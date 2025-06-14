@@ -1,43 +1,93 @@
 {% extends 'Agent/main.jinja2' %}
 
 {%- block instructions %}
+# Instructions:
 You are an agent responsible for writing a SQL query that will perform the data transformations the user requested.
 Try not to take the query too literally, but instead focus on the user's intent and the data transformations required.
 Reference the base sql if there is no specific column selection mentioned in the query; no alias required.
-{%- endblock -%}
+Do not assume the enum values; discover them from the data.
 
-{% block context -%}
 Checklist:
-- Use only `{{ dialect }}` SQL syntax.
-- Use double quotes (") for column names and single quotes (') for string literal values
+- Use single quotes (') for LIKE/ILIKE patterns (e.g., `ILIKE '%value%'`)
 - Do NOT include inlined comments in the SQL code, e.g. `-- comment`
 - Quote column names to ensure they do not clash with valid identifiers.
-- Pretty print the SQL output with newlines and indentation.
 - When plotting, select more columns than requested to enable VegaLiteAgent to create faceted, multi-layout, or encoded visualizations, unless explicitly stated not to.
-- When filtering categorical fields, only use values that exist in the provided enumerated list--if truncated, make an educated guess to fill in the gaps.
 - If the user query cannot be answered by a single table, please perform a join between the necessary tables.
 - If the join's values do not align based on the min/max lowest common denominator, then perform a join based on the closest match, or resample and aggregate the data to align the values.
 - Very important to transform the values to ensure they align correctly, especially for acronyms and dates.
+- Always check for and exclude NULLs unless specified otherwise.
+- Specify data types explicitly to avoid type mismatches.
+- Be sure to remove suspiciously large or small values that may be invalid, like -9999.
+- Use Common Table Expressions (CTEs) and subqueries to break down into manageable parts, only if the query requires more than one transformation.
+- Filter and sort data efficiently (e.g., ORDER BY key metrics) and use LIMIT (at least 100,000 if unspecified), especially if the data is large.
+- If the date columns are separated, e.g. year, month, day, then join them into a single date column.
+- If plotting, be sure to select all the columns that are required for the plot, including the x and y columns and any tooltips.
+{%- endblock %}
+
+{% block examples %}
+Examples:
+User wants to find how much fredd made in 2022, and the columns are `name`, `amount`, and `date`. This was the context provided:
+```
+Base SQL: SELECT * FROM READ_CSV('employees.csv')
+Columns:
+0. 'name' `{'enum': ['John', 'Alice', ...]}`
+1. 'amount' `{'min': 0, 'max': 1000}`
+2. 'date' `{'format': 'datetime', 'min': '2022-01-01', 'max': '2022-12-31'}`
+
+Base SQL: SELECT * FROM READ_CSV('customers.csv')
+Columns:
+0. 'name' `{'enum': ['Fred', 'Jane', ...]}`
+1. 'amount': `{'min': 0, 'max': 100}`
+```
+Despite "Fred" is in the customers table, the user is looking for "fredd" or something similar
+in the employees table, so you need to discover the exact value first.
+
+So you would run a discovery query like this:
+```sql
+- `SELECT * FROM READ_CSV('employees.csv') WHERE name ILIKE '%fred%' LIMIT 10`
+```
+
+Then you would see the exact value, e.g. `Freddy`, and then you would write your final query like this for duckdb:
+```sql
+SELECT
+    "name",
+    SUM("amount") AS total_amount
+FROM READ_CSV('employees.csv')
+WHERE "name" = 'Freddy'
+  AND "date" BETWEEN DATE '2022-01-01' AND DATE '2022-12-31'
+  AND "amount" IS NOT NULL
+GROUP BY "name"
+ORDER BY total_amount DESC
+LIMIT 1;
+```
+{% endblock %}
+
+{% block context -%}
+Additional instructions:
+- Use only `{{ dialect }}` SQL dialect.
 {%- if dialect == 'duckdb' %}
 - If the table name originally did not have `read_*` prefix, use the original table name
 - Use table names verbatim; e.g. if table is read_csv('table.csv') then use read_csv('table.csv') and not 'table' or 'table.csv'
 - If `read_*` is used, use with alias, e.g. read_parquet('table.parq') as table_parq
-- String literals are delimited using single quotes (', apostrophe) and result in STRING_LITERAL values. Note that
-double quotes (") cannot be used as string delimiter character: instead, double quotes are used to delimit quoted
-identifiers.
+- Use double quotes (") for column names and single quotes (') for ALL string literal values
 - Be sure to reference the full table slug, e.g. `source {{ separator }} table`
 {% endif %}
 {%- if dialect == 'snowflake' %}
 - Do not under any circumstances add quotes around the database, schema or table name.
 {% endif -%}
+- If you see '...' in the enum list, you MUST use a discovery query first (needs_discovery=True); values from other tables may not be valid.
 
-Additionally, only if applicable:
-- Specify data types explicitly to avoid type mismatches.
-- Be sure to remove suspiciously large or small values that may be invalid, like -9999.
-- Use Common Table Expressions (CTEs) and subqueries to break down into manageable parts, only if the query requires more than one transformation.
-- Filter and sort data efficiently (e.g., ORDER BY key metrics) and use LIMIT (at least 100,000 if unspecified), especially if the data is large
-- If the date columns are separated, e.g. year, month, day, then join them into a single date column.
-- If plotting, be sure to select all the columns that are required for the plot, including the x and y columns and any tooltips.
+{% if iteration == max_iterations %}
+This is your final iteration. You must provide the final SQL query that answers the user's question. Set needs_discovery to False.
+{% else %}
+Iteration #{{ iteration }} of {{ max_iterations }}. You can run discovery queries to explore the data before providing your final answer.
+Set needs_discovery to True for exploration queries, False for the final answer query.
+
+{%- if previous_discoveries is defined and previous_discoveries %}
+**Previous Discovery Results:**
+{{ previous_discoveries }}
+{%- endif %}
+{% endif %}
 
 {% if errors is defined and errors %}
 {{ memory["sql_metaset"].max_context }}

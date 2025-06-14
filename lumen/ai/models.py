@@ -28,16 +28,44 @@ class ThinkingYesNo(BaseModel):
 
 class Sql(BaseModel):
 
-    chain_of_thought: str = Field(
+    # This won't be shown, but in my experience, this will ground the LLM and make them think about the enums
+    # carefully, so it won't hallucinate values that are not present since they are auto-complete machines.
+    enums_truncated: bool = Field(
         description="""
-        You are a world-class SQL expert, and your fame is on the line so don't mess up.
-        If it's simple, give at max one sentence about using `SELECT * FROM ...`.
-        However, if applicable, be sure to carefully study the schema, discuss the values in the columns,
-        and whether you need to wrangle the data before you can use it, before finally writing a correct and valid
-        SQL query that fully answers the user's query. If using CTEs, comment on the purpose of each.
-        Everything should be made as simple as possible, but no simpler and be concise.
+        If the relevant tables and columns have enums and contain '...',
+        then this should be set to True.
         """
     )
+
+    information_completeness: str = Field(
+        description="""
+        CRITICAL: You are FORBIDDEN from making ANY assumptions about data values. BE EXTREMELY LITERAL.
+
+        Based on the selected tables and columns, walk through the following checklist in bullets:
+        - Do you see '...' in ANY enum preview? (If yes, you MUST do discovery)
+        - NEVER EVER assume values exist just because they seem logical or common
+        - You can ONLY use values that are explicitly printed in the enum preview
+        """
+    )
+
+    needs_discovery: bool = Field(
+        description="Set to True if you need to explore the data further using SQL, otherwise False."
+    )
+
+    chain_of_thought: str = Field(
+        description="""
+        Based on your information_completeness evaluation:
+        - If needs_discovery=True: Explain what you need to discover and how
+        - If needs_discovery=False: You are a world-class SQL expert, and your fame is on the line so don't mess up.
+          Carefully study the schema, discuss the values in the columns, and whether you need to wrangle
+          the data before you can use it, before finally writing a correct and valid SQL query that fully
+          answers the user's query. If using CTEs, comment on the purpose of each.
+        """
+    )
+
+    query: str = Field(description="""
+        Correct, valid SQL query that is based on the information_completeness and chain_of_thought;
+        should only be one query and do NOT add extraneous comments.""")
 
     expr_slug: str = Field(
         description="""
@@ -45,11 +73,6 @@ class Sql(BaseModel):
         e.g. top_5_athletes. The slug must be unique, i.e. should not match other existing table names or slugs.
         """
     )
-
-    query: str = Field(description="""
-        Correct, valid SQL query that answers the user's query and is based on
-        the chain of thought; do NOT add extraneous comments.""")
-
 
 class VegaLiteSpec(BaseModel):
 

@@ -582,6 +582,9 @@ class SQLAgent(LumenBaseAgent):
 
     requires = param.List(default=["sources", "source", "sql_metaset"], readonly=True)
 
+    max_discovery_iterations = param.Integer(default=5, doc="""
+        Maximum number of discovery iterations before requiring a final answer.""")
+
     _extensions = (
         "codeeditor",
         "tabulator",
@@ -589,56 +592,115 @@ class SQLAgent(LumenBaseAgent):
 
     _output_type = SQLOutput
 
-    @retry_llm_output()
-    async def _create_valid_sql(self, messages: list[Message], dialect: str, title: str, tables_to_source: dict[str, BaseSQLSource], errors=None):
-        errors_context = {}
-        if errors:
-            # get the head of the tables
-            columns_context = ""
-            vector_metadata_map = self._memory["sql_metaset"].vector_metaset.vector_metadata_map
-            for table_slug, vector_metadata in vector_metadata_map.items():
-                table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
-                if table_name in tables_to_source:
-                    columns = [col.name for col in vector_metadata.columns or []]
-                    columns_context += f"\nSQL: {vector_metadata.base_sql}\nColumns: {', '.join(columns)}\n\n"
-            last_output = self._memory.get("sql")
-            num_errors = len(errors)
-            errors = ("\n".join(f"{i + 1}. {error}" for i, error in enumerate(errors))).strip()
-            errors_context = {
-                "errors": errors,
-                "last_output": last_output,
-                "num_errors": num_errors,
-                "columns_context": columns_context,
-            }
+    def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
+        memory["sql"] = event.new
 
-        system_prompt = await self._render_prompt(
-            "main",
-            messages,
-            dialect=dialect,
-            separator=SOURCE_TABLE_SEPARATOR,
-            **errors_context
-        )
-        with self._add_step(title=title or "SQL query", steps_layout=self._steps_layout) as step:
+    async def _execute_discovery(self, sql_query: str, expr_slug: str, source, iteration: int, step) -> str:
+        """Execute discovery query and return summary."""
+        try:
+            sql_expr_source = source.create_sql_expr_source({expr_slug: sql_query}, materialize=False)
+            df = await get_data(await get_pipeline(source=sql_expr_source, table=expr_slug))
+            step.stream(f"\n\n**Discovery Result:** {df}")
+            return df.to_dict(orient="records")
+        except Exception as e:
+            step.stream(f"\n\n**Discovery Failed:** {e!s}")
+            return f"Discovery {iteration}: Failed - {e!s}"
+
+    async def _validate_sql_with_retry(self, sql_query: str, expr_slug: str, source, messages: list[Message], step, max_retries: int = 3) -> tuple[str, Any]:
+        """
+        Validate SQL query with retry logic. Streams directly to the provided step.
+
+        Returns:
+            tuple: (validated_sql_query, sql_expr_source)
+        """
+        for i in range(max_retries):
+            try:
+                sql_expr_source = source.create_sql_expr_source({expr_slug: sql_query})
+                if i > 0:
+                    step.stream("\n\n✅ SQL validation successful")
+                return sql_query, sql_expr_source
+            except Exception as e:
+                if i == max_retries - 1:
+                    step.stream(f"\n\n❌ SQL validation failed after {max_retries} attempts: {e}")
+                    raise e
+
+                step.stream(f"\n\n⚠️ SQL validation failed (attempt {i+1}/{max_retries}): {e}")
+                sql_query = clean_sql(
+                    await self._retry_output_by_line(str(e), messages, self._memory, sql_query, language="sql"),
+                    source.dialect,
+                )
+                step.stream(f"\n\n**Retry {i+1}:** `{expr_slug}`\n```sql\n{sql_query}\n```")
+
+    async def _run_iteration(self, iteration: int, messages: list[Message], dialect: str, source, discovery_context: str) -> dict:
+        """Run a single iteration of SQL generation with immediate validation."""
+        with self._add_step(title=f"SQL generation {iteration}/{self.max_discovery_iterations}", steps_layout=self._steps_layout) as step:
+            # Generate SQL
+            system_prompt = await self._render_prompt(
+                "main",
+                messages,
+                dialect=dialect,
+                separator=SOURCE_TABLE_SEPARATOR,
+                iteration=iteration,
+                max_iterations=self.max_discovery_iterations,
+                previous_discoveries=discovery_context,
+            )
+
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
             response = self.llm.stream(messages, system=system_prompt, model_spec=model_spec, response_model=self._get_model("main"))
+
+            async for output in response:
+                thoughts = ""
+                if output.information_completeness:
+                    thoughts += f"**Information Completeness:** {output.information_completeness}\n\n"
+                if output.chain_of_thought:
+                    thoughts += f"\n\n{output.chain_of_thought}"
+                if thoughts:
+                    step.stream(thoughts, replace=True)
+
+            if not output.query:
+                raise ValueError("No SQL query was generated.")
+
+            sql_query = clean_sql(output.query, dialect)
+            step.stream(f"\n\n`{output.expr_slug}`\n```sql\n{sql_query}\n```")
+
             try:
-                async for output in response:
-                    step_message = output.chain_of_thought or ""
-                    step.stream(step_message, replace=True)
-                if output.query:
-                    sql_query = clean_sql(output.query, dialect)
-                if sql_query and output.expr_slug:
-                    step.stream(f"\n\n`{output.expr_slug}`\n```sql\n{sql_query}\n```")
-                self._memory["sql"] = sql_query
-            except asyncio.CancelledError as e:
-                step.failed_title = "Cancelled SQL query generation"
+                validated_sql, sql_expr_source = await self._validate_sql_with_retry(
+                    sql_query, output.expr_slug, source, messages, step
+                )
+                sql_query = validated_sql
+            except Exception as e:
+                # If validation fails completely, we can't proceed with this iteration
+                step.stream(f"\n\n❌ Cannot proceed with invalid SQL: {e}")
+                step.status = "failed"
                 raise e
 
-        if step.failed_title and step.failed_title.startswith("Cancelled"):
-            raise asyncio.CancelledError()
-        elif not sql_query:
-            raise ValueError("No SQL query was generated.")
+            # Check if final query or max iterations reached
+            if not output.needs_discovery or iteration == self.max_discovery_iterations:
+                return {
+                    "is_final": True,
+                    "sql_query": sql_query,
+                    "expr_slug": output.expr_slug,
+                    "sql_expr_source": sql_expr_source,
+                    "discovery_summary": ""
+                }
 
+            # Execute discovery query (now with validated SQL)
+            discovery_summary = await self._execute_discovery(sql_query, output.expr_slug, source, iteration, step)
+            return {
+                "is_final": False,
+                "sql_query": sql_query,
+                "expr_slug": output.expr_slug,
+                "sql_expr_source": sql_expr_source,
+                "discovery_summary": discovery_summary
+            }
+
+    async def _create_final_pipeline(self, result: dict, tables_to_source: dict, messages: list[Message], render_output: bool, step_title: str) -> Any:
+        """Create the final pipeline with already-validated SQL query."""
+        sql_query = result["sql_query"]
+        expr_slug = result["expr_slug"]
+        sql_expr_source = result["sql_expr_source"]  # Already validated!
+
+        # Handle multiple sources if needed
         sources = set(tables_to_source.values())
         if len(sources) > 1:
             mirrors = {}
@@ -648,7 +710,6 @@ class SQLAgent(LumenBaseAgent):
                     sql_query = sql_query.replace(a_table, renamed_table)
                 else:
                     renamed_table = a_table
-                # Remove source prefixes from table names
                 if SOURCE_TABLE_SEPARATOR in renamed_table:
                     _, renamed_table = renamed_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
                 sql_query = sql_query.replace(a_table, renamed_table)
@@ -657,35 +718,16 @@ class SQLAgent(LumenBaseAgent):
         else:
             source = next(iter(sources))
 
-        # check whether the SQL query is valid
-        expr_slug = output.expr_slug
-        for i in range(3):
-            try:
-                # TODO: if original sql expr matches, don't recreate a new one!
-                sql_expr_source = source.create_sql_expr_source({expr_slug: sql_query})
-                break
-            except Exception as e:
-                report_error(e, step, status="failed")
-                with self._add_step(title="Re-attempted SQL query", steps_layout=self._steps_layout) as step:
-                    sql_query = clean_sql(
-                        await self._retry_output_by_line(e, messages, self._memory, sql_query, language="sql"),
-                        dialect=dialect,
-                    )
-                    step.stream(f"\n\n`{expr_slug}`\n```sql\n{sql_query}\n```")
-                if i == 2:
-                    raise e
-
         sql_query = sql_expr_source.tables[expr_slug]
+
+        # Apply transforms and create pipeline
         sql_transforms = [SQLLimit(limit=1_000_000, write=source.dialect, pretty=True, identify=False)]
-        transformed_sql_query = sql_query
-        for sql_transform in sql_transforms:
-            transformed_sql_query = sql_transform.apply(transformed_sql_query)  # not to be used elsewhere; just for transparency
-            if transformed_sql_query != sql_query:
-                stream_details(f"```sql\n{transformed_sql_query}\n```", step, title=f"{sql_transform.__class__.__name__} Applied")
         pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms)
         df = await get_data(pipeline)
 
+        # Update memory
         self._memory["data"] = await describe_data(df)
+        self._memory["sql"] = sql_query
         if isinstance(self._memory["sources"], dict):
             self._memory["sources"][expr_slug] = sql_expr_source
         else:
@@ -693,10 +735,10 @@ class SQLAgent(LumenBaseAgent):
         self._memory["source"] = sql_expr_source
         self._memory["pipeline"] = pipeline
         self._memory["table"] = pipeline.table
-        return sql_query
 
-    def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
-        memory["sql"] = event.new
+        # Render output
+        self._render_lumen(pipeline, spec=sql_query, messages=messages, render_output=render_output, title=step_title)
+        return pipeline
 
     async def respond(
         self,
@@ -704,30 +746,38 @@ class SQLAgent(LumenBaseAgent):
         render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
+        """
+        Iterative SQL generation with discovery queries and immediate validation.
+        """
+        # Setup
         dialect = self._memory["source"].dialect
-        if isinstance(self._memory["sources"], dict):
-            sources = self._memory["sources"]
-        else:
-            sources = {source.name: source for source in self._memory["sources"]}
+        sources = self._memory["sources"] if isinstance(self._memory["sources"], dict) else {source.name: source for source in self._memory["sources"]}
         vector_metaset = self._memory["sql_metaset"].vector_metaset
-        selected_slugs = list(
-            #  if no tables/cols are subset
-            vector_metaset.selected_columns or vector_metaset.vector_metadata_map
-        )
-        tables_to_source = {}
-        for table_slug in selected_slugs:
-            a_source_obj, a_table = parse_table_slug(table_slug, sources)
-            tables_to_source[a_table] = a_source_obj
+        selected_slugs = list(vector_metaset.selected_columns or vector_metaset.vector_metadata_map)
+        tables_to_source = {parse_table_slug(table_slug, sources)[1]: parse_table_slug(table_slug, sources)[0] for table_slug in selected_slugs}
+        source = next(iter(tables_to_source.values()))
 
-        try:
-            sql_query = await self._create_valid_sql(messages, dialect, step_title, tables_to_source)
-            pipeline = self._memory["pipeline"]
-        except RetriesExceededError as e:
-            traceback.print_exception(e)
-            self._memory["__error__"] = str(e)
-            return None
-        self._render_lumen(pipeline, spec=sql_query, messages=messages, render_output=render_output, title=step_title)
-        return pipeline
+        # Discovery context and SQL history
+        discovery_context = ""
+
+        # Iterative discovery loop with immediate validation
+        for iteration in range(1, self.max_discovery_iterations + 1):
+            result = await self._run_iteration(iteration, messages, dialect, source, discovery_context)
+            if result is None:
+                continue
+
+            if result.get("is_final"):
+                return await self._create_final_pipeline(
+                    result, tables_to_source, messages, render_output, step_title
+                )
+
+            if result["discovery_summary"] is not None or result["sql_query"]:
+                iteration_info = f"\n{iteration}.\n```sql\n{result['sql_query']}\n```"
+                if result["discovery_summary"] is not None:
+                    iteration_info += f"\nResult: {result['discovery_summary']}"
+                discovery_context += iteration_info
+
+        return None
 
 
 class DbtslAgent(LumenBaseAgent, DbtslMixin):
