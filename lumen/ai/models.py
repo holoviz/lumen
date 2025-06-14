@@ -31,13 +31,15 @@ class Sql(BaseModel):
     chain_of_thought: str = Field(
         description="""
         You are a world-class SQL expert, and your fame is on the line so don't mess up.
-        If it's simple, give at max one sentence about using `SELECT * FROM ...`.
-        However, if applicable, be sure to carefully study the schema, discuss the values in the columns,
-        and whether you need to wrangle the data before you can use it, before finally writing a correct and valid
-        SQL query that fully answers the user's query. If using CTEs, comment on the purpose of each.
-        Everything should be made as simple as possible, but no simpler and be concise.
+        Carefully study the schema, discuss the values in the columns, and whether you need to wrangle
+        the data before you can use it, before finally writing a correct and valid SQL query that fully
+        answers the user's query. If using CTEs, comment on the purpose of each.
         """
     )
+
+    query: str = Field(description="""
+        Correct, valid SQL query that answers the user's question;
+        should only be one query and do NOT add extraneous comments.""")
 
     expr_slug: str = Field(
         description="""
@@ -46,9 +48,23 @@ class Sql(BaseModel):
         """
     )
 
-    query: str = Field(description="""
-        Correct, valid SQL query that answers the user's query and is based on
-        the chain of thought; do NOT add extraneous comments.""")
+
+class CheckContext(BaseModel):
+
+    information_completeness: str = Field(
+        description="""
+        Based on the selected tables and columns, walk through the following checklist in bullets:
+        - Do you see '...' in ANY enum preview? (If yes, you MUST do discovery)
+        - NEVER EVER assume values exist just because they seem logical or common
+        - You can ONLY use values that are explicitly printed in the enum preview
+        - Does the results answer the user's question?
+        - Recommend a plan to discover more data, i.e. table and column
+        """
+    )
+
+    needs_discovery: bool = Field(
+        description="Set to True if you need to explore the data further using SQL, otherwise False."
+    )
 
 
 class VegaLiteSpec(BaseModel):

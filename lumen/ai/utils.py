@@ -265,8 +265,8 @@ def process_enums(spec, num_cols, limit=None, include_enum=True, reduce_enums=Tr
     if reduce_enums:
         max_enums = max(2, min(10, int(10 * math.exp(-0.1 * max(0, num_cols - 10)))))
     else:
-        max_enums = 6
-    truncate_limit = min(limit or 5, max_enums)
+        max_enums = 2
+    truncate_limit = min(limit or 2, max_enums)
 
     if not include_enum or len(spec["enum"]) == 0:
         spec.pop("enum")

@@ -94,6 +94,7 @@ class VectorMetaset:
                     col_desc = truncate_string(col.description, max_length=100) if truncate else col.description
                     context += f": {col_desc}"
                 context += "\n"
+            context += "\n"
         return context
 
     @property
@@ -217,7 +218,7 @@ class SQLMetaset:
                     context += f" `{schema_data}`"
 
                 context += "\n"
-
+            context += "\n"
         return context.replace("'type': 'str', ", "")  # Remove type info for lower token
 
     @property
