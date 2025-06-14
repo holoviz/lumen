@@ -5,7 +5,6 @@
 You are an agent responsible for writing a SQL query that will perform the data transformations the user requested.
 Try not to take the query too literally, but instead focus on the user's intent and the data transformations required.
 Reference the base sql if there is no specific column selection mentioned in the query; no alias required.
-Do not assume the enum values; discover them from the data.
 
 Checklist:
 - Use single quotes (') for LIKE/ILIKE patterns (e.g., `ILIKE '%value%'`)
@@ -26,39 +25,9 @@ Checklist:
 
 {% block examples %}
 Examples:
-User wants to find how much fredd made in 2022, and the columns are `name`, `amount`, and `date`. This was the context provided:
-```
-Base SQL: SELECT * FROM READ_CSV('employees.csv')
-Columns:
-0. 'name' `{'enum': ['John', 'Alice', ...]}`
-1. 'amount' `{'min': 0, 'max': 1000}`
-2. 'date' `{'format': 'datetime', 'min': '2022-01-01', 'max': '2022-12-31'}`
-
-Base SQL: SELECT * FROM READ_CSV('customers.csv')
-Columns:
-0. 'name' `{'enum': ['Fred', 'Jane', ...]}`
-1. 'amount': `{'min': 0, 'max': 100}`
-```
-Despite "Fred" is in the customers table, the user is looking for "fredd" or something similar
-in the employees table, so you need to discover the exact value first.
-
-So you would run a discovery query like this:
+Discovery query:
 ```sql
 - `SELECT * FROM READ_CSV('employees.csv') WHERE name ILIKE '%fred%' LIMIT 10`
-```
-
-Then you would see the exact value, e.g. `Freddy`, and then you would write your final query like this for duckdb:
-```sql
-SELECT
-    "name",
-    SUM("amount") AS total_amount
-FROM READ_CSV('employees.csv')
-WHERE "name" = 'Freddy'
-  AND "date" BETWEEN DATE '2022-01-01' AND DATE '2022-12-31'
-  AND "amount" IS NOT NULL
-GROUP BY "name"
-ORDER BY total_amount DESC
-LIMIT 1;
 ```
 {% endblock %}
 
@@ -75,17 +44,16 @@ Additional instructions:
 {%- if dialect == 'snowflake' %}
 - Do not under any circumstances add quotes around the database, schema or table name.
 {% endif -%}
-- If you see '...' in the enum list, you MUST use a discovery query first (needs_discovery=True); values from other tables may not be valid.
 
 {% if iteration == max_iterations %}
-This is your final iteration. You must provide the final SQL query that answers the user's question. Set needs_discovery to False.
+This is your final iteration. You must provide the final SQL query that answers the user's question.
 {% else %}
-Iteration #{{ iteration }} of {{ max_iterations }}. You can run discovery queries to explore the data before providing your final answer.
-Set needs_discovery to True for exploration queries, False for the final answer query.
+Iteration #{{ iteration }} of {{ max_iterations }}. Generate a SQL query based on the available information.
 
 {%- if previous_discoveries is defined and previous_discoveries %}
 **Previous Discovery Results:**
 {{ previous_discoveries }}
+Do not repeat the same discovery queries again.
 {%- endif %}
 {% endif %}
 

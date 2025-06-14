@@ -38,7 +38,8 @@ from .controls import RetryControls, SourceControls
 from .llm import Llm, Message
 from .memory import _Memory
 from .models import (
-    DbtslQueryParams, PartialBaseModel, RetrySpec, Sql, VegaLiteSpec,
+    CheckContext, DbtslQueryParams, PartialBaseModel, RetrySpec, Sql,
+    VegaLiteSpec,
 )
 from .schemas import get_metaset
 from .services import DbtslMixin
@@ -575,6 +576,10 @@ class SQLAgent(LumenBaseAgent):
                 "response_model": Sql,
                 "template": PROMPTS_DIR / "SQLAgent" / "main.jinja2",
             },
+            "check_context": {
+                "response_model": CheckContext,
+                "template": PROMPTS_DIR / "SQLAgent" / "check_context.jinja2",
+            }
         }
     )
 
@@ -594,6 +599,29 @@ class SQLAgent(LumenBaseAgent):
 
     def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
         memory["sql"] = event.new
+
+    async def _check_information_completeness(self, messages: list[Message], discovery_context: str) -> tuple[bool, str]:
+        """
+        Check if we have complete information to answer the query or need discovery.
+        Returns (needs_discovery, information_completeness_text).
+        """
+        with self._add_step(title="Checking information completeness", steps_layout=self._steps_layout) as step:
+            system_prompt = await self._render_prompt("check_context", messages, previous_discoveries=discovery_context)
+            model_spec = self.prompts["check_context"].get("llm_spec", self.llm_spec_key)
+
+            response = self.llm.stream(
+                messages,
+                system=system_prompt,
+                model_spec=model_spec,
+                response_model=self._get_model("check_context"),
+            )
+
+            async for output in response:
+                if output.information_completeness:
+                    step.stream(f"**Information Assessment:** {output.information_completeness}", replace=True)
+
+            step.stream(f"\n\n**Needs Discovery:** {'Yes' if output.needs_discovery else 'No'}")
+            return output.needs_discovery, output.information_completeness
 
     async def _execute_discovery(self, sql_query: str, expr_slug: str, source, iteration: int, step) -> str:
         """Execute discovery query and return summary."""
@@ -632,12 +660,25 @@ class SQLAgent(LumenBaseAgent):
                 step.stream(f"\n\n**Retry {i+1}:** `{expr_slug}`\n```sql\n{sql_query}\n```")
 
     async def _run_iteration(self, iteration: int, messages: list[Message], dialect: str, source, discovery_context: str) -> dict:
-        """Run a single iteration of SQL generation with immediate validation."""
-        with self._add_step(title=f"SQL generation {iteration}/{self.max_discovery_iterations}", steps_layout=self._steps_layout) as step:
-            # Generate SQL
+        """Run a single iteration: check info completeness, then generate SQL if needed."""
+
+        # First, check if we have complete information (include previous discoveries in context)
+        needs_discovery, information_completeness = await self._check_information_completeness(messages, discovery_context)
+
+        # Determine if this should be final iteration
+        is_final = not needs_discovery or iteration == self.max_discovery_iterations
+        step_title = f"{'Final SQL' if is_final else 'Discovery query'} generation {iteration}/{self.max_discovery_iterations}"
+
+        if needs_discovery and information_completeness:
+            modified_messages = [{"role": "user", "content": information_completeness}]
+        else:
+            modified_messages = messages
+
+        # Generate SQL (same process for both final and discovery)
+        with self._add_step(title=step_title, steps_layout=self._steps_layout) as step:
             system_prompt = await self._render_prompt(
                 "main",
-                messages,
+                modified_messages,
                 dialect=dialect,
                 separator=SOURCE_TABLE_SEPARATOR,
                 iteration=iteration,
@@ -649,13 +690,8 @@ class SQLAgent(LumenBaseAgent):
             response = self.llm.stream(messages, system=system_prompt, model_spec=model_spec, response_model=self._get_model("main"))
 
             async for output in response:
-                thoughts = ""
-                if output.information_completeness:
-                    thoughts += f"**Information Completeness:** {output.information_completeness}\n\n"
                 if output.chain_of_thought:
-                    thoughts += f"\n\n{output.chain_of_thought}"
-                if thoughts:
-                    step.stream(thoughts, replace=True)
+                    step.stream(output.chain_of_thought, replace=True)
 
             if not output.query:
                 raise ValueError("No SQL query was generated.")
@@ -669,13 +705,12 @@ class SQLAgent(LumenBaseAgent):
                 )
                 sql_query = validated_sql
             except Exception as e:
-                # If validation fails completely, we can't proceed with this iteration
                 step.stream(f"\n\n❌ Cannot proceed with invalid SQL: {e}")
                 step.status = "failed"
                 raise e
 
-            # Check if final query or max iterations reached
-            if not output.needs_discovery or iteration == self.max_discovery_iterations:
+            # Return based on whether this is final or discovery
+            if is_final:
                 return {
                     "is_final": True,
                     "sql_query": sql_query,
@@ -683,16 +718,16 @@ class SQLAgent(LumenBaseAgent):
                     "sql_expr_source": sql_expr_source,
                     "discovery_summary": ""
                 }
-
-            # Execute discovery query (now with validated SQL)
-            discovery_summary = await self._execute_discovery(sql_query, output.expr_slug, source, iteration, step)
-            return {
-                "is_final": False,
-                "sql_query": sql_query,
-                "expr_slug": output.expr_slug,
-                "sql_expr_source": sql_expr_source,
-                "discovery_summary": discovery_summary
-            }
+            else:
+                # Execute discovery query
+                discovery_summary = await self._execute_discovery(sql_query, output.expr_slug, source, iteration, step)
+                return {
+                    "is_final": False,
+                    "sql_query": sql_query,
+                    "expr_slug": output.expr_slug,
+                    "sql_expr_source": sql_expr_source,
+                    "discovery_summary": discovery_summary
+                }
 
     async def _create_final_pipeline(self, result: dict, tables_to_source: dict, messages: list[Message], render_output: bool, step_title: str) -> Any:
         """Create the final pipeline with already-validated SQL query."""
@@ -760,9 +795,11 @@ class SQLAgent(LumenBaseAgent):
         # Discovery context and SQL history
         discovery_context = ""
 
-        # Iterative discovery loop with immediate validation
+        # Iterative discovery loop
         for iteration in range(1, self.max_discovery_iterations + 1):
-            result = await self._run_iteration(iteration, messages, dialect, source, discovery_context)
+            result = await self._run_iteration(
+                iteration, messages, dialect, source, discovery_context
+            )
             if result is None:
                 continue
 
