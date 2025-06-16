@@ -50,20 +50,25 @@ class Sql(BaseModel):
 
 
 class CheckContext(BaseModel):
-
     information_completeness: str = Field(
         description="""
-        Based on the selected tables and columns, walk through the following checklist in bullets:
-        - Do you see '...' in ANY enum preview? (If yes, you MUST do discovery)
-        - NEVER EVER assume values exist just because they seem logical or common
-        - You can ONLY use values that are explicitly printed in the enum preview
-        - Does the results answer the user's question?
-        - Recommend a plan to discover more data, i.e. table and column
+        Concisely explain whether the current schema overview provides sufficient
+        information to answer the user's question.
         """
     )
 
-    needs_discovery: bool = Field(
-        description="Set to True if you need to explore the data further using SQL, otherwise False."
+    discovery_steps: list[str] = Field(
+        default_factory=list,
+        description="""
+        Natural language steps describing what data to find to answer the user's question.
+        Try to think of steps that can map to SQL queries (but do not write SQL),
+        so if there are multiple steps that can be expressed as a single SQL query,
+        combine them into one step. Do not mention assume values; keep the steps vague.
+
+        Write in plain English describing WHAT to find, not HOW. Preserve all important
+        context from the user's question (entities, filters, constraints). Keep steps to a minimum,
+        and the LAST step must directly answer the user's question with full context preserved.
+        """
     )
 
 

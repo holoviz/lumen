@@ -600,13 +600,13 @@ class SQLAgent(LumenBaseAgent):
     def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
         memory["sql"] = event.new
 
-    async def _check_information_completeness(self, messages: list[Message], discovery_context: str) -> tuple[bool, str]:
+    async def _check_information_completeness(self, messages: list[Message], sql_plan_context: str) -> list[str]:
         """
         Check if we have complete information to answer the query or need discovery.
-        Returns (needs_discovery, information_completeness_text).
+        Returns discovery_steps).
         """
         with self._add_step(title="Checking information completeness", steps_layout=self._steps_layout) as step:
-            system_prompt = await self._render_prompt("check_context", messages, previous_discoveries=discovery_context)
+            system_prompt = await self._render_prompt("check_context", messages, previous_sql_plan_results=sql_plan_context)
             model_spec = self.prompts["check_context"].get("llm_spec", self.llm_spec_key)
 
             response = self.llm.stream(
@@ -620,19 +620,10 @@ class SQLAgent(LumenBaseAgent):
                 if output.information_completeness:
                     step.stream(f"**Information Assessment:** {output.information_completeness}", replace=True)
 
-            step.stream(f"\n\n**Needs Discovery:** {'Yes' if output.needs_discovery else 'No'}")
-            return output.needs_discovery, output.information_completeness
-
-    async def _execute_discovery(self, sql_query: str, expr_slug: str, source, iteration: int, step) -> str:
-        """Execute discovery query and return summary."""
-        try:
-            sql_expr_source = source.create_sql_expr_source({expr_slug: sql_query}, materialize=False)
-            df = await get_data(await get_pipeline(source=sql_expr_source, table=expr_slug))
-            step.stream(f"\n\n**Discovery Result:** {df}")
-            return df.to_dict(orient="records")
-        except Exception as e:
-            step.stream(f"\n\n**Discovery Failed:** {e!s}")
-            return f"Discovery {iteration}: Failed - {e!s}"
+            if output.discovery_steps:
+                instructions_text = "\n".join(f"- {instruction}" for instruction in output.discovery_steps)
+                step.stream(f"\n\n**SQL Plan:**\n{instructions_text}")
+            return output.discovery_steps
 
     async def _validate_sql_with_retry(self, sql_query: str, expr_slug: str, source, messages: list[Message], step, max_retries: int = 3) -> tuple[str, Any]:
         """
@@ -659,121 +650,181 @@ class SQLAgent(LumenBaseAgent):
                 )
                 step.stream(f"\n\n**Retry {i+1}:** `{expr_slug}`\n```sql\n{sql_query}\n```")
 
-    async def _run_iteration(self, iteration: int, messages: list[Message], dialect: str, source, discovery_context: str) -> dict:
-        """Run a single iteration: check info completeness, then generate SQL if needed."""
-
-        # First, check if we have complete information (include previous discoveries in context)
-        needs_discovery, information_completeness = await self._check_information_completeness(messages, discovery_context)
-
-        # Determine if this should be final iteration
-        is_final = not needs_discovery or iteration == self.max_discovery_iterations
-        step_title = f"{'Final SQL' if is_final else 'Discovery query'} generation {iteration}/{self.max_discovery_iterations}"
-
-        if needs_discovery and information_completeness:
-            modified_messages = [{"role": "user", "content": information_completeness}]
-        else:
-            modified_messages = messages
-
-        # Generate SQL (same process for both final and discovery)
+    @retry_llm_output()
+    async def _generate_and_validate_sql(
+        self,
+        messages: list[Message],
+        dialect: str,
+        source,
+        step_number: int,
+        current_step: str,
+        sql_plan_context: str,
+        step_title: str,
+        errors: list | None = None,
+    ) -> tuple[str, str, Any]:
+        """
+        Generate and validate SQL for any message set. Returns (sql_query, expr_slug, sql_expr_source).
+        """
         with self._add_step(title=step_title, steps_layout=self._steps_layout) as step:
             system_prompt = await self._render_prompt(
                 "main",
-                modified_messages,
+                messages,
                 dialect=dialect,
                 separator=SOURCE_TABLE_SEPARATOR,
-                iteration=iteration,
-                max_iterations=self.max_discovery_iterations,
-                previous_discoveries=discovery_context,
+                step_number=step_number,
+                current_step=current_step,
+                previous_sql_plan_results=sql_plan_context,
+                errors=errors,
             )
 
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
-            response = self.llm.stream(messages, system=system_prompt, model_spec=model_spec, response_model=self._get_model("main"))
+            response = self.llm.stream(
+                messages,
+                system=system_prompt,
+                model_spec=model_spec,
+                response_model=self._get_model("main"),
+            )
 
-            async for output in response:
+            output = None
+            async for out in response:
+                output = out
                 if output.chain_of_thought:
                     step.stream(output.chain_of_thought, replace=True)
 
-            if not output.query:
+            if not output or not output.query:
                 raise ValueError("No SQL query was generated.")
 
             sql_query = clean_sql(output.query, dialect)
             step.stream(f"\n\n`{output.expr_slug}`\n```sql\n{sql_query}\n```")
 
-            try:
-                validated_sql, sql_expr_source = await self._validate_sql_with_retry(
-                    sql_query, output.expr_slug, source, messages, step
-                )
-                sql_query = validated_sql
-            except Exception as e:
-                step.stream(f"\n\n❌ Cannot proceed with invalid SQL: {e}")
-                step.status = "failed"
-                raise e
+            # Validate SQL
+            validated_sql, sql_expr_source = await self._validate_sql_with_retry(
+                sql_query, output.expr_slug, source, messages, step
+            )
+            return validated_sql, output.expr_slug, sql_expr_source
 
-            # Return based on whether this is final or discovery
-            if is_final:
-                return {
-                    "is_final": True,
+    async def _execute_single_step(self, plan_step: str, sql_query: str, expr_slug: str, sql_expr_source, source, iteration: int, step_num: int, is_final_step: bool) -> dict:
+        """Execute a single SQL plan step and return the result."""
+        with self._add_step(title=f"Executing step {iteration}.{step_num}", steps_layout=self._steps_layout) as step:
+            if is_final_step:
+                # Final step: create full pipeline with transforms
+                sql_transforms = [SQLLimit(limit=1_000_000, write=source.dialect, pretty=True, identify=False)]
+                pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms)
+                df = await get_data(pipeline)
+
+                result = {
+                    "step": plan_step,
                     "sql_query": sql_query,
-                    "expr_slug": output.expr_slug,
+                    "expr_slug": expr_slug,
                     "sql_expr_source": sql_expr_source,
-                    "discovery_summary": ""
+                    "pipeline": pipeline,
+                    "data": df,
+                    "has_data": len(df) > 0,
+                    "summary": f"Final query returned {len(df)} rows",
+                    "is_final": True
                 }
             else:
-                # Execute discovery query
-                discovery_summary = await self._execute_discovery(sql_query, output.expr_slug, source, iteration, step)
-                return {
-                    "is_final": False,
+                temp_source = source.create_sql_expr_source({expr_slug: sql_query}, materialize=False)
+                df = await get_data(await get_pipeline(source=temp_source, table=expr_slug))
+
+                summary = str(df.to_dict()) if len(df) < 100 else f"Found {len(df)} rows: {df.head().to_dict()}"
+                result = {
+                    "step": plan_step,
                     "sql_query": sql_query,
-                    "expr_slug": output.expr_slug,
-                    "sql_expr_source": sql_expr_source,
-                    "discovery_summary": discovery_summary
+                    "summary": summary,
+                    "has_data": len(df) > 0,
+                    "is_final": False
                 }
+            step.stream(f"**Result:** {result['summary']}")
+            return result
 
-    async def _create_final_pipeline(self, result: dict, tables_to_source: dict, messages: list[Message], render_output: bool, step_title: str) -> Any:
-        """Create the final pipeline with already-validated SQL query."""
-        sql_query = result["sql_query"]
-        expr_slug = result["expr_slug"]
-        sql_expr_source = result["sql_expr_source"]  # Already validated!
+    async def _execute_sql_plan_steps(self, discovery_steps: list[str], iteration: int, dialect: str, source, sql_plan_context: str) -> list[dict]:
+        """Execute all SQL plan steps sequentially, with the last step being the final answer."""
+        results = []
+        current_context = sql_plan_context
 
-        # Handle multiple sources if needed
-        sources = set(tables_to_source.values())
-        if len(sources) > 1:
-            mirrors = {}
-            for a_table, a_source in tables_to_source.items():
-                if not any(a_table.rstrip(")").rstrip("'").rstrip('"').endswith(ext) for ext in [".csv", ".parquet", ".parq", ".json", ".xlsx"]):
-                    renamed_table = a_table.replace(".", "_")
-                    sql_query = sql_query.replace(a_table, renamed_table)
-                else:
-                    renamed_table = a_table
-                if SOURCE_TABLE_SEPARATOR in renamed_table:
-                    _, renamed_table = renamed_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
-                sql_query = sql_query.replace(a_table, renamed_table)
-                mirrors[renamed_table] = (a_source, renamed_table)
-            source = DuckDBSource(uri=":memory:", mirrors=mirrors)
-        else:
-            source = next(iter(sources))
+        for i, plan_step in enumerate(discovery_steps, 1):
+            is_final_step = (i == len(discovery_steps))
+            step_title = f"SQL Plan {iteration}.{i}"
 
-        sql_query = sql_expr_source.tables[expr_slug]
+            # Generate and validate SQL
+            step_messages = [{"role": "user", "content": plan_step}]
+            sql_query, expr_slug, sql_expr_source = await self._generate_and_validate_sql(
+                step_messages, dialect, source, i, plan_step, current_context, step_title
+            )
 
-        # Apply transforms and create pipeline
-        sql_transforms = [SQLLimit(limit=1_000_000, write=source.dialect, pretty=True, identify=False)]
-        pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms)
-        df = await get_data(pipeline)
+            # Execute and collect result
+            result = await self._execute_single_step(
+                plan_step, sql_query, expr_slug, sql_expr_source, source, iteration, i, is_final_step
+            )
+            results.append(result)
+            current_context += f"\n{plan_step!r} Result: {result['summary']}"
 
-        # Update memory
-        self._memory["data"] = await describe_data(df)
-        self._memory["sql"] = sql_query
+            # Stop if final step failed
+            if is_final_step and not result['has_data'] and 'Failed' in result['summary']:
+                raise Exception(result['summary'])
+
+        return results
+
+    async def _execute_iteration(self, iteration: int, messages: list[Message], source, sql_plan_context: str) -> dict | None:
+        """Execute a single iteration of SQL planning. Returns final result if successful, None otherwise."""
+        # Get SQL plan
+        discovery_steps = await self._check_information_completeness(
+            messages, sql_plan_context
+        )
+
+        if not discovery_steps:
+            return None
+
+        # Execute all SQL plan steps
+        dialect = self._memory["source"].dialect
+        results = await self._execute_sql_plan_steps(
+            discovery_steps, iteration, dialect, source, sql_plan_context
+        )
+
+        # The LAST result is always the final query/pipeline
+        final_result = results[-1]
+        if final_result["has_data"]:
+            return final_result
+
+        # Store results for context in next iteration
+        self._iteration_results = results
+        return None
+
+    def _update_context_for_next_iteration(self, sql_plan_context: str, iteration: int) -> str:
+        """Update context with results from current iteration."""
+        if hasattr(self, '_iteration_results'):
+            results_summary = "\n".join(
+                f"{i+1}. {r['step']}\nResult: {r['summary']}"
+                for i, r in enumerate(self._iteration_results)
+            )
+            sql_plan_context += f"\nIteration {iteration} Results:\n{results_summary}"
+        return sql_plan_context
+
+    async def _create_pipeline_from_result(self, result: dict, messages: list[Message], render_output: bool, step_title: str) -> Any:
+        """Create the final pipeline from the result of the last SQL plan step."""
+        # Update memory with final result
+        self._memory["data"] = await describe_data(result["data"])
+        self._memory["sql"] = result["sql_query"]
+        self._memory["pipeline"] = result["pipeline"]
+        self._memory["table"] = result["pipeline"].table
+
+        # Update sources
         if isinstance(self._memory["sources"], dict):
-            self._memory["sources"][expr_slug] = sql_expr_source
+            self._memory["sources"][result["expr_slug"]] = result["sql_expr_source"]
         else:
-            self._memory["sources"].append(sql_expr_source)
-        self._memory["source"] = sql_expr_source
-        self._memory["pipeline"] = pipeline
-        self._memory["table"] = pipeline.table
+            self._memory["sources"].append(result["sql_expr_source"])
+        self._memory["source"] = result["sql_expr_source"]
 
         # Render output
-        self._render_lumen(pipeline, spec=sql_query, messages=messages, render_output=render_output, title=step_title)
-        return pipeline
+        self._render_lumen(
+            result["pipeline"],
+            spec=result["sql_query"],
+            messages=messages,
+            render_output=render_output,
+            title=step_title
+        )
+        return result["pipeline"]
 
     async def respond(
         self,
@@ -782,37 +833,45 @@ class SQLAgent(LumenBaseAgent):
         step_title: str | None = None,
     ) -> Any:
         """
-        Iterative SQL generation with discovery queries and immediate validation.
+        Simplified SQL generation where the last SQL plan step is the final query.
         """
-        # Setup
-        dialect = self._memory["source"].dialect
+        # Setup sources and metadata
         sources = self._memory["sources"] if isinstance(self._memory["sources"], dict) else {source.name: source for source in self._memory["sources"]}
         vector_metaset = self._memory["sql_metaset"].vector_metaset
         selected_slugs = list(vector_metaset.selected_columns or vector_metaset.vector_metadata_map)
         tables_to_source = {parse_table_slug(table_slug, sources)[1]: parse_table_slug(table_slug, sources)[0] for table_slug in selected_slugs}
         source = next(iter(tables_to_source.values()))
 
-        # Discovery context and SQL history
-        discovery_context = ""
+        # Handle multiple sources if needed
+        if len(set(tables_to_source.values())) > 1:
+            mirrors = {}
+            for a_table, a_source in tables_to_source.items():
+                if not any(a_table.rstrip(")").rstrip("'").rstrip('"').endswith(ext)
+                           for ext in [".csv", ".parquet", ".parq", ".json", ".xlsx"]):
+                    renamed_table = a_table.replace(".", "_")
+                else:
+                    renamed_table = a_table
+                if SOURCE_TABLE_SEPARATOR in renamed_table:
+                    _, renamed_table = renamed_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
+                mirrors[renamed_table] = (a_source, renamed_table)
+            source = DuckDBSource(uri=":memory:", mirrors=mirrors)
 
-        # Iterative discovery loop
+        # Execute SQL plan iterations
+        sql_plan_context = ""
         for iteration in range(1, self.max_discovery_iterations + 1):
-            result = await self._run_iteration(
-                iteration, messages, dialect, source, discovery_context
+            final_result = await self._execute_iteration(
+                iteration, messages, source, sql_plan_context
             )
-            if result is None:
-                continue
 
-            if result.get("is_final"):
-                return await self._create_final_pipeline(
-                    result, tables_to_source, messages, render_output, step_title
+            if final_result:
+                return await self._create_pipeline_from_result(
+                    final_result, messages, render_output, step_title
                 )
 
-            if result["discovery_summary"] is not None or result["sql_query"]:
-                iteration_info = f"\n{iteration}.\n```sql\n{result['sql_query']}\n```"
-                if result["discovery_summary"] is not None:
-                    iteration_info += f"\nResult: {result['discovery_summary']}"
-                discovery_context += iteration_info
+            # Update context for next iteration if no final result
+            sql_plan_context = self._update_context_for_next_iteration(
+                sql_plan_context, iteration
+            )
 
         return None
 

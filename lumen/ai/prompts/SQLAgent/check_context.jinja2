@@ -2,56 +2,58 @@
 
 {%- block instructions %}
 # Instructions:
-You are responsible for checking whether we have complete information about the data to answer the user's query directly, or if we need to perform discovery queries first.
+Determine the discovery steps needed to answer the user's query.
 
-Your job is to:
-1. Carefully examine the provided table schemas and column information
-2. Look for any enum previews that are truncated (contain '...')
-3. Determine if we have enough concrete information to write a final SQL query
-4. Be extremely literal - never assume data values exist unless explicitly shown
+**Step-by-step:**
+1. Identify user-requested values.
+2. List only visible enum values; do not assume beyond '...'.
+3. If enum shows ['A', 'B', '...']: "Confirmed: A, B. Unconfirmed: after '...'"
+4. Provide discovery steps - if values need to be explored first, start with exploration steps, then end with the final analysis.
+5. Always provide at least one discovery step.
 
-Key Rules:
-- If ANY enum preview shows '...' at the end, you MUST set needs_discovery=True
-- NEVER assume values exist just because they seem logical or common
-- You can ONLY use values that are explicitly printed in the enum preview
-- Be conservative - when in doubt, choose discovery over assumptions
+Rules:
+- If previous discoveries found the needed values, provide only the final analysis step
+- If requested values aren't visible or need exploration, start with exploration steps
+- Only visible enum values are confirmed; never assume others
+- Discovery steps: (1) Find all values in columns if needed, (2) Final analysis with confirmed values
+- Combine related operations into single steps to avoid fragmentation
 {% endblock %}
 
 {% block examples %}
 Examples:
+Data Schema: 'name' enum ['Alice', 'Bob', 'Charlie', ...], 'year' enum [2020, 2021, 2022], 'region' enum ["North America", "Europe", ...]
 
-Example 1 - Needs Discovery:
-User asks: "Show me sales for John in 2022"
-Schema shows:
-```
-Columns:
-0. 'name' `{'enum': ['Alice', 'Bob', 'Charlie', ...]}`
-1. 'sales' `{'min': 100, 'max': 50000}`
-2. 'year' `{'enum': [2020, 2021, 2022]}`
-```
+1. No Previous Discovery, Incomplete Enum:
+User: "Show sales for John in 2022"
+- 'John' not in confirmed 'name' values; '2022' is confirmed.
+Discovery Steps: ['Explore distinct names containing John', 'Show sales for John in 2022 excluding nulls']
 
-Result: needs_discovery=True because the name enum shows '...' - we don't know if 'John' exists.
+2. No Discovery Needed:
+User: "Show who made the most sales in 2020"
+- '2020' confirmed
+Discovery Steps: ['Show who made the most sales in 2020 excluding nulls']
 
-Example 2 - Complete Information:
-User asks: "Show me sales for Alice in 2022"
-Schema shows:
-```
-Columns:
-0. 'name' `{'enum': ['Alice', 'Bob', 'Charlie']}`
-1. 'sales' `{'min': 100, 'max': 50000}`
-2. 'year' `{'enum': [2020, 2021, 2022]}`
-```
-
-Result: needs_discovery=False because 'Alice' is explicitly listed and 2022 is available.
+3. Counter Example:
+User: "Which salesperson in the Asian region has the highest revenue?"
+'Asia' not in confirmed 'region' values
+BAD Discovery Steps: ['Check available regions for Asia or Asian', 'Filter salespeople by Asian region', 'Group by salesperson', 'Sum revenue per salesperson', 'Find maximum revenue', 'Identify top salesperson']
+GOOD Discovery Steps: ['Check available regions for Asia or Asian', 'Find the salesperson with highest revenue in the Asian region']
+**DON'T do the BAD - too fragmented:**
 {% endblock %}
 
 {% block context %}
-# Information Completeness Analysis:
-Please analyze the data context below and determine if we have complete information:
+Please analyze the data context below and provide discovery steps:
 
-{%- if previous_discoveries is defined and previous_discoveries %}
-**Previous Discovery Results:**
-{{ previous_discoveries }}
+{%- if previous_sql_plan_results is defined and previous_sql_plan_results %}
+**Previous SQL Plan Results:**
+{{ previous_sql_plan_results }}
+
+- If previous SQL plans found the needed values, provide only the final analysis step
+- If requested values are still missing, start with exploration steps
+{%- else %}
+**No Previous SQL Plan Results**
+- If requested values aren't visible in schema enums, start with exploration steps
+- Always provide at least one discovery step
 {%- endif %}
 
 {{ memory["sql_metaset"].selected_context }}
