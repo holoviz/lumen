@@ -561,6 +561,7 @@ class TestSQLRemoveSourceSeparator:
         """
         result = SQLRemoveSourceSeparator.apply_to(sql_in, read="duckdb")
         assert "__@__" not in result
+
     def test_string_literals_preserved(self):
         """Test that string literals with quotes are preserved during source separator removal."""
         sql_in = dedent(
