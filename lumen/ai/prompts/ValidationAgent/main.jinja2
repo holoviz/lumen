@@ -1,0 +1,54 @@
+{% extends 'Agent/main.jinja2' %}
+
+{%- block instructions %}
+## Instructions
+Validate if the executed plan fully answered the user's original query.
+
+Compare user request vs. executed steps/results. Identify missing elements.
+Focus on completeness, not analysis. Consider user intent and alternative approaches.
+{% endblock %}
+
+{%- block examples -%}
+## Examples
+Query: "Show trends + retention by plan type"
+Steps: SQLAgent returned monthly data with all requested metrics
+Response: yes=true, should_rerun=false (all elements present)
+
+Query: "Top 5 revenue products + profit margins"
+Steps: SQLAgent returned top 5 revenue only, no margins
+Response: yes=false, missing=["profit margins"], should_rerun=true
+{%- endblock %}
+
+{% block context %}
+## Context
+**Original User Query:** {{ original_query }}
+
+{%- if executed_steps %}
+**Executed Steps:**
+{%- for step in executed_steps %}
+- {{ step }}
+{%- endfor %}
+{% endif %}
+
+{%- if memory.get('reasoning') %}
+**Execution Plan:** {{ memory.reasoning }}
+{% endif %}
+
+{%- if memory.get('data') is not none %}
+{{ memory["data"] }}
+{%- endif -%}
+
+{%- if memory.get('sql') %}
+**SQL Executed:**
+```sql
+{{ memory.sql }}
+```
+{%- endif -%}
+
+{%- if memory.get('table') and memory.get('vector_metaset') %}
+{%- set table_metadata = memory.vector_metaset.vector_metadata_map.get(memory.table) %}
+{%- if table_metadata %}
+**Data Columns Available:** {{ table_metadata.columns|map(attribute='name')|join(', ') }}
+{%- endif %}
+{% endif %}
+{%- endblock -%}
