@@ -754,15 +754,19 @@ class SQLAgent(LumenBaseAgent):
             )
 
             # Execute and collect result
-            result = await self._execute_single_step(
-                plan_step, sql_query, expr_slug, sql_expr_source, source, iteration, i, is_final_step
-            )
-            results.append(result)
-            current_context += f"\n{plan_step!r} Result: {result['summary']}"
+            try:
+                result = await self._execute_single_step(
+                    plan_step, sql_query, expr_slug, sql_expr_source, source, iteration, i, is_final_step
+                )
+                results.append(result)
+                current_context += f"\n{plan_step!r} Result: {result['summary']}"
 
-            # Stop if final step failed
-            if is_final_step and not result['has_data'] and 'Failed' in result['summary']:
-                raise Exception(result['summary'])
+                # Stop if final step failed
+                if is_final_step and not result['has_data'] and 'Failed' in result['summary']:
+                    raise Exception(result['summary'])
+            except Exception as e:
+                if is_final_step:
+                    raise e
 
         return results
 
