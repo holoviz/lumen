@@ -69,6 +69,7 @@ class Llm(param.Parameterized):
                 params["mode"] = Mode[params["mode"].upper()]
         super().__init__(**params)
         self._status = StatusBadge(name="LLM Pending", description="Waiting for LLM to initialize")
+        self._raw_client = None
         if not self.model_kwargs.get("default"):
             raise ValueError(
                 f"Please specify a 'default' model in the model_kwargs "
@@ -108,6 +109,12 @@ class Llm(param.Parameterized):
         the model(s) are ready to run, e.g. downloading the model
         files.
         """
+
+    async def get_raw_client(self):
+        """Get the raw client, ensuring it's initialized first"""
+        if self._raw_client is None:
+            await self.get_client("default")
+        return self._raw_client
 
     async def invoke(
         self,
@@ -427,7 +434,10 @@ class OpenAI(Llm):
             model_kwargs["api_key"] = self.api_key
         if self.organization:
             model_kwargs["organization"] = self.organization
-        llm = openai.AsyncOpenAI(**model_kwargs)
+
+        if self._raw_client is None:
+            self._raw_client = openai.AsyncOpenAI(**model_kwargs)
+        llm = self._raw_client
 
         if self.interceptor:
             self.interceptor.patch_client(llm, mode="store_inputs")
@@ -484,7 +494,10 @@ class AzureOpenAI(Llm):
             model_kwargs["api_key"] = self.api_key
         if self.endpoint:
             model_kwargs["azure_endpoint"] = self.endpoint
-        llm = openai.AsyncAzureOpenAI(**model_kwargs)
+
+        if self._raw_client is None:
+            self._raw_client = openai.AsyncAzureOpenAI(**model_kwargs)
+        llm = self._raw_client
 
         if self.interceptor:
             self.interceptor.patch_client(llm, mode="store_inputs")
@@ -529,7 +542,10 @@ class MistralAI(Llm):
         model_kwargs["api_key"] = self.api_key
         model = model_kwargs.pop("model")
         mode = model_kwargs.pop("mode", self.mode)
-        llm = Mistral(**model_kwargs)
+
+        if self._raw_client is None:
+            self._raw_client = Mistral(**model_kwargs)
+        llm = self._raw_client
 
         stream = kwargs.get("stream", False)
         llm.chat.completions = SimpleNamespace(create=None)  # make it like OpenAI for simplicity
@@ -579,7 +595,10 @@ class AzureMistralAI(MistralAI):
         model_kwargs["azure_endpoint"] = self.endpoint
         model = model_kwargs.pop("model")
         mode = model_kwargs.pop("mode", self.mode)
-        llm = MistralAzure(**model_kwargs)
+
+        if self._raw_client is None:
+            self._raw_client = MistralAzure(**model_kwargs)
+        llm = self._raw_client
 
         stream = kwargs.get("stream", False)
         llm.chat.completions = SimpleNamespace(create=None)  # make it like OpenAI for simplicity
@@ -630,7 +649,9 @@ class AnthropicAI(Llm):
         model = model_kwargs.pop("model")
         mode = model_kwargs.pop("mode", self.mode)
 
-        llm = AsyncAnthropic(api_key=self.api_key, **model_kwargs)
+        if self._raw_client is None:
+            self._raw_client = AsyncAnthropic(api_key=self.api_key, **model_kwargs)
+        llm = self._raw_client
 
         if response_model:
             client = instructor.from_anthropic(llm, mode=mode)
