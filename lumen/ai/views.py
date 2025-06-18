@@ -315,7 +315,7 @@ class AnalysisOutput(LumenOutput):
                 )
                 self._main.insert(1, ('Config', pn.Column(controls, run_button)))
             with discard_events(self):
-                self._main.active = 0 if self.analysis.autorun else 1
+                self._main.active = 1
         self._rendered = True
 
     async def _rerun(self, event):
