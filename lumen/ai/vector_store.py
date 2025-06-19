@@ -22,6 +22,8 @@ from panel import cache as pn_cache
 from tqdm.auto import tqdm
 
 from .actor import PROMPTS_DIR, LLMUser
+from .batch_providers import BatchProcessingNotSupportedError, BatchProvider
+from .batch_situate import BatchSituateProcessor
 from .embeddings import Embeddings, NumpyEmbeddings
 from .models import YesNo
 from .utils import log_debug
@@ -82,11 +84,27 @@ class VectorStore(LLMUser):
         doc="List of metadata keys to exclude when creating the embeddings.",
     )
 
-    situate = param.Boolean(
+    situate = param.ClassSelector(
+        class_=(int, bool),
         default=False,
         doc="""
-        Whether to insert a `llm_context` key in the metadata containing
-        contextual about the chunks.""",
+        Controls whether to add a `llm_context` key to the metadata
+        with contextual information about the chunks.
+        If set to True, all chunks will be situated.
+        If set to an integer, only chunks with a character
+        count less than or equal to this value will be situated.
+        If set to False, no chunks will be situated.""",
+    )
+
+    batch_situate_threshold = param.Integer(
+        default=1000,
+        bounds=(0, None),
+        doc="Minimum number of chunks to use batch processing for situating. Set to 0 to disable batch processing."
+    )
+
+    batch_timeout = param.Integer(
+        default=172800,  # 48 hours
+        doc="Maximum time to wait for batch job completion (seconds)"
     )
 
     def __init__(self, **params):
@@ -204,7 +222,49 @@ class VectorStore(LLMUser):
 
         return chunks
 
-    async def should_situate_chunk(self, chunk: str) -> bool:
+    async def _situate_chunks(self, should_situate: bool, document: str, chunks: list[str], metadata: dict, max_characters: int | None = None) -> dict[str, str]:
+        """Handle chunk situating with intelligent batch/sequential processing selection"""
+        if not should_situate:
+            return {}
+
+        if not self.llm:
+            raise ValueError("LLM not provided. Cannot apply situate.")
+
+        # Try batch processing for large chunk sets
+        if len(chunks) >= self.batch_situate_threshold > 0:
+            try:
+                provider = BatchProvider.create_for_llm(self.llm, timeout=self.batch_timeout)
+                batch_processor = BatchSituateProcessor(provider=provider)
+                chunk_contexts = await batch_processor.batch_situate_chunks(
+                    document, chunks, metadata, self
+                )
+                log_debug(f"Batch processing generated contexts for {len(chunk_contexts)} chunks")
+                return chunk_contexts
+            except BatchProcessingNotSupportedError:
+                log_debug(f"Batch processing not supported for {type(self.llm).__name__}, using sequential processing")
+            except Exception as e:
+                log_debug(f"Batch processing failed: {e}, falling back to sequential processing")
+
+        # Use sequential processing
+        return await self._sequential_situate_chunks(document, chunks, metadata, max_characters)
+
+    async def _sequential_situate_chunks(self, document: str, chunks: list[str], metadata: dict, max_characters: int | None = None) -> dict[str, str]:
+        """Sequential processing of chunk situating (original implementation)"""
+        chunk_contexts = {}
+        previous_context = None
+
+        for chunk in chunks:
+            needs_context = await self.should_situate_chunk(chunk, max_characters)
+            if not needs_context:
+                continue
+
+            context = await self._generate_context(document, chunk, previous_context, metadata)
+            chunk_contexts[chunk] = context
+            previous_context = context
+
+        return chunk_contexts
+
+    async def should_situate_chunk(self, chunk: str, max_characters: int | None = None) -> bool:
         """
         Determine whether a chunk should be situated based on its content.
 
@@ -212,6 +272,8 @@ class VectorStore(LLMUser):
         ----------
         chunk: str
             The chunk text to evaluate
+        max_characters: int | None
+            The maximum character count for situating chunks
 
         Returns
         -------
@@ -220,6 +282,8 @@ class VectorStore(LLMUser):
         """
         if not self.llm:
             return self.situate
+        elif max_characters is not None and len(chunk) > max_characters:
+            return False
 
         try:
             # Use a user message to avoid conflicts with system instructions
@@ -235,7 +299,7 @@ class VectorStore(LLMUser):
         self,
         items: list[dict],
         force_ids: list[int] | None = None,
-        situate: bool | None = None,
+        situate: int | bool | None = None,
     ) -> list[int]:
         """
         Add items to the vector store.
@@ -260,6 +324,10 @@ class VectorStore(LLMUser):
 
         # Use the provided situate parameter or fall back to the class default
         use_situate = self.situate if situate is None else situate
+        if isinstance(use_situate, int) and use_situate > 0:
+            max_characters = use_situate
+        else:
+            max_characters = None
 
         for item in items:
             text = item["text"]
@@ -277,19 +345,7 @@ class VectorStore(LLMUser):
                 should_situate = True
 
             # Generate contextual descriptions if situate is enabled and multiple chunks exist
-            chunk_contexts = {}
-            if should_situate and self.llm:
-                previous_context = None  # Start with no previous context
-                for chunk in content_chunks:
-                    needs_context = await self.should_situate_chunk(chunk)
-                    if not needs_context:
-                        continue
-
-                    context = await self._generate_context(text, chunk, previous_context, metadata)
-                    chunk_contexts[chunk] = context
-                    previous_context = context  # Save this context for the next chunk
-            elif should_situate and not self.llm:
-                raise ValueError("LLM not provided. Cannot apply situate.")
+            chunk_contexts = await self._situate_chunks(should_situate, text, content_chunks, metadata, max_characters)
 
             # Process each chunk with its context
             for chunk in content_chunks:
