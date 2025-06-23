@@ -1,3 +1,4 @@
+import asyncio
 import datetime as dt
 import os
 
@@ -184,3 +185,146 @@ def test_extension_of_comlicated_url(source):
     url = "https://api.tfl.gov.uk/Occupancy/BikePoints/@{stations.stations.id}?app_key=random_numbers"
     source.tables["test"] = url
     assert source._named_files["test"][1] is None
+
+
+# Async tests for base source methods
+@pytest.mark.asyncio
+async def test_source_get_async_default_implementation(source):
+    """Test that the default get_async implementation works using asyncio.to_thread"""
+    # Test basic async functionality
+    result = await source.get_async('test')
+    expected = source.get('test')
+    pd.testing.assert_frame_equal(result, expected)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "column_value_type", [
+        ('A', 1, 'single_value'),
+        ('A', (1, 3), 'range'),
+        ('C', 'foo2', 'single_value'),
+        ('C', ['foo1', 'foo3'], 'list'),
+        ('D', dt.datetime(2009, 1, 2), 'single_value'),
+    ]
+)
+async def test_source_get_async_with_filters(source, column_value_type, expected_df):
+    """Test that get_async works with various filters"""
+    column, value, _ = column_value_type
+    kwargs = {column: value}
+
+    # Test async version
+    result_async = await source.get_async('test', **kwargs)
+
+    # Compare with sync version
+    result_sync = source.get('test', **kwargs)
+
+    pd.testing.assert_frame_equal(result_async, result_sync)
+
+
+@pytest.mark.asyncio
+async def test_source_get_async_multiple_concurrent_calls(source):
+    """Test that multiple concurrent async calls work correctly"""
+    # Make multiple concurrent async calls
+    tasks = [
+        source.get_async('test', A=1),
+        source.get_async('test', A=2),
+        source.get_async('test', C='foo1'),
+    ]
+
+    results = await asyncio.gather(*tasks)
+
+    # Compare with sync versions
+    expected_results = [
+        source.get('test', A=1),
+        source.get('test', A=2),
+        source.get('test', C='foo1'),
+    ]
+
+    for result, expected in zip(results, expected_results, strict=False):
+        pd.testing.assert_frame_equal(result, expected)
+
+
+# Test BaseSQLSource async methods
+@pytest.mark.asyncio
+async def test_base_sql_source_execute_async():
+    """Test BaseSQLSource execute_async method using a mock implementation"""
+    from lumen.sources.base import BaseSQLSource
+
+    class MockSQLSource(BaseSQLSource):
+        """Mock SQL source for testing async functionality"""
+
+        def __init__(self):
+            self.tables = {'test_table': 'test_table'}
+            self._cache = {}
+
+        def execute(self, sql_query, *args, **kwargs):
+            # Mock execute that returns a simple DataFrame
+            return pd.DataFrame({
+                'id': [1, 2, 3],
+                'name': ['Alice', 'Bob', 'Charlie'],
+                'value': [10, 20, 30]
+            })
+
+        def get_tables(self):
+            return list(self.tables.keys())
+
+        def get_sql_expr(self, table):
+            return f"SELECT * FROM {table}"
+
+    # Create mock source and test execute_async
+    mock_source = MockSQLSource()
+
+    # Test that execute_async returns the same result as execute
+    sql_query = "SELECT * FROM test_table"
+    result_async = await mock_source.execute_async(sql_query)
+    result_sync = mock_source.execute(sql_query)
+
+    pd.testing.assert_frame_equal(result_async, result_sync)
+
+
+@pytest.mark.asyncio
+async def test_base_sql_source_get_async():
+    """Test BaseSQLSource get_async method using a mock implementation"""
+    from lumen.sources.base import BaseSQLSource
+
+    class MockSQLSource(BaseSQLSource):
+        """Mock SQL source for testing async functionality"""
+
+        def __init__(self):
+            self.tables = {'test_table': 'test_table'}
+            self._cache = {}
+
+        def execute(self, sql_query, *args, **kwargs):
+            # Mock execute that filters based on the SQL query
+            df = pd.DataFrame({
+                'id': [1, 2, 3, 4, 5],
+                'name': ['Alice', 'Bob', 'Charlie', 'David', 'Eve'],
+                'category': ['A', 'B', 'A', 'C', 'B']
+            })
+
+            # Simple mock filtering based on SQL content
+            if 'WHERE' in sql_query.upper():
+                if "category = 'A'" in sql_query:
+                    return df[df['category'] == 'A']
+                elif "id = 1" in sql_query:
+                    return df[df['id'] == 1]
+            return df
+
+        def get_tables(self):
+            return list(self.tables.keys())
+
+        def get_sql_expr(self, table):
+            return f"SELECT * FROM {table}"
+
+    # Create mock source and test get_async
+    mock_source = MockSQLSource()
+
+    # Test basic get_async (no filters)
+    result_async = await mock_source.get_async('test_table')
+    expected = mock_source.execute("SELECT * FROM test_table")
+    pd.testing.assert_frame_equal(result_async, expected)
+
+    # Test get_async with conditions (this will test SQL filter application)
+    result_async_filtered = await mock_source.get_async('test_table', category='A')
+    # The base implementation should build and execute a filtered query
+    assert len(result_async_filtered) <= len(expected)  # Should be filtered

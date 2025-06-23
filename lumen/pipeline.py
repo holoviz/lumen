@@ -77,12 +77,12 @@ def expand_queries(values, groups=('filters', 'variables')):
     spec_groups = []
     for group in groups:
         if group in values:
-            var_names, var_values = zip(*values[group].items())
-            variable_space = (dict(zip(var_names, vs)) for vs in product(*var_values))
+            var_names, var_values = zip(*values[group].items(), strict=False)
+            variable_space = (dict(zip(var_names, vs, strict=False)) for vs in product(*var_values))
         else:
             variable_space = [{}]
         spec_groups.append(list(variable_space))
-    return [dict(zip(groups, group)) for group in product(*spec_groups)]
+    return [dict(zip(groups, group, strict=False)) for group in product(*spec_groups)]
 
 
 class Pipeline(Viewer, Component):
@@ -586,11 +586,11 @@ class Pipeline(Viewer, Component):
         if sql_transforms:
             try:
                 from .sources.duckdb import DuckDBSource
-            except Exception:
+            except Exception as e:
                 raise RuntimeError(
                     'Cannot chain SQL transforms on a Pipeline without '
                     'DuckDB. Ensure DuckDB is installed.'
-                )
+                ) from e
             sql_src = DuckDBSource(uri=':memory:', mirrors={self.name: self})
             new = Pipeline(
                 source=sql_src,

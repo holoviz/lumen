@@ -1,3 +1,4 @@
+import asyncio
 import json
 import threading
 
@@ -106,18 +107,40 @@ class BigQuerySource(BaseSQLSource):
         """
         try:
             self._credentials, project_id = google.auth.default()  # pyright: ignore [reportAttributeAccessIssue]
-        except DefaultCredentialsError:
+        except DefaultCredentialsError as exc:
             msg = (
                 "No default credentials can be found. Please run `gcloud init` at least once "
                 "to create default credentials to your Google Cloud project."
             )
-            raise DefaultCredentialsError(msg)
+            raise DefaultCredentialsError(msg) from exc
 
         if self.project_id == "":
             self.project_id = project_id
 
     def execute(self, sql_query: str) -> pd.DataFrame:
         return self._sql_client.query_and_wait(sql_query).to_dataframe()
+
+    async def execute_async(self, sql_query: str) -> pd.DataFrame:
+        """
+        Execute a BigQuery SQL query asynchronously and return the result as a DataFrame.
+
+        Parameters
+        ----------
+        sql_query : str
+            The SQL query to execute
+
+        Returns
+        -------
+        pd.DataFrame
+            The query result as a pandas DataFrame
+        """
+        job = self._sql_client.query(sql_query)
+
+        while not job.done():
+            await asyncio.sleep(0.1)
+            job.reload()
+
+        return job.to_dataframe()
 
     def get_tables(self) -> list[str]:
         """Get a list of available tables for the project.
@@ -296,7 +319,7 @@ class BigQuerySource(BaseSQLSource):
             elif column_type == "BOOLEAN":
                 schema[column_name] = {"type": column_type.lower()}
             elif column_type == "RECORD":
-                print(f"{column_name} is of type {column_type}, which we currently ignore.")
+                print(f"{column_name} is of type {column_type}, which we currently ignore.")  # noqa: T201
                 continue
 
         sql_expr = self.get_sql_expr(table)
@@ -376,6 +399,33 @@ class BigQuerySource(BaseSQLSource):
         for st in sql_transforms:
             sql_expr = st.apply(sql_expr)
         return self.execute(sql_expr)
+
+    async def get_async(self, table, **query):
+        """
+        Retrieve a table from BigQuery asynchronously with optional filtering.
+
+        Parameters
+        ----------
+        table : str
+            The table name to query
+        **query : dict
+            Query parameters and filters to apply
+
+        Returns
+        -------
+        pd.DataFrame
+            The filtered table data as a pandas DataFrame
+        """
+        query.pop("__dask", None)
+        sql_expr = self.get_sql_expr(table)
+        sql_transforms = query.pop("sql_transforms", [])
+        conditions = list(query.items())
+        filter_in_sql = bool(self.filter_in_sql)
+        if filter_in_sql:
+            sql_transforms = [SQLFilter(conditions=conditions)] + sql_transforms
+        for st in sql_transforms:
+            sql_expr = st.apply(sql_expr)
+        return await self.execute_async(sql_expr)
 
     def close(self):
         """

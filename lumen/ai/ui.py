@@ -109,8 +109,8 @@ class UI(Viewer):
 
     table_upload_callbacks = param.Dict(default={}, doc="""
         Dictionary mapping from file extensions to callback function,
-        e.g. {"hdf5": ...}. The callback function should accept the file bytes and
-        table alias, add or modify the `source` in memory, and return a bool
+        e.g. {"hdf5": ...}. The callback function should accept the file bytes,
+        table alias, and filename, add or modify the `source` in memory, and return a bool
         (True if the table was successfully uploaded).""")
 
     template = param.Selector(
@@ -192,7 +192,7 @@ class UI(Viewer):
             self._notebook_export, *(
                 Button(
                     name=label, button_type='primary',
-                    on_click=lambda _: e(self.interface),
+                    on_click=lambda _, e=e: e(self.interface),
                     stylesheets=['.bk-btn { padding: 4.5px 6px;']
                 )
                 for label, e in self.export_functions.items()
@@ -263,20 +263,17 @@ class UI(Viewer):
             self._vector_store_status_badge.param.update(
                 status="running", name="Tables Vector Store Pending", description="Pending initialization"
             )
-            self.interface.loading = True
         elif ready_state is True:
             # Ready - show as success
             num_tables = len(memory["tables_metadata"])
             self._vector_store_status_badge.param.update(
                 status="success", name="Tables Vector Store Ready", description=f"Embedded {num_tables} table(s)"
             )
-            self.interface.loading = False
         elif ready_state is None:
             # Error state
             self._vector_store_status_badge.param.update(
                 status="danger", name="Tables Vector Store Error", description="Error initializing tables vector store"
             )
-            self.interface.loading = False
 
     def _destroy(self, session_context):
         """
@@ -591,7 +588,7 @@ class ExplorerUI(UI):
     async def _cleanup_explorations(self, event):
         if len(event.new) <= len(event.old):
             return
-        for i, (old, new) in enumerate(zip(event.old, event.new)):
+        for i, (old, new) in enumerate(zip(event.old, event.new, strict=False)):
             if old is new:
                 continue
             self._contexts.pop(i)

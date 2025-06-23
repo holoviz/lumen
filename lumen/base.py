@@ -331,7 +331,7 @@ class Component(param.Parameterized):
     def _deprecation(
         cls, msg: str, key: str, spec: dict[str, Any], update: dict[str, Any]
     ):
-        warnings.warn(msg, DeprecationWarning)
+        warnings.warn(msg, DeprecationWarning, stacklevel=2)
         if key not in spec:
             spec[key] = {}
         spec[key].update(update)
@@ -360,7 +360,7 @@ class Component(param.Parameterized):
             pobj._validate(value)
         except Exception as e:
             msg = f"{cls.__name__} component {key!r} value failed validation: {e!s}"
-            raise ValidationError(msg, spec, key)
+            raise ValidationError(msg, spec, key) from e
 
     @classmethod
     def _is_component_key(cls, key: str) -> bool:
@@ -615,7 +615,7 @@ class MultiTypeComponent(Component):
                     f"component '{component_type}', the '{e.name}' package "
                     "must be installed."
                 )
-                raise ImportError(msg)
+                raise ImportError(msg) from e
 
     @classmethod
     def _get_type(

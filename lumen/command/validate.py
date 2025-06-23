@@ -2,9 +2,9 @@ import argparse
 
 from pathlib import Path
 
-import yaml
+import yaml  # type: ignore
 
-from bokeh.command.subcommand import Argument, Subcommand  # type: ignore
+from bokeh.command.subcommand import Argument, Subcommand
 
 from ..validation import ValidationError
 
@@ -34,9 +34,9 @@ class Validate(Subcommand):
             try:
                 output = Dashboard.validate(spec)
             except ValidationError as e:
-                print(e)
+                print(e)  # noqa: T201
                 continue
             if output == spec:
-                print(f'Validation found no issues with {yaml_file}.')
+                print(f'Validation found no issues with {yaml_file}.')  # noqa: T201
             else:
-                print(f'Validation made a number of changes to {yaml_file}.\n\n', yaml.dump(output))
+                print(f'Validation made a number of changes to {yaml_file}.\n\n', yaml.dump(output))  # noqa: T201

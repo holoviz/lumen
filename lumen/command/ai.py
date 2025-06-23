@@ -20,7 +20,7 @@ from panel.io.application import Application
 try:
     from ..ai.config import THIS_DIR
 except ImportError as e:
-    print(f'You need to install lumen-ai with "lumen[ai]": {e}')
+    print(f'You need to install lumen-ai with "pip install lumen[ai]": {e}')  # noqa: T201
     sys.exit(1)
 
 from ..ai import agents as lumen_agents, llm as lumen_llms  # Aliased here
@@ -30,6 +30,7 @@ CMD_DIR = THIS_DIR / ".." / "command"
 
 LLM_PROVIDERS = {
     'openai': 'OpenAI',
+    'google': 'GoogleAI',
     'anthropic': 'AnthropicAI',
     'mistral': 'MistralAI',
     'azure-openai': 'AzureOpenAI',
@@ -116,10 +117,10 @@ class LumenAIServe(Serve):
 
         try:
             provider_cls = getattr(lumen_llms, LLM_PROVIDERS[provider])
-        except (KeyError, AttributeError):
+        except (KeyError, AttributeError) as err:
             raise ValueError(
                 f"Could not find LLM Provider {provider!r}, valid providers include: {list(LLM_PROVIDERS)}."
-            )
+            ) from err
 
         if provider is None:
             raise RuntimeError(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import fnmatch
 import hashlib
 import json
@@ -25,6 +26,11 @@ import panel as pn
 import param  # type: ignore
 import requests
 
+try:
+    import aiohttp
+except ImportError:
+    aiohttp = None
+
 from panel.io.cache import _generate_hash
 
 from ..base import MultiTypeComponent
@@ -32,8 +38,8 @@ from ..filters.base import Filter
 from ..state import state
 from ..transforms.base import Filter as FilterTransform, Transform
 from ..transforms.sql import (
-    SQLCount, SQLDistinct, SQLLimit, SQLMinMax, SQLSample, SQLSelectFrom,
-    SQLTransform,
+    SQLCount, SQLDistinct, SQLFilter, SQLLimit, SQLMinMax, SQLSample,
+    SQLSelectFrom, SQLTransform,
 )
 from ..util import get_dataframe_schema, is_ref, merge_schemas
 from ..validation import ValidationError, match_suggestion_message
@@ -55,7 +61,7 @@ if TYPE_CHECKING:
 
 
 
-def cached(method, locks=weakref.WeakKeyDictionary()):
+def cached(method, locks=None):
     """
     Adds caching to a Source.get query.
 
@@ -63,6 +69,8 @@ def cached(method, locks=weakref.WeakKeyDictionary()):
     -------
     Returns method wrapped in caching functionality.
     """
+    if locks is None:
+        locks = weakref.WeakKeyDictionary()
     @wraps(method)
     def wrapped(self, table, **query):
         if self._supports_sql and not self.cache_per_query and 'sql_transforms' in query:
@@ -100,7 +108,9 @@ def cached(method, locks=weakref.WeakKeyDictionary()):
     return wrapped
 
 
-def cached_schema(method, locks=weakref.WeakKeyDictionary()):
+def cached_schema(method, locks=None):
+    if locks is None:
+        locks = weakref.WeakKeyDictionary()
     @wraps(method)
     def wrapped(self, table: str | None = None, limit: int | None = None, shuffle: bool = False):
         if self in locks:
@@ -134,7 +144,9 @@ def cached_schema(method, locks=weakref.WeakKeyDictionary()):
     return wrapped
 
 
-def cached_metadata(method, locks=weakref.WeakKeyDictionary()):
+def cached_metadata(method, locks=None):
+    if locks is None:
+        locks = weakref.WeakKeyDictionary()
     @wraps(method)
     def wrapped(self, table: str | list[str] | None = None):
         if self in locks:
@@ -269,7 +281,7 @@ class Source(MultiTypeComponent):
     ) -> dict[str, Any]:
         warnings.warn(
             'Providing filters in a Source definition is deprecated, '
-            'please declare filters as part of a Pipeline.', DeprecationWarning
+            'please declare filters as part of a Pipeline.', DeprecationWarning, stacklevel=2
         )
         return cls._validate_dict_subtypes('filters', Filter, filter_specs, spec, context)
 
@@ -374,7 +386,7 @@ class Source(MultiTypeComponent):
             for table, tschema in json_schema.items():
                 if table in schema:
                     continue
-                for col, cschema in tschema.items():
+                for cschema in tschema.values():
                     if isinstance(cschema, int):
                         continue
                     if cschema.get('type') == 'string' and cschema.get('format') == 'datetime':
@@ -635,6 +647,24 @@ class Source(MultiTypeComponent):
             A DataFrame containing the queried table.
         """
 
+    async def get_async(self, table: str, **query) -> DataFrame:
+        """
+        Return a table asynchronously; optionally filtered by the given query.
+
+        Parameters
+        ----------
+        table : str
+             The name of the table to query
+        query : dict
+             A dictionary containing all the query parameters
+
+        Returns
+        -------
+        DataFrame
+            A DataFrame containing the queried table.
+        """
+        return await asyncio.to_thread(self.get, table, **query)
+
     def __str__(self) -> str:
         return self.name
 
@@ -667,6 +697,32 @@ class RESTSource(Source):
         r = requests.get(self.url+'/data', params=query)
         df = pd.DataFrame(r.json())
         return df
+
+    async def get_async(self, table: str, **query) -> pd.DataFrame:
+        """
+        Return a table asynchronously; optionally filtered by the given query.
+
+        Parameters
+        ----------
+        table : str
+             The name of the table to query
+        query : dict
+             A dictionary containing all the query parameters
+
+        Returns
+        -------
+        DataFrame
+            A pandas DataFrame containing the queried table.
+        """
+        if aiohttp is None:
+            return super().get_async(table, **query)
+
+        query = dict(table=table, **query)
+        async with aiohttp.ClientSession() as session:
+            async with session.get(self.url+'/data', params=query) as response:
+                data = await response.json()
+                df = pd.DataFrame(data)
+                return df
 
 
 class InMemorySource(Source):
@@ -943,8 +999,8 @@ class BaseSQLSource(Source):
         if isinstance(self.tables, dict):
             try:
                 table = self.tables[self.normalize_table(table)]
-            except KeyError:
-                raise KeyError(f"Table {table} not found in {self.tables.keys()}")
+            except KeyError as e:
+                raise KeyError(f"Table {table} not found in {self.tables.keys()}") from e
         else:
             table = self.normalize_table(table)
 
@@ -977,6 +1033,55 @@ class BaseSQLSource(Source):
             The result as a pandas DataFrame
         """
         raise NotImplementedError
+
+    async def execute_async(self, sql_query: str, *args, **kwargs) -> pd.DataFrame:
+        """
+        Executes a SQL query asynchronously and returns the result as a DataFrame.
+
+        This default implementation runs the synchronous execute() method in a thread
+        to avoid blocking the event loop. Subclasses can override this method
+        to provide truly asynchronous implementations.
+
+        Arguments
+        ---------
+        sql_query : str
+            The SQL Query to execute
+        *args : list
+            Positional arguments to pass to the SQL query
+        **kwargs : dict
+            Keyword arguments to pass to the SQL query
+
+        Returns
+        -------
+        pd.DataFrame
+            The result as a pandas DataFrame
+        """
+        return await asyncio.to_thread(self.execute, sql_query, *args, **kwargs)
+
+    async def get_async(self, table: str, **query) -> DataFrame:
+        """
+        Return a table asynchronously; optionally filtered by the given query.
+
+        Parameters
+        ----------
+        table : str
+             The name of the table to query
+        query : dict
+             A dictionary containing all the query parameters
+
+        Returns
+        -------
+        DataFrame
+            A DataFrame containing the queried table.
+        """
+        sql_expr = self.get_sql_expr(table)
+
+        conditions = list(query.items())
+        if conditions:
+            sql_filter = SQLFilter(conditions=conditions)
+            sql_expr = sql_filter.apply(sql_expr)
+
+        return await self.execute_async(sql_expr)
 
     @cached_schema
     def get_schema(
@@ -1097,15 +1202,15 @@ class JSONSource(FileSource):
             for i in range(len(cross_product)//self.chunk_size):
                 start = i*self.chunk_size
                 chunk = cross_product[start: start+self.chunk_size]
-                tvalues = zip(*chunk)
+                tvalues = zip(*chunk, strict=False)
                 table = template
-                for m, tvals in zip(template_vars, tvalues):
+                for m, tvals in zip(template_vars, tvalues, strict=False):
                     tvals = ','.join([v for v in set(tvals)])
                     table = table.replace(m, quote(tvals))
                 tables.append(table)
         else:
             table = template
-            for m, tvals in zip(template_vars, zip(*cross_product)):
+            for m, tvals in zip(template_vars, zip(*cross_product, strict=False), strict=False):
                 values = ','.join([v for v in set(tvals)])
                 table = table.replace(m, quote(values))
             tables.append(table)

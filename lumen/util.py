@@ -160,7 +160,7 @@ def _j_getoauth(x):
         return ''
     return state.user_info.get(x, '')
 
-def expand_spec(pars, context={}, getenv=True, getshell=True, getheaders=True,
+def expand_spec(pars, context=None, getenv=True, getshell=True, getheaders=True,
                 getcookies=True, getoauth=True):
     """
     Render variables in context into the set of parameters with jinja2.
@@ -178,6 +178,8 @@ def expand_spec(pars, context={}, getenv=True, getshell=True, getheaders=True,
     -------
     dict with the same keys as ``pars``, but updated values
     """
+    if context is None:
+        context = {}
     if isinstance(pars, dict):
         return {k: expand_spec(
             v, context, getenv, getshell, getheaders, getcookies, getoauth
@@ -230,11 +232,11 @@ def resolve_module_reference(reference, component_type=None):
     module = '.'.join(modules)
     try:
         module = importlib.import_module(module)
-    except Exception:
+    except Exception as exc:
         raise ValueError(
             f"{cls_name} reference {reference!r} could not be resolved. "
             f"Module {module!r} could not be found."
-        )
+        ) from exc
     if not hasattr(module, ctype):
         raise ValueError(
             f"{cls_name} reference {reference!r} could not be resolved. "
@@ -257,7 +259,7 @@ def is_ref(value):
 def extract_refs(spec, ref_type=None):
     refs = []
     if isinstance(spec, dict):
-        for k, v in spec.items():
+        for v in spec.values():
             for ref in extract_refs(v, ref_type):
                 if ref not in refs:
                     refs.append(ref)
