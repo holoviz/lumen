@@ -1493,4 +1493,7 @@ class AnalysisAgent(LumenBaseAgent):
             self.interface.stream("Failed to find an analysis that applies to this data")
         else:
             self._render_lumen(view, analysis=analysis, pipeline=pipeline, render_output=render_output, title=step_title)
+            self.interface.stream(
+                analysis.message or f"Successfully created view with {analysis_name} analysis.", user="Assistant"
+            )
         return view
