@@ -31,13 +31,15 @@ class Sql(BaseModel):
     chain_of_thought: str = Field(
         description="""
         You are a world-class SQL expert, and your fame is on the line so don't mess up.
-        If it's simple, give at max one sentence about using `SELECT * FROM ...`.
-        However, if applicable, be sure to carefully study the schema, discuss the values in the columns,
-        and whether you need to wrangle the data before you can use it, before finally writing a correct and valid
-        SQL query that fully answers the user's query. If using CTEs, comment on the purpose of each.
-        Everything should be made as simple as possible, but no simpler and be concise.
+        Carefully study the schema, discuss the values in the columns, and whether you need to wrangle
+        the data before you can use it, before finally writing a correct and valid SQL query that fully
+        answers the user's query. If using CTEs, comment on the purpose of each.
         """
     )
+
+    query: str = Field(description="""
+        Correct, valid SQL query that answers the user's question;
+        should only be one query and do NOT add extraneous comments.""")
 
     expr_slug: str = Field(
         description="""
@@ -46,9 +48,28 @@ class Sql(BaseModel):
         """
     )
 
-    query: str = Field(description="""
-        Correct, valid SQL query that answers the user's query and is based on
-        the chain of thought; do NOT add extraneous comments.""")
+
+class CheckContext(BaseModel):
+    information_completeness: str = Field(
+        description="""
+        Concisely explain whether the current schema overview provides sufficient
+        information to answer the user's question.
+        """
+    )
+
+    discovery_steps: list[str] = Field(
+        default_factory=list,
+        description="""
+        Natural language steps describing what data to find to answer the user's question.
+        Try to think of steps that can map to SQL queries (but do not write SQL),
+        so if there are multiple steps that can be expressed as a single SQL query,
+        combine them into one step. Do not mention assume values; keep the steps vague.
+
+        Write in plain English describing WHAT to find, not HOW. Preserve all important
+        context from the user's question (entities, filters, constraints). Keep steps to a minimum,
+        and the LAST step must directly answer the user's question with full context preserved.
+        """
+    )
 
 
 class VegaLiteSpec(BaseModel):

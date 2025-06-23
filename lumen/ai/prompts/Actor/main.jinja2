@@ -11,9 +11,6 @@ The current date time is {{ current_datetime.strftime('%b %d, %Y %I:%M %p') }}
 {%- block examples -%}
 {%- endblock -%}
 
-{%- block context -%}
-{%- endblock %}
-
 {% block tools -%}
 {%- if 'agent_tool_contexts' in memory and actor_name in memory["agent_tool_contexts"] %}
 {#- Agent-specific tool contexts -#}
@@ -23,6 +20,9 @@ The current date time is {{ current_datetime.strftime('%b %d, %Y %I:%M %p') }}
 {% else %}
 {% endif -%}
 {%- endblock -%}
+
+{%- block context -%}
+{%- endblock %}
 
 {%- block errors -%}
 {%- if last_output is defined %}
