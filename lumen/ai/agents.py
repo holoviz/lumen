@@ -604,7 +604,7 @@ class SQLAgent(LumenBaseAgent):
     async def _check_information_completeness(self, messages: list[Message], sql_plan_context: str) -> list[str]:
         """
         Check if we have complete information to answer the query or need discovery.
-        Returns discovery_steps).
+        Returns discovery_steps.
         """
         with self._add_step(title="Checking information completeness", steps_layout=self._steps_layout) as step:
             system_prompt = await self._render_prompt("check_context", messages, previous_sql_plan_results=sql_plan_context)
@@ -705,7 +705,9 @@ class SQLAgent(LumenBaseAgent):
             return validated_sql, output.expr_slug, sql_expr_source
 
     async def _execute_single_step(self, plan_step: str, sql_query: str, expr_slug: str, sql_expr_source, source, iteration: int, step_num: int, is_final_step: bool) -> dict:
-        """Execute a single SQL plan step and return the result."""
+        """
+        Execute a single SQL plan step and return the result.
+        """
         with self._add_step(title=f"Executing step {iteration}.{step_num}", steps_layout=self._steps_layout) as step:
             if is_final_step:
                 # Final step: create full pipeline with transforms
@@ -728,7 +730,7 @@ class SQLAgent(LumenBaseAgent):
                 temp_source = source.create_sql_expr_source({expr_slug: sql_query}, materialize=False)
                 df = await get_data(await get_pipeline(source=temp_source, table=expr_slug))
 
-                summary = str(df.to_dict()) if len(df) < 100 else f"Found {len(df)} rows: {df.head().to_dict()}"
+                summary = str(df.to_dict()) if len(df) < 100 else f"Found {len(df)} rows: {df.head(100).to_dict()}"
                 result = {
                     "step": plan_step,
                     "sql_query": sql_query,
@@ -740,7 +742,9 @@ class SQLAgent(LumenBaseAgent):
             return result
 
     async def _execute_sql_plan_steps(self, discovery_steps: list[str], iteration: int, dialect: str, source, sql_plan_context: str) -> list[dict]:
-        """Execute all SQL plan steps sequentially, with the last step being the final answer."""
+        """
+        Execute all SQL plan steps sequentially, with the last step being the final answer.
+        """
         results = []
         current_context = sql_plan_context
 
@@ -772,7 +776,9 @@ class SQLAgent(LumenBaseAgent):
         return results
 
     async def _execute_iteration(self, iteration: int, messages: list[Message], source, sql_plan_context: str) -> dict | None:
-        """Execute a single iteration of SQL planning. Returns final result if successful, None otherwise."""
+        """
+        Execute a single iteration of SQL planning. Returns final result if successful, None otherwise.
+        """
         # Get SQL plan
         discovery_steps = await self._check_information_completeness(
             messages, sql_plan_context
