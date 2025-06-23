@@ -1122,7 +1122,7 @@ class IterativeTableLookup(TableLookup):
     purpose = param.String(default="""
         Looks up the most relevant tables and provides SQL schemas of those tables.""")
 
-    provides = param.List(default=["vector_metaset", "sql_metaset"], readonly=True, doc="""
+    provides = param.List(default=["tables_metadata", "vector_metaset", "sql_metaset"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
 
     max_selection_iterations = param.Integer(default=3, doc="""

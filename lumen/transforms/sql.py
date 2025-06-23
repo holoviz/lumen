@@ -753,9 +753,19 @@ class SQLRemoveSourceSeparator(SQLTransform):
             after = node_str.split(self._parsable_separator)[-1]
             filename = node.this.sql().replace(node_str, after)
             return filename
-        elif isinstance(node, sqlglot.exp.Literal) and isinstance(node.this, str):
+        elif isinstance(node, sqlglot.exp.Literal):
+            # Handle string literals that might contain the separator
+            if isinstance(node.this, str) and self._parsable_separator in node.this:
+                filename = node.this.split(self._parsable_separator)[-1]
+                # Preserve the original literal type and quotes
+                return sqlglot.exp.Literal.string(filename)
+            return node
+        elif hasattr(node, 'this') and isinstance(node.this, str) and self._parsable_separator in node.this:
+            # Handle other node types that might contain the separator in their string content
             filename = node.this.split(self._parsable_separator)[-1]
-            return filename
+            # Create a new node of the same type with the cleaned string
+            new_node = node.__class__(this=filename)
+            return new_node
         else:
             return node
 
