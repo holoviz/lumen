@@ -17,7 +17,7 @@ test-core = ["py313", "test-core"]
 docs = ["py311", "doc", "ai", "sql"]
 build = ["py311", "build"]
 lint = ["py311", "lint"]
-bq-dev = ["py313", "ai", "ai-local", "ai-llama", "ai-google", "ai-litellm", "bigquery", "lint", "sql", "test", "test-core"]
+bq-dev = ["py313", "ai", "ai-local", "ai-llama", "ai-google", "bigquery", "lint", "sql", "test", "test-core"]
 
 [dependencies]
 bokeh = "*"
@@ -73,6 +73,9 @@ llama-cpp-python = ">=0.3.0"
 
 [feature.ai-google.pypi-dependencies]
 google-generativeai = "*"
+
+[feature.ai-litellm.pypi-dependencies]
+litellm = "*"
 
 [feature.sql.dependencies]
 duckdb = "*"
