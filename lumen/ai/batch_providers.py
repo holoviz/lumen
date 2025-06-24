@@ -8,6 +8,7 @@ import time
 import uuid
 
 from abc import abstractmethod
+from pathlib import Path
 from typing import Any
 
 import param
@@ -26,7 +27,105 @@ class BatchProcessingNotSupportedError(Exception):
 class BatchProvider(param.Parameterized):
     """Abstract base class for batch processing providers"""
 
-    timeout = param.Integer(default=1800, bounds=(60, 7200), doc="Maximum time to wait for batch job completion (seconds)")
+    timeout = param.Integer(default=1800, bounds=(60, 172800), doc="Maximum time to wait for batch job completion (seconds)")
+    batch_dir = param.String(default=".lumen_batch", doc="Directory to save batch state files")
+    keep_states = param.Boolean(default=True, doc="Keep batch state files after successful completion")
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        # Ensure batch state directory exists
+        Path(self.batch_dir).mkdir(exist_ok=True)
+
+    def _get_batch_state_file(self, batch_id: str) -> Path:
+        """Get the path to the batch state file for a given batch ID"""
+        return Path(self.batch_dir) / f"{batch_id}.json"
+
+    def save_batch_state(self, batch_id: str, state: dict[str, Any]) -> None:
+        """Save batch state to file"""
+        state_file = self._get_batch_state_file(batch_id)
+        state_data = {
+            "batch_id": batch_id,
+            "provider": self.__class__.__name__,
+            "created_at": time.time(),
+            "state": state
+        }
+
+        with open(state_file, 'w') as f:
+            json.dump(state_data, f, indent=2)
+
+        log_debug(f"Saved batch state to {state_file}")
+
+    def load_batch_state(self, batch_id: str) -> dict[str, Any] | None:
+        """Load batch state from file"""
+        state_file = self._get_batch_state_file(batch_id)
+
+        if not state_file.exists():
+            return None
+
+        try:
+            with open(state_file) as f:
+                state_data = json.load(f)
+
+            # Verify this is the right provider
+            if state_data.get("provider") != self.__class__.__name__:
+                log_debug(f"Batch state provider mismatch: expected {self.__class__.__name__}, got {state_data.get('provider')}")
+                return None
+
+            log_debug(f"Loaded batch state from {state_file}")
+            return state_data.get("state", {})
+
+        except Exception as e:
+            log_debug(f"Error loading batch state: {e}")
+            return None
+
+    def cleanup_batch_state(self, batch_id: str) -> None:
+        """Remove batch state file after successful completion"""
+        state_file = self._get_batch_state_file(batch_id)
+        if state_file.exists():
+            state_file.unlink()
+            log_debug(f"Cleaned up batch state file: {state_file}")
+
+    def list_pending_batches(self) -> list[dict[str, Any]]:
+        """List all pending batch jobs for this provider"""
+        batch_dir = Path(self.batch_dir)
+        if not batch_dir.exists():
+            return []
+
+        pending_batches = []
+        for state_file in batch_dir.glob("*.json"):
+            try:
+                with open(state_file) as f:
+                    state_data = json.load(f)
+
+                # Only include batches for this provider
+                if state_data.get("provider") == self.__class__.__name__:
+                    pending_batches.append({
+                        "batch_id": state_data["batch_id"],
+                        "created_at": state_data["created_at"],
+                        "state_file": str(state_file)
+                    })
+            except Exception as e:
+                log_debug(f"Error reading batch state file {state_file}: {e}")
+
+        return sorted(pending_batches, key=lambda x: x["created_at"], reverse=True)
+
+    async def resume_batch(self, batch_id: str) -> dict[str, Any] | None:
+        """Resume monitoring an existing batch job"""
+        saved_state = self.load_batch_state(batch_id)
+        if not saved_state:
+            log_debug(f"No saved state found for batch {batch_id}")
+            return None
+
+        log_debug(f"Resuming batch {batch_id}")
+
+        try:
+            # Monitor the batch until completion
+            batch_data = await self.monitor_batch(batch_id)
+            return batch_data
+
+        except Exception as e:
+            log_debug(f"Error resuming batch {batch_id}: {e}")
+            return None
 
     @abstractmethod
     async def create_batch(self, requests: list[dict[str, Any]]) -> str:
@@ -101,15 +200,42 @@ class OpenAIBatchProvider(BatchProvider):
             for request in requests:
                 f.write(json.dumps(request) + "\n")
 
-        # Upload file
-        with open(batch_file_path, "rb") as f:
-            batch_file = await asyncio.to_thread(client.files.create, file=f, purpose="batch")
+        log_debug(f"Created batch file: {batch_file_path} with {len(requests)} requests")
 
-        # Create batch
-        batch = await asyncio.to_thread(client.batches.create, input_file_id=batch_file.id, endpoint="/v1/chat/completions", completion_window="24h")
+        # Upload file - client methods are already async, don't wrap in to_thread
+        try:
+            with open(batch_file_path, "rb") as f:
+                batch_file = await client.files.create(file=f, purpose="batch")
 
-        log_debug(f"Created OpenAI batch job: {batch.id}")
-        return batch.id
+            log_debug(f"Successfully uploaded batch file with ID: {batch_file.id}")
+
+        except Exception as e:
+            log_debug(f"Error uploading batch file: {e}")
+            raise Exception(f"Failed to upload batch file: {e}") from e
+
+        # Create batch - this is also async
+        try:
+            batch = await client.batches.create(
+                input_file_id=batch_file.id,
+                endpoint="/v1/chat/completions",
+                completion_window="24h"
+            )
+
+            # Save batch state immediately after creation
+            self.save_batch_state(batch.id, {
+                "input_file_id": batch_file.id,
+                "endpoint": "/v1/chat/completions",
+                "completion_window": "24h",
+                "num_requests": len(requests),
+                "status": "created"
+            })
+
+            log_debug(f"Created OpenAI batch job: {batch.id}")
+            return batch.id
+
+        except Exception as e:
+            log_debug(f"Error creating batch: {e}")
+            raise Exception(f"Failed to create batch job: {e}") from e
 
     async def monitor_batch(self, batch_id: str) -> dict[str, Any]:
         """Monitor batch job with exponential backoff"""
@@ -118,18 +244,41 @@ class OpenAIBatchProvider(BatchProvider):
         wait_time = 30  # Start with 30 second polls
 
         while time.time() - start_time < self.timeout:
-            batch_status = await asyncio.to_thread(client.batches.retrieve, batch_id)
+            batch_status = await client.batches.retrieve(batch_id)
 
-            log_debug(f"OpenAI batch {batch_id} status: {batch_status.status}")
+            print(f"OpenAI batch {batch_id} status: {batch_status.status}")  # noqa: T201
+
+            # Update saved state with current status
+            saved_state = self.load_batch_state(batch_id) or {}
+            saved_state["status"] = batch_status.status
+            saved_state["last_checked"] = time.time()
+            self.save_batch_state(batch_id, saved_state)
 
             if batch_status.status == "completed":
+                # Only clean up state file if not keeping completed batches
+                if not self.keep_states:
+                    self.cleanup_batch_state(batch_id)
+                else:
+                    # Mark as completed in state file for reference
+                    saved_state["status"] = "completed"
+                    saved_state["completed_at"] = time.time()
+                    self.save_batch_state(batch_id, saved_state)
+                    log_debug(f"Keeping completed batch state for {batch_id}")
                 return batch_status
             elif batch_status.status in ["failed", "expired", "cancelled"]:
+                # Keep state file for debugging failed batches
+                saved_state["error"] = f"Batch failed with status: {batch_status.status}"
+                self.save_batch_state(batch_id, saved_state)
                 raise Exception(f"OpenAI batch job {batch_id} failed: {batch_status.status}")
 
             # Exponential backoff with jitter
             await asyncio.sleep(wait_time)
             wait_time = min(wait_time * 1.2, 300)  # Cap at 5 minutes
+
+        # Save timeout state
+        saved_state = self.load_batch_state(batch_id) or {}
+        saved_state["error"] = f"Timeout after {self.timeout} seconds"
+        self.save_batch_state(batch_id, saved_state)
 
         raise TimeoutError(f"OpenAI batch job {batch_id} timed out after {self.timeout} seconds")
 
@@ -139,7 +288,7 @@ class OpenAIBatchProvider(BatchProvider):
 
         # Download results file
         result_file_id = batch_data.output_file_id
-        result_content = await asyncio.to_thread(client.files.content, result_file_id)
+        result_content = await client.files.content(result_file_id)
 
         # Parse JSONL results
         results = []
@@ -194,7 +343,7 @@ class AnthropicBatchProvider(BatchProvider):
         for request in requests:
             batch_requests.append({"custom_id": request["custom_id"], "params": request["body"]})
 
-        batch = await asyncio.to_thread(client.messages.batches.create, requests=batch_requests)
+        batch = await client.messages.batches.create(requests=batch_requests)
 
         log_debug(f"Created Anthropic batch job: {batch.id}")
         return batch.id
@@ -206,7 +355,7 @@ class AnthropicBatchProvider(BatchProvider):
         wait_time = 30
 
         while time.time() - start_time < self.timeout:
-            batch_status = await asyncio.to_thread(client.messages.batches.retrieve, batch_id)
+            batch_status = await client.messages.batches.retrieve(batch_id)
 
             log_debug(f"Anthropic batch {batch_id} status: {batch_status.processing_status}")
 
@@ -224,10 +373,18 @@ class AnthropicBatchProvider(BatchProvider):
         """Get Anthropic batch results"""
         client = await self._get_client()
 
-        # Get results using the sync iterator in a thread
-        results = await asyncio.to_thread(lambda: list(client.messages.batches.results(batch_data.id)))
-
-        return results
+        # Get results - the results method might need to be handled differently
+        # Let's try the async approach first, fall back to sync if needed
+        try:
+            # Try async iteration
+            results = []
+            async for result in client.messages.batches.results(batch_data.id):
+                results.append(result)
+            return results
+        except AttributeError:
+            # Fall back to sync iteration in a thread if async not available
+            results = await asyncio.to_thread(lambda: list(client.messages.batches.results(batch_data.id)))
+            return results
 
     def format_request(self, custom_id: str, prompt_data: dict[str, Any]) -> dict[str, Any]:
         # Anthropic doesn't need method/url wrapper
@@ -288,11 +445,15 @@ class MistralBatchProvider(BatchProvider):
                 f.write(json.dumps(request) + "\n")
 
         # Use Mistral's batch endpoint
-        with open(batch_file_path, "rb") as f:
-            batch = await asyncio.to_thread(client.batch.create, input_file=f, endpoint="/v1/chat/completions")
+        try:
+            with open(batch_file_path, "rb") as f:
+                batch = await client.batch.create(input_file=f, endpoint="/v1/chat/completions")
 
-        log_debug(f"Created Mistral batch job: {batch.id}")
-        return batch.id
+            log_debug(f"Created Mistral batch job: {batch.id}")
+            return batch.id
+        except Exception as e:
+            log_debug(f"Error creating Mistral batch: {e}")
+            raise Exception(f"Failed to create Mistral batch job: {e}") from e
 
     async def monitor_batch(self, batch_id: str) -> dict[str, Any]:
         """Monitor Mistral batch job"""
@@ -301,7 +462,7 @@ class MistralBatchProvider(BatchProvider):
         wait_time = 30
 
         while time.time() - start_time < self.timeout:
-            batch_status = await asyncio.to_thread(client.batch.retrieve, batch_id)
+            batch_status = await client.batch.retrieve(batch_id)
 
             log_debug(f"Mistral batch {batch_id} status: {batch_status.status}")
 
@@ -321,7 +482,7 @@ class MistralBatchProvider(BatchProvider):
 
         # Similar to OpenAI
         result_file_id = batch_data.output_file_id
-        result_content = await asyncio.to_thread(client.files.content, result_file_id)
+        result_content = await client.files.content(result_file_id)
 
         results = []
         for line in result_content.content.decode("utf-8").strip().split("\n"):
