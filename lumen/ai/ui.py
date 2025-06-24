@@ -109,8 +109,8 @@ class UI(Viewer):
 
     table_upload_callbacks = param.Dict(default={}, doc="""
         Dictionary mapping from file extensions to callback function,
-        e.g. {"hdf5": ...}. The callback function should accept the file bytes and
-        table alias, add or modify the `source` in memory, and return a bool
+        e.g. {"hdf5": ...}. The callback function should accept the file bytes,
+        table alias, and filename, add or modify the `source` in memory, and return a bool
         (True if the table was successfully uploaded).""")
 
     template = param.Selector(

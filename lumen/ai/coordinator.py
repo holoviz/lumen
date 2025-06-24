@@ -283,13 +283,16 @@ class Coordinator(Viewer, VectorLookupToolUser):
         inplace: bool = True,
         analysis: bool = False,
         append_demo: bool = True,
-        hide_after_use: bool = True
+        hide_after_use: bool = True,
+        memory = None
     ):
         async def hide_suggestions(_=None):
             if len(self.interface.objects) > num_objects:
                 suggestion_buttons.visible = False
 
-        memory = self._memory
+        if memory is None:
+            memory = self._memory
+
         async def use_suggestion(event):
             button = event.obj
             with button.param.update(loading=True), self.interface.active_widget.param.update(loading=True):
@@ -306,11 +309,17 @@ class Coordinator(Viewer, VectorLookupToolUser):
                         log_debug("No analysis agent found.")
                         return
                     messages = [{"role": "user", "content": contents}]
-                    with agent.param.update(memory=memory):
-                        await agent.respond(
-                            messages, render_output=self.render_output, agents=self.agents
-                        )
-                        await self._add_analysis_suggestions()
+                    original_memory = agent.memory
+                    try:
+                        with agent.param.update(memory=memory):
+                            await agent.respond(
+                                messages, render_output=self.render_output, agents=self.agents
+                            )
+                            # Pass the same memory to _add_analysis_suggestions
+                            await self._add_analysis_suggestions(memory=memory)
+                    finally:
+                        # Reset agent memory to original state
+                        agent.memory = original_memory
                 else:
                     self.interface.send(contents)
 
@@ -359,9 +368,11 @@ class Coordinator(Viewer, VectorLookupToolUser):
         self.interface.param.watch(hide_suggestions, "objects")
         return message
 
-    async def _add_analysis_suggestions(self):
-        pipeline = self._memory["pipeline"]
-        current_analysis = self._memory.get("analysis")
+    async def _add_analysis_suggestions(self, memory=None):
+        if memory is None:
+            memory = self._memory
+        pipeline = memory["pipeline"]
+        current_analysis = memory.get("analysis")
 
         # Clear current_analysis unless the last message is the same AnalysisOutput
         if current_analysis and self.interface.objects:
@@ -380,6 +391,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
             analysis=True,
             hide_after_use=False,
             num_objects=len(self.interface.objects),
+            memory=memory
         )
 
     async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface):
@@ -499,7 +511,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
                         # We have to create a new list to trigger an event
                         # since inplace updates will not trigger updates
                         # and won't allow diffing between old and new values
-                        self._memory['outputs'] = self._memory['outputs']+[out]
+                        self._memory["outputs"] = self._memory["outputs"]+[out]
                     message_kwargs = dict(value=out, user=subagent.name)
                     self.interface.stream(**message_kwargs)
             step.success_title = f"{agent_name} agent successfully responded"
