@@ -290,8 +290,8 @@ class LlamaCpp(Llm):
 
     model_kwargs = param.Dict(default={
         "default": {
-            "repo": "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
-            "model_file": "qwen2.5-coder-7b-instruct-q5_k_m.gguf",
+            "repo": "Qwen/Qwen3-8B-GGUF",
+            "model_file": "Qwen3-8B-Q4_K_M.gguf",
             "chat_format": "qwen",
         },
     })
