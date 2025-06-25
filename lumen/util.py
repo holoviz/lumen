@@ -259,7 +259,7 @@ def is_ref(value):
 def extract_refs(spec, ref_type=None):
     refs = []
     if isinstance(spec, dict):
-        for _k, v in spec.items():
+        for v in spec.values():
             for ref in extract_refs(v, ref_type):
                 if ref not in refs:
                     refs.append(ref)
@@ -355,47 +355,72 @@ def slugify(value, allow_unicode=False) -> str:
     return re.sub(r"[-\s]+", "-", value).strip("-_")
 
 
-def detect_file_encoding(file_obj: Path | io.BytesIO | io.StringIO | str | bytes) -> str:
+def detect_file_encoding(file_obj: Path | str | io.BytesIO | io.StringIO, sample_size: int = 8192) -> str:
     """
-    Detects the given file object's encoding.
+    Simple, fast file encoding detection.
 
     Parameters
     ----------
-    file_obj : Path | io.BytesIO | io.StringIO | str | bytes
-        File object or path object to detect encoding.
+    file_obj : Path | str | io.BytesIO | io.StringIO
+        File path or file-like object to detect encoding
+    sample_size : int, default=8192
+        Bytes to read for detection
 
     Returns
     -------
     str
+        Detected encoding
     """
-    import chardet
+    # Get bytes data from different input types
+    if isinstance(file_obj, (str, Path)):
+        # File path
+        file_path = Path(file_obj)
+        if not file_path.exists():
+            data = None
+        else:
+            with file_path.open("rb") as f:
+                data = f.read(sample_size)
+    elif isinstance(file_obj, io.BytesIO):
+        # BytesIO - preserve position
+        pos = file_obj.tell()
+        data = file_obj.read(sample_size)
+        file_obj.seek(pos)
+    elif isinstance(file_obj, io.StringIO):
+        # StringIO - read and encode
+        pos = file_obj.tell()
+        content = file_obj.read(sample_size)
+        file_obj.seek(pos)
+        data = content.encode('utf-8')[:sample_size]
+    else:
+        raise ValueError(f"Unsupported file object type: {type(file_obj)}")
 
-    if isinstance(file_obj, str):
-        try:
-            path_exists = Path(file_obj).exists()
-            if path_exists:
-                file_obj = Path(file_obj)
-        except OSError:
-            pass
+    if not data:
+        return "utf-8"
 
-    # Handle if a path is given.
-    if isinstance(file_obj, Path):
-        with file_obj.open("rb") as f:
-            data = f.read()
-        detected_encoding = chardet.detect(data)
-        encoding = detected_encoding["encoding"]
+    # Check BOM first (instant detection)
+    if data.startswith(b'\xef\xbb\xbf'):
+        return 'utf-8-sig'
+    elif data.startswith(b'\xff\xfe'):
+        return 'utf-16-le'
+    elif data.startswith(b'\xfe\xff'):
+        return 'utf-16-be'
 
-    # Handle if a string or bytes object is given.
-    if isinstance(file_obj, bytes):
-        detected_encoding = chardet.detect(file_obj)
-    elif isinstance(file_obj, str):
-        detected_encoding = chardet.detect(file_obj.encode())
+    # Try UTF-8 (most common)
+    try:
+        data.decode('utf-8')
+        return 'utf-8'
+    except UnicodeDecodeError:
+        pass
 
-    encoding = detected_encoding["encoding"]
-
-    if encoding == "ISO-8859-1":
-        encoding = "latin-1"
-    elif encoding == "ascii":
-        encoding = "utf-8"
-
-    return encoding.lower()
+    # Use chardet if available, otherwise fallback
+    try:
+        import chardet
+        result = chardet.detect(data)
+        encoding = result.get('encoding', 'latin-1')
+        # Clean up common names
+        if encoding and encoding.lower() in ['iso-8859-1', 'ascii']:
+            return 'utf-8' if encoding.lower() == 'ascii' else 'latin-1'
+        return encoding.lower() if encoding else 'latin-1'
+    except ImportError:
+        # Simple fallback without chardet
+        return 'latin-1'  # Can decode any byte sequence

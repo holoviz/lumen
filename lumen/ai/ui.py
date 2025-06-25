@@ -109,8 +109,8 @@ class UI(Viewer):
 
     table_upload_callbacks = param.Dict(default={}, doc="""
         Dictionary mapping from file extensions to callback function,
-        e.g. {"hdf5": ...}. The callback function should accept the file bytes and
-        table alias, add or modify the `source` in memory, and return a bool
+        e.g. {"hdf5": ...}. The callback function should accept the file bytes,
+        table alias, and filename, add or modify the `source` in memory, and return a bool
         (True if the table was successfully uploaded).""")
 
     template = param.Selector(
@@ -263,20 +263,17 @@ class UI(Viewer):
             self._vector_store_status_badge.param.update(
                 status="running", name="Tables Vector Store Pending", description="Pending initialization"
             )
-            self.interface.loading = True
         elif ready_state is True:
             # Ready - show as success
             num_tables = len(memory["tables_metadata"])
             self._vector_store_status_badge.param.update(
                 status="success", name="Tables Vector Store Ready", description=f"Embedded {num_tables} table(s)"
             )
-            self.interface.loading = False
         elif ready_state is None:
             # Error state
             self._vector_store_status_badge.param.update(
                 status="danger", name="Tables Vector Store Error", description="Error initializing tables vector store"
             )
-            self.interface.loading = False
 
     def _destroy(self, session_context):
         """
@@ -310,7 +307,7 @@ class UI(Viewer):
                 if src.endswith(('.parq', '.parquet')):
                     table = f"read_parquet('{src}')"
                 elif src.endswith(".csv"):
-                    encoding = detect_file_encoding(file_obj=src)
+                    encoding = detect_file_encoding(src)
                     table = f"read_csv('{src}', encoding='{encoding}')"
                 elif src.endswith(".json"):
                     table = f"read_json_auto('{src}')"

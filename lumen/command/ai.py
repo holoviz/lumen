@@ -37,6 +37,7 @@ LLM_PROVIDERS = {
     'azure-mistral': 'AzureMistralAI',
     "ai-navigator": "AINavigator",
     'llama-cpp': 'LlamaCpp',
+    'litellm': 'LiteLLM',
 }
 
 
@@ -117,10 +118,10 @@ class LumenAIServe(Serve):
 
         try:
             provider_cls = getattr(lumen_llms, LLM_PROVIDERS[provider])
-        except (KeyError, AttributeError) as exc:
+        except (KeyError, AttributeError) as err:
             raise ValueError(
                 f"Could not find LLM Provider {provider!r}, valid providers include: {list(LLM_PROVIDERS)}."
-            ) from exc
+            ) from err
 
         if provider is None:
             raise RuntimeError(

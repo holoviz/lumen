@@ -58,6 +58,7 @@ ai-mistralai = ['lumen[ai]', 'mistralai']
 ai-anthropic = ['lumen[ai]', 'anthropic']
 ai-llama = ['lumen[ai-local]', 'llama-cpp-python >=0.3.0']
 ai-google = ['lumen[ai]', 'google-genai']
+ai-litellm = ['lumen[ai]', 'litellm']
 bigquery = ['google-cloud-bigquery', 'sqlalchemy-bigquery']
 
 [project.scripts]
