@@ -498,7 +498,7 @@ class DocumentLookup(VectorLookupTool):
     purpose = param.String(default="""
         Looks up relevant documents based on the user query.""")
 
-    requires = param.List(default=["document_sources"], readonly=True, doc="""
+    requires = param.List(default=[], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
 
     sync_sources = param.Boolean(default=True, doc="""

@@ -19,6 +19,8 @@ from panel.viewable import Viewable, Viewer
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
+from lumen.ai.vector_store import DuckDBVectorStore
+
 from ..base import Component
 from ..dashboard import Config
 from ..pipeline import Pipeline
@@ -31,7 +33,7 @@ from ..views import (
 )
 from .actor import ContextProvider
 from .config import (
-    PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, VEGA_MAP_LAYER,
+    EMBEDDINGS_DIR, PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, VEGA_MAP_LAYER,
     VEGA_ZOOMABLE_MAP_ITEMS, RetriesExceededError,
 )
 from .controls import RetryControls, SourceControls
@@ -43,7 +45,7 @@ from .models import (
 )
 from .schemas import get_metaset
 from .services import DbtslMixin
-from .tools import ToolUser
+from .tools import DocumentLookup, ToolUser
 from .translate import param_to_pydantic
 from .utils import (
     apply_changes, clean_sql, describe_data, get_data, get_pipeline,
@@ -1286,6 +1288,11 @@ class VegaLiteAgent(BaseViewAgent):
     _extensions = ("vega",)
 
     _output_type = VegaLiteOutput
+
+    def __init__(self, **params):
+        vector_store = DuckDBVectorStore(uri=str(EMBEDDINGS_DIR / "vega_lite.db"))
+        params["tools"] = params.get("tools", []) + [DocumentLookup(vector_store=vector_store)]
+        super().__init__(**params)
 
     async def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
         try:
