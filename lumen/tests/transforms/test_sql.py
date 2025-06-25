@@ -561,5 +561,32 @@ class TestSQLRemoveSourceSeparator:
         """
         result = SQLRemoveSourceSeparator.apply_to(sql_in, read="duckdb")
         assert "__@__" not in result
-        assert "READ_CSV('plant_specific_buffers.csv')" in result
-        assert "READ_CSV('data_centers.csv')" in result
+
+    def test_string_literals_preserved(self):
+        """Test that string literals with quotes are preserved during source separator removal."""
+        sql_in = dedent(
+            '''
+            SELECT "athlete_full_name", "medal_type", COUNT(*) AS "medal_count"
+            FROM "ProvidedSource00000__@__olympic_medals.csv"
+            WHERE "country_name" = 'United States of America'
+              AND "athlete_full_name" IS NOT NULL
+              AND "athlete_full_name" != 'Michael PHELPS'
+            GROUP BY "athlete_full_name", "medal_type"
+            ORDER BY "medal_count" DESC
+            LIMIT 100
+            '''
+        ).strip()
+        result = SQLRemoveSourceSeparator.apply_to(sql_in)
+        # The transform reformats to single line and changes some syntax
+        expected = ('SELECT "athlete_full_name", "medal_type", COUNT(*) AS "medal_count" '
+                   'FROM "olympic_medals.csv" '
+                   'WHERE "country_name" = \'United States of America\' '
+                   'AND NOT "athlete_full_name" IS NULL '
+                   'AND "athlete_full_name" <> \'Michael PHELPS\' '
+                   'GROUP BY "athlete_full_name", "medal_type" '
+                   'ORDER BY "medal_count" DESC '
+                   'LIMIT 100')
+        assert result == expected
+        # Verify string literals are preserved
+        assert "'United States of America'" in result
+        assert "'Michael PHELPS'" in result

@@ -29,6 +29,8 @@ class Analysis(param.ParameterizedFunction):
        The columns required for the analysis. May use tuples to declare that one of
        the columns must be present.""")
 
+    message = param.String(default="", doc="The message to display on interface when the analysis is run.")
+
     _run_button = param.Parameter(default=None)
 
      # Whether to allow the analysis to be called multiple times in a row
@@ -116,4 +118,6 @@ class Join(Analysis):
                 content += f"\nadditional context:\n{self.context!r}"
             await agent.answer(messages=[{"role": "user", "content": content}])
             pipeline = memory["pipeline"]
+
+        self.message = f"Joined {self._previous_table} with {self.table_name}."
         return pipeline
