@@ -38,8 +38,8 @@ from .controls import RetryControls, SourceControls
 from .llm import Llm, Message
 from .memory import _Memory
 from .models import (
-    CheckContext, DbtslQueryParams, PartialBaseModel, QueryCompletionValidation, RetrySpec,
-    Sql, VegaLiteSpec,
+    CheckContext, DbtslQueryParams, PartialBaseModel,
+    QueryCompletionValidation, RetrySpec, Sql, VegaLiteSpec,
 )
 from .schemas import get_metaset
 from .services import DbtslMixin
