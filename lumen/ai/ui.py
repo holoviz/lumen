@@ -209,6 +209,7 @@ class UI(Viewer):
         state.onload(self._setup_llm_and_watchers)
 
         tables = set()
+        suggestions = self._coordinator.suggestions.copy()
         for source in memory.get("sources", []):
             tables |= set(source.get_tables())
         if len(tables) == 1:
