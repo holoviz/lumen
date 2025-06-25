@@ -286,6 +286,9 @@ class Coordinator(Viewer, VectorLookupToolUser):
         hide_after_use: bool = True,
         memory = None
     ):
+        if not suggestions:
+            return
+
         async def hide_suggestions(_=None):
             if len(self.interface.objects) > num_objects:
                 suggestion_buttons.visible = False
@@ -363,7 +366,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
         message = self.interface.objects[-1]
         if inplace:
-            message.footer_objects = [suggestion_buttons]
+            footer_objects = message.footer_objects or []
+            message.footer_objects = footer_objects + [suggestion_buttons]
 
         self.interface.param.watch(hide_suggestions, "objects")
         return message
@@ -877,7 +881,7 @@ class Planner(Coordinator):
         # e.g. DbtslAgent is unsatisfiable if DbtslLookup was used in planning
         # but did not provide dbtsl_metaset
         # also filter out agents where excluded keys exist in memory
-        agents = [agent for agent in agents if len(set(agent.requires) - all_provides) == 0]
+        agents = [agent for agent in agents if len(set(agent.requires) - all_provides) == 0 and type(agent).__name__ != "ValidationAgent"]
         tools = [tool for tool in tools if len(set(tool.requires) - all_provides) == 0]
 
         reasoning = None
@@ -1033,6 +1037,25 @@ class Planner(Coordinator):
                 )
             )
             actors_in_graph.add(actor)
+
+        if "ValidationAgent" in agents:
+            validation_step = type(step)(
+                actor="ValidationAgent",
+                instruction='Validate whether the executed plan fully answered the user\'s original query.',
+                title='Validating results',
+                render_output=False
+            )
+            steps.append(validation_step)
+            execution_graph.append(
+                ExecutionNode(
+                    actor=agents["ValidationAgent"],
+                    provides=agents["ValidationAgent"].provides,
+                    instruction=validation_step.instruction,
+                    title=validation_step.title,
+                    render_output=validation_step.render_output
+                )
+            )
+            actors_in_graph.add("ValidationAgent")
 
         plan.steps = steps
         previous_actors = actors

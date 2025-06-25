@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import Literal
 
 from instructor.dsl.partial import PartialLiteralMixin
@@ -270,6 +268,23 @@ class DbtslQueryParams(BaseModel):
         default_factory=list,
         description="A list of columns or expressions to order the results by, e.g. ['metric_time__month']"
     )
+
+
+class QueryCompletionValidation(PartialBaseModel):
+    """Validation of whether the executed plan answered the user's query"""
+
+    chain_of_thought: str = Field(
+        description="Explain your reasoning succinctly as to why you will be answering yes or no.")
+
+    missing_elements: list[str] = Field(
+        default_factory=list,
+        description="List of specific elements from the user's query that weren't addressed"
+    )
+    suggestions: list[str] = Field(
+        default_factory=list,
+        description="Suggestions for additional steps that could complete the query if not fully answered"
+    )
+    yes: bool = Field(description="True if query successfully completed, otherwise False.")
 
 
 def make_refined_query_model(item_type_name: str = "items"):
