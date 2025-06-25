@@ -213,9 +213,6 @@ class UI(Viewer):
             tables |= set(source.get_tables())
         if len(tables) == 1:
             suggestions = [f"Show {next(iter(tables))}"] + self._coordinator.suggestions
-            self._coordinator._add_suggestions_to_footer(
-                suggestions=suggestions
-            )
         elif len(tables) > 1:
             table_list_agent = next(
                 (agent for agent in self._coordinator.agents if isinstance(agent, TableListAgent)),
@@ -225,6 +222,9 @@ class UI(Viewer):
                 param.parameterized.async_executor(partial(table_list_agent.respond, []))
         elif self._source_agent and len(memory.get("document_sources", [])) == 0:
             param.parameterized.async_executor(partial(self._source_agent.respond, []))
+        self._coordinator._add_suggestions_to_footer(
+            suggestions=suggestions
+        )
 
     async def _setup_llm_and_watchers(self):
         """Initialize LLM and set up reactive watchers for TableLookup readiness."""

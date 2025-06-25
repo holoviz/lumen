@@ -264,7 +264,6 @@ class Coordinator(Viewer, VectorLookupToolUser):
             "rerun": {"callback": on_rerun},
             "clear": {"callback": on_clear},
         }
-        self._add_suggestions_to_footer(self.suggestions)
 
         if "source" in self._memory and "sources" not in self._memory:
             self._memory["sources"] = [self._memory["source"]]
