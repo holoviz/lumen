@@ -34,7 +34,7 @@ from ..transforms.sql import SQLLimit
 from ..util import detect_file_encoding, log
 from .agents import (
     AnalysisAgent, AnalystAgent, ChatAgent, DocumentListAgent, SourceAgent,
-    SQLAgent, TableListAgent, VegaLiteAgent,
+    SQLAgent, TableListAgent, ValidationAgent, VegaLiteAgent,
 )
 from .components import SplitJS, StatusBadge
 from .config import PROVIDED_SOURCE_NAME, SOURCE_TABLE_SEPARATOR
@@ -202,7 +202,7 @@ class UI(Viewer):
     )
 
     default_agents = param.List(default=[
-        TableListAgent, ChatAgent, DocumentListAgent, AnalystAgent, SourceAgent, SQLAgent, VegaLiteAgent
+        TableListAgent, ChatAgent, DocumentListAgent, AnalystAgent, SourceAgent, SQLAgent, VegaLiteAgent, ValidationAgent
     ], doc="""List of default agents which will always be added.""")
 
     export_functions = param.Dict(default={}, doc="""
@@ -338,13 +338,11 @@ class UI(Viewer):
         state.onload(self._setup_llm_and_watchers)
 
         tables = set()
+        suggestions = self._coordinator.suggestions.copy()
         for source in memory.get("sources", []):
             tables |= set(source.get_tables())
         if len(tables) == 1:
             suggestions = [f"Show {next(iter(tables))}"] + self._coordinator.suggestions
-            self._coordinator._add_suggestions_to_footer(
-                suggestions=suggestions
-            )
         elif len(tables) > 1:
             table_list_agent = next(
                 (agent for agent in self._coordinator.agents if isinstance(agent, TableListAgent)),
@@ -354,6 +352,9 @@ class UI(Viewer):
                 param.parameterized.async_executor(partial(table_list_agent.respond, []))
         elif self._source_agent and len(memory.get("document_sources", [])) == 0:
             param.parameterized.async_executor(partial(self._source_agent.respond, []))
+        self._coordinator._add_suggestions_to_footer(
+            suggestions=suggestions
+        )
 
     async def _setup_llm_and_watchers(self):
         """Initialize LLM and set up reactive watchers for TableLookup readiness."""
