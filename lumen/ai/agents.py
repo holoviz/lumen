@@ -38,8 +38,8 @@ from .controls import RetryControls, SourceControls
 from .llm import Llm, Message
 from .memory import _Memory
 from .models import (
-    CheckContext, DbtslQueryParams, PartialBaseModel, RetrySpec, Sql,
-    VegaLiteSpec,
+    CheckContext, DbtslQueryParams, PartialBaseModel,
+    QueryCompletionValidation, RetrySpec, Sql, VegaLiteSpec,
 )
 from .schemas import get_metaset
 from .services import DbtslMixin
@@ -544,14 +544,12 @@ class LumenBaseAgent(Agent):
 class SQLAgent(LumenBaseAgent):
     conditions = param.List(
         default=[
-            "Use for queries that need to access, filter, join, or aggregate existing data tables",
             "Use when user asks about data contained in tables (e.g., 'show me sales data', 'filter by date')",
             "Use for calculations that require data from tables (e.g., 'calculate average', 'sum by category')",
             "Use when user wants to display or examine table contents",
             "If sql_metaset is not in memory, use with IterativeTableLookup",
             "Commonly used with AnalystAgent to analyze query results",
             "For existing tables, only use if additional calculations are needed",
-            "When reusing tables, reference by name rather than regenerating queries",
             "NOT for technical questions about programming, functions, or libraries",
             "NOT for questions that don't require data table access",
             "NOT useful if the user is using the same data for plotting",
@@ -1268,7 +1266,6 @@ class VegaLiteAgent(BaseViewAgent):
             "Use for explanatory, publication-ready visualizations",
             "Use when user specifically requests Vega-Lite charts",
             "Use for polished charts intended for presentation or sharing",
-            "Use for final charts in reports, dashboards, or publications",
         ]
     )
 
@@ -1497,3 +1494,87 @@ class AnalysisAgent(LumenBaseAgent):
                 analysis.message or f"Successfully created view with {analysis_name} analysis.", user="Assistant"
             )
         return view
+
+
+class ValidationAgent(Agent):
+    """
+    ValidationAgent focuses solely on validating whether the executed plan
+    fully answered the user's original query. It identifies missing elements
+    and suggests next steps when validation fails.
+    """
+
+    conditions = param.List(
+        default=[
+            "Use to validate whether executed plans fully answered user queries",
+            "Use when plan execution is complete but validation is needed",
+            "Use to identify missing elements from the original user request",
+            "NOT for data analysis or pattern identification",
+            "NOT for technical programming questions",
+        ]
+    )
+
+    purpose = param.String(
+        default="""
+        Validates whether executed plans fully answered the user's original query.
+        Identifies missing elements, assesses completeness, and suggests next steps
+        when validation fails. Acts as a quality gate for plan execution."""
+    )
+
+    prompts = param.Dict(
+        default={
+            "main": {"template": PROMPTS_DIR / "ValidationAgent" / "main.jinja2", "response_model": QueryCompletionValidation, "tools": []},
+        }
+    )
+
+    requires = param.List(default=[], readonly=True)
+
+    provides = param.List(default=["validation_result"], readonly=True)
+
+    async def respond(
+        self,
+        messages: list[Message],
+        render_output: bool = False,
+        step_title: str | None = None,
+    ) -> Any:
+        def on_click(event):
+            suggestions_list = '\n- '.join(result.suggestions)
+            self.interface.send(f"Follow these suggestions: {suggestions_list}")
+
+        if messages:
+            user_messages = [msg for msg in reversed(messages) if msg.get("role") == "user"]
+            original_query = user_messages[0].get("content", "")
+
+        executed_steps = None
+        if "plan" in self._memory and hasattr(self._memory["plan"], "steps"):
+            executed_steps = [f"{step.actor}: {step.instruction}" for step in self._memory["plan"].steps]
+
+        system_prompt = await self._render_prompt("main", messages, original_query=original_query, executed_steps=executed_steps)
+        model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
+
+        result = await self.llm.invoke(
+            messages=messages,
+            system=system_prompt,
+            model_spec=model_spec,
+            response_model=QueryCompletionValidation,
+        )
+
+        self._memory["validation_result"] = result
+
+        response_parts = []
+        if result.yes:
+            return result
+
+
+        response_parts.append(f"**Query Validation: ✗ Incomplete** - {result.chain_of_thought}")
+        if result.missing_elements:
+            response_parts.append(f"**Missing Elements:** {', '.join(result.missing_elements)}")
+        if result.suggestions:
+            response_parts.append("**Suggested Next Steps:**")
+            for i, suggestion in enumerate(result.suggestions, 1):
+                response_parts.append(f"{i}. {suggestion}")
+
+        button = pn.widgets.Button(name="Rerun", on_click=on_click)
+        footer_objects = [button]
+        formatted_response = "\n\n".join(response_parts)
+        self.interface.stream(formatted_response, user=self.user, max_width=self._max_width, footer_objects=footer_objects)
+        return result

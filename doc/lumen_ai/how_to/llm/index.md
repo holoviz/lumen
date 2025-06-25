@@ -85,6 +85,7 @@ anthropic
 gemini
 azure
 llama_cpp
+litellm
 endpoints
 models_for_agents
 ```
