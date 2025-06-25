@@ -544,14 +544,12 @@ class LumenBaseAgent(Agent):
 class SQLAgent(LumenBaseAgent):
     conditions = param.List(
         default=[
-            "Use for queries that need to access, filter, join, or aggregate existing data tables",
             "Use when user asks about data contained in tables (e.g., 'show me sales data', 'filter by date')",
             "Use for calculations that require data from tables (e.g., 'calculate average', 'sum by category')",
             "Use when user wants to display or examine table contents",
             "If sql_metaset is not in memory, use with IterativeTableLookup",
             "Commonly used with AnalystAgent to analyze query results",
             "For existing tables, only use if additional calculations are needed",
-            "When reusing tables, reference by name rather than regenerating queries",
             "NOT for technical questions about programming, functions, or libraries",
             "NOT for questions that don't require data table access",
             "NOT useful if the user is using the same data for plotting",
@@ -1268,7 +1266,6 @@ class VegaLiteAgent(BaseViewAgent):
             "Use for explanatory, publication-ready visualizations",
             "Use when user specifically requests Vega-Lite charts",
             "Use for polished charts intended for presentation or sharing",
-            "Use for final charts in reports, dashboards, or publications",
         ]
     )
 

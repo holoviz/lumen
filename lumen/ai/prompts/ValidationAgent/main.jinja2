@@ -31,7 +31,7 @@ Response: yes=false, missing=["profit margins"], should_rerun=true
 {% endif %}
 
 {%- if memory.get('reasoning') %}
-**Execution Plan:** {{ memory.reasoning }}
+**Planning Chain of Thoughts:** {{ memory.reasoning }}
 {% endif %}
 
 {%- if memory.get('data') is not none %}
