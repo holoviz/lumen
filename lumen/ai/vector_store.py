@@ -167,10 +167,6 @@ class VectorStore(LLMUser):
         if isinstance(response, str):
             return response
         else:
-            print(
-                f"Used: {response.usage.prompt_tokens} total tokens ({response.usage.prompt_tokens_details.cached_tokens} cached) and output {response.usage.completion_tokens}"
-            )
-            print("\n\n")
             return response.choices[0].message.content
 
     @pn_cache
@@ -1059,7 +1055,7 @@ class DuckDBVectorStore(VectorStore):
             "class": self.embeddings.__class__.__module__ + "." + self.embeddings.__class__.__name__,
             "params": {}
         }
-        for param_name, param_obj in self.embeddings.param.objects().items():
+        for param_name in self.embeddings.param:
             if param_name not in ['name']:
                 value = getattr(self.embeddings, param_name)
                 if isinstance(value, (str, int, float, bool, list, dict)) or value is None:

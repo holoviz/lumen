@@ -60,13 +60,13 @@ class VectorMetaset:
                 continue
 
             vector_metadata = self.vector_metadata_map[table_slug]
-            context += f"\n\n{table_slug!r}\n\nSimilarity: ({vector_metadata.similarity:.3f})\n\n"
+
+            base_sql = truncate_string(vector_metadata.base_sql, max_length=200) if truncate else vector_metadata.base_sql
+            context += f"{table_slug!r}: {base_sql}\n"
 
             if vector_metadata.description:
-                context += f"Info: {vector_metadata.description}\n\n"
-
-            if vector_metadata.base_sql:
-                context += f"Base SQL: {vector_metadata.base_sql}\n\n"
+                desc = truncate_string(vector_metadata.description, max_length=100) if truncate else vector_metadata.description
+                context += f"Info: {desc}\n"
 
             max_length = 20
             cols_to_show = vector_metadata.columns or []
@@ -81,7 +81,7 @@ class VectorMetaset:
                 original_indices = list(range(len(cols_to_show)))
                 show_ellipsis = False
 
-            for i, (col, orig_idx) in enumerate(zip(cols_to_show, original_indices)):
+            for i, (col, orig_idx) in enumerate(zip(cols_to_show, original_indices, strict=False)):
                 if show_ellipsis and i == len(cols_to_show) // 2:
                     context += "...\n"
 
@@ -94,6 +94,7 @@ class VectorMetaset:
                     col_desc = truncate_string(col.description, max_length=100) if truncate else col.description
                     context += f": {col_desc}"
                 context += "\n"
+            context += "\n"
         return context
 
     @property
@@ -158,14 +159,12 @@ class SQLMetaset:
             if not vector_metadata:
                 continue
 
-            context += f"{table_slug!r} Similarity: ({vector_metadata.similarity:.3f})\n"
+            base_sql = truncate_string(vector_metadata.base_sql, max_length=200) if truncate else vector_metadata.base_sql
+            context += f"{table_slug!r}: {base_sql}\n"
 
             if vector_metadata.description:
                 desc = truncate_string(vector_metadata.description, max_length=100) if truncate else vector_metadata.description
                 context += f"Info: {desc}\n"
-
-            base_sql = truncate_string(vector_metadata.base_sql, max_length=200) if truncate else vector_metadata.base_sql
-            context += f"Base SQL: {base_sql}\n"
 
             sql_data: SQLMetadata = self.sql_metadata_map.get(table_slug)
             if sql_data:
@@ -188,7 +187,7 @@ class SQLMetaset:
                 original_indices = list(range(len(cols_to_show)))
                 show_ellipsis = False
 
-            for i, (col, orig_idx) in enumerate(zip(cols_to_show, original_indices)):
+            for i, (col, orig_idx) in enumerate(zip(cols_to_show, original_indices, strict=False)):
                 if show_ellipsis and i == len(cols_to_show) // 2:
                     context += "...\n"
 
@@ -217,8 +216,8 @@ class SQLMetaset:
                     context += f" `{schema_data}`"
 
                 context += "\n"
-
-        return context
+            context += "\n"
+        return context.replace("'type': 'str', ", "")  # Remove type info for lower token
 
     @property
     def max_context(self) -> str:

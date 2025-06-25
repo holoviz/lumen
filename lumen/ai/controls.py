@@ -658,7 +658,7 @@ class SourceControls(Viewer):
             for media_controls in all_media_controls:
                 if media_controls.extension.endswith(custom_table_extensions):
                     n_tables += int(table_upload_callbacks[media_controls.extension](
-                        media_controls.file_obj, media_controls.alias
+                        media_controls.file_obj, media_controls.alias, media_controls.filename
                     ))
                 elif media_controls.extension.endswith(TABLE_EXTENSIONS):
                     if source is None:

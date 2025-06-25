@@ -180,7 +180,7 @@ class Card(Viewer):
     @classmethod
     def from_spec(
         cls, spec: dict[str, Any] | str, filters: list[Filter] | None = None,
-        pipelines: dict[str, Pipeline] = {}
+        pipelines: dict[str, Pipeline] | None = None
     ) -> Card:
         """
         Creates a Card from a specification.
@@ -225,6 +225,8 @@ class Card(Viewer):
             view_spec = view.copy()
             if 'name' not in view_spec and name:
                 view_spec['name'] = name
+            if pipelines is None:
+                pipelines = {}
             if 'pipeline' in view_spec:
                 pname = view_spec.pop('pipeline')
                 if isinstance(pname, str) and pname in pipelines:
@@ -576,15 +578,15 @@ class Layout(Component, Viewer):
 
             # Only the controls for the first facet is shown so link
             # the other facets to the controls of the first
-            for v1, v2 in zip(linked_views, card.views):
+            for v1, v2 in zip(linked_views, card.views, strict=False):
                 if v1.controls:
                     v1.param.watch(partial(self._sync_component, v2), v1.controls)
                 if v1.pipeline is None or v2.pipeline is None:
                     continue
-                for t1, t2 in zip(v1.pipeline.sql_transforms, v2.pipeline.sql_transforms):
+                for t1, t2 in zip(v1.pipeline.sql_transforms, v2.pipeline.sql_transforms, strict=False):
                     if t1.controls:
                         t1.param.watch(partial(self._sync_component, t2), t1.controls)
-                for t1, t2 in zip(v1.pipeline.transforms, v2.pipeline.transforms):
+                for t1, t2 in zip(v1.pipeline.transforms, v2.pipeline.transforms, strict=False):
                     if t1.controls:
                         t1.param.watch(partial(self._sync_component, t2), t1.controls)
         self._view_controls = pn.Column(*controls, sizing_mode='stretch_width')
@@ -797,7 +799,7 @@ class Layout(Component, Viewer):
         warnings.warn(
             'Inlining source definitions in a layout is no longer supported. '
             'Please ensure you declare all sources as part of the global \'sources\' '
-            'field', DeprecationWarning
+            'field', DeprecationWarning, stacklevel=2
         )
         src_spec = Source.validate(source_spec, context)
         src_cls = Source._get_type(src_spec['type'])  # type: ignore
@@ -923,7 +925,7 @@ class Layout(Component, Viewer):
             view_spec['pipeline'] = view_pipeline.name
 
         if isinstance(views, dict):
-            spec['views'] = dict(zip(views, processed_views))
+            spec['views'] = dict(zip(views, processed_views, strict=False))
         else:
             spec['views'] = processed_views
 

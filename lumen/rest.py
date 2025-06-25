@@ -110,13 +110,13 @@ class ParameterEndpoint(TableEndpoint):
                 self.param.warning(f"Query {k}={v} could not be resolved "
                                    "data does not have queried column.")
             if isinstance(v, list):
-                filter_fn = lambda o: getattr(o, k) in v
+                filter_fn = lambda o, k=k, v=v: getattr(o, k) in v
             elif isinstance(v, tuple):
-                filter_fn = lambda o: v[0]<= getattr(o, k) <= v[1]
+                filter_fn = lambda o, k=k, v=v: v[0] <= getattr(o, k) <= v[1]
             else:
-                filter_fn = lambda o: getattr(o, k) == v
+                filter_fn = lambda o, k=k, v=v: getattr(o, k) == v
             objects = list(filter(objects, filter_fn))
-        return [o.param.serialize_parameters(self.columns) for o in self.objects]
+        return [o.param.serialize_parameters(self.columns) for o in objects]
 
     def schema(self):
         schema = super().schema()

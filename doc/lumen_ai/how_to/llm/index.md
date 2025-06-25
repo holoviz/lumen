@@ -26,8 +26,16 @@ Learn how to configure the Mistral as the LLM provider used by Lumen AI.
 :link: anthropic
 :link-type: doc
 
-Learn how to configure the OpenAI as the LLM provider used by Lumen AI.
+Learn how to configure Anthropic as the LLM provider used by Lumen AI.
 ![Anthropic Logo](../../../_static/logos/anthropic.png)
+:::
+
+:::{grid-item-card} Use Google Gemini
+:link: gemini
+:link-type: doc
+
+Learn how to configure Google Gemini as the LLM provider used by Lumen AI.
+![Google Logo](../../../_static/logos/google.png)
 :::
 
 :::{grid-item-card} Use Azure AI
@@ -55,7 +63,14 @@ Learn how to configure the Llama.cpp as the LLM provider used by Lumen AI.
 :link: endpoints
 :link-type: doc
 
-Learn how to configure the OpenAI as the LLM provider used by Lumen AI.
+Learn how to configure OpenAI compatible endpoints as the LLM provider used by Lumen AI.
+:::
+
+:::{grid-item-card} Configure Models for Agents
+:link: models_for_agents
+:link-type: doc
+
+Learn how to configure different models for different types of agents and tasks.
 :::
 
 ::::
@@ -67,7 +82,10 @@ hidden: true
 openai
 mistral
 anthropic
+gemini
 azure
 llama_cpp
+litellm
 endpoints
+models_for_agents
 ```

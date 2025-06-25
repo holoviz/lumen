@@ -170,7 +170,7 @@ class Config(Component):
             raise ValidationError(
                 f'Config template {path!r} module could not be imported '
                 f'errored with: {e}.', spec, path
-            )
+            ) from e
         if not hasattr(module, name):
             raise ValidationError(
                 f'Config template {name!r} was not found in {path!r} module.',
@@ -361,7 +361,7 @@ class Defaults(Component):
                         pobj._validate(default[p])
                     except Exception as e:
                         msg = f"The default for {obj_type.__name__} {p!r} parameter failed validation: {e!s}"
-                        raise ValidationError(msg, default, p)
+                        raise ValidationError(msg, default, p) from e
                 else:
                     msg = (
                         f'Default for {obj_type.__name__} {p!r} parameter cannot be set '
@@ -385,7 +385,7 @@ class Defaults(Component):
                     pobj._validate(download_defaults[p])
                 except Exception as e:
                     msg = f"The default for Download {p!r} parameter failed validation: {e!s}"
-                    raise ValidationError(msg, download_defaults, p)
+                    raise ValidationError(msg, download_defaults, p) from e
                 continue
             msg = (
                 f'Default for Download {p!r} parameter cannot be set as there '
@@ -866,7 +866,7 @@ class Dashboard(Component, Viewer):
             else:
                 items = [self._loading]
         elif isinstance(self._layout, pn.Tabs):
-            items = list(zip(self._layout._names, list(self._layout.objects))) # type: ignore
+            items = list(zip(self._layout._names, list(self._layout.objects), strict=False)) # type: ignore
             tab_name = items[self._layout.active][0]
             if name and tab_name != name:
                 return
@@ -933,7 +933,7 @@ class Dashboard(Component, Viewer):
         if event is not None:
             self._set_loading(event.obj.title, reloading=event.name == 'rerender')
         items = []
-        for layout, spec in zip(self.layouts, state.spec.get('layouts', [])):
+        for layout, spec in zip(self.layouts, state.spec.get('layouts', []), strict=False):
             if layout is None or isinstance(layout, Future):
                 panel = pn.layout.VSpacer(name=spec['title'])
             else:
@@ -1115,7 +1115,7 @@ class Dashboard(Component, Viewer):
         spec.update(super().to_spec(context=spec))
         spec['layouts'] = [
             tspec if layout is None else layout
-            for layout, tspec in zip(spec['layouts'], state.spec['layouts'])
+            for layout, tspec in zip(spec['layouts'], state.spec['layouts'], strict=False)
         ]
         return {k: v for k, v in spec.items() if v != {}}
 

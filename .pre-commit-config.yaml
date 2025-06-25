@@ -23,6 +23,20 @@ repos:
     hooks:
       - id: isort
         name: isort (python)
+-   repo: https://github.com/pre-commit/pygrep-hooks
+    rev: v1.10.0
+    hooks:
+      - id: python-no-log-warn
+      - id: python-use-type-annotations
+    # Custom hook to catch breakpoint() calls
+-   repo: local
+    hooks:
+      - id: no-breakpoint
+        name: No breakpoint() calls
+        entry: breakpoint\(
+        language: pygrep
+        files: \.py$
+        types: [python]
 -   repo: https://github.com/shssoichiro/oxipng
     rev: v9.1.3
     hooks:

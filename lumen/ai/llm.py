@@ -345,8 +345,8 @@ class LlamaCpp(Llm):
             return
 
         from huggingface_hub import hf_hub_download
-        print(f"{cls.__name__} provider is downloading following models:\n\n{json.dumps(huggingface_models, indent=2)}")
-        for model, kwargs in model_kwargs.items():
+        print(f"{cls.__name__} provider is downloading following models:\n\n{json.dumps(huggingface_models, indent=2)}")  # noqa: T201
+        for kwargs in model_kwargs.values():
             repo = kwargs.get('repo', kwargs.get('repo_id'))
             model_file = kwargs.get('model_file')
             hf_hub_download(repo, model_file)
@@ -628,11 +628,12 @@ class AnthropicAI(Llm):
 
         model_kwargs = self._get_model_kwargs(model_spec)
         model = model_kwargs.pop("model")
+        mode = model_kwargs.pop("mode", self.mode)
 
         llm = AsyncAnthropic(api_key=self.api_key, **model_kwargs)
 
         if response_model:
-            client = instructor.from_anthropic(llm)
+            client = instructor.from_anthropic(llm, mode=mode)
             return partial(client.messages.create, model=model, **self.create_kwargs)
         else:
             return partial(llm.messages.create, model=model, **self.create_kwargs)
@@ -647,6 +648,80 @@ class AnthropicAI(Llm):
     def _add_system_message(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
         input_kwargs["system"] = system
         return messages, input_kwargs
+
+
+class GoogleAI(Llm):
+    """
+    A LLM implementation that calls Google's Gemini models.
+    """
+
+    api_key = param.String(default=os.getenv("GEMINI_API_KEY"), doc="The Google API key.")
+
+    mode = param.Selector(default=Mode.GENAI_TOOLS, objects=[Mode.GENAI_TOOLS, Mode.GENAI_STRUCTURED_OUTPUTS])
+
+    temperature = param.Number(default=1, bounds=(0, 1), constant=True)
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "gemini-2.0-flash"},  # Cost-optimized, low latency
+        "reasoning": {"model": "gemini-2.5-flash-preview-05-20"},  # Thinking model, balanced price/performance
+    })
+
+    _supports_model_stream = True
+
+    @property
+    def _client_kwargs(self):
+        return {}
+
+    @classmethod
+    def _get_delta(cls, chunk: Any) -> str:
+        """Extract delta content from streaming response."""
+        if hasattr(chunk, 'text'):
+            return chunk.text
+        elif hasattr(chunk, 'content') and chunk.content:
+            return chunk.content
+        return ""
+
+    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
+        from google import genai
+        model_kwargs = self._get_model_kwargs(model_spec)
+        model = model_kwargs.pop("model")
+        mode = model_kwargs.pop("mode", self.mode)
+
+        llm = genai.Client(api_key=self.api_key, **model_kwargs)
+
+        if response_model:
+            client = instructor.from_genai(llm, mode=mode, use_async=True)
+            return partial(client.chat.completions.create, model=model, **self.create_kwargs)
+        else:
+            chat = llm.aio.models
+            if kwargs.pop("stream"):
+                return partial(chat.generate_content_stream, model=model, **self.create_kwargs)
+            else:
+                return partial(chat.generate_content, model=model, **self.create_kwargs)
+
+    async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
+        """Override to handle Gemini-specific message format conversion."""
+        try:
+            from google.genai.types import GenerateContentConfig
+        except ImportError as exc:
+            raise ImportError(
+                "Please install the `google-generativeai` package to use Google AI models. "
+                "You can install it with `pip install -U google-genai`."
+            ) from exc
+
+        client = await self.get_client(model_spec, **kwargs)
+
+        if kwargs.get("response_model"):
+            config = GenerateContentConfig(temperature=self.temperature)
+            return await client(messages=messages, config=config, **kwargs)
+        else:
+            kwargs.pop("stream")
+            system_instruction = next(
+                message["content"] for message in messages if message["role"] == "system"
+            )
+            config = GenerateContentConfig(temperature=self.temperature, system_instruction=system_instruction)
+            prompt = messages.pop(-1)["content"]
+            return await client(contents=[prompt], **kwargs)
 
 
 class AINavigator(OpenAI):
@@ -750,3 +825,106 @@ class WebLLM(Llm):
             raise e
         else:
             self._status.param.update(status="success", name='LLM Ready')
+
+
+class LiteLLM(Llm):
+    """
+    A LLM implementation using LiteLLM that supports multiple providers
+    through a unified interface.
+
+    LiteLLM allows you to call 100+ LLMs using the same OpenAI-compatible
+    input/output format, including providers like OpenAI, Anthropic, Cohere,
+    Hugging Face, Azure, Vertex AI, and more.
+    """
+
+    mode = param.Selector(default=Mode.TOOLS, objects=BASE_MODES)
+
+    temperature = param.Number(default=0.7, bounds=(0, 2), constant=True)
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "gpt-4o-mini"},
+        "reasoning": {"model": "claude-3-5-sonnet-latest"},
+        "sql": {"model": "gpt-4o-mini"},
+    }, doc="""
+        Model configurations by type. LiteLLM supports model strings like:
+        - OpenAI: "gpt-4", "gpt-4o-mini"
+        - Anthropic: "claude-3-5-sonnet-latest", "claude-3-haiku"
+        - Google: "gemini/gemini-pro", "gemini/gemini-1.5-flash"
+        - And many more with format: "provider/model" or just "model" for defaults
+    """)
+
+    litellm_params = param.Dict(default={}, doc="""
+        Additional parameters to pass to litellm.acompletion().
+        Examples: custom_llm_provider, api_base, api_version, etc.""")
+
+    enable_caching = param.Boolean(default=False, doc="""
+        Enable LiteLLM's built-in caching for repeated queries.""")
+
+    fallback_models = param.List(default=[], doc="""
+        List of fallback models to try if the primary model fails.
+        Example: ["gpt-4o-mini", "claude-3-haiku", "gemini/gemini-1.5-flash"]""")
+
+    router_settings = param.Dict(default={}, doc="""
+        Settings for LiteLLM Router for load balancing across multiple models.
+        Example: {"routing_strategy": "least-busy", "num_retries": 3}""")
+
+    _supports_stream = True
+    _supports_model_stream = True
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        # Configure caching if enabled
+        if self.enable_caching:
+            self._setup_caching()
+
+    def _setup_caching(self):
+        """Enable LiteLLM caching."""
+        import litellm
+
+        from litellm import Cache
+        litellm.cache = Cache()
+
+    @property
+    def _client_kwargs(self):
+        """Base kwargs for all LiteLLM calls."""
+        kwargs = {
+            "temperature": self.temperature,
+        }
+        kwargs.update(self.litellm_params)
+        return kwargs
+
+    def _get_model_string(self, model_spec: str | dict) -> str:
+        """Extract the model string from model spec."""
+        model_kwargs = self._get_model_kwargs(model_spec)
+        return model_kwargs.get("model")
+
+    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
+        """
+        Get a client callable that's compatible with instructor.
+
+        For LiteLLM, we create a wrapper around litellm.acompletion that
+        can be patched by instructor.
+        """
+        import litellm
+
+        model = self._get_model_string(model_spec)
+        model_kwargs = self._get_model_kwargs(model_spec)
+        model = model_kwargs.pop("model")
+        mode = model_kwargs.pop("mode", self.mode)
+
+        llm = litellm.acompletion
+        if response_model:
+            llm = instructor.from_litellm(llm, mode=mode)
+            return partial(llm.chat.completions.create, model=model, **self.create_kwargs)
+        else:
+            return partial(llm, model=model, **self._client_kwargs, **model_kwargs)
+
+    @classmethod
+    def _get_delta(cls, chunk) -> str:
+        """Extract delta content from streaming chunks."""
+        # LiteLLM returns OpenAI-compatible responses
+        if hasattr(chunk, 'choices') and chunk.choices:
+            choice = chunk.choices[0]
+            if hasattr(choice, 'delta') and hasattr(choice.delta, 'content'):
+                return choice.delta.content or ""
+        return ""

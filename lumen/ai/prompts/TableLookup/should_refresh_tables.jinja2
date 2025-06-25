@@ -9,6 +9,9 @@ First, analyze both queries and determine if the current query is likely to requ
 2. Is the current query asking about different tables that weren't mentioned in the previous query?
 3. Does the current query have a fundamentally different intent that would require different tables?
 4. Would the previously selected tables be insufficient to answer the current query?
+
+Return yes=True if the current query requires different tables than the previous query.
+Return yes=False if the current query can be answered using the same tables as the previous query.
 {% endblock %}
 
 {% block context %}

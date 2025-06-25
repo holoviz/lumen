@@ -61,7 +61,7 @@ if TYPE_CHECKING:
 
 
 
-def cached(method, locks=weakref.WeakKeyDictionary()):
+def cached(method, locks=None):
     """
     Adds caching to a Source.get query.
 
@@ -69,6 +69,8 @@ def cached(method, locks=weakref.WeakKeyDictionary()):
     -------
     Returns method wrapped in caching functionality.
     """
+    if locks is None:
+        locks = weakref.WeakKeyDictionary()
     @wraps(method)
     def wrapped(self, table, **query):
         if self._supports_sql and not self.cache_per_query and 'sql_transforms' in query:
@@ -106,7 +108,9 @@ def cached(method, locks=weakref.WeakKeyDictionary()):
     return wrapped
 
 
-def cached_schema(method, locks=weakref.WeakKeyDictionary()):
+def cached_schema(method, locks=None):
+    if locks is None:
+        locks = weakref.WeakKeyDictionary()
     @wraps(method)
     def wrapped(self, table: str | None = None, limit: int | None = None, shuffle: bool = False):
         if self in locks:
@@ -140,7 +144,9 @@ def cached_schema(method, locks=weakref.WeakKeyDictionary()):
     return wrapped
 
 
-def cached_metadata(method, locks=weakref.WeakKeyDictionary()):
+def cached_metadata(method, locks=None):
+    if locks is None:
+        locks = weakref.WeakKeyDictionary()
     @wraps(method)
     def wrapped(self, table: str | list[str] | None = None):
         if self in locks:
@@ -275,7 +281,7 @@ class Source(MultiTypeComponent):
     ) -> dict[str, Any]:
         warnings.warn(
             'Providing filters in a Source definition is deprecated, '
-            'please declare filters as part of a Pipeline.', DeprecationWarning
+            'please declare filters as part of a Pipeline.', DeprecationWarning, stacklevel=2
         )
         return cls._validate_dict_subtypes('filters', Filter, filter_specs, spec, context)
 
@@ -380,7 +386,7 @@ class Source(MultiTypeComponent):
             for table, tschema in json_schema.items():
                 if table in schema:
                     continue
-                for col, cschema in tschema.items():
+                for cschema in tschema.values():
                     if isinstance(cschema, int):
                         continue
                     if cschema.get('type') == 'string' and cschema.get('format') == 'datetime':
@@ -993,8 +999,8 @@ class BaseSQLSource(Source):
         if isinstance(self.tables, dict):
             try:
                 table = self.tables[self.normalize_table(table)]
-            except KeyError:
-                raise KeyError(f"Table {table} not found in {self.tables.keys()}")
+            except KeyError as e:
+                raise KeyError(f"Table {table} not found in {self.tables.keys()}") from e
         else:
             table = self.normalize_table(table)
 
@@ -1196,15 +1202,15 @@ class JSONSource(FileSource):
             for i in range(len(cross_product)//self.chunk_size):
                 start = i*self.chunk_size
                 chunk = cross_product[start: start+self.chunk_size]
-                tvalues = zip(*chunk)
+                tvalues = zip(*chunk, strict=False)
                 table = template
-                for m, tvals in zip(template_vars, tvalues):
+                for m, tvals in zip(template_vars, tvalues, strict=False):
                     tvals = ','.join([v for v in set(tvals)])
                     table = table.replace(m, quote(tvals))
                 tables.append(table)
         else:
             table = template
-            for m, tvals in zip(template_vars, zip(*cross_product)):
+            for m, tvals in zip(template_vars, zip(*cross_product, strict=False), strict=False):
                 values = ','.join([v for v in set(tvals)])
                 table = table.replace(m, quote(values))
             tables.append(table)

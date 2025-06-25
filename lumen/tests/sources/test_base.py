@@ -240,7 +240,7 @@ async def test_source_get_async_multiple_concurrent_calls(source):
         source.get('test', C='foo1'),
     ]
 
-    for result, expected in zip(results, expected_results):
+    for result, expected in zip(results, expected_results, strict=False):
         pd.testing.assert_frame_equal(result, expected)
 
 
