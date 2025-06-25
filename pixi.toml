@@ -74,6 +74,9 @@ llama-cpp-python = ">=0.3.0"
 [feature.ai-google.pypi-dependencies]
 google-generativeai = "*"
 
+[feature.ai-litellm.pypi-dependencies]
+litellm = "*"
+
 [feature.sql.dependencies]
 duckdb = "*"
 intake-sql = "*"

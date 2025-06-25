@@ -833,3 +833,106 @@ class WebLLM(Llm):
             raise e
         else:
             self._status.param.update(status="success", name='LLM Ready')
+
+
+class LiteLLM(Llm):
+    """
+    A LLM implementation using LiteLLM that supports multiple providers
+    through a unified interface.
+
+    LiteLLM allows you to call 100+ LLMs using the same OpenAI-compatible
+    input/output format, including providers like OpenAI, Anthropic, Cohere,
+    Hugging Face, Azure, Vertex AI, and more.
+    """
+
+    mode = param.Selector(default=Mode.TOOLS, objects=BASE_MODES)
+
+    temperature = param.Number(default=0.7, bounds=(0, 2), constant=True)
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "gpt-4o-mini"},
+        "reasoning": {"model": "claude-3-5-sonnet-latest"},
+        "sql": {"model": "gpt-4o-mini"},
+    }, doc="""
+        Model configurations by type. LiteLLM supports model strings like:
+        - OpenAI: "gpt-4", "gpt-4o-mini"
+        - Anthropic: "claude-3-5-sonnet-latest", "claude-3-haiku"
+        - Google: "gemini/gemini-pro", "gemini/gemini-1.5-flash"
+        - And many more with format: "provider/model" or just "model" for defaults
+    """)
+
+    litellm_params = param.Dict(default={}, doc="""
+        Additional parameters to pass to litellm.acompletion().
+        Examples: custom_llm_provider, api_base, api_version, etc.""")
+
+    enable_caching = param.Boolean(default=False, doc="""
+        Enable LiteLLM's built-in caching for repeated queries.""")
+
+    fallback_models = param.List(default=[], doc="""
+        List of fallback models to try if the primary model fails.
+        Example: ["gpt-4o-mini", "claude-3-haiku", "gemini/gemini-1.5-flash"]""")
+
+    router_settings = param.Dict(default={}, doc="""
+        Settings for LiteLLM Router for load balancing across multiple models.
+        Example: {"routing_strategy": "least-busy", "num_retries": 3}""")
+
+    _supports_stream = True
+    _supports_model_stream = True
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        # Configure caching if enabled
+        if self.enable_caching:
+            self._setup_caching()
+
+    def _setup_caching(self):
+        """Enable LiteLLM caching."""
+        import litellm
+
+        from litellm import Cache
+        litellm.cache = Cache()
+
+    @property
+    def _client_kwargs(self):
+        """Base kwargs for all LiteLLM calls."""
+        kwargs = {
+            "temperature": self.temperature,
+        }
+        kwargs.update(self.litellm_params)
+        return kwargs
+
+    def _get_model_string(self, model_spec: str | dict) -> str:
+        """Extract the model string from model spec."""
+        model_kwargs = self._get_model_kwargs(model_spec)
+        return model_kwargs.get("model")
+
+    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
+        """
+        Get a client callable that's compatible with instructor.
+
+        For LiteLLM, we create a wrapper around litellm.acompletion that
+        can be patched by instructor.
+        """
+        import litellm
+
+        model = self._get_model_string(model_spec)
+        model_kwargs = self._get_model_kwargs(model_spec)
+        model = model_kwargs.pop("model")
+        mode = model_kwargs.pop("mode", self.mode)
+
+        llm = litellm.acompletion
+        if response_model:
+            llm = instructor.from_litellm(llm, mode=mode)
+            return partial(llm.chat.completions.create, model=model, **self.create_kwargs)
+        else:
+            return partial(llm, model=model, **self._client_kwargs, **model_kwargs)
+
+    @classmethod
+    def _get_delta(cls, chunk) -> str:
+        """Extract delta content from streaming chunks."""
+        # LiteLLM returns OpenAI-compatible responses
+        if hasattr(chunk, 'choices') and chunk.choices:
+            choice = chunk.choices[0]
+            if hasattr(choice, 'delta') and hasattr(choice.delta, 'content'):
+                return choice.delta.content or ""
+        return ""
