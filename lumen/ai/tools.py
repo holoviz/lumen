@@ -244,26 +244,6 @@ class VectorLookupTool(Tool):
                 "template": PROMPTS_DIR / "VectorLookupTool" / "refine_query.jinja2",
                 "response_model": make_refined_query_model,
             },
-            "select_columns": {
-                "template": PROMPTS_DIR / "TableLookup" / "select_columns.jinja2",
-                "response_model": make_columns_selection,
-            },
-            "should_refresh_columns": {
-                "template": PROMPTS_DIR / "TableLookup" / "should_refresh_columns.jinja2",
-                "response_model": ThinkingYesNo,
-            },
-            "should_refresh_tables": {
-                "template": PROMPTS_DIR / "TableLookup" / "should_refresh_tables.jinja2",
-                "response_model": ThinkingYesNo,
-            },
-            "should_select_columns": {
-                "template": PROMPTS_DIR / "TableLookup" / "should_select_columns.jinja2",
-                "response_model": ThinkingYesNo,
-            },
-            "main": {
-                "template": PROMPTS_DIR / "DbtslLookup" / "main.jinja2",
-                "response_model": ThinkingYesNo,
-            },
         },
         doc="Dictionary of available prompts for the tool."
     )
@@ -289,6 +269,16 @@ class VectorLookupTool(Tool):
         if 'vector_store' not in params:
             params['vector_store'] = NumpyVectorStore(embeddings=NumpyEmbeddings())
         super().__init__(**params)
+
+    def _handle_ready_task_done(self, task):
+        """Properly handle exceptions from async ready tasks."""
+        try:
+            # This will re-raise the exception if one occurred
+            if task.exception():
+                raise task.exception()
+        except Exception as e:
+            log_debug(f"Error in ready task: {type(e).__name__} - {e!s}")
+            traceback.print_exc()
 
     def _format_results_for_refinement(self, results: list[dict[str, Any]]) -> str:
         """
@@ -542,16 +532,6 @@ class DocumentLookup(VectorLookupTool):
 
         return "\n".join(formatted_results)
 
-    def _handle_ready_task_done(self, task):
-        """Properly handle exceptions from the ready task."""
-        try:
-            # This will re-raise the exception if one occurred
-            if task.exception():
-                raise task.exception()
-        except Exception as e:
-            log_debug(f"Error in ready task: {type(e).__name__} - {e!s}")
-            traceback.print_exc()
-
     async def _update_vector_store(self, _, __, sources):
         # Build a list of document items for a single upsert operation
         items_to_upsert = []
@@ -564,25 +544,6 @@ class DocumentLookup(VectorLookupTool):
         if items_to_upsert:
             await self.vector_store.upsert(items_to_upsert)
 
-    async def respond(self, messages: list[Message], **kwargs: Any) -> str:
-        query = messages[-1]["content"]
-
-        # Perform search with refinement
-        results = await self._perform_search_with_refinement(query)
-        closest_doc_chunks = [
-            f"{result['text']} (Relevance: {result['similarity']:.1f} - "
-            f"Metadata: {result['metadata']})"
-            for result in results
-            if result['similarity'] >= self.min_similarity
-        ]
-
-        if not closest_doc_chunks:
-            return ""
-
-        message = "Please augment your response with the following context if relevant:\n"
-        message += "\n".join(f"- {doc}" for doc in closest_doc_chunks)
-        return message
-
 
 class TableLookup(VectorLookupTool):
     """
@@ -592,9 +553,31 @@ class TableLookup(VectorLookupTool):
 
     conditions = param.List(default=[
         "Best paired with ChatAgent for general conversation about data",
-        "Skip if sufficient context already exists in memory",
+        "Avoid if table discovery already performed for same request",
         "Not useful for data related queries",
     ])
+
+    prompts = param.Dict(
+        default={
+            "refine_query": {
+                "template": PROMPTS_DIR / "VectorLookupTool" / "refine_query.jinja2",
+                "response_model": make_refined_query_model,
+            },
+            "select_columns": {
+                "template": PROMPTS_DIR / "TableLookup" / "select_columns.jinja2",
+                "response_model": make_columns_selection,
+            },
+            "should_refresh_columns": {
+                "template": PROMPTS_DIR / "TableLookup" / "should_refresh_columns.jinja2",
+                "response_model": ThinkingYesNo,
+            },
+            "should_select_columns": {
+                "template": PROMPTS_DIR / "TableLookup" / "should_select_columns.jinja2",
+                "response_model": ThinkingYesNo,
+            },
+        },
+        doc="Dictionary of available prompts for the tool."
+    )
 
     exclusions = param.List(default=["dbtsl_metaset"])
 
@@ -611,10 +594,6 @@ class TableLookup(VectorLookupTool):
 
     enable_select_columns = param.Boolean(default=True, doc="""
         Whether to enable column subsetting to filter out irrelevant columns.""")
-
-    enable_table_validation = param.Boolean(default=True, doc="""
-        Whether to enable validation of tables between queries to determine
-        if the full TableLookup process needs to be rerun.""")
 
     include_metadata = param.Boolean(default=True, doc="""
         Whether to include table descriptions in the embeddings and responses.""")
@@ -682,16 +661,6 @@ class TableLookup(VectorLookupTool):
                     description += f"\n  Info: {table_description}"
             formatted_results.append(description)
         return "\n".join(formatted_results)
-
-    def _handle_ready_task_done(self, task):
-        """Properly handle exceptions from the ready task."""
-        try:
-            # This will re-raise the exception if one occurred
-            if task.exception():
-                raise task.exception()
-        except Exception as e:
-            log_debug(f"Error in ready task: {type(e).__name__} - {e!s}")
-            traceback.print_exc()
 
     async def _enrich_metadata(self, source, table_name: str):
         """Fetch metadata for a table and return enriched entry for batch processing."""
@@ -833,29 +802,6 @@ class TableLookup(VectorLookupTool):
             # Clean up sources_in_progress after tasks are done, even if there was an error
             if vector_store_id is not None and processed_sources:
                 self._cleanup_sources_in_progress(vector_store_id, processed_sources)
-
-    async def _should_refresh_tables(self, messages: list[dict[str, str]]) -> bool:
-        """
-        Determine if we should rerun the entire TableLookup process based on the new query.
-        """
-        # If no previous table info exists, we definitely need to run the full query
-        if self._previous_state is None:
-            return True
-
-        try:
-            result = await self._invoke_prompt(
-                "should_refresh_tables",
-                messages,
-                previous_state=self._previous_state,
-            )
-            return result.yes
-
-        except Exception as e:
-            # On any error, be safe and requery tables
-            with self._add_step(title="Table Validation Error") as step:
-                step.stream(f"Error checking if tables need to be requeried: {e}")
-                step.status = "failed"
-            return True
 
     async def _should_refresh_columns(self, messages: list[dict[str, str]]) -> bool:
         """
@@ -1111,7 +1057,6 @@ class IterativeTableLookup(TableLookup):
     """
 
     conditions = param.List(default=[
-        "Skip if sufficient context already exists in memory",
         "Useful for answering data queries",
         "Avoid for follow-up questions when existing data is sufficient",
         "Use only when existing information is insufficient for the current query",
@@ -1322,6 +1267,20 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
     DbtslLookup tool that creates a vector store of all available dbt semantic layers
     and responds with relevant metrics for user queries.
     """
+
+    prompts = param.Dict(
+        default={
+            "refine_query": {
+                "template": PROMPTS_DIR / "VectorLookupTool" / "refine_query.jinja2",
+                "response_model": make_refined_query_model,
+            },
+            "main": {
+                "template": PROMPTS_DIR / "DbtslLookup" / "main.jinja2",
+                "response_model": ThinkingYesNo,
+            },
+        },
+        doc="Dictionary of available prompts for the tool."
+    )
 
     dimension_fetch_timeout = param.Number(default=15, doc="""
         Maximum time in seconds to wait for a dimension values fetch operation.""")
