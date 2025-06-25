@@ -37,6 +37,7 @@ LLM_PROVIDERS = {
     'azure-mistral': 'AzureMistralAI',
     "ai-navigator": "AINavigator",
     'llama-cpp': 'LlamaCpp',
+    'litellm': 'LiteLLM',
 }
 
 
