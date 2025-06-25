@@ -1425,8 +1425,8 @@ class MCPAgent(Agent):
         """Get or create a client for the specified server URL."""
         try:
             from fastmcp import Client
-        except ImportError:
-            raise ImportError("Please install the fastmcp package to use MCP agents")
+        except ImportError as e:
+            raise ImportError("Please install the fastmcp package to use MCP agents") from e
 
         if server_url not in self._clients:
             self._clients[server_url] = Client(server_url)

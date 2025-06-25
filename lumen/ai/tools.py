@@ -1570,8 +1570,8 @@ class MCPLookupTool(VectorLookupTool):
         """Get or create a client for the specified server."""
         try:
             from fastmcp import Client
-        except ImportError:
-            raise ImportError("Please install the fastmcp package to use MCPLookupTool")
+        except ImportError as e:
+            raise ImportError("Please install the fastmcp package to use MCPLookupTool") from e
 
         if server.name not in self._mcp_clients:
             # Create a new client for this server
