@@ -16,7 +16,7 @@ import yaml
 from panel.chat import ChatInterface
 from panel.layout import Column
 from panel.viewable import Viewable, Viewer
-from pydantic import BaseModel, create_model
+from pydantic import AnyUrl, BaseModel, create_model
 from pydantic.fields import FieldInfo
 
 from ..base import Component
@@ -38,8 +38,8 @@ from .controls import RetryControls, SourceControls
 from .llm import Llm, Message
 from .memory import _Memory
 from .models import (
-    CheckContext, DbtslQueryParams, PartialBaseModel, RetrySpec, Sql,
-    VegaLiteSpec,
+    CheckContext, DbtslQueryParams, MCPOperations, PartialBaseModel, RetrySpec,
+    Sql, VegaLiteSpec,
 )
 from .schemas import get_metaset
 from .services import DbtslMixin
@@ -194,7 +194,8 @@ class SourceAgent(Agent):
         table alias, add or modify the `source` in memory, and return a bool
         (True if the table was successfully uploaded).""")
 
-    purpose = param.String(default="The SourceAgent allows a user to upload new datasets, tables, or documents.")
+    purpose = param.String(default="""
+        The SourceAgent allows a user to upload new datasets, tables, or documents if requested.""")
 
     requires = param.List(default=[], readonly=True)
 
@@ -1375,6 +1376,179 @@ class VegaLiteAgent(BaseViewAgent):
             # because those result in an blank plot without error
             vega_spec["params"] = [{"bind": "scales", "name": "grid", "select": "interval"}]
         return {"spec": vega_spec, "sizing_mode": "stretch_both", "min_height": 300, "max_width": 1200}
+
+
+class MCPAgent(Agent):
+    """
+    Agent for Model Context Protocol (MCP) operations.
+
+    Intelligently selects and executes relevant MCP tools and/or resources
+    based on user queries using LLM-guided selection.
+    """
+
+    conditions = param.List(
+        default=[
+            "Use when user wants to interact with MCP capabilities",
+            "For both tool execution and resource reading",
+            "When mcp_metaset contains tools or resources",
+        ]
+    )
+
+    purpose = param.String(default="""
+        Intelligently selects and executes MCP tools and/or reads MCP resources
+        based on user queries. Can handle both operations in a single interaction.""")
+
+    prompts = param.Dict(
+        default={
+            "main": {
+                "template": PROMPTS_DIR / "MCPAgent" / "main.jinja2",
+            },
+            "select_operations": {
+                "template": PROMPTS_DIR / "MCPAgent" / "select_operations.jinja2",
+                "response_model": MCPOperations
+            },
+        }
+    )
+
+    requires = param.List(default=["mcp_metaset"], readonly=True)
+    provides = param.List(default=["data"], readonly=True)
+
+    _clients = {}
+
+    @classmethod
+    async def applies(cls, memory: _Memory) -> bool:
+        """Check if this agent should be used based on available MCP capabilities."""
+        metaset = memory.get("mcp_metaset")
+        return metaset is not None and (bool(metaset.tools) or bool(metaset.resources))
+
+    async def _get_client(self, server_url: str, transport_type: str = "auto"):
+        """Get or create a client for the specified server URL."""
+        try:
+            from fastmcp import Client
+        except ImportError as e:
+            raise ImportError("Please install the fastmcp package to use MCP agents") from e
+
+        if server_url not in self._clients:
+            self._clients[server_url] = Client(server_url)
+
+        return self._clients[server_url]
+
+    def _process_mcp_content(self, content):
+        """Process MCP content objects into readable format."""
+        if isinstance(content, list):
+            processed = []
+            for item in content:
+                if hasattr(item, 'text'):
+                    processed.append(item.text)
+                elif hasattr(item, 'data'):
+                    processed.append(f"[{type(item).__name__}]: {getattr(item, 'mimeType', 'unknown')}")
+                else:
+                    processed.append(str(item))
+            return processed
+        elif hasattr(content, 'text'):
+            return content.text
+        elif hasattr(content, 'data'):
+            return f"[{type(content).__name__}]: {getattr(content, 'mimeType', 'unknown')}"
+        else:
+            return str(content)
+
+    def _format_content_for_display(self, content):
+        """Format content for user-friendly display."""
+        if isinstance(content, list):
+            return "\n".join(map(str, content))
+        try:
+            parsed = json.loads(content)
+            return json.dumps(parsed, indent=2)
+        except Exception:
+            return str(content)
+
+    async def respond(
+        self,
+        messages: list[Message],
+        render_output: bool = False,
+        step_title: str | None = None,
+    ) -> Any:
+        """Execute MCP operations based on the user query."""
+        # Get the MCPMetaset from memory
+        metaset = self._memory.get("mcp_metaset")
+        if not metaset:
+            raise ValueError("No MCP metaset found in memory")
+
+        available_tools = metaset.tools
+        available_resources = metaset.resources
+
+        if not available_tools and not available_resources:
+            return "No MCP tools or resources are available."
+
+        results = {}
+
+        with self._add_step(title="Processing MCP capabilities") as step:
+            # Use LLM to select operations
+            selection = await self._invoke_prompt(
+                "select_operations",
+                messages,
+                metaset=metaset,
+            )
+
+            step.stream(selection.chain_of_thought)
+            if selection.selected_tools:
+                step.stream(f"\nExecuting {len(selection.selected_tools)} selected tools...")
+                for tool_selection in selection.selected_tools:
+                    tool_name = tool_selection.tool_name
+                    parameters = tool_selection.parameters
+
+                    if tool_name in available_tools:
+                        tool = available_tools[tool_name]
+                        try:
+                            client = await self._get_client(tool.server_url)
+                            async with client:
+                                result = await client.call_tool(tool_name, parameters)
+                            processed_result = self._process_mcp_content(result)
+                            results[f"tool_{tool_name}"] = processed_result
+                            step.stream(f"\n✓ Executed tool: {tool_name}")
+                        except Exception as e:
+                            step.stream(f"\n✗ Error executing tool {tool_name}: {e}")
+                            results[f"tool_{tool_name}"] = {"error": str(e)}
+
+            if selection.selected_resources:
+                step.stream(f"\nReading {len(selection.selected_resources)} selected resources...")
+                for resource_uri in selection.selected_resources:
+                    if AnyUrl(resource_uri) in available_resources:
+                        resource = available_resources[AnyUrl(resource_uri)]
+                        try:
+                            client = await self._get_client(resource.server_url)
+                            async with client:
+                                content_result = await client.read_resource(resource_uri)
+                            processed_result = self._process_mcp_content(content_result)
+                            results[f"resource_{resource_uri}"] = processed_result
+                            step.stream(f"\n✓ Read resource: {resource_uri}")
+                        except Exception as e:
+                            step.stream(f"\n✗ Error reading resource {resource_uri}: {e}")
+                            results[f"resource_{resource_uri}"] = {"error": str(e)}
+
+            if results:
+                for operation, result in results.items():
+                    formatted_result = self._format_content_for_display(result)
+                    stream_details(
+                        formatted_result,
+                        step,
+                        title=f"MCP {operation.replace('_', ' ').title()} Result",
+                        auto=False
+                    )
+                step.success_title = f"Successfully processed {len(results)} MCP operations"
+            else:
+                step.failed_title = "No MCP operations were executed"
+                return "No relevant MCP operations could be performed."
+
+        self._memory["data"] = {
+            "operations": list(results.keys()),
+            "results": results
+        }
+        system_prompt = await self._render_prompt("main", messages)
+        return await self._stream(
+            messages,
+            system_prompt=system_prompt
+        )
 
 
 class AnalysisAgent(LumenBaseAgent):
