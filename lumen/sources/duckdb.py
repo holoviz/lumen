@@ -267,13 +267,17 @@ class DuckDBSource(BaseSQLSource):
             try:
                 self._connection.execute(table_expr)
             except duckdb.CatalogException as e:
+                original_e = e
                 pattern = r"Table with name\s(\S+)"
                 match = re.search(pattern, str(e))
                 if match and isinstance(self.tables, dict):
                     name = match.group(1)
                     real = self.tables[name] if name in self.tables else self.tables[name.strip('"')]
                     table_expr = SQLSelectFrom(sql_expr=self.sql_expr, tables={name: real}).apply(table_expr)
-                    self._connection.execute(table_expr)
+                    try:
+                        self._connection.execute(table_expr)
+                    except Exception as e:
+                        raise original_e from e
                 else:
                     raise e
         return source

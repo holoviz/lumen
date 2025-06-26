@@ -47,37 +47,46 @@ class Sql(BaseModel):
     )
 
 
-class CheckContext(BaseModel):
-    information_completeness: str = Field(
+class CheckContext(PartialBaseModel):
+    query_complexity: Literal["direct", "discovery_required", "complex_analysis"] = Field(
         description="""
-        Concisely explain whether the current schema overview provides sufficient
-        information to answer the user's question. If table columns haven't been explored
-        yet AND the query requires understanding the data structure (not just displaying it),
-        mention that column structure needs to be examined first.
+        Classify the query complexity:
+        - "direct": Simple display, count, or queries with standard/obvious values
+        - "discovery_required": Queries needing unknown entity values or name variations
+        - "complex_analysis": Multi-step analysis requiring multiple discovery phases
+        """
+    )
+
+    efficient_plan: str = Field(
+        description="""
+        For discovery queries: Describe the strategy for efficient token usage and data cleaning.
+        - Identify which columns require targeted value exploration
+        - Specify suitable LIMIT values (1-2 for schema inspection, 3-10 for value discovery, 100000 for final answers, 1000000 if user wants full table display)
+        - Determine if WHERE clauses with pattern matching can narrow discovery scope
+        - Ensure NULL values are filtered out using IS NOT NULL conditions
+        - Include data cleaning assessment: check for invalid values (-9999, 'N/A', empty strings), formatting issues (currency symbols, commas), and subtitle rows requiring OFFSET
+        - Consider that each query result will be added to the conversation context
+        """
+    )
+
+    discovery_needed: bool = Field(
+        description="""
+        True if the query requires schema verification or value discovery before answering.
+        False ONLY for simple table display queries ("show table", "display data").
+        Most queries need at least schema verification to check column names and enum values.
         """
     )
 
     discovery_steps: list[str] = Field(
         default_factory=list,
         description="""
-        Natural language steps describing what data to find to answer the user's question.
-        Try to think of steps that can map to SQL queries (but do not write SQL),
-        so if there are multiple steps that can be expressed as a single SQL query,
-        combine them into one step. Do not mention assume values; keep the steps vague.
+        ONLY provide steps if discovery_needed=True
 
-        For the first iteration with no previous SQL plan results:
-        - If the user wants to simply display/show a table: provide only the display step
-        - If the user needs specific analysis requiring unknown columns: start with structure exploration
-        - If the query involves filtering, calculations, or specific column operations: include exploration first
-
-        When exploration is needed, examine both column structure AND actual values to understand:
-        - What columns are available and their data types
-        - What actual values exist (e.g., "United States" vs "United States of America")
-        - Value patterns, formats, and variations in the data
-
-        Write in plain English describing WHAT to find, not HOW. Preserve all important
-        context from the user's question (entities, filters, constraints). Keep steps to a minimum,
-        and the LAST step must directly answer the user's question with full context preserved.
+        For direct queries, leave this empty - system should answer immediately.
+        Focus on entities mentioned in user's query. Use WHERE pattern matching when possible.
+        Always exclude NULL values with IS NOT NULL conditions.
+        Include data cleaning step when needed to assess data quality and identify cleaning requirements.
+        The LAST step must directly answer the user's question.
         """
     )
 
@@ -135,7 +144,10 @@ def make_plan_models(agents: list[str], tools: list[str]):
         steps=(
             list[step],
             FieldInfo(
-                description="A list of steps to perform that will solve user query. Ensure you include ALL the steps needed to solve the task, matching the chain of thought."
+                description="""
+                A list of steps to perform that will solve user query. Each step should use a DIFFERENT actor.
+                Ensure you include ALL the steps needed to solve the task, but avoid redundant consecutive steps.
+                """
             )
         )
     )
@@ -286,8 +298,7 @@ class QueryCompletionValidation(PartialBaseModel):
     """Validation of whether the executed plan answered the user's query"""
 
     chain_of_thought: str = Field(
-        description="Explain your reasoning succinctly as to why you will be answering yes or no.")
-
+        description="Explain your reasoning succinctly (in a sentence or two) as to why you will be answering yes or no.")
     missing_elements: list[str] = Field(
         default_factory=list,
         description="List of specific elements from the user's query that weren't addressed"

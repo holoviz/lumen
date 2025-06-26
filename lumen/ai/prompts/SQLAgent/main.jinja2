@@ -10,57 +10,40 @@ Write a SQL query for the user's data transformation request, focusing on intent
 - NULL handling: Exclude NULLs unless specified otherwise
 - Performance: Use LIMIT 100000 if unspecified, efficient ORDER BY, filter early
 - Single SQL query: Provide a single, complete query that answers the user's request
+- Subtitle rows: If dataset has subtitle/unit rows (e.g., "LAT" then "degree_N"), use OFFSET to skip them
 
-## Table Structure Exploration:
-- **Discovery/exploration queries**: Use `SELECT * LIMIT 1-5` to examine structure and sample values
-- **Final answer queries**: Use `LIMIT 100000` or appropriate limits for the user's needs
-- Use `SELECT DISTINCT "column" LIMIT 10` to explore available values in specific columns
-- When exploring values, use small limits to understand data patterns, not retrieve results
+## Query Strategy:
 
-## SQL Plan Query Rules:
-- Never assume values exist: Only filter by values confirmed in previous SQL plan results.
-- Explore first: Use `SELECT DISTINCT ... ILIKE '%pattern%'` to discover available values before filtering.
-- Final step performs analysis: Last step in plan should perform the actual calculations/analysis requested.
-- Progressive approach: Each step builds on previous results, with final step answering the user's question.
+**Step Limits:**
+- Structure discovery: LIMIT 1-2
+- Value discovery: LIMIT 3-10
+- Final answer: LIMIT 100000
+- **CRITICAL: Table/file display commands: NO LIMIT WHATSOEVER (show complete contents)**
 
-## Query Structure:
-- Single table: Use directly
-- Multiple tables: JOIN with proper value alignment (transform acronyms/dates as needed)
-- Complex logic: Use CTEs only when multiple transformations required
-- Data cleaning: Remove invalid values (-9999, empty strings, etc.)
-- Date handling: Combine separate year/month/day columns if needed
-- Plotting: Select extra columns for visualization flexibility
+**Rules:**
+- Use pattern matching: `WHERE "column" ILIKE '%pattern%'`
+- Exclude NULLs: `AND "column" IS NOT NULL`
+- Only filter by confirmed values from previous results
+- Progressive approach: each step builds on previous
+- Clean invalid values (-9999, empty strings)
+- Use CTEs only when necessary
 {%- endblock %}
 
 {% block examples %}
-Example queries:
-
-**For discovery/exploration (small limits for understanding structure):**
-```sql
--- Examine table structure and sample data
-SELECT * FROM "table_name" LIMIT 2;
-```
+**Examples:**
 
 ```sql
--- Explore available values in a column
-SELECT DISTINCT "country_name"
-FROM "table_name"
-WHERE "country_name" IS NOT NULL
-ORDER BY "country_name"
-LIMIT 10;
-```
+-- Structure (LIMIT 1-2)
+SELECT * FROM "table" LIMIT 1;
 
-**For final analysis (appropriate limits for user needs):**
-```sql
--- Answer user's question with full results
-SELECT "column_name", COUNT(*) AS "count"
-FROM "table_name"
-WHERE "text_column" = 'value'
-  AND "category" IN ('option1', 'option2')
-  AND "name" ILIKE '%pattern%'
-GROUP BY "column_name"
-ORDER BY "count" DESC
-LIMIT 100000;
+-- Discovery (LIMIT 3-10)
+SELECT DISTINCT "column" FROM "table"
+WHERE "column" ILIKE '%pattern%' AND "column" IS NOT NULL LIMIT 10;
+
+-- Analysis (LIMIT 100000)
+SELECT "name", COUNT(*) AS "count" FROM "table"
+WHERE "type" = 'value' AND "name" IS NOT NULL
+GROUP BY "name" ORDER BY "count" DESC LIMIT 100000;
 ```
 {% endblock %}
 
@@ -80,43 +63,52 @@ Additional instructions:
 
 Step {{ step_number }} of SQL Plan: {{ current_step }}
 
-{%- if previous_sql_plan_results is defined and previous_sql_plan_results %}
-**Previous SQL Plan Results:**
-{{ previous_sql_plan_results }}
+## Step Guidance:
 
-**Based on previous SQL plan results:**
-- Only filter by values that were confirmed to exist in the results above
-- Build upon previous discoveries to answer the user's question
+{%- if query_complexity == "direct" %}
+{%- if "show" in current_step.lower() and ("table" in current_step.lower() or "data" in current_step.lower() or ".parquet" in current_step.lower() or ".csv" in current_step.lower() or ".json" in current_step.lower() or "display" in current_step.lower()) %}
+**Show Table/File:** DO NOT USE ANY LIMIT - Display complete table/file contents as requested by user
+{%- elif "structure" in current_step.lower() or "examine" in current_step.lower() or "sample" in current_step.lower() %}
+**Structure Query:** LIMIT 1-2 for schema understanding only
 {%- else %}
-**First SQL Plan Step:**
-- Execute the current step as specified in the SQL plan
-- If this is a discovery/exploration step: Use small LIMIT (5-10) to understand structure and values
-- If this is the final answer step: Use appropriate LIMIT for user's needs (100000+ for full results)
+**Direct Query:** LIMIT 100000 for analysis and aggregations
+{%- endif %}
+{%- elif query_complexity == "discovery_required" %}
+**Discovery Query:** LIMIT 3-10 for targeted value exploration, focus on query entities
+{%- elif query_complexity == "complex_analysis" %}
+**Analysis Query:** LIMIT 100000, use all previously discovered values
+{%- else %}
+**Default:** Use appropriate LIMIT based on step intent:
+- Structure: LIMIT 1-2
+- Discovery: LIMIT 3-10
+- Final analysis: LIMIT 100000
 {%- endif %}
 
-{% if errors is defined and errors %}
-{{ memory["sql_metaset"].full_context }}
-{% else %}
+{%- if previous_sql_plan_results is defined and previous_sql_plan_results %}
+**Previous Results:**
+{{ previous_sql_plan_results }}
+
+Use confirmed values only, build on discoveries.
+{%- else %}
+**First Step:** Execute as specified, use appropriate LIMIT.
+{%- endif %}
+
 {{ memory["sql_metaset"].table_context }}
-{% endif %}
 {%- endblock -%}
 
 {%- block errors %}
 {{ super() }}
 {% if errors is defined and errors %}
-**Common syntax error fixes:**
-- If the error mentions `syntax error at or near "%"` or similar string patterns, you likely forgot to quote string literals with single quotes
-- If the error is `syntax error at or near ")"`, double check you used table names verbatim, i.e. `read_parquet('table_name.parq')` instead of `table_name`
-- Ensure no inline comments are present
-- **Double-check that ALL string values are enclosed in single quotes ('')**
-
-Here are some common fixes for errors:
-
-- Handle NULL values using functions like COALESCE or IS NULL.
-- If it's a date column (excluding individual year/month/day integers) date, cast to date using appropriate syntax, e.g.
-CAST or TO_DATE
-- Capture only the required numeric values while removing all whitespace, like `(\d+)`, or remove characters like `$`, `%`, `,`, etc, only if needed.
-- Ensure robust type conversion using functions like TRY_CAST to avoid query failures due to invalid data.
+**Error Fixes:**
+- Quote string literals with single quotes
+- Use table names verbatim: `read_parquet('file.parq')`
+- No inline comments
+- Handle NULLs with COALESCE/IS NULL
+- Cast dates with CAST/TO_DATE
+- Clean numeric values, use TRY_CAST for safety
+- If cannot cast string, it might be due to the second row being a subtitle/unit row, so use OFFSET to skip it
+- Use TRY_CAST for numeric conversions to avoid errors
+- Only ONE limit clause is allowed, even when using UNION
 
 Casting Examples:
 
@@ -147,7 +139,7 @@ SELECT
 FROM sales_summary
 WHERE total_sales > 0
 ORDER BY total_sales DESC
-LIMIT 5;
+LIMIT 100000;
 ```
 
 - BAD:
