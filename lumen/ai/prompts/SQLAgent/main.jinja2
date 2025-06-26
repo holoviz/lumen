@@ -10,14 +10,15 @@ Write a SQL query for the user's data transformation request, focusing on intent
 - NULL handling: Exclude NULLs unless specified otherwise
 - Performance: Use LIMIT 100000 if unspecified, efficient ORDER BY, filter early
 - Single SQL query: Provide a single, complete query that answers the user's request
+- Subtitle rows: If dataset has subtitle/unit rows (e.g., "LAT" then "degree_N"), use OFFSET to skip them
 
 ## Query Strategy:
 
 **Step Limits:**
-- Structure discovery: LIMIT 1-3
-- Value discovery: LIMIT 5-10
+- Structure discovery: LIMIT 1-2
+- Value discovery: LIMIT 3-10
 - Final answer: LIMIT 100000
-- **Table display: No limit (show full contents)**
+- **CRITICAL: Table/file display commands: NO LIMIT WHATSOEVER (show complete contents)**
 
 **Rules:**
 - Use pattern matching: `WHERE "column" ILIKE '%pattern%'`
@@ -32,10 +33,10 @@ Write a SQL query for the user's data transformation request, focusing on intent
 **Examples:**
 
 ```sql
--- Structure (LIMIT 1-3)
-SELECT * FROM "table" LIMIT 3;
+-- Structure (LIMIT 1-2)
+SELECT * FROM "table" LIMIT 1;
 
--- Discovery (LIMIT 5-10)
+-- Discovery (LIMIT 3-10)
 SELECT DISTINCT "column" FROM "table"
 WHERE "column" ILIKE '%pattern%' AND "column" IS NOT NULL LIMIT 10;
 
@@ -64,16 +65,23 @@ Step {{ step_number }} of SQL Plan: {{ current_step }}
 
 ## Step Guidance:
 
-{%- if "show" in current_step.lower() and ("table" in current_step.lower() or "data" in current_step.lower()) %}
-**Show Table:** No limit for table display, show full contents
+{%- if query_complexity == "direct" %}
+{%- if "show" in current_step.lower() and ("table" in current_step.lower() or "data" in current_step.lower() or ".parquet" in current_step.lower() or ".csv" in current_step.lower() or ".json" in current_step.lower() or "display" in current_step.lower()) %}
+**Show Table/File:** DO NOT USE ANY LIMIT - Display complete table/file contents as requested by user
 {%- elif "structure" in current_step.lower() or "examine" in current_step.lower() or "sample" in current_step.lower() %}
-**Structure:** LIMIT 1-3, understand schema only
-{%- elif "explore" in current_step.lower() or "discover" in current_step.lower() or "distinct" in current_step.lower() %}
-**Discovery:** LIMIT 5-10, pattern matching, focus on query entities
-{%- elif "answer" in current_step.lower() or "final" in current_step.lower() or "count" in current_step.lower() %}
-**Analysis:** LIMIT 100000, use all previous discoveries
+**Structure Query:** LIMIT 1-2 for schema understanding only
 {%- else %}
-**Default:** Use appropriate LIMIT based on intent
+**Direct Query:** LIMIT 100000 for analysis and aggregations
+{%- endif %}
+{%- elif query_complexity == "discovery_required" %}
+**Discovery Query:** LIMIT 3-10 for targeted value exploration, focus on query entities
+{%- elif query_complexity == "complex_analysis" %}
+**Analysis Query:** LIMIT 100000, use all previously discovered values
+{%- else %}
+**Default:** Use appropriate LIMIT based on step intent:
+- Structure: LIMIT 1-2
+- Discovery: LIMIT 3-10
+- Final analysis: LIMIT 100000
 {%- endif %}
 
 {%- if previous_sql_plan_results is defined and previous_sql_plan_results %}
@@ -85,11 +93,7 @@ Use confirmed values only, build on discoveries.
 **First Step:** Execute as specified, use appropriate LIMIT.
 {%- endif %}
 
-{% if errors is defined and errors %}
-{{ memory["sql_metaset"].full_context }}
-{% else %}
 {{ memory["sql_metaset"].table_context }}
-{% endif %}
 {%- endblock -%}
 
 {%- block errors %}
@@ -102,6 +106,9 @@ Use confirmed values only, build on discoveries.
 - Handle NULLs with COALESCE/IS NULL
 - Cast dates with CAST/TO_DATE
 - Clean numeric values, use TRY_CAST for safety
+- If cannot cast string, it might be due to the second row being a subtitle/unit row, so use OFFSET to skip it
+- Use TRY_CAST for numeric conversions to avoid errors
+- Only ONE limit clause is allowed, even when using UNION
 
 Casting Examples:
 
@@ -132,7 +139,7 @@ SELECT
 FROM sales_summary
 WHERE total_sales > 0
 ORDER BY total_sales DESC
-LIMIT 5;
+LIMIT 100000;
 ```
 
 - BAD:

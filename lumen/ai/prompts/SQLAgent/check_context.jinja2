@@ -7,7 +7,8 @@ Determine discovery steps needed to answer the user's query.
 ## Query Classification:
 
 DIRECT QUERIES (Quick schema check + answer):
-- Table display: "show table", "display data", "show me the table"
+- Table display: "show table", "display data", "show me the table", "show [filename]"
+- File display: "show ibtracs.last3years.parquet", "show data.csv", "display [filename]"
 - Simple aggregations: "count rows", "sum totals", "top athletes"
 - Structure queries: "what columns", "describe table"
 - Ranking/filtering: "most/least", "top N"
@@ -29,10 +30,17 @@ ENTITY DISCOVERY QUERIES (Focused discovery needed):
 ## Discovery Rules:
 
 Query Limits:
-- Structure: LIMIT 3-5
-- Value discovery: LIMIT 20-50
+- Structure: LIMIT 1-2
+- Value discovery: LIMIT 3-10
 - Final answers: No limit for SHOW commands
 - Always exclude NULLs
+
+Data Cleaning Discovery:
+- Check for invalid values (-9999, empty strings, 'N/A', 'NULL')
+- Identify data type inconsistencies (mixed text/numbers)
+- Look for formatting issues (currency symbols, commas in numbers)
+- Detect subtitle/unit rows that need OFFSET
+- Verify date formats and null patterns
 
 Pattern Discovery:
 ```sql
@@ -44,9 +52,11 @@ LIMIT 20;
 
 ## Step Planning:
 1. Direct: Single step with final answer
-2. Discovery: Structure check → Value discovery → Final analysis
+2. Discovery: Structure check → Data cleaning assessment → Value discovery → Final analysis
 3. Complex: 2-3 focused steps maximum
 4. Be token conscious - results inject back into context
+5. Include data cleaning step when detecting inconsistencies or invalid values
+6. Use minimal LIMIT values for discovery to reduce token usage
 
 {% endblock %}
 
@@ -56,12 +66,14 @@ Examples:
 Direct (No steps needed):
 "Show me the data table" → ['Display the data table']
 "Show the table" → ['Display the table contents']
+"Show customers.csv" → ['Display customers.csv']
 
 Analysis (Structure check first):
-"Which entity has the most metric?" → ['Check structure (LIMIT 3)', 'Count metric by entity']
+"Which entity has the most metric?" → ['Check structure (LIMIT 1-2)', 'Count metric by entity']
 
 Discovery:
-"Show records for [Name]" → ['Find name variations (LIMIT 30)', 'Display matching records']
+"Show records for [Name]" → ['Find name variations (LIMIT 10)', 'Display matching records']
+"Analyze sales data" → ['Check structure (LIMIT 1-2)', 'Assess data quality/cleaning needs (LIMIT 10)', 'Perform analysis']
 {% endblock %}
 
 {% block context %}
@@ -85,8 +97,8 @@ Guide:
 - Always verify schema first
 
 Limits:
-- Structure: LIMIT 3-5
-- Discovery: LIMIT 20-50
+- Structure: LIMIT 1-2
+- Discovery: LIMIT 3-10
 - Final: No limit for SHOW
 {%- endif %}
 

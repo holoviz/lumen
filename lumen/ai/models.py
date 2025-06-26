@@ -59,11 +59,12 @@ class CheckContext(PartialBaseModel):
 
     efficient_plan: str = Field(
         description="""
-        For discovery queries: Describe the strategy for efficient token usage.
+        For discovery queries: Describe the strategy for efficient token usage and data cleaning.
         - Identify which columns require targeted value exploration
-        - Specify suitable LIMIT values (1-3 for schema inspection, 5-10 for value discovery, 100000 for final answers, 1000000 if user wants full table display)
+        - Specify suitable LIMIT values (1-2 for schema inspection, 3-10 for value discovery, 100000 for final answers, 1000000 if user wants full table display)
         - Determine if WHERE clauses with pattern matching can narrow discovery scope
         - Ensure NULL values are filtered out using IS NOT NULL conditions
+        - Include data cleaning assessment: check for invalid values (-9999, 'N/A', empty strings), formatting issues (currency symbols, commas), and subtitle rows requiring OFFSET
         - Consider that each query result will be added to the conversation context
         """
     )
@@ -84,6 +85,7 @@ class CheckContext(PartialBaseModel):
         For direct queries, leave this empty - system should answer immediately.
         Focus on entities mentioned in user's query. Use WHERE pattern matching when possible.
         Always exclude NULL values with IS NOT NULL conditions.
+        Include data cleaning step when needed to assess data quality and identify cleaning requirements.
         The LAST step must directly answer the user's question.
         """
     )
