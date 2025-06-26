@@ -26,9 +26,9 @@ on user feedback.
 {{ numbered_text }}
 ```
 
-{% if memory.get("sql_metaset") and memory["sql_metaset"]..table_context %}
+{% if memory.get("sql_metaset") and memory["sql_metaset"].table_context %}
 **Available schema context:**
-{{ memory["sql_metaset"]..table_context }}
+{{ memory["sql_metaset"].table_context }}
 {% endif %}
 
 **Issue to fix:** The code above has problems that need to be addressed based on the user's feedback.
