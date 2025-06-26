@@ -12,7 +12,6 @@ Ground Rules:
 - Respect dependency chains: assign tasks only when input requirements are met
 - Leverage existing memory instead of regenerating information if possible
 - Stay within scope of the user's request (don't plot unless asked, etc.)
-- Do not use the same actor twice in a row
 - Plan only rather than executing (avoid details)
 - It's often unnecessary to use the same actor multiple times in a single plan
 - Never mention a lack of data sources or tables in your plan - assume your actors will handle data discovery
@@ -150,3 +149,15 @@ Fix required: Include dependency providers BEFORE the dependent actors in your n
 {%- endif %}
 Remember: A plan that ignores dependencies will always fail. Check requirements before assigning any actor, and do not consecutively use the same actor.
 {%- endblock -%}
+
+{% block examples %}
+# Examples
+
+✅ GOOD: "Top 5 customers by revenue"
+1. SQLAgent: Query top customers by revenue
+2. AnalystAgent: Analyze customer patterns
+
+❌ BAD: "Show sales trends"
+1. SQLAgent: Get sales data
+2. SQLAgent: Calculate trends ← Consecutive actor violation
+{% endblock %}

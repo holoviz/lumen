@@ -1589,7 +1589,7 @@ class ValidationAgent(Agent):
                 user_messages = [msg for msg in reversed(messages) if msg.get("role") == "user"]
                 original_query = user_messages[0].get("content", "").split("-- For context...")[0]
             suggestions_list = '\n- '.join(result.suggestions)
-            self.interface.send(f"Follow these suggestions to fulfill the original intent {original_query!r}:\n{suggestions_list}")
+            self.interface.send(f"Follow these suggestions to fulfill the original intent {original_query}\n\n{suggestions_list}")
 
         executed_steps = None
         if "plan" in self._memory and hasattr(self._memory["plan"], "steps"):

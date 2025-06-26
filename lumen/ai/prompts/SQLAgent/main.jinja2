@@ -48,6 +48,21 @@ GROUP BY "name" ORDER BY "count" DESC LIMIT 100000;
 {% endblock %}
 
 {% block context -%}
+
+{%- if 'sql' in memory %}
+🗃️ Previous Plan's SQL:
+```sql
+{{ memory['sql'] }}
+```
+{%- endif %}
+
+{%- if memory.get('data') is not none %}
+📊 Summary of the data returned from the Previous Plan's SQL:
+{{ memory["data"] }}
+{%- endif -%}
+
+
+
 Additional instructions:
 - Use only `{{ dialect }}` SQL dialect.
 {%- if dialect == 'duckdb' %}
