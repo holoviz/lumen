@@ -4,7 +4,12 @@
 ## Instructions
 **BEFORE VALIDATING: Read the SQL query AND summary data results to understand what filtering was applied and what was returned.**
 
-Validate if the executed plan answered the user's query. Focus on completeness, correctness, and user intent.
+**REQUIRED FIRST STEP: Restate in your own words:**
+1. What the user originally asked for
+2. What the SQL query actually does (step by step)
+3. What data was returned in the summary
+
+Then validate if the executed plan answered the user's query. Focus on completeness, correctness, and user intent.
 
 **Validation Rules:**
 - Base validation on BOTH SQL logic AND summary results
@@ -22,6 +27,11 @@ Validate if the executed plan answered the user's query. Focus on completeness, 
 **SQL:** SELECT country, SUM(sales) FROM data WHERE region='Europe' GROUP BY country ORDER BY sales DESC LIMIT 1
 **Data Returned:** Germany: $2.1M
 **Response:** yes=true, should_rerun=false (query correctly filtered and returned answer)
+
+**Query:** "Show me the table"
+**SQL:** SELECT * FROM data LIMIT 100000
+**Data Returned:** Full table with 100,000 rows
+**Response:** yes=true, should_rerun=false
 {%- endblock %}
 
 {% block context %}

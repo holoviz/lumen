@@ -490,7 +490,6 @@ class LumenBaseAgent(Agent):
         """
         Retry the output by line, allowing the user to provide feedback on why the output was not satisfactory, or an error.
         """
-        feedback_content = f"Address this feedback: {feedback!r}."
         original_lines = original_output.splitlines()
         with self.param.update(memory=memory):
             # TODO: only input the inner spec to retry
@@ -500,7 +499,7 @@ class LumenBaseAgent(Agent):
                 messages=messages,
                 numbered_text=numbered_text,
                 language=language,
-                feedback=feedback_content,
+                feedback=feedback,
             )
         retry_model = self._lookup_prompt_key("retry_output", "response_model")
         invoke_kwargs = dict(
@@ -555,7 +554,7 @@ class SQLAgent(LumenBaseAgent):
 
     exclusions = param.List(default=["dbtsl_metaset"])
 
-    not_with = param.List(default=["DbtslAgent", "TableLookup", "TableListAgent"])
+    not_with = param.List(default=["DbtslAgent", "TableLookup"])
 
     purpose = param.String(
         default="""
@@ -635,7 +634,7 @@ class SQLAgent(LumenBaseAgent):
             query_complexity = getattr(output, 'query_complexity', 'discovery_required')
 
             # If no discovery needed, return empty list for direct answer
-            if hasattr(output, 'discovery_needed') and output.discovery_needed is False:
+            if query_complexity == "direct":
                 step.stream("\n\n**Result:** Direct answer - no discovery needed")
                 return ([], query_complexity)
 
@@ -726,18 +725,18 @@ class SQLAgent(LumenBaseAgent):
             if not output or not output.query:
                 raise ValueError("No SQL query was generated.")
 
+            sql_query = output.query
             try:
-                sql_query = clean_sql(output.query, dialect)
-            except Exception as e:
-                step.stream(f"\n\n❌ Failed to clean SQL query: {e}")
-                sql_query = output.query
-            step.stream(f"\n\n`{output.expr_slug}`\n```sql\n{sql_query}\n```")
+                sql_query = clean_sql(sql_query, dialect)
+                step.stream(f"\n\n`{output.expr_slug}`\n```sql\n{sql_query}\n```")
 
-            # Validate SQL
-            validated_sql, sql_expr_source = await self._validate_sql_with_retry(
-                sql_query, output.expr_slug, source, messages, step
-            )
-            return validated_sql, output.expr_slug, sql_expr_source
+                # Validate SQL
+                sql_query, sql_expr_source = await self._validate_sql_with_retry(
+                    sql_query, output.expr_slug, source, messages, step
+                )
+            except Exception as e:
+                raise ValueError(f"Failed to execute SQL: {sql_query} due to {e}") from e
+            return sql_query, output.expr_slug, sql_expr_source
 
     async def _execute_single_step(self, plan_step: str, sql_query: str, expr_slug: str, sql_expr_source, source, iteration: int, step_num: int, is_final_step: bool) -> dict:
         """
@@ -824,7 +823,7 @@ class SQLAgent(LumenBaseAgent):
         # Handle direct answer case (no discovery needed)
         if not discovery_steps:
             # Create direct answer step from user query
-            user_query = messages[0].get("content", "") if messages else "Display the data"
+            user_query = next((m.get("content", "") for m in messages if m.get("role") == "user"), "Display the data")
             discovery_steps = [user_query]
 
         # Execute all SQL plan steps
@@ -855,7 +854,7 @@ class SQLAgent(LumenBaseAgent):
                 for i, r in enumerate(self._iteration_results)
             )
             sql_plan_context += f"\nIteration {iteration} Results:\n{results_summary}"
-        return sql_plan_context
+        return sql_plan_context[-10000:]
 
     async def _create_pipeline_from_result(self, result: dict, messages: list[Message], render_output: bool, step_title: str) -> Any:
         """Create the final pipeline from the result of the last SQL plan step."""
@@ -1588,7 +1587,7 @@ class ValidationAgent(Agent):
         def on_click(event):
             if messages:
                 user_messages = [msg for msg in reversed(messages) if msg.get("role") == "user"]
-                original_query = user_messages[0].get("content", "")
+                original_query = user_messages[0].get("content", "").split("-- For context...")[0]
             suggestions_list = '\n- '.join(result.suggestions)
             self.interface.send(f"Follow these suggestions to fulfill the original intent {original_query!r}:\n{suggestions_list}")
 

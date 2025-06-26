@@ -1,107 +1,103 @@
 {% extends 'Agent/main.jinja2' %}
 
+{%- set limits = {
+    'structure': '1-2',
+    'discovery': '3-10',
+    'final': 'No limit for SHOW commands'
+} -%}
+
 {%- block instructions %}
 # Instructions:
 Determine discovery steps needed to answer the user's query.
 
 ## Query Classification:
 
-DIRECT QUERIES (Quick schema check + answer):
-- Table display: "show table", "display data", "show me the table", "show [filename]"
-- File display: "show ibtracs.last3years.parquet", "show data.csv", "display [filename]"
-- Simple aggregations: "count rows", "sum totals", "top athletes"
-- Structure queries: "what columns", "describe table"
-- Ranking/filtering: "most/least", "top N"
+**DIRECT QUERIES** (Quick schema check + answer):
+- Table/file display: "show table", "display data", "show [filename]"
+- Simple operations: "count rows", "sum totals", "top N", "describe table"
 
 → Direct execution without discovery steps
 
-ENTITY DISCOVERY QUERIES (Focused discovery needed):
+**ENTITY DISCOVERY QUERIES** (Focused discovery needed):
 - Specific entity filters with unknown values
 - Names, places, companies needing pattern discovery
 - Complex entity combinations
 
 → Systematic discovery with small token limits
 
-## Critical Rule: Schema Verification Required
+## Critical Rules:
 - User terms may not match actual schema
 - Column names/enum values may differ from expected
 - ALWAYS verify column names and enum values first
+- Be token conscious - results inject back into context
 
-## Discovery Rules:
+## Discovery Strategy:
 
-Query Limits:
-- Structure: LIMIT 1-2
-- Value discovery: LIMIT 3-10
-- Final answers: No limit for SHOW commands
-- Always exclude NULLs
+**Query Limits:**
+- Structure: LIMIT {{ limits.structure }}
+- Value discovery: LIMIT {{ limits.discovery }}
+- Final answers: {{ limits.final }}
+- Always exclude NULLs with IS NOT NULL
 
-Data Cleaning Discovery:
+**Data Quality Assessment:**
 - Check for invalid values (-9999, empty strings, 'N/A', 'NULL')
-- Identify data type inconsistencies (mixed text/numbers)
-- Look for formatting issues (currency symbols, commas in numbers)
+- Identify formatting issues (currency symbols, commas in numbers)
 - Detect subtitle/unit rows that need OFFSET
-- Verify date formats and null patterns
+- Use pattern matching: `WHERE "column" ILIKE '%pattern%' AND "column" IS NOT NULL`
 
-Pattern Discovery:
-```sql
-SELECT DISTINCT "column"
-FROM "table"
-WHERE "column" ILIKE '%pattern%' AND "column" IS NOT NULL
-LIMIT 20;
-```
-
-## Step Planning:
-1. Direct: Single step with final answer
-2. Discovery: Structure check → Data cleaning assessment → Value discovery → Final analysis
-3. Complex: 2-3 focused steps maximum
-4. Be token conscious - results inject back into context
-5. Include data cleaning step when detecting inconsistencies or invalid values
-6. Use minimal LIMIT values for discovery to reduce token usage
+**Step Planning:**
+1. **Direct:** Single step with final answer
+2. **Discovery:** Structure check → Data cleaning assessment → Value discovery → Final analysis
+3. **Complex:** 2-3 focused steps maximum
+4. Use minimal LIMIT values for discovery to reduce token usage
 
 {% endblock %}
 
 {% block examples %}
-Examples:
+**Examples:**
 
-Direct (No steps needed):
-"Show me the data table" → ['Display the data table']
-"Show the table" → ['Display the table contents']
-"Show customers.csv" → ['Display customers.csv']
+**Direct (No steps needed):**
+- "Show me the data table" → ['Display the data table']
+- "Show customers.csv" → ['Display customers.csv']
 
-Analysis (Structure check first):
-"Which entity has the most metric?" → ['Check structure (LIMIT 1-2)', 'Count metric by entity']
+**Analysis (Structure check first):**
+- "Which entity has the most metric?" → ['Check structure (LIMIT {{ limits.structure }})', 'Count metric by entity']
 
-Discovery:
-"Show records for [Name]" → ['Find name variations (LIMIT 10)', 'Display matching records']
-"Analyze sales data" → ['Check structure (LIMIT 1-2)', 'Assess data quality/cleaning needs (LIMIT 10)', 'Perform analysis']
+**Discovery:**
+- "Show records for [Name]" → ['Find name variations (LIMIT 10)', 'Display matching records']
+- "Analyze sales data" → ['Check structure (LIMIT {{ limits.structure }})', 'Assess data quality/cleaning needs (LIMIT 10)', 'Perform analysis']
 {% endblock %}
 
 {% block context %}
 Please analyze the data context below and provide discovery steps:
 
 {%- if previous_sql_plan_results is defined and previous_sql_plan_results %}
-Previous Results:
+
+**Previous Results:**
 {{ previous_sql_plan_results }}
 
-Analysis:
+**Analysis Guide:**
 - Found needed values → final step only
 - Missing values → focused discovery (small LIMIT)
 - Be token efficient
-{%- else %}
-First Iteration
 
-Guide:
+{%- else %}
+
+**First Iteration**
+
+**Analysis Guide:**
 - Simple display → Direct answer
 - Aggregation/ranking → Schema check + answer
 - Entity names → Discovery needed
 - Always verify schema first
 
-Limits:
-- Structure: LIMIT 1-2
-- Discovery: LIMIT 3-10
-- Final: No limit for SHOW
+**Apply Limits:**
+- Structure: LIMIT {{ limits.structure }}
+- Discovery: LIMIT {{ limits.discovery }}
+- Final: {{ limits.final }}
+
 {%- endif %}
 
-Available Schema:
+**Available Schema:**
 {{ memory["sql_metaset"].table_context }}
 {%- endblock %}

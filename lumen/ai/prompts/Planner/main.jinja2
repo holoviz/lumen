@@ -109,6 +109,11 @@ Conditions for use:
 ```
 {%- endif %}
 
+{%- if memory.get('data') is not none %}
+📊 Summary of the data returned from SQL:
+{{ memory["data"] }}
+{%- endif -%}
+
 {%- if is_follow_up and 'vector_metaset' in memory %}
 👉 Follow-up detected: Prioritize using existing data before retrieving new information
 {%- elif 'vector_metaset' in memory and not is_follow_up %}

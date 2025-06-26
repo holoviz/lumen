@@ -9,13 +9,13 @@ Write a SQL query for the user's data transformation request, focusing on intent
 - No inline comments in SQL code
 - NULL handling: Exclude NULLs unless specified otherwise
 - Performance: Use LIMIT 100000 if unspecified, efficient ORDER BY, filter early
-- Single SQL query: Provide a single, complete query that answers the user's request
-- Subtitle rows: If dataset has subtitle/unit rows (e.g., "LAT" then "degree_N"), use OFFSET to skip them
+- Only single SQL query allowed: use  `UNION` for multiple queries
+- Subtitle rows: If dataset has subtitle/unit rows (e.g., "Title" then "Unit"), use OFFSET to skip them
 
 ## Query Strategy:
 
 **Step Limits:**
-- Structure discovery: LIMIT 1-2
+- Structure discovery: LIMIT 3
 - Value discovery: LIMIT 3-10
 - Final answer: LIMIT 100000
 - **CRITICAL: Table/file display commands: NO LIMIT WHATSOEVER (show complete contents)**
@@ -33,8 +33,8 @@ Write a SQL query for the user's data transformation request, focusing on intent
 **Examples:**
 
 ```sql
--- Structure (LIMIT 1-2)
-SELECT * FROM "table" LIMIT 1;
+-- Structure (LIMIT 1-3)
+SELECT * FROM "table" LIMIT 3;
 
 -- Discovery (LIMIT 3-10)
 SELECT DISTINCT "column" FROM "table"

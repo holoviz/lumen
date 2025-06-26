@@ -36,8 +36,8 @@ class Sql(BaseModel):
     )
 
     query: str = Field(description="""
-        Correct, valid SQL query that answers the user's question;
-        should only be one query and do NOT add extraneous comments.""")
+        One, correct, valid SQL query that answers the user's question;
+        should only be one query and do NOT add extraneous comments; no multiple semicolons""")
 
     expr_slug: str = Field(
         description="""
@@ -48,6 +48,13 @@ class Sql(BaseModel):
 
 
 class CheckContext(PartialBaseModel):
+    chain_of_thought: str = Field(
+        description="""
+        Explain how you will use the data to check the context, and address any previous issues you encountered.
+        If you need to run a query, explain what it is and why.
+        """
+    )
+
     query_complexity: Literal["direct", "discovery_required", "complex_analysis"] = Field(
         description="""
         Classify the query complexity:
@@ -61,7 +68,7 @@ class CheckContext(PartialBaseModel):
         description="""
         For discovery queries: Describe the strategy for efficient token usage and data cleaning.
         - Identify which columns require targeted value exploration
-        - Specify suitable LIMIT values (1-2 for schema inspection, 3-10 for value discovery, 100000 for final answers, 1000000 if user wants full table display)
+        - Specify suitable LIMIT values (1-3 for schema inspection, 3-10 for value discovery, 100000 for final answers)
         - Determine if WHERE clauses with pattern matching can narrow discovery scope
         - Ensure NULL values are filtered out using IS NOT NULL conditions
         - Include data cleaning assessment: check for invalid values (-9999, 'N/A', empty strings), formatting issues (currency symbols, commas), and subtitle rows requiring OFFSET
@@ -69,24 +76,18 @@ class CheckContext(PartialBaseModel):
         """
     )
 
-    discovery_needed: bool = Field(
-        description="""
-        True if the query requires schema verification or value discovery before answering.
-        False ONLY for simple table display queries ("show table", "display data").
-        Most queries need at least schema verification to check column names and enum values.
-        """
-    )
-
     discovery_steps: list[str] = Field(
         default_factory=list,
         description="""
         ONLY provide steps if discovery_needed=True
+        Do not redo previous iteration discoveries if their corresponding results are present unless necessary.
 
         For direct queries, leave this empty - system should answer immediately.
         Focus on entities mentioned in user's query. Use WHERE pattern matching when possible.
         Always exclude NULL values with IS NOT NULL conditions.
         Include data cleaning step when needed to assess data quality and identify cleaning requirements.
-        The LAST step must directly answer the user's question.
+        The LAST step must directly answer the user's question and MUST contain the full context (original user query).
+        The steps must be descriptions in English, that help the LLM discover more about the data, NOT SQL queries.
         """
     )
 
@@ -298,7 +299,7 @@ class QueryCompletionValidation(PartialBaseModel):
     """Validation of whether the executed plan answered the user's query"""
 
     chain_of_thought: str = Field(
-        description="Explain your reasoning succinctly (in a sentence or two) as to why you will be answering yes or no.")
+        description="Restate intent and results succinctly; then explain your reasoning as to why you will be answering yes or no.")
     missing_elements: list[str] = Field(
         default_factory=list,
         description="List of specific elements from the user's query that weren't addressed"
