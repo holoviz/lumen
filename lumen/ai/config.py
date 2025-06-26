@@ -26,6 +26,7 @@ class RetriesExceededError(Exception):
 
 THIS_DIR = Path(__file__).parent
 PROMPTS_DIR = THIS_DIR / "prompts"
+EMBEDDINGS_DIR = THIS_DIR / "embeddings"
 
 GETTING_STARTED_SUGGESTIONS = [
     "What datasets are available?",

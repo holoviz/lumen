@@ -20,6 +20,7 @@ import markitdown
 
 from tqdm import tqdm
 
+from lumen.ai.config import EMBEDDINGS_DIR
 from lumen.ai.embeddings import OpenAIEmbeddings
 from lumen.ai.llm import OpenAI
 from lumen.ai.vector_store import DuckDBVectorStore
@@ -27,7 +28,6 @@ from lumen.ai.vector_store import DuckDBVectorStore
 # Configuration
 VERSION = "6.1.0"
 THIS_DIR = Path(__file__).parent
-EMBEDDINGS_DIR = THIS_DIR / ".." / "lumen" / "embeddings"
 BATCH_DIR = THIS_DIR / ".lumen_batch"
 
 
@@ -76,7 +76,7 @@ async def process_vega_lite_docs(
         await vector_store.add_directory(
             md_dir,
             pattern="*",
-            metadata={"version": VERSION, "type": "document"},
+            metadata={"version": VERSION, "type": "documents"},
             situate=True,
         )
         print(f"\n✅ {len(vector_store)} Total chunks in vector store {uri}")
