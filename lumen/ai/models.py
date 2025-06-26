@@ -51,7 +51,9 @@ class CheckContext(BaseModel):
     information_completeness: str = Field(
         description="""
         Concisely explain whether the current schema overview provides sufficient
-        information to answer the user's question.
+        information to answer the user's question. If table columns haven't been explored
+        yet AND the query requires understanding the data structure (not just displaying it),
+        mention that column structure needs to be examined first.
         """
     )
 
@@ -62,6 +64,11 @@ class CheckContext(BaseModel):
         Try to think of steps that can map to SQL queries (but do not write SQL),
         so if there are multiple steps that can be expressed as a single SQL query,
         combine them into one step. Do not mention assume values; keep the steps vague.
+
+        For the first iteration with no previous SQL plan results:
+        - If the user wants to simply display/show a table: provide only the display step
+        - If the user needs specific analysis requiring unknown columns: start with structure exploration
+        - If the query involves filtering, calculations, or specific column operations: include exploration first
 
         Write in plain English describing WHAT to find, not HOW. Preserve all important
         context from the user's question (entities, filters, constraints). Keep steps to a minimum,

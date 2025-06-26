@@ -65,9 +65,12 @@ Please analyze the data context below and provide discovery steps:
 - If requested values are still missing, start with exploration steps
 {%- else %}
 **No Previous SQL Plan Results**
-- If requested values aren't visible in schema enums, start with exploration steps
-- Always provide at least one discovery step
+- This is the first iteration. Determine if column exploration is needed:
+  * Simple display queries ("Show table X", "Display data"): provide only the display step
+  * Analysis queries requiring unknown columns: start with exploration, then analysis
+  * Queries with filtering/calculations: include exploration first if column details unknown
+- Provide the minimum necessary steps to answer the user's question
 {%- endif %}
 
-{{ memory["sql_metaset"].selected_context }}
+{{ memory["sql_metaset"].table_context }}
 {%- endblock %}

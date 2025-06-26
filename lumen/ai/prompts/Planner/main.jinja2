@@ -109,12 +109,6 @@ Conditions for use:
 📋 Last table: `{{ memory['table'] }}`
 {%- endif %}
 
-{%- if 'vector_metaset' in memory and memory.get('vector_metaset').selected_columns %}
-📃 Selected columns:
-{{ memory['vector_metaset'].selected_columns }}
-From query: "{{ memory['vector_metaset'].query }}"
-{%- endif %}
-
 {%- if 'sql' in memory %}
 🗃️ Current SQL:
 ```sql

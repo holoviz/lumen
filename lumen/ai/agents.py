@@ -847,7 +847,7 @@ class SQLAgent(LumenBaseAgent):
         # Setup sources and metadata
         sources = self._memory["sources"] if isinstance(self._memory["sources"], dict) else {source.name: source for source in self._memory["sources"]}
         vector_metaset = self._memory["sql_metaset"].vector_metaset
-        selected_slugs = list(vector_metaset.selected_columns or vector_metaset.vector_metadata_map)
+        selected_slugs = list(vector_metaset.vector_metadata_map)
         tables_to_source = {parse_table_slug(table_slug, sources)[1]: parse_table_slug(table_slug, sources)[0] for table_slug in selected_slugs}
         source = next(iter(tables_to_source.values()))
 

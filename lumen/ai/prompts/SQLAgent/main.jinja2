@@ -8,8 +8,13 @@ Write a SQL query for the user's data transformation request, focusing on intent
 - Column names: Use double quotes (") to avoid identifier conflicts: `SELECT "column_name"`
 - No inline comments in SQL code
 - NULL handling: Exclude NULLs unless specified otherwise
-- Performance: Use LIMIT (≥100k if unspecified), efficient ORDER BY, filter early
+- Performance: Use LIMIT 100000 if unspecified, efficient ORDER BY, filter early
 - Single SQL query: Provide a single, complete query that answers the user's request
+
+## Table Structure Exploration:
+- Use `SELECT * FROM "table_name" LIMIT 1` for data structure
+- Use `SELECT DISTINCT "column" LIMIT 20` to explore available values in specific columns
+- Prefer limited queries over full table scans when exploring structure
 
 ## SQL Plan Query Rules:
 - Never assume values exist: Only filter by values confirmed in previous SQL plan results.
@@ -27,15 +32,20 @@ Write a SQL query for the user's data transformation request, focusing on intent
 {%- endblock %}
 
 {% block examples %}
-Example:
+Example queries:
+**For exploring table columns:**
 ```sql
-SELECT "column_name", COUNT(*) AS "count"
+SELECT * FROM "table_name" LIMIT 1;
+```
+
+**For exploring distinct values:**
+```sql
+-- Discover available values in a column
+SELECT DISTINCT "column_name"
 FROM "table_name"
-WHERE "text_column" = 'value'
-  AND "category" IN ('option1', 'option2')
-  AND "name" ILIKE '%pattern%'
-GROUP BY "column_name"
-ORDER BY "count" DESC;
+WHERE "column_name" IS NOT NULL
+ORDER BY "column_name"
+LIMIT 20;
 ```
 {% endblock %}
 
@@ -70,7 +80,7 @@ Step {{ step_number }} of SQL Plan: {{ current_step }}
 {% if errors is defined and errors %}
 {{ memory["sql_metaset"].max_context }}
 {% else %}
-{{ memory["sql_metaset"].selected_context }}
+{{ memory["sql_metaset"].table_context }}
 {% endif %}
 {%- endblock -%}
 

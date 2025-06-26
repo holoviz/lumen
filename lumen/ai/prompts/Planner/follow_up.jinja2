@@ -39,12 +39,6 @@ Data in memory: Only revenue data
 {% endblock %}
 
 {% block context -%}
-{%- if 'vector_metaset' in memory and memory.get('vector_metaset').selected_columns %}
-📃 Selected columns:
-{{ memory['vector_metaset'].selected_columns }}
-From query: "{{ memory['vector_metaset'].query }}"
-{%- endif %}
-
 {%- if 'sql' in memory %}
 🗃️ Current SQL:
 ```sql
