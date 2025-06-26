@@ -12,9 +12,10 @@ Write a SQL query for the user's data transformation request, focusing on intent
 - Single SQL query: Provide a single, complete query that answers the user's request
 
 ## Table Structure Exploration:
-- Use `SELECT * FROM "table_name" LIMIT 1` for data structure
-- Use `SELECT DISTINCT "column" LIMIT 20` to explore available values in specific columns
-- Prefer limited queries over full table scans when exploring structure
+- **Discovery/exploration queries**: Use `SELECT * LIMIT 1-5` to examine structure and sample values
+- **Final answer queries**: Use `LIMIT 100000` or appropriate limits for the user's needs
+- Use `SELECT DISTINCT "column" LIMIT 10` to explore available values in specific columns
+- When exploring values, use small limits to understand data patterns, not retrieve results
 
 ## SQL Plan Query Rules:
 - Never assume values exist: Only filter by values confirmed in previous SQL plan results.
@@ -33,19 +34,33 @@ Write a SQL query for the user's data transformation request, focusing on intent
 
 {% block examples %}
 Example queries:
-**For exploring table columns:**
+
+**For discovery/exploration (small limits for understanding structure):**
 ```sql
-SELECT * FROM "table_name" LIMIT 1;
+-- Examine table structure and sample data
+SELECT * FROM "table_name" LIMIT 2;
 ```
 
-**For exploring distinct values:**
 ```sql
--- Discover available values in a column
-SELECT DISTINCT "column_name"
+-- Explore available values in a column
+SELECT DISTINCT "country_name"
 FROM "table_name"
-WHERE "column_name" IS NOT NULL
-ORDER BY "column_name"
-LIMIT 20;
+WHERE "country_name" IS NOT NULL
+ORDER BY "country_name"
+LIMIT 10;
+```
+
+**For final analysis (appropriate limits for user needs):**
+```sql
+-- Answer user's question with full results
+SELECT "column_name", COUNT(*) AS "count"
+FROM "table_name"
+WHERE "text_column" = 'value'
+  AND "category" IN ('option1', 'option2')
+  AND "name" ILIKE '%pattern%'
+GROUP BY "column_name"
+ORDER BY "count" DESC
+LIMIT 100000;
 ```
 {% endblock %}
 
@@ -75,6 +90,8 @@ Step {{ step_number }} of SQL Plan: {{ current_step }}
 {%- else %}
 **First SQL Plan Step:**
 - Execute the current step as specified in the SQL plan
+- If this is a discovery/exploration step: Use small LIMIT (5-10) to understand structure and values
+- If this is the final answer step: Use appropriate LIMIT for user's needs (100000+ for full results)
 {%- endif %}
 
 {% if errors is defined and errors %}

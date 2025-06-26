@@ -70,6 +70,11 @@ class CheckContext(BaseModel):
         - If the user needs specific analysis requiring unknown columns: start with structure exploration
         - If the query involves filtering, calculations, or specific column operations: include exploration first
 
+        When exploration is needed, examine both column structure AND actual values to understand:
+        - What columns are available and their data types
+        - What actual values exist (e.g., "United States" vs "United States of America")
+        - Value patterns, formats, and variations in the data
+
         Write in plain English describing WHAT to find, not HOW. Preserve all important
         context from the user's question (entities, filters, constraints). Keep steps to a minimum,
         and the LAST step must directly answer the user's question with full context preserved.
