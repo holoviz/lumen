@@ -187,7 +187,7 @@ def retry_llm_output(retries=3, sleep=1):
                     try:
                         output = await func(*args, **kwargs)
                         if not output:
-                            raise Exception("No valid output from LLM.")
+                            raise Exception(f"No valid output from LLM: {errors}")
                         return output
                     except Exception as e:
                         if isinstance(e, UNRECOVERABLE_ERRORS):
@@ -214,7 +214,7 @@ def retry_llm_output(retries=3, sleep=1):
                     try:
                         output = func(*args, **kwargs)
                         if not output:
-                            raise Exception("No valid output from LLM.")
+                            raise Exception(f"No valid output from LLM: {errors}")
                         return output
                     except Exception as e:
                         if isinstance(e, UNRECOVERABLE_ERRORS):
@@ -456,12 +456,12 @@ async def describe_data(df: pd.DataFrame) -> str:
                 # Get unique values for enum processing
                 unique_values = df[col].dropna().unique().tolist()
                 if unique_values:
-                    # Process enums just like in get_schema
+                    # Process enums with limit of 3
                     temp_spec = {"enum": unique_values}
                     updated_spec, _ = process_enums(
                         temp_spec,
                         num_cols=len(df.columns),
-                        limit=5000,  # Using the sample limit
+                        limit=3,  # Limit to 3 enum values
                         include_enum=True,
                         reduce_enums=True
                     )
@@ -501,6 +501,10 @@ async def describe_data(df: pd.DataFrame) -> str:
         for col in df.select_dtypes(include=["float64"]).columns:
             df[col] = df[col].apply(format_float)
 
+        # Add head and tail samples (1 row each)
+        head_sample = df.head(1).to_dict('records')
+        tail_sample = df.tail(1).to_dict('records')
+
         return {
             "summary": {
                 "total_table_cells": size,
@@ -509,6 +513,8 @@ async def describe_data(df: pd.DataFrame) -> str:
                 "is_summarized": is_summarized,
             },
             "stats": df_describe_dict,
+            "head": head_sample[0] if head_sample else {},
+            "tail": tail_sample[0] if tail_sample else {},
         }
 
     return await asyncio.to_thread(describe_data_sync, df)

@@ -36,8 +36,8 @@ class Sql(BaseModel):
     )
 
     query: str = Field(description="""
-        Correct, valid SQL query that answers the user's question;
-        should only be one query and do NOT add extraneous comments.""")
+        One, correct, valid SQL query that answers the user's question;
+        should only be one query and do NOT add extraneous comments; no multiple semicolons""")
 
     expr_slug: str = Field(
         description="""
@@ -47,25 +47,47 @@ class Sql(BaseModel):
     )
 
 
-class CheckContext(BaseModel):
-    information_completeness: str = Field(
+class CheckContext(PartialBaseModel):
+    chain_of_thought: str = Field(
         description="""
-        Concisely explain whether the current schema overview provides sufficient
-        information to answer the user's question.
+        Explain how you will use the data to check the context, and address any previous issues you encountered.
+        If you need to run a query, explain what it is and why.
+        """
+    )
+
+    query_complexity: Literal["direct", "discovery_required", "complex_analysis"] = Field(
+        description="""
+        Classify the query complexity:
+        - "direct": Simple display, count, or queries with standard/obvious values
+        - "discovery_required": Queries needing unknown entity values or name variations
+        - "complex_analysis": Multi-step analysis requiring multiple discovery phases
+        """
+    )
+
+    efficient_plan: str = Field(
+        description="""
+        For discovery queries: Describe the strategy for efficient token usage and data cleaning.
+        - Identify which columns require targeted value exploration
+        - Specify suitable LIMIT values (1-3 for schema inspection, 3-10 for value discovery, 100000 for final answers)
+        - Determine if WHERE clauses with pattern matching can narrow discovery scope
+        - Ensure NULL values are filtered out using IS NOT NULL conditions
+        - Include data cleaning assessment: check for invalid values (-9999, 'N/A', empty strings), formatting issues (currency symbols, commas), and subtitle rows requiring OFFSET
+        - Consider that each query result will be added to the conversation context
         """
     )
 
     discovery_steps: list[str] = Field(
         default_factory=list,
         description="""
-        Natural language steps describing what data to find to answer the user's question.
-        Try to think of steps that can map to SQL queries (but do not write SQL),
-        so if there are multiple steps that can be expressed as a single SQL query,
-        combine them into one step. Do not mention assume values; keep the steps vague.
+        ONLY provide steps if discovery_needed=True
+        Do not redo previous iteration discoveries if their corresponding results are present unless necessary.
 
-        Write in plain English describing WHAT to find, not HOW. Preserve all important
-        context from the user's question (entities, filters, constraints). Keep steps to a minimum,
-        and the LAST step must directly answer the user's question with full context preserved.
+        For direct queries, leave this empty - system should answer immediately.
+        Focus on entities mentioned in user's query. Use WHERE pattern matching when possible.
+        Always exclude NULL values with IS NOT NULL conditions.
+        Include data cleaning step when needed to assess data quality and identify cleaning requirements.
+        The LAST step must directly answer the user's question and MUST contain the full context (original user query).
+        The steps must be descriptions in English, that help the LLM discover more about the data, NOT SQL queries.
         """
     )
 
@@ -111,6 +133,7 @@ def make_plan_models(agents: list[str], tools: list[str]):
                     Briefly summarize the user's goal and categorize the question type:
                     high-level, data-focused, or other. Identify the most relevant and compatible actors,
                     explaining their requirements, and what you already have satisfied. If there were previous failures, discuss them.
+                    IMPORTANT: Ensure no consecutive steps use the same actor in your planned sequence.
                     """
             ),
         ),
@@ -123,7 +146,11 @@ def make_plan_models(agents: list[str], tools: list[str]):
         steps=(
             list[step],
             FieldInfo(
-                description="A list of steps to perform that will solve user query. Ensure you include ALL the steps needed to solve the task, matching the chain of thought."
+                description="""
+                A list of steps to perform that will solve user query. Each step MUST use a DIFFERENT actor than the previous step.
+                CRITICAL: No two consecutive steps can use the same actor. Review your plan to ensure this constraint is met.
+                Ensure you include ALL the steps needed to solve the task, but avoid redundant consecutive steps.
+                """
             )
         )
     )
@@ -274,8 +301,7 @@ class QueryCompletionValidation(PartialBaseModel):
     """Validation of whether the executed plan answered the user's query"""
 
     chain_of_thought: str = Field(
-        description="Explain your reasoning succinctly as to why you will be answering yes or no.")
-
+        description="Restate intent and results succinctly; then explain your reasoning as to why you will be answering yes or no.")
     missing_elements: list[str] = Field(
         default_factory=list,
         description="List of specific elements from the user's query that weren't addressed"

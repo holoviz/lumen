@@ -798,8 +798,8 @@ class Planner(Coordinator):
 
         is_follow_up = result.yes
         if not is_follow_up:
-            self._memory.pop("data", None)
             self._memory.pop("pipeline", None)
+
         return is_follow_up
 
     async def _execute_planner_tools(self, messages: list[Message]):

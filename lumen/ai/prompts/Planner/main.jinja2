@@ -12,7 +12,6 @@ Ground Rules:
 - Respect dependency chains: assign tasks only when input requirements are met
 - Leverage existing memory instead of regenerating information if possible
 - Stay within scope of the user's request (don't plot unless asked, etc.)
-- Do not use the same actor twice in a row
 - Plan only rather than executing (avoid details)
 - It's often unnecessary to use the same actor multiple times in a single plan
 - Never mention a lack of data sources or tables in your plan - assume your actors will handle data discovery
@@ -24,13 +23,6 @@ Ground Rules:
 {% endblock -%}
 
 {%- block context %}
-# Current Memory
-{%- for key in memory.keys() %}
-{%- if memory[key] is not none %}
-- `{{ key }}`
-{%- endif %}
-{%- endfor %}
-
 # Available Actors with Dependency Analysis
 {%- if tools %}
 ## 🛠️ Tools
@@ -38,6 +30,8 @@ Ground Rules:
 
 {{ tool.__class__.__name__ }} provides: {{ tool.provides | join('`, `') or ' responses' }}
 {{ ' '.join(tool.purpose.strip().split()) }}
+Conditions for use:
+{{ tool.conditions | join('\n') }}
 {%- set missing_reqs = [] %}
 {%- for req in tool.requires %}
   {%- if req not in memory.keys() or memory[req] is none %}
@@ -49,8 +43,6 @@ Ground Rules:
 {%- else %}
 ✅ Ready!
 {%- endif %}
-Conditions for use:
-{{ tool.conditions | join('\n') }}
 {%- endfor %}
 {% endif %}
 
@@ -58,6 +50,8 @@ Conditions for use:
 {%- for agent in agents %}
 {{ agent.name[:-5] }} provides {{ agent.provides | join('`, `') or 'None' }}
 {{- agent.purpose }}
+Conditions for use:
+{{ agent.conditions | join('\n') }}
 {%- set missing_reqs = [] %}
 {%- for req in agent.requires %}
   {%- if req not in memory.keys() or memory[req] is none %}
@@ -82,8 +76,6 @@ Conditions for use:
 {%- else %}
 ✅ Ready!
 {%- endif %}
-Conditions for use:
-{{ agent.conditions | join('\n') }}
 {% endfor %}
 # Current Data Context
 
@@ -109,18 +101,17 @@ Conditions for use:
 📋 Last table: `{{ memory['table'] }}`
 {%- endif %}
 
-{%- if 'vector_metaset' in memory and memory.get('vector_metaset').selected_columns %}
-📃 Selected columns:
-{{ memory['vector_metaset'].selected_columns }}
-From query: "{{ memory['vector_metaset'].query }}"
-{%- endif %}
-
 {%- if 'sql' in memory %}
 🗃️ Current SQL:
 ```sql
 {{ memory['sql'] }}
 ```
 {%- endif %}
+
+{%- if memory.get('data') is not none %}
+📊 Summary of the data returned from SQL:
+{{ memory["data"] }}
+{%- endif -%}
 
 {%- if is_follow_up and 'vector_metaset' in memory %}
 👉 Follow-up detected: Prioritize using existing data before retrieving new information
@@ -156,5 +147,17 @@ Fix required: Include dependency providers BEFORE the dependent actors in your n
 3. Reorder your plan so providers come before consumers
 4. Verify all dependencies are satisfied in the correct sequence
 {%- endif %}
-Remember: A plan that ignores dependencies will always fail. Check requirements before assigning any actor!
+Remember: A plan that ignores dependencies will always fail. Check requirements before assigning any actor, and do not consecutively use the same actor.
 {%- endblock -%}
+
+{% block examples %}
+# Examples
+
+✅ GOOD: "Top 5 customers by revenue"
+1. SQLAgent: Query top customers by revenue
+2. AnalystAgent: Analyze customer patterns
+
+❌ BAD: "Show sales trends"
+1. SQLAgent: Get sales data
+2. SQLAgent: Calculate trends ← Consecutive actor violation
+{% endblock %}
