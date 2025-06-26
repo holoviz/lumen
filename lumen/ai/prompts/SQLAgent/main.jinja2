@@ -78,7 +78,7 @@ Step {{ step_number }} of SQL Plan: {{ current_step }}
 {%- endif %}
 
 {% if errors is defined and errors %}
-{{ memory["sql_metaset"].max_context }}
+{{ memory["sql_metaset"].full_context }}
 {% else %}
 {{ memory["sql_metaset"].table_context }}
 {% endif %}
