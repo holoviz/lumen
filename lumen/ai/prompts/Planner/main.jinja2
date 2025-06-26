@@ -24,13 +24,6 @@ Ground Rules:
 {% endblock -%}
 
 {%- block context %}
-# Current Memory
-{%- for key in memory.keys() %}
-{%- if memory[key] is not none %}
-- `{{ key }}`
-{%- endif %}
-{%- endfor %}
-
 # Available Actors with Dependency Analysis
 {%- if tools %}
 ## 🛠️ Tools
@@ -38,6 +31,8 @@ Ground Rules:
 
 {{ tool.__class__.__name__ }} provides: {{ tool.provides | join('`, `') or ' responses' }}
 {{ ' '.join(tool.purpose.strip().split()) }}
+Conditions for use:
+{{ tool.conditions | join('\n') }}
 {%- set missing_reqs = [] %}
 {%- for req in tool.requires %}
   {%- if req not in memory.keys() or memory[req] is none %}
@@ -49,8 +44,6 @@ Ground Rules:
 {%- else %}
 ✅ Ready!
 {%- endif %}
-Conditions for use:
-{{ tool.conditions | join('\n') }}
 {%- endfor %}
 {% endif %}
 
@@ -58,6 +51,8 @@ Conditions for use:
 {%- for agent in agents %}
 {{ agent.name[:-5] }} provides {{ agent.provides | join('`, `') or 'None' }}
 {{- agent.purpose }}
+Conditions for use:
+{{ agent.conditions | join('\n') }}
 {%- set missing_reqs = [] %}
 {%- for req in agent.requires %}
   {%- if req not in memory.keys() or memory[req] is none %}
@@ -82,8 +77,6 @@ Conditions for use:
 {%- else %}
 ✅ Ready!
 {%- endif %}
-Conditions for use:
-{{ agent.conditions | join('\n') }}
 {% endfor %}
 # Current Data Context
 
@@ -150,5 +143,5 @@ Fix required: Include dependency providers BEFORE the dependent actors in your n
 3. Reorder your plan so providers come before consumers
 4. Verify all dependencies are satisfied in the correct sequence
 {%- endif %}
-Remember: A plan that ignores dependencies will always fail. Check requirements before assigning any actor!
+Remember: A plan that ignores dependencies will always fail. Check requirements before assigning any actor, and do not consecutively use the same actor.
 {%- endblock -%}

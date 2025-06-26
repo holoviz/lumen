@@ -2,75 +2,94 @@
 
 {%- block instructions %}
 # Instructions:
-Determine the discovery steps needed to answer the user's query.
+Determine discovery steps needed to answer the user's query.
 
-**Step-by-step:**
-1. Identify user-requested values.
-2. List only visible enum values; do not assume beyond '...'.
-3. If enum shows ['A', 'B', '...']: "Confirmed: A, B. Unconfirmed: after '...'"
-4. Provide discovery steps - if values need to be explored first, start with exploration steps, then end with the final analysis.
-5. Always provide at least one discovery step.
+## Query Classification:
 
-Rules:
-- If previous discoveries found the needed values, provide only the final analysis step
-- Only require exploration if you need to FILTER BY specific values that aren't visible AND are uncertain to exist
-- Common/standard values (like 'Winter'/'Summer', 'Male'/'Female', etc.) don't need exploration
-- If the query is about finding patterns, counts, or rankings, prefer direct analysis over exploration
-- Only visible enum values are confirmed; NEVER assume values are "likely" or "probably" present
-- Don't make assumptions about what exists - if it's not visible, it's not confirmed
-- Discovery steps: (1) Find specific uncertain values only if needed for filtering, (2) Final analysis
-- Combine related operations into single steps to avoid fragmentation
+DIRECT QUERIES (Quick schema check + answer):
+- Table display: "show table", "display data", "show me the table"
+- Simple aggregations: "count rows", "sum totals", "top athletes"
+- Structure queries: "what columns", "describe table"
+- Ranking/filtering: "most/least", "top N"
+
+→ Direct execution without discovery steps
+
+ENTITY DISCOVERY QUERIES (Focused discovery needed):
+- Specific entity filters with unknown values
+- Names, places, companies needing pattern discovery
+- Complex entity combinations
+
+→ Systematic discovery with small token limits
+
+## Critical Rule: Schema Verification Required
+- User terms may not match actual schema
+- Column names/enum values may differ from expected
+- ALWAYS verify column names and enum values first
+
+## Discovery Rules:
+
+Query Limits:
+- Structure: LIMIT 3-5
+- Value discovery: LIMIT 20-50
+- Final answers: No limit for SHOW commands
+- Always exclude NULLs
+
+Pattern Discovery:
+```sql
+SELECT DISTINCT "column"
+FROM "table"
+WHERE "column" ILIKE '%pattern%' AND "column" IS NOT NULL
+LIMIT 20;
+```
+
+## Step Planning:
+1. Direct: Single step with final answer
+2. Discovery: Structure check → Value discovery → Final analysis
+3. Complex: 2-3 focused steps maximum
+4. Be token conscious - results inject back into context
+
 {% endblock %}
 
 {% block examples %}
 Examples:
-Data Schema: 'name' enum ['Alice', 'Bob', 'Charlie', ...], 'year' enum [2020, 2021, 2022], 'region' enum ["North America", "Europe", ...]
 
-1. No Previous Discovery, Incomplete Enum:
-User: "Show sales for John in 2022"
-- 'John' not in confirmed 'name' values; '2022' is confirmed.
-Discovery Steps: ['Explore distinct names containing John', 'Show sales for John or alike in 2022 excluding nulls']
+Direct (No steps needed):
+"Show me the data table" → ['Display the data table']
+"Show the table" → ['Display the table contents']
 
-2. No Discovery Needed:
-User: "Show who made the most sales in 2020"
-- '2020' confirmed
-Discovery Steps: ['Show who made the most sales in 2020 excluding nulls']
+Analysis (Structure check first):
+"Which entity has the most metric?" → ['Check structure (LIMIT 3)', 'Count metric by entity']
 
-3. DON'T assume "likely" values:
-User: "Show sales data for Fredd"
-❌ BAD: "Fredd is likely present as it's a common name" - NO ASSUMPTIONS!
-✅ GOOD: "Fredd not visible in customer_name enum"
-Discovery Steps: ['Check if Fredd exists in customer_name values', 'Show sales data from Fredd']
-
-4. No Exploration Needed - Pattern/Ranking Query:
-User: "What are the top 3 most common categories?"
-'category' enum shows ['Electronics', 'Books', ...] - incomplete but not needed for ranking
-Discovery Steps: ['Count occurrences of each category and identify the top 3 most common']
-
-6. Counter Example:
-User: "Which salesperson in the Asian region has the highest revenue?"
-'Asia' not in confirmed 'region' values
-BAD Discovery Steps: ['Check available regions for Asia or Asian', 'Filter salespeople by Asian region', 'Group by salesperson', 'Sum revenue per salesperson', 'Find maximum revenue', 'Identify top salesperson']
-GOOD Discovery Steps: ['Check available regions for Asia or Asian', 'Find the salesperson with highest revenue in the Asian region']
-**DON'T do the BAD - too fragmented:**
+Discovery:
+"Show records for [Name]" → ['Find name variations (LIMIT 30)', 'Display matching records']
 {% endblock %}
 
 {% block context %}
 Please analyze the data context below and provide discovery steps:
+
 {%- if previous_sql_plan_results is defined and previous_sql_plan_results %}
-**Previous SQL Plan Results:**
+Previous Results:
 {{ previous_sql_plan_results }}
 
-- If previous SQL plans found the needed values, provide only the final analysis step
-- If requested values are still missing, start with exploration steps
+Analysis:
+- Found needed values → final step only
+- Missing values → focused discovery (small LIMIT)
+- Be token efficient
 {%- else %}
-**No Previous SQL Plan Results**
-- This is the first iteration. Determine if column exploration is needed:
-  * Simple display queries ("Show table X", "Display data"): provide only the display step
-  * Analysis queries requiring unknown columns: start with exploration, then analysis
-  * Queries with filtering/calculations: include exploration first if column details unknown
-- Provide the minimum necessary steps to answer the user's question
+First Iteration
+
+Guide:
+- Simple display → Direct answer
+- Aggregation/ranking → Schema check + answer
+- Entity names → Discovery needed
+- Always verify schema first
+
+Limits:
+- Structure: LIMIT 3-5
+- Discovery: LIMIT 20-50
+- Final: No limit for SHOW
 {%- endif %}
 
+Available Schema:
 {{ memory["sql_metaset"].table_context }}
 {%- endblock %}

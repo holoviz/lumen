@@ -491,10 +491,12 @@ class LumenBaseAgent(Agent):
         """
         Retry the output by line, allowing the user to provide feedback on why the output was not satisfactory, or an error.
         """
+        feedback_content = f"Address this feedback: {feedback!r}.\n\nThese were the previous instructions to use as reference:"
         modified_messages = mutate_user_message(
-            f"New feedback: {feedback!r}.\n\nThese were the previous instructions to use as reference:",
+            feedback_content,
             deepcopy(messages), wrap='\n"""\n', suffix=False
         )
+        breakpoint()
         original_lines = original_output.splitlines()
         with self.param.update(memory=memory):
             # TODO: only input the inner spec to retry
@@ -604,7 +606,7 @@ class SQLAgent(LumenBaseAgent):
         Check if we have complete information to answer the query or need discovery.
         Returns discovery_steps.
         """
-        with self._add_step(title="Checking information completeness", steps_layout=self._steps_layout) as step:
+        with self._add_step(title="Smart query analysis", steps_layout=self._steps_layout) as step:
             system_prompt = await self._render_prompt("check_context", messages, previous_sql_plan_results=sql_plan_context)
             model_spec = self.prompts["check_context"].get("llm_spec", self.llm_spec_key)
 
@@ -615,14 +617,36 @@ class SQLAgent(LumenBaseAgent):
                 response_model=self._get_model("check_context"),
             )
 
+            output = None
             async for output in response:
-                if output.information_completeness:
-                    step.stream(f"**Information Assessment:** {output.information_completeness}", replace=True)
+                message = ""
+                if output.query_complexity:
+                    message += f"\n\n**Query Complexity:** {output.query_complexity}"
+                if hasattr(output, 'efficient_plan') and output.efficient_plan:
+                    message += f"\n\n**Token Efficiency Plan:** {output.efficient_plan}"
+                step.stream(message, replace=True)
 
-            if output.discovery_steps:
-                instructions_text = "\n".join(f"- {instruction}" for instruction in output.discovery_steps)
-                step.stream(f"\n\n**SQL Plan:**\n{instructions_text}")
-            return output.discovery_steps
+            # Handle case where streaming didn't complete properly
+            if not output:
+                step.stream("\n\n**Result:** Using fallback - proceeding with discovery")
+                return ["Examine the user's query and provide appropriate response"]
+
+            # If no discovery needed, return empty list for direct answer
+            if hasattr(output, 'discovery_needed') and output.discovery_needed is False:
+                step.stream("\n\n**Result:** Direct answer - no discovery needed")
+                return []
+
+            # Get discovery steps, with fallback
+            discovery_steps = getattr(output, 'discovery_steps', [])
+            if discovery_steps:
+                instructions_text = "\n".join(f"- {instruction}" for instruction in discovery_steps)
+                step.stream(f"\n\n**Discovery Plan:**\n{instructions_text}")
+            else:
+                # Fallback discovery steps
+                discovery_steps = ["Examine the user's query and provide appropriate response"]
+                step.stream("\n\n**Discovery Plan:** Using fallback discovery")
+
+            return discovery_steps
 
     async def _validate_sql_with_retry(self, sql_query: str, expr_slug: str, source, messages: list[Message], step, max_retries: int = 3) -> tuple[str, Any]:
         """
@@ -638,13 +662,17 @@ class SQLAgent(LumenBaseAgent):
                     step.stream("\n\n✅ SQL validation successful")
                 return sql_query, sql_expr_source
             except Exception as e:
+                feedback = f"{type(e).__name__}: {e!s}"
+                if "KeyError" in feedback:
+                    feedback += " The table does not exist; select from one of the available tables listed."
+
                 if i == max_retries - 1:
                     step.stream(f"\n\n❌ SQL validation failed after {max_retries} attempts: {e}")
                     raise e
 
                 step.stream(f"\n\n⚠️ SQL validation failed (attempt {i+1}/{max_retries}): {e}")
                 sql_query = clean_sql(
-                    await self._retry_output_by_line(str(e), messages, self._memory, sql_query, language="sql"),
+                    await self._retry_output_by_line(feedback, messages, self._memory, sql_query, language="sql"),
                     source.dialect,
                 )
                 step.stream(f"\n\n**Retry {i+1}:** `{expr_slug}`\n```sql\n{sql_query}\n```")
@@ -693,7 +721,11 @@ class SQLAgent(LumenBaseAgent):
             if not output or not output.query:
                 raise ValueError("No SQL query was generated.")
 
-            sql_query = clean_sql(output.query, dialect)
+            try:
+                sql_query = clean_sql(output.query, dialect)
+            except Exception as e:
+                step.stream(f"\n\n❌ Failed to clean SQL query: {e}")
+                sql_query = output.query
             step.stream(f"\n\n`{output.expr_slug}`\n```sql\n{sql_query}\n```")
 
             # Validate SQL
@@ -782,8 +814,11 @@ class SQLAgent(LumenBaseAgent):
             messages, sql_plan_context
         )
 
+        # Handle direct answer case (no discovery needed)
         if not discovery_steps:
-            return None
+            # Create direct answer step from user query
+            user_query = messages[0].get("content", "") if messages else "Display the data"
+            discovery_steps = [user_query]
 
         # Execute all SQL plan steps
         dialect = self._memory["source"].dialect
@@ -794,6 +829,11 @@ class SQLAgent(LumenBaseAgent):
         # The LAST result is always the final query/pipeline
         final_result = results[-1]
         if final_result["has_data"]:
+            # Save successful SQL plan context for potential follow-up queries
+            self._memory["sql_plan_context"] = sql_plan_context + f"\nIteration {iteration} Results:\n" + "\n".join(
+                f"{i+1}. {r['step']}\nResult: {r['summary']}"
+                for i, r in enumerate(results)
+            )
             return final_result
 
         # Store results for context in next iteration
@@ -866,7 +906,9 @@ class SQLAgent(LumenBaseAgent):
             source = DuckDBSource(uri=":memory:", mirrors=mirrors)
 
         # Execute SQL plan iterations
-        sql_plan_context = ""
+        # Use saved context from previous queries if available (follow-up scenarios)
+        sql_plan_context = self._memory.get("sql_plan_context", "")
+
         for iteration in range(1, self.max_discovery_iterations + 1):
             final_result = await self._execute_iteration(
                 iteration, messages, source, sql_plan_context
@@ -1537,18 +1579,17 @@ class ValidationAgent(Agent):
         step_title: str | None = None,
     ) -> Any:
         def on_click(event):
+            if messages:
+                user_messages = [msg for msg in reversed(messages) if msg.get("role") == "user"]
+                original_query = user_messages[0].get("content", "")
             suggestions_list = '\n- '.join(result.suggestions)
-            self.interface.send(f"Follow these suggestions: {suggestions_list}")
-
-        if messages:
-            user_messages = [msg for msg in reversed(messages) if msg.get("role") == "user"]
-            original_query = user_messages[0].get("content", "")
+            self.interface.send(f"Follow these suggestions to fulfill the original intent {original_query!r}:\n{suggestions_list}")
 
         executed_steps = None
         if "plan" in self._memory and hasattr(self._memory["plan"], "steps"):
             executed_steps = [f"{step.actor}: {step.instruction}" for step in self._memory["plan"].steps]
 
-        system_prompt = await self._render_prompt("main", messages, original_query=original_query, executed_steps=executed_steps)
+        system_prompt = await self._render_prompt("main", messages, executed_steps=executed_steps)
         model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
 
         result = await self.llm.invoke(

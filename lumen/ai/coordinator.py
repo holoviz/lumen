@@ -798,8 +798,16 @@ class Planner(Coordinator):
 
         is_follow_up = result.yes
         if not is_follow_up:
+            # Clear all SQL-related context if not a follow-up
             self._memory.pop("data", None)
             self._memory.pop("pipeline", None)
+            self._memory.pop("sql_plan_context", None)
+            self._memory.pop("sql", None)
+        else:
+            # For SQL follow-ups, preserve the discovery context
+            # This allows SQLAgent to skip rediscovery and directly answer
+            log_debug("Preserving SQL discovery context for follow-up question")
+
         return is_follow_up
 
     async def _execute_planner_tools(self, messages: list[Message]):
