@@ -21,6 +21,7 @@ import glob
 import json
 import os
 import pathlib
+import shutil
 
 from datetime import date
 
@@ -29,6 +30,7 @@ import param
 param.parameterized.docstring_signature = False
 param.parameterized.docstring_describe_params = False
 
+import nbsite
 import panel
 
 from nbsite import nbbuild
@@ -92,9 +94,18 @@ nbsite_pyodide_conf = {
     ]
 }
 
+# This conf.py overrides html_static_path inherited from nbsite so
+# we manually bring js/goatcounter.js
+gc_file = pathlib.Path(nbsite.__file__).parent / '_shared_static' / 'js' / 'goatcounter.js'
+if gc_file.exists():
+    out_dir = pathlib.Path(__file__).parent / '_static' / 'js'
+    out_dir.mkdir(exist_ok=True)
+    shutil.copy(gc_file, out_dir / gc_file.name)
+
 html_js_files = [
     (None, {'body': '{"shimMode": true}', 'type': 'esms-options'}),
     f'https://cdn.holoviz.org/panel/{js_version}/dist/bundled/reactiveesm/es-module-shims@^1.10.0/dist/es-module-shims.min.js',
+    'js/goatcounter.js',
 ]
 
 # Add any paths that contain templates here, relative to this directory.
