@@ -574,7 +574,8 @@ class SQLAgent(LumenBaseAgent):
             "check_context": {
                 "response_model": CheckContext,
                 "template": PROMPTS_DIR / "SQLAgent" / "check_context.jinja2",
-            }
+            },
+            "retry_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "SQLAgent" / "retry_output.jinja2"},
         }
     )
 
@@ -594,9 +595,9 @@ class SQLAgent(LumenBaseAgent):
 
     def _truncate_summary(self, summary: str, max_chars: int = 3000) -> str:
         """Truncate summary to prevent context overflow."""
-        if len(summary) <= max_chars:
-            return summary
-        return summary[:max_chars-3] + "..."
+        if len(summary) >= max_chars:
+            summary = summary[:max_chars-3] + "..."
+        return f"\n```\n{summary}\n```"
 
     def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
         memory["sql"] = event.new
@@ -686,22 +687,25 @@ class SQLAgent(LumenBaseAgent):
         dialect: str,
         source,
         step_number: int,
+        is_final_step: bool,
         current_step: str,
         sql_plan_context: str,
         step_title: str,
         query_complexity: str | None = None,
         errors: list | None = None,
-    ) -> tuple[str, str, Any]:
+    ) -> tuple[pn.chat.ChatStep, str, str, Any]:
         """
         Generate and validate SQL for any message set. Returns (sql_query, expr_slug, sql_expr_source).
         """
-        with self._add_step(title=step_title, steps_layout=self._steps_layout) as step:
+        with self.interface.param.update(callback_exception="raise"):
+            step = self._add_step(title=step_title, steps_layout=self._steps_layout, status="running")
             system_prompt = await self._render_prompt(
                 "main",
                 messages,
                 dialect=dialect,
                 separator=SOURCE_TABLE_SEPARATOR,
                 step_number=step_number,
+                is_final_step=is_final_step,
                 current_step=current_step,
                 previous_sql_plan_results=sql_plan_context,
                 query_complexity=query_complexity,
@@ -735,47 +739,47 @@ class SQLAgent(LumenBaseAgent):
                     sql_query, output.expr_slug, source, messages, step
                 )
             except Exception as e:
-                raise ValueError(f"Failed to execute SQL: {sql_query} due to {e}") from e
-            return sql_query, output.expr_slug, sql_expr_source
+                raise ValueError(f"Failed to execute SQL:\n```sql\n{sql_query}\n```\ndue to {e}") from e
+            return step, sql_query, output.expr_slug, sql_expr_source
 
-    async def _execute_single_step(self, plan_step: str, sql_query: str, expr_slug: str, sql_expr_source, source, iteration: int, step_num: int, is_final_step: bool) -> dict:
+    async def _execute_single_step(self, chat_step: pn.chat.ChatStep, plan_step: str, sql_query: str, expr_slug: str, sql_expr_source, source, iteration: int, step_num: int, is_final_step: bool) -> dict:
         """
         Execute a single SQL plan step and return the result.
         """
-        with self._add_step(title=f"Executing step {iteration}.{step_num}", steps_layout=self._steps_layout) as step:
-            if is_final_step:
-                # Final step: create full pipeline with transforms
-                sql_transforms = [SQLLimit(limit=1_000_000, write=source.dialect, pretty=True, identify=False)]
-                pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms)
-                df = await get_data(pipeline)
+        if is_final_step:
+            # Final step: create full pipeline with transforms
+            sql_transforms = [SQLLimit(limit=1_000_000, write=source.dialect, pretty=True, identify=False)]
+            pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms)
+            df = await get_data(pipeline)
 
-                result = {
-                    "step": plan_step,
-                    "sql_query": sql_query,
-                    "expr_slug": expr_slug,
-                    "sql_expr_source": sql_expr_source,
-                    "pipeline": pipeline,
-                    "data": df,
-                    "has_data": len(df) > 0,
-                    "summary": f"Final query returned {len(df)} rows",
-                    "is_final": True
-                }
-            else:
-                temp_source = source.create_sql_expr_source({expr_slug: sql_query}, materialize=False)
-                df = await get_data(await get_pipeline(source=temp_source, table=expr_slug))
+            result = {
+                "step": plan_step,
+                "sql_query": sql_query,
+                "expr_slug": expr_slug,
+                "sql_expr_source": sql_expr_source,
+                "pipeline": pipeline,
+                "data": df,
+                "has_data": len(df) > 0,
+                "summary": f"Final query returned {len(df)} rows",
+                "is_final": True
+            }
+        else:
+            temp_source = source.create_sql_expr_source({expr_slug: sql_query}, materialize=False)
+            df = await get_data(await get_pipeline(source=temp_source, table=expr_slug))
 
-                summary = str(df.to_dict()) if len(df) < 100 else f"Found {len(df)} rows: {df.head(100).to_dict()}"
-                # Truncate summary to prevent context overflow
-                summary = self._truncate_summary(summary)
-                result = {
-                    "step": plan_step,
-                    "sql_query": sql_query,
-                    "summary": summary,
-                    "has_data": len(df) > 0,
-                    "is_final": False
-                }
-            step.stream(f"**Result:** {result['summary']}")
-            return result
+            summary = str(df.to_dict()) if len(df) < 100 else f"Found {len(df)} rows: {df.head(100).to_dict()}"
+            # Truncate summary to prevent context overflow
+            summary = self._truncate_summary(summary)
+            result = {
+                "step": plan_step,
+                "sql_query": sql_query,
+                "summary": summary,
+                "has_data": len(df) > 0,
+                "is_final": False
+            }
+        stream_details(f"{result['summary']}", chat_step, title="Results")
+        chat_step.status = "success"
+        return result
 
     async def _execute_sql_plan_steps(self, discovery_steps: list[str], iteration: int, dialect: str, source, sql_plan_context: str, query_complexity: str) -> list[dict]:
         """
@@ -790,14 +794,14 @@ class SQLAgent(LumenBaseAgent):
 
             # Generate and validate SQL
             step_messages = [{"role": "user", "content": plan_step}]
-            sql_query, expr_slug, sql_expr_source = await self._generate_and_validate_sql(
-                step_messages, dialect, source, i, plan_step, current_context, step_title, query_complexity
+            chat_step, sql_query, expr_slug, sql_expr_source = await self._generate_and_validate_sql(
+                step_messages, dialect, source, i, is_final_step, plan_step, current_context, step_title, query_complexity
             )
 
             # Execute and collect result
             try:
                 result = await self._execute_single_step(
-                    plan_step, sql_query, expr_slug, sql_expr_source, source, iteration, i, is_final_step
+                    chat_step, plan_step, sql_query, expr_slug, sql_expr_source, source, iteration, i, is_final_step
                 )
                 results.append(result)
                 current_context += f"\n{plan_step!r} Result: {result['summary']}"
@@ -806,6 +810,7 @@ class SQLAgent(LumenBaseAgent):
                 if is_final_step and not result['has_data'] and 'Failed' in result['summary']:
                     raise Exception(result['summary'])
             except Exception as e:
+                chat_step.status = "failed"
                 if is_final_step:
                     raise e
 

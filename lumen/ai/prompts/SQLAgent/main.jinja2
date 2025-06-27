@@ -14,12 +14,6 @@ Write a SQL query for the user's data transformation request, focusing on intent
 
 ## Query Strategy:
 
-**Step Limits:**
-- Structure discovery: LIMIT 3
-- Value discovery: LIMIT 3-10
-- Final answer: LIMIT 100000
-- **CRITICAL: Table/file display commands: NO LIMIT WHATSOEVER (show complete contents)**
-
 **Rules:**
 - Use pattern matching: `WHERE "column" ILIKE '%pattern%'`
 - Exclude NULLs: `AND "column" IS NOT NULL`
@@ -40,11 +34,17 @@ SELECT * FROM "table" LIMIT 3;
 SELECT DISTINCT "column" FROM "table"
 WHERE "column" ILIKE '%pattern%' AND "column" IS NOT NULL LIMIT 10;
 
+-- UNION (LIMIT only at end)
+SELECT "season" AS "value" FROM "table" WHERE "season" IS NOT NULL
+UNION ALL
+SELECT SUBSTR("date", 1, 4) AS "value" FROM "table" WHERE "date" IS NOT NULL
+LIMIT 10;
+```
+
 -- Analysis (LIMIT 100000)
 SELECT "name", COUNT(*) AS "count" FROM "table"
 WHERE "type" = 'value' AND "name" IS NOT NULL
 GROUP BY "name" ORDER BY "count" DESC LIMIT 100000;
-```
 {% endblock %}
 
 {% block context -%}
@@ -60,8 +60,6 @@ GROUP BY "name" ORDER BY "count" DESC LIMIT 100000;
 📊 Summary of the data returned from the Previous Plan's SQL:
 {{ memory["data"] }}
 {%- endif -%}
-
-
 
 Additional instructions:
 - Use only `{{ dialect }}` SQL dialect.
@@ -80,14 +78,8 @@ Step {{ step_number }} of SQL Plan: {{ current_step }}
 
 ## Step Guidance:
 
-{%- if query_complexity == "direct" %}
-{%- if "show" in current_step.lower() and ("table" in current_step.lower() or "data" in current_step.lower() or ".parquet" in current_step.lower() or ".csv" in current_step.lower() or ".json" in current_step.lower() or "display" in current_step.lower()) %}
+{%- if query_complexity == "direct" or is_final_step %}
 **Show Table/File:** DO NOT USE ANY LIMIT - Display complete table/file contents as requested by user
-{%- elif "structure" in current_step.lower() or "examine" in current_step.lower() or "sample" in current_step.lower() %}
-**Structure Query:** LIMIT 1-2 for schema understanding only
-{%- else %}
-**Direct Query:** LIMIT 100000 for analysis and aggregations
-{%- endif %}
 {%- elif query_complexity == "discovery_required" %}
 **Discovery Query:** LIMIT 3-10 for targeted value exploration, focus on query entities
 {%- elif query_complexity == "complex_analysis" %}

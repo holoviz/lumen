@@ -1037,7 +1037,7 @@ class Planner(Coordinator):
             )
             actors_in_graph.add(actor)
 
-        if "ValidationAgent" in agents:
+        if "ValidationAgent" in agents and "TableListAgent" not in actors_in_graph:
             validation_step = type(step)(
                 actor="ValidationAgent",
                 instruction='Validate whether the executed plan fully answered the user\'s original query.',

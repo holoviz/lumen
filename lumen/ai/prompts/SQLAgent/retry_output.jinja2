@@ -1,0 +1,16 @@
+{% extends 'LumenBaseAgent/retry_output.jinja2' %}
+
+{% block instructions %}
+{{ super() }}
+
+**SQL-Specific Requirements:**
+- For multiple SELECT statements: combine into single query using UNION/UNION ALL
+- For syntax errors: ensure SQL dialect compliance
+- For column errors: use exact schema column names
+- Only ONE query allowed - no semicolon-separated statements
+{% endblock %}
+
+{% block context %}
+**Available Schema:**
+{{ memory["sql_metaset"].compact_context }}
+{% endblock %}

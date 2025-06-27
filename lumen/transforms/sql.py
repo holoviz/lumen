@@ -747,7 +747,7 @@ class SQLRemoveSourceSeparator(SQLTransform):
             return self.to_sql(self.parse_sql(sql_in).transform(self._remove_source_separator))
         except ValueError:
             pattern = rf'"[^"]*{re.escape(SOURCE_TABLE_SEPARATOR)}([^"]+)"'
-            return self.to_sql(re.sub(pattern, r'"\1"', sql_in))
+            return self.to_sql(self.parse_sql(re.sub(pattern, r'"\1"', sql_in)))
 
     def _remove_source_separator(self, node):
         if isinstance(node, Table):

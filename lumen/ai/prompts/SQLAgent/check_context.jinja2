@@ -1,11 +1,5 @@
 {% extends 'Agent/main.jinja2' %}
 
-{%- set limits = {
-    'structure': '1-2',
-    'discovery': '3-10',
-    'final': 'No limit for SHOW commands'
-} -%}
-
 {%- block instructions %}
 # Instructions:
 Determine discovery steps needed to answer the user's query.
@@ -33,23 +27,18 @@ Determine discovery steps needed to answer the user's query.
 
 ## Discovery Strategy:
 
-**Query Limits:**
-- Structure: LIMIT {{ limits.structure }}
-- Value discovery: LIMIT {{ limits.discovery }}
-- Final answers: {{ limits.final }}
-- Always exclude NULLs with IS NOT NULL
-
 **Data Quality Assessment:**
-- Check for invalid values (-9999, empty strings, 'N/A', 'NULL')
+- Check for invalid values of relevant columns (-9999, empty strings, 'N/A', 'NULL')
 - Identify formatting issues (currency symbols, commas in numbers)
 - Detect subtitle/unit rows that need OFFSET
 - Use pattern matching: `WHERE "column" ILIKE '%pattern%' AND "column" IS NOT NULL`
+- Always exclude NULLs with IS NOT NULL
+- Keep the SQL statements as simple as possible
 
 **Step Planning:**
 1. **Direct:** Single step with final answer
 2. **Discovery:** Structure check → Data cleaning assessment → Value discovery → Final analysis
 3. **Complex:** 2-3 focused steps maximum
-4. Use minimal LIMIT values for discovery to reduce token usage
 
 {% endblock %}
 
@@ -61,11 +50,11 @@ Determine discovery steps needed to answer the user's query.
 - "Show customers.csv" → ['Display customers.csv']
 
 **Analysis (Structure check first):**
-- "Which entity has the most metric?" → ['Check structure (LIMIT {{ limits.structure }})', 'Count metric by entity']
+- "Which entity has the most metric?" → ['Check structure', 'Count metric by entity']
 
 **Discovery:**
 - "Show records for [Name]" → ['Find name variations (LIMIT 10)', 'Display matching records']
-- "Analyze sales data" → ['Check structure (LIMIT {{ limits.structure }})', 'Assess data quality/cleaning needs (LIMIT 10)', 'Perform analysis']
+- "Analyze sales data" → ['Check structure', 'Assess data quality/cleaning needs (LIMIT 10)', 'Perform analysis']
 {% endblock %}
 
 {% block context %}
@@ -91,13 +80,8 @@ Please analyze the data context below and provide discovery steps:
 - Entity names → Discovery needed
 - Always verify schema first
 
-**Apply Limits:**
-- Structure: LIMIT {{ limits.structure }}
-- Discovery: LIMIT {{ limits.discovery }}
-- Final: {{ limits.final }}
-
 {%- endif %}
 
 **Available Schema:**
-{{ memory["sql_metaset"].table_context }}
+{{ memory["sql_metaset"].compact_context }}
 {%- endblock %}
