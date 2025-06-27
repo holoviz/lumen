@@ -552,6 +552,12 @@ class SQLAgent(LumenBaseAgent):
         ]
     )
 
+    @property
+    def logger(self):
+        """Simple logger for debugging iteration behavior"""
+        import logging
+        return logging.getLogger(self.__class__.__name__)
+
     exclusions = param.List(default=["dbtsl_metaset"])
 
     not_with = param.List(default=["DbtslAgent", "TableLookup"])
@@ -599,23 +605,57 @@ class SQLAgent(LumenBaseAgent):
             summary = summary[:max_chars-3] + "..."
         return f"\n```\n{summary}\n```"
 
+    def _register_sql_source(self, expr_slug: str, sql_expr_source) -> None:
+        """Register a SQL expression source in memory for reuse in subsequent iterations."""
+        if isinstance(self._memory["sources"], dict):
+            self._memory["sources"][expr_slug] = sql_expr_source
+        else:
+            self._memory["sources"].append(sql_expr_source)
+
+        # Trigger sources update to notify other components
+        self._memory.trigger("sources")
+
+        # Log the registration for debugging
+        self.logger.info(f"Registered SQL source: {expr_slug}")
+
     def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
         memory["sql"] = event.new
 
-    async def _check_information_completeness(self, messages: list[Message], sql_plan_context: str) -> tuple[list[str], str]:
+    async def _check_information_completeness(self, messages: list[Message], sql_plan_context: str,
+                                            current_iteration: int = 1) -> CheckContext:
         """
         Check if we have complete information to answer the query or need discovery.
-        Returns (discovery_steps, query_complexity).
+        Returns CheckContext with iteration-aware planning.
         """
-        with self._add_step(title="Smart query analysis", steps_layout=self._steps_layout) as step:
-            system_prompt = await self._render_prompt("check_context", messages, previous_sql_plan_results=sql_plan_context)
+        # Detect if this is a multi-table join query
+        user_query = next((m.get("content", "") for m in messages if m.get("role") == "user"), "")
+        involves_join = any(keyword in user_query.lower() for keyword in ["join", "merge", "combine", "match"])
+
+        # Extract preprocessing tables from context
+        preprocessing_tables = []
+        if "Available preprocessed tables:" in sql_plan_context:
+            table_section = sql_plan_context.split("Available preprocessed tables:")[1].split("\n\n")[0]
+            preprocessing_tables = [line.strip("- ") for line in table_section.strip().split("\n") if line.strip()]
+
+        with self._add_step(title=f"Planning iteration {current_iteration} of {self.max_discovery_iterations}",
+                           steps_layout=self._steps_layout) as step:
+            system_prompt = await self._render_prompt(
+                "check_context",
+                messages,
+                previous_sql_plan_results=sql_plan_context,
+                current_iteration=current_iteration,
+                max_iterations=self.max_discovery_iterations,
+                preprocessing_tables=preprocessing_tables,
+                user_query=user_query,
+                involves_multiple_tables=involves_join
+            )
             model_spec = self.prompts["check_context"].get("llm_spec", self.llm_spec_key)
 
             response = self.llm.stream(
                 messages,
                 system=system_prompt,
                 model_spec=model_spec,
-                response_model=self._get_model("check_context"),
+                response_model=CheckContext,
             )
 
             output = None
@@ -624,32 +664,41 @@ class SQLAgent(LumenBaseAgent):
                 if output.query_complexity:
                     message += f"\n\n**Query Complexity:** {output.query_complexity}"
                 if hasattr(output, 'efficient_plan') and output.efficient_plan:
-                    message += f"\n\n**Token Efficiency Plan:** {output.efficient_plan}"
+                    message += f"\n\n**Strategy:** {output.efficient_plan}"
                 step.stream(message, replace=True)
 
             # Handle case where streaming didn't complete properly
             if not output:
                 step.stream("\n\n**Result:** Using fallback - proceeding with discovery")
-                return (["Examine the user's query and provide appropriate response"], "discovery_required")
+                output = CheckContext(
+                    chain_of_thought="Fallback planning",
+                    query_complexity="discovery_required",
+                    discovery_steps=["Examine the user's query and provide appropriate response"],
+                    current_iteration=current_iteration,
+                    max_iterations=self.max_discovery_iterations
+                )
 
-            query_complexity = getattr(output, 'query_complexity', 'discovery_required')
+            # Update response with context
+            output.current_iteration = current_iteration
+            output.max_iterations = self.max_discovery_iterations
+            output.preprocessing_tables = preprocessing_tables
 
-            # If no discovery needed, return empty list for direct answer
-            if query_complexity == "direct":
-                step.stream("\n\n**Result:** Direct answer - no discovery needed")
-                return ([], query_complexity)
+            # Stream planning information
+            message = f"\n\n**Iteration {current_iteration}/{self.max_discovery_iterations}**"
+            message += f"\n**Query Type:** {output.query_complexity}"
+            if output.query_complexity == "multi_table_join":
+                message += f"\n**Strategy:** {output.efficient_plan}"
 
-            # Get discovery steps, with fallback
-            discovery_steps = getattr(output, 'discovery_steps', [])
-            if discovery_steps:
-                instructions_text = "\n".join(f"- {instruction}" for instruction in discovery_steps)
-                step.stream(f"\n\n**Discovery Plan:**\n{instructions_text}")
-            else:
-                # Fallback discovery steps
-                discovery_steps = ["Examine the user's query and provide appropriate response"]
-                step.stream("\n\n**Discovery Plan:** Using fallback discovery")
+            if output.discovery_steps:
+                instructions_text = "\n".join(f"- {instruction}" for instruction in output.discovery_steps)
+                message += f"\n\n**Steps for this iteration:**\n{instructions_text}"
 
-            return (discovery_steps, query_complexity)
+            if output.materialization_steps:
+                message += f"\n\n**Will materialize steps:** {output.materialization_steps}"
+
+            step.stream(message)
+
+            return output
 
     async def _validate_sql_with_retry(self, sql_query: str, expr_slug: str, dialect: str, source, messages: list[Message], step, max_retries: int = 3) -> tuple[str, Any]:
         """
@@ -715,6 +764,7 @@ class SQLAgent(LumenBaseAgent):
                 current_step=current_step,
                 previous_sql_plan_results=sql_plan_context,
                 query_complexity=query_complexity,
+                current_iteration=getattr(self, '_current_iteration', 1),
                 errors=errors,
             )
 
@@ -749,7 +799,28 @@ class SQLAgent(LumenBaseAgent):
                 raise ValueError(f"Failed to execute SQL:\n```sql\n{sql_query}\n```\ndue to {e}") from e
             return step, sql_query, output.expr_slug, sql_expr_source
 
-    async def _execute_single_step(self, chat_step: pn.chat.ChatStep, plan_step: str, sql_query: str, expr_slug: str, sql_expr_source, source, iteration: int, step_num: int, is_final_step: bool) -> dict:
+    def _create_step_summary(self, df, step_type="discovery"):
+        """
+        Create an appropriate summary based on the result data size and type.
+        """
+        if len(df) == 0:
+            return "No data found matching the criteria"
+        elif len(df) < 10:
+            # Small result set - show actual values
+            return f"Found {len(df)} items: {df.to_dict('records')}"
+        elif len(df) < 100:
+            # Medium result set - show sample with summary stats
+            sample_data = df.head(10).to_dict('records')
+            return f"Found {len(df)} items. Sample: {sample_data}"
+        else:
+            # Large result set - show summary statistics and sample
+            sample_data = df.head(5).to_dict('records')
+            if step_type == "final":
+                return f"Query returned {len(df)} rows. First 5: {sample_data}"
+            else:
+                return f"Discovery found {len(df)} items. First 5: {sample_data}"
+
+    async def _execute_single_step(self, chat_step: pn.chat.ChatStep, plan_step: str, sql_query: str, expr_slug: str, sql_expr_source, source, iteration: int, step_num: int, is_final_step: bool, should_materialize: bool = False) -> dict:
         """
         Execute a single SQL plan step and return the result.
         """
@@ -759,6 +830,9 @@ class SQLAgent(LumenBaseAgent):
             pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms)
             df = await get_data(pipeline)
 
+            # Create appropriate summary for final step
+            summary = self._create_step_summary(df, "final")
+
             result = {
                 "step": plan_step,
                 "sql_query": sql_query,
@@ -767,14 +841,17 @@ class SQLAgent(LumenBaseAgent):
                 "pipeline": pipeline,
                 "data": df,
                 "has_data": len(df) > 0,
-                "summary": f"Final query returned {len(df)} rows",
+                "summary": summary,
                 "is_final": True
             }
         else:
-            temp_source = source.create_sql_expr_source({expr_slug: sql_query}, materialize=False)
+            # Create materialized or temporary source based on flag
+            temp_source = source.create_sql_expr_source({expr_slug: sql_query}, materialize=should_materialize)
             df = await get_data(await get_pipeline(source=temp_source, table=expr_slug))
 
-            summary = str(df.to_dict()) if len(df) < 100 else f"Found {len(df)} rows: {df.head(100).to_dict()}"
+            # Create appropriate summary for intermediate step
+            summary = self._create_step_summary(df, "discovery")
+
             # Truncate summary to prevent context overflow
             summary = self._truncate_summary(summary)
             result = {
@@ -782,13 +859,21 @@ class SQLAgent(LumenBaseAgent):
                 "sql_query": sql_query,
                 "summary": summary,
                 "has_data": len(df) > 0,
-                "is_final": False
+                "is_final": False,
+                "materialized": should_materialize
             }
+
+            if should_materialize:
+                result["materialized_table"] = expr_slug
+                self._register_sql_source(expr_slug, temp_source)
+
+                stream_details(f"\n\n✅ Materialized as: {expr_slug}\n", chat_step, title="Materialization")
+
         stream_details(f"\n\n{result['summary']}\n", chat_step, title="Results")
         chat_step.status = "success"
         return result
 
-    async def _execute_sql_plan_steps(self, discovery_steps: list[str], iteration: int, dialect: str, source, sql_plan_context: str, query_complexity: str) -> list[dict]:
+    async def _execute_sql_plan_steps(self, discovery_steps: list[str], iteration: int, dialect: str, source, sql_plan_context: str, query_complexity: str, materialization_steps: list[int]) -> list[dict]:
         """
         Execute all SQL plan steps sequentially, with the last step being the final answer.
         """
@@ -797,6 +882,7 @@ class SQLAgent(LumenBaseAgent):
 
         for i, plan_step in enumerate(discovery_steps, 1):
             is_final_step = (i == len(discovery_steps))
+            should_materialize = i in materialization_steps
             step_title = f"SQL Plan {iteration}.{i}"
 
             # Generate and validate SQL
@@ -808,7 +894,7 @@ class SQLAgent(LumenBaseAgent):
             # Execute and collect result
             try:
                 result = await self._execute_single_step(
-                    chat_step, plan_step, sql_query, expr_slug, sql_expr_source, source, iteration, i, is_final_step
+                    chat_step, plan_step, sql_query, expr_slug, sql_expr_source, source, iteration, i, is_final_step, should_materialize
                 )
                 results.append(result)
                 current_context += f"\n{plan_step!r} Result: {result['summary']}"
@@ -825,51 +911,173 @@ class SQLAgent(LumenBaseAgent):
 
     async def _execute_iteration(self, iteration: int, messages: list[Message], source, sql_plan_context: str) -> dict | None:
         """
-        Execute a single iteration of SQL planning. Returns final result if successful, None otherwise.
+        Execute a single iteration of SQL planning with iteration awareness.
         """
-        # Get SQL plan
-        discovery_steps, query_complexity = await self._check_information_completeness(
-            messages, sql_plan_context
+        # Track current iteration for template context
+        self._current_iteration = iteration
+
+        # Get SQL plan with iteration context
+        check_result = await self._check_information_completeness(
+            messages, sql_plan_context, current_iteration=iteration
         )
 
-        # Handle direct answer case (no discovery needed)
-        if not discovery_steps:
-            # Create direct answer step from user query
+        discovery_steps = check_result.discovery_steps
+        query_complexity = check_result.query_complexity
+        materialization_steps = check_result.materialization_steps
+
+        # For multi-table joins, ensure we're following the iteration strategy
+        if query_complexity == "multi_table_join":
+            if iteration == 1 and any("join" in step.lower() for step in discovery_steps):
+                # Prevent premature joining in iteration 1
+                self.logger.warning("Iteration 1 should explore, not join. Adjusting steps...")
+                discovery_steps = [s for s in discovery_steps if "join" not in s.lower()]
+
+            if iteration in [2, 3] and len(discovery_steps) > 2:
+                # Limit preprocessing to focused steps
+                self.logger.info(f"Iteration {iteration}: Focusing on preprocessing")
+                discovery_steps = discovery_steps[:2]  # Limit complexity
+
+        # Handle direct answer case
+        if not discovery_steps and query_complexity == "direct":
             user_query = next((m.get("content", "") for m in messages if m.get("role") == "user"), "Display the data")
             discovery_steps = [user_query]
 
-        # Execute all SQL plan steps
+        # Execute all SQL plan steps with materialization
         dialect = self._memory["source"].dialect
         results = await self._execute_sql_plan_steps(
-            discovery_steps, iteration, dialect, source, sql_plan_context, query_complexity
+            discovery_steps, iteration, dialect, source, sql_plan_context,
+            query_complexity, materialization_steps
         )
 
-        # The LAST result is always the final query/pipeline
+        # Check if this is the final answer
+        is_final_iteration = (
+            iteration == self.max_discovery_iterations or
+            query_complexity in ["direct", "discovery_required"] or
+            (query_complexity == "multi_table_join" and iteration >= 4 and results[-1]["has_data"])
+        )
+
         final_result = results[-1]
-        if final_result["has_data"]:
-            # Save successful SQL plan context for potential follow-up queries
-            self._memory["sql_plan_context"] = sql_plan_context + f"\nIteration {iteration} Results:\n" + "\n".join(
+        if is_final_iteration and final_result["has_data"]:
+            # Save context including preprocessing tables using FIFO queue
+            preprocessing_info = ""
+            if check_result.preprocessing_tables:
+                preprocessing_info = "\n\nAvailable preprocessed tables:\n" + \
+                                   "\n".join(f"- {t}" for t in check_result.preprocessing_tables)
+
+            # Create new iteration entry
+            results_summary = "\n".join(
                 f"{i+1}. {r['step']}\nResult: {self._truncate_summary(r['summary'])}"
                 for i, r in enumerate(results)
             )
+            new_entry = f"\nIteration {iteration} Results:\n{results_summary}"
+
+            # Use FIFO queue system for final context too
+            context_queue = self._extract_context_queue(sql_plan_context)
+            context_queue.append(new_entry)
+
+            # Keep only the most recent 10 entries (FIFO)
+            if len(context_queue) > 10:
+                context_queue = context_queue[-10:]
+
+            # Rebuild final context
+            base_context = preprocessing_info if preprocessing_info else ""
+            queue_context = "".join(context_queue)
+
+            self._memory["sql_plan_context"] = f"{base_context}{queue_context}"
             return final_result
 
-        # Store results for context in next iteration
+        # Store results and preprocessing tables for next iteration
         self._iteration_results = results
+        if any(r.get('materialized') for r in results):
+            mat_tables = [r['materialized_table'] for r in results if r.get('materialized')]
+            sql_plan_context += "\n\nAvailable preprocessed tables:\n" + "\n".join(f"- {t}" for t in mat_tables)
+
         return None
 
     def _update_context_for_next_iteration(self, sql_plan_context: str, iteration: int) -> str:
-        """Update context with results from current iteration."""
+        """Update context with results from current iteration using FIFO queue."""
         if hasattr(self, '_iteration_results'):
             results_summary = "\n".join(
                 f"{i+1}. {r['step']}\nResult: {self._truncate_summary(r['summary'])}"
                 for i, r in enumerate(self._iteration_results)
             )
-            sql_plan_context += f"\nIteration {iteration} Results:\n{results_summary}"
-        return sql_plan_context[-10000:]
+            new_entry = f"\nIteration {iteration} Results:\n{results_summary}"
+
+            # Parse existing context to extract previous results as a queue
+            context_queue = self._extract_context_queue(sql_plan_context)
+
+            # Add new entry to queue
+            context_queue.append(new_entry)
+
+            # Keep only the most recent 10 entries (FIFO)
+            if len(context_queue) > 10:
+                context_queue = context_queue[-10:]
+
+            # Rebuild context with materialized tables info + queue
+            base_context = self._extract_base_context(sql_plan_context)
+            queue_context = "".join(context_queue)
+
+            return f"{base_context}{queue_context}"
+
+        return sql_plan_context
+
+    def _extract_context_queue(self, sql_plan_context: str) -> list[str]:
+        """Extract previous iteration results from context as a list."""
+        queue = []
+        if "Iteration" in sql_plan_context:
+            # Split on "Iteration X Results:" pattern
+            parts = sql_plan_context.split("\nIteration ")
+            for part in parts[1:]:  # Skip first part (before any iterations)
+                queue.append(f"\nIteration {part}")
+        return queue
+
+    def _extract_base_context(self, sql_plan_context: str) -> str:
+        """Extract non-iteration parts of context (preprocessing tables, etc.)."""
+        if "Available preprocessed tables:" in sql_plan_context:
+            # Keep preprocessing tables info
+            base_parts = []
+            lines = sql_plan_context.split("\n")
+            in_preprocessing_section = False
+
+            for line in lines:
+                if "Available preprocessed tables:" in line:
+                    in_preprocessing_section = True
+                    base_parts.append(line)
+                elif in_preprocessing_section and line.startswith("- "):
+                    base_parts.append(line)
+                elif in_preprocessing_section and "Iteration" in line:
+                    break  # End of preprocessing section
+                elif not in_preprocessing_section and "Iteration" not in line:
+                    base_parts.append(line)
+
+            return "\n".join(base_parts)
+        else:
+            # No preprocessing tables, just return non-iteration parts
+            if "\nIteration" in sql_plan_context:
+                return sql_plan_context.split("\nIteration")[0]
+            return sql_plan_context
 
     async def _create_pipeline_from_result(self, result: dict, messages: list[Message], render_output: bool, step_title: str) -> Any:
         """Create the final pipeline from the result of the last SQL plan step."""
+        # Handle incomplete results for fallback scenarios
+        if "data" not in result:
+            # For intermediate results, we need to create a basic pipeline
+            sql_query = result["sql_query"]
+            source = self._memory["source"]
+            expr_slug = f"fallback_{len(sql_query) % 1000}"
+            sql_expr_source = source.create_sql_expr_source({expr_slug: sql_query})
+
+            sql_transforms = [SQLLimit(limit=1_000_000, write=source.dialect, pretty=True, identify=False)]
+            pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms)
+            data = await get_data(pipeline)
+
+            result.update({
+                "data": data,
+                "pipeline": pipeline,
+                "expr_slug": expr_slug,
+                "sql_expr_source": sql_expr_source
+            })
+
         # Update memory with final result
         self._memory["data"] = await describe_data(result["data"])
         self._memory["sql"] = result["sql_query"]
@@ -924,9 +1132,9 @@ class SQLAgent(LumenBaseAgent):
                 mirrors[renamed_table] = (a_source, renamed_table)
             source = DuckDBSource(uri=":memory:", mirrors=mirrors)
 
-        # Execute SQL plan iterations
-        # Use saved context from previous queries if available (follow-up scenarios)
+        # Execute SQL plan iterations with awareness of complexity
         sql_plan_context = self._memory.get("sql_plan_context", "")
+        final_result = None
 
         for iteration in range(1, self.max_discovery_iterations + 1):
             final_result = await self._execute_iteration(
@@ -934,15 +1142,31 @@ class SQLAgent(LumenBaseAgent):
             )
 
             if final_result:
-                return await self._create_pipeline_from_result(
-                    final_result, messages, render_output, step_title
-                )
+                break  # Got final answer
 
-            # Update context for next iteration if no final result
+            # Update context for next iteration
             sql_plan_context = self._update_context_for_next_iteration(
                 sql_plan_context, iteration
             )
-        return self._memory["pipeline"]
+
+            # For multi-table joins, ensure we continue through all iterations
+            if iteration < 4 and "multi_table_join" in sql_plan_context:
+                self.logger.info(f"Multi-table join: continuing to iteration {iteration + 1}")
+                continue
+
+        if final_result:
+            return await self._create_pipeline_from_result(
+                final_result, messages, render_output, step_title
+            )
+        # Fallback: use the last result even if incomplete
+        elif hasattr(self, '_iteration_results') and self._iteration_results:
+            last_result = self._iteration_results[-1]
+            self.logger.warning("Max iterations reached without final answer, using last result")
+            return await self._create_pipeline_from_result(
+                last_result, messages, render_output, step_title
+            )
+
+        return self._memory.get("pipeline")
 
 
 class DbtslAgent(LumenBaseAgent, DbtslMixin):

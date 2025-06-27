@@ -51,43 +51,67 @@ class CheckContext(PartialBaseModel):
     chain_of_thought: str = Field(
         description="""
         Explain how you will use the data to check the context, and address any previous issues you encountered.
-        If you need to run a query, explain what it is and why.
+        Consider which iteration you're on and plan accordingly.
         """
     )
 
-    query_complexity: Literal["direct", "discovery_required", "complex_analysis"] = Field(
+    query_complexity: Literal["direct", "discovery_required", "complex_analysis", "multi_table_join"] = Field(
         description="""
         Classify the query complexity:
         - "direct": Simple display, count, or queries with standard/obvious values
         - "discovery_required": Queries needing unknown entity values or name variations
         - "complex_analysis": Multi-step analysis requiring multiple discovery phases
+        - "multi_table_join": Queries requiring joins between multiple tables (use all 5 iterations)
         """
+    )
+
+    current_iteration: int = Field(
+        default=1,
+        description="The current iteration number (1-5)"
+    )
+
+    max_iterations: int = Field(
+        default=5,
+        description="Maximum number of iterations available"
     )
 
     efficient_plan: str = Field(
         description="""
         For discovery queries: Describe the strategy for efficient token usage and data cleaning.
-        - Identify which columns require targeted value exploration
-        - Specify suitable LIMIT values (1-3 for schema inspection, 3-10 for value discovery, 100000 for final answers)
-        - Determine if WHERE clauses with pattern matching can narrow discovery scope
-        - Ensure NULL values are filtered out using IS NOT NULL conditions
-        - Include data cleaning assessment: check for invalid values (-9999, 'N/A', empty strings), formatting issues (currency symbols, commas), and subtitle rows requiring OFFSET
-        - Consider that each query result will be added to the conversation context
+        For multi-table joins, outline the full 5-iteration strategy:
+        - Iteration 1: Table exploration and join column identification
+        - Iterations 2-3: Create preprocessed/normalized tables for easier joining
+        - Iterations 4-5: Perform final joins and answer the query
         """
     )
 
     discovery_steps: list[str] = Field(
         default_factory=list,
         description="""
-        ONLY provide steps if discovery_needed=True
-        Do not redo previous iteration discoveries if their corresponding results are present unless necessary.
+        Steps for this iteration ONLY. Don't try to do everything at once.
 
-        For direct queries, leave this empty - system should answer immediately.
-        Focus on entities mentioned in user's query. Use WHERE pattern matching when possible.
-        Always exclude NULL values with IS NOT NULL conditions.
-        Include data cleaning step when needed to assess data quality and identify cleaning requirements.
-        The LAST step must directly answer the user's question and MUST contain the full context (original user query).
-        The steps must be descriptions in English, that help the LLM discover more about the data, NOT SQL queries.
+        For multi_table_join queries:
+        - Iteration 1: Focus on understanding table structures and identifying join columns
+        - Iterations 2-3: Create intermediate tables with normalized join keys
+        - Iterations 4-5: Join the preprocessed tables and answer the query
+
+        The LAST step of the FINAL iteration must directly answer the user's question.
+        """
+    )
+
+    materialization_steps: list[int] = Field(
+        default_factory=list,
+        description="""
+        List of step indices that should be materialized as persistent tables.
+        For multi-table joins, materialize preprocessing steps in iterations 2-3.
+        """
+    )
+
+    preprocessing_tables: list[str] = Field(
+        default_factory=list,
+        description="""
+        Names of tables created in previous iterations that can be used for joining.
+        These are materialized tables from preprocessing steps.
         """
     )
 
