@@ -777,7 +777,7 @@ class SQLAgent(LumenBaseAgent):
                 "has_data": len(df) > 0,
                 "is_final": False
             }
-        stream_details(f"{result['summary']}", chat_step, title="Results")
+        stream_details(f"\n\n{result['summary']}\n", chat_step, title="Results")
         chat_step.status = "success"
         return result
 
@@ -875,6 +875,7 @@ class SQLAgent(LumenBaseAgent):
         else:
             self._memory["sources"].append(result["sql_expr_source"])
         self._memory["source"] = result["sql_expr_source"]
+        self._memory.trigger("sources")
 
         # Render output
         self._render_lumen(
@@ -1089,6 +1090,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
             self._memory["table"] = pipeline.table
             self._memory["dbtsl_vector_metaset"] = vector_metaset
             self._memory["dbtsl_sql_metaset"] = sql_metaset
+            self._memory.trigger("sources")
             return sql_query, pipeline
         except Exception as e:
             report_error(e, step)
