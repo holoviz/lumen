@@ -65,6 +65,7 @@ instance/
 
 # Sphinx documentation
 docs/_build/
+doc/_static/js/goatcounter.js
 
 # PyBuilder
 target/
