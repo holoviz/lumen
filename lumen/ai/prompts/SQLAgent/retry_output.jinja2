@@ -11,6 +11,8 @@
 {% endblock %}
 
 {% block context %}
+{{ super() }}
+
 **Available Schema:**
 {{ memory["sql_metaset"].compact_context }}
 {% endblock %}

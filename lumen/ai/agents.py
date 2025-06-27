@@ -651,15 +651,21 @@ class SQLAgent(LumenBaseAgent):
 
             return (discovery_steps, query_complexity)
 
-    async def _validate_sql_with_retry(self, sql_query: str, expr_slug: str, source, messages: list[Message], step, max_retries: int = 3) -> tuple[str, Any]:
+    async def _validate_sql_with_retry(self, sql_query: str, expr_slug: str, dialect: str, source, messages: list[Message], step, max_retries: int = 3) -> tuple[str, Any]:
         """
         Validate SQL query with retry logic. Streams directly to the provided step.
 
         Returns:
             tuple: (validated_sql_query, sql_expr_source)
         """
+        try:
+            sql_query = clean_sql(sql_query, dialect)
+        except Exception as e:
+            step.stream(f"\n\n❌ SQL cleaning failed: {e}")
+
         for i in range(max_retries):
             try:
+                step.stream(f"\n\n`{expr_slug}`\n```sql\n{sql_query}\n```")
                 sql_expr_source = source.create_sql_expr_source({expr_slug: sql_query})
                 if i > 0:
                     step.stream("\n\n✅ SQL validation successful")
@@ -731,14 +737,15 @@ class SQLAgent(LumenBaseAgent):
 
             sql_query = output.query
             try:
-                sql_query = clean_sql(sql_query, dialect)
-                step.stream(f"\n\n`{output.expr_slug}`\n```sql\n{sql_query}\n```")
-
                 # Validate SQL
                 sql_query, sql_expr_source = await self._validate_sql_with_retry(
-                    sql_query, output.expr_slug, source, messages, step
+                    sql_query, output.expr_slug, dialect, source, messages, step
                 )
             except Exception as e:
+                step.param.update(
+                    status="failed",
+                    title=f"SQL Failed: {e}"
+                )
                 raise ValueError(f"Failed to execute SQL:\n```sql\n{sql_query}\n```\ndue to {e}") from e
             return step, sql_query, output.expr_slug, sql_expr_source
 
