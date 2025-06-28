@@ -645,6 +645,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 log_debug(f"Direct dependency detected: {tool.name} provides at least one requirement for {agent.name}")
                 # The agent already has it formatted in its template
                 continue
+            elif len(result) < 1000:
+                is_relevant = True
             else:
                 # Otherwise, check semantic relevance
                 is_relevant = await self._check_tool_relevance(
@@ -1037,7 +1039,7 @@ class Planner(Coordinator):
             )
             actors_in_graph.add(actor)
 
-        if "ValidationAgent" in agents:
+        if "ValidationAgent" in agents and len(actors_in_graph) > 1:
             validation_step = type(step)(
                 actor="ValidationAgent",
                 instruction='Validate whether the executed plan fully answered the user\'s original query.',

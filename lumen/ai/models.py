@@ -47,48 +47,68 @@ class Sql(BaseModel):
     )
 
 
-class CheckContext(PartialBaseModel):
-    chain_of_thought: str = Field(
+class NextStep(PartialBaseModel):
+    """Represents the next single step to take in SQL exploration."""
+
+    reasoning: str = Field(
         description="""
-        Explain how you will use the data to check the context, and address any previous issues you encountered.
-        If you need to run a query, explain what it is and why.
+        Brief reasoning about what we know so far and what specific information we need next.
+        Be concise and focused on the immediate next step.
         """
     )
 
-    query_complexity: Literal["direct", "discovery_required", "complex_analysis"] = Field(
+    step_type: Literal["explore", "discover", "preprocess", "join", "filter", "aggregate", "final"] = Field(
         description="""
-        Classify the query complexity:
-        - "direct": Simple display, count, or queries with standard/obvious values
-        - "discovery_required": Queries needing unknown entity values or name variations
-        - "complex_analysis": Multi-step analysis requiring multiple discovery phases
+        The type of step to take:
+        - "explore": Initial table structure examination (LIMIT 3-5)
+        - "discover": Find specific values or patterns (LIMIT 10)
+        - "preprocess": Clean/normalize data for later use
+        - "join": Combine tables (only after exploration)
+        - "filter": Apply specific conditions
+        - "aggregate": Summarize data
+        - "final": Answer the user's question
         """
     )
 
-    efficient_plan: str = Field(
+    action_description: str = Field(
         description="""
-        For discovery queries: Describe the strategy for efficient token usage and data cleaning.
-        - Identify which columns require targeted value exploration
-        - Specify suitable LIMIT values (1-3 for schema inspection, 3-10 for value discovery, 100000 for final answers)
-        - Determine if WHERE clauses with pattern matching can narrow discovery scope
-        - Ensure NULL values are filtered out using IS NOT NULL conditions
-        - Include data cleaning assessment: check for invalid values (-9999, 'N/A', empty strings), formatting issues (currency symbols, commas), and subtitle rows requiring OFFSET
-        - Consider that each query result will be added to the conversation context
+        Clear, specific description of what this single step should do.
+        For discovery: explore ONE table at a time, no UNION operations.
         """
     )
 
-    discovery_steps: list[str] = Field(
+    query_complexity: Literal["simple", "discovery", "complex", "join"] = Field(
+        description="Complexity of this specific step only"
+    )
+
+    should_materialize: bool = Field(
+        description="Whether this step's results should be materialized for reuse"
+    )
+
+    is_final_answer: bool = Field(
+        description="Whether this step will provide the final answer to the user"
+    )
+
+    expected_limit: int = Field(
+        default=10,
+        description="Expected LIMIT for this query based on step type"
+    )
+
+
+class ReadinessCheck(PartialBaseModel):
+    """Check if we're ready to answer the user's question."""
+
+    reasoning: str = Field(
+        description="Explain what information we have and what might still be missing"
+    )
+
+    is_ready: bool = Field(
+        description="True if we have enough information to write the final query"
+    )
+
+    missing_info: list[str] = Field(
         default_factory=list,
-        description="""
-        ONLY provide steps if discovery_needed=True
-        Do not redo previous iteration discoveries if their corresponding results are present unless necessary.
-
-        For direct queries, leave this empty - system should answer immediately.
-        Focus on entities mentioned in user's query. Use WHERE pattern matching when possible.
-        Always exclude NULL values with IS NOT NULL conditions.
-        Include data cleaning step when needed to assess data quality and identify cleaning requirements.
-        The LAST step must directly answer the user's question and MUST contain the full context (original user query).
-        The steps must be descriptions in English, that help the LLM discover more about the data, NOT SQL queries.
-        """
+        description="List of specific information still needed (if not ready)"
     )
 
 

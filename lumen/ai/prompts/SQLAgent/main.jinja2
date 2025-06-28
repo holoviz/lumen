@@ -9,24 +9,25 @@ Write a SQL query for the user's data transformation request, focusing on intent
 - No inline comments in SQL code
 - NULL handling: Exclude NULLs unless specified otherwise
 - Performance: Use LIMIT 100000 if unspecified, efficient ORDER BY, filter early
-- Only single SQL query allowed: use  `UNION` for multiple queries
+- **Discovery queries**: One table at a time, no UNION
 - Subtitle rows: If dataset has subtitle/unit rows (e.g., "Title" then "Unit"), use OFFSET to skip them
+- **NO CREATE statements**: Materialization is handled automatically by the system
+- **Data Quality**: Filter out space-only values with `TRIM("column") != ''`
+- **Header Rows**: Use OFFSET 1 when data has header/metadata rows
 
 ## Query Strategy:
 
-**Step Limits:**
-- Structure discovery: LIMIT 3
-- Value discovery: LIMIT 3-10
-- Final answer: LIMIT 100000
-- **CRITICAL: Table/file display commands: NO LIMIT WHATSOEVER (show complete contents)**
-
 **Rules:**
-- Use pattern matching: `WHERE "column" ILIKE '%pattern%'`
+- **Entity Discovery**: When searching for enums:
+  - Use multiple pattern variations: `ILIKE '%us%' OR ILIKE '%american%' OR ILIKE '%united%'`
+  - Check multiple columns if available: country_name, country_code, country_3_letter_code
+  - Consider common abbreviations and variations and case sensitivity
 - Exclude NULLs: `AND "column" IS NOT NULL`
 - Only filter by confirmed values from previous results
 - Progressive approach: each step builds on previous
 - Clean invalid values (-9999, empty strings)
 - Use CTEs only when necessary
+- **For preprocessing steps**: Write SELECT statements that transform data; materialization happens automatically
 {%- endblock %}
 
 {% block examples %}
@@ -38,13 +39,23 @@ SELECT * FROM "table" LIMIT 3;
 
 -- Discovery (LIMIT 3-10)
 SELECT DISTINCT "column" FROM "table"
-WHERE "column" ILIKE '%pattern%' AND "column" IS NOT NULL LIMIT 10;
+WHERE "column" IS NOT NULL LIMIT 10;
+
+-- Preprocessing (SELECT only - materialization automatic)
+SELECT *,
+CASE "season"
+WHEN 'DJF' THEN MAKE_DATE("year" - 1, 12, 1)
+WHEN 'JFM' THEN MAKE_DATE("year", 1, 1)
+ELSE NULL
+END AS "datetime"
+FROM "table"
+WHERE "year" IS NOT NULL AND "season" IS NOT NULL
+LIMIT 100000;
 
 -- Analysis (LIMIT 100000)
 SELECT "name", COUNT(*) AS "count" FROM "table"
 WHERE "type" = 'value' AND "name" IS NOT NULL
 GROUP BY "name" ORDER BY "count" DESC LIMIT 100000;
-```
 {% endblock %}
 
 {% block context -%}
@@ -61,8 +72,6 @@ GROUP BY "name" ORDER BY "count" DESC LIMIT 100000;
 {{ memory["data"] }}
 {%- endif -%}
 
-
-
 Additional instructions:
 - Use only `{{ dialect }}` SQL dialect.
 {%- if dialect == 'duckdb' %}
@@ -71,39 +80,33 @@ Additional instructions:
 - If `read_*` is used, use with alias, e.g. read_parquet('table.parq') as table_parq
 - Use double quotes (") for column names and single quotes (') for ALL string literal values (e.g., ILIKE '%pattern%', 'text_value', '2023-01-01')
 - Be sure to reference the full table slug, e.g. `source {{ separator }} table`
+- Use `CAST('YYYY-MM-DD' AS DATE)` for date literals, `MAKE_DATE(year, month, day)` for constructing dates from parts, for string concatenation dates: `CAST(year || '-' || month || '-' || day AS DATE)`
 {% endif %}
 {%- if dialect == 'snowflake' %}
 - Do not under any circumstances add quotes around the database, schema or table name.
 {% endif -%}
 
-Step {{ step_number }} of SQL Plan: {{ current_step }}
+Step {{ step_number }}: {{ current_step }}
 
 ## Step Guidance:
 
-{%- if query_complexity == "direct" %}
-{%- if "show" in current_step.lower() and ("table" in current_step.lower() or "data" in current_step.lower() or ".parquet" in current_step.lower() or ".csv" in current_step.lower() or ".json" in current_step.lower() or "display" in current_step.lower()) %}
-**Show Table/File:** DO NOT USE ANY LIMIT - Display complete table/file contents as requested by user
-{%- elif "structure" in current_step.lower() or "examine" in current_step.lower() or "sample" in current_step.lower() %}
-**Structure Query:** LIMIT 1-2 for schema understanding only
+{%- if query_complexity == "join" %}
+**Join Query:** Build on previous discovery to join tables with confidence
+{%- elif query_complexity == "simple" or is_final_step %}
+**Direct Query:** Execute the final query to answer the user's question
+{%- elif query_complexity == "discovery" %}
+**Discovery Query:** LIMIT 3-10 for targeted exploration (one table at a time)
+{%- elif query_complexity == "complex" %}
+**Complex Query:** Use all previously discovered values and context
 {%- else %}
-**Direct Query:** LIMIT 100000 for analysis and aggregations
-{%- endif %}
-{%- elif query_complexity == "discovery_required" %}
-**Discovery Query:** LIMIT 3-10 for targeted value exploration, focus on query entities
-{%- elif query_complexity == "complex_analysis" %}
-**Analysis Query:** LIMIT 100000, use all previously discovered values
-{%- else %}
-**Default:** Use appropriate LIMIT based on step intent:
-- Structure: LIMIT 1-2
-- Discovery: LIMIT 3-10
-- Final analysis: LIMIT 100000
+**Default:** Use appropriate LIMIT based on step type
 {%- endif %}
 
 {%- if previous_sql_plan_results is defined and previous_sql_plan_results %}
 **Previous Results:**
 {{ previous_sql_plan_results }}
 
-Use confirmed values only, build on discoveries.
+Use confirmed values only, build on discoveries and advance knowledge about the tables and columns.
 {%- else %}
 **First Step:** Execute as specified, use appropriate LIMIT.
 {%- endif %}
@@ -124,8 +127,52 @@ Use confirmed values only, build on discoveries.
 - If cannot cast string, it might be due to the second row being a subtitle/unit row, so use OFFSET to skip it
 - Use TRY_CAST for numeric conversions to avoid errors
 - Only ONE limit clause is allowed, even when using UNION
+- **For date conversion errors**: Check for header rows (use OFFSET 1), filter spaces with `TRIM(column) != ''`, ensure minimum length
+- **For invalid date formats**: Use `TRY_CAST` instead of `CAST` for date conversions
 
-Casting Examples:
+**Date Construction Examples:**
+```sql
+-- Constructing dates from year, month, day
+SELECT MAKE_DATE(2023, 12, 1) AS start_date;
+
+-- From string concatenation
+SELECT CAST("year" || '-12-01' AS DATE) AS start_date;
+
+-- Season to date mapping
+CASE "season"
+WHEN 'DJF' THEN MAKE_DATE("year" - 1, 12, 1)
+WHEN 'JFM' THEN MAKE_DATE("year", 1, 1)
+WHEN 'FMA' THEN MAKE_DATE("year", 2, 1)
+ELSE NULL
+END AS "season_start"
+
+-- Clean timestamp extraction (for ISO_TIME issues)
+SELECT *,
+    TRY_CAST(SUBSTRING("ISO_TIME", 1, 10) AS DATE) AS "date_key"
+FROM "table" OFFSET 1
+WHERE "ISO_TIME" IS NOT NULL
+    AND TRIM("ISO_TIME") != ''
+    AND LENGTH(TRIM("ISO_TIME")) >= 19
+    AND "ISO_TIME" NOT LIKE '%Year%'
+    AND "ISO_TIME" NOT LIKE '%degrees%'
+LIMIT 100000;
+```
+
+-- Data cleaning with header skip and space filtering
+SELECT *,
+  CAST(SUBSTRING("ISO_TIME", 1, 10) AS DATE) AS "date_key"
+FROM "table" OFFSET 1
+WHERE "ISO_TIME" IS NOT NULL
+  AND TRIM("ISO_TIME") != ''
+  AND LENGTH(TRIM("ISO_TIME")) >= 10
+LIMIT 100000;
+
+-- UNION (LIMIT only at end)
+SELECT "season" AS "value" FROM "table" WHERE "season" IS NOT NULL
+UNION ALL
+SELECT SUBSTR("date", 1, 4) AS "value" FROM "table" WHERE "date" IS NOT NULL
+LIMIT 10;
+```
 
 If the query is "Which five regions have the highest total sales from 2022-02-22?"...
 
@@ -155,15 +202,6 @@ FROM sales_summary
 WHERE total_sales > 0
 ORDER BY total_sales DESC
 LIMIT 100000;
-```
-
-- BAD:
-```sql
-SELECT region, SUM(amount) AS total_sales
-FROM sales
-WHERE sale_date >= '2022-02-22'
-GROUP BY region
-ORDER BY total_sales DESC;
 ```
 {%- endif -%}
 {% endblock -%}
