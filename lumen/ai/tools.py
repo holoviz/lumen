@@ -579,8 +579,6 @@ class TableLookup(VectorLookupTool):
     provides = param.List(default=["tables_metadata", "vector_metaset"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
 
-
-
     include_metadata = param.Boolean(default=True, doc="""
         Whether to include table descriptions in the embeddings and responses.""")
 
