@@ -48,6 +48,8 @@ jobs:
         run: |
           conda activate test
           conda install -c ae5-admin anaconda-project ae5-tools
+      - name: Prepare environment to check it solves
+        run: anaconda-project prepare examples/gallery
       - name: Upload and deploy dev gallery
         if: |
           (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'dev') ||
