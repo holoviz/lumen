@@ -49,7 +49,9 @@ jobs:
           conda activate test
           conda install -c ae5-admin anaconda-project ae5-tools
       - name: Prepare environment to check it solves
-        run: anaconda-project prepare --directory examples/gallery
+        run: |
+          anaconda-project prepare --directory examples/gallery
+          git clean -fxd examples/gallery
       - name: Upload and deploy dev gallery
         if: |
           github.event.workflow_run.event != 'schedule' &&
