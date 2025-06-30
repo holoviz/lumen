@@ -52,8 +52,11 @@ jobs:
         run: anaconda-project prepare examples/gallery
       - name: Upload and deploy dev gallery
         if: |
-          (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'dev') ||
-          (github.event_name == 'workflow_run' && (contains(steps.vars.outputs.tag, 'a') || contains(steps.vars.outputs.tag, 'b') || contains(steps.vars.outputs.tag, 'rc')))
+          github.event.workflow_run.event != 'schedule' &&
+          (
+            (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'dev') ||
+            (github.event_name == 'workflow_run' && (contains(steps.vars.outputs.tag, 'a') || contains(steps.vars.outputs.tag, 'b') || contains(steps.vars.outputs.tag, 'rc')))
+          )
         run: |
           conda activate test
           ae5 login --hostname holoviz-demo.anaconda.com --username ${{ secrets.AE5_USERNAME }} --password ${{ secrets.AE5_PASSWORD }}
@@ -63,8 +66,11 @@ jobs:
           ae5 deployment start lumen-gallery-dev --endpoint lumen-gallery-dev --command default --public --command default --resource-profile default --wait
       - name: Upload and deploy prod gallery
         if: |
-          (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'main') ||
-          (github.event_name == 'workflow_run' && !(contains(steps.vars.outputs.tag, 'a') || contains(steps.vars.outputs.tag, 'b') || contains(steps.vars.outputs.tag, 'rc')))
+          github.event.workflow_run.event != 'schedule' &&
+          (
+            (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'main') ||
+            (github.event_name == 'workflow_run' && !(contains(steps.vars.outputs.tag, 'a') || contains(steps.vars.outputs.tag, 'b') || contains(steps.vars.outputs.tag, 'rc')))
+          )
         run: |
           conda activate test
           ae5 login --hostname holoviz-demo.anaconda.com --username ${{ secrets.AE5_USERNAME }} --password ${{ secrets.AE5_PASSWORD }}
