@@ -22,7 +22,6 @@ packages:
   - datashader
   - fastparquet
   - altair
-  - numba::llvmlite
   - python-duckdb
   - intake-parquet
   - s3fs
