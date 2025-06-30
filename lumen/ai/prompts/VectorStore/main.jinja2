@@ -43,7 +43,7 @@ Response: "HoloViews docs: plot hooks for low-level backend customization to mod
 # Full Document
 {{ document }}
 
-{% if previous_context %}
+{% if previous_context is defined %}
 # Previous Chunk Context
 {{ previous_context }}
 {% endif %}
