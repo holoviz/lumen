@@ -786,8 +786,6 @@ class TableLookup(VectorLookupTool):
             if vector_store_id is not None and processed_sources:
                 self._cleanup_sources_in_progress(vector_store_id, processed_sources)
 
-
-
     async def _gather_info(self, messages: list[dict[str, str]]) -> dict:
         """Gather relevant information about the tables based on the user query."""
         query = messages[-1]["content"]

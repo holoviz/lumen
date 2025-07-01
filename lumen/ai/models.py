@@ -59,16 +59,16 @@ class NextStep(PartialBaseModel):
         description="""
         First restate the current knowledge, referencing computed columns and tables.
         Then explain the next step to take. Do not explore the structure and sample rows
-        of the joined tables. If the user only requested a join, do not do additional exploration
-        after the join.
+        of the joined tables. Please be mindful of what the user requested; do not
+        do any additional arbitrary exploration that is not directly related to the user's request.
         """
     )
 
-    step_type: Literal["discover", "join", "final"] = Field(
+    step_type: Literal["discover", "filter", "join", "final"] = Field(
         description="""
         The type of step to take:
         - "discover": Find specific values or patterns (LIMIT 10)
-        - "filter: Filter rows based on conditions (LIMIT 100000)
+        - "filter": Filter rows based on conditions (does not require exploring, LIMIT 100000)
         - "join": Combine tables (LIMIT 100000); do not join without exploring join keys first
         - "final": Execute the final query to answer the user's question (LIMIT 100000)
         """
@@ -92,9 +92,11 @@ class NextStep(PartialBaseModel):
 
     is_final_answer: bool = Field(
         description="""
-        Whether this step will provide the final answer to the user,
+        Whether this step will provide the final answer to the user:
         e.g. if user simply requested a join without any other request,
-        and the step is a join, then this should be True.
+        and the step is a join, then this should be True, or if
+        user requested subset of rows from a table, and the step is a filter,
+        then this should be True.
         """
     )
 

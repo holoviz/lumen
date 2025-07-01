@@ -27,7 +27,18 @@ Write a SQL query for the user's data transformation request, focusing on intent
 {%- endblock %}
 
 {% block context -%}
-Available Schema:
+{%- if memory.get('tables_metadata') %}
+📊 Tables available:
+{%- set tables_list = memory['tables_metadata'].keys() | list %}
+{%- for table in tables_list[:10] %}
+- {{ table }}
+{%- endfor %}
+{%- if tables_list | length > 10 %}
+- (showing first 10 of {{ tables_list | length }} tables)
+{%- endif %}
+{% endif %}
+
+Available Schema Context:
 {{ memory["sql_metaset"].compact_context }}
 
 {%- if 'sql' in memory %}
@@ -100,26 +111,6 @@ SELECT MAKE_DATE(2023, 12, 1) AS start_date;
 -- From string concatenation
 SELECT CAST("year" || '-12-01' AS DATE) AS start_date;
 
--- Season to date mapping
-CASE "season"
-WHEN 'DJF' THEN MAKE_DATE("year" - 1, 12, 1)
-WHEN 'JFM' THEN MAKE_DATE("year", 1, 1)
-WHEN 'FMA' THEN MAKE_DATE("year", 2, 1)
-ELSE NULL
-END AS "season_start"
-
--- Clean timestamp extraction (for ISO_TIME issues)
-SELECT *,
-    TRY_CAST(SUBSTRING("ISO_TIME", 1, 10) AS DATE) AS "date_key"
-FROM "table" OFFSET 1
-WHERE "ISO_TIME" IS NOT NULL
-    AND TRIM("ISO_TIME") != ''
-    AND LENGTH(TRIM("ISO_TIME")) >= 19
-    AND "ISO_TIME" NOT LIKE '%Year%'
-    AND "ISO_TIME" NOT LIKE '%degrees%'
-LIMIT 100000;
-```
-
 -- Data cleaning with header skip and space filtering
 SELECT *,
   CAST(SUBSTRING("ISO_TIME", 1, 10) AS DATE) AS "date_key"
@@ -134,26 +125,6 @@ SELECT "season" AS "value" FROM "table" WHERE "season" IS NOT NULL
 UNION ALL
 SELECT SUBSTR("date", 1, 4) AS "value" FROM "table" WHERE "date" IS NOT NULL
 LIMIT 10;
-```
-
-Multiple DISTINCT columns (WRONG vs RIGHT):
-```sql
--- WRONG: Cannot use multiple DISTINCT in same SELECT
-SELECT DISTINCT "ISO_TIME", DISTINCT "SEASON" FROM "table";
-
--- RIGHT: Use separate queries with UNION ALL
-SELECT DISTINCT "ISO_TIME" AS "value", 'ISO_TIME' AS "column_name"
-FROM "table"
-WHERE "ISO_TIME" IS NOT NULL
-  AND TRIM("ISO_TIME") != ''
-  AND LENGTH(TRIM("ISO_TIME")) >= 10
-UNION ALL
-SELECT DISTINCT "SEASON" AS "value", 'SEASON' AS "column_name"
-FROM "table"
-WHERE "SEASON" IS NOT NULL
-  AND TRIM("SEASON") != ''
-ORDER BY "column_name", "value"
-LIMIT 100;
 ```
 
 If the query is "Which five regions have the highest total sales from 2022-02-22?"...
