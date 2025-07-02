@@ -61,11 +61,16 @@ Additional instructions:
 - If `read_*` is used, use with alias, e.g. read_parquet('table.parq') as table_parq
 - Use double quotes (") for column names and single quotes (') for ALL string literal values (e.g., ILIKE '%pattern%', 'text_value', '2023-01-01')
 - Be sure to reference the full table slug, e.g. `source {{ separator }} table`
-- Use CAST('YYYY-MM-DD' AS DATE) for static date literals.
-- Use MAKE_DATE(year, month, day) to construct dates from numeric components.
-- Use CAST(year || '-' || month || '-' || day AS DATE) for basic string concatenation of date parts, when format is guaranteed to be 'YYYY-MM-DD'.
-- Use STRPTIME(string, format) to parse dates from custom or non-standard string formats (e.g., '01/12/2020' with format '%d/%m/%Y').
-- If avaialble, use materialized tables from previous steps
+
+## DuckDB Performance Tips:
+- Date extraction: For filtering, use `month("ISO_TIME"::DATE) IN (6,7,8)` or range predicates, NOT `CAST(SUBSTRING(...))`
+- Range predicates are fastest: `"date" >= '2023-06-01' AND "date" < '2023-09-01'`
+- Use `strftime()` for formatting only, `TRY_CAST` for safe conversions
+- Conditional aggregates: `COUNT(*) FILTER (WHERE x)` > `SUM(CASE WHEN x THEN 1 END)`
+- Use `QUALIFY` for window filtering, `arg_max()` for correlated values
+- Prefer `ILIKE` > `LOWER() LIKE`, `USING` for joins, `DISTINCT ON` for unique rows
+- Use `PIVOT`/`UNPIVOT`, `LIST` aggregates, struct syntax `{'key': value}`
+- Use materialized tables from previous steps when available
 {% endif %}
 {%- if dialect == 'snowflake' %}
 - Do not under any circumstances add quotes around the database, schema or table name.
@@ -80,7 +85,9 @@ SQL Query History (avoid duplicating these):
 ```sql
 {{ query }}
 ```
-Table Status: {{ table_status }}
+{% if table_status != "<unmaterialized>" %}
+Can be referenced as: {{ table_status }}
+{% endif %}
 
 {%- endfor %}
 {%- else %}
@@ -91,70 +98,29 @@ First Step: No previous queries executed yet.
 {%- block errors %}
 {{ super() }}
 {% if errors is defined and errors %}
-Error Fixes:
-- Quote string literals with single quotes
-- Use table names verbatim: `read_parquet('file.parq')`
-- No inline comments
-- Handle NULLs with COALESCE/IS NULL
-- Clean numeric values, use TRY_CAST for safety
-- If cannot cast string, it might be due to the second row being a subtitle/unit row, so use OFFSET to skip it
-- Use TRY_CAST for numeric conversions to avoid errors
-- Only ONE limit clause is allowed, even when using UNION
-- For date conversion errors: Check for header rows (use OFFSET 1), filter spaces with `TRIM(column) != ''`, ensure minimum length
-- For invalid date formats: Use `TRY_CAST` instead of `CAST` for date conversions
+Quick Fixes:
+- String literals: single quotes only
+- Table names: use verbatim `read_parquet('file.parq')`
+- Numeric cast errors: use `TRY_CAST`, check for header rows (OFFSET 1)
+- Date errors: `TRY_CAST`, filter `TRIM(col) != ''`, check length
+- UNION: only ONE LIMIT at end
 
-Date Construction Examples:
+DuckDB Examples:
 ```sql
--- Constructing dates from year, month, day
-SELECT MAKE_DATE(2023, 12, 1) AS start_date;
+-- GOOD: Filter by month using date functions
+SELECT * FROM "table"
+WHERE month("ISO_TIME"::DATE) IN (6, 7, 8);
 
--- From string concatenation
-SELECT CAST("year" || '-12-01' AS DATE) AS start_date;
+-- BETTER: Use range predicates for best performance
+SELECT * FROM "table"
+WHERE "ISO_TIME" >= '2023-06-01' AND "ISO_TIME" < '2023-09-01';
 
--- Data cleaning with header skip and space filtering
-SELECT *,
-  CAST(SUBSTRING("ISO_TIME", 1, 10) AS DATE) AS "date_key"
-FROM "table" OFFSET 1
-WHERE "ISO_TIME" IS NOT NULL
-  AND TRIM("ISO_TIME") != ''
-  AND LENGTH(TRIM("ISO_TIME")) >= 10
-LIMIT 100000;
-
--- UNION (LIMIT only at end)
-SELECT "season" AS "value" FROM "table" WHERE "season" IS NOT NULL
-UNION ALL
-SELECT SUBSTR("date", 1, 4) AS "value" FROM "table" WHERE "date" IS NOT NULL
-LIMIT 10;
-```
-
-If the query is "Which five regions have the highest total sales from 2022-02-22?"...
-
-- GOOD:
-```sql
-WITH sales_summary AS (
-    SELECT
-        "region",
-        SUM(
-            TRY_CAST(
-                REPLACE(
-                    REPLACE("amount", '$', ''),
-                    ',', ''
-                ) AS DECIMAL(10,2)
-            )
-        ) AS total_sales
-    FROM read_csv('sales.csv')
-    WHERE "sale_date" >= DATE '2022-02-22'
-      AND TRY_CAST(REPLACE(REPLACE("amount", '$', ''), ',', '') AS DECIMAL(10,2)) IS NOT NULL
-      AND "region" IS NOT NULL
-    GROUP BY "region"
-)
-SELECT
-    "region",
-    total_sales
-FROM sales_summary
-WHERE total_sales > 0
-ORDER BY total_sales DESC
-LIMIT 100000;
+-- Top 5 with QUALIFY
+SELECT "region", SUM(TRY_CAST(REPLACE("amount", '$', '') AS DECIMAL)) AS total
+FROM read_csv('sales.csv')
+WHERE "sale_date" >= '2022-02-22'::DATE
+GROUP BY "region"
+QUALIFY ROW_NUMBER() OVER (ORDER BY total DESC) <= 5;
 ```
 {%- endif -%}
 {% endblock -%}

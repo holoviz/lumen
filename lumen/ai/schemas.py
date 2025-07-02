@@ -48,7 +48,7 @@ class VectorMetaset:
         """
         context = ""
         for table_slug, vector_metadata in self.vector_metadata_map.items():
-            base_sql = truncate_string(vector_metadata.base_sql, max_length=200) if truncate else vector_metadata.base_sql
+            base_sql = truncate_string(vector_metadata.base_sql, max_length=500) if truncate else vector_metadata.base_sql
             context += f"{table_slug!r}\nUse SQL: {base_sql}\n"
 
             if vector_metadata.description:

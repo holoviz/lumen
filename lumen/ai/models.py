@@ -89,6 +89,7 @@ class NextStep(PartialBaseModel):
         Set to True if the result of this step will be used in subsequent steps,
         e.g. joining with other tables or filtering; the limit should be set to 100000.
         Set to False if this is a one-off step that won't be reused, e.g. discovery.
+        Only materialize if necessary to make the intermediate steps available.
         """
     )
 
@@ -176,7 +177,6 @@ def make_plan_models(agents: list[str], tools: list[str]):
             FieldInfo(
                 description="""
                 A list of steps to perform that will solve user query. Each step MUST use a DIFFERENT actor than the previous step.
-                CRITICAL: No consecutive steps can use the same actor, e.g. [SQLAgent, SQLAgent, AnalystAgent] should be [SQLAgent, AnalystAgent].
                 Review your plan to ensure this constraint is met.
                 """
             )

@@ -14,6 +14,7 @@ Ground Rules:
 - Stay within scope of the user's request (don't plot unless asked, etc.)
 - Plan only rather than executing (avoid details)
 - It's often unnecessary to use the same actor multiple times in a single plan
+- NEVER use the same actor consecutively - combine multiple tasks for the same actor into a single step
 - Never mention a lack of data sources or tables in your plan - assume your actors will handle data discovery
 - Do not ignore the actor's exclusions and conditions
 - When keys are already present in memory, utilize them to construct your plan efficiently—avoid assigning an actor to produce memory keys that are already available
@@ -134,10 +135,12 @@ Actors selected:
 
 Failed because: The plan didn't satisfy dependencies: `{{ unmet_dependencies }}`
 
+{% if candidates %}
 Available solutions:
 {%- for candidate in candidates %}
 - `{{ candidate.name[:-5] if candidate.name.endswith('Agent') else candidate.__class__.__name__ }}` provides: `{{ candidate.provides | join('`, `') }}`
 {%- endfor %}
+{% endif %}
 
 ## Recovery Strategy:
 1. Identify which actor(s) failed due to missing dependencies

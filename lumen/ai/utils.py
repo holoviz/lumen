@@ -743,7 +743,7 @@ def truncate_string(s, max_length=30, ellipsis="..."):
     return f"{s[:part_length]}{ellipsis}{s[-part_length:]}"
 
 
-def truncate_iterable(iterable, max_length=30) -> tuple[list, list, bool]:
+def truncate_iterable(iterable, max_length=150) -> tuple[list, list, bool]:
     iterable_list = list(iterable)
     if len(iterable_list) > max_length:
         half = max_length // 2
