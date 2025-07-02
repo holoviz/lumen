@@ -81,6 +81,60 @@ class DuckDBSource(BaseSQLSource):
             self._connection = duckdb.connect(self.uri)
             for init in self.initializers:
                 self._connection.execute(init)
+
+        # Process tables to handle automatic file detection
+        if isinstance(self.tables, dict):
+            processed_tables = {}
+            file_based_tables = {}
+            sql_based_tables = {}
+
+            # First pass: separate file paths from SQL expressions
+            for table_name, table_expr in self.tables.items():
+                if isinstance(table_expr, str) and self._is_file_path(table_expr):
+                    table_name = re.sub(r'\W+', '_', table_name)
+                    file_based_tables[table_name] = table_expr
+                else:
+                    sql_based_tables[table_name] = table_expr
+
+            # Second pass: create views for file-based tables
+            for table_name, file_path in file_based_tables.items():
+                # Auto-detect file type and create appropriate view
+                read_expr = self._create_file_read_expr(file_path)
+                # Quote table name to handle special characters
+                quoted_table = f'"{table_name}"' if not (table_name.startswith('"') and table_name.endswith('"')) else table_name
+                view_sql = f"CREATE OR REPLACE VIEW {quoted_table} AS {read_expr}"
+                try:
+                    self._connection.execute(view_sql)
+                    # Store the SQL expression for later use
+                    processed_tables[table_name] = f"SELECT * FROM {quoted_table}"
+                except Exception:
+                    # If view creation fails, store the read expression directly
+                    processed_tables[table_name] = read_expr
+
+            # Third pass: process SQL-based tables (which may reference file-based tables)
+            for table_name, sql_expr in sql_based_tables.items():
+                table_name = re.sub(r'\W+', '_', table_name)
+                # Skip non-string expressions (e.g., dicts)
+                if not isinstance(sql_expr, str):
+                    processed_tables[table_name] = sql_expr
+                    continue
+
+                # For SQL expressions that define complete queries, create them as views
+                # This includes both READ_* functions and other SELECT statements
+                if sql_expr.strip().upper().startswith('SELECT'):
+                    quoted_table = f'"{table_name}"' if not (table_name.startswith('"') and table_name.endswith('"')) else table_name
+                    view_sql = f"CREATE OR REPLACE VIEW {quoted_table} AS {sql_expr}"
+                    try:
+                        self._connection.execute(view_sql)
+                        processed_tables[table_name] = f"SELECT * FROM {quoted_table}"
+                    except Exception:
+                        # If view creation fails, store the original SQL expression
+                        processed_tables[table_name] = sql_expr
+                else:
+                    processed_tables[table_name] = sql_expr
+
+            self.tables = processed_tables
+
         for table, mirror in self.mirrors.items():
             if isinstance(mirror, pd.DataFrame):
                 df = mirror
@@ -101,6 +155,37 @@ class DuckDBSource(BaseSQLSource):
     @property
     def connection(self):
         return self._connection
+
+    def _is_file_path(self, table_expr: str) -> bool:
+        """
+        Detect if a table expression is a file path vs SQL expression.
+
+        Returns True if it's likely a file path, False if it's SQL.
+        """
+        if not isinstance(table_expr, str):
+            return False
+        file_extensions = ('.csv', '.parquet', '.json', '.jsonl', '.ndjson', '.tsv')
+        if any(table_expr.lower().endswith(ext) for ext in file_extensions):
+            return True
+        return False
+
+    def _create_file_read_expr(self, file_path: str) -> str:
+        """
+        Create appropriate DuckDB read expression based on file extension.
+        """
+        file_lower = file_path.lower()
+
+        if file_lower.endswith('.csv'):
+            return f"SELECT * FROM READ_CSV('{file_path}')"
+        elif file_lower.endswith('.parquet'):
+            return f"SELECT * FROM READ_PARQUET('{file_path}')"
+        elif file_lower.endswith(('.json', '.jsonl', '.ndjson')):
+            return f"SELECT * FROM READ_JSON('{file_path}')"
+        elif file_lower.endswith('.tsv'):
+            return f"SELECT * FROM READ_CSV('{file_path}', delim='\t')"
+        else:
+            # Default to CSV for unknown extensions
+            return f"SELECT * FROM READ_CSV('{file_path}')"
 
     @classmethod
     def _recursive_resolve(
