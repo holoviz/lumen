@@ -18,6 +18,7 @@ Write a SQL query for the user's data transformation request, focusing on intent
   - Use multiple pattern variations: `ILIKE '%us%' OR ILIKE '%american%' OR ILIKE '%united%'`
   - Check multiple columns if available: country_name, country_code, country_3_letter_code
   - Consider common abbreviations and variations and case sensitivity
+  - **Format variation checking**: When initial discovery fails, immediately check for format variations, underscores vs spaces using `ILIKE`
 - Only filter by confirmed values from previous results
 - Progressive approach: each step builds on previous
 - Clean invalid values (-9999, empty strings)
@@ -79,19 +80,12 @@ Step {{ step_number }}: {{ current_step }}
 
 ## Step Guidance:
 
-{%- if sql_query_history %}
-SQL Query History (avoid duplicating these):
-{%- for query, table_status in sql_query_history.items() %}
-```sql
-{{ query }}
-```
-{% if table_status != "<unmaterialized>" %}
-Can be referenced as: {{ table_status }}
-{% endif %}
-
-{%- endfor %}
+{%- if sql_plan_context %}
+Current Knowledge:
+{{ sql_plan_context }}
 {%- else %}
-First Step: No previous queries executed yet.
+Starting fresh - no previous steps taken yet
+
 {%- endif %}
 {% endblock %}
 

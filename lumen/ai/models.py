@@ -54,22 +54,40 @@ class Sql(PartialBaseModel):
     )
 
 
+
 class NextStep(PartialBaseModel):
     """Represents the next single step to take in SQL exploration."""
 
+    pre_step_validation: str = Field(
+        description="""
+        If there are no previous steps, this should be empty.
+        Validate that this proposed step is necessary and efficient:
+        1. Is this information already available from previous steps or materialized tables?
+        2. Could this be combined with other discoveries into one step?
+        3. Does this directly contribute to answering the user's question?
+        4. Are we leveraging existing materialized tables instead of rebuilding CTEs?
+        Provide a brief validation assessment in 1-2 sentences.
+        """
+    )
+
     reasoning: str = Field(
         description="""
-        First restate the current knowledge, referencing computed columns and tables.
-        Then explain the next step to take. Do not explore the structure and sample rows
-        of the joined tables. Please be mindful of what the user requested; do not
-        do any additional arbitrary exploration that is not directly related to the user's request.
+        Explain the strategic rationale for this specific step:
+        - What gap in knowledge does this step fill?
+        - How does this step move us closer to the final answer?
+        - What approach will be used and why?
+        - Why should/shouldn't this step be materialized for future use?
+        - Is this the final answer step, and if so, why?
+        - If applicable, which materialized tables from previous steps will be leveraged?
+        Do not repeat validation concerns here. Focus on the "why" and "how"
+        of the step rather than whether it should be done.
         """
     )
 
     step_type: Literal["discover", "filter", "join", "final"] = Field(
         description="""
         The type of step to take:
-        - "discover": Find specific values or patterns (LIMIT 10)
+        - "discover": Batch multiple related discoveries in one step (LIMIT 10 each)
         - "filter": Filter rows based on conditions (does not require exploring, LIMIT 100000)
         - "join": Combine tables (LIMIT 100000); do not join without exploring join keys first
         - "final": Execute the final query to answer the user's question (LIMIT 100000)
@@ -78,18 +96,25 @@ class NextStep(PartialBaseModel):
 
     action_description: str = Field(
         description="""
-        Clear, specific description of what this step should do, which
-        should progress logically from the previous step, and not repeat previous steps.
-        Be sure to mention the desired limit based on step type; final steps should have a limit of 100000.
+        Provide a detailed, executable description of the specific SQL operation to perform:
+        - What tables/views will be queried (including any materialized tables to reuse)?
+        - What columns will be selected or used in conditions?
+        - What filters, joins, or aggregations will be applied?
+        - What is the expected output format and row count limit?
+        - For discovery steps: What multiple discoveries can be batched together?
+        This should be specific enough to guide SQL generation while progressing
+        logically from previous steps without repetition.
         """
     )
 
     should_materialize: bool = Field(
         description="""
-        Set to True if the result of this step will be used in subsequent steps,
-        e.g. joining with other tables or filtering; the limit should be set to 100000.
-        Set to False if this is a one-off step that won't be reused, e.g. discovery.
-        Only materialize if necessary to make the intermediate steps available.
+        Set to True if the result of this step will be used in subsequent steps—e.g.,
+        for joins or filtering—so it should be limited to 100,000 rows.
+        Set to False if this is a one-off step that won't be reused (e.g., for exploratory analysis).
+        Materialize only when necessary to expose intermediate results;
+        these should be treated like sub-CTEs.
+        IMPORTANT: Consider the cost-benefit of materialization vs rebuilding queries.
         """
     )
 
@@ -100,6 +125,7 @@ class NextStep(PartialBaseModel):
         and the step is a join, then this should be True, or if
         user requested subset of rows from a table, and the step is a filter,
         then this should be True.
+        For simple "show me [table]" requests, this should be True immediately.
         """
     )
 

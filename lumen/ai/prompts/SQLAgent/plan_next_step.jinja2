@@ -6,6 +6,19 @@
 You are planning the NEXT SINGLE STEP to make progress toward answering the user's query.
 DO NOT plan multiple steps ahead - focus only on what to do next based on what you've learned.
 
+## Pre-Discovery Checklist:
+Before planning discovery steps, check these common issues:
+- **Data format verification**: If initial discovery fails, immediately check for format variations (e.g., 'el_nino' vs 'el nino', underscores vs spaces)
+- **Enum exploration efficiency**: When discovering values, explore ALL enum columns that might be relevant in ONE step
+- **Context reuse**: Reference materialized tables from previous steps rather than re-discovering the same information
+- **Join key identification**: If joins are needed, discover join keys BEFORE attempting joins
+
+## Step Efficiency Rules:
+- NEVER repeat similar discoveries across multiple steps
+- If Step N explores years, don't re-explore years in Step N+1 unless specifically different criteria
+- Batch discovery: "Find distinct values in column A AND column B AND column C" rather than separate steps
+- Use the minimum discovery needed: If you found what you need, move to analysis immediately
+
 ## Decision Process:
 1. **Review what we already know** from "Current Knowledge" section
 2. **Check if this is a direct query** - if yes, mark as final answer immediately
@@ -24,13 +37,19 @@ DO NOT plan multiple steps ahead - focus only on what to do next based on what y
 {% block examples %}
 Direct Query Examples (for these cases, set `is_final_answer=True`):
 
-User: "Show me oni" → Step 1: Final answer - "Display the complete contents of oni dataset"
+User: "Show me table" → Step 1: Final answer - "Display the complete contents of table"
 
 Multi-Step Analysis Examples:
 
 Step 1: "Find distinct product categories AND get min and max date range AND identify data quality" (batch multiple discoveries into one step)
 Step 2: "Create preprocessed orders with standardized dates"
 Step 3: "Calculate total sales by category for the final answer"
+
+## Discovery Batching Examples:
+GOOD: "Batch multiple related discoveries in a single step, e.g., find distinct values in several columns AND compute summary statistics together"
+BAD: Performing each discovery in separate, sequential steps when they can be combined
+
+When planning discovery, ask: "What else do I need to know about this data that I can get in the same query?"
 {% endblock %}
 
 {% block context %}
