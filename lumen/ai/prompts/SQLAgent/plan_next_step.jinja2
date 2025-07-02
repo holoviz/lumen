@@ -6,6 +6,19 @@
 You are planning the NEXT SINGLE STEP to make progress toward answering the user's query.
 DO NOT plan multiple steps ahead - focus only on what to do next based on what you've learned.
 
+## Direct Query Detection:
+**IMPORTANT: For simple "show me", "display", or "see" requests that just want to view table contents, skip exploration and go directly to final answer.**
+
+Examples of direct queries:
+- "Show me [table_name]"
+- "Display the [table_name] data"
+- "See the contents of [table_name]"
+- "What's in [table_name]"
+- "View [table_name]"
+- "Look at [table_name]"
+
+For these cases, set `is_final_answer=True` and `action_description="Display the complete contents of [table_name]"`.
+
 ## Step Types:
 - **explore**: Initial table structure examination (LIMIT 3-5)
 - **discover**: Find specific values or patterns (LIMIT 10) - ONE table at a time, NO UNION
@@ -16,14 +29,16 @@ DO NOT plan multiple steps ahead - focus only on what to do next based on what y
 - **final**: Answer the user's question
 
 ## Decision Process:
-1. Review what you've learned from previous steps
-2. Identify what specific information you still need
-3. Choose the most appropriate next action
-4. Be specific about what to look for
+1. **Check if this is a direct query first** - if yes, mark as final answer
+2. Review what you've learned from previous steps
+3. Identify what specific information you still need
+4. Choose the most appropriate next action
+5. Be specific about what to look for
 
 ## Important:
-- Take small, focused steps
-- Build knowledge incrementally
+- **Recognize direct queries and avoid unnecessary exploration**
+- Take small, focused steps only when analysis is needed
+- Build knowledge incrementally for complex queries
 - Don't try to do everything at once
 - Materialize only expensive transformations
 {% endblock %}
@@ -38,6 +53,8 @@ DO NOT plan multiple steps ahead - focus only on what to do next based on what y
 {{ current_context }}
 {%- else %}
 **Starting fresh - no previous steps taken yet**
+
+**REMINDER: If this is a simple "show me [table]" request, mark as final answer immediately.**
 {%- endif %}
 
 {%- if materialized_tables %}
@@ -52,7 +69,13 @@ DO NOT plan multiple steps ahead - focus only on what to do next based on what y
 {% endblock %}
 
 {% block examples %}
-**Example Progression:**
+**Direct Query Examples (Skip to Final Answer):**
+
+User: "Show me oni" → Step 1: Final answer - "Display the complete contents of oni dataset"
+User: "Display the sales data" → Step 1: Final answer - "Display the complete contents of sales table"
+User: "What's in customers" → Step 1: Final answer - "Display the complete contents of customers table"
+
+**Multi-Step Analysis Examples:**
 
 Step 1: "Explore the orders table structure to understand columns"
 Step 2: "Find distinct product categories in the orders table"
@@ -66,5 +89,5 @@ Step 1: "Explore olympic_medals table structure"
 Step 2: "Discover US athletes using pattern matching: WHERE country_name ILIKE '%United%' OR country_name ILIKE '%American%' OR country_code ILIKE '%USA%'"
 Step 3: "Filter for gold medals and aggregate by athlete"
 
-Each step builds on previous knowledge!
+Each step builds on previous knowledge for complex queries!
 {% endblock %}

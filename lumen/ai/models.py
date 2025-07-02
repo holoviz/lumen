@@ -168,8 +168,8 @@ def make_plan_models(agents: list[str], tools: list[str]):
             FieldInfo(
                 description="""
                 A list of steps to perform that will solve user query. Each step MUST use a DIFFERENT actor than the previous step.
-                CRITICAL: No two consecutive steps can use the same actor. Review your plan to ensure this constraint is met.
-                Ensure you include ALL the steps needed to solve the task, but avoid redundant consecutive steps.
+                CRITICAL: No consecutive steps can use the same actor, e.g. [SQLAgent, SQLAgent, AnalystAgent] should be [SQLAgent, AnalystAgent].
+                Review your plan to ensure this constraint is met.
                 """
             )
         )
