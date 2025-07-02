@@ -55,77 +55,84 @@ class Sql(PartialBaseModel):
 
 
 
+class SQLRoadmap(PartialBaseModel):
+    """High-level execution roadmap for SQL query planning."""
+
+    discovery_steps: list[str] = Field(
+        description="""List of discovery steps needed (e.g., 'Check date ranges in both datasets',
+        'Find distinct categories', 'Validate join keys'). Each step should be specific and actionable."""
+    )
+
+    validation_checks: list[str] = Field(
+        default_factory=list,
+        description="""Critical validation checks before proceeding (e.g., 'Verify temporal overlap',
+        'Confirm key format compatibility'). Focus on compatibility between datasets."""
+    )
+
+    join_strategy: str = Field(
+        default="",
+        description="""If joins are needed, describe the strategy and key relationships.
+        Include how to handle temporal or categorical mismatches."""
+    )
+
+    potential_issues: list[str] = Field(
+        default_factory=list,
+        description="""Potential issues to watch for (e.g., 'Limited temporal overlap',
+        'Different granularities', 'Format mismatches'). Be specific to the datasets."""
+    )
+
+    estimated_steps: int = Field(
+        description="Number of steps estimated to complete the query (typically 2-5)."
+    )
+
+
 class NextStep(PartialBaseModel):
     """Represents the next single step to take in SQL exploration."""
 
     pre_step_validation: str = Field(
         description="""
-        If there are no previous steps, this should be empty.
-        Validate that this proposed step is necessary and efficient:
-        1. Is this information already available from previous steps or materialized tables?
-        2. Could this be combined with other discoveries into one step?
-        3. Does this directly contribute to answering the user's question?
-        4. Are we leveraging existing materialized tables instead of rebuilding CTEs?
-        Provide a brief validation assessment in 1-2 sentences.
+        If no previous steps, leave empty. Check: 1) Info already available?
+        2) Combinable with other discoveries? 3) Directly contributes to answer?
+        Brief 1-2 sentence assessment.
         """
     )
 
     reasoning: str = Field(
         description="""
-        Explain the strategic rationale for this specific step:
-        - What gap in knowledge does this step fill?
-        - How does this step move us closer to the final answer?
-        - What approach will be used and why?
-        - Why should/shouldn't this step be materialized for future use?
-        - Is this the final answer step, and if so, why?
-        - If applicable, which materialized tables from previous steps will be leveraged?
-        Do not repeat validation concerns here. Focus on the "why" and "how"
-        of the step rather than whether it should be done.
+        Strategic rationale: What gap does this fill? How does it progress toward answer?
+        Approach and why? Materialization decision? Which existing materialized tables used?
+        Focus on "why" and "how", not validation.
         """
     )
 
     step_type: Literal["discover", "filter", "join", "final"] = Field(
         description="""
-        The type of step to take:
-        - "discover": Batch multiple related discoveries in one step (LIMIT 10 each)
-        - "filter": Filter rows based on conditions (does not require exploring, LIMIT 100000)
-        - "join": Combine tables (LIMIT 100000); do not join without exploring join keys first
-        - "final": Execute the final query to answer the user's question (LIMIT 100000)
+        - "discover": Batch multiple discoveries (LIMIT 10 each) + min/max ranges
+        - "filter": Filter rows (LIMIT 100000)
+        - "join": Combine tables (LIMIT 100000); explore join keys first
+        - "final": Final query (LIMIT 100000)
         """
     )
 
     action_description: str = Field(
         description="""
-        Provide a detailed, executable description of the specific SQL operation to perform:
-        - What tables/views will be queried (including any materialized tables to reuse)?
-        - What columns will be selected or used in conditions?
-        - What filters, joins, or aggregations will be applied?
-        - What is the expected output format and row count limit?
-        - For discovery steps: What multiple discoveries can be batched together?
-        This should be specific enough to guide SQL generation while progressing
-        logically from previous steps without repetition.
+        Executable SQL operation: Which tables/materialized views? Which columns?
+        What filters/joins/aggregations? Expected output and limit?
+        Specific enough for SQL generation, building on previous steps.
         """
     )
 
     should_materialize: bool = Field(
         description="""
-        Set to True if the result of this step will be used in subsequent steps—e.g.,
-        for joins or filtering—so it should be limited to 100,000 rows.
-        Set to False if this is a one-off step that won't be reused (e.g., for exploratory analysis).
-        Materialize only when necessary to expose intermediate results;
-        these should be treated like sub-CTEs.
-        IMPORTANT: Consider the cost-benefit of materialization vs rebuilding queries.
+        True if result used in subsequent steps (joins/filtering, limit 100k).
+        False for one-off exploratory steps. Materialize only when necessary.
         """
     )
 
     is_final_answer: bool = Field(
         description="""
-        Whether this step will provide the final answer to the user:
-        e.g. if user simply requested a join without any other request,
-        and the step is a join, then this should be True, or if
-        user requested subset of rows from a table, and the step is a filter,
-        then this should be True.
-        For simple "show me [table]" requests, this should be True immediately.
+        True if this step provides the final answer to user's request.
+        E.g., simple "show table" requests or when all info is available.
         """
     )
 

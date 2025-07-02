@@ -3,53 +3,44 @@
 {%- block instructions %}
 # Plan Next Step Instructions
 
-You are planning the NEXT SINGLE STEP to make progress toward answering the user's query.
-DO NOT plan multiple steps ahead - focus only on what to do next based on what you've learned.
+Plan the NEXT SINGLE STEP toward answering the user's query.
+
+## EFFICIENCY PRIORITY:
+🎯 **Each step costs significant resources:**
+1. **Reuse before rebuild**: Check for existing materialized tables
+2. **Batch discoveries**: Combine multiple explorations into single steps
+3. **Progress decisively**: Move toward final answer quickly
 
 ## Pre-Discovery Checklist:
-Before planning discovery steps, check these common issues:
-- **Data format verification**: If initial discovery fails, immediately check for format variations (e.g., 'el_nino' vs 'el nino', underscores vs spaces)
-- **Enum exploration efficiency**: When discovering values, explore ALL enum columns that might be relevant in ONE step
-- **Context reuse**: Reference materialized tables from previous steps rather than re-discovering the same information
-- **Join key identification**: If joins are needed, discover join keys BEFORE attempting joins
-
-## Step Efficiency Rules:
-- NEVER repeat similar discoveries across multiple steps
-- If Step N explores years, don't re-explore years in Step N+1 unless specifically different criteria
-- Batch discovery: "Find distinct values in column A AND column B AND column C" rather than separate steps
-- Use the minimum discovery needed: If you found what you need, move to analysis immediately
+- **Materialized table check**: Can existing tables provide this information?
+- **Batch discoveries**: Combine multiple explorations + min/max ranges into one step
+- **Format variations**: Check underscores vs spaces if initial discovery fails
+- **Join keys**: Discover join keys before attempting joins
+- **Temporal alignment**: Verify date ranges overlap between datasets
+- **Data compatibility**: Check value formats match (e.g., year as int vs string)
 
 ## Decision Process:
-1. **Review what we already know** from "Current Knowledge" section
-2. **Check if this is a direct query** - if yes, mark as final answer immediately
-3. **Identify information gaps** - what specific details are still missing?
-4. **Avoid redundancy** - don't re-explore what we already discovered
-5. **Progress logically**:
-   - Have table structures? → Explore data patterns
-   - Have data patterns? → Understand relationships
-   - Have relationships? → Ready for final query
-6. **For discovery steps**: Only explore NEW aspects not covered in previous steps and try combining multiple distinct discoveries into one step
-7. **Batch related discoveries**: Combine multiple explorations (e.g., "Find categories AND compute min and max") in single steps
-8. **Prioritize by intent**: Focus discovery on data elements directly relevant to user's question, not exhaustive exploration
-9. Each additional step incurs significant compounding costs, so be efficient and produce multiple discoveries in one step when possible.
+1. **Check materialized tables** - can existing tables answer the question?
+2. **Direct query check** - if simple request, mark as final answer
+3. **Validate compatibility** - temporal overlaps, key formats, data types
+4. **Batch discoveries** - combine multiple explorations + min/max ranges
+5. **Progress logically**: structures → patterns → relationships → final query
+
+## Common Pitfalls to Avoid:
+- **Temporal mismatch**: Don't join datasets without overlapping date ranges
+- **Single-point mapping**: Avoid mapping single values to ranges (e.g., month to season)
+- **Format assumptions**: Verify formats match before joins (spaces vs underscores)
+- **Overly narrow discovery**: Include all relevant months/periods in initial exploration
 {% endblock %}
 
 {% block examples %}
-Direct Query Examples (for these cases, set `is_final_answer=True`):
+## Examples:
 
-User: "Show me table" → Step 1: Final answer - "Display the complete contents of table"
+**Direct Query:** "Show me table" → Final answer immediately
 
-Multi-Step Analysis Examples:
+**Multi-Step:** "Find categories + min/max ranges + quality" → "Final analysis"
 
-Step 1: "Find distinct product categories AND get min and max date range AND identify data quality" (batch multiple discoveries into one step)
-Step 2: "Create preprocessed orders with standardized dates"
-Step 3: "Calculate total sales by category for the final answer"
-
-## Discovery Batching Examples:
-GOOD: "Batch multiple related discoveries in a single step, e.g., find distinct values in several columns AND compute summary statistics together"
-BAD: Performing each discovery in separate, sequential steps when they can be combined
-
-When planning discovery, ask: "What else do I need to know about this data that I can get in the same query?"
+**Reuse:** "Use existing distinct_year_season_from_oni table" not "Find distinct years..."
 {% endblock %}
 
 {% block context %}
@@ -61,10 +52,14 @@ Steps Already Taken: {{ total_steps }}
 {%- if sql_plan_context %}
 Current Knowledge:
 {{ sql_plan_context }}
+
+{%- if 'materialized' in sql_plan_context.lower() or 'DuckDBSource' in sql_plan_context %}
+⚠️  **MATERIALIZED TABLES AVAILABLE**: Check above for existing tables before planning new queries.
+Please take into account all the steps and results as to not repeat previous work!
+{%- endif %}
 {%- else %}
 Starting fresh - no previous steps taken yet
-
 {%- endif %}
 
-REMINDER: If this is a simple "show me [table]" request, mark as final answer immediately--else progress logically based on what we already know.
+**Planning Reminder**: Simple "show table" requests = final answer immediately. Complex requests = check materialized tables first.
 {% endblock %}

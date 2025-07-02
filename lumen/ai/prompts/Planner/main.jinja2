@@ -120,7 +120,8 @@ Conditions for use:
 👉 Existing metadata found: Evaluate if current data is sufficient before requesting more
 {%- endif %}
 
-{% if unmet_dependencies %}
+{# Break the terrible loop of it not planning properly #}
+{% if previous_plans and not (previous_plans | length) % 2 == 0 and unmet_dependencies %}
 # ❌ Previous Planning Failure
 
 What went wrong: In your previous attempt, you planned:
@@ -150,7 +151,6 @@ Available solutions:
 5. Include dependency providers BEFORE the dependent actors in your new plan
 6. Do not repeat the same actor consecutively unless absolutely necessary
 
-{%- else %}
 {%- endif %}
 Remember: A plan that ignores dependencies will always fail. Check requirements before assigning any actor.
 {%- endblock -%}
