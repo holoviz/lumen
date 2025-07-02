@@ -177,7 +177,7 @@ class BigQuerySource(BaseSQLSource):
     def get_sql_expr(self, table: str) -> str:
         if isinstance(self.tables, dict):
             if table not in self.tables:
-                raise KeyError(f"Table {table} not found in {list(self.tables)}.")
+                raise KeyError(f"Table {table!r} not found in {list(self.tables)}.")
             return self.tables[table]
         return f"SELECT * FROM {table}"
 

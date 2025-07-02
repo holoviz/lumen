@@ -33,8 +33,10 @@ class SqlQuery(PartialBaseModel):
 
     expr_slug: str = Field(
         description="""
-        Give the SQL expression a concise, but descriptive, slug that includes whatever transforms were applied to it,
-        e.g. top_5_athletes, distinct_years_table1. The slug must be unique, i.e. should not match other existing table names or slugs.
+        Provide a unique, descriptive slug for the SQL expression that clearly indicates the key transformations and source tables involved.
+        Include 1 or 2 elements of data lineage in the slug, such as the main transformation and original table names,
+        e.g. top_5_athletes_in_2020 or distinct_years_from_wx_table.
+        Ensure the slug does not duplicate any existing table names or slugs.
         """
     )
 

@@ -426,8 +426,11 @@ async def describe_data(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: boo
         size = df.size
         shape = df.shape
         if size < 250:
-            # Use the first column as index
-            df = df.set_index(df.columns[0])
+            # Use the first column as index to save tokens
+            if len(df.columns) > 1:
+                df = df.set_index(df.columns[0])
+            else:
+                df = df.to_dict("records")
             return df
 
         is_sampled = False

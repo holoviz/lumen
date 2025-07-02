@@ -139,25 +139,27 @@ Available solutions:
 - `{{ candidate.name[:-5] if candidate.name.endswith('Agent') else candidate.__class__.__name__ }}` provides: `{{ candidate.provides | join('`, `') }}`
 {%- endfor %}
 
-Fix required: Include dependency providers BEFORE the dependent actors in your new plan.
-
 ## Recovery Strategy:
 1. Identify which actor(s) failed due to missing dependencies
 2. Add the appropriate provider(s) from the available solutions above
 3. Reorder your plan so providers come before consumers
 4. Verify all dependencies are satisfied in the correct sequence
+5. Include dependency providers BEFORE the dependent actors in your new plan
+6. Do not repeat the same actor consecutively unless absolutely necessary
+
+{%- else %}
 {%- endif %}
-Remember: A plan that ignores dependencies will always fail. Check requirements before assigning any actor, and do not consecutively use the same actor.
+Remember: A plan that ignores dependencies will always fail. Check requirements before assigning any actor.
 {%- endblock -%}
 
 {% block examples %}
 # Examples
 
-✅ GOOD: "Top 5 customers by revenue"
-1. SQLAgent: Query top customers by revenue
+✅ GOOD: "Top and bottom 5 customers by revenue"
+1. SQLAgent: Query the top 5 customers and bottom 5 customers by revenue
 2. AnalystAgent: Analyze customer patterns
 
-❌ BAD: "Show sales trends"
-1. SQLAgent: Get sales data
-2. SQLAgent: Calculate trends ← Consecutive actor violation
+❌ BAD: "Top and bottom 5 customers by revenue" (consecutive agents)
+1. SQLAgent: Query the top 5 customers by revenue
+2. SQLAgent: Query the bottom 5 customers by revenue
 {% endblock %}
