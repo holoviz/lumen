@@ -24,16 +24,8 @@ class ThinkingYesNo(BaseModel):
     yes: bool = Field(description="True if yes, otherwise False.")
 
 
-class Sql(BaseModel):
-
-    chain_of_thought: str = Field(
-        description="""
-        You are a world-class SQL expert, and your fame is on the line so don't mess up.
-        Carefully study the schema, discuss the values in the columns, and whether you need to wrangle
-        the data before you can use it, before finally writing a correct and valid SQL query that fully
-        answers the user's query. If using CTEs, comment on the purpose of each.
-        """
-    )
+class SqlQuery(PartialBaseModel):
+    """A single SQL query with its associated metadata."""
 
     query: str = Field(description="""
         One, correct, valid SQL query that answers the user's question;
@@ -42,7 +34,20 @@ class Sql(BaseModel):
     expr_slug: str = Field(
         description="""
         Give the SQL expression a concise, but descriptive, slug that includes whatever transforms were applied to it,
-        e.g. top_5_athletes. The slug must be unique, i.e. should not match other existing table names or slugs.
+        e.g. top_5_athletes, distinct_years_table1. The slug must be unique, i.e. should not match other existing table names or slugs.
+        """
+    )
+
+
+class Sql(PartialBaseModel):
+    """Multiple SQL queries to execute in sequence."""
+
+    queries: list[SqlQuery] = Field(
+        default_factory=list,
+        description="""
+        List of SQL queries to execute. For discovery steps, include multiple queries
+        to explore different aspects (e.g., distinct values from different columns).
+        For final steps, only one query is allowed.
         """
     )
 
@@ -52,46 +57,45 @@ class NextStep(PartialBaseModel):
 
     reasoning: str = Field(
         description="""
-        Brief reasoning about what we know so far and what specific information we need next.
-        Be concise and focused on the immediate next step.
+        First restate the current knowledge, referencing computed columns and tables.
+        Then explain the next step to take. Do not explore the structure and sample rows
+        of the joined tables. If the user only requested a join, do not do additional exploration
+        after the join.
         """
     )
 
-    step_type: Literal["explore", "discover", "preprocess", "join", "filter", "aggregate", "final"] = Field(
+    step_type: Literal["discover", "join", "final"] = Field(
         description="""
         The type of step to take:
-        - "explore": Initial table structure examination (LIMIT 3-5)
         - "discover": Find specific values or patterns (LIMIT 10)
-        - "preprocess": Clean/normalize data for later use
-        - "join": Combine tables (only after exploration)
-        - "filter": Apply specific conditions
-        - "aggregate": Summarize data
-        - "final": Answer the user's question
+        - "filter: Filter rows based on conditions (LIMIT 100000)
+        - "join": Combine tables (LIMIT 100000); do not join without exploring join keys first
+        - "final": Execute the final query to answer the user's question (LIMIT 100000)
         """
     )
 
     action_description: str = Field(
         description="""
-        Clear, specific description of what this single step should do.
-        For discovery: explore ONE table at a time, no UNION operations.
+        Clear, specific description of what this step should do, which
+        should progress logically from the previous step, and not repeat previous steps.
+        Be sure to mention the desired limit based on step type; final steps should have a limit of 100000.
         """
     )
 
-    query_complexity: Literal["simple", "discovery", "complex", "join"] = Field(
-        description="Complexity of this specific step only"
-    )
-
     should_materialize: bool = Field(
-        description="Whether this step's results should be materialized for reuse"
+        description="""
+        Set to True if the result of this step will be used in subsequent steps,
+        e.g. joining with other tables or filtering; the limit should be set to 100000.
+        Set to False if this is a one-off step that won't be reused, e.g. discovery.
+        """
     )
 
     is_final_answer: bool = Field(
-        description="Whether this step will provide the final answer to the user"
-    )
-
-    expected_limit: int = Field(
-        default=10,
-        description="Expected LIMIT for this query based on step type"
+        description="""
+        Whether this step will provide the final answer to the user,
+        e.g. if user simply requested a join without any other request,
+        and the step is a join, then this should be True.
+        """
     )
 
 
@@ -322,6 +326,7 @@ class QueryCompletionValidation(PartialBaseModel):
 
     chain_of_thought: str = Field(
         description="Restate intent and results succinctly; then explain your reasoning as to why you will be answering yes or no.")
+
     missing_elements: list[str] = Field(
         default_factory=list,
         description="List of specific elements from the user's query that weren't addressed"

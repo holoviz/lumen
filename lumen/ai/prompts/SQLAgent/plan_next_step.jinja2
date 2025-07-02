@@ -6,88 +6,47 @@
 You are planning the NEXT SINGLE STEP to make progress toward answering the user's query.
 DO NOT plan multiple steps ahead - focus only on what to do next based on what you've learned.
 
-## Direct Query Detection:
-**IMPORTANT: For simple "show me", "display", or "see" requests that just want to view table contents, skip exploration and go directly to final answer.**
-
-Examples of direct queries:
-- "Show me [table_name]"
-- "Display the [table_name] data"
-- "See the contents of [table_name]"
-- "What's in [table_name]"
-- "View [table_name]"
-- "Look at [table_name]"
-
-For these cases, set `is_final_answer=True` and `action_description="Display the complete contents of [table_name]"`.
-
-## Step Types:
-- **explore**: Initial table structure examination (LIMIT 3-5)
-- **discover**: Find specific values or patterns (LIMIT 10) - ONE table at a time, NO UNION
-- **preprocess**: Clean/normalize data for later use
-- **join**: Combine tables (only after exploration)
-- **filter**: Apply specific conditions
-- **aggregate**: Summarize data
-- **final**: Answer the user's question
-
 ## Decision Process:
-1. **Check if this is a direct query first** - if yes, mark as final answer
-2. Review what you've learned from previous steps
-3. Identify what specific information you still need
-4. Choose the most appropriate next action
-5. Be specific about what to look for
-
-## Important:
-- **Recognize direct queries and avoid unnecessary exploration**
-- Take small, focused steps only when analysis is needed
-- Build knowledge incrementally for complex queries
-- Don't try to do everything at once
-- Materialize only expensive transformations
-{% endblock %}
-
-{% block context %}
-**User Query:** {{ user_query }}
-
-**Steps Taken:** {{ total_steps }}
-
-{%- if current_context %}
-**Current Knowledge:**
-{{ current_context }}
-{%- else %}
-**Starting fresh - no previous steps taken yet**
-
-**REMINDER: If this is a simple "show me [table]" request, mark as final answer immediately.**
-{%- endif %}
-
-{%- if materialized_tables %}
-**Materialized Tables Available:**
-{%- for table in materialized_tables %}
-- {{ table }}
-{%- endfor %}
-{%- endif %}
-
-**Available Schema:**
-{{ memory["sql_metaset"].compact_context }}
+1. **Review what we already know** from "Current Knowledge" section
+2. **Check if this is a direct query** - if yes, mark as final answer immediately
+3. **Identify information gaps** - what specific details are still missing?
+4. **Avoid redundancy** - don't re-explore what we already discovered
+5. **Progress logically**:
+   - Have table structures? → Explore data patterns
+   - Have data patterns? → Understand relationships
+   - Have relationships? → Ready for final query
+6. **For discovery steps**: Only explore NEW aspects not covered in previous steps and try combining multiple distinct discoveries into one step
+7. **Batch related discoveries**: Combine multiple explorations (e.g., "Find categories AND compute min and max") in single steps
+8. **Prioritize by intent**: Focus discovery on data elements directly relevant to user's question, not exhaustive exploration
+9. Each additional step incurs significant compounding costs, so be efficient and produce multiple discoveries in one step when possible.
 {% endblock %}
 
 {% block examples %}
-**Direct Query Examples (Skip to Final Answer):**
+Direct Query Examples (for these cases, set `is_final_answer=True`):
 
 User: "Show me oni" → Step 1: Final answer - "Display the complete contents of oni dataset"
-User: "Display the sales data" → Step 1: Final answer - "Display the complete contents of sales table"
-User: "What's in customers" → Step 1: Final answer - "Display the complete contents of customers table"
 
-**Multi-Step Analysis Examples:**
+Multi-Step Analysis Examples:
 
 Step 1: "Explore the orders table structure to understand columns"
-Step 2: "Find distinct product categories in the orders table"
-Step 3: "Check date range of orders to understand timeframe"
-Step 4: "Create preprocessed orders with standardized dates"
-Step 5: "Calculate total sales by category for the final answer"
+Step 2: "Find distinct product categories AND get min and max date range AND identify data quality"
+Step 3: "Create preprocessed orders with standardized dates"
+Step 4: "Calculate total sales by category for the final answer"
+{% endblock %}
 
-**Entity Discovery Example:**
+{% block context %}
+Available Schema:
+{{ memory["sql_metaset"].compact_context }}
 
-Step 1: "Explore olympic_medals table structure"
-Step 2: "Discover US athletes using pattern matching: WHERE country_name ILIKE '%United%' OR country_name ILIKE '%American%' OR country_code ILIKE '%USA%'"
-Step 3: "Filter for gold medals and aggregate by athlete"
+Steps Already Taken: {{ total_steps }}
 
-Each step builds on previous knowledge for complex queries!
+{%- if sql_plan_context %}
+Current Knowledge:
+{{ sql_plan_context }}
+{%- else %}
+Starting fresh - no previous steps taken yet
+
+{%- endif %}
+
+REMINDER: If this is a simple "show me [table]" request, mark as final answer immediately--else progress logically based on what we already know.
 {% endblock %}

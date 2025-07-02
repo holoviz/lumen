@@ -9,56 +9,26 @@ Write a SQL query for the user's data transformation request, focusing on intent
 - No inline comments in SQL code
 - NULL handling: Exclude NULLs unless specified otherwise
 - Performance: Use LIMIT 100000 if unspecified, efficient ORDER BY, filter early
-- **Discovery queries**: One table at a time, no UNION
+- Discovery queries: One table at a time, no UNION
 - Subtitle rows: If dataset has subtitle/unit rows (e.g., "Title" then "Unit"), use OFFSET to skip them
-- **NO CREATE statements**: Materialization is handled automatically by the system
-- **Data Quality**: Filter out space-only values with `TRIM("column") != ''`
-- **Header Rows**: Use OFFSET 1 when data has header/metadata rows
-
-## Query Strategy:
-
-**Rules:**
-- **Entity Discovery**: When searching for enums:
+- NO CREATE statements: Materialization is handled automatically by the system
+- Data Quality: Filter out space-only values with `TRIM("column") != ''`
+- Header Rows: Use OFFSET 1 when data has header/metadata rows
+- Entity Discovery: When searching for enums:
   - Use multiple pattern variations: `ILIKE '%us%' OR ILIKE '%american%' OR ILIKE '%united%'`
   - Check multiple columns if available: country_name, country_code, country_3_letter_code
   - Consider common abbreviations and variations and case sensitivity
-- Exclude NULLs: `AND "column" IS NOT NULL`
 - Only filter by confirmed values from previous results
 - Progressive approach: each step builds on previous
 - Clean invalid values (-9999, empty strings)
 - Use CTEs only when necessary
-- **For preprocessing steps**: Write SELECT statements that transform data; materialization happens automatically
+- For preprocessing steps: Write SELECT statements that transform data, i.e. no CREATE statements, materialization happens automatically
+- Limits should not be applied to final steps.
 {%- endblock %}
 
-{% block examples %}
-**Examples:**
-
-```sql
--- Structure (LIMIT 1-3)
-SELECT * FROM "table" LIMIT 3;
-
--- Discovery (LIMIT 3-10)
-SELECT DISTINCT "column" FROM "table"
-WHERE "column" IS NOT NULL LIMIT 10;
-
--- Preprocessing (SELECT only - materialization automatic)
-SELECT *,
-CASE "season"
-WHEN 'DJF' THEN MAKE_DATE("year" - 1, 12, 1)
-WHEN 'JFM' THEN MAKE_DATE("year", 1, 1)
-ELSE NULL
-END AS "datetime"
-FROM "table"
-WHERE "year" IS NOT NULL AND "season" IS NOT NULL
-LIMIT 100000;
-
--- Analysis (LIMIT 100000)
-SELECT "name", COUNT(*) AS "count" FROM "table"
-WHERE "type" = 'value' AND "name" IS NOT NULL
-GROUP BY "name" ORDER BY "count" DESC LIMIT 100000;
-{% endblock %}
-
 {% block context -%}
+Available Schema:
+{{ memory["sql_metaset"].compact_context }}
 
 {%- if 'sql' in memory %}
 🗃️ Previous Plan's SQL:
@@ -70,7 +40,7 @@ GROUP BY "name" ORDER BY "count" DESC LIMIT 100000;
 {%- if memory.get('data') is not none %}
 📊 Summary of the data returned from the Previous Plan's SQL:
 {{ memory["data"] }}
-{%- endif -%}
+{%- endif %}
 
 Additional instructions:
 - Use only `{{ dialect }}` SQL dialect.
@@ -80,57 +50,49 @@ Additional instructions:
 - If `read_*` is used, use with alias, e.g. read_parquet('table.parq') as table_parq
 - Use double quotes (") for column names and single quotes (') for ALL string literal values (e.g., ILIKE '%pattern%', 'text_value', '2023-01-01')
 - Be sure to reference the full table slug, e.g. `source {{ separator }} table`
-- Use `CAST('YYYY-MM-DD' AS DATE)` for date literals, `MAKE_DATE(year, month, day)` for constructing dates from parts, for string concatenation dates: `CAST(year || '-' || month || '-' || day AS DATE)`
+- Use CAST('YYYY-MM-DD' AS DATE) for static date literals.
+- Use MAKE_DATE(year, month, day) to construct dates from numeric components.
+- Use CAST(year || '-' || month || '-' || day AS DATE) for basic string concatenation of date parts, when format is guaranteed to be 'YYYY-MM-DD'.
+- Use STRPTIME(string, format) to parse dates from custom or non-standard string formats (e.g., '01/12/2020' with format '%d/%m/%Y').
+- If avaialble, use materialized tables from previous steps
 {% endif %}
 {%- if dialect == 'snowflake' %}
 - Do not under any circumstances add quotes around the database, schema or table name.
-{% endif -%}
-
+{%- endif %}
 Step {{ step_number }}: {{ current_step }}
 
 ## Step Guidance:
 
-{%- if query_complexity == "join" %}
-**Join Query:** Build on previous discovery to join tables with confidence
-{%- elif query_complexity == "simple" or is_final_step %}
-**Direct Query:** Execute the final query to answer the user's question
-{%- elif query_complexity == "discovery" %}
-**Discovery Query:** LIMIT 3-10 for targeted exploration (one table at a time)
-{%- elif query_complexity == "complex" %}
-**Complex Query:** Use all previously discovered values and context
+{%- if sql_query_history %}
+SQL Query History (avoid duplicating these):
+{%- for query, table_status in sql_query_history.items() %}
+```sql
+{{ query }}
+```
+Table Status: {{ table_status }}
+
+{%- endfor %}
 {%- else %}
-**Default:** Use appropriate LIMIT based on step type
+First Step: No previous queries executed yet.
 {%- endif %}
-
-{%- if previous_sql_plan_results is defined and previous_sql_plan_results %}
-**Previous Results:**
-{{ previous_sql_plan_results }}
-
-Use confirmed values only, build on discoveries and advance knowledge about the tables and columns.
-{%- else %}
-**First Step:** Execute as specified, use appropriate LIMIT.
-{%- endif %}
-
-{{ memory["sql_metaset"].table_context }}
-{%- endblock -%}
+{% endblock %}
 
 {%- block errors %}
 {{ super() }}
 {% if errors is defined and errors %}
-**Error Fixes:**
+Error Fixes:
 - Quote string literals with single quotes
 - Use table names verbatim: `read_parquet('file.parq')`
 - No inline comments
 - Handle NULLs with COALESCE/IS NULL
-- Cast dates with CAST/TO_DATE
 - Clean numeric values, use TRY_CAST for safety
 - If cannot cast string, it might be due to the second row being a subtitle/unit row, so use OFFSET to skip it
 - Use TRY_CAST for numeric conversions to avoid errors
 - Only ONE limit clause is allowed, even when using UNION
-- **For date conversion errors**: Check for header rows (use OFFSET 1), filter spaces with `TRIM(column) != ''`, ensure minimum length
-- **For invalid date formats**: Use `TRY_CAST` instead of `CAST` for date conversions
+- For date conversion errors: Check for header rows (use OFFSET 1), filter spaces with `TRIM(column) != ''`, ensure minimum length
+- For invalid date formats: Use `TRY_CAST` instead of `CAST` for date conversions
 
-**Date Construction Examples:**
+Date Construction Examples:
 ```sql
 -- Constructing dates from year, month, day
 SELECT MAKE_DATE(2023, 12, 1) AS start_date;
@@ -172,6 +134,26 @@ SELECT "season" AS "value" FROM "table" WHERE "season" IS NOT NULL
 UNION ALL
 SELECT SUBSTR("date", 1, 4) AS "value" FROM "table" WHERE "date" IS NOT NULL
 LIMIT 10;
+```
+
+Multiple DISTINCT columns (WRONG vs RIGHT):
+```sql
+-- WRONG: Cannot use multiple DISTINCT in same SELECT
+SELECT DISTINCT "ISO_TIME", DISTINCT "SEASON" FROM "table";
+
+-- RIGHT: Use separate queries with UNION ALL
+SELECT DISTINCT "ISO_TIME" AS "value", 'ISO_TIME' AS "column_name"
+FROM "table"
+WHERE "ISO_TIME" IS NOT NULL
+  AND TRIM("ISO_TIME") != ''
+  AND LENGTH(TRIM("ISO_TIME")) >= 10
+UNION ALL
+SELECT DISTINCT "SEASON" AS "value", 'SEASON' AS "column_name"
+FROM "table"
+WHERE "SEASON" IS NOT NULL
+  AND TRIM("SEASON") != ''
+ORDER BY "column_name", "value"
+LIMIT 100;
 ```
 
 If the query is "Which five regions have the highest total sales from 2022-02-22?"...

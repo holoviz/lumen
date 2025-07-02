@@ -428,9 +428,9 @@ async def describe_data(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: boo
         if size < 250:
             return df
 
-        is_summarized = False
+        is_sampled = False
         if shape[0] > 5000:
-            is_summarized = True
+            is_sampled = True
             df = df.sample(5000)
 
         df = df.sort_index()
@@ -445,7 +445,7 @@ async def describe_data(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: boo
             sampled_columns = True
 
         describe_df = df.describe(percentiles=[])
-        columns_to_drop = ["min", "max"] # present if any numeric
+        columns_to_drop = ["min", "max", "count", "top", "freq"] # present if any numeric or object
         columns_to_drop = [col for col in columns_to_drop if col in describe_df.columns]
         df_describe_dict = describe_df.drop(columns=columns_to_drop).to_dict()
 
@@ -471,11 +471,9 @@ async def describe_data(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: boo
             except Exception:
                 df_describe_dict[col]["nunique"] = 'unknown'
             try:
-                df_describe_dict[col]["lengths"] = {
-                    "max": df[col].str.len().max(),
-                    "min": df[col].str.len().min(),
-                    "mean": format_float(float(df[col].str.len().mean())),
-                }
+                max_length = df[col].str.len().max()
+                if pd.notna(max_length):
+                    df_describe_dict[col]["max_length"] = int(max_length)
             except AttributeError:
                 pass
 
@@ -500,16 +498,16 @@ async def describe_data(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: boo
         for col in df.select_dtypes(include=["float64"]).columns:
             df[col] = df[col].apply(format_float)
 
-        # Add head and tail samples (1 row each)
-        head_sample = df.head(1).to_dict('records')
-        tail_sample = df.tail(1).to_dict('records')
+        # Add head and tail samples (2 row each)
+        head_sample = df.head(2).to_dict('records')
+        tail_sample = df.tail(2).to_dict('records')
 
         return {
             "summary": {
-                "total_table_cells": size,
-                "total_shape": shape,
-                "sampled_columns": sampled_columns,
-                "is_summarized": is_summarized,
+                "n_cells": size,
+                "shape": shape,
+                "sampled_cols": sampled_columns,
+                "is_sampled": is_sampled,
             },
             "stats": df_describe_dict,
             "head": head_sample[0] if head_sample else {},
