@@ -11,6 +11,9 @@ Write a SQL query for the user's data transformation request, focusing on intent
 - Performance: Use LIMIT 100000 if unspecified, efficient ORDER BY, filter early
 - Only single SQL query allowed: use  `UNION` for multiple queries
 - Subtitle rows: If dataset has subtitle/unit rows (e.g., "Title" then "Unit"), use OFFSET to skip them
+- **NO CREATE statements**: Materialization is handled automatically by the system
+- **Data Quality**: Filter out space-only values with `TRIM("column") != ''`
+- **Header Rows**: Use OFFSET 1 when data has header/metadata rows
 
 ## Query Strategy:
 
@@ -21,6 +24,7 @@ Write a SQL query for the user's data transformation request, focusing on intent
 - Progressive approach: each step builds on previous
 - Clean invalid values (-9999, empty strings)
 - Use CTEs only when necessary
+- **For preprocessing steps**: Write SELECT statements that transform data; materialization happens automatically
 {%- endblock %}
 
 {% block examples %}
@@ -33,6 +37,26 @@ SELECT * FROM "table" LIMIT 3;
 -- Discovery (LIMIT 3-10)
 SELECT DISTINCT "column" FROM "table"
 WHERE "column" ILIKE '%pattern%' AND "column" IS NOT NULL LIMIT 10;
+
+-- Preprocessing (SELECT only - materialization automatic)
+SELECT *,
+CASE "season"
+WHEN 'DJF' THEN MAKE_DATE("year" - 1, 12, 1)
+WHEN 'JFM' THEN MAKE_DATE("year", 1, 1)
+ELSE NULL
+END AS "datetime"
+FROM "table"
+WHERE "year" IS NOT NULL AND "season" IS NOT NULL
+LIMIT 100000;
+
+-- Data cleaning with header skip and space filtering
+SELECT *,
+  CAST(SUBSTRING("ISO_TIME", 1, 10) AS DATE) AS "date_key"
+FROM "table" OFFSET 1
+WHERE "ISO_TIME" IS NOT NULL
+  AND TRIM("ISO_TIME") != ''
+  AND LENGTH(TRIM("ISO_TIME")) >= 10
+LIMIT 100000;
 
 -- UNION (LIMIT only at end)
 SELECT "season" AS "value" FROM "table" WHERE "season" IS NOT NULL
@@ -69,6 +93,7 @@ Additional instructions:
 - If `read_*` is used, use with alias, e.g. read_parquet('table.parq') as table_parq
 - Use double quotes (") for column names and single quotes (') for ALL string literal values (e.g., ILIKE '%pattern%', 'text_value', '2023-01-01')
 - Be sure to reference the full table slug, e.g. `source {{ separator }} table`
+- Use `CAST('YYYY-MM-DD' AS DATE)` for date literals, `MAKE_DATE(year, month, day)` for constructing dates from parts, for string concatenation dates: `CAST(year || '-' || month || '-' || day AS DATE)`
 {% endif %}
 {%- if dialect == 'snowflake' %}
 - Do not under any circumstances add quotes around the database, schema or table name.
@@ -78,7 +103,18 @@ Step {{ step_number }} of SQL Plan: {{ current_step }}
 
 ## Step Guidance:
 
-{%- if query_complexity == "direct" or is_final_step %}
+{%- if query_complexity == "multi_table_join" %}
+{%- if current_iteration == 1 %}
+**Iteration 1 - Table Exploration:** LIMIT 3-5 per table, examine structures, identify join columns
+**DO NOT attempt joins yet!** Focus on understanding data formats and potential join keys.
+{%- elif current_iteration in [2, 3] %}
+**Iteration {{ current_iteration }} - Preprocessing:** Create normalized/cleaned tables with standardized join keys
+**Use SELECT statements only** - materialization happens automatically behind the scenes
+{%- elif current_iteration in [4, 5] %}
+**Iteration {{ current_iteration }} - Joining:** Use preprocessed tables to perform final joins
+{%- if current_iteration == 5 %}**FINAL ITERATION:** Must provide complete answer to user's question{%- endif %}
+{%- endif %}
+{%- elif query_complexity == "direct" or is_final_step %}
 **Show Table/File:** DO NOT USE ANY LIMIT - Display complete table/file contents as requested by user
 {%- elif query_complexity == "discovery_required" %}
 **Discovery Query:** LIMIT 3-10 for targeted value exploration, focus on query entities
@@ -95,7 +131,7 @@ Step {{ step_number }} of SQL Plan: {{ current_step }}
 **Previous Results:**
 {{ previous_sql_plan_results }}
 
-Use confirmed values only, build on discoveries.
+Use confirmed values only, build on discoveries and advance knowledge about the tables and columns.
 {%- else %}
 **First Step:** Execute as specified, use appropriate LIMIT.
 {%- endif %}
@@ -116,6 +152,36 @@ Use confirmed values only, build on discoveries.
 - If cannot cast string, it might be due to the second row being a subtitle/unit row, so use OFFSET to skip it
 - Use TRY_CAST for numeric conversions to avoid errors
 - Only ONE limit clause is allowed, even when using UNION
+- **For date conversion errors**: Check for header rows (use OFFSET 1), filter spaces with `TRIM(column) != ''`, ensure minimum length
+- **For invalid date formats**: Use `TRY_CAST` instead of `CAST` for date conversions
+
+**Date Construction Examples:**
+```sql
+-- Constructing dates from year, month, day
+SELECT MAKE_DATE(2023, 12, 1) AS start_date;
+
+-- From string concatenation
+SELECT CAST("year" || '-12-01' AS DATE) AS start_date;
+
+-- Season to date mapping
+CASE "season"
+WHEN 'DJF' THEN MAKE_DATE("year" - 1, 12, 1)
+WHEN 'JFM' THEN MAKE_DATE("year", 1, 1)
+WHEN 'FMA' THEN MAKE_DATE("year", 2, 1)
+ELSE NULL
+END AS "season_start"
+
+-- Clean timestamp extraction (for ISO_TIME issues)
+SELECT *,
+    TRY_CAST(SUBSTRING("ISO_TIME", 1, 10) AS DATE) AS "date_key"
+FROM "table" OFFSET 1
+WHERE "ISO_TIME" IS NOT NULL
+    AND TRIM("ISO_TIME") != ''
+    AND LENGTH(TRIM("ISO_TIME")) >= 19
+    AND "ISO_TIME" NOT LIKE '%Year%'
+    AND "ISO_TIME" NOT LIKE '%degrees%'
+LIMIT 100000;
+```
 
 Casting Examples:
 

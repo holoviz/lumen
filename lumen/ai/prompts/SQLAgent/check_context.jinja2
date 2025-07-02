@@ -2,43 +2,52 @@
 
 {%- block instructions %}
 # Instructions:
-Determine discovery steps needed to answer the user's query.
+Determine discovery steps needed for the CURRENT iteration to answer the user's query.
+
+## Important Context:
+- You are on iteration {{ current_iteration }} of {{ max_iterations }}
+- You have {{ max_iterations - current_iteration }} iterations remaining
+- For complex joins, use ALL available iterations strategically
 
 ## Query Classification:
 
-**DIRECT QUERIES** (Quick schema check + answer):
-- Table/file display: "show table", "display data", "show [filename]"
-- Simple operations: "count rows", "sum totals", "top N", "describe table"
-
+**DIRECT QUERIES** (Single iteration):
+- Table/file display: "show table", "display data"
+- Simple operations: "count rows", "sum totals"
 → Direct execution without discovery steps
 
-**ENTITY DISCOVERY QUERIES** (Focused discovery needed):
-- Specific entity filters with unknown values
-- Names, places, companies needing pattern discovery
-- Complex entity combinations
+**MULTI_TABLE_JOIN** (Use all 5 iterations):
+- Queries requiring joins between 2+ tables
+- Complex date/time mappings between tables
+- Entity resolution across different naming conventions
 
-→ Systematic discovery with small token limits
+## Multi-Table Join Strategy (5 iterations):
+
+**Iteration 1: Exploration (You are here if current_iteration=1)**
+- Examine table structures (LIMIT 3-5 rows per table)
+- Identify potential join columns
+- Understand data types and formats
+- Check for naming variations
+→ DO NOT attempt joins yet!
+
+**Iteration 2-3: Preprocessing (current_iteration=2 or 3)**
+- Create normalized versions of tables using SELECT statements
+- Standardize date formats, entity names
+- Extract join keys into clean columns
+- System will materialize these automatically (no CREATE needed)
+→ Focus on ONE table per iteration
+
+**Iteration 4-5: Joining & Answering (current_iteration=4 or 5)**
+- Join the preprocessed tables
+- Apply final filters and aggregations
+- Answer the user's question completely
+→ Reference materialized tables from iterations 2-3
 
 ## Critical Rules:
-- User terms may not match actual schema
-- Column names/enum values may differ from expected
-- ALWAYS verify column names and enum values first
-- Be token conscious - results inject back into context
-
-## Discovery Strategy:
-
-**Data Quality Assessment:**
-- Check for invalid values of relevant columns (-9999, empty strings, 'N/A', 'NULL')
-- Identify formatting issues (currency symbols, commas in numbers)
-- Detect subtitle/unit rows that need OFFSET
-- Use pattern matching: `WHERE "column" ILIKE '%pattern%' AND "column" IS NOT NULL`
-- Always exclude NULLs with IS NOT NULL
-- Keep the SQL statements as simple as possible
-
-**Step Planning:**
-1. **Direct:** Single step with final answer
-2. **Discovery:** Structure check → Data cleaning assessment → Value discovery → Final analysis
-3. **Complex:** 2-3 focused steps maximum
+- Don't rush! You have 5 iterations - use them wisely
+- Each iteration builds on previous results
+- Materialize expensive transformations for reuse
+- Keep queries simple and focused per iteration
 
 {% endblock %}
 
@@ -58,28 +67,41 @@ Determine discovery steps needed to answer the user's query.
 {% endblock %}
 
 {% block context %}
-Please analyze the data context below and provide discovery steps:
+Current Iteration: {{ current_iteration }} of {{ max_iterations }}
 
 {%- if previous_sql_plan_results is defined and previous_sql_plan_results %}
-
-**Previous Results:**
+**Previous Iteration Results:**
 {{ previous_sql_plan_results }}
 
-**Analysis Guide:**
-- Found needed values → final step only
-- Missing values → focused discovery (small LIMIT)
-- Be token efficient
+{%- if preprocessing_tables %}
+**Available Preprocessed Tables:**
+{%- for table in preprocessing_tables %}
+- {{ table }}
+{%- endfor %}
+{%- endif %}
+
+**Planning Guidance for Iteration {{ current_iteration }}:**
+{%- if current_iteration == 1 %}
+First iteration: Focus on exploration and understanding data structures.
+If this appears to be a multi-table query, examine table structures and identify join columns.
+Do NOT attempt joins yet - save that for later iterations.
+{%- elif current_iteration in [2, 3] %}
+Middle iterations: If working with multi-table joins, create preprocessed tables with clean join keys.
+Materialize results for reuse. Pick ONE table to preprocess this iteration.
+{%- elif current_iteration in [4, 5] %}
+Later iterations: If working with multi-table joins, now you can join!
+Use any preprocessed tables from previous iterations.
+{%- if current_iteration == 5 %}**FINAL ITERATION:** Must provide complete answer to user's question{%- endif %}
+{%- endif %}
 
 {%- else %}
-
-**First Iteration**
-
-**Analysis Guide:**
-- Simple display → Direct answer
-- Aggregation/ranking → Schema check + answer
-- Entity names → Discovery needed
-- Always verify schema first
-
+**First Iteration - Exploration Phase**
+{%- if "join" in user_query.lower() or involves_multiple_tables %}
+This appears to be a multi-table query. Plan to use all 5 iterations:
+1. Explore tables (current)
+2-3. Preprocess tables
+4-5. Join and answer
+{%- endif %}
 {%- endif %}
 
 **Available Schema:**
