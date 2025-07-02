@@ -1,0 +1,70 @@
+{% extends 'Agent/main.jinja2' %}
+
+{%- block instructions %}
+# Plan Next Step Instructions
+
+You are planning the NEXT SINGLE STEP to make progress toward answering the user's query.
+DO NOT plan multiple steps ahead - focus only on what to do next based on what you've learned.
+
+## Step Types:
+- **explore**: Initial table structure examination (LIMIT 3-5)
+- **discover**: Find specific values or patterns (LIMIT 10) - ONE table at a time, NO UNION
+- **preprocess**: Clean/normalize data for later use
+- **join**: Combine tables (only after exploration)
+- **filter**: Apply specific conditions
+- **aggregate**: Summarize data
+- **final**: Answer the user's question
+
+## Decision Process:
+1. Review what you've learned from previous steps
+2. Identify what specific information you still need
+3. Choose the most appropriate next action
+4. Be specific about what to look for
+
+## Important:
+- Take small, focused steps
+- Build knowledge incrementally
+- Don't try to do everything at once
+- Materialize only expensive transformations
+{% endblock %}
+
+{% block context %}
+**User Query:** {{ user_query }}
+
+**Steps Taken:** {{ total_steps }}
+
+{%- if current_context %}
+**Current Knowledge:**
+{{ current_context }}
+{%- else %}
+**Starting fresh - no previous steps taken yet**
+{%- endif %}
+
+{%- if materialized_tables %}
+**Materialized Tables Available:**
+{%- for table in materialized_tables %}
+- {{ table }}
+{%- endfor %}
+{%- endif %}
+
+**Available Schema:**
+{{ memory["sql_metaset"].compact_context }}
+{% endblock %}
+
+{% block examples %}
+**Example Progression:**
+
+Step 1: "Explore the orders table structure to understand columns"
+Step 2: "Find distinct product categories in the orders table"
+Step 3: "Check date range of orders to understand timeframe"
+Step 4: "Create preprocessed orders with standardized dates"
+Step 5: "Calculate total sales by category for the final answer"
+
+**Entity Discovery Example:**
+
+Step 1: "Explore olympic_medals table structure"
+Step 2: "Discover US athletes using pattern matching: WHERE country_name ILIKE '%United%' OR country_name ILIKE '%American%' OR country_code ILIKE '%USA%'"
+Step 3: "Filter for gold medals and aggregate by athlete"
+
+Each step builds on previous knowledge!
+{% endblock %}

@@ -421,7 +421,7 @@ async def get_data(pipeline):
     return await asyncio.to_thread(get_data_sync)
 
 
-async def describe_data(df: pd.DataFrame) -> str:
+async def describe_data(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool = True) -> str:
     def describe_data_sync(df):
         size = df.size
         shape = df.shape
@@ -456,14 +456,13 @@ async def describe_data(df: pd.DataFrame) -> str:
                 # Get unique values for enum processing
                 unique_values = df[col].dropna().unique().tolist()
                 if unique_values:
-                    # Process enums with limit of 3
                     temp_spec = {"enum": unique_values}
                     updated_spec, _ = process_enums(
                         temp_spec,
                         num_cols=len(df.columns),
-                        limit=3,  # Limit to 3 enum values
+                        limit=enum_limit,
                         include_enum=True,
-                        reduce_enums=True
+                        reduce_enums=reduce_enums,
                     )
                     if "enum" in updated_spec:
                         df_describe_dict[col]["enum"] = updated_spec["enum"]
@@ -734,14 +733,14 @@ def parse_table_slug(table: str, sources: dict[str, Source], normalize: bool = T
     return a_source_obj, a_table
 
 
-def truncate_string(s, max_length=20, ellipsis="..."):
+def truncate_string(s, max_length=30, ellipsis="..."):
     if len(s) <= max_length:
         return s
     part_length = (max_length - len(ellipsis)) // 2
     return f"{s[:part_length]}{ellipsis}{s[-part_length:]}"
 
 
-def truncate_iterable(iterable, max_length=20) -> tuple[list, list, bool]:
+def truncate_iterable(iterable, max_length=30) -> tuple[list, list, bool]:
     iterable_list = list(iterable)
     if len(iterable_list) > max_length:
         half = max_length // 2

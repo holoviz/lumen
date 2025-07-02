@@ -9,7 +9,7 @@ Write a SQL query for the user's data transformation request, focusing on intent
 - No inline comments in SQL code
 - NULL handling: Exclude NULLs unless specified otherwise
 - Performance: Use LIMIT 100000 if unspecified, efficient ORDER BY, filter early
-- Only single SQL query allowed: use  `UNION` for multiple queries
+- **Discovery queries**: One table at a time, no UNION
 - Subtitle rows: If dataset has subtitle/unit rows (e.g., "Title" then "Unit"), use OFFSET to skip them
 - **NO CREATE statements**: Materialization is handled automatically by the system
 - **Data Quality**: Filter out space-only values with `TRIM("column") != ''`
@@ -18,7 +18,10 @@ Write a SQL query for the user's data transformation request, focusing on intent
 ## Query Strategy:
 
 **Rules:**
-- Use pattern matching: `WHERE "column" ILIKE '%pattern%'`
+- **Entity Discovery**: When searching for enums:
+  - Use multiple pattern variations: `ILIKE '%us%' OR ILIKE '%american%' OR ILIKE '%united%'`
+  - Check multiple columns if available: country_name, country_code, country_3_letter_code
+  - Consider common abbreviations and variations and case sensitivity
 - Exclude NULLs: `AND "column" IS NOT NULL`
 - Only filter by confirmed values from previous results
 - Progressive approach: each step builds on previous
@@ -36,7 +39,7 @@ SELECT * FROM "table" LIMIT 3;
 
 -- Discovery (LIMIT 3-10)
 SELECT DISTINCT "column" FROM "table"
-WHERE "column" ILIKE '%pattern%' AND "column" IS NOT NULL LIMIT 10;
+WHERE "column" IS NOT NULL LIMIT 10;
 
 -- Preprocessing (SELECT only - materialization automatic)
 SELECT *,
@@ -83,32 +86,20 @@ Additional instructions:
 - Do not under any circumstances add quotes around the database, schema or table name.
 {% endif -%}
 
-Step {{ step_number }} of SQL Plan: {{ current_step }}
+Step {{ step_number }}: {{ current_step }}
 
 ## Step Guidance:
 
-{%- if query_complexity == "multi_table_join" %}
-{%- if current_iteration == 1 %}
-**Iteration 1 - Table Exploration:** LIMIT 3-5 per table, examine structures, identify join columns
-**DO NOT attempt joins yet!** Focus on understanding data formats and potential join keys.
-{%- elif current_iteration in [2, 3] %}
-**Iteration {{ current_iteration }} - Preprocessing:** Create normalized/cleaned tables with standardized join keys
-**Use SELECT statements only** - materialization happens automatically behind the scenes
-{%- elif current_iteration in [4, 5] %}
-**Iteration {{ current_iteration }} - Joining:** Use preprocessed tables to perform final joins
-{%- if current_iteration == 5 %}**FINAL ITERATION:** Must provide complete answer to user's question{%- endif %}
-{%- endif %}
-{%- elif query_complexity == "direct" or is_final_step %}
-**Show Table/File:** DO NOT USE ANY LIMIT - Display complete table/file contents as requested by user
-{%- elif query_complexity == "discovery_required" %}
-**Discovery Query:** LIMIT 3-10 for targeted value exploration, focus on query entities
-{%- elif query_complexity == "complex_analysis" %}
-**Analysis Query:** LIMIT 100000, use all previously discovered values
+{%- if query_complexity == "join" %}
+**Join Query:** Build on previous discovery to join tables with confidence
+{%- elif query_complexity == "simple" or is_final_step %}
+**Direct Query:** Execute the final query to answer the user's question
+{%- elif query_complexity == "discovery" %}
+**Discovery Query:** LIMIT 3-10 for targeted exploration (one table at a time)
+{%- elif query_complexity == "complex" %}
+**Complex Query:** Use all previously discovered values and context
 {%- else %}
-**Default:** Use appropriate LIMIT based on step intent:
-- Structure: LIMIT 1-2
-- Discovery: LIMIT 3-10
-- Final analysis: LIMIT 100000
+**Default:** Use appropriate LIMIT based on step type
 {%- endif %}
 
 {%- if previous_sql_plan_results is defined and previous_sql_plan_results %}

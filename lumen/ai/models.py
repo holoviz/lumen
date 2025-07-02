@@ -47,72 +47,68 @@ class Sql(BaseModel):
     )
 
 
-class CheckContext(PartialBaseModel):
-    chain_of_thought: str = Field(
+class NextStep(PartialBaseModel):
+    """Represents the next single step to take in SQL exploration."""
+
+    reasoning: str = Field(
         description="""
-        Explain how you will use the data to check the context, and address any previous issues you encountered.
-        Consider which iteration you're on and plan accordingly.
+        Brief reasoning about what we know so far and what specific information we need next.
+        Be concise and focused on the immediate next step.
         """
     )
 
-    query_complexity: Literal["direct", "discovery_required", "complex_analysis", "multi_table_join"] = Field(
+    step_type: Literal["explore", "discover", "preprocess", "join", "filter", "aggregate", "final"] = Field(
         description="""
-        Classify the query complexity:
-        - "direct": Simple display, count, or queries with standard/obvious values
-        - "discovery_required": Queries needing unknown entity values or name variations
-        - "complex_analysis": Multi-step analysis requiring multiple discovery phases
-        - "multi_table_join": Queries requiring joins between multiple tables (use all 5 iterations)
+        The type of step to take:
+        - "explore": Initial table structure examination (LIMIT 3-5)
+        - "discover": Find specific values or patterns (LIMIT 10)
+        - "preprocess": Clean/normalize data for later use
+        - "join": Combine tables (only after exploration)
+        - "filter": Apply specific conditions
+        - "aggregate": Summarize data
+        - "final": Answer the user's question
         """
     )
 
-    current_iteration: int = Field(
-        default=1,
-        description="The current iteration number (1-5)"
-    )
-
-    max_iterations: int = Field(
-        default=5,
-        description="Maximum number of iterations available"
-    )
-
-    efficient_plan: str = Field(
+    action_description: str = Field(
         description="""
-        For discovery queries: Describe the strategy for efficient token usage and data cleaning.
-        For multi-table joins, outline the full 5-iteration strategy:
-        - Iteration 1: Table exploration and join column identification
-        - Iterations 2-3: Create preprocessed/normalized tables for easier joining
-        - Iterations 4-5: Perform final joins and answer the query
+        Clear, specific description of what this single step should do.
+        For discovery: explore ONE table at a time, no UNION operations.
         """
     )
 
-    discovery_steps: list[str] = Field(
+    query_complexity: Literal["simple", "discovery", "complex", "join"] = Field(
+        description="Complexity of this specific step only"
+    )
+
+    should_materialize: bool = Field(
+        description="Whether this step's results should be materialized for reuse"
+    )
+
+    is_final_answer: bool = Field(
+        description="Whether this step will provide the final answer to the user"
+    )
+
+    expected_limit: int = Field(
+        default=10,
+        description="Expected LIMIT for this query based on step type"
+    )
+
+
+class ReadinessCheck(PartialBaseModel):
+    """Check if we're ready to answer the user's question."""
+
+    reasoning: str = Field(
+        description="Explain what information we have and what might still be missing"
+    )
+
+    is_ready: bool = Field(
+        description="True if we have enough information to write the final query"
+    )
+
+    missing_info: list[str] = Field(
         default_factory=list,
-        description="""
-        Steps for this iteration ONLY. Don't try to do everything at once.
-
-        For multi_table_join queries:
-        - Iteration 1: Focus on understanding table structures and identifying join columns
-        - Iterations 2-3: Create intermediate tables with normalized join keys
-        - Iterations 4-5: Join the preprocessed tables and answer the query
-
-        The LAST step of the FINAL iteration must directly answer the user's question.
-        """
-    )
-
-    materialization_steps: list[int] = Field(
-        default_factory=list,
-        description="""
-        List of step indices that should be materialized as persistent tables.
-        For multi-table joins, materialize preprocessing steps in iterations 2-3.
-        """
-    )
-
-    preprocessing_tables: list[str] = Field(
-        default_factory=list,
-        description="""
-        Names of tables created in previous iterations that can be used for joining.
-        These are materialized tables from preprocessing steps.
-        """
+        description="List of specific information still needed (if not ready)"
     )
 
 
