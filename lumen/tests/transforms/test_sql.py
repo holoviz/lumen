@@ -590,3 +590,27 @@ class TestSQLRemoveSourceSeparator:
         # Verify string literals are preserved
         assert "'United States of America'" in result
         assert "'Michael PHELPS'" in result
+
+    def test_debug_complex_table_names(self):
+        """Test the specific case that's failing with complex table names."""
+        sql_in = '''SELECT DISTINCT "NAME", "SEASON", "BASIN" FROM ProvidedSource00000__@__ibtracs.last3years.parquet WHERE "BASIN" = 'EP' AND "SEASON" IN (SELECT DISTINCT CAST("year" AS VARCHAR) FROM ProvidedSource00000__@__oni.csv WHERE "season" = 'AMJ' AND "oni" IN ('el_nino', 'la_nina')) AND TRIM("NAME") != '' ORDER BY "SEASON" LIMIT 10'''
+
+        result = SQLRemoveSourceSeparator.apply_to(sql_in)
+        print(f"\nInput: {sql_in}")
+        print(f"Output: {result}")
+
+        # The result should contain the full table names without the source prefix
+        # They should be properly quoted since they contain dots
+        assert '"ibtracs.last3years.parquet"' in result
+        assert '"oni.csv"' in result
+
+        # Should not contain the original source prefix
+        assert 'ProvidedSource00000__@__' not in result
+        assert '__@__' not in result
+
+        # Should not contain standalone extensions without the full name
+        # Check that 'parquet' and 'csv' only appear as part of the full quoted table names
+        parquet_matches = result.count('parquet')
+        csv_matches = result.count('csv')
+        assert parquet_matches == 1, f"Expected 1 'parquet', found {parquet_matches}"
+        assert csv_matches == 1, f"Expected 1 'csv', found {csv_matches}"
