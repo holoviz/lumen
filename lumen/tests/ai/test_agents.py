@@ -1,6 +1,7 @@
 import json
 
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -14,6 +15,7 @@ from lumen.ai.agents import (
     AnalystAgent, ChatAgent, SQLAgent, VegaLiteAgent,
 )
 from lumen.ai.llm import Llm
+from lumen.ai.models import SQLRoadmap
 from lumen.ai.schemas import get_metaset
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
@@ -133,10 +135,20 @@ class TestSoloAgentRespond:
         mock_memory["source"] = duckdb_source
         mock_memory["sources"] = sources = {"duckdb": duckdb_source}
         mock_memory["sql_metaset"] = await get_metaset(sources, ["test_sql"])
-        agent = SQLAgent(llm=mock_llm, memory=mock_memory)
-        response = await agent.respond(test_messages)
-        assert response is not None
 
+        dummy_roadmap = SQLRoadmap(
+            estimated_steps=1,
+            discovery_steps=["Check schema"],
+            validation_checks=["Check for NULLs"],
+            potential_issues=["None"],
+            join_strategy="Simple lookup"
+        )
+
+        agent = SQLAgent(llm=mock_llm, memory=mock_memory)
+
+        with patch.object(SQLAgent, "_generate_roadmap", new=AsyncMock(return_value=dummy_roadmap)):
+            response = await agent.respond(test_messages)
+            assert response is not None
     async def test_vegalite_agent(self, mock_llm, mock_memory, duckdb_source, test_messages):
         """Test VegaLiteAgent instantiation and respond"""
         # Set up necessary data in memory
