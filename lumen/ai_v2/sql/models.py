@@ -2,27 +2,57 @@
 SQL Agent Response Models
 """
 
-from pydantic import BaseModel, Field
+import pandas as pd
 
-from ..core.models import PartialBaseModel, SpecFragment
+from pydantic import (
+    BaseModel, Field, field_serializer, field_validator,
+)
+
+from ..core.models import PartialBaseModel
 
 
 class SQLQuery(PartialBaseModel):
-    """Response model for a single SQL query"""
+    """Represents a SQL query"""
 
-    description: str = Field(description="What this query does")
-    query: str = Field(description="The SQL query")
-    output_table: str = Field(description="Name for the resulting table")
+    content: str = Field(description="The SQL query code to execute")
+    table_name: str = Field(description="Name for the resulting table")
+
+    @field_validator("content")
+    @classmethod
+    def validate_select(cls, v: str) -> str:
+        """Ensure query starts with SELECT"""
+        if not v.strip().upper().startswith("SELECT"):
+            raise ValueError("SQL query must start with 'SELECT'")
+        return v
 
 
 class SQLQueries(PartialBaseModel):
-    """Response model for multiple SQL queries to execute together"""
+    """Represents query(s) to execute"""
 
-    chain_of_thought: str = Field(description="Reasoning behind these queries")
-    queries: list[SQLQuery] = Field(description="List of SQL queries to execute in order")
-    batch_description: str = Field(description="Overall description of what this batch accomplishes")
-    should_materialize: list[bool] = Field(description="Whether each query result should be materialized for later use")
+    chain_of_thought: str = Field(description="In a sentence or two, explain the SQL queries.")
+    content: list[SQLQuery] = Field(description="List of SQL queries to execute in order based on the chain_of_thought.")
 
+
+class SQLQueryResult(PartialBaseModel):
+    """Represents a single SQL query result"""
+
+    table_name: str = Field(description="Name of the resulting table from the SQL query")
+    content: pd.DataFrame = Field(description="The result of the SQL query as a DataFrame")
+
+    class Config:
+        arbitrary_types_allowed = True
+
+    @field_serializer('content')
+    def serialize_dataframe(self, df: pd.DataFrame) -> list[dict]:
+        return df.to_dict(orient='records')
+
+
+class SQLQueryResults(PartialBaseModel):
+    """Represents multiple SQL query results"""
+
+    content: list[SQLQueryResult] = Field(
+        description="A dictionary mapping table names to their corresponding SQL query results"
+    )
 
 class LineChange(BaseModel):
     """Represents a single line change in a SQL query"""
@@ -35,85 +65,51 @@ class LineChange(BaseModel):
     line_no: int = Field(description="The line number in the original text that needs to be changed.")
 
 
-class RetrySpec(PartialBaseModel):
+class LineChanges(PartialBaseModel):
     """Represents a revision of text with its content and changes."""
 
     chain_of_thought: str = Field(description="In a sentence or two, explain the plan to revise the text based on the feedback provided.")
-    lines_changes: list[LineChange] = Field(description="A list of changes made to the lines in the original text based on the chain_of_thought.")
+    content: list[LineChange] = Field(description="A list of changes made to the lines in the original text based on the chain_of_thought.")
 
 
-# ===== Action Input Models =====
+class LLMMessage(PartialBaseModel):
+    """Represents a message in OpenAI format"""
+
+    role: str = Field(description="The role of the message sender (e.g., 'user', 'assistant')")
+    content: str = Field(description="The content of the message")
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: str) -> str:
+        """Ensure role is either 'user' or 'assistant'"""
+        if v not in ["user", "assistant"]:
+            raise ValueError("Role must be either 'user' or 'assistant'")
+        return v
 
 
-class QueryEditRequest(PartialBaseModel):
-    """Request to edit a SQL query"""
+class LLMMessages(PartialBaseModel):
+    """Represents a list of messages in OpenAI format"""
 
-    original_query: str = Field(description="The original SQL query to edit")
-    feedback: str = Field(description="Feedback on what needs to be changed")
+    messages: list[LLMMessage] = Field(default_factory=list, description="List of messages in OpenAI format")
 
+    @field_validator("messages")
+    @classmethod
+    def validate_messages(cls, v: list[LLMMessage]) -> list[LLMMessage]:
+        """Ensure at least one message is provided"""
+        if not v:
+            raise ValueError("At least one message must be provided")
+        return v
 
-class QueryBatchRequest(PartialBaseModel):
-    """Request to generate and execute multiple SQL queries"""
+    def serialize(self) -> list[dict]:
+        """Serialize messages to a list of dictionaries"""
+        return [message.model_dump() for message in self.messages]
 
-    instruction: str = Field(description="Natural language instruction for what the queries should accomplish")
-    goal: str = Field(default="", description="The overall goal or objective")
-    context: str = Field(default="", description="Relevant context or requirements")
+    def append(self, message: LLMMessage) -> None:
+        """Add a new message to the list"""
+        self.messages.append(LLMMessage.model_validate(message))
 
-
-class QueryExecutionRequest(PartialBaseModel):
-    """Request to execute a specific SQL query"""
-
-    query: str = Field(description="The SQL query to execute")
-    output_table: str = Field(description="Name for the resulting table")
-    materialize: bool = Field(default=False, description="Whether to materialize the result for later use")
-
-
-class QueryBatchExecutionRequest(PartialBaseModel):
-    """Request to execute multiple SQL queries in sequence"""
-
-    batch_description: str = Field(default="", description="Description of what this batch accomplishes")
-    queries: list[QueryExecutionRequest] = Field(description="List of queries to execute")
-
-
-# ===== SQL Fragment Models =====
-
-
-class SQLQueriesFragment(SpecFragment):
-    """Fragment for SQL queries generation"""
-
-    def __str__(self) -> str:
-        queries = self.content.get("queries", [])
-        batch_desc = self.content.get("batch_description", "SQL queries batch")
-        return f"{batch_desc}: {len(queries)} queries generated"
-
-
-class QueryExecutionFragment(SpecFragment):
-    """Fragment for query execution results"""
-
-    def __str__(self) -> str:
-        if self.content.get("executed_queries"):
-            # Multi-query execution
-            executed_queries = self.content.get("executed_queries", [])
-            success_count = self.content.get("success_count", 0)
-            total_queries = len(executed_queries)
-
-            # Check for schema discovery
-            schema_count = sum(1 for q in executed_queries if q.get("schema_results"))
-            if schema_count > 0:
-                return f"Executed {total_queries} queries ({schema_count} schema, {success_count} successful)"
-            else:
-                return f"Executed {total_queries} queries ({success_count} successful)"
-        else:
-            # Single query execution
-            status = self.content.get("status", "unknown")
-            table = self.content.get("table", "")
-            return f"Query executed: {table} ({status})"
-
-
-class SchemaDiscoveryFragment(SpecFragment):
-    """Fragment for schema discovery results"""
-
-    def __str__(self) -> str:
-        tables_count = len(self.content.get("tables", []))
-        database = self.content.get("database", "database")
-        return f"Discovered {tables_count} tables in {database}"
+    def pop(self) -> LLMMessage | None:
+        """Remove and return the last message from the list"""
+        if self.messages:
+            return self.messages.pop()
+        return None
