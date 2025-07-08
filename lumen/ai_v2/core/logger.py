@@ -148,7 +148,7 @@ class AgentLogger:
 
     def log_milestone_start(self, milestone: str):
         """Log milestone start"""
-        self.info(f"🚀 Starting milestone: {milestone}")
+        self.info(f"{Colors.OKGREEN}🚀 Starting milestone: {milestone}{Colors.ENDC}")
 
     def log_complete(self, milestone: str, steps: int):
         """Log milestone completion"""
@@ -181,6 +181,25 @@ class AgentLogger:
         completion_indicator = "🏁" if enables_completion else "📍"
         self.info(f"{completion_indicator} Checkpoint: {milestone}")
 
+    def log_checkpoint_evaluation_start(self, milestone: str, has_outputs: bool):
+        """Log the start of checkpoint evaluation"""
+        outputs_str = " with outputs" if has_outputs else " without outputs"
+        self.debug(f"🔍 Evaluating milestone completion for '{milestone}'{outputs_str}")
+
+    def log_checkpoint_evaluation_result(self, milestone: str, is_complete: bool, missing_info: str = None):
+        """Log the result of checkpoint evaluation"""
+        if not is_complete:
+            reason = f": {missing_info}" if missing_info else ""
+            self.debug(f"⏳ Milestone '{milestone}' evaluated as INCOMPLETE{reason}")
+
+    def log_checkpoint_content(self, checkpoint_summary: str):
+        """Log checkpoint content for debugging"""
+        if len(checkpoint_summary) > 200:
+            display_summary = checkpoint_summary[:200] + f"... [+{len(checkpoint_summary) - 200} chars]"
+        else:
+            display_summary = checkpoint_summary
+        self.debug(f"📄 Checkpoint summary: {display_summary}")
+
     def log_template_render(self, method_name: str, template_length: int):
         """Log template rendering"""
         self.debug(f"{Colors.PROMPT}📝 Rendered template for {method_name}: {template_length} chars{Colors.ENDC}")
@@ -189,7 +208,6 @@ class AgentLogger:
         """Log prompt content with highlighting"""
         # Split content into lines for better readability
         lines = content.split('\n')
-        self.debug(f"{Colors.PROMPT}📝 Template content for {method_name}:{Colors.ENDC}")
         for line in lines:
             self.debug(f"{Colors.PROMPT_CONTENT}{line}{Colors.ENDC}")
 
