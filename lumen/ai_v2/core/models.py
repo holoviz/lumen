@@ -1,7 +1,7 @@
 """
 Lumen AI 2.0 - Core Response Models
 
-Note: reasoning, chain_of_thought always comes before
+Note: reasoning always comes before
 the bools, actions, etc to give the LLM time to reflect
 and build up context!
 """
@@ -15,8 +15,10 @@ from pydantic import BaseModel, Field, field_validator
 
 # ===== Base Models =====
 
+
 class PartialBaseModel(BaseModel, PartialLiteralMixin):
     """Base model that supports streaming through async generators"""
+
 
 class PartialEscapeModel(PartialBaseModel):
     """Base model with escape hatch - set missing_info to halt execution when you need more information"""
@@ -31,15 +33,21 @@ class PartialEscapeModel(PartialBaseModel):
             raise RuntimeError(f"Agent needs more information: {v}")
         return v
 
-# ===== Hierarchical Models =====
+
+# ===== Action System =====
+
 
 class ActionParameter(PartialBaseModel):
     """Information about an action parameter"""
 
-    name: str = Field(description="Parameter name")
-    annotation: Any = Field(description="Type annotation")
-    default: Any = Field(default=None, description="Default value if any")
-    kind: str = Field(description="Parameter kind (e.g. 'POSITIONAL_OR_KEYWORD')")
+    name: str
+    annotation: Any
+    default: Any = Field(default=None, description="Default value for parameter. If None, parameter is required")
+
+    @property
+    def required(self) -> bool:
+        """Whether this parameter is required (has no default value)"""
+        return self.default is None
 
     class Config:
         arbitrary_types_allowed = True
@@ -48,12 +56,59 @@ class ActionParameter(PartialBaseModel):
 class ActionInfo(PartialBaseModel):
     """Structured information about an action method"""
 
-    name: str = Field(description="Action method name")
-    callable: Callable = Field(description="The actual callable method")
-    signature: Signature = Field(description="Method signature")
+    name: str
+    callable: Callable
+    signature: Signature
     signature_str: str = Field(description="Human-readable signature string")
-    docstring: str = Field(default="", description="Method docstring")
-    parameters: dict[str, ActionParameter] = Field(default_factory=dict, description="Parameter information")
+    docstring: str = ""
+    parameters: dict[str, ActionParameter] = Field(default_factory=dict)
 
     class Config:
         arbitrary_types_allowed = True
+
+
+class Action(PartialBaseModel):
+    """Represents a single action to be executed"""
+
+    name: str
+    parameters: dict[str, Any] = Field(default_factory=dict, description="Parameters for the action")
+
+
+# ===== Milestone Execution =====
+
+
+class MilestoneStep(PartialBaseModel):
+    """Represents a single step in milestone execution"""
+
+    reasoning: str
+    actions: list[Action]
+    outputs: dict[str, Any] = Field(default_factory=dict)
+
+    class Config:
+        arbitrary_types_allowed = True
+
+
+# ===== Strategic Planning =====
+
+
+class Milestone(PartialBaseModel):
+    """Represents a single milestone in the roadmap"""
+
+    goal: str
+    skipped: bool = Field(default=False)
+    completed: bool = Field(default=False)
+
+
+class Roadmap(PartialBaseModel):
+    """Represents the strategic roadmap for achieving a goal"""
+
+    reasoning: str
+    milestones: list[Milestone]
+
+
+class Checkpoint(PartialEscapeModel):
+    """Combined evaluation and checkpoint creation"""
+
+    summary: str = Field(description="If milestone is complete: comprehensive summary for strategic planning. If incomplete: leave empty.")
+
+    enables_goal_completion: bool = Field(default=False, description="Whether this checkpoint enables completing the overall goal")
