@@ -4,9 +4,7 @@ SQL Agent Response Models
 
 import pandas as pd
 
-from pydantic import (
-    BaseModel, Field, field_serializer, field_validator,
-)
+from pydantic import BaseModel, Field, field_serializer
 from pydantic.json_schema import SkipJsonSchema
 
 from ..core.models import Artifact, PartialBaseModel
@@ -25,13 +23,12 @@ class SQLQueries(PartialBaseModel):
     reasoning: str = Field(description="In a sentence or two, explain the SQL queries.")
     content: list[SQLQuery] = Field(description="List of SQL queries to execute in order based on the reasoning.")
 
-    @field_validator("content", mode="before")
-    @classmethod
-    def convert_to_sql_query(cls, content: list[str]) -> list[SQLQuery]:
-        """Convert a list of strings to a list of SQLQuery objects."""
-        if isinstance(content, list) and all(isinstance(item, str) for item in content):
-            return [SQLQuery(content=item) for item in content]
-        return content
+    def __init__(self, **data):
+        if "content" in data and isinstance(data["content"], str):
+            data["content"] = [SQLQuery(content=data["content"])]
+        elif "content" in data and isinstance(data["content"], list):
+            data["content"] = [SQLQuery(**query) if isinstance(query, dict) else SQLQuery(content=query) for query in data["content"]]
+        super().__init__(**data)
 
     def __str__(self) -> str:
         """String representation showing actual SQL queries"""
@@ -71,29 +68,12 @@ class SQLQueryOutputs(PartialBaseModel):
             df = result.content
             # Show query info
             if result.table_name:
-                lines.append(f"  - {len(df)} rows returned for table '{result.table_name}'")
-            elif hasattr(result, 'query') and result.query:
-                # Truncate long queries for readability
-                query_preview = result.query if len(result.query) < 100 else result.query[:97] + "..."
-                lines.append(f"  - {len(df)} rows returned from: `{query_preview}`")
+                lines.append(f"- {len(df)} rows returned for table '{result.table_name}'")
+            elif hasattr(result, "query") and result.query:
+                lines.append(f"- {len(df)} rows returned from: `{result.query}`")
             else:
-                lines.append(f"  - {len(df)} rows returned")
-
-            # Include column names if it's schema discovery
-            if len(df) > 0:
-                if "column_name" in df.columns:
-                    columns = df["column_name"].tolist()
-                    lines.append(f"    Columns: {', '.join(columns[:5])}")
-                    if len(columns) > 5:
-                        lines.append(f"    ... and {len(columns) - 5} more columns")
-                elif "table_name" in df.columns:
-                    tables = df["table_name"].tolist()
-                    lines.append(f"    Tables: {', '.join(tables[:5])}")
-                    if len(tables) > 5:
-                        lines.append(f"    ... and {len(tables) - 5} more tables")
-                # For aggregated results, show sample
-                elif len(df) < 10:
-                    lines.append(f"    Data: {df.to_string()}")
+                lines.append(f"- {len(df)} rows returned")
+            lines.append(f"\n{df.to_csv(index=False)}")
 
         return "\n".join(lines)
 
@@ -126,11 +106,7 @@ class SQLResultData(PartialBaseModel):
 
     def to_artifact(self, key: str, description: str) -> Artifact:
         """Convert to an artifact for storage"""
-        return Artifact(
-            key=key,
-            value=f"Query: {self.query}\nResults: {len(self.results)} rows with columns: {', '.join(self.columns)}",
-            description=description
-        )
+        return Artifact(key=key, value=f"Query: {self.query}\nResults: {len(self.results)} rows with columns: {', '.join(self.columns)}", description=description)
 
     def get_summary(self) -> str:
         """Get a human-readable summary of the results"""
@@ -141,7 +117,7 @@ class SQLResultData(PartialBaseModel):
         summary_lines = [f"Found {self.row_count} rows:"]
         for i, row in enumerate(self.results[:5]):
             row_str = ", ".join(f"{k}: {v}" for k, v in row.items())
-            summary_lines.append(f"{i+1}. {row_str}")
+            summary_lines.append(f"{i + 1}. {row_str}")
 
         if len(self.results) > 5:
             summary_lines.append(f"... and {len(self.results) - 5} more rows")

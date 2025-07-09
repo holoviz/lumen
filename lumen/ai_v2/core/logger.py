@@ -29,6 +29,9 @@ class Colors:
     PROMPT = '\033[95m'  # Magenta for prompts
     PROMPT_CONTENT = '\033[96m'  # Cyan for prompt content
 
+    # Checkpoint highlighting
+    CHECKPOINT = '\033[93m'  # Yellow for checkpoint results
+
 class ColoredFormatter(logging.Formatter):
     """Custom formatter that adds colors to log levels"""
 
@@ -130,33 +133,50 @@ class AgentLogger:
         self.logger.critical(msg, **kwargs)
 
     def log_goal_start(self, goal: str):
-        """Log the start of goal achievement"""
+        """Log the start of goal achievement with delimiter"""
+        delimiter = "═" * 80  # Double line for goal boundaries
+        self.info(f"{Colors.HEADER}{delimiter}{Colors.ENDC}")
         self.info(f"🎯 Starting goal: {goal}")
+        self.info(f"{Colors.HEADER}{delimiter}{Colors.ENDC}")
 
     def log_goal_complete(self, goal: str, milestones: int, duration: float | None = None):
-        """Log goal completion"""
+        """Log goal completion with delimiter"""
+        delimiter = "═" * 80  # Double line for goal boundaries
         duration_str = f" in {duration:.2f}s" if duration else ""
+        self.info(f"{Colors.HEADER}{delimiter}{Colors.ENDC}")
         self.info(f"✅ Goal completed: {goal} ({milestones} milestones{duration_str})")
+        self.info(f"{Colors.HEADER}{delimiter}{Colors.ENDC}")
 
     def log_roadmap_created(self, milestones: int):
         """Log roadmap creation"""
+        delimiter = "─" * 80  # Terminal width delimiter
         self.info(f"📋 Roadmap created with {milestones} milestones")
+        self.info(f"{Colors.OKGREEN}{delimiter}{Colors.ENDC}")
 
     def log_roadmap_updated(self, completed: int, skipped: int, remaining: int):
         """Log roadmap update"""
         self.info(f"📋 Roadmap updated: {completed} completed, {skipped} skipped, {remaining} remaining")
 
-    def log_milestone_start(self, milestone: str):
-        """Log milestone start"""
-        self.info(f"{Colors.OKGREEN}🚀 Starting milestone: {milestone}{Colors.ENDC}")
-
     def log_complete(self, milestone: str, steps: int):
-        """Log milestone completion"""
+        """Log milestone completion with delimiter"""
+        delimiter = "─" * 80  # Terminal width delimiter
+        self.info(f"{Colors.FAIL}{delimiter}{Colors.ENDC}")
         self.info(f"✅ Milestone completed: {milestone} ({steps} steps)")
+        self.info(f"{Colors.FAIL}{delimiter}{Colors.ENDC}")
 
     def log_milestone_step(self, step: int, milestone: str, actions: int):
         """Log milestone step"""
+        delimiter = "─" * 80  # Terminal width delimiter
+        self.info(f"{Colors.FAIL}{delimiter}{Colors.ENDC}")
         self.debug(f"⚡ Step {step} for '{milestone}': {actions} actions")
+        self.info(f"{Colors.FAIL}{delimiter}{Colors.ENDC}")
+
+    def log_milestone_retry(self, step: int, milestone: str, reason: str):
+        """Log milestone retry with delimiter"""
+        delimiter = "┄" * 80  # Dotted line for retries
+        self.warning(f"{Colors.WARNING}{delimiter}{Colors.ENDC}")
+        self.warning(f"🔄 Step {step} retry for '{milestone}': {reason}")
+        self.warning(f"{Colors.WARNING}{delimiter}{Colors.ENDC}")
 
     def log_actions_start(self, actions: list):
         """Log start of action execution"""
@@ -172,25 +192,10 @@ class AgentLogger:
         """Log action execution error"""
         self.error(f"❌ Action '{action_name}' failed: {error}")
 
-    def log_parallel_execution(self, parallel_count: int, sequential_count: int):
-        """Log parallel vs sequential execution"""
-        self.debug(f"⚡ Parallel execution: {parallel_count} parallel, {sequential_count} sequential")
-
-    def log_checkpoint_created(self, milestone: str, enables_completion: bool):
-        """Log checkpoint creation"""
-        completion_indicator = "🏁" if enables_completion else "📍"
-        self.info(f"{completion_indicator} Checkpoint: {milestone}")
-
-    def log_checkpoint_evaluation_start(self, milestone: str, has_outputs: bool):
-        """Log the start of checkpoint evaluation"""
-        outputs_str = " with outputs" if has_outputs else " without outputs"
-        self.debug(f"🔍 Evaluating milestone completion for '{milestone}'{outputs_str}")
-
-    def log_checkpoint_evaluation_result(self, milestone: str, is_complete: bool, missing_info: str = None):
-        """Log the result of checkpoint evaluation"""
-        if not is_complete:
-            reason = f": {missing_info}" if missing_info else ""
-            self.debug(f"⏳ Milestone '{milestone}' evaluated as INCOMPLETE{reason}")
+    def log_checkpoint_created(self, summary: str, artifacts_count: int = 0):
+        """Log checkpoint creation with yellow highlighting"""
+        artifacts_str = f" with {artifacts_count} artifacts" if artifacts_count > 0 else ""
+        self.info(f"{Colors.CHECKPOINT}📋 Checkpoint created{artifacts_str}: {summary}{Colors.ENDC}")
 
     def log_checkpoint_content(self, checkpoint_summary: str):
         """Log checkpoint content for debugging"""
@@ -199,10 +204,6 @@ class AgentLogger:
         else:
             display_summary = checkpoint_summary
         self.debug(f"📄 Checkpoint summary: {display_summary}")
-
-    def log_template_render(self, method_name: str, template_length: int):
-        """Log template rendering"""
-        self.debug(f"{Colors.PROMPT}📝 Rendered template for {method_name}: {template_length} chars{Colors.ENDC}")
 
     def log_prompt_content(self, method_name: str, content: str):
         """Log prompt content with highlighting"""

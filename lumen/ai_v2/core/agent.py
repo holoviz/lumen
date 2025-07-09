@@ -21,31 +21,35 @@ import time
 from collections.abc import Callable
 from functools import wraps
 from textwrap import dedent
-from typing import Any
+from typing import Any, Literal
 
 import param
 
+from instructor.exceptions import InstructorRetryException
 from jinja2 import Template, TemplateError, UndefinedError
 from pydantic import BaseModel, Field, create_model
+from tenacity import (
+    retry, retry_if_exception_type, stop_after_attempt, wait_exponential,
+)
 
 from ...ai.llm import Llm
+from ...ai.models import PartialBaseModel
 from .logger import AgentLogger
 from .models import (
-    Action, ActionDecision, ActionInfo, ActionParameter, ActionResult,
-    ActionsInfo, Checkpoint, Checkpoints, GoalResult, PartialEscapeModel,
-    Roadmap,
+    Action, ActionInfo, ActionParameter, ActionResult, ActionsInfo, Checkpoint,
+    Checkpoints, GoalResult, MissingDeliverablesError, Roadmap,
 )
 
 MAX_ITERATIONS = 3
 MAX_ERRORS = 3
 
 
-def action(func: Callable = None, *, locked: bool = False) -> Callable:
+def action(func: Callable | None = None, *, locked: bool = False) -> Callable:
     """Decorator to mark methods as callable actions with automatic error handling
 
     Args:
         func: The function to decorate
-        locked: Whether this action must be executed exclusively (cannot be parallelized)
+        locked: Whether this action must be executed exclusively
     """
 
     def decorator(f: Callable) -> Callable:
@@ -156,11 +160,6 @@ class BaseAgent(param.Parameterized):
             raise ValueError(f"Template error in method '{method_name}': {e}. Check the Jinja2 syntax in the docstring.") from e
         except Exception as e:
             raise ValueError(f"Unexpected error rendering template for method '{method_name}': {e}") from e
-
-        # Log the rendered template
-        self.logger.log_template_render(method_name, len(rendered_template))
-        self.logger.log_prompt_content(method_name, rendered_template)
-
         return rendered_template
 
     def _build_action_info(self, action_name: str, method: Callable) -> ActionInfo:
@@ -179,7 +178,7 @@ class BaseAgent(param.Parameterized):
 
         # Create human-readable signature string using ActionParameter's __str__
         sig_params = []
-        for param_name, param_info in params.items():
+        for param_info in params.values():
             sig_params.append(str(param_info))
 
         signature_str = ", ".join(sig_params)
@@ -216,6 +215,12 @@ class BaseAgent(param.Parameterized):
         # Create ActionsInfo wrapper for utility methods
         self._actions_info = ActionsInfo(actions=actions_dict)
 
+        fields = {
+            "reasoning": (str, Field(description="Think through what needs to be done next and why this specific action is the right choice")),
+            "action_name": (Literal[tuple(self._actions.keys())], Field(description="Name of the action to execute")),
+        }
+        self._action_decision_model = create_model("ActionDecision", __base__=PartialBaseModel, **fields)
+
     def _create_action_model(self, action_name: str, action_info: ActionInfo) -> type:
         """Create a dynamic Pydantic model for a specific action"""
         signature = action_info.signature
@@ -246,29 +251,9 @@ class BaseAgent(param.Parameterized):
 
         # Create the dynamic model
         model_name = f"{action_name.title()}Step"
-        dynamic_model = create_model(model_name, __base__=PartialEscapeModel, **fields)
+        dynamic_model = create_model(model_name, __base__=PartialBaseModel, **fields)
 
         return dynamic_model
-
-    async def _execute_single_action_safe(self, action: Action) -> Any:
-        """Execute a single action with error handling"""
-        if action.name not in self._actions:
-            error_msg = f"Unknown action: {action.name}"
-            self.logger.log_action_error(action.name, "Unknown action")
-            if hasattr(self, "raise_on_error") and self.raise_on_error:
-                raise ValueError(error_msg)
-            return error_msg
-
-        method = self._actions[action.name]
-        try:
-            # Always use keyword arguments to avoid positional argument issues
-            return await method(**action.parameters)
-        except Exception as e:
-            error_msg = f"Error executing {action.name}: {e!s}"
-            self.logger.log_action_error(action.name, str(e))
-            if hasattr(self, "raise_on_error") and self.raise_on_error:
-                raise RuntimeError(error_msg) from e
-            return error_msg
 
     def _serialize_output(self, output: str | dict | BaseModel) -> str:
         if isinstance(output, str):
@@ -291,7 +276,7 @@ class BaseAgent(param.Parameterized):
                 if value is not None and value != "":
                     filtered_value = self._filter_empty_values(value)
                     # Only include if the filtered value is not empty
-                    if filtered_value is not None and filtered_value != "" and filtered_value != {} and filtered_value != []:
+                    if filtered_value is not None and filtered_value not in ("", {}, []):
                         filtered[key] = filtered_value
             return filtered
         elif isinstance(obj, list):
@@ -318,43 +303,28 @@ class BaseAgent(param.Parameterized):
             Parsed response from LLM
         """
         system_prompt = self._render_prompt(method_name, **template_vars)
+        self.logger.log_prompt_content(method_name, system_prompt)
 
-        # Log input messages
+        self.logger.log_llm_call(method_name, len(messages))
         for i, message in enumerate(messages):
             role = message.get("role", "unknown")
             content = message.get("content", "")
-            # Truncate very long messages for readability
-            if len(content) > 500:
-                display_content = content[:500] + f"... [+{len(content) - 500} chars]"
-            else:
-                display_content = content
-            # vary emoji based on role
             if role == "user":
                 emoji = "👤"
             elif role == "assistant":
                 emoji = "🤖"
             else:
                 emoji = "💬"
-            self.logger.debug(f"{emoji} {i + 1} ({role}): {display_content}")
-
-        self.logger.log_llm_call(method_name, len(messages))
+            self.logger.debug(f"{emoji} {i + 1} ({role}): {content}")
         response = await self.llm.invoke(messages=messages, system=system_prompt, response_model=response_model)
 
         # Log response
         if hasattr(response, "model_dump_json"):
             response_json = response.model_dump_json(indent=2, exclude_none=True)
-            if len(response_json) > 1000:
-                display_response = response_json[:1000] + f"... [+{len(response_json) - 1000} chars]"
-            else:
-                display_response = response_json
-            self.logger.debug(f"📤 Response content: {display_response}")
+            # self.logger.debug(f"📤 Response content: {response_json}")
         else:
             response_str = str(response)
-            if len(response_str) > 500:
-                display_response = response_str[:500] + f"... [+{len(response_str) - 500} chars]"
-            else:
-                display_response = response_str
-            self.logger.debug(f"📤 Response content: {display_response}")
+            self.logger.debug(f"📤 Response content: {response_str}")
 
         return response
 
@@ -379,10 +349,8 @@ class BaseAgent(param.Parameterized):
         start_time = time.time()
         self.logger.log_goal_start(goal)
 
-        checkpoints = Checkpoints()
-
         # Create roadmap once at the beginning
-        roadmap = await self.create_roadmap(goal, checkpoints)
+        roadmap = await self.create_roadmap(goal)
         roadmap.goal = goal
 
         # Log roadmap creation
@@ -392,21 +360,18 @@ class BaseAgent(param.Parameterized):
             self.logger.info(f"  {i}. {goal_text}")
 
         # Execute each milestone in sequence
+        checkpoints = Checkpoints()
         for milestone in roadmap.milestones:
             if milestone.skipped:
                 self.logger.info(f"⏭️ Skipping milestone: {milestone.goal}")
                 continue
 
             # Execute the milestone
-            self.logger.log_milestone_start(milestone.goal)
             checkpoint = await self.execute_milestone(milestone.goal, goal, checkpoints)
             checkpoints.append(checkpoint)
 
             # Mark milestone as completed
             milestone.completed = True
-
-            # Log checkpoint
-            self.logger.log_checkpoint_created(milestone.goal, checkpoint.overall_goal_completed)
 
             # Check if we can complete the goal early
             if checkpoint.overall_goal_completed:
@@ -416,97 +381,50 @@ class BaseAgent(param.Parameterized):
         duration = time.time() - start_time
         self.logger.log_goal_complete(goal, len(checkpoints), duration)
 
-        # Get all artifacts from checkpoints
-        all_artifacts = checkpoints.get_all_artifacts()
-
-        # Collect all errors from checkpoints
-        all_errors = []
-        for checkpoint in checkpoints:
-            all_errors.extend(checkpoint.errors)
-
         # Determine success and summary
-        if checkpoints and checkpoints[-1].overall_goal_result:
-            # Use the checkpoint's result directly
+        if checkpoints:
             success = True
             summary = checkpoints[-1].overall_goal_result
             self.logger.info("🎉 Goal completed with final checkpoint result")
-        else:
-            # Create basic result from checkpoints
-            success = bool(checkpoints) and not any(checkpoint.has_errors for checkpoint in checkpoints)
-            summary_parts = [f"Completed {len(checkpoints)} milestones:"]
-            for i, checkpoint in enumerate(checkpoints, 1):
-                summary_parts.append(f"{i}. {checkpoint.milestone_goal}: {checkpoint.summary}")
-            summary = "\n".join(summary_parts)
-            self.logger.info(f"🎉 Goal completed with {len(checkpoints)} checkpoints")
 
         # Create final result
         result = GoalResult(
             goal=goal,
             success=success,
             summary=summary,
-            artifacts=all_artifacts,
-            errors=all_errors,
-            checkpoints=checkpoints.checkpoints,  # Extract the list for backwards compatibility
-            total_milestones=len(checkpoints),
-            iterations=1,  # Static roadmap means single iteration
+            checkpoints=checkpoints,
             duration=duration,
         )
 
         self.logger.info(f"📊 Final summary: {result.summary}")
         return result
 
-    def _extract_final_data(self, checkpoints: Checkpoints) -> dict[str, Any]:
-        """Extract final data from checkpoints - to be overridden by domain-specific agents"""
-        return {}
+    async def create_roadmap(self, goal: str) -> Roadmap:
+        """Create strategic roadmap for achieving a high-level goal
 
-    async def create_roadmap(self, goal: str, checkpoints: Checkpoints) -> Roadmap:
-        """Create the strategic roadmap based on goal - called only once at the start
-
-        You are a strategic planning AI that creates high-level roadmaps for achieving goals.
-
-        Create a complete roadmap of 2-4 substantial milestones that will achieve the goal.
-        Each milestone should be a meaningful step that accomplishes significant progress.
-
-        IMPORTANT GUIDELINES:
-        - Combine related operations into single milestones (e.g., "Generate and execute query to find top 5 customers")
-        - Consider prerequisites like schema discovery for complex database queries
-        - Create substantial milestones that can stand alone, not tiny incremental steps
-        - Plan the complete path to success upfront
-
-        Create a complete roadmap that will achieve the goal efficiently.
+        Usually 2-4 atomic milestones that build logically toward the goal.
+        Consider prerequisites, dependencies, and plan complete path upfront.
         """
-        # Build messages for planning phase - only checkpoints, not execution details
-        messages = []
-
-        # Add the current goal
-        messages.append({"role": "user", "content": f"Goal: {goal}"})
-
+        messages = [{"role": "user", "content": f"Goal: {goal}"}]
         roadmap = await self._call_llm("create_roadmap", messages, Roadmap)
-
         return roadmap
 
-    async def execute_milestone(self, milestone_goal: str, overall_goal: str, previous_checkpoints: Checkpoints) -> Checkpoint:
+    async def execute_milestone(self, milestone_goal: str, overall_goal: str, checkpoints: Checkpoints | None = None) -> Checkpoint:
         """Execute a single milestone using single-action iterations
 
         Args:
             milestone_goal: The specific milestone to achieve
             overall_goal: The overall goal for context
-            previous_checkpoints: Checkpoints collection with completed checkpoints and artifacts
+            checkpoints: Checkpoints collection with completed checkpoints and artifacts
 
         Returns:
             Checkpoint summary for the planning phase
         """
-        # Start with milestone goal and context from previous checkpoints
-        messages = [{"role": "user", "content": f"Milestone: {milestone_goal}"}]
-
-        # Add previous checkpoint summaries and artifacts as context
-        if previous_checkpoints:
-            context_msg = previous_checkpoints.build_context_summary()
-            messages.insert(0, {"role": "assistant", "content": context_msg})
-            self.logger.debug(f"💡 Added context from {len(previous_checkpoints)} previous checkpoints")
-
-        outputs = {}
-        step_summaries = []  # Accumulate step summaries
+        # Build conversation with proper user/assistant alternation
+        messages = []
+        if checkpoints:
+            messages.extend(checkpoints.serialize())
+        messages.append({"role": "user", "content": milestone_goal})
 
         iteration = 0
         while iteration < MAX_ITERATIONS:
@@ -515,55 +433,25 @@ class BaseAgent(param.Parameterized):
 
             # Step 1: Execute single action
             result = await self.execute_milestone_step(messages)
-            outputs[result.action_name] = result.output
 
-            # Step 2: Accumulate step summary (don't add to messages yet)
-            step_summary = f"Step {iteration}: Executed {result.action_name}"
-            if result.output:
-                step_summary += f"\nOutput: {self._serialize_output(result.output)}"
-            step_summaries.append(step_summary)
+            # Step 2: Add assistant message with action result
+            step_message = f"Executed {result.action_name!r}, outputting:\n{result}"
+            messages.append({"role": "assistant", "content": step_message})
 
             # Step 3: Evaluate completion and create checkpoint
             try:
-                checkpoint = await self.evaluate_and_checkpoint(milestone_goal, overall_goal, messages, outputs)
-                # If we get here, milestone is complete (no missing_info exception)
-
-                # Add consolidated message for all steps
-                if step_summaries:
-                    consolidated_message = "\n\n".join(step_summaries)
-                    messages.append({"role": "assistant", "content": consolidated_message})
-
+                checkpoint = await self.evaluate_checkpoint(milestone_goal, messages)
+                # If we get here, milestone is complete (no missing_parts exception)
                 self.logger.log_complete(milestone_goal, iteration)
                 return checkpoint
-            except Exception as e:
-                if "Agent needs more information" in str(e):
-                    # Extract the missing info message
-                    missing_info = str(e).replace("Agent needs more information: ", "")
-                    # Log incomplete evaluation
-                    self.logger.log_checkpoint_evaluation_result(milestone_goal, False, missing_info)
-                    self.logger.debug(f"Milestone not complete after step {iteration}: {e}")
-
-                    # Add consolidated message for steps so far (for context in next iteration)
-                    if step_summaries:
-                        consolidated_message = "\n\n".join(step_summaries)
-                        messages.append({"role": "assistant", "content": consolidated_message})
-                        step_summaries = []  # Reset for next batch
-
-                    continue
-                else:
-                    # Re-raise unexpected errors
-                    raise
+            except (MissingDeliverablesError, InstructorRetryException) as e:
+                messages.append({"role": "user", "content": f"Checkpoint incomplete: {e!s}"})
 
         # If we reach max iterations, create checkpoint anyway
         self.logger.warning(f"Milestone '{milestone_goal}' hit max iterations ({MAX_ITERATIONS}), creating checkpoint anyway")
 
-        # Add final consolidated message
-        if step_summaries:
-            consolidated_message = "\n\n".join(step_summaries)
-            messages.append({"role": "assistant", "content": consolidated_message})
-
         try:
-            return await self.evaluate_and_checkpoint(milestone_goal, overall_goal, messages, outputs)
+            return await self.evaluate_checkpoint(milestone_goal, messages)
         except RuntimeError:
             # Even the fallback failed, create a minimal checkpoint
             checkpoint = Checkpoint(
@@ -573,46 +461,45 @@ class BaseAgent(param.Parameterized):
             checkpoint.milestone_goal = milestone_goal
             return checkpoint
 
+    @retry(
+        stop=stop_after_attempt(MAX_ERRORS),
+        retry=retry_if_exception_type(ValueError),
+    )
     async def execute_milestone_step(self, messages: list[dict]) -> ActionResult:
         """Execute a single milestone step.
 
         You are executing a milestone step. Based on the milestone goal and conversation history,
         determine what single action to take next.
 
-        IMPORTANT: Review the conversation history to understand what has already been accomplished.
-        Build upon previous work rather than duplicating it. If artifacts or outputs from previous
-        milestones can be used directly, prefer actions that utilize them over actions that recreate them.
-
-        When choosing action parameters, consider the outputs from previous actions in this milestone.
-        For example, if a previous action discovered table names, use those exact names in subsequent actions.
-
         Available actions:
-        {{ actions_list }}
+        {{ actions_info }}
 
         Choose the most appropriate action to make progress toward the milestone goal.
         """
         # Step 1: Decide which action to take
-        decision = await self._call_llm("execute_milestone_step", messages, ActionDecision, actions_list=self._actions_info.build_action_list())
-
-        # Step 2: Create dynamic model for the chosen action
-        if decision.action_name not in self._actions_info:
-            raise ValueError(f"Unknown action: {decision.action_name}")
+        decision = await self._call_llm("execute_milestone_step", messages, self._action_decision_model, actions_info=self._actions_info)
 
         action_info = self._actions_info[decision.action_name]
         ActionModel = self._create_action_model(decision.action_name, action_info)
 
-        # Step 3: Get structured action with parameters
+        # Step 2: Get structured action with parameters
         action_prompt = f"Execute {decision.action_name} based on this reasoning: {decision.reasoning}"
-        action_messages = [{"role": "user", "content": action_prompt}]
+
+        action_messages = messages.copy()
+        if action_messages[-1]["role"] == "user":
+            # Combine the last message with the action prompt
+            action_messages[-1]["content"] += f"\n\n{action_prompt}"
+        else:
+            action_messages.append({"role": "user", "content": action_prompt})
 
         structured_action = await self._call_llm(decision.action_name, action_messages, ActionModel, action_info=action_info, reasoning=decision.reasoning)
 
-        # Step 4: Execute the action
+        # Step 3: Execute the action
         method = self._actions[decision.action_name]
         # Extract parameters (skip reasoning, action fields) - preserve Pydantic model instances
         params = {}
         for field_name, field_value in structured_action:
-            if field_name not in ("reasoning", "action", "missing_info"):
+            if field_name not in ("reasoning", "action", "missing_parts"):
                 params[field_name] = field_value
 
         output = await method(**params)
@@ -620,84 +507,24 @@ class BaseAgent(param.Parameterized):
         # Step 5: Return action result
         return ActionResult(action_name=decision.action_name, output=output)
 
-    async def evaluate_and_checkpoint(self, milestone_goal: str, overall_goal: str, messages: list[dict], outputs: dict[str, Any]) -> Checkpoint:
+    async def evaluate_checkpoint(self, milestone_goal: str, messages: list[dict]) -> Checkpoint:
         """Evaluate milestone completion and create checkpoint with smart artifact extraction
 
-        Based on the milestone goal, conversation history, and action outputs:
-
+        Based on the milestone goal (user request) and conversation history:
         1. Evaluate if the milestone is complete
-        2. Extract ONLY goal-relevant information from outputs as artifacts
+        2. Extract goal-relevant artifacts for future milestones
         3. Create a summary for strategic planning
-        4. If the overall goal is now complete, provide comprehensive final result summary
-        5. Track any errors that occurred during execution
-
-        Overall goal: {{ overall_goal }}
-
-        {% if output_summaries %}
-        Action outputs from this milestone:
-        {{ output_summaries }}
-        {% endif %}
-
-        CRITICAL for milestone completion evaluation:
-        - Break down the milestone goal into its component parts and verify each part is complete
-        - Look for conjunctions like "and", "then", "to" that indicate multiple requirements
-        - If the milestone uses compound phrases, ALL parts must be satisfied
-        - Be precise about what has been accomplished vs. what was requested
-        - Set milestone_completed to True ONLY if the milestone goal has been fully achieved
-        - If any required component is missing or incomplete, set milestone_completed to False
-
-        IMPORTANT for artifacts field:
-        - Store ONLY information needed to achieve the overall goal
-        - Use descriptive keys like "customer_table", "aggregation_query", etc.
-        - Don't store raw data - extract the essential information relevant to the goal
-        - Key numeric results or row counts
-        - Any error messages or issues encountered
-        - Example: Artifact(key="orders_table_columns", value="order_id, customer_id, total_amount", description="Available columns in orders table")
-
-        IMPORTANT for error handling:
-        - If any actions failed or produced errors, list them in the errors field
-        - Set milestone_completed to False if critical errors prevent milestone completion
-        - Include specific error messages to help with debugging and retry logic
-
-        IMPORTANT for overall_goal_result:
-        - If this milestone produces the final answer to the overall goal, provide it here
-        - Example: "The top 5 customers by total order amount are: 1. Customer A ($500), 2. Customer B ($450)..."
-        - Only fill this if the overall goal is actually completed
+        4. Track any errors that occurred
         """
-        # Log evaluation start
-        self.logger.log_checkpoint_evaluation_start(milestone_goal, bool(outputs))
-
-        # Build output summaries using str() on each output
-        output_summaries = []
-        for name, output in outputs.items():
-            output_summaries.append(f"{name}: {output}")
-        output_summary_text = "\n".join(output_summaries) if output_summaries else ""
-
         checkpoint = await self._call_llm(
-            "evaluate_and_checkpoint",
-            messages,  # Don't add milestone again - it's already in messages
+            "evaluate_checkpoint",
+            messages,
             Checkpoint,
-            overall_goal=overall_goal,
-            output_summaries=output_summary_text,
         )
 
         # Set milestone_goal after LLM generation (excluded field)
         checkpoint.milestone_goal = milestone_goal
 
-        # Log checkpoint details
-        self.logger.info(f"Checkpoint created: {checkpoint.summary}")
-        self.logger.log_checkpoint_content(checkpoint.summary)
-
-        # Log evaluation result - checkpoint is complete if no missing_info exception was raised
-        self.logger.log_checkpoint_evaluation_result(milestone_goal, checkpoint.milestone_completed, None)
-
-        # Log any errors
-        if checkpoint.has_errors:
-            for error in checkpoint.errors:
-                self.logger.warning(f"Checkpoint error: {error}")
-
-        # Validate that milestone was actually completed if no errors
-        if not checkpoint.has_errors and not checkpoint.milestone_completed:
-            self.logger.warning(f"Milestone marked as incomplete despite no errors: {milestone_goal}")
-
+        # Log checkpoint details with yellow highlighting
+        self.logger.log_checkpoint_created(checkpoint.summary, len(checkpoint.artifacts))
         return checkpoint

@@ -22,24 +22,6 @@ class PartialBaseModel(BaseModel, PartialLiteralMixin):
     """Base model that supports streaming through async generators"""
 
 
-class PartialEscapeModel(PartialBaseModel):
-    """Base model with escape hatch - set missing_parts to halt execution when you need more information"""
-
-    missing_parts: list[str] = Field(
-        default_factory=list,
-        description="""
-        If you need more information to proceed or the results are incomplete, describe what's missing here.
-        This will halt execution with the message. Be specific about about what additional work is needed.
-        """
-    )
-
-    @field_validator("missing_parts")
-    def validate_missing_parts(cls, v: list[str]) -> list[str]:
-        if not v:
-            return v
-        raise RuntimeError(f"Agent needs more information: {', '.join(v)}")
-
-
 # ===== Action System =====
 
 
@@ -96,13 +78,6 @@ class Action(PartialBaseModel):
 # ===== Milestone Execution =====
 
 
-class ActionDecision(PartialBaseModel):
-    """Decides which single action to take next in milestone execution"""
-
-    reasoning: str = Field(description="Think through what needs to be done next and why this specific action is the right choice")
-    action_name: str = Field(description="Name of the action to execute")
-
-
 class ActionResult(PartialBaseModel):
     """Result of executing a single action"""
 
@@ -111,6 +86,22 @@ class ActionResult(PartialBaseModel):
 
     class Config:
         arbitrary_types_allowed = True
+
+    def __str__(self) -> str:
+        """String representation of the action result"""
+        if not self.output:
+            return "No results returned"
+
+        # Use the model's __str__ method if it exists and is not the default object one
+        if hasattr(self.output, "__str__") and self.output.__class__.__str__ is not object.__str__:
+            summary = str(self.output)
+            # Truncate very long summaries for readability
+            if len(summary) > 1000:
+                summary = summary[:997] + "..."
+            return summary
+
+        # Fallback to basic info
+        return f"Completed {self.action_name} successfully"
 
 
 # ===== Strategic Planning =====
@@ -158,7 +149,15 @@ class Artifact(PartialBaseModel):
             return f"{self.key}: {self.value}"
 
 
-class Checkpoint(PartialEscapeModel):
+class MissingDeliverablesError(Exception):
+    """Raised when a checkpoint has missing deliverables that need to be addressed before proceeding"""
+
+    def __init__(self, missing_parts: list[str]):
+        super().__init__(f"Checkpoint has these missing deliverables:\n{', '.join(missing_parts)}")
+        self.missing_parts = missing_parts
+
+
+class Checkpoint(PartialBaseModel):
     """Combined evaluation and checkpoint creation"""
 
     summary: str = Field(
@@ -168,14 +167,18 @@ class Checkpoint(PartialEscapeModel):
         )
     )
     artifacts: list[Artifact] = Field(default_factory=list, description="Goal-relevant artifacts extracted from outputs for future milestones")
+
     overall_goal_result: str = Field(
-        default="", description="If the overall goal is now complete, provide a comprehensive summary of the final result. Leave empty if more work is needed."
+        default="", description="If the overall goal is now complete, provide a comprehensive summary of the final result based on the overall goal. Leave empty if more work is needed."
     )
-    milestone_completed: bool = Field(
-        default=True, description="Whether this milestone was actually completed successfully. Set to False if there were critical errors."
-    )
-    errors: list[str] = Field(
-        default_factory=list, description="List of any errors encountered during this milestone that should be addressed."
+
+    missing_deliverables: list[str] = Field(
+        default_factory=list,
+        description="""
+        List specific parts of the milestone goal that remain incomplete or unfinished.
+        If any part of the milestone goal was not fully accomplished, document what's missing.
+        This halts execution until the missing work is completed.
+        """,
     )
 
     # Not included in LLM generation - set programmatically
@@ -186,10 +189,12 @@ class Checkpoint(PartialEscapeModel):
         """Whether the overall goal has been completed"""
         return bool(self.overall_goal_result.strip())
 
-    @property
-    def has_errors(self) -> bool:
-        """Whether this checkpoint has any errors"""
-        return bool(self.errors)
+    @field_validator("missing_deliverables", mode="before")
+    @classmethod
+    def validate_missing_deliverables(cls, v: list[str]) -> list[str]:
+        if not v or v[0] is None:
+            return v
+        raise MissingDeliverablesError(v)
 
 
 class Checkpoints(PartialBaseModel):
@@ -213,37 +218,23 @@ class Checkpoints(PartialBaseModel):
         """Add a checkpoint to the collection"""
         self.checkpoints.append(checkpoint)
 
-    def build_context_summary(self) -> str:
-        """Build a context summary string for prompts"""
+    def serialize(self) -> list[dict[str, str]]:
+        """Build a list of messages"""
         if not self.checkpoints:
-            return ""
+            return []
 
-        context_parts = ["Previous completed work:"]
-        for i, checkpoint in enumerate(self.checkpoints, 1):
-            context_parts.append(f"{i}. {checkpoint.summary}")
-            # Include artifacts if available
+        messages = []
+        for checkpoint in self.checkpoints:
+            user_message = {"role": "user", "content": checkpoint.milestone_goal}
+            assistant_content = [checkpoint.summary]
             if checkpoint.artifacts:
-                context_parts.append("   Available artifacts:")
+                assistant_content.append("Available artifacts:")
                 for artifact in checkpoint.artifacts:
-                    context_parts.append(f"   - {artifact}")
-        return "\n".join(context_parts)
-
-    def build_checkpoint_list(self) -> str:
-        """Build a simple checkpoint list for roadmap planning"""
-        if not self.checkpoints:
-            return ""
-
-        parts = []
-        for checkpoint in self.checkpoints:
-            parts.append(f"✅ {checkpoint.milestone_goal}: {checkpoint.summary}")
-        return "\n".join(parts)
-
-    def get_all_artifacts(self) -> list[Artifact]:
-        """Get all artifacts from all checkpoints"""
-        all_artifacts = []
-        for checkpoint in self.checkpoints:
-            all_artifacts.extend(checkpoint.artifacts)
-        return all_artifacts
+                    assistant_content.append(f" - {artifact}")
+            assistant_content = "\n".join(assistant_content)
+            assistant_message = {"role": "assistant", "content": assistant_content}
+            messages.extend([user_message, assistant_message])
+        return messages
 
 
 class ActionsInfo(PartialBaseModel):
@@ -275,15 +266,17 @@ class ActionsInfo(PartialBaseModel):
         """Get action with default"""
         return self.actions.get(key, default)
 
-    def build_action_list(self, prefix: str = "-") -> str:
-        """Build a formatted action list for prompts"""
+    def __str__(self) -> str:
+        """
+        String representation of all actions for prompt generation.
+        """
         if not self.actions:
             return "No actions available"
 
         parts = []
         for action_name, action_info in self.actions.items():
-            parts.append(f"{prefix} {action_info}")
-        return "\n".join(parts)
+            parts.append(f"`{action_name}`: {action_info}")
+        return "\n- ".join(parts)
 
 
 class GoalResult(PartialBaseModel):
@@ -292,20 +285,10 @@ class GoalResult(PartialBaseModel):
     goal: str = Field(description="The original goal that was achieved")
     success: bool = Field(description="Whether the goal was successfully achieved")
     summary: str = Field(description="Comprehensive summary of what was accomplished")
-    final_data: dict[str, Any] = Field(default_factory=dict, description="Key final outputs and results from achieving the goal")
-    artifacts: list[Artifact] = Field(default_factory=list, description="All artifacts created during goal achievement")
-    errors: list[str] = Field(default_factory=list, description="List of any errors encountered during goal execution")
 
     # Execution metadata
-    checkpoints: list[Checkpoint] = Field(default_factory=list)
-    total_milestones: int = 0
-    iterations: int = 0
+    checkpoints: Checkpoints
     duration: float = 0.0
 
     class Config:
         arbitrary_types_allowed = True
-
-    @property
-    def has_errors(self) -> bool:
-        """Whether this goal result has any errors"""
-        return bool(self.errors) or any(checkpoint.has_errors for checkpoint in self.checkpoints)
