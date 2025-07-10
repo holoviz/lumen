@@ -569,7 +569,7 @@ class TestSQLRemoveSourceSeparator:
         sql_in = dedent(
             '''
             SELECT "athlete_full_name", "medal_type", COUNT(*) AS "medal_count"
-            FROM "ProvidedSource00000__@__olympic_medals.csv"
+            FROM "ProvidedSource00000 ⦙ olympic_medals.csv"
             WHERE "country_name" = 'United States of America'
               AND "athlete_full_name" IS NOT NULL
               AND "athlete_full_name" != 'Michael PHELPS'
