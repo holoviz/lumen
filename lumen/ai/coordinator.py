@@ -5,88 +5,71 @@ import re
 import traceback
 
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 import param
 
 from panel import bind
-from panel.chat import ChatFeed, ChatInterface, ChatStep
-from panel.layout import (
-    Card, Column, FlexBox, Tabs,
-)
+from panel.chat import ChatFeed
+from panel.layout import FlexBox
 from panel.pane import HTML
-from panel.viewable import Viewable, Viewer
-from panel.widgets import Button
+from panel.viewable import Viewer
+from panel_material_ui import (
+    Button, Card, ChatInterface, ChatStep, Column, Tabs,
+)
 from pydantic import BaseModel
 
-from lumen.ai.vector_store import VectorStore
-
-from ..views.base import Panel, View
 from .actor import Actor
-from .agents import (
-    Agent, AnalysisAgent, ChatAgent, SQLAgent,
-)
+from .agents import Agent, AnalysisAgent, ChatAgent
 from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
 from .llm import LlamaCpp, Llm, Message
 from .logs import ChatLogs
 from .models import ThinkingYesNo, make_agent_model, make_plan_models
+from .report import Section, Task
 from .tools import (
     IterativeTableLookup, TableLookup, Tool, VectorLookupToolUser,
 )
 from .utils import (
     fuse_messages, log_debug, mutate_user_message, stream_details,
 )
-from .views import AnalysisOutput, LumenOutput
+from .views import AnalysisOutput
 
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
 
-
-UI_INTRO_MESSAGE = """
-👋 Click a suggestion below or upload a data source to get started!
-
-Lumen AI combines large language models (LLMs) with specialized agents to help you explore, analyze,
-and visualize data without writing code.
-
-On the chat interface...
-
-💬 Ask questions in plain English to generate SQL queries and visualizations
-🔍 Inspect and validate results through conversation
-📝 Get summaries and key insights from your data
-🧩 Apply custom analyses with a click of a button
-
-If unsatisfied with the results...
-
-🔄 Use the Rerun button to re-run the last query
-⏪ Use the Undo button to remove the last query
-🗑️ Use the Clear button to start a new session
-
-Click the toggle, or drag the edge, to expand the sidebar and...
-
-🌐 Explore data with [Graphic Walker](https://docs.kanaries.net/graphic-walker) - filter, sort, download
-💾 Access all generated tables and visualizations under tabs
-📤 Export your session as a reproducible notebook
-
-Note, if the vector store (above) is pending, results may be degraded until it is ready.
-
-📖 Learn more about [Lumen AI](https://lumen.holoviz.org/lumen_ai/getting_started/using_lumen_ai.html)
-"""
+    from .vector_store import VectorStore
 
 
-class ExecutionNode(param.Parameterized):
+class Plan(Section):
     """
-    Defines a node in an execution graph.
+    A Plan is a Task that is a collection of other Tasks.
     """
 
-    actor = param.ClassSelector(class_=Actor)
+    interface = param.ClassSelector(class_=ChatFeed)
 
-    provides = param.ClassSelector(class_=(set, list), default=set())
-
-    instruction = param.String(default="")
-
-    title = param.String(default="")
-
-    render_output = param.Boolean(default=False)
+    async def _run_task(self, i: int, task: Self | Actor, **kwargs):
+        outputs = []
+        with self.interface.add_step(title=f"{task.title}...", user="Runner", layout_params={"title": "🏗️ Plan Execution Steps"}, steps_layout=self.steps_layout) as step:
+            step.stream(f"`Working on task {task.title}`:\n\n{task.instruction}")
+            try:
+                with task.param.update(
+                    memory=self.memory, interface=self.interface, steps_layout=self.steps_layout, history=self.history
+                ):
+                    outputs += await task.execute(**kwargs)
+            except asyncio.CancelledError as e:
+                step.failed_title = f"{task.title} agent was cancelled"
+                raise e
+            except Exception as e:
+                self.memory['__error__'] = str(e)
+                raise e
+            unprovided = [p for actor in task.subtasks for p in actor.provides if p not in self.memory]
+            if unprovided:
+                step.failed_title = f"{task.title} did not provide {', '.join(unprovided)}. Aborting the plan."
+                raise RuntimeError(f"{task.title} failed to provide declared context.")
+            log_debug(f"\033[96mCompleted: {task.title}\033[0m", show_length=False)
+            step.stream(f"\n\nSuccessfully completed task {task.title}:\n\n> {task.instruction}", replace=True)
+            step.success_title = f"{task.title} successfully completed"
+        return outputs
 
 
 class Coordinator(Viewer, VectorLookupToolUser):
@@ -124,9 +107,6 @@ class Coordinator(Viewer, VectorLookupToolUser):
     logs_db_path = param.String(default=None, doc="""
         The path to the log file that will store the messages exchanged with the LLM.""")
 
-    render_output = param.Boolean(default=True, doc="""
-        Whether to write outputs to the ChatInterface.""")
-
     suggestions = param.List(default=GETTING_STARTED_SUGGESTIONS, doc="""
         Initial list of suggestions of actions the user can take.""")
 
@@ -135,7 +115,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
     def __init__(
         self,
         llm: Llm | None = None,
-        interface: ChatFeed | ChatInterface | None = None,
+        interface: ChatFeed | None = None,
         agents: list[Agent | type[Agent]] | None = None,
         tools: list[Tool | type[Tool]] | None = None,
         vector_store: VectorStore | None = None,
@@ -205,6 +185,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
         llm = llm or self.llm
         instantiated = []
+        tools = tools or []
         self._analyses = []
         for agent in agents or self.agents:
             if not isinstance(agent, Agent):
@@ -254,12 +235,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
             vector_store=vector_store, document_vector_store=document_vector_store, **params
         )
 
-        welcome_message = UI_INTRO_MESSAGE if self.within_ui else "Welcome to LumenAI; get started by clicking a suggestion or type your own query below!"
-        interface.send(
-            welcome_message,
-            user="Help", respond=False, show_reaction_icons=False, show_copy_icon=False
-        )
-        interface.button_properties={
+        interface.button_properties = {
             "undo": {"callback": on_undo},
             "rerun": {"callback": on_rerun},
             "clear": {"callback": on_clear},
@@ -315,7 +291,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
                     try:
                         with agent.param.update(memory=memory):
                             await agent.respond(
-                                messages, render_output=self.render_output, agents=self.agents
+                                messages, agents=self.agents
                             )
                             # Pass the same memory to _add_analysis_suggestions
                             await self._add_analysis_suggestions(memory=memory)
@@ -341,7 +317,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
             *[
                 Button(
                     name=suggestion,
-                    button_style="outline",
+                    button_style="outlined",
                     on_click=use_suggestion,
                     margin=5,
                     disabled=self.interface.param.loading
@@ -397,9 +373,9 @@ class Coordinator(Viewer, VectorLookupToolUser):
             memory=memory
         )
 
-    async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface):
+    async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface) -> Plan:
         log_debug(f"New Message: \033[91m{contents!r}\033[0m", show_sep="above")
-        await self.respond(contents)
+        return await self.respond(contents)
 
     async def _fill_model(self, messages, system, agent_model):
         model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
@@ -420,105 +396,12 @@ class Coordinator(Viewer, VectorLookupToolUser):
         tools = {tool_name: tool for tool_name, tool in tools.items()  if not any(excluded_key in self._memory for excluded_key in tool.exclusions)}
         return agents, tools, {}
 
-    async def _compute_execution_graph(self, messages: list[Message], agents: dict[str, Agent], tools: dict[str, Tool], pre_plan_output: dict) -> list[ExecutionNode]:
+    async def _compute_plan(self, messages: list[Message], agents: dict[str, Agent], tools: dict[str, Tool], pre_plan_output: dict) -> Plan:
         """
         Compute the execution graph for the given messages and agents.
         The graph is a list of ExecutionNode objects that represent
         the actions to be taken by the agents.
         """
-
-    async def _execute_graph_node(
-        self,
-        node: ExecutionNode,
-        messages: list[Message],
-        execution_graph: list[ExecutionNode] | None = None,
-        allow_missing: bool = False,
-    ) -> bool:
-        subagent = node.actor
-        instruction = node.instruction
-        title = node.title.capitalize()
-        render_output = node.render_output and self.render_output
-        agent_name = type(subagent).name.replace('Agent', '')
-
-        # attach the new steps to the existing steps--used when there is intermediate Lumen output
-        steps_layout = None
-        for step_message in reversed(self.interface.objects[-5:]):
-            if step_message.user == "Assistant" and isinstance(step_message.object, Card):
-                steps_layout = step_message.object
-                break
-
-        mutated_messages = deepcopy(messages)
-        with self.interface.add_step(title=f"Querying {agent_name} agent...", steps_layout=steps_layout) as step:
-            step.stream(f"`{agent_name}` agent is working on the following task:\n\n{instruction}")
-            if isinstance(subagent, SQLAgent):
-                custom_agent = next((a for a in self.agents if isinstance(a, AnalysisAgent)), None)
-                if custom_agent:
-                    custom_analysis_doc = custom_agent.purpose.replace("Available analyses include:\n", "")
-                    custom_message = (
-                        f"Avoid doing the same analysis as any of these custom analyses: {custom_analysis_doc!r} "
-                        f"Most likely, you'll just need to do a simple SELECT * FROM {{table}};"
-                    )
-                    mutated_messages = mutate_user_message(custom_message, mutated_messages)
-            if instruction:
-                content = f"-- For context...\nHere's part of the multi-step plan: {instruction!r}, but as the expert, you may need to deviate from it if you notice any inconsistencies or issues."
-                mutate_user_message(
-                    content,
-                    mutated_messages, suffix=True, wrap=True
-                )
-
-            shared_ctx = {"memory": self.memory}
-            respond_kwargs = {"agents": self.agents} if isinstance(subagent, AnalysisAgent) else {}
-            if isinstance(subagent, Agent):
-                shared_ctx["steps_layout"] = steps_layout
-            with subagent.param.update(**shared_ctx):
-                try:
-                    result = await subagent.respond(
-                        mutated_messages,
-                        step_title=title,
-                        render_output=render_output,
-                        **respond_kwargs
-                    )
-                except asyncio.CancelledError as e:
-                    step.failed_title = f"{agent_name} agent was cancelled"
-                    raise e
-                except Exception as e:
-                    self._memory['__error__'] = str(e)
-                    raise e
-                log_debug(f"\033[96mCompleted: {agent_name}\033[0m", show_length=False)
-
-            unprovided = [p for p in subagent.provides if p not in self._memory]
-            if (unprovided and agent_name != "Source") or (len(unprovided) > 1 and agent_name == "Source"):
-                if not allow_missing:
-                    step.failed_title = f"{agent_name} did not provide {', '.join(unprovided)}. Aborting the plan."
-                    raise RuntimeError(f"{agent_name} failed to provide declared context.")
-                else:
-                    step.stream(
-                        f"\n\n✗ {agent_name} agent did not provide the following context: {', '.join(unprovided)}. "
-                        "Continuing with the plan."
-                    )
-
-            step.stream(f"\n\n`{agent_name}` agent successfully completed the following task:\n\n> {instruction}", replace=True)
-            # Handle Tool specific behaviors
-            if isinstance(subagent, Tool):
-                # Handle string results from tools
-                if isinstance(result, str) and result:
-                    await self._handle_tool_result(subagent, result, step, execution_graph, messages)
-                # Handle View/Viewable results regardless of agent type
-                if isinstance(result, (View, Viewable)):
-                    if isinstance(result, Viewable):
-                        result = Panel(object=result, pipeline=self._memory.get('pipeline'))
-                    out = LumenOutput(
-                        component=result, render_output=render_output, title=title
-                    )
-                    if 'outputs' in self._memory:
-                        # We have to create a new list to trigger an event
-                        # since inplace updates will not trigger updates
-                        # and won't allow diffing between old and new values
-                        self._memory["outputs"] = self._memory["outputs"]+[out]
-                    message_kwargs = dict(value=out, user=subagent.name)
-                    self.interface.stream(**message_kwargs)
-            step.success_title = f"{agent_name} agent successfully responded"
-        return step.status == "success"
 
     def _serialize(self, obj: Any, exclude_passwords: bool = True) -> str:
         if isinstance(obj, (Column, Card, Tabs)):
@@ -565,8 +448,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
             tools = {tool.name[:-5]: tool for tool in self._tools["main"]}
 
             agents, tools, pre_plan_output = await self._pre_plan(messages, agents, tools)
-            execution_graph = await self._compute_execution_graph(messages, agents, tools, pre_plan_output)
-            if execution_graph is None:
+            plan = await self._compute_plan(messages, agents, tools, pre_plan_output)
+            if plan is None:
                 msg = (
                     "Assistant could not settle on a plan of action to perform the requested query. "
                     "Please restate your request."
@@ -574,10 +457,12 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 self.interface.stream(msg, user='Lumen')
                 return msg
 
-            for node in execution_graph:
-                succeeded = await self._execute_graph_node(node, messages, execution_graph=execution_graph)
-                if not succeeded:
-                    break
+            with self.interface.param.update(callback_exception="raise"):
+                with plan.param.update(
+                    history=messages, memory=self._memory, interface=self.interface, steps_layout=self.steps_layout
+                ):
+                    await plan.execute()
+            self.steps_layout.title = f"✅ Sucessfully completed {plan.title!r}"
 
             if "pipeline" in self._memory:
                 await self._add_analysis_suggestions()
@@ -586,7 +471,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
         for message_obj in self.interface.objects[::-1]:
             if isinstance(message_obj.object, Card):
                 message_obj.object.collapsed = True
-                break
+        return plan
 
     async def _check_tool_relevance(self, tool: Tool, tool_output: str, actor: Actor, actor_task: str, messages: list[Message]) -> bool:
         result = await self._invoke_prompt(
@@ -602,7 +487,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
         return result.yes
 
-    async def _handle_tool_result(self, tool: Tool, result: str, step: ChatStep, execution_graph: list[ExecutionNode] | None = None, messages: list[Message] | None = None):
+    async def _handle_tool_result(self, tool: Tool, result: str, step: ChatStep, plan: Plan | None = None, messages: list[Message] | None = None):
         """Handle string tool results and determine relevance for future agents."""
         # Caller should ensure result is a non-empty string before calling this method
 
@@ -610,7 +495,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
         stream_details(result, step, title="Results", auto=False)
 
         # Early exit if no execution graph provided
-        if not execution_graph:
+        if not plan:
             return
 
         # Find agents that will be used in future nodes
@@ -621,10 +506,11 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 continue
 
             # Find if this agent appears in future nodes
-            for future_node in execution_graph:
-                if future_node.actor is agent:
-                    future_agents[agent] = future_node.instruction
-                    break
+            for task in plan.subtasks:
+                for actor in task.subtasks:
+                    if actor is agent:
+                        future_agents[agent] = task.instruction
+                        break
 
         # Early exit if no future agents found
         if not future_agents:
@@ -700,7 +586,7 @@ class DependencyResolver(Coordinator):
         )
         return await self._fill_model(messages, system, agent_model)
 
-    async def _compute_execution_graph(self, messages, agents: dict[str, Agent], tools: dict[str, Tool], pre_plan_output: dict[str, Any]) -> list[ExecutionNode]:
+    async def _compute_plan(self, messages, agents: dict[str, Agent], tools: dict[str, Tool], pre_plan_output: dict[str, Any]) -> Plan | None:
         if len(agents) == 1:
             agent = next(iter(agents.values()))
         else:
@@ -722,11 +608,11 @@ class DependencyResolver(Coordinator):
                     agent = agents[output.agent_or_tool]
 
         if agent is None:
-            return []
+            return None
 
         cot = output.chain_of_thought
         subagent = agent
-        execution_graph = []
+        tasks = []
         while (unmet_dependencies := tuple(
             r for r in await subagent.requirements(messages) if r not in self._memory
         )):
@@ -745,15 +631,16 @@ class DependencyResolver(Coordinator):
                     subagent = tools[output.agent_or_tool]
                 else:
                     subagent = agents[output.agent_or_tool]
-                execution_graph.append(
-                    ExecutionNode(
-                        actor=subagent,
+                tasks.append(
+                    Task(
+                        subtasks=[subagent],
                         provides=unmet_dependencies,
                         instruction=output.chain_of_thought,
+                        title=output.agent_or_tool
                     )
                 )
                 step.success_title = f"Solved a dependency with {output.agent_or_tool}"
-        return execution_graph[::-1] + [ExecutionNode(actor=agent, instruction=cot)]
+        return Plan(subtasks=tasks[::-1] + [Task(subtasks=[agent], instruction=cot)])
 
 
 class Planner(Coordinator):
@@ -811,7 +698,16 @@ class Planner(Coordinator):
             msg["content"] for msg in reversed(messages)
             if msg.get("role") == "user"), ""
         )
-        with self.interface.add_step(title="Gathering context for planning...", user="Assistant") as step:
+
+        steps_layout = self.steps_layout
+        if self.interface and steps_layout is None:
+            steps_layout = None
+            for step_message in reversed(self.interface.objects[-5:]):
+                if step_message.user == "Planner" and isinstance(step_message.object, Card):
+                    steps_layout = step_message.object
+                    break
+
+        with self.interface.add_step(title="Gathering context for planning...", user="Assistant", steps_layout=steps_layout) as step:
             for tool in self.planner_tools:
                 is_relevant = await self._check_tool_relevance(
                     tool, "", self, f"Gather context for planning to answer {user_query}", messages
@@ -825,17 +721,16 @@ class Planner(Coordinator):
 
                 tool_name = getattr(tool, "name", type(tool).__name__)
                 step.stream(f"Using {tool_name} to gather planning context...")
-
-                node = ExecutionNode(
-                    actor=tool,
-                    provides=tool.provides,
+                task = Task(
+                    interface=self.interface,
+                    memory=self._memory,
+                    subtasks=[tool],
                     instruction=user_query,
                     title=f"Gathering context with {tool_name}",
-                    render_output=False
+                    steps_layout=steps_layout,
                 )
-
-                success = await self._execute_graph_node(node, messages, allow_missing=True)
-                if not success:
+                await task.execute()
+                if task.status != "error":
                     step.stream(f"\n\n✗ Failed to gather context from {tool_name}")
                     continue
 
@@ -845,7 +740,9 @@ class Planner(Coordinator):
             await self._execute_planner_tools(messages)
         else:
             log_debug("\033[92mDetected follow-up question, using existing context\033[0m")
-            with self.interface.add_step(title="Using existing data context...", user="Assistant") as step:
+            with self.interface.add_step(
+                title="Using existing data context...", user="Assistant", steps_layout=self.steps_layout
+            ) as step:
                 step.stream("Detected that this is a follow-up question related to the previous dataset.")
                 step.stream("\n\nUsing the existing data in memory to answer without re-executing data retrieval.")
                 step.success_title = "Using existing data for follow-up question"
@@ -882,7 +779,6 @@ class Planner(Coordinator):
         # also filter out agents where excluded keys exist in memory
         agents = [agent for agent in agents if len(set(agent.requires) - all_provides) == 0 and type(agent).__name__ != "ValidationAgent"]
         tools = [tool for tool in tools if len(set(tool.requires) - all_provides) == 0]
-
         reasoning = None
         while reasoning is None:
             # candidates = agents and tools that can provide
@@ -927,15 +823,15 @@ class Planner(Coordinator):
         return await self._fill_model(mutated_messages, system, plan_model)
 
     async def _resolve_plan(
-            self,
-            plan,
-            agents: dict[str, Agent],
-            tools: dict[str, Tool],
-            messages: list[Message],
-            previous_actors: list[str],
-        ) -> tuple[list[ExecutionNode], set[str], list[str]]:
+        self,
+        plan,
+        agents: dict[str, Agent],
+        tools: dict[str, Tool],
+        messages: list[Message],
+        previous_actors: list[str],
+    ) -> tuple[Plan, set[str], list[str]]:
         table_provided = False
-        execution_graph = []
+        tasks = []
         provided = set(self._memory)
         unmet_dependencies = set()
         steps = []
@@ -965,8 +861,8 @@ class Planner(Coordinator):
             provided |= set(subagent.provides)
             unmet_dependencies = (unmet_dependencies | requires) - provided
             has_table_lookup = any(
-                isinstance(node.actor, TableLookup)
-                for node in execution_graph
+                any(isinstance(st, TableLookup) for st in task.subtasks)
+                for task in tasks
             )
             if "table" in unmet_dependencies and not table_provided and "SQLAgent" in agents and has_table_lookup:
                 provided |= set(agents['SQLAgent'].provides)
@@ -974,36 +870,30 @@ class Planner(Coordinator):
                     actor='SQLAgent',
                     instruction='Load the table',
                     title='Loading table',
-                    render_output=False
                 )
-                execution_graph.append(
-                    ExecutionNode(
-                        actor=agents['SQLAgent'],
-                        provides=agents['SQLAgent'].provides,
+                tasks.append(
+                    Task(
+                        subtasks=[agents['SQLAgent']],
                         instruction=sql_step.instruction,
-                        title=sql_step.title,
-                        render_output=False
+                        title=sql_step.title
                     )
                 )
                 steps.append(sql_step)
                 table_provided = True
                 unmet_dependencies -= provided
                 actors_in_graph.add('SQLAgent')
-
-            execution_graph.append(
-                ExecutionNode(
-                    actor=subagent,
-                    provides=subagent.provides,
+            tasks.append(
+                Task(
+                    subtasks=[subagent],
                     instruction=step.instruction,
-                    title=step.title,
-                    render_output=step.render_output
+                    title=step.title
                 )
             )
             steps.append(step)
             actors_in_graph.add(key)
 
-        last_node = execution_graph[-1] if execution_graph else None
-        if last_node and isinstance(last_node.actor, Tool) and not isinstance(last_node.actor, TableLookup):
+        last_task = tasks[-1]
+        if isinstance(last_task.subtasks[0], Tool) and not isinstance(last_task.subtasks[0], TableLookup):
             if "AnalystAgent" in agents and all(r in provided for r in agents["AnalystAgent"].requires):
                 actor = "AnalystAgent"
             else:
@@ -1017,22 +907,19 @@ class Planner(Coordinator):
                 log_debug(f"Skipping summarization with {actor} due to conflicts: {conflicts}")
                 plan.steps = steps
                 previous_actors = actors
-                return execution_graph, unmet_dependencies, previous_actors
+                return Plan(subtasks=tasks, title=plan.title), unmet_dependencies, previous_actors
 
             summarize_step = type(step)(
                 actor=actor,
                 instruction='Summarize the results.',
                 title='Summarizing results',
-                render_output=False
             )
             steps.append(summarize_step)
-            execution_graph.append(
-                ExecutionNode(
-                    actor=agents[actor],
-                    provides=agents[actor].provides,
+            tasks.append(
+                Task(
+                    subtasks=[agents[actor]],
                     instruction=summarize_step.instruction,
                     title=summarize_step.title,
-                    render_output=summarize_step.render_output
                 )
             )
             actors_in_graph.add(actor)
@@ -1042,48 +929,39 @@ class Planner(Coordinator):
                 actor="ValidationAgent",
                 instruction='Validate whether the executed plan fully answered the user\'s original query.',
                 title='Validating results',
-                render_output=False
             )
             steps.append(validation_step)
-            execution_graph.append(
-                ExecutionNode(
-                    actor=agents["ValidationAgent"],
-                    provides=agents["ValidationAgent"].provides,
+            tasks.append(
+                Task(
+                    subtasks=[agents["ValidationAgent"]],
                     instruction=validation_step.instruction,
-                    title=validation_step.title,
-                    render_output=validation_step.render_output
+                    title=validation_step.title
                 )
             )
             actors_in_graph.add("ValidationAgent")
 
         plan.steps = steps
-        previous_actors = actors
-        return execution_graph, unmet_dependencies, previous_actors
+        return Plan(subtasks=tasks, title=plan.title), unmet_dependencies, actors
 
-    async def _compute_execution_graph(self, messages: list[Message], agents: dict[str, Agent], tools: dict[str, Tool], pre_plan_output: dict[str, Any]) -> list[ExecutionNode]:
+    async def _compute_plan(self, messages: list[Message], agents: dict[str, Agent], tools: dict[str, Tool], pre_plan_output: dict[str, Any]) -> Plan:
         tool_names = list(tools)
         agent_names = list(agents)
+        reason_model, plan_model = self._get_model("main", agents=agent_names, tools=tool_names)
 
-        reason_model, plan_model = self._get_model(
-            "main",
-            agents=agent_names,
-            tools=tool_names,
-        )
         planned = False
         unmet_dependencies = set()
-        execution_graph = []
-        previous_actors = []
-        previous_plans = []
+        previous_plans, previous_actors = [], []
         attempts = 0
-
+        plan = None
         with self.interface.param.update(callback_exception="raise"):
-            with self.interface.add_step(title="Planning how to solve user query...", user="Assistant") as istep:
+            with self.interface.add_step(title="Planning how to solve user query...", user="Planner", layout_params={"title": "📝 Planner Steps"}) as istep:
+                self.steps_layout = self.interface.objects[-1].object
                 while not planned:
                     if attempts > 0:
                         log_debug(f"\033[91m!! Attempt {attempts}\033[0m")
                     plan = None
                     try:
-                        plan = await self._make_plan(
+                        raw_plan = await self._make_plan(
                             messages, agents, tools, unmet_dependencies, previous_actors, previous_plans,
                             reason_model, plan_model, istep, is_follow_up=pre_plan_output["is_follow_up"]
                         )
@@ -1095,7 +973,9 @@ class Planner(Coordinator):
                         istep.failed_title = 'Failed to make plan. Ensure LLM is configured correctly and/or try again.'
                         traceback.print_exception(e)
                         raise e
-                    execution_graph, unmet_dependencies, previous_actors = await self._resolve_plan(plan, agents, tools, messages, previous_actors)
+                    plan, unmet_dependencies, previous_actors = await self._resolve_plan(
+                        raw_plan, agents, tools, messages, previous_actors
+                    )
                     if unmet_dependencies:
                         istep.stream(f"The plan didn't account for {unmet_dependencies!r}", replace=True)
                         attempts += 1
@@ -1103,15 +983,16 @@ class Planner(Coordinator):
                         planned = True
                     if attempts > 5:
                         istep.failed_title = "Planning failed to come up with viable plan, please restate the problem and try again."
+                        self.steps_layout.title = "❌ Planning failed"
                         e = RuntimeError("Planner failed to come up with viable plan after 5 attempts.")
                         traceback.print_exception(e)
                         raise e
-                self._memory["plan"] = plan
-                istep.stream('\n\nHere are the steps:\n\n')
-                for i, step in enumerate(plan.steps):
-                    istep.stream(f"{i+1}. {step.actor}: {step.instruction}\n")
-                if attempts > 0:
-                    istep.success_title = f"Plan with {len(plan.steps)} steps created after {attempts + 1} attempts"
-                else:
-                    istep.success_title = f"Plan with {len(plan.steps)} steps created"
-            return execution_graph
+            self._memory["plan"] = raw_plan
+            istep.stream('\n\nHere are the steps:\n\n')
+            for i, step in enumerate(raw_plan.steps):
+                istep.stream(f"{i+1}. {step.actor}: {step.instruction}\n")
+            if attempts > 0:
+                istep.success_title = f"Plan with {len(raw_plan.steps)} steps created after {attempts + 1} attempts"
+            else:
+                istep.success_title = f"Plan with {len(raw_plan.steps)} steps created"
+        return plan

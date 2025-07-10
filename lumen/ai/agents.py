@@ -13,7 +13,6 @@ import param
 import yaml
 
 from panel.chat import ChatInterface
-from panel.layout import Column
 from panel.viewable import Viewable, Viewer
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
@@ -73,9 +72,6 @@ class Agent(Viewer, ToolUser, ContextProvider):
 
     llm = param.ClassSelector(class_=Llm, doc="""
         The LLM implementation to query.""")
-
-    steps_layout = param.ClassSelector(default=None, class_=Column, allow_None=True, doc="""
-        The layout progress updates will be streamed to.""")
 
     user = param.String(default="Agent", doc="""
         The name of the user that will be respond to the user query.""")
@@ -152,7 +148,6 @@ class Agent(Viewer, ToolUser, ContextProvider):
     async def respond(
         self,
         messages: list[Message],
-        render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
         """
@@ -165,8 +160,6 @@ class Agent(Viewer, ToolUser, ContextProvider):
         messages: list[Message]
             The list of messages corresponding to the user query and any other
             system messages to be included.
-        render_output: bool
-            Whether to render the output to the chat interface.
         step_title: str | None
             If the Agent response is part of a longer query this describes
             the step currently being processed.
@@ -204,7 +197,6 @@ class SourceAgent(Agent):
     async def respond(
         self,
         messages: list[Message],
-        render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
         source_controls = SourceControls(multiple=True, replace_controls=False, memory=self.memory, table_upload_callbacks=self.table_upload_callbacks)
@@ -262,7 +254,6 @@ class ChatAgent(Agent):
     async def respond(
         self,
         messages: list[Message],
-        render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
         context = {"tool_context": await self._use_tools("main", messages)}
@@ -304,10 +295,9 @@ class AnalystAgent(ChatAgent):
     async def respond(
         self,
         messages: list[Message],
-        render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
-        messages = await super().respond(messages, render_output, step_title)
+        messages = await super().respond(messages, step_title)
         if len(self._memory.get("data", [])) == 0 and self._memory.get("sql"):
             self._memory["sql"] = f"{self._memory['sql']}\n-- No data was returned from the query."
         return messages
@@ -348,7 +338,6 @@ class ListAgent(Agent):
     async def respond(
         self,
         messages: list[Message],
-        render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
         items = self._get_items()
@@ -397,7 +386,7 @@ class TableListAgent(ListAgent):
     not_with = param.List(default=["DbtslAgent", "SQLAgent"])
 
     purpose = param.String(default="""
-        Displays a list of all available tables & datasets in memory.""")
+        Displays a list of all available tables & datasets in memory. Not useful for identifying which table to use for analysis.""")
 
     requires = param.List(default=["source"], readonly=True)
 
@@ -515,7 +504,6 @@ class LumenBaseAgent(Agent):
         self,
         component: Component,
         messages: list | None = None,
-        render_output: bool = False,
         title: str | None = None,
         **kwargs,
     ):
@@ -525,8 +513,13 @@ class LumenBaseAgent(Agent):
 
         memory = self._memory
         retry_controls = RetryControls()
-        out = self._output_type(component=component, footer=[retry_controls], render_output=render_output, title=title, **kwargs)
         retry_controls.param.watch(_retry_invoke, "reason")
+        out = self._output_type(
+            component=component,
+            footer=[retry_controls],
+            title=title,
+            **kwargs
+        )
         out.param.watch(partial(self._update_spec, self._memory), "spec")
         if "outputs" in self._memory:
             # We have to create a new list to trigger an event
@@ -554,7 +547,10 @@ class SQLAgent(LumenBaseAgent):
 
     exclusions = param.List(default=["dbtsl_metaset"])
 
-    not_with = param.List(default=["DbtslAgent", "TableLookup"])
+    max_discovery_iterations = param.Integer(default=5, doc="""
+        Maximum number of discovery iterations before requiring a final answer.""")
+
+    not_with = param.List(default=["DbtslAgent", "TableLookup", "TableListAgent"])
 
     purpose = param.String(
         default="""
@@ -583,13 +579,9 @@ class SQLAgent(LumenBaseAgent):
 
     requires = param.List(default=["sources", "source", "sql_metaset"], readonly=True)
 
-    max_discovery_iterations = param.Integer(default=5, doc="""
-        Maximum number of discovery iterations before requiring a final answer.""")
+    user = param.String(default="SQL")
 
-    _extensions = (
-        "codeeditor",
-        "tabulator",
-    )
+    _extensions = ("codeeditor", "tabulator")
 
     _output_type = SQLOutput
 
@@ -868,7 +860,7 @@ class SQLAgent(LumenBaseAgent):
             sql_plan_context += f"\nIteration {iteration} Results:\n{results_summary}"
         return sql_plan_context[-10000:]
 
-    async def _create_pipeline_from_result(self, result: dict, messages: list[Message], render_output: bool, step_title: str) -> Any:
+    async def _create_pipeline_from_result(self, result: dict, messages: list[Message], step_title: str) -> Any:
         """Create the final pipeline from the result of the last SQL plan step."""
         # Update memory with final result
         self._memory["data"] = await describe_data(result["data"])
@@ -889,7 +881,6 @@ class SQLAgent(LumenBaseAgent):
             result["pipeline"],
             spec=result["sql_query"],
             messages=messages,
-            render_output=render_output,
             title=step_title
         )
         return result["pipeline"]
@@ -897,7 +888,6 @@ class SQLAgent(LumenBaseAgent):
     async def respond(
         self,
         messages: list[Message],
-        render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
         """
@@ -935,7 +925,7 @@ class SQLAgent(LumenBaseAgent):
 
             if final_result:
                 return await self._create_pipeline_from_result(
-                    final_result, messages, render_output, step_title
+                    final_result, messages, step_title
                 )
 
             # Update context for next iteration if no final result
@@ -984,10 +974,9 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
         The source associated with the dbt Semantic Layer.""",
     )
 
-    _extensions = (
-        "codeeditor",
-        "tabulator",
-    )
+    user = param.String(default="DBT")
+
+    _extensions = ("codeeditor", "tabulator")
 
     _output_type = SQLOutput
 
@@ -1106,7 +1095,6 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
     async def respond(
         self,
         messages: list[Message],
-        render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
         """
@@ -1119,7 +1107,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
             self._memory["__error__"] = str(e)
             return None
 
-        self._render_lumen(pipeline, spec=sql_query, messages=messages, render_output=render_output, title=step_title)
+        self._render_lumen(pipeline, spec=sql_query, messages=messages, title=step_title)
         return pipeline
 
 
@@ -1238,7 +1226,6 @@ class BaseViewAgent(LumenBaseAgent):
     async def respond(
         self,
         messages: list[Message],
-        render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
         """
@@ -1255,7 +1242,7 @@ class BaseViewAgent(LumenBaseAgent):
         spec = await self._create_valid_spec(messages, pipeline, schema, step_title)
         self._memory["view"] = dict(spec, type=self.view_type)
         view = self.view_type(pipeline=pipeline, **spec)
-        self._render_lumen(view, messages=messages, render_output=render_output, title=step_title)
+        self._render_lumen(view, messages=messages, title=step_title)
         return view
 
 
@@ -1468,7 +1455,6 @@ class AnalysisAgent(LumenBaseAgent):
     async def respond(
         self,
         messages: list[Message],
-        render_output: bool = False,
         step_title: str | None = None,
         agents: list[Agent] | None = None,
     ) -> Any:
@@ -1551,7 +1537,7 @@ class AnalysisAgent(LumenBaseAgent):
         if view is None and analysis.autorun:
             self.interface.stream("Failed to find an analysis that applies to this data")
         else:
-            self._render_lumen(view, analysis=analysis, pipeline=pipeline, render_output=render_output, title=step_title)
+            self._render_lumen(view, analysis=analysis, pipeline=pipeline, title=step_title)
             self.interface.stream(
                 analysis.message or f"Successfully created view with {analysis_name} analysis.", user="Assistant"
             )

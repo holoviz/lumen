@@ -122,7 +122,6 @@ def make_plan_models(agents: list[str], tools: list[str]):
         actor=(Literal[tuple(agents+tools)], FieldInfo(description="The name of the actor to assign a task to.")),
         instruction=(str, FieldInfo(description="Instructions to the actor to assist in the task, and whether rendering is required.")),
         title=(str, FieldInfo(description="Short title of the task to be performed; up to three words.")),
-        render_output=(bool, FieldInfo(description="Whether the output of the actor should be rendered. If the user wants to see the table, and the actor is SQL, then this should be `True`.")),
     )
     reasoning = create_model(
         'Reasoning',

@@ -25,14 +25,7 @@ CSS = """
 /* Max width for comfortable reading */
 .left-panel-content {
     max-width: clamp(450px, 95vw, 1200px);
-    margin: 0px auto;  /* Center the content */
-    background-color: var(--panel-background-color);
-    border-radius: 10px; /* Slight rounded corners */
-    overflow-y: auto;   /* Enable scrolling if content is taller than the area */
-    box-sizing: border-box; /* Include padding in size calculations */
-    padding-inline: 0.5rem; /* Increased padding for better visual spacing */
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08); /* Subtle shadow for depth */
-    border: 1px solid rgba(0, 0, 0, 0.08); /* Subtle border for definition */
+    margin: 0px auto;
 }
 
 /* Split panel styles */
@@ -50,10 +43,9 @@ CSS = """
 .content-wrapper {
     width: 100%;
     height: 100%;
-    display: block;
+    display: contents;
     background-color: var(--panel-background-color);
     border-radius: 10px; /* Slight rounded corners */
-    overflow-y: auto;   /* Enable scrolling if content is taller than the area */
     box-sizing: border-box; /* Include padding in size calculations */
     padding-inline: 0.5rem; /* Increased padding for better visual spacing */
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08); /* Subtle shadow for depth */
