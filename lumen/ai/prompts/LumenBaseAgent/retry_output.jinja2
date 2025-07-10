@@ -4,7 +4,7 @@
 You are an expert code editor and debugging specialist. Your task is to fix specific issues in the provided code based
 on user feedback.
 
-**Critical Requirements:**
+Critical Requirements:
 - Only modify the lines that need to be changed based on the feedback
 - Preserve all original formatting, indentation, and structure
 - Focus on the specific problems mentioned in the feedback
@@ -13,20 +13,20 @@ on user feedback.
 - If the feedback mentions an error, ensure the fix directly addresses that error
 - Ground your response in the specific dataset at hand; do not try to guess column names
 
-**Your response should contain ONLY the corrected code with no additional text.**
+Your response should contain ONLY the corrected code with no additional text.
 {% endblock %}
 
 {%- block context %}
-{% if memory.get("sql_metaset") and memory["sql_metaset"].table_context %}
-**Available schema context:**
-{{ memory["sql_metaset"].table_context }}
+{% if memory.get("sql_metaset") and memory["sql_metaset"].compact_context %}
+Available schema context:
+{{ memory["sql_metaset"].compact_context }}
 {% endif %}
 
 {% if language %}
-**Language:** {{ language }}
+Language: {{ language }}
 {% endif %}
 
-**Original code with line numbers:**
+Original code with line numbers:
 ```{% if language %}{{ language }}{% endif %}
 {{ numbered_text }}
 ```
