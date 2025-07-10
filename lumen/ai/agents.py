@@ -4,7 +4,6 @@ import asyncio
 import json
 import traceback
 
-from copy import deepcopy
 from functools import partial
 from typing import Any, Literal
 
@@ -46,8 +45,8 @@ from .tools import ToolUser
 from .translate import param_to_pydantic
 from .utils import (
     apply_changes, clean_sql, describe_data, get_data, get_pipeline,
-    get_schema, load_json, log_debug, mutate_user_message, parse_table_slug,
-    report_error, retry_llm_output, stream_details,
+    get_schema, load_json, log_debug, parse_table_slug, report_error,
+    retry_llm_output, stream_details,
 )
 from .views import (
     AnalysisOutput, LumenOutput, SQLOutput, VegaLiteOutput,
@@ -480,23 +479,20 @@ class LumenBaseAgent(Agent):
         """
         Retry the output by line, allowing the user to provide feedback on why the output was not satisfactory, or an error.
         """
-        modified_messages = mutate_user_message(
-            f"New feedback: {feedback!r}.\n\nThese were the previous instructions to use as reference:",
-            deepcopy(messages), wrap='\n"""\n', suffix=False
-        )
         original_lines = original_output.splitlines()
         with self.param.update(memory=memory):
             # TODO: only input the inner spec to retry
             numbered_text = "\n".join(f"{i:2d}: {line}" for i, line in enumerate(original_lines, 1))
             system = await self._render_prompt(
                 "retry_output",
-                messages=modified_messages,
+                messages=messages,
                 numbered_text=numbered_text,
                 language=language,
+                feedback=feedback,
             )
         retry_model = self._lookup_prompt_key("retry_output", "response_model")
         invoke_kwargs = dict(
-            messages=modified_messages,
+            messages=messages,
             system=system,
             response_model=retry_model,
             model_spec="reasoning",
@@ -574,7 +570,8 @@ class SQLAgent(LumenBaseAgent):
             "check_context": {
                 "response_model": CheckContext,
                 "template": PROMPTS_DIR / "SQLAgent" / "check_context.jinja2",
-            }
+            },
+            "retry_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "SQLAgent" / "retry_output.jinja2"},
         }
     )
 
@@ -588,15 +585,21 @@ class SQLAgent(LumenBaseAgent):
 
     _output_type = SQLOutput
 
+    def _truncate_summary(self, summary: str, max_chars: int = 3000) -> str:
+        """Truncate summary to prevent context overflow."""
+        if len(summary) >= max_chars:
+            summary = summary[:max_chars-3] + "..."
+        return f"\n```\n{summary}\n```"
+
     def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
         memory["sql"] = event.new
 
-    async def _check_information_completeness(self, messages: list[Message], sql_plan_context: str) -> list[str]:
+    async def _check_information_completeness(self, messages: list[Message], sql_plan_context: str) -> tuple[list[str], str]:
         """
         Check if we have complete information to answer the query or need discovery.
-        Returns discovery_steps.
+        Returns (discovery_steps, query_complexity).
         """
-        with self._add_step(title="Checking information completeness", steps_layout=self._steps_layout) as step:
+        with self._add_step(title="Smart query analysis", steps_layout=self._steps_layout) as step:
             system_prompt = await self._render_prompt("check_context", messages, previous_sql_plan_results=sql_plan_context)
             model_spec = self.prompts["check_context"].get("llm_spec", self.llm_spec_key)
 
@@ -607,36 +610,70 @@ class SQLAgent(LumenBaseAgent):
                 response_model=self._get_model("check_context"),
             )
 
+            output = None
             async for output in response:
-                if output.information_completeness:
-                    step.stream(f"**Information Assessment:** {output.information_completeness}", replace=True)
+                message = ""
+                if output.query_complexity:
+                    message += f"\n\n**Query Complexity:** {output.query_complexity}"
+                if hasattr(output, 'efficient_plan') and output.efficient_plan:
+                    message += f"\n\n**Token Efficiency Plan:** {output.efficient_plan}"
+                step.stream(message, replace=True)
 
-            if output.discovery_steps:
-                instructions_text = "\n".join(f"- {instruction}" for instruction in output.discovery_steps)
-                step.stream(f"\n\n**SQL Plan:**\n{instructions_text}")
-            return output.discovery_steps
+            # Handle case where streaming didn't complete properly
+            if not output:
+                step.stream("\n\n**Result:** Using fallback - proceeding with discovery")
+                return (["Examine the user's query and provide appropriate response"], "discovery_required")
 
-    async def _validate_sql_with_retry(self, sql_query: str, expr_slug: str, source, messages: list[Message], step, max_retries: int = 3) -> tuple[str, Any]:
+            query_complexity = getattr(output, 'query_complexity', 'discovery_required')
+
+            # If no discovery needed, return empty list for direct answer
+            if query_complexity == "direct":
+                step.stream("\n\n**Result:** Direct answer - no discovery needed")
+                return ([], query_complexity)
+
+            # Get discovery steps, with fallback
+            discovery_steps = getattr(output, 'discovery_steps', [])
+            if discovery_steps:
+                instructions_text = "\n".join(f"- {instruction}" for instruction in discovery_steps)
+                step.stream(f"\n\n**Discovery Plan:**\n{instructions_text}")
+            else:
+                # Fallback discovery steps
+                discovery_steps = ["Examine the user's query and provide appropriate response"]
+                step.stream("\n\n**Discovery Plan:** Using fallback discovery")
+
+            return (discovery_steps, query_complexity)
+
+    async def _validate_sql_with_retry(self, sql_query: str, expr_slug: str, dialect: str, source, messages: list[Message], step, max_retries: int = 3) -> tuple[str, Any]:
         """
         Validate SQL query with retry logic. Streams directly to the provided step.
 
         Returns:
             tuple: (validated_sql_query, sql_expr_source)
         """
+        try:
+            sql_query = clean_sql(sql_query, dialect)
+        except Exception as e:
+            step.stream(f"\n\n❌ SQL cleaning failed: {e}")
+
         for i in range(max_retries):
             try:
+                step.stream(f"\n\n`{expr_slug}`\n```sql\n{sql_query}\n```")
                 sql_expr_source = source.create_sql_expr_source({expr_slug: sql_query})
                 if i > 0:
                     step.stream("\n\n✅ SQL validation successful")
                 return sql_query, sql_expr_source
             except Exception as e:
+                feedback = f"{type(e).__name__}: {e!s}"
+                if "KeyError" in feedback:
+                    feedback += " The table does not exist; select from one of the available tables listed."
+
                 if i == max_retries - 1:
                     step.stream(f"\n\n❌ SQL validation failed after {max_retries} attempts: {e}")
                     raise e
 
                 step.stream(f"\n\n⚠️ SQL validation failed (attempt {i+1}/{max_retries}): {e}")
                 sql_query = clean_sql(
-                    await self._retry_output_by_line(str(e), messages, self._memory, sql_query, language="sql"),
+                    await self._retry_output_by_line(feedback, messages, self._memory, sql_query, language="sql"),
                     source.dialect,
                 )
                 step.stream(f"\n\n**Retry {i+1}:** `{expr_slug}`\n```sql\n{sql_query}\n```")
@@ -648,23 +685,28 @@ class SQLAgent(LumenBaseAgent):
         dialect: str,
         source,
         step_number: int,
+        is_final_step: bool,
         current_step: str,
         sql_plan_context: str,
         step_title: str,
+        query_complexity: str | None = None,
         errors: list | None = None,
-    ) -> tuple[str, str, Any]:
+    ) -> tuple[pn.chat.ChatStep, str, str, Any]:
         """
         Generate and validate SQL for any message set. Returns (sql_query, expr_slug, sql_expr_source).
         """
-        with self._add_step(title=step_title, steps_layout=self._steps_layout) as step:
+        with self.interface.param.update(callback_exception="raise"):
+            step = self._add_step(title=step_title, steps_layout=self._steps_layout, status="running")
             system_prompt = await self._render_prompt(
                 "main",
                 messages,
                 dialect=dialect,
                 separator=SOURCE_TABLE_SEPARATOR,
                 step_number=step_number,
+                is_final_step=is_final_step,
                 current_step=current_step,
                 previous_sql_plan_results=sql_plan_context,
+                query_complexity=query_complexity,
                 errors=errors,
             )
 
@@ -685,53 +727,60 @@ class SQLAgent(LumenBaseAgent):
             if not output or not output.query:
                 raise ValueError("No SQL query was generated.")
 
-            sql_query = clean_sql(output.query, dialect)
-            step.stream(f"\n\n`{output.expr_slug}`\n```sql\n{sql_query}\n```")
+            sql_query = output.query
+            try:
+                # Validate SQL
+                sql_query, sql_expr_source = await self._validate_sql_with_retry(
+                    sql_query, output.expr_slug, dialect, source, messages, step
+                )
+            except Exception as e:
+                step.param.update(
+                    status="failed",
+                    title=f"SQL Failed: {e}"
+                )
+                raise ValueError(f"Failed to execute SQL:\n```sql\n{sql_query}\n```\ndue to {e}") from e
+            return step, sql_query, output.expr_slug, sql_expr_source
 
-            # Validate SQL
-            validated_sql, sql_expr_source = await self._validate_sql_with_retry(
-                sql_query, output.expr_slug, source, messages, step
-            )
-            return validated_sql, output.expr_slug, sql_expr_source
-
-    async def _execute_single_step(self, plan_step: str, sql_query: str, expr_slug: str, sql_expr_source, source, iteration: int, step_num: int, is_final_step: bool) -> dict:
+    async def _execute_single_step(self, chat_step: pn.chat.ChatStep, plan_step: str, sql_query: str, expr_slug: str, sql_expr_source, source, iteration: int, step_num: int, is_final_step: bool) -> dict:
         """
         Execute a single SQL plan step and return the result.
         """
-        with self._add_step(title=f"Executing step {iteration}.{step_num}", steps_layout=self._steps_layout) as step:
-            if is_final_step:
-                # Final step: create full pipeline with transforms
-                sql_transforms = [SQLLimit(limit=1_000_000, write=source.dialect, pretty=True, identify=False)]
-                pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms)
-                df = await get_data(pipeline)
+        if is_final_step:
+            # Final step: create full pipeline with transforms
+            sql_transforms = [SQLLimit(limit=1_000_000, write=source.dialect, pretty=True, identify=False)]
+            pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms)
+            df = await get_data(pipeline)
 
-                result = {
-                    "step": plan_step,
-                    "sql_query": sql_query,
-                    "expr_slug": expr_slug,
-                    "sql_expr_source": sql_expr_source,
-                    "pipeline": pipeline,
-                    "data": df,
-                    "has_data": len(df) > 0,
-                    "summary": f"Final query returned {len(df)} rows",
-                    "is_final": True
-                }
-            else:
-                temp_source = source.create_sql_expr_source({expr_slug: sql_query}, materialize=False)
-                df = await get_data(await get_pipeline(source=temp_source, table=expr_slug))
+            result = {
+                "step": plan_step,
+                "sql_query": sql_query,
+                "expr_slug": expr_slug,
+                "sql_expr_source": sql_expr_source,
+                "pipeline": pipeline,
+                "data": df,
+                "has_data": len(df) > 0,
+                "summary": f"Final query returned {len(df)} rows",
+                "is_final": True
+            }
+        else:
+            temp_source = source.create_sql_expr_source({expr_slug: sql_query}, materialize=False)
+            df = await get_data(await get_pipeline(source=temp_source, table=expr_slug))
 
-                summary = str(df.to_dict()) if len(df) < 100 else f"Found {len(df)} rows: {df.head(100).to_dict()}"
-                result = {
-                    "step": plan_step,
-                    "sql_query": sql_query,
-                    "summary": summary,
-                    "has_data": len(df) > 0,
-                    "is_final": False
-                }
-            step.stream(f"**Result:** {result['summary']}")
-            return result
+            summary = str(df.to_dict()) if len(df) < 100 else f"Found {len(df)} rows: {df.head(100).to_dict()}"
+            # Truncate summary to prevent context overflow
+            summary = self._truncate_summary(summary)
+            result = {
+                "step": plan_step,
+                "sql_query": sql_query,
+                "summary": summary,
+                "has_data": len(df) > 0,
+                "is_final": False
+            }
+        stream_details(f"\n\n{result['summary']}\n", chat_step, title="Results")
+        chat_step.status = "success"
+        return result
 
-    async def _execute_sql_plan_steps(self, discovery_steps: list[str], iteration: int, dialect: str, source, sql_plan_context: str) -> list[dict]:
+    async def _execute_sql_plan_steps(self, discovery_steps: list[str], iteration: int, dialect: str, source, sql_plan_context: str, query_complexity: str) -> list[dict]:
         """
         Execute all SQL plan steps sequentially, with the last step being the final answer.
         """
@@ -744,14 +793,14 @@ class SQLAgent(LumenBaseAgent):
 
             # Generate and validate SQL
             step_messages = [{"role": "user", "content": plan_step}]
-            sql_query, expr_slug, sql_expr_source = await self._generate_and_validate_sql(
-                step_messages, dialect, source, i, plan_step, current_context, step_title
+            chat_step, sql_query, expr_slug, sql_expr_source = await self._generate_and_validate_sql(
+                step_messages, dialect, source, i, is_final_step, plan_step, current_context, step_title, query_complexity
             )
 
             # Execute and collect result
             try:
                 result = await self._execute_single_step(
-                    plan_step, sql_query, expr_slug, sql_expr_source, source, iteration, i, is_final_step
+                    chat_step, plan_step, sql_query, expr_slug, sql_expr_source, source, iteration, i, is_final_step
                 )
                 results.append(result)
                 current_context += f"\n{plan_step!r} Result: {result['summary']}"
@@ -760,6 +809,7 @@ class SQLAgent(LumenBaseAgent):
                 if is_final_step and not result['has_data'] and 'Failed' in result['summary']:
                     raise Exception(result['summary'])
             except Exception as e:
+                chat_step.status = "failed"
                 if is_final_step:
                     raise e
 
@@ -770,22 +820,30 @@ class SQLAgent(LumenBaseAgent):
         Execute a single iteration of SQL planning. Returns final result if successful, None otherwise.
         """
         # Get SQL plan
-        discovery_steps = await self._check_information_completeness(
+        discovery_steps, query_complexity = await self._check_information_completeness(
             messages, sql_plan_context
         )
 
+        # Handle direct answer case (no discovery needed)
         if not discovery_steps:
-            return None
+            # Create direct answer step from user query
+            user_query = next((m.get("content", "") for m in messages if m.get("role") == "user"), "Display the data")
+            discovery_steps = [user_query]
 
         # Execute all SQL plan steps
         dialect = self._memory["source"].dialect
         results = await self._execute_sql_plan_steps(
-            discovery_steps, iteration, dialect, source, sql_plan_context
+            discovery_steps, iteration, dialect, source, sql_plan_context, query_complexity
         )
 
         # The LAST result is always the final query/pipeline
         final_result = results[-1]
         if final_result["has_data"]:
+            # Save successful SQL plan context for potential follow-up queries
+            self._memory["sql_plan_context"] = sql_plan_context + f"\nIteration {iteration} Results:\n" + "\n".join(
+                f"{i+1}. {r['step']}\nResult: {self._truncate_summary(r['summary'])}"
+                for i, r in enumerate(results)
+            )
             return final_result
 
         # Store results for context in next iteration
@@ -796,11 +854,11 @@ class SQLAgent(LumenBaseAgent):
         """Update context with results from current iteration."""
         if hasattr(self, '_iteration_results'):
             results_summary = "\n".join(
-                f"{i+1}. {r['step']}\nResult: {r['summary']}"
+                f"{i+1}. {r['step']}\nResult: {self._truncate_summary(r['summary'])}"
                 for i, r in enumerate(self._iteration_results)
             )
             sql_plan_context += f"\nIteration {iteration} Results:\n{results_summary}"
-        return sql_plan_context
+        return sql_plan_context[-10000:]
 
     async def _create_pipeline_from_result(self, result: dict, messages: list[Message], step_title: str) -> Any:
         """Create the final pipeline from the result of the last SQL plan step."""
@@ -816,6 +874,7 @@ class SQLAgent(LumenBaseAgent):
         else:
             self._memory["sources"].append(result["sql_expr_source"])
         self._memory["source"] = result["sql_expr_source"]
+        self._memory.trigger("sources")
 
         # Render output
         self._render_lumen(
@@ -837,7 +896,7 @@ class SQLAgent(LumenBaseAgent):
         # Setup sources and metadata
         sources = self._memory["sources"] if isinstance(self._memory["sources"], dict) else {source.name: source for source in self._memory["sources"]}
         vector_metaset = self._memory["sql_metaset"].vector_metaset
-        selected_slugs = list(vector_metaset.selected_columns or vector_metaset.vector_metadata_map)
+        selected_slugs = list(vector_metaset.vector_metadata_map)
         tables_to_source = {parse_table_slug(table_slug, sources)[1]: parse_table_slug(table_slug, sources)[0] for table_slug in selected_slugs}
         source = next(iter(tables_to_source.values()))
 
@@ -856,7 +915,9 @@ class SQLAgent(LumenBaseAgent):
             source = DuckDBSource(uri=":memory:", mirrors=mirrors)
 
         # Execute SQL plan iterations
-        sql_plan_context = ""
+        # Use saved context from previous queries if available (follow-up scenarios)
+        sql_plan_context = self._memory.get("sql_plan_context", "")
+
         for iteration in range(1, self.max_discovery_iterations + 1):
             final_result = await self._execute_iteration(
                 iteration, messages, source, sql_plan_context
@@ -1025,6 +1086,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
             self._memory["table"] = pipeline.table
             self._memory["dbtsl_vector_metaset"] = vector_metaset
             self._memory["dbtsl_sql_metaset"] = sql_metaset
+            self._memory.trigger("sources")
             return sql_query, pipeline
         except Exception as e:
             report_error(e, step)
@@ -1523,18 +1585,17 @@ class ValidationAgent(Agent):
         step_title: str | None = None,
     ) -> Any:
         def on_click(event):
+            if messages:
+                user_messages = [msg for msg in reversed(messages) if msg.get("role") == "user"]
+                original_query = user_messages[0].get("content", "").split("-- For context...")[0]
             suggestions_list = '\n- '.join(result.suggestions)
-            self.interface.send(f"Follow these suggestions: {suggestions_list}")
-
-        if messages:
-            user_messages = [msg for msg in reversed(messages) if msg.get("role") == "user"]
-            original_query = user_messages[0].get("content", "")
+            self.interface.send(f"Follow these suggestions to fulfill the original intent {original_query}\n\n{suggestions_list}")
 
         executed_steps = None
         if "plan" in self._memory and hasattr(self._memory["plan"], "steps"):
             executed_steps = [f"{step.actor}: {step.instruction}" for step in self._memory["plan"].steps]
 
-        system_prompt = await self._render_prompt("main", messages, original_query=original_query, executed_steps=executed_steps)
+        system_prompt = await self._render_prompt("main", messages, executed_steps=executed_steps)
         model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
 
         result = await self.llm.invoke(

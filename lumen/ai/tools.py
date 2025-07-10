@@ -18,18 +18,17 @@ from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .embeddings import NumpyEmbeddings
 from .llm import Message
 from .models import (
-    ThinkingYesNo, make_columns_selection, make_iterative_selection_model,
-    make_refined_query_model,
+    ThinkingYesNo, make_iterative_selection_model, make_refined_query_model,
 )
 from .schemas import (
-    Column, DbtslMetadata, DbtslMetaset, PreviousState, SQLMetadata,
-    SQLMetaset, VectorMetadata, VectorMetaset,
+    Column, DbtslMetadata, DbtslMetaset, SQLMetadata, SQLMetaset,
+    VectorMetadata, VectorMetaset,
 )
 from .services import DbtslMixin
 from .translate import function_to_model
 from .utils import (
-    get_schema, log_debug, process_enums, retry_llm_output, stream_details,
-    truncate_string, with_timeout,
+    get_schema, log_debug, process_enums, stream_details, truncate_string,
+    with_timeout,
 )
 from .vector_store import NumpyVectorStore, VectorStore
 
@@ -563,18 +562,6 @@ class TableLookup(VectorLookupTool):
                 "template": PROMPTS_DIR / "VectorLookupTool" / "refine_query.jinja2",
                 "response_model": make_refined_query_model,
             },
-            "select_columns": {
-                "template": PROMPTS_DIR / "TableLookup" / "select_columns.jinja2",
-                "response_model": make_columns_selection,
-            },
-            "should_refresh_columns": {
-                "template": PROMPTS_DIR / "TableLookup" / "should_refresh_columns.jinja2",
-                "response_model": ThinkingYesNo,
-            },
-            "should_select_columns": {
-                "template": PROMPTS_DIR / "TableLookup" / "should_select_columns.jinja2",
-                "response_model": ThinkingYesNo,
-            },
         },
         doc="Dictionary of available prompts for the tool."
     )
@@ -593,9 +580,6 @@ class TableLookup(VectorLookupTool):
 
     provides = param.List(default=["tables_metadata", "vector_metaset"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
-
-    enable_select_columns = param.Boolean(default=True, doc="""
-        Whether to enable column subsetting to filter out irrelevant columns.""")
 
     include_metadata = param.Boolean(default=True, doc="""
         Whether to include table descriptions in the embeddings and responses.""")
@@ -630,7 +614,6 @@ class TableLookup(VectorLookupTool):
             self._memory["tables_metadata"] = {}  # used for storing table metadata for LLM
         self._raw_metadata = {}
         self._semaphore = asyncio.Semaphore(self.max_concurrent)
-        self._previous_state = None  # used for tracking previous state for _should...
         if self.sync_sources:
             self._memory.on_change('sources', self._update_vector_store)
         if "sources" in self._memory:
@@ -805,150 +788,6 @@ class TableLookup(VectorLookupTool):
             if vector_store_id is not None and processed_sources:
                 self._cleanup_sources_in_progress(vector_store_id, processed_sources)
 
-    async def _should_refresh_columns(self, messages: list[dict[str, str]]) -> bool:
-        """
-        Determine if we should rerun the column selection based on the new query.
-        """
-        # If no previous selection exists, we definitely need to run it
-        if self._previous_state is None:
-            return True
-
-        try:
-            # Use convenience method to render prompt and invoke LLM
-            result = await self._invoke_prompt(
-                "should_refresh_columns",
-                messages,
-                previous_state=self._previous_state,
-            )
-
-            return result.yes
-
-        except Exception as e:
-            # On any error, be safe and reselect columns
-            with self._add_step(title="Column Revalidation Error") as step:
-                step.stream(f"Error checking if column selection should be rerun: {e}")
-                step.status = "failed"
-            return True
-
-    async def _should_select_columns(self, messages: list[dict[str, str]]) -> bool:
-        """
-        Determine if columns should be subset based on the user query.
-
-        This function uses a YesNo model to check if the user is asking for specific information
-        that would benefit from column subsetting, or if they're simply asking about available
-        datasets/tables, in which case we want to show all columns.
-
-        For example:
-        - "What tables do you have?" -> False (don't subset columns)
-        - "What columns are in the users table?" -> False (don't subset columns)
-        - "Show me the correlation between age and income" -> True (subset columns)
-
-        Parameters
-        ----------
-        messages: list[dict[str, str]]
-            The user query messages
-
-        Returns
-        -------
-        bool
-            True if columns should be subset, False otherwise
-        """
-        if not self.enable_select_columns:
-            return False
-
-        cols_lengths = set()
-        if "vector_metaset" in self._memory:
-            vector_metaset = self._memory["vector_metaset"]
-            if vector_metaset.selected_columns:
-                table_slugs = list(vector_metaset.selected_columns)
-            else:
-                table_slugs = None
-            for vector_metadata in vector_metaset.vector_metadata_map.values():
-                if table_slugs and vector_metadata.table_slug not in table_slugs:
-                    continue
-                cols_lengths.add(len(vector_metadata.columns))
-
-        if not cols_lengths or (max(cols_lengths) <= 30 and sum(cols_lengths) <= 70):
-            return False
-
-        try:
-            # Use the YesNo prompt to check if we should subset columns
-            result = await self._invoke_prompt(
-                "should_select_columns",
-                messages,
-                previous_state=self._previous_state,
-            )
-
-            return result.yes
-
-        except Exception as e:
-            with self._add_step(title="Column Subsetting Check Error") as step:
-                step.stream(f"Error checking if columns should be subset: {e}")
-                step.status = "failed"
-            # Default to True (subset columns) in case of error
-            return True
-
-    @retry_llm_output()
-    async def _select_columns(self, messages: list[dict[str, str]], errors: list | None = None) -> None:
-        """
-        Select relevant columns from tables based on the user query.
-        This runs after _gather_info and before _format_context.
-        """
-        if not self.enable_select_columns:
-            return
-
-        vector_metaset: VectorMetaset = self._memory.get("vector_metaset")
-        needs_reselection = await self._should_refresh_columns(messages)
-        if not needs_reselection and vector_metaset.selected_columns:
-            with self._add_step(title="Column Selection (Cached)") as step:
-                step.stream("Reusing previous column selection as the query intent is similar.")
-                for table_slug, column_names in vector_metaset.selected_columns.items():
-                    if table_slug in vector_metaset.selected_columns:
-                        table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
-                        stream_details('\n\n'.join(column_names), step, title=f"Selected columns for {table_name}")
-            return vector_metaset.selected_columns
-
-        try:
-            with self._add_step(title="Column Selection", steps_layout=self.steps_layout) as step:
-                selected_columns = {}
-                vector_metadata_map = vector_metaset.vector_metadata_map
-                table_slugs = list(vector_metaset.vector_metadata_map)
-                if self._previous_state:
-                    table_slugs += list(self._previous_state.selected_columns)
-                async for output_chunk in self._stream_prompt(
-                    "select_columns",
-                    messages,
-                    separator=SOURCE_TABLE_SEPARATOR,
-                    table_slugs=table_slugs,
-                    previous_state=self._previous_state,
-                    errors=errors,
-                ):
-                    # Convert indices to column names and store by table
-                    if output_chunk.chain_of_thought:
-                        step.stream(output_chunk.chain_of_thought, replace=True)
-
-                tables_columns_indices = output_chunk.tables_columns_indices
-                selected_indices = {
-                    obj.table_slug: obj.column_indices
-                    for obj in tables_columns_indices
-                }
-                for table_slug, indices in selected_indices.items():
-                    if table_slug not in vector_metadata_map:
-                        continue
-                    table = vector_metadata_map[table_slug]
-                    all_columns = [col.name for col in table.columns]
-                    column_names = [all_columns[idx] for idx in indices if idx < len(all_columns)]
-                    selected_columns[table_slug] = column_names
-                    table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
-                    stream_details('\n\n'.join(column_names), step, title=f"Selected columns for {table_name}", auto=False)
-                vector_metaset.selected_columns = selected_columns
-            return selected_columns
-        except Exception as e:
-            with self._add_step(title="Column Selection Error") as step:
-                traceback.print_exc()
-                step.stream(f"Error selecting columns: {e}")
-                step.status = "failed"
-            raise e
 
     async def _gather_info(self, messages: list[dict[str, str]]) -> dict:
         """Gather relevant information about the tables based on the user query."""
@@ -1025,31 +864,15 @@ class TableLookup(VectorLookupTool):
         """Generate formatted text representation from schema objects."""
         # Get schema objects from memory
         vector_metaset = self._memory.get("vector_metaset")
-        return vector_metaset.selected_context
+        return str(vector_metaset)
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         """
-        Fetches tables based on the user query, selects relevant columns, and returns formatted context.
+        Fetches tables based on the user query and returns formatted context.
         """
         # Run the process to build schema objects
         await self._gather_info(messages)
-
-        should_select = await self._should_select_columns(messages)
-        if should_select:
-            try:
-                await self._select_columns(messages)
-            except Exception:
-                log_debug("Failed to select columns, skipping column selection.")
-        else:
-            with self._add_step(title="Column Selection Skipped", steps_layout=self.steps_layout) as step:
-                step.stream("Column subsetting skipped")
-
-        self._previous_state = PreviousState(
-            query=messages[-1]["content"],
-            selected_columns=self._memory.get("vector_metaset", {}).selected_columns,
-        )
         return self._format_context()
-
 
 
 class IterativeTableLookup(TableLookup):
@@ -1109,7 +932,6 @@ class IterativeTableLookup(TableLookup):
         examined_slugs = set(sql_metadata_map.keys())
         all_slugs = list(vector_metadata_map.keys())
         failed_slugs = []
-        satisfied_slugs = []
         selected_slugs = []
         chain_of_thought = ""
         max_iterations = self.max_selection_iterations
@@ -1185,13 +1007,11 @@ class IterativeTableLookup(TableLookup):
                         # Check if we're done with table selection (do not allow on 1st iteration)
                         if (output.is_done and iteration != 1) or not available_slugs:
                             step.stream("\n\nSelection process complete - model is satisfied with selected tables")
-                            satisfied_slugs = selected_slugs
                             fast_track = True
                         elif iteration != max_iterations:
                             step.stream("\n\nUnsatisfied with selected tables - continuing selection process...")
                         else:
                             step.stream("\n\nMaximum iterations reached - stopping selection process")
-                            satisfied_slugs = selected_slugs or list(examined_slugs)
                             break
                     except Exception as e:
                         traceback.print_exc()
@@ -1234,25 +1054,11 @@ class IterativeTableLookup(TableLookup):
 
                 if fast_track:
                     step.stream("Fast-tracked selection process.")
-                    satisfied_slugs = selected_slugs
                     # based on similarity search alone, if we have selected tables, we're done!!
                     break
 
-        # Filter sql_metadata_map and sql_schema_objects to match satisfied_slugs
+        # Filter sql_metadata_map to match satisfied_slugs
         sql_metadata_map = {table_slug: schema_data for table_slug, schema_data in sql_metadata_map.items()}
-        # Only keep table schemas that were selected in the final iteration or were fast-tracked
-        if satisfied_slugs:
-            # Update selected_columns in vector_metaset
-            vector_metaset.selected_columns = {
-                table_slug: vector_metaset.selected_columns
-                for table_slug in satisfied_slugs
-                if table_slug in vector_metaset.selected_columns
-            }
-            for table_slug in satisfied_slugs:
-                if table_slug in vector_metadata_map and table_slug not in vector_metaset.selected_columns:
-                    table = vector_metadata_map[table_slug]
-                    all_columns = [col.name for col in table.columns]
-                    vector_metaset.selected_columns[table_slug] = all_columns
 
         # Create SQLMetaset object using the vector schema and SQL data
         sql_metaset = SQLMetaset(
@@ -1265,7 +1071,7 @@ class IterativeTableLookup(TableLookup):
     def _format_context(self) -> str:
         """Generate formatted text representation from schema objects."""
         sql_metaset = self._memory.get("sql_metaset")
-        return sql_metaset.selected_context
+        return str(sql_metaset)
 
 
 class DbtslLookup(VectorLookupTool, DbtslMixin):

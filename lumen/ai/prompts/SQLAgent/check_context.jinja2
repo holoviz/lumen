@@ -2,72 +2,86 @@
 
 {%- block instructions %}
 # Instructions:
-Determine the discovery steps needed to answer the user's query.
+Determine discovery steps needed to answer the user's query.
 
-**Step-by-step:**
-1. Identify user-requested values.
-2. List only visible enum values; do not assume beyond '...'.
-3. If enum shows ['A', 'B', '...']: "Confirmed: A, B. Unconfirmed: after '...'"
-4. Provide discovery steps - if values need to be explored first, start with exploration steps, then end with the final analysis.
-5. Always provide at least one discovery step.
+## Query Classification:
 
-Rules:
-- If previous discoveries found the needed values, provide only the final analysis step
-- Only require exploration if you need to FILTER BY specific values that aren't visible AND are uncertain to exist
-- Common/standard values (like 'Winter'/'Summer', 'Male'/'Female', etc.) don't need exploration
-- If the query is about finding patterns, counts, or rankings, prefer direct analysis over exploration
-- Only visible enum values are confirmed; NEVER assume values are "likely" or "probably" present
-- Don't make assumptions about what exists - if it's not visible, it's not confirmed
-- Discovery steps: (1) Find specific uncertain values only if needed for filtering, (2) Final analysis
-- Combine related operations into single steps to avoid fragmentation
+**DIRECT QUERIES** (Quick schema check + answer):
+- Table/file display: "show table", "display data", "show [filename]"
+- Simple operations: "count rows", "sum totals", "top N", "describe table"
+
+→ Direct execution without discovery steps
+
+**ENTITY DISCOVERY QUERIES** (Focused discovery needed):
+- Specific entity filters with unknown values
+- Names, places, companies needing pattern discovery
+- Complex entity combinations
+
+→ Systematic discovery with small token limits
+
+## Critical Rules:
+- User terms may not match actual schema
+- Column names/enum values may differ from expected
+- ALWAYS verify column names and enum values first
+- Be token conscious - results inject back into context
+
+## Discovery Strategy:
+
+**Data Quality Assessment:**
+- Check for invalid values of relevant columns (-9999, empty strings, 'N/A', 'NULL')
+- Identify formatting issues (currency symbols, commas in numbers)
+- Detect subtitle/unit rows that need OFFSET
+- Use pattern matching: `WHERE "column" ILIKE '%pattern%' AND "column" IS NOT NULL`
+- Always exclude NULLs with IS NOT NULL
+- Keep the SQL statements as simple as possible
+
+**Step Planning:**
+1. **Direct:** Single step with final answer
+2. **Discovery:** Structure check → Data cleaning assessment → Value discovery → Final analysis
+3. **Complex:** 2-3 focused steps maximum
+
 {% endblock %}
 
 {% block examples %}
-Examples:
-Data Schema: 'name' enum ['Alice', 'Bob', 'Charlie', ...], 'year' enum [2020, 2021, 2022], 'region' enum ["North America", "Europe", ...]
+**Examples:**
 
-1. No Previous Discovery, Incomplete Enum:
-User: "Show sales for John in 2022"
-- 'John' not in confirmed 'name' values; '2022' is confirmed.
-Discovery Steps: ['Explore distinct names containing John', 'Show sales for John or alike in 2022 excluding nulls']
+**Direct (No steps needed):**
+- "Show me the data table" → ['Display the data table']
+- "Show customers.csv" → ['Display customers.csv']
 
-2. No Discovery Needed:
-User: "Show who made the most sales in 2020"
-- '2020' confirmed
-Discovery Steps: ['Show who made the most sales in 2020 excluding nulls']
+**Analysis (Structure check first):**
+- "Which entity has the most metric?" → ['Check structure', 'Count metric by entity']
 
-3. DON'T assume "likely" values:
-User: "Show sales data for Fredd"
-❌ BAD: "Fredd is likely present as it's a common name" - NO ASSUMPTIONS!
-✅ GOOD: "Fredd not visible in customer_name enum"
-Discovery Steps: ['Check if Fredd exists in customer_name values', 'Show sales data from Fredd']
-
-4. No Exploration Needed - Pattern/Ranking Query:
-User: "What are the top 3 most common categories?"
-'category' enum shows ['Electronics', 'Books', ...] - incomplete but not needed for ranking
-Discovery Steps: ['Count occurrences of each category and identify the top 3 most common']
-
-6. Counter Example:
-User: "Which salesperson in the Asian region has the highest revenue?"
-'Asia' not in confirmed 'region' values
-BAD Discovery Steps: ['Check available regions for Asia or Asian', 'Filter salespeople by Asian region', 'Group by salesperson', 'Sum revenue per salesperson', 'Find maximum revenue', 'Identify top salesperson']
-GOOD Discovery Steps: ['Check available regions for Asia or Asian', 'Find the salesperson with highest revenue in the Asian region']
-**DON'T do the BAD - too fragmented:**
+**Discovery:**
+- "Show records for [Name]" → ['Find name variations (LIMIT 10)', 'Display matching records']
+- "Analyze sales data" → ['Check structure', 'Assess data quality/cleaning needs (LIMIT 10)', 'Perform analysis']
 {% endblock %}
 
 {% block context %}
 Please analyze the data context below and provide discovery steps:
+
 {%- if previous_sql_plan_results is defined and previous_sql_plan_results %}
-**Previous SQL Plan Results:**
+
+**Previous Results:**
 {{ previous_sql_plan_results }}
 
-- If previous SQL plans found the needed values, provide only the final analysis step
-- If requested values are still missing, start with exploration steps
+**Analysis Guide:**
+- Found needed values → final step only
+- Missing values → focused discovery (small LIMIT)
+- Be token efficient
+
 {%- else %}
-**No Previous SQL Plan Results**
-- If requested values aren't visible in schema enums, start with exploration steps
-- Always provide at least one discovery step
+
+**First Iteration**
+
+**Analysis Guide:**
+- Simple display → Direct answer
+- Aggregation/ranking → Schema check + answer
+- Entity names → Discovery needed
+- Always verify schema first
+
 {%- endif %}
 
-{{ memory["sql_metaset"].selected_context }}
+**Available Schema:**
+{{ memory["sql_metaset"].compact_context }}
 {%- endblock %}

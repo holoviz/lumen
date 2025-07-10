@@ -685,8 +685,8 @@ class Planner(Coordinator):
 
         is_follow_up = result.yes
         if not is_follow_up:
-            self._memory.pop("data", None)
             self._memory.pop("pipeline", None)
+
         return is_follow_up
 
     async def _execute_planner_tools(self, messages: list[Message]):
@@ -924,21 +924,18 @@ class Planner(Coordinator):
             )
             actors_in_graph.add(actor)
 
-        if "ValidationAgent" in agents:
+        if "ValidationAgent" in agents and len(actors_in_graph) > 1:
             validation_step = type(step)(
                 actor="ValidationAgent",
                 instruction='Validate whether the executed plan fully answered the user\'s original query.',
                 title='Validating results',
-                render_output=False
             )
             steps.append(validation_step)
-            execution_graph.append(
-                ExecutionNode(
-                    actor=agents["ValidationAgent"],
-                    provides=agents["ValidationAgent"].provides,
+            tasks.append(
+                Task(
+                    subtasks=[agents["ValidationAgent"]],
                     instruction=validation_step.instruction,
-                    title=validation_step.title,
-                    render_output=validation_step.render_output
+                    title=validation_step.title
                 )
             )
             actors_in_graph.add("ValidationAgent")

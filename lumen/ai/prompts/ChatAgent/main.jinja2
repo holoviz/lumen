@@ -34,6 +34,6 @@ No dataset has been loaded yet. Please ask the user to load a dataset or provide
 The user has not provided any data or documents to chat about. Please prompt the user
 to upload some data or documents.
 {%- elif 'vector_metaset' in memory %}
-{{ memory['vector_metaset'].min_context }}
+{{ memory['vector_metaset'].table_context }}
 {%- endif %}
 {% endblock -%}
