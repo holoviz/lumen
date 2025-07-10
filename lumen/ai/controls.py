@@ -744,7 +744,7 @@ class RetryControls(Viewer):
 
     def _enter_reason(self, _):
         self.param.update(
-            reason=self._text_input.value,
+            reason=self._text_input.value_input,
             active=False,
         )
 

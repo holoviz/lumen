@@ -462,6 +462,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
                     history=messages, memory=self._memory, interface=self.interface, steps_layout=self.steps_layout
                 ):
                     await plan.execute()
+            self.steps_layout.title = f"✅ Sucessfully completed {plan.title!r}"
 
             if "pipeline" in self._memory:
                 await self._add_analysis_suggestions()
@@ -985,6 +986,7 @@ class Planner(Coordinator):
                         planned = True
                     if attempts > 5:
                         istep.failed_title = "Planning failed to come up with viable plan, please restate the problem and try again."
+                        self.steps_layout.title = "❌ Planning failed"
                         e = RuntimeError("Planner failed to come up with viable plan after 5 attempts.")
                         traceback.print_exception(e)
                         raise e

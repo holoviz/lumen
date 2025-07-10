@@ -23,8 +23,9 @@ from panel.util import edit_readonly
 from panel.viewable import Child, Children, Viewer
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
-    Button, ChatFeed, ChatInterface, ChatMessage, Column, FileDownload, List,
-    MultiChoice, Page, Paper, Row, Switch, Tabs, ToggleIcon,
+    Button, ChatFeed, ChatInterface, ChatMessage, Column, FileDownload,
+    IconButton, MenuList, MultiChoice, Page, Paper, Row, Switch, Tabs,
+    ToggleIcon,
 )
 
 from ..pipeline import Pipeline
@@ -38,7 +39,6 @@ from .agents import (
 )
 from .components import SplitJS, StatusBadge
 from .config import PROVIDED_SOURCE_NAME, SOURCE_TABLE_SEPARATOR
-from .controls import SourceControls
 from .coordinator import Coordinator, Plan, Planner
 from .export import (
     export_notebook, make_md_cell, make_preamble, render_cells, write_notebook,
@@ -63,23 +63,23 @@ and visualize data without writing code.
 
 On the chat interface...
 
-💬 Ask questions in plain English to generate SQL queries and visualizations
-🔍 Inspect and validate results through conversation
-📝 Get summaries and key insights from your data
-🧩 Apply custom analyses with a click of a button
+💬 Ask questions in plain English to generate SQL queries and visualizations  
+🔍 Inspect and validate results through conversation  
+📝 Get summaries and key insights from your data  
+🧩 Apply custom analyses with a click of a button  
 
 If unsatisfied with the results...
 
-🔄 Use the Rerun button to re-run the last query
-⏪ Use the Undo button to remove the last query
-🗑️ Use the Clear button to start a new session
+🔄 Use the Rerun button to re-run the last query  
+⏪ Use the Undo button in the + menu to remove the last query  
+🗑️ Use the Clear button in the + menu to start a new session  
 
 Click the toggle, or drag the edge, to expand the sidebar and...
 
-🌐 Explore data with [Graphic Walker](https://docs.kanaries.net/graphic-walker) - filter, sort, download
-💾 Access all generated tables and visualizations under tabs
-📤 Export your session as a reproducible notebook
-"""
+🌐 Explore data with [Graphic Walker](https://docs.kanaries.net/graphic-walker) - filter, sort, download  
+💾 Navigate, reorder and delete explorations in the sidebar  
+📤 Export your session as a reproducible notebook  
+"""  # noqa: W291
 
 EXPLORATIONS_INTRO = """
 🧪 **Explorations**
@@ -99,24 +99,20 @@ class TableExplorer(Viewer):
     def __init__(self, **params):
         super().__init__(**params)
         self._table_select = MultiChoice(
-            placeholder="Select table(s)", sizing_mode='stretch_width',
-            max_height=200, max_items=5, min_height=65, margin=0
+            label="Select table(s) to preview", sizing_mode='stretch_width',
+            max_height=200, max_items=5, margin=0
         )
         self._explore_button = Button(
-            name='Explore table(s)', icon='add_chart', button_type='primary', align='center', icon_size="2em",
-            disabled=self._table_select.param.value.rx().rx.not_(), on_click=self._update_explorers, height=65,
-            margin=(0, 0, 0, 10), width=200
+            name='Explore table(s)', icon='add_chart', button_type='primary', icon_size="2em",
+            disabled=self._table_select.param.value.rx().rx.not_(), on_click=self._update_explorers,
+            margin=(0, 0, 0, 10), width=200, align='end'
         )
         self._input_row = Row(self._table_select, self._explore_button)
         self._source_map = {}
         memory.on_change('sources', self._update_source_map)
         self._update_source_map(init=True)
 
-        self._controls = SourceControls(
-            cancellable=False, clear_uploads=True, multiple=True, name='Upload'
-        )
-        self._controls.param.watch(self._explore_table_if_single, "add")
-        self._tabs = Tabs(self._controls, dynamic=True, sizing_mode='stretch_both')
+        self._tabs = Tabs(dynamic=True, sizing_mode='stretch_both')
         self._layout = Column(
             self._input_row, self._tabs, sizing_mode='stretch_both',
         )
@@ -172,7 +168,7 @@ class TableExplorer(Viewer):
                 )
                 explorers.append(walker)
 
-            self._tabs.objects = explorers + [self._controls]
+            self._tabs.objects = explorers
             self._table_select.value = []
 
     def __panel__(self):
@@ -481,7 +477,7 @@ class UI(Viewer):
             if self._source_agent:
                 self._source_agent.table_upload_callbacks = self.table_upload_callbacks
                 page.header.append(
-                    Button(label="Upload Data", icon="upload", color="success", on_click=self._trigger_source_agent)
+                    IconButton(icon="upload", on_click=self._trigger_source_agent, color='light')
                 )
             page.servable()
             return page
@@ -579,7 +575,7 @@ class ExplorerUI(UI):
         cb = self.interface.callback
         self._coordinator.render_output = False
         self.interface.callback = self._wrap_callback(cb)
-        self._explorations = List(
+        self._explorations = MenuList(
             dense=True, label='Explorations', margin=(-50, 0, 0, 0), sizing_mode='stretch_width'
         )
         self._reorder_switch = Switch(
@@ -587,6 +583,8 @@ class ExplorerUI(UI):
             disabled=self._explorations.param.items.rx.len()<2
         )
         self._reorder_switch.param.watch(self._toggle_reorder, 'value')
+        self._explorations.on_action('up', self._move_up)
+        self._explorations.on_action('down', self._move_down)
         self._explorations.on_action('remove', self._delete_exploration)
         self._explorer = TableExplorer(interface=self.interface)
         self._explorations_intro = Markdown(
@@ -603,7 +601,7 @@ class ExplorerUI(UI):
             sx={".MuiIcon-root": {"color": "white"}}
         )
         self._report_toggle.param.watch(self._toggle_report, ['value'])
-        self._home = Exploration(
+        self._last_synced = self._home = Exploration(
             context=memory,
             title='Home',
             conversation=self.interface.objects,
@@ -612,7 +610,7 @@ class ExplorerUI(UI):
         home_item = {'label': 'Home', 'icon': 'home', 'view': self._home}
         self._explorations.param.update(items=[home_item], value=home_item)
         self._explorations.param.watch(self._cleanup_explorations, ['items'])
-        self._explorations.param.watch(self._update_conversation, ['value'])
+        self._explorations.param.watch(self._update_conversation, ['active'])
         self._global_notebook_export = FileDownload(
             icon="notebook",
             icon_size="1.5em",
@@ -636,13 +634,28 @@ class ExplorerUI(UI):
         self._sidebar = Column(self._reorder_switch, self._explorations)
         self._idle = asyncio.Event()
         self._idle.set()
-        self._last_synced = None
+
+    def _move_up(self, item):
+        items = list(self._explorations.items)
+        index = items.index(item)
+        if index <= 1:
+            return
+        items.pop(index)
+        items.insert(index-1, item)
+        self._explorations.items = items
+
+    def _move_down(self, item):
+        items = list(self._explorations.items)
+        index = items.index(item)
+        items.pop(index)
+        items.insert(index+1, item)
+        self._explorations.items = items
 
     def _toggle_reorder(self, event):
         items = self._explorations.items[:1]
         reorder_actions = [
-            {'label': 'Move Up', 'inline': True, 'icon': 'keyboard_arrow_up'},
-            {'label': 'Move Down', 'inline': True, 'icon': 'keyboard_arrow_down'}
+            {'action': 'up', 'label': 'Move Up', 'inline': True, 'icon': 'keyboard_arrow_up'},
+            {'action': 'down', 'label': 'Move Down', 'inline': True, 'icon': 'keyboard_arrow_down'}
         ]
         for item in self._explorations.items[1:]:
             item = dict(item)
@@ -702,12 +715,13 @@ class ExplorerUI(UI):
                 # If active tab has changed while we waited
                 # skip the sync
                 return
+
             # If conversation was already updated, resync conversation
             if self._last_synced is exploration:
-                exploration.conversation = self.interface.objects
-            else:
+                exploration.conversation = list(self.interface.objects)
+            elif self._last_synced is not None:
                 # Otherwise snapshot the conversation
-                event.old['view'].conversation = self._snapshot_messages()
+                self._last_synced.conversation = self._snapshot_messages()
 
         with hold():
             self._set_conversation(exploration.conversation)
@@ -764,7 +778,7 @@ class ExplorerUI(UI):
             title=title,
             view=output
         )
-        view_item = {'label': title, 'removeable': True, 'view': exploration, 'icon': None, 'actions': [{'action': 'remove', 'label': 'Remove', 'icon': 'delete'}]}
+        view_item = {'label': title, 'view': exploration, 'icon': None, 'actions': [{'action': 'remove', 'label': 'Remove', 'icon': 'delete'}]}
         with hold():
             self.interface.objects = conversation
             self._idle.set()
