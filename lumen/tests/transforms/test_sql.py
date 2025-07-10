@@ -510,13 +510,13 @@ class TestSQLRemoveSourceSeparator:
         assert result == expected
 
     def test_basic(self):
-        sql_in = "SELECT * FROM source__@__table2"
+        sql_in = "SELECT * FROM source ⦙ table2"
         result = SQLRemoveSourceSeparator.apply_to(sql_in)
         expected = "SELECT * FROM table2"
         assert result == expected
 
     def test_read(self):
-        sql_in = "SELECT * FROM read_csv('source__@__table2.csv')"
+        sql_in = "SELECT * FROM read_csv('source ⦙ table2.csv')"
         result = SQLRemoveSourceSeparator.apply_to(sql_in, read="duckdb")
         expected = "SELECT * FROM READ_CSV('table2.csv')"
         assert result == expected
@@ -531,7 +531,7 @@ class TestSQLRemoveSourceSeparator:
                     "lat" AS "Latitude",
                     'Data Center' AS "Type"
                 FROM
-                    READ_CSV('ProvidedSource00000__@__data_centers.csv')
+                    READ_CSV('ProvidedSource00000 ⦙ data_centers.csv')
             ),
             power_plants AS (
                 SELECT
@@ -540,7 +540,7 @@ class TestSQLRemoveSourceSeparator:
                     "Plant latitude" AS "Latitude",
                     "Plant primary fuel category" AS "Type"
                 FROM
-                    READ_CSV('ProvidedSource00000__@__plant_specific_buffers.csv')
+                    READ_CSV('ProvidedSource00000 ⦙ plant_specific_buffers.csv')
             )
 
             SELECT
@@ -560,14 +560,16 @@ class TestSQLRemoveSourceSeparator:
                 power_plants;
         """
         result = SQLRemoveSourceSeparator.apply_to(sql_in, read="duckdb")
-        assert "__@__" not in result
+        assert " ⦙ " not in result
+        assert "READ_CSV('plant_specific_buffers.csv')" in result
+        assert "READ_CSV('data_centers.csv')" in result
 
     def test_string_literals_preserved(self):
         """Test that string literals with quotes are preserved during source separator removal."""
         sql_in = dedent(
             '''
             SELECT "athlete_full_name", "medal_type", COUNT(*) AS "medal_count"
-            FROM "ProvidedSource00000__@__olympic_medals.csv"
+            FROM "ProvidedSource00000 ⦙ olympic_medals.csv"
             WHERE "country_name" = 'United States of America'
               AND "athlete_full_name" IS NOT NULL
               AND "athlete_full_name" != 'Michael PHELPS'

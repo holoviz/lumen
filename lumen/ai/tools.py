@@ -165,7 +165,7 @@ class VectorLookupToolUser(ToolUser):
         kwargs = super()._get_tool_kwargs(tool, prompt_tools, **params)
 
         # If the tool is already instantiated and has a vector_store, use it
-        if isinstance(tool, VectorLookupTool) and tool.vector_store is not None:
+        if not isinstance(tool, VectorLookupTool) or (isinstance(tool, VectorLookupTool) and tool.vector_store is not None):
             return kwargs
         elif isinstance(tool, VectorLookupTool) and tool._item_type_name == "document" and self.document_vector_store is not None:
             kwargs["vector_store"] = self.document_vector_store
@@ -380,7 +380,7 @@ class VectorLookupTool(Tool):
         if all(result.get('metadata') == results[0].get('metadata') for result in results) or self.llm is None:
             return results
 
-        with self._add_step(title="Vector Search with Refinement") as step:
+        with self._add_step(title="Vector Search with Refinement", steps_layout=self.steps_layout) as step:
             best_similarity = max([result.get('similarity', 0) for result in results], default=0)
             best_results = results
             step.stream(f"Initial search found {len(results)} chunks with best similarity: {best_similarity:.3f}\n\n")
@@ -571,7 +571,9 @@ class TableLookup(VectorLookupTool):
     not_with = param.List(default=["IterativeTableLookup"])
 
     purpose = param.String(default="""
-        Discovers relevant tables using vector search, providing context for other agents.""")
+        Discovers relevant tables using vector search, providing context for other agents.
+        Not to be used for finding tables for further analysis (e.g. SQL), because it does
+        not provide a schema.""")
 
     requires = param.List(default=["sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
@@ -872,7 +874,6 @@ class TableLookup(VectorLookupTool):
         return self._format_context()
 
 
-
 class IterativeTableLookup(TableLookup):
     """
     Extended version of TableLookup that performs an iterative table selection process.
@@ -936,7 +937,11 @@ class IterativeTableLookup(TableLookup):
         sources = {source.name: source for source in self._memory["sources"]}
 
         for iteration in range(1, max_iterations + 1):
-            with self._add_step(title=f"Iterative table selection {iteration} / {max_iterations}", success_title=f"Selection iteration {iteration} / {max_iterations} completed") as step:
+            with self._add_step(
+                title=f"Iterative table selection {iteration} / {max_iterations}",
+                success_title=f"Selection iteration {iteration} / {max_iterations} completed",
+                steps_layout=self.steps_layout
+            ) as step:
                 available_slugs = [
                     table_slug for table_slug in all_slugs
                     if table_slug not in examined_slugs

@@ -12,7 +12,6 @@ repos:
     -   id: detect-private-key
     -   id: end-of-file-fixer
         exclude: \.(csv|excalidraw)$
-    -   id: trailing-whitespace
 -   repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.6.9
     hooks:
