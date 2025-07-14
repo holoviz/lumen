@@ -83,6 +83,9 @@ class OpenAIEmbeddings(Embeddings):
         default="text-embedding-3-small", doc="The OpenAI model to use."
     )
 
+    max_chars_per_batch = param.Integer(default=1_000_000, doc="""
+        Maximum number of characters per batch for embedding requests; OpenAI has a 300,000 token limit per request.""")
+
     def __init__(self, **params):
         super().__init__(**params)
         from openai import AsyncOpenAI
@@ -91,8 +94,31 @@ class OpenAIEmbeddings(Embeddings):
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         texts = [text.replace("\n", " ").strip() for text in texts]
-        response = await self.client.embeddings.create(input=texts, model=self.model)
-        return [r.embedding for r in response.data]
+
+        # OpenAI has a 300,000 token limit per request
+        all_embeddings = []
+        current_batch = []
+        current_batch_chars = 0
+
+        for text in texts:
+            text_chars = len(text)
+
+            # If adding this text would exceed the limit, process current batch
+            if current_batch and (current_batch_chars + text_chars > self.max_chars_per_batch):
+                response = await self.client.embeddings.create(input=current_batch, model=self.model)
+                all_embeddings.extend([r.embedding for r in response.data])
+                current_batch = []
+                current_batch_chars = 0
+
+            current_batch.append(text)
+            current_batch_chars += text_chars
+
+        # Process the final batch if it has any texts
+        if current_batch:
+            response = await self.client.embeddings.create(input=current_batch, model=self.model)
+            all_embeddings.extend([r.embedding for r in response.data])
+
+        return all_embeddings
 
 
 class AzureOpenAIEmbeddings(Embeddings):

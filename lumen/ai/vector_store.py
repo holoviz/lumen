@@ -18,10 +18,13 @@ import numpy.core.multiarray
 import param
 import semchunk
 
+from markitdown import FileConversionException, MarkItDown, StreamInfo
 from panel import cache as pn_cache
 from tqdm.auto import tqdm
 
 from .actor import PROMPTS_DIR, LLMUser
+from .batch_providers import BatchProcessingNotSupportedError, BatchProvider
+from .batch_situate import BatchSituateProcessor
 from .embeddings import Embeddings, NumpyEmbeddings
 from .models import YesNo
 from .utils import log_debug
@@ -82,11 +85,33 @@ class VectorStore(LLMUser):
         doc="List of metadata keys to exclude when creating the embeddings.",
     )
 
-    situate = param.Boolean(
+    situate = param.ClassSelector(
+        class_=(int, bool),
         default=False,
         doc="""
-        Whether to insert a `llm_context` key in the metadata containing
-        contextual about the chunks.""",
+        Controls whether to add a `llm_context` key to the metadata
+        with contextual information about the chunks.
+        If set to True, all chunks will be situated.
+        If set to an integer, only chunks with a character
+        count less than or equal to this value will be situated.
+        If set to False, no chunks will be situated.""",
+    )
+
+    batch_situate_threshold = param.Integer(
+        default=1000,
+        bounds=(0, None),
+        doc="Minimum number of chunks to use batch processing for situating. Set to 0 to disable batch processing."
+    )
+
+    batch_provider_kwargs = param.Dict(
+        default={},
+        doc="""
+        Additional keyword arguments to pass to the BatchProvider.
+        This can include parameters like `timeout`, `batch_dir`, etc.""")
+
+    force_new_batches = param.Boolean(
+        default=False,
+        doc="If True, always create new batches even if completed ones exist"
     )
 
     def __init__(self, **params):
@@ -204,7 +229,49 @@ class VectorStore(LLMUser):
 
         return chunks
 
-    async def should_situate_chunk(self, chunk: str) -> bool:
+    async def _situate_chunks(self, should_situate: bool, document: str, chunks: list[str], metadata: dict, max_characters: int | None = None) -> dict[str, str]:
+        """Handle chunk situating with intelligent batch/sequential processing selection"""
+        if not should_situate:
+            return {}
+
+        if not self.llm:
+            raise ValueError("LLM not provided. Cannot apply situate.")
+
+        # Try batch processing for large chunk sets
+        if len(chunks) >= self.batch_situate_threshold > 0:
+            try:
+                provider = BatchProvider.create_for_llm(self.llm, **self.batch_provider_kwargs)
+                batch_processor = BatchSituateProcessor(provider=provider)
+                chunk_contexts = await batch_processor.batch_situate_chunks(
+                    document, chunks, metadata, self, force_new_batch=self.force_new_batches
+                )
+                log_debug(f"Batch processing generated contexts for {len(chunk_contexts)} chunks")
+                return chunk_contexts
+            except BatchProcessingNotSupportedError:
+                log_debug(f"Batch processing not supported for {type(self.llm).__name__}, using sequential processing")
+            except Exception as e:
+                log_debug(f"Batch processing failed: {e}, falling back to sequential processing")
+
+        # Use sequential processing
+        return await self._sequential_situate_chunks(document, chunks, metadata, max_characters)
+
+    async def _sequential_situate_chunks(self, document: str, chunks: list[str], metadata: dict, max_characters: int | None = None) -> dict[str, str]:
+        """Sequential processing of chunk situating (original implementation)"""
+        chunk_contexts = {}
+        previous_context = None
+
+        for chunk in chunks:
+            needs_context = await self.should_situate_chunk(chunk, max_characters)
+            if not needs_context:
+                continue
+
+            context = await self._generate_context(document, chunk, previous_context, metadata)
+            chunk_contexts[chunk] = context
+            previous_context = context
+
+        return chunk_contexts
+
+    async def should_situate_chunk(self, chunk: str, max_characters: int | None = None) -> bool:
         """
         Determine whether a chunk should be situated based on its content.
 
@@ -212,6 +279,8 @@ class VectorStore(LLMUser):
         ----------
         chunk: str
             The chunk text to evaluate
+        max_characters: int | None
+            The maximum character count for situating chunks
 
         Returns
         -------
@@ -220,6 +289,8 @@ class VectorStore(LLMUser):
         """
         if not self.llm:
             return self.situate
+        elif max_characters is not None and len(chunk) > max_characters:
+            return False
 
         try:
             # Use a user message to avoid conflicts with system instructions
@@ -235,7 +306,7 @@ class VectorStore(LLMUser):
         self,
         items: list[dict],
         force_ids: list[int] | None = None,
-        situate: bool | None = None,
+        situate: int | bool | None = None,
     ) -> list[int]:
         """
         Add items to the vector store.
@@ -254,12 +325,16 @@ class VectorStore(LLMUser):
         -------
         List of assigned IDs for the added items.
         """
-        all_texts = []
-        all_metadata = []
-        text_and_metadata_list = []
-
         # Use the provided situate parameter or fall back to the class default
         use_situate = self.situate if situate is None else situate
+        if isinstance(use_situate, int) and use_situate > 0:
+            max_characters = use_situate
+        else:
+            max_characters = None
+
+        # Step 1: Collect ALL chunks from ALL documents
+        all_chunks = []
+        chunk_to_document_map = {}  # Maps chunk -> (document_text, metadata)
 
         for item in items:
             text = item["text"]
@@ -270,47 +345,96 @@ class VectorStore(LLMUser):
                 text, self.chunk_size, self.chunk_func, **self.chunk_func_kwargs
             )
 
-            # Skip situating if use_situate is False
-            if not use_situate or len(content_chunks) <= 1:
-                should_situate = False
-            else:
-                should_situate = True
-
-            # Generate contextual descriptions if situate is enabled and multiple chunks exist
-            chunk_contexts = {}
-            if should_situate and self.llm:
-                previous_context = None  # Start with no previous context
-                for chunk in content_chunks:
-                    needs_context = await self.should_situate_chunk(chunk)
-                    if not needs_context:
-                        continue
-
-                    context = await self._generate_context(text, chunk, previous_context, metadata)
-                    chunk_contexts[chunk] = context
-                    previous_context = context  # Save this context for the next chunk
-            elif should_situate and not self.llm:
-                raise ValueError("LLM not provided. Cannot apply situate.")
-
-            # Process each chunk with its context
+            # Map each chunk to its source document
             for chunk in content_chunks:
-                chunk_metadata = metadata.copy()
+                all_chunks.append(chunk)
+                chunk_to_document_map[chunk] = (text, metadata)
 
-                # Add context to metadata if situate is enabled and multiple chunks exist
-                if should_situate and chunk in chunk_contexts:
-                    chunk_metadata["llm_context"] = chunk_contexts[chunk]
+        log_debug(f"Collected {len(all_chunks)} chunks from {len(items)} documents")
 
-                text_and_metadata = self._join_text_and_metadata(chunk, chunk_metadata)
-                all_texts.append(chunk)
-                all_metadata.append(chunk_metadata)
-                text_and_metadata_list.append(text_and_metadata)
+        # Step 2: Generate contexts using batch or sequential processing
+        chunk_contexts = {}
+        if use_situate and len(all_chunks) > 1:
+            chunk_contexts = await self._situate_all_chunks(
+                all_chunks, chunk_to_document_map, max_characters
+            )
 
-        # Get embeddings for all chunks
+        # Step 3: Prepare final data for storage
+        all_texts = []
+        all_metadata = []
+        text_and_metadata_list = []
+
+        for chunk in all_chunks:
+            document_text, metadata = chunk_to_document_map[chunk]
+            final_metadata = metadata.copy()
+
+            # Add context if available
+            if chunk in chunk_contexts:
+                final_metadata["llm_context"] = chunk_contexts[chunk]
+
+            text_and_metadata = self._join_text_and_metadata(chunk, final_metadata)
+            all_texts.append(chunk)
+            all_metadata.append(final_metadata)
+            text_and_metadata_list.append(text_and_metadata)
+
+        # Step 4: Get embeddings and store
         embeddings = np.array(
             await self.embeddings.embed(text_and_metadata_list), dtype=np.float32
         )
 
-        # Implement add logic in derived classes
         return await self._add_items(all_texts, all_metadata, embeddings, force_ids)
+
+    async def _situate_all_chunks(
+        self,
+        all_chunks: list[str],
+        chunk_to_document_map: dict[str, tuple[str, dict]],
+        max_characters: int | None
+    ) -> dict[str, str]:
+        """Situate chunks using batch processing when possible, sequential as fallback"""
+        # Try batch processing for large chunk sets
+        if len(all_chunks) >= self.batch_situate_threshold > 0:
+            try:
+                provider = BatchProvider.create_for_llm(
+                    self.llm, **self.batch_provider_kwargs
+                )
+                batch_processor = BatchSituateProcessor(provider=provider)
+
+                # For cross-document batching, use a combined context
+                # You could improve this by creating a better combined document context
+                first_doc, first_metadata = next(iter(chunk_to_document_map.values()))
+
+                chunk_contexts = await batch_processor.batch_situate_chunks(
+                    first_doc, all_chunks, first_metadata, self, force_new_batch=self.force_new_batches,
+                )
+                log_debug(f"Batch processing generated contexts for {len(chunk_contexts)} chunks")
+                return chunk_contexts
+
+            except BatchProcessingNotSupportedError as e:
+                raise ValueError(f"Batch processing not supported for {type(self.llm).__name__}, using sequential processing") from e
+
+        # Use sequential processing as fallback
+        return await self._sequential_situate_all_chunks(all_chunks, chunk_to_document_map, max_characters)
+
+    async def _sequential_situate_all_chunks(
+        self,
+        all_chunks: list[str],
+        chunk_to_document_map: dict[str, tuple[str, dict]],
+        max_characters: int | None
+    ) -> dict[str, str]:
+        """Sequential processing fallback"""
+        chunk_contexts = {}
+
+        for chunk in all_chunks:
+            document_text, metadata = chunk_to_document_map[chunk]
+
+            needs_context = await self.should_situate_chunk(chunk, max_characters)
+            if not needs_context:
+                continue
+
+            context = await self._generate_context(document_text, chunk, None, metadata)
+            chunk_contexts[chunk] = context
+
+        return chunk_contexts
 
     @abstractmethod
     async def _add_items(
@@ -401,9 +525,10 @@ class VectorStore(LLMUser):
 
         base_metadata = metadata or {}
 
-        # Collect files that match the pattern and don't match exclude patterns
-        all_ids = []
-        for file_path in tqdm(file_paths, unit="file", desc="Embedding files"):
+        mdit = MarkItDown()
+        all_items = []
+
+        for file_path in tqdm(file_paths, unit="file", desc="Loading files"):
             # Skip directories
             if not file_path.is_file():
                 continue
@@ -419,15 +544,33 @@ class VectorStore(LLMUser):
             file_metadata = base_metadata.copy()
             file_metadata["filename"] = str(file_path)
 
-            all_ids.extend(
-                await self.add_file(
-                    filename=file_path,
-                    metadata=file_metadata,
-                    situate=situate,
-                    upsert=upsert
+            # Load file content
+            try:
+                doc = await asyncio.to_thread(mdit.convert_local, file_path)
+            except FileConversionException:  # for ascii issues
+                with open(file_path, encoding="utf-8") as f:
+                    text_content = f.read()
+                doc = await asyncio.to_thread(
+                    mdit.convert_stream,
+                    io.BytesIO(text_content.encode("utf-8")),
+                    stream_info=StreamInfo(charset="utf-8"),
                 )
-            )
-        return all_ids
+
+            all_items.append({
+                "text": doc.text_content,
+                "metadata": file_metadata
+            })
+
+        if not all_items:
+            return []
+
+        log_debug(f"Loaded {len(all_items)} files, processing with batch-aware add()")
+
+        # Process all items together - add() will handle batch vs sequential automatically
+        if upsert:
+            return await self.upsert(all_items, situate=situate)
+        else:
+            return await self.add(all_items, situate=situate)
 
     async def add_file(
         self,
@@ -461,8 +604,6 @@ class VectorStore(LLMUser):
         -------
         List of assigned IDs for the added items.
         """
-        from markitdown import FileConversionException, MarkItDown, StreamInfo
-
         if metadata is None:
             metadata = {}
         mdit = MarkItDown()
