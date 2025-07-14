@@ -32,7 +32,7 @@ from ..pipeline import Pipeline
 from ..sources import Source
 from ..sources.duckdb import DuckDBSource
 from ..transforms.sql import SQLLimit
-from ..util import detect_file_encoding, log
+from ..util import log
 from .agents import (
     AnalysisAgent, AnalystAgent, ChatAgent, DocumentListAgent, SourceAgent,
     SQLAgent, TableListAgent, ValidationAgent, VegaLiteAgent,
@@ -430,13 +430,8 @@ class UI(Viewer):
                 src = str(src)
                 if src.startswith('http'):
                     remote = True
-                if src.endswith(('.parq', '.parquet')):
-                    table = f"read_parquet('{src}')"
-                elif src.endswith(".csv"):
-                    encoding = detect_file_encoding(src)
-                    table = f"read_csv('{src}', encoding='{encoding}')"
-                elif src.endswith(".json"):
-                    table = f"read_json_auto('{src}')"
+                if src.endswith(('.parq', '.parquet', '.csv', '.json', '.tsv', '.jsonl', '.ndjson')):
+                    table = src
                 else:
                     raise ValueError(
                         f"Could not determine how to load {src} file."
