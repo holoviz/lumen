@@ -675,6 +675,7 @@ class SQLAgent(LumenBaseAgent):
                     feedback, messages, self._memory, sql_query, language=f"sql.{dialect}"
                 )
                 sql_query = clean_sql(retry_result, dialect)
+        return sql_query
 
     async def _execute_query(
         self, source, expr_slug: str, sql_query: str,
@@ -714,7 +715,7 @@ class SQLAgent(LumenBaseAgent):
 
     async def _finalize_execution(
         self, results: dict, context_entries: list[dict],
-        messages: list[Message], render_output: bool, step_title: str | None
+        messages: list[Message], step_title: str | None
     ) -> None:
         """Finalize execution for final step."""
         # Get first result (typically only one for final step)
@@ -735,7 +736,6 @@ class SQLAgent(LumenBaseAgent):
             pipeline,
             spec=result["sql"],
             messages=messages,
-            render_output=render_output,
             title=step_title
         )
 
