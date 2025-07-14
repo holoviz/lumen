@@ -1326,8 +1326,10 @@ class BaseViewAgent(LumenBaseAgent):
                         steps_layout=self._steps_layout,
                     ) as retry_step:
                         view = await self._retry_output_by_line(e, messages, self._memory, yaml.safe_dump(spec), language="")
-                        retry_step.stream(f"\n\n```json\n{view}\n```")
-                    spec = yaml.safe_load(view)
+                        if "json_spec: " in view:
+                            view = view.split("json_spec: ")[-1].rstrip('"').rstrip("'")
+                        spec = json.loads(view)
+                        retry_step.stream(f"\n\n```json\n{spec}\n```")
                     if i == 2:
                         raise
 
