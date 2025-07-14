@@ -647,7 +647,7 @@ class SQLAgent(LumenBaseAgent):
 
     async def _validate_sql(
         self, sql_query: str, expr_slug: str, dialect: str,
-        source, messages: list[Message], step, max_retries: int = 3
+        source, messages: list[Message], step, max_retries: int = 2
     ) -> str:
         """Validate and potentially fix SQL query."""
         # Clean SQL
@@ -742,7 +742,7 @@ class SQLAgent(LumenBaseAgent):
             title=step_title
         )
 
-    @retry_llm_output()
+    @retry_llm_output(retries=3)
     async def _execute_sql_step(
         self,
         action_description: str,
