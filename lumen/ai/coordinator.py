@@ -531,6 +531,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 log_debug(f"Direct dependency detected: {tool.name} provides at least one requirement for {agent.name}")
                 # The agent already has it formatted in its template
                 continue
+            elif len(result) < 1000:
+                is_relevant = True
             else:
                 # Otherwise, check semantic relevance
                 is_relevant = await self._check_tool_relevance(
@@ -837,6 +839,19 @@ class Planner(Coordinator):
         steps = []
         actors = []
         actors_in_graph = set()
+
+        # Check for consecutive agents of the same type
+        consecutive_found = False
+        for i in range(len(plan.steps) - 1):
+            current_actor = plan.steps[i].actor
+            next_actor = plan.steps[i + 1].actor
+            if current_actor == next_actor:
+                consecutive_found = True
+                unmet_dependencies.add(f"Do not use two {current_actor} consecutively!")
+                break
+
+        if consecutive_found:
+            return Plan(subtasks=tasks, title=plan.title), unmet_dependencies, previous_actors
 
         for step in plan.steps:
             key = step.actor

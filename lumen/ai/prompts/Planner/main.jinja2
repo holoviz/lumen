@@ -14,6 +14,7 @@ Ground Rules:
 - Stay within scope of the user's request (don't plot unless asked, etc.)
 - Plan only rather than executing (avoid details)
 - It's often unnecessary to use the same actor multiple times in a single plan
+- NEVER use the same actor consecutively - combine multiple tasks for the same actor into a single step
 - Never mention a lack of data sources or tables in your plan - assume your actors will handle data discovery
 - Do not ignore the actor's exclusions and conditions
 - When keys are already present in memory, utilize them to construct your plan efficiently—avoid assigning an actor to produce memory keys that are already available
@@ -119,7 +120,8 @@ Conditions for use:
 👉 Existing metadata found: Evaluate if current data is sufficient before requesting more
 {%- endif %}
 
-{% if unmet_dependencies %}
+{# Break the terrible loop of it not planning properly #}
+{% if previous_plans and not (previous_plans | length) % 2 == 0 and unmet_dependencies %}
 # ❌ Previous Planning Failure
 
 What went wrong: In your previous attempt, you planned:
@@ -134,30 +136,33 @@ Actors selected:
 
 Failed because: The plan didn't satisfy dependencies: `{{ unmet_dependencies }}`
 
+{% if candidates %}
 Available solutions:
 {%- for candidate in candidates %}
 - `{{ candidate.name[:-5] if candidate.name.endswith('Agent') else candidate.__class__.__name__ }}` provides: `{{ candidate.provides | join('`, `') }}`
 {%- endfor %}
-
-Fix required: Include dependency providers BEFORE the dependent actors in your new plan.
+{% endif %}
 
 ## Recovery Strategy:
 1. Identify which actor(s) failed due to missing dependencies
 2. Add the appropriate provider(s) from the available solutions above
 3. Reorder your plan so providers come before consumers
 4. Verify all dependencies are satisfied in the correct sequence
+5. Include dependency providers BEFORE the dependent actors in your new plan
+6. Do not repeat the same actor consecutively unless absolutely necessary
+
 {%- endif %}
-Remember: A plan that ignores dependencies will always fail. Check requirements before assigning any actor, and do not consecutively use the same actor.
+Remember: A plan that ignores dependencies will always fail. Check requirements before assigning any actor.
 {%- endblock -%}
 
 {% block examples %}
 # Examples
 
-✅ GOOD: "Top 5 customers by revenue"
-1. SQLAgent: Query top customers by revenue
+✅ GOOD: "Top and bottom 5 customers by revenue"
+1. SQLAgent: Query the top 5 customers and bottom 5 customers by revenue
 2. AnalystAgent: Analyze customer patterns
 
-❌ BAD: "Show sales trends"
-1. SQLAgent: Get sales data
-2. SQLAgent: Calculate trends ← Consecutive actor violation
+❌ BAD: "Top and bottom 5 customers by revenue" (consecutive agents)
+1. SQLAgent: Query the top 5 customers by revenue
+2. SQLAgent: Query the bottom 5 customers by revenue
 {% endblock %}

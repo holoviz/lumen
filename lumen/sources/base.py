@@ -1000,7 +1000,7 @@ class BaseSQLSource(Source):
             try:
                 table = self.tables[self.normalize_table(table)]
             except KeyError as e:
-                raise KeyError(f"Table {table} not found in {self.tables.keys()}") from e
+                raise KeyError(f"Table {table!r} not found in {self.tables.keys()}") from e
         else:
             table = self.normalize_table(table)
 

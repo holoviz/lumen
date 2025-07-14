@@ -1,6 +1,7 @@
 import json
 
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -14,6 +15,7 @@ from lumen.ai.agents import (
     AnalystAgent, ChatAgent, SQLAgent, VegaLiteAgent,
 )
 from lumen.ai.llm import Llm
+from lumen.ai.models import NextStep, SQLRoadmap
 from lumen.ai.schemas import get_metaset
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
@@ -133,9 +135,34 @@ class TestSoloAgentRespond:
         mock_memory["source"] = duckdb_source
         mock_memory["sources"] = sources = {"duckdb": duckdb_source}
         mock_memory["sql_metaset"] = await get_metaset(sources, ["test_sql"])
+
         agent = SQLAgent(llm=mock_llm, memory=mock_memory)
-        response = await agent.respond(test_messages)
-        assert response is not None
+
+        dummy_roadmap = SQLRoadmap(
+            estimated_steps=1,
+            discovery_steps=["Check schema"],
+            validation_checks=["Check for NULLs"],
+            potential_issues=[],
+            join_strategy="Simple lookup"
+        )
+
+        dummy_next_step = NextStep(
+            step_type="discover",
+            action_description="SELECT * FROM test_sql",
+            should_materialize=False,
+            is_final_answer=True,
+            reasoning="It's a simple query.",
+            pre_step_validation="Valid",
+        )
+
+        with patch.object(SQLAgent, "_generate_roadmap", new=AsyncMock(return_value=dummy_roadmap)), \
+            patch.object(SQLAgent, "_plan_next_step", new=AsyncMock(return_value=dummy_next_step)), \
+            patch.object(SQLAgent, "_generate_sql_queries", new=AsyncMock(return_value={"test_query": "SELECT * FROM test_sql"})), \
+            patch.object(SQLAgent, "_validate_sql", new=AsyncMock(side_effect=lambda *a, **kw: a[1])), \
+            patch.object(SQLAgent, "_execute_query", new=AsyncMock(return_value=("done", "done", "summary"))), \
+            patch.object(SQLAgent, "_finalize_execution", new=AsyncMock(return_value="done")):
+            response = await agent.respond(test_messages)
+            assert response is "done"
 
     async def test_vegalite_agent(self, mock_llm, mock_memory, duckdb_source, test_messages):
         """Test VegaLiteAgent instantiation and respond"""

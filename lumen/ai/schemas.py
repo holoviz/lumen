@@ -46,8 +46,7 @@ class VectorMetaset:
             include_columns: Whether to include column details in the context
             truncate: Whether to truncate strings and columns for brevity
         """
-        context = "Below are the relevant tables available:\n\n"
-
+        context = ""
         for table_slug, vector_metadata in self.vector_metadata_map.items():
             base_sql = truncate_string(vector_metadata.base_sql, max_length=200) if truncate else vector_metadata.base_sql
             context += f"{table_slug!r} (access this table with: {base_sql})\n"
@@ -130,7 +129,7 @@ class SQLMetaset:
         Returns:
             Formatted context string
         """
-        context = "Below are the relevant tables available:\n\n"
+        context = ""
 
         for table_slug in self.sql_metadata_map.keys():
             vector_metadata = self.vector_metaset.vector_metadata_map.get(table_slug)
