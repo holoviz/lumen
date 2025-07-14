@@ -9,14 +9,12 @@ import aiohttp
 import pandas as pd
 import param
 
-from panel.chat import ChatAreaInput
-from panel.layout import (
-    Column, FlexBox, Row, Tabs,
-)
 from panel.pane.markup import HTML
 from panel.viewable import Viewer
-from panel.widgets import (
-    Button, FileDropper, Select, Tabulator, TextInput, ToggleIcon, Tqdm,
+from panel.widgets import FileDropper, Tabulator, Tqdm
+from panel_material_ui import (
+    Button, ChatAreaInput, Column, FlexBox, Row, Select, Tabs, TextInput,
+    ToggleIcon,
 )
 
 from ..sources.duckdb import DuckDBSource
@@ -152,7 +150,7 @@ class SourceControls(Viewer):
         self._file_input = FileDropper(
             layout="compact",
             multiple=self.param.multiple,
-            margin=(10, 10, 0, 10),
+            margin=0,
             sizing_mode="stretch_width",
             # accepted_filetypes=[".csv", ".parquet", ".parq", ".json", ".xlsx"],
         )
@@ -725,17 +723,19 @@ class RetryControls(Viewer):
         super().__init__(**params)
         icon = ToggleIcon.from_param(
             self.param.active,
-            name=" ",
+            label=" ",
             description="Prompt LLM to retry",
-            icon="repeat-once",
-            active_icon="x",
-            margin=5,
+            icon="edit",
+            active_icon="cancel",
+            margin=(5, 0),
+            size="1em"
         )
         self._text_input = TextInput(
             placeholder="Enter feedback and press the <Enter> to retry.",
             visible=icon.param.value,
             max_length=200,
             margin=(5, 0),
+            size="small"
         )
         row = Row(icon, self._text_input)
         self._row = row
@@ -744,7 +744,7 @@ class RetryControls(Viewer):
 
     def _enter_reason(self, _):
         self.param.update(
-            reason=self._text_input.value,
+            reason=self._text_input.value_input,
             active=False,
         )
 

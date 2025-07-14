@@ -12,9 +12,9 @@ Ground Rules:
 - Respect dependency chains: assign tasks only when input requirements are met
 - Leverage existing memory instead of regenerating information if possible
 - Stay within scope of the user's request (don't plot unless asked, etc.)
-- Do not use the same actor twice in a row
 - Plan only rather than executing (avoid details)
 - It's often unnecessary to use the same actor multiple times in a single plan
+- NEVER use the same actor consecutively - combine multiple tasks for the same actor into a single step
 - Never mention a lack of data sources or tables in your plan - assume your actors will handle data discovery
 - Do not ignore the actor's exclusions and conditions
 - When keys are already present in memory, utilize them to construct your plan efficiently—avoid assigning an actor to produce memory keys that are already available
@@ -24,13 +24,6 @@ Ground Rules:
 {% endblock -%}
 
 {%- block context %}
-# Current Memory
-{%- for key in memory.keys() %}
-{%- if memory[key] is not none %}
-- `{{ key }}`
-{%- endif %}
-{%- endfor %}
-
 # Available Actors with Dependency Analysis
 {%- if tools %}
 ## 🛠️ Tools
@@ -38,6 +31,8 @@ Ground Rules:
 
 {{ tool.__class__.__name__ }} provides: {{ tool.provides | join('`, `') or ' responses' }}
 {{ ' '.join(tool.purpose.strip().split()) }}
+Conditions for use:
+{{ tool.conditions | join('\n') }}
 {%- set missing_reqs = [] %}
 {%- for req in tool.requires %}
   {%- if req not in memory.keys() or memory[req] is none %}
@@ -49,8 +44,6 @@ Ground Rules:
 {%- else %}
 ✅ Ready!
 {%- endif %}
-Conditions for use:
-{{ tool.conditions | join('\n') }}
 {%- endfor %}
 {% endif %}
 
@@ -58,6 +51,8 @@ Conditions for use:
 {%- for agent in agents %}
 {{ agent.name[:-5] }} provides {{ agent.provides | join('`, `') or 'None' }}
 {{- agent.purpose }}
+Conditions for use:
+{{ agent.conditions | join('\n') }}
 {%- set missing_reqs = [] %}
 {%- for req in agent.requires %}
   {%- if req not in memory.keys() or memory[req] is none %}
@@ -82,8 +77,6 @@ Conditions for use:
 {%- else %}
 ✅ Ready!
 {%- endif %}
-Conditions for use:
-{{ agent.conditions | join('\n') }}
 {% endfor %}
 # Current Data Context
 
@@ -109,12 +102,6 @@ Conditions for use:
 📋 Last table: `{{ memory['table'] }}`
 {%- endif %}
 
-{%- if 'vector_metaset' in memory and memory.get('vector_metaset').selected_columns %}
-📃 Selected columns:
-{{ memory['vector_metaset'].selected_columns }}
-From query: "{{ memory['vector_metaset'].query }}"
-{%- endif %}
-
 {%- if 'sql' in memory %}
 🗃️ Current SQL:
 ```sql
@@ -122,13 +109,19 @@ From query: "{{ memory['vector_metaset'].query }}"
 ```
 {%- endif %}
 
+{%- if memory.get('data') is not none %}
+📊 Summary of the data returned from SQL:
+{{ memory["data"] }}
+{%- endif -%}
+
 {%- if is_follow_up and 'vector_metaset' in memory %}
 👉 Follow-up detected: Prioritize using existing data before retrieving new information
 {%- elif 'vector_metaset' in memory and not is_follow_up %}
 👉 Existing metadata found: Evaluate if current data is sufficient before requesting more
 {%- endif %}
 
-{% if unmet_dependencies %}
+{# Break the terrible loop of it not planning properly #}
+{% if previous_plans and not (previous_plans | length) % 2 == 0 and unmet_dependencies %}
 # ❌ Previous Planning Failure
 
 What went wrong: In your previous attempt, you planned:
@@ -143,18 +136,33 @@ Actors selected:
 
 Failed because: The plan didn't satisfy dependencies: `{{ unmet_dependencies }}`
 
+{% if candidates %}
 Available solutions:
 {%- for candidate in candidates %}
 - `{{ candidate.name[:-5] if candidate.name.endswith('Agent') else candidate.__class__.__name__ }}` provides: `{{ candidate.provides | join('`, `') }}`
 {%- endfor %}
-
-Fix required: Include dependency providers BEFORE the dependent actors in your new plan.
+{% endif %}
 
 ## Recovery Strategy:
 1. Identify which actor(s) failed due to missing dependencies
 2. Add the appropriate provider(s) from the available solutions above
 3. Reorder your plan so providers come before consumers
 4. Verify all dependencies are satisfied in the correct sequence
+5. Include dependency providers BEFORE the dependent actors in your new plan
+6. Do not repeat the same actor consecutively unless absolutely necessary
+
 {%- endif %}
-Remember: A plan that ignores dependencies will always fail. Check requirements before assigning any actor!
+Remember: A plan that ignores dependencies will always fail. Check requirements before assigning any actor.
 {%- endblock -%}
+
+{% block examples %}
+# Examples
+
+✅ GOOD: "Top and bottom 5 customers by revenue"
+1. SQLAgent: Query the top 5 customers and bottom 5 customers by revenue
+2. AnalystAgent: Analyze customer patterns
+
+❌ BAD: "Top and bottom 5 customers by revenue" (consecutive agents)
+1. SQLAgent: Query the top 5 customers by revenue
+2. SQLAgent: Query the bottom 5 customers by revenue
+{% endblock %}

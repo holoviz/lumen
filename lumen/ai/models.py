@@ -24,49 +24,133 @@ class ThinkingYesNo(BaseModel):
     yes: bool = Field(description="True if yes, otherwise False.")
 
 
-class Sql(BaseModel):
-
-    chain_of_thought: str = Field(
-        description="""
-        You are a world-class SQL expert, and your fame is on the line so don't mess up.
-        Carefully study the schema, discuss the values in the columns, and whether you need to wrangle
-        the data before you can use it, before finally writing a correct and valid SQL query that fully
-        answers the user's query. If using CTEs, comment on the purpose of each.
-        """
-    )
+class SqlQuery(PartialBaseModel):
+    """A single SQL query with its associated metadata."""
 
     query: str = Field(description="""
-        Correct, valid SQL query that answers the user's question;
-        should only be one query and do NOT add extraneous comments.""")
+        One, correct, valid SQL query that answers the user's question;
+        should only be one query and do NOT add extraneous comments; no multiple semicolons""")
 
     expr_slug: str = Field(
         description="""
-        Give the SQL expression a concise, but descriptive, slug that includes whatever transforms were applied to it,
-        e.g. top_5_athletes. The slug must be unique, i.e. should not match other existing table names or slugs.
+        Provide a unique, descriptive slug for the SQL expression that clearly indicates the key transformations and source tables involved.
+        Include 1 or 2 elements of data lineage in the slug, such as the main transformation and original table names,
+        e.g. top_5_athletes_in_2020 or distinct_years_from_wx_table.
+        Ensure the slug does not duplicate any existing table names or slugs.
         """
     )
 
 
-class CheckContext(BaseModel):
-    information_completeness: str = Field(
-        description="""
-        Concisely explain whether the current schema overview provides sufficient
-        information to answer the user's question.
-        """
-    )
+class Sql(PartialBaseModel):
+    """Multiple SQL queries to execute in sequence."""
 
-    discovery_steps: list[str] = Field(
+    queries: list[SqlQuery] = Field(
         default_factory=list,
         description="""
-        Natural language steps describing what data to find to answer the user's question.
-        Try to think of steps that can map to SQL queries (but do not write SQL),
-        so if there are multiple steps that can be expressed as a single SQL query,
-        combine them into one step. Do not mention assume values; keep the steps vague.
-
-        Write in plain English describing WHAT to find, not HOW. Preserve all important
-        context from the user's question (entities, filters, constraints). Keep steps to a minimum,
-        and the LAST step must directly answer the user's question with full context preserved.
+        List of SQL queries to execute. For discovery steps, include multiple queries
+        to explore different aspects (e.g., distinct values from different columns).
+        For final steps, only one query is allowed.
         """
+    )
+
+
+
+class SQLRoadmap(PartialBaseModel):
+    """High-level execution roadmap for SQL query planning."""
+
+    discovery_steps: list[str] = Field(
+        description="""List of discovery steps needed (e.g., 'Check date ranges in both datasets',
+        'Find distinct categories', 'Validate join keys'). Each step should be specific and actionable."""
+    )
+
+    validation_checks: list[str] = Field(
+        default_factory=list,
+        description="""Critical validation checks before proceeding (e.g., 'Verify temporal overlap',
+        'Confirm key format compatibility'). Focus on compatibility between datasets."""
+    )
+
+    join_strategy: str = Field(
+        default="",
+        description="""If joins are needed, describe the strategy and key relationships.
+        Include how to handle temporal or categorical mismatches."""
+    )
+
+    potential_issues: list[str] = Field(
+        default_factory=list,
+        description="""Potential issues to watch for (e.g., 'Limited temporal overlap',
+        'Different granularities', 'Format mismatches'). Be specific to the datasets."""
+    )
+
+    estimated_steps: int = Field(
+        description="Number of steps estimated to complete the query (typically 2-5)."
+    )
+
+
+class NextStep(PartialBaseModel):
+    """Represents the next single step to take in SQL exploration."""
+
+    pre_step_validation: str = Field(
+        description="""
+        If no previous steps, leave empty. Check: 1) Info already available?
+        2) Combinable with other discoveries? 3) Directly contributes to answer?
+        Brief 1-2 sentence assessment.
+        """
+    )
+
+    reasoning: str = Field(
+        description="""
+        Strategic rationale: What gap does this fill? How does it progress toward answer?
+        Approach and why? Materialization decision? Which existing materialized tables used?
+        Focus on "why" and "how", not validation.
+        """
+    )
+
+    step_type: Literal["discover", "filter", "join", "final"] = Field(
+        description="""
+        - "discover": Batch multiple discoveries (LIMIT 10 each) + min/max ranges
+        - "filter": Filter rows (LIMIT 100000)
+        - "join": Combine tables (LIMIT 100000); explore join keys first
+        - "final": Final query (LIMIT 100000)
+        """
+    )
+
+    action_description: str = Field(
+        description="""
+        Executable SQL operation: Which tables/materialized views? Which columns?
+        What filters/joins/aggregations? Expected output and limit?
+        Specific enough for SQL generation, building on previous steps.
+        """
+    )
+
+    should_materialize: bool = Field(
+        description="""
+        True if result used in subsequent steps (joins/filtering, limit 100k).
+        False for one-off exploratory steps. Materialize only when necessary.
+        """
+    )
+
+    is_final_answer: bool = Field(
+        description="""
+        True if this step provides the final answer to user's request.
+        E.g., simple "show table" requests or when all info is available.
+        """
+    )
+
+
+class ReadinessCheck(PartialBaseModel):
+    """Check if we're ready to answer the user's question."""
+
+    reasoning: str = Field(
+        description="Explain what information we have and what might still be missing"
+    )
+
+    is_ready: bool = Field(
+        description="True if we have enough information to write the final query"
+    )
+
+    missing_info: list[str] = Field(
+        default_factory=list,
+        description="List of specific information still needed (if not ready)"
     )
 
 
@@ -100,7 +184,6 @@ def make_plan_models(agents: list[str], tools: list[str]):
         actor=(Literal[tuple(agents+tools)], FieldInfo(description="The name of the actor to assign a task to.")),
         instruction=(str, FieldInfo(description="Instructions to the actor to assist in the task, and whether rendering is required.")),
         title=(str, FieldInfo(description="Short title of the task to be performed; up to three words.")),
-        render_output=(bool, FieldInfo(description="Whether the output of the actor should be rendered. If the user wants to see the table, and the actor is SQL, then this should be `True`.")),
     )
     reasoning = create_model(
         'Reasoning',
@@ -111,6 +194,7 @@ def make_plan_models(agents: list[str], tools: list[str]):
                     Briefly summarize the user's goal and categorize the question type:
                     high-level, data-focused, or other. Identify the most relevant and compatible actors,
                     explaining their requirements, and what you already have satisfied. If there were previous failures, discuss them.
+                    IMPORTANT: Ensure no consecutive steps use the same actor in your planned sequence.
                     """
             ),
         ),
@@ -123,7 +207,10 @@ def make_plan_models(agents: list[str], tools: list[str]):
         steps=(
             list[step],
             FieldInfo(
-                description="A list of steps to perform that will solve user query. Ensure you include ALL the steps needed to solve the task, matching the chain of thought."
+                description="""
+                A list of steps to perform that will solve user query. Each step MUST use a DIFFERENT actor than the previous step.
+                Review your plan to ensure this constraint is met.
+                """
             )
         )
     )
@@ -274,7 +361,7 @@ class QueryCompletionValidation(PartialBaseModel):
     """Validation of whether the executed plan answered the user's query"""
 
     chain_of_thought: str = Field(
-        description="Explain your reasoning succinctly as to why you will be answering yes or no.")
+        description="Restate intent and results succinctly; then explain your reasoning as to why you will be answering yes or no.")
 
     missing_elements: list[str] = Field(
         default_factory=list,

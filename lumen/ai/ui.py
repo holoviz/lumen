@@ -11,41 +11,41 @@ from typing import TYPE_CHECKING, Any
 
 import param
 
-from panel.chat import ChatFeed, ChatInterface, ChatMessage
 from panel.chat.feed import PLACEHOLDER_SVG
 from panel.config import config, panel_extension
 from panel.io.document import hold
 from panel.io.resources import CSS_URLS
 from panel.io.state import state
-from panel.layout import (
-    Column, HSpacer, Row, Tabs,
-)
+from panel.layout import Column as PnColumn, HSpacer
 from panel.pane import SVG, Markdown
 from panel.param import ParamMethod
-from panel.template import FastListTemplate
-from panel.theme import Material
 from panel.util import edit_readonly
-from panel.viewable import Viewer
-from panel.widgets import Button, FileDownload, MultiChoice
+from panel.viewable import Child, Children, Viewer
+from panel_gwalker import GraphicWalker
+from panel_material_ui import (
+    Button, ChatFeed, ChatInterface, ChatMessage, Column, FileDownload,
+    IconButton, MenuList, MultiChoice, Page, Paper, Row, Switch, Tabs,
+    ToggleIcon,
+)
 
-from ..config import SOURCE_TABLE_SEPARATOR
 from ..pipeline import Pipeline
 from ..sources import Source
 from ..sources.duckdb import DuckDBSource
 from ..transforms.sql import SQLLimit
-from ..util import detect_file_encoding, log
+from ..util import log
 from .agents import (
     AnalysisAgent, AnalystAgent, ChatAgent, DocumentListAgent, SourceAgent,
     SQLAgent, TableListAgent, ValidationAgent, VegaLiteAgent,
 )
 from .components import SplitJS, StatusBadge
-from .config import PROVIDED_SOURCE_NAME
-from .coordinator import Coordinator, Planner
+from .config import PROVIDED_SOURCE_NAME, SOURCE_TABLE_SEPARATOR
+from .coordinator import Coordinator, Plan, Planner
 from .export import (
     export_notebook, make_md_cell, make_preamble, render_cells, write_notebook,
 )
 from .llm import Llm, OpenAI
 from .memory import _Memory, memory
+from .report import Report
 from .tools import TableLookup
 from .vector_store import VectorStore
 
@@ -53,6 +53,33 @@ if TYPE_CHECKING:
     from .views import LumenOutput
 
 DataT = str | Path | Source | Pipeline
+
+
+UI_INTRO_MESSAGE = """
+👋 Click a suggestion below or upload a data source to get started!
+
+Lumen AI combines large language models (LLMs) with specialized agents to help you explore, analyze,
+and visualize data without writing code.
+
+On the chat interface...
+
+💬 Ask questions in plain English to generate SQL queries and visualizations  
+🔍 Inspect and validate results through conversation  
+📝 Get summaries and key insights from your data  
+🧩 Apply custom analyses with a click of a button  
+
+If unsatisfied with the results...
+
+🔄 Use the Rerun button to re-run the last query  
+⏪ Use the Undo button in the + menu to remove the last query  
+🗑️ Use the Clear button in the + menu to start a new session  
+
+Click the toggle, or drag the edge, to expand the sidebar and...
+
+🌐 Explore data with [Graphic Walker](https://docs.kanaries.net/graphic-walker) - filter, sort, download  
+💾 Navigate, reorder and delete explorations in the sidebar  
+📤 Export your session as a reproducible notebook  
+"""  # noqa: W291
 
 EXPLORATIONS_INTRO = """
 🧪 **Explorations**
@@ -63,10 +90,99 @@ EXPLORATIONS_INTRO = """
 - Each exploration maintains its own context, so you can branch off an existing result by navigating to that tab.
 """
 
+
+class TableExplorer(Viewer):
+
+    interface = param.ClassSelector(class_=ChatFeed, doc="""
+        The interface for the Coordinator to interact with.""")
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._table_select = MultiChoice(
+            label="Select table(s) to preview", sizing_mode='stretch_width',
+            max_height=200, max_items=5, margin=0
+        )
+        self._explore_button = Button(
+            name='Explore table(s)', icon='add_chart', button_type='primary', icon_size="2em",
+            disabled=self._table_select.param.value.rx().rx.not_(), on_click=self._update_explorers,
+            margin=(0, 0, 0, 10), width=200, align='end'
+        )
+        self._input_row = Row(self._table_select, self._explore_button)
+        self._source_map = {}
+        memory.on_change('sources', self._update_source_map)
+        self._update_source_map(init=True)
+
+        self._tabs = Tabs(dynamic=True, sizing_mode='stretch_both')
+        self._layout = Column(
+            self._input_row, self._tabs, sizing_mode='stretch_both',
+        )
+
+    def _update_source_map(self, old=None, new=None, sources=None, init=False):
+        if sources is None:
+            sources = memory['sources']
+        selected = list(self._table_select.value)
+        deduplicate = len(sources) > 1
+        new = {}
+        for source in sources:
+            tables = source.get_tables()
+            for t in tables:
+                if deduplicate:
+                    t = f'{source.name}{SOURCE_TABLE_SEPARATOR}{t}'
+                if (t.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)[-1] not in self._source_map and
+                    not init and not len(selected) > self._table_select.max_items and state.loaded):
+                    selected.append(t)
+                new[t] = source
+        self._source_map.clear()
+        self._source_map.update(new)
+        selected = selected if len(selected) == 1 else []
+        self._table_select.param.update(options=list(self._source_map), value=selected)
+        self._input_row.visible = bool(self._source_map)
+
+    def _explore_table_if_single(self, event):
+        """
+        If only one table is uploaded, help the user load it
+        without requiring them to click twice. This step
+        only triggers when the Upload in the Overview tab is used,
+        i.e. does not trigger with uploads through the SourceAgent
+        """
+        if len(self._table_select.options) == 1:
+            self._explore_button.param.trigger("value")
+
+    def _update_explorers(self, event):
+        if not event.new:
+            return
+
+        with self._explore_button.param.update(loading=True), self.interface.param.update(loading=True):
+            explorers = []
+            for table in self._table_select.value:
+                source = self._source_map[table]
+                if SOURCE_TABLE_SEPARATOR in table:
+                    _, table = table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
+                pipeline = Pipeline(
+                    source=source, table=table, sql_transforms=[SQLLimit(limit=100_000, read=source.dialect)]
+                )
+                table_label = f"{table[:25]}..." if len(table) > 25 else table
+                walker = GraphicWalker(
+                    pipeline.param.data, sizing_mode='stretch_both', min_height=800,
+                    kernel_computation=True, name=table_label, tab='data'
+                )
+                explorers.append(walker)
+
+            self._tabs.objects = explorers
+            self._table_select.value = []
+
+    def __panel__(self):
+        return self._layout
+
+
 class UI(Viewer):
     """
     UI provides a baseclass and high-level entrypoint to start chatting with your data.
     """
+
+    agents = param.List(default=[], doc="""
+        List of additional Agents to add beyond the default_agents."""
+    )
 
     analyses = param.List(default=[], doc="""
         List of custom analyses. If provided the AnalysesAgent will be added."""
@@ -81,10 +197,6 @@ class UI(Viewer):
         default={}, doc="""Keyword arguments to pass to the Coordinator."""
     )
 
-    agents = param.List(default=[], doc="""
-        List of additional Agents to add beyond the default_agents."""
-    )
-
     default_agents = param.List(default=[
         TableListAgent, ChatAgent, DocumentListAgent, AnalystAgent, SourceAgent, SQLAgent, VegaLiteAgent, ValidationAgent
     ], doc="""List of default agents which will always be added.""")
@@ -92,17 +204,17 @@ class UI(Viewer):
     export_functions = param.Dict(default={}, doc="""
        Dictionary mapping from name of exporter to export function.""")
 
+    interface = param.ClassSelector(class_=ChatFeed, doc="""
+        The interface for the Coordinator to interact with.""")
+
     llm = param.ClassSelector(class_=Llm, default=OpenAI(), doc="""
         The LLM provider to be used by default""")
 
-    log_level = param.ObjectSelector(default='INFO', objects=['DEBUG', 'INFO', 'WARNING', 'ERROR'], doc="""
+    log_level = param.ObjectSelector(default='DEBUG', objects=['DEBUG', 'INFO', 'WARNING', 'ERROR'], doc="""
         The log level to use.""")
 
     logs_db_path = param.String(default=None, doc="""
         The path to the log file that will store the messages exchanged with the LLM.""")
-
-    interface = param.ClassSelector(class_=ChatFeed, doc="""
-        The interface for the Coordinator to interact with.""")
 
     notebook_preamble = param.String(default='', doc="""
         Preamble to add to exported notebook(s).""")
@@ -158,11 +270,22 @@ class UI(Viewer):
             agents.append(AnalysisAgent(analyses=self.analyses))
 
         self._resolve_data(data)
-
         if self.interface is None:
             self.interface = ChatInterface(
-                load_buffer=5, sizing_mode="stretch_both", show_button_tooltips=True, show_button_name=False,
+                callback_exception='verbose',
+                load_buffer=5,
+                margin=(0, 5, 10, 10),
+                sizing_mode="stretch_both",
+                show_button_tooltips=True,
+                show_button_name=False,
             )
+            self.interface._widget.color = "primary"
+            welcome_message = UI_INTRO_MESSAGE
+            self.interface.send(
+                Markdown(welcome_message, sizing_mode="stretch_width"),
+                user="Help", respond=False, show_reaction_icons=False, show_copy_icon=False
+            )
+
         levels = logging.getLevelNamesMapping()
         if levels.get(self.log_level) < 20:
             self.interface.callback_exception = "verbose"
@@ -200,9 +323,11 @@ class UI(Viewer):
             styles={'position': 'relative', 'right': '20px', 'top': '-1px'},
             sizing_mode='stretch_width'
         )
-        self._main = Column(self._exports, self._coordinator, sizing_mode='stretch_both')
+        self._main = Column(self._exports, self._coordinator, sizing_mode='stretch_both', align="center")
         self._source_agent = next((agent for agent in self._coordinator.agents if isinstance(agent, SourceAgent)), None)
-        self._vector_store_status_badge = StatusBadge(name="Tables Vector Store Pending", description="Pending initialization")
+        self._vector_store_status_badge = StatusBadge(
+            name="Tables Vector Store Pending", align="center", description="Pending initialization"
+        )
         self._table_lookup_tool = None  # Will be set after coordinator is initialized
         if state.curdoc and state.curdoc.session_context:
             state.on_session_destroyed(self._destroy)
@@ -305,13 +430,8 @@ class UI(Viewer):
                 src = str(src)
                 if src.startswith('http'):
                     remote = True
-                if src.endswith(('.parq', '.parquet')):
-                    table = f"read_parquet('{src}')"
-                elif src.endswith(".csv"):
-                    encoding = detect_file_encoding(src)
-                    table = f"read_csv('{src}', encoding='{encoding}')"
-                elif src.endswith(".json"):
-                    table = f"read_json_auto('{src}')"
+                if src.endswith(('.parq', '.parquet', '.csv', '.json', '.tsv', '.jsonl', '.ndjson')):
+                    table = src
                 else:
                     raise ValueError(
                         f"Could not determine how to load {src} file."
@@ -320,9 +440,11 @@ class UI(Viewer):
         if tables or mirrors:
             initializers = ["INSTALL httpfs;", "LOAD httpfs;"] if remote else []
             source = DuckDBSource(
-                tables=tables, mirrors=mirrors,
-                uri=':memory:', initializers=initializers,
-                name=PROVIDED_SOURCE_NAME
+                initializers=initializers,
+                mirrors=mirrors,
+                name=PROVIDED_SOURCE_NAME,
+                tables=tables,
+                uri=':memory:'
             )
             sources.append(source)
         memory['sources'] = sources
@@ -336,38 +458,24 @@ class UI(Viewer):
         config.css_files.append(CSS_URLS['font-awesome'])
         if (state.curdoc and state.curdoc.session_context) or server is True:
             panel_extension(
-                *{ext for agent in self._coordinator.agents for ext in agent._extensions}, template=self.template
+                *{ext for agent in self._coordinator.agents for ext in agent._extensions}
             )
-            config.template = self.template
-            template = state.template
-            if isinstance(template, FastListTemplate):
-                template.main_layout = None
-            template.favicon = "https://lumen.holoviz.org/_static/favicon.ico"
-            template.title = self.title
-            template.config.css_files.append(
-                'https://fonts.googleapis.com/css2?family=Nunito:wght@700'
-            )
-            template.config.raw_css = [
-                "#header a { font-family: 'Nunito', sans-serif; font-size: 2em; font-weight: bold;}"
-                "#main { padding: 0 } .main .card-margin.stretch_both { margin: 0; height: 100%; }"
-            ]
-            template.header.append(
-                Row(
-                    self.llm.status(),
-                    self._vector_store_status_badge,
-                    sizing_mode="stretch_width",
-                    align="center",
-                ),
+            page = Page(
+                css_files=['https://fonts.googleapis.com/css2?family=Nunito:wght@700'],
+                title=self.title,
+                header=[self.llm.status(), self._vector_store_status_badge, self._report_toggle],
+                main=[self._main],
+                sidebar=[] if self._sidebar is None else [self._sidebar],
+                sidebar_open=False,
+                sidebar_variant='temporary',
             )
             if self._source_agent:
                 self._source_agent.table_upload_callbacks = self.table_upload_callbacks
-                template.header.append(
-                    Row(
-                        Button(name="Upload Data", icon="upload", button_type="success", on_click=self._trigger_source_agent),
-                    )
+                page.header.append(
+                    IconButton(icon="upload", on_click=self._trigger_source_agent, color='light')
                 )
-            template.main.append(self._main)
-            return template
+            page.servable()
+            return page
         return super()._create_view()
 
     def _trigger_source_agent(self, event=None):
@@ -386,7 +494,7 @@ class UI(Viewer):
 
     def _repr_mimebundle_(self, include=None, exclude=None):
         panel_extension(
-            *{ext for exts in self._coordinator.agents for ext in exts}, design='material', notifications=True
+            *{ext for agent in self._coordinator.agents for ext in agent._extensions}, notifications=True
         )
         return self._create_view()._repr_mimebundle_(include, exclude)
 
@@ -409,6 +517,24 @@ class ChatUI(UI):
     """
 
     title = param.String(default='Lumen ChatUI', doc="Title of the app.")
+
+
+class Exploration(param.Parameterized):
+
+    context = param.ClassSelector(class_=_Memory)
+
+    conversation = Children()
+
+    plan = param.ClassSelector(class_=Plan)
+
+    title = param.String(default="")
+
+    subtitle = param.String(default="")
+
+    view = Child()
+
+    def __panel__(self):
+        return self.view
 
 
 class ExplorerUI(UI):
@@ -444,98 +570,127 @@ class ExplorerUI(UI):
         cb = self.interface.callback
         self._coordinator.render_output = False
         self.interface.callback = self._wrap_callback(cb)
-        self._explorations = Tabs(
-            sizing_mode='stretch_both',
-            closable=True,
-            tabs_location="left" if self.chat_ui_position == "right" else "right",
-            stylesheets=[
-                """
-                :host(.bk-left) .bk-header .bk-tab {
-                    padding-left: 5px;
-                    padding-right: 2px;
-                    text-align: left;
-                    max-width: 50px;
-                    overflow: hidden;
-                    text-overflow: clip;
-                    white-space: nowrap;
-                    transition: max-width 0.3s ease;
-                }
-
-                :host(.bk-left) .bk-header .bk-tab:hover {
-                    max-width: 300px;
-                }
-
-                /* For right-side tabs */
-                .bk-header .bk-tab {
-                    max-width: 50px;
-                    overflow: hidden;
-                    text-overflow: clip;
-                    white-space: nowrap;
-                    transition: max-width 0.3s ease;
-                }
-
-                .bk-header .bk-tab:hover {
-                    max-width: 300px;
-                }
-                """
-            ]
+        self._explorations = MenuList(
+            dense=True, label='Explorations', margin=(-50, 0, 0, 0), sizing_mode='stretch_width'
         )
-        self._explorations.param.watch(self._cleanup_explorations, ['objects'])
-        self._explorations.param.watch(self._set_context, ['active'])
+        self._reorder_switch = Switch(
+            label='Edit', styles={'margin-left': 'auto', 'z-index': '999'},
+            disabled=self._explorations.param.items.rx.len()<2
+        )
+        self._reorder_switch.param.watch(self._toggle_reorder, 'value')
+        self._explorations.on_action('up', self._move_up)
+        self._explorations.on_action('down', self._move_down)
+        self._explorations.on_action('remove', self._delete_exploration)
+        self._explorer = TableExplorer(interface=self.interface)
+        self._explorations_intro = Markdown(
+            EXPLORATIONS_INTRO,
+            margin=(0, 0, 10, 10),
+            sizing_mode='stretch_width',
+            visible=self._explorations.param["items"].rx.bool().rx.not_()
+        )
+        self._report_toggle = ToggleIcon(
+            icon="chat",
+            active_icon="summarize",
+            value=False,
+            styles={"margin-left": "auto"},
+            sx={".MuiIcon-root": {"color": "white"}}
+        )
+        self._report_toggle.param.watch(self._toggle_report, ['value'])
+        self._last_synced = self._home = Exploration(
+            context=memory,
+            title='Home',
+            conversation=self.interface.objects,
+            view=Column(self._explorations_intro, self._explorer)
+        )
+        home_item = {'label': 'Home', 'icon': 'home', 'view': self._home}
+        self._explorations.param.update(items=[home_item], value=home_item)
+        self._explorations.param.watch(self._cleanup_explorations, ['items'])
+        self._explorations.param.watch(self._update_conversation, ['active'])
         self._global_notebook_export = FileDownload(
             icon="notebook",
             icon_size="1.5em",
             button_type="primary",
             callback=self._global_export_notebook,
-            filename=f"{self.title.replace(' ', '_')}.ipynb",
-            stylesheets=['.bk-btn a { padding: 0 6px; }'],
-            styles={'position': 'absolute', 'right': '0px', 'top': '-1px', 'z-index': '100'},
+            filename=f"{self.title.replace(' ', '_')}.ipynb"
         )
         self._exports.visible = False
-        self._titles = []
-        self._contexts = []
-        self._root_conversation = self.interface.objects
-        self._conversations = []
-
-        self._explorations_intro = Markdown(
-            EXPLORATIONS_INTRO,
-            margin=(0, 0, 10, 10),
-            sizing_mode='stretch_width',
-            visible=self._explorations.param["objects"].rx.bool().rx.not_()
+        self._output = Paper(
+            self._home.view, elevation=2, margin=(0, 10, 10, 5), sx={'p': 4},
+            height_policy='max', sizing_mode="stretch_both"
         )
-        self._output = Tabs(
-            ('Raw Tables', self._table_explorer()),
-            ('Explorations', Column(self._explorations_intro, self._explorations)),
-            design=Material
-        )
-        output = Column(self._global_notebook_export, self._output, styles={'overflow-x': 'auto', 'overflow-y': 'auto'}, sizing_mode='stretch_both')
-        chat = Column(self._exports, self._coordinator)
         self._split = SplitJS(
-            left=chat,
-            right=output,
+            left=self._coordinator,
+            right=self._output,
             invert=self.chat_ui_position != 'left',
             sizing_mode='stretch_both'
         )
+        self._report = Column()
         self._main = Column(self._split)
+        self._sidebar = Column(self._reorder_switch, self._explorations)
         self._idle = asyncio.Event()
         self._idle.set()
-        self._last_synced = None
-        self._output.param.watch(self._update_conversation, 'active')
+
+    def _move_up(self, item):
+        items = list(self._explorations.items)
+        index = items.index(item)
+        if index <= 1:
+            return
+        items.pop(index)
+        items.insert(index-1, item)
+        self._explorations.items = items
+
+    def _move_down(self, item):
+        items = list(self._explorations.items)
+        index = items.index(item)
+        items.pop(index)
+        items.insert(index+1, item)
+        self._explorations.items = items
+
+    def _toggle_reorder(self, event):
+        items = self._explorations.items[:1]
+        reorder_actions = [
+            {'action': 'up', 'label': 'Move Up', 'inline': True, 'icon': 'keyboard_arrow_up'},
+            {'action': 'down', 'label': 'Move Down', 'inline': True, 'icon': 'keyboard_arrow_down'}
+        ]
+        for item in self._explorations.items[1:]:
+            item = dict(item)
+            if event.new:
+                item['actions'] = item['actions'] + reorder_actions
+            else:
+                item['actions'] = [
+                    action for action in item['actions'] if action['label'] not in ('Move Up', 'Move Down')
+                ]
+            items.append(item)
+        self._explorations.items = items
+
+    def _toggle_report(self, event):
+        if event.new:
+            self._main[:] = [Report(
+                subtasks=[
+                    exploration['view'].plan for exploration in self._explorations.items[1:]
+                ]
+            )]
+        else:
+            self._main[:] = [self._split]
+
+    def _delete_exploration(self, item):
+        self._explorations.items = [it for it in self._explorations.items if it is not item]
 
     def _destroy(self, session_context):
         """
         Cleanup on session destroy
         """
-        for c in self._contexts:
-            c.cleanup()
+        for c in self._explorations.items[1:]:
+            c['view'].context.cleanup()
 
     def _global_export_notebook(self):
         cells, extensions = [], []
-        for i, objects in enumerate(self._conversations):
-            title = self._titles[i]
+        for item in self._explorations.items:
+            exploration = item['view']
+            title = exploration.title
             header = make_md_cell(f'## {title}')
             cells.append(header)
-            msg_cells, msg_exts = render_cells(objects)
+            msg_cells, msg_exts = render_cells(exploration.conversation)
             cells += msg_cells
             for ext in msg_exts:
                 if ext not in extensions:
@@ -543,42 +698,34 @@ class ExplorerUI(UI):
         preamble = make_preamble(self.notebook_preamble, extensions=extensions)
         return StringIO(write_notebook(preamble+cells))
 
-    async def _update_conversation(self, event=None, tab=None):
-        active = self._explorations.active
-        if len(self._conversations) <= active:
-            return
+    async def _update_conversation(self, event=None):
+        exploration = self._explorations.value['view']
+        self._output[:] = [exploration.view]
 
-        if tab is None:
-            # When user switches tabs and coordinator is running
+        if event is not None:
+            # When user switches explorations and coordinator is running
             # wait to switch the conversation context
             await self._idle.wait()
-            if self._explorations.active != active:
+            if self._explorations.value['view'] is not exploration:
                 # If active tab has changed while we waited
                 # skip the sync
                 return
+
             # If conversation was already updated, resync conversation
-            if self._last_synced == active:
-                if self._conversations:
-                    self._conversations[active] = self.interface.objects
-                else:
-                    self._root_conversation = self.interface.objects
-        if (event.new if event is not None else tab):
-            # Explorations Tab
-            if self._conversations and active < len(self._conversations):
-                conversation = self._conversations[active]
-            else:
-                conversation = self._snapshot_messages()
+            if self._last_synced is exploration:
+                exploration.conversation = list(self.interface.objects)
+            elif self._last_synced is not None:
+                # Otherwise snapshot the conversation
+                self._last_synced.conversation = self._snapshot_messages()
+
+        with hold():
+            self._set_conversation(exploration.conversation)
+            self._notebook_export.param.update(
+                filename = f"{exploration.title.replace(' ', '_')}.ipynb"
+            )
             self._exports.visible = True
-        else:
-            # Overview tab
-            self._exports.visible = False
-            conversation = self._root_conversation
-            # We must mark the last synced as None to ensure
-            # we do not resync with the Overview tab conservation
-            active = None
-        self._set_conversation(conversation)
-        self.interface._chat_log.scroll_to_latest()
-        self._last_synced = active
+            self.interface._chat_log.scroll_to_latest()
+        self._last_synced = exploration
 
     def _set_conversation(self, conversation: list[Any]):
         feed = self.interface._chat_log
@@ -592,33 +739,9 @@ class ExplorerUI(UI):
         for i, (old, new) in enumerate(zip(event.old, event.new, strict=False)):
             if old is new:
                 continue
-            self._contexts.pop(i)
-            self._conversations.pop(i)
-            self._titles.pop(i)
             if i == self._last_synced:
-                await self._update_conversation(tab=1)
+                await self._update_conversation()
             break
-
-    async def _set_context(self, event=None, old=None, new=None):
-        active = event.new if new is None else new
-        if len(self._conversations) == 0:
-            return
-        await self._idle.wait()
-        if active != self._explorations.active:
-            return
-        if self._last_synced == active:
-            self._conversations[active] = self.interface.objects
-        else:
-            self._conversations[event.old if old is None else old] = self._snapshot_messages()
-        conversation = self._conversations[active]
-        with hold():
-            self._set_conversation(conversation)
-            self._notebook_export.param.update(
-                filename = f"{self._titles[active].replace(' ', '_')}.ipynb"
-            )
-            self._exports.visible = True
-        self.interface._chat_log.scroll_to_latest()
-        self._last_synced = active
 
     def _snapshot_messages(self, new=False):
         to = -3 if new else None
@@ -631,101 +754,42 @@ class ExplorerUI(UI):
             messages.append(msg)
         return messages
 
-    def _table_explorer(self):
-        from panel_gwalker import GraphicWalker
-
-        table_select = MultiChoice(
-            placeholder="Select table(s) to view contents", sizing_mode='stretch_width',
-            max_height=200, max_items=5
-        )
-        explore_button = Button(
-            name='Explore table(s)', icon='chart-bar', button_type='primary', align='center',
-            disabled=table_select.param.value.rx().rx.not_()
-        )
-        input_row = Row(table_select, explore_button)
-
-        source_map = {}
-        def update_source_map(_, __, sources, init=False):
-            selected = list(table_select.value)
-            deduplicate = len(sources) > 1
-            new = {}
-            for source in sources:
-                tables = source.get_tables()
-                for t in tables:
-                    if deduplicate:
-                        t = f'{source.name}{SOURCE_TABLE_SEPARATOR}{t}'
-                    if t.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)[-1] not in source_map and not init and not len(selected) > table_select.max_items and state.loaded:
-                        selected.append(t)
-                    new[t] = source
-            source_map.clear()
-            source_map.update(new)
-            selected = selected if len(selected) == 1 else []
-            table_select.param.update(options=list(source_map), value=selected)
-            input_row.visible = bool(source_map)
-        memory.on_change('sources', update_source_map)
-        update_source_map(None, None, memory['sources'], init=True)
-
-        def explore_table_if_single(event):
-            """
-            If only one table is uploaded, help the user load it
-            without requiring them to click twice. This step
-            only triggers when the Upload in the Overview tab is used,
-            i.e. does not trigger with uploads through the SourceAgent
-            """
-            if len(table_select.options) == 1:
-                explore_button.param.trigger("value")
-
-        tabs = Tabs(dynamic=True, sizing_mode='stretch_both', design=Material)
-
-        @param.depends(explore_button, watch=True)
-        def get_explorers(load):
-            if not load:
-                return
-            with explore_button.param.update(loading=True), self.interface.param.update(loading=True):
-                explorers = []
-                for table in table_select.value:
-                    source = source_map[table]
-                    if SOURCE_TABLE_SEPARATOR in table:
-                        _, table = table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
-                    pipeline = Pipeline(
-                        source=source, table=table, sql_transforms=[SQLLimit(limit=100_000, read=source.dialect)]
-                    )
-                    table_label = f"{table[:25]}..." if len(table) > 25 else table
-                    walker = GraphicWalker(
-                        pipeline.param.data, sizing_mode='stretch_both', min_height=800,
-                        kernel_computation=True, name=table_label, tab='data'
-                    )
-                    explorers.append(walker)
-
-                tabs.objects = explorers
-                table_select.value = []
-
-        return Column(
-            input_row,
-            tabs,
-            sizing_mode='stretch_both',
-        )
-
     async def _add_exploration(self, title: str, memory: _Memory):
-        n = len(self._explorations)
-        active = self._explorations.active
-        self._titles.append(title)
-        self._contexts.append(memory)
-        self.interface.objects = conversation = list(self.interface.objects)
-        self._conversations.append(conversation)
-        tab_title = f"{title[:25]}..." if len(title) > 25 else title
-        self._explorations.append((tab_title, Column(name=title, sizing_mode='stretch_both', loading=True)))
-        self._notebook_export.filename = f"{title.replace(' ', '_')}.ipynb"
-        if n:
-            self._conversations[active] = self._snapshot_messages(new=True)
+        # Sanpshot previous conversation
+        last_exploration = self._explorations.value['view']
+        is_home = last_exploration is self._home
+        if is_home:
+            last_exploration.conversation = [self.interface.objects[0]]
+            conversation = self.interface.objects[1:]
         else:
-            self._root_conversation = self._snapshot_messages(new=True)
-        self._last_synced = n
-        self._explorations.active = n
-        self._output.active = 1
-        await self._update_conversation(tab=1)
+            last_exploration.conversation = self._snapshot_messages(new=True)
+            conversation = list(self.interface.objects)
 
-    def _add_outputs(self, exploration: Column, outputs: list[LumenOutput] | str, memory: _Memory):
+        # Create new exploration
+        output = Column(sizing_mode='stretch_both', loading=True)
+        exploration = Exploration(
+            context=memory,
+            conversation=conversation,
+            title=title,
+            view=output
+        )
+        view_item = {'label': title, 'view': exploration, 'icon': None, 'actions': [{'action': 'remove', 'label': 'Remove', 'icon': 'delete'}]}
+        with hold():
+            self.interface.objects = conversation
+            self._idle.set()
+            self._explorations.param.update(
+                items=self._explorations.items+[view_item],
+                value=view_item
+            )
+            self._idle.clear()
+            self._output[:] = [output]
+            self._notebook_export.filename = f"{title.replace(' ', '_')}.ipynb"
+            await self._update_conversation()
+        self._last_synced = exploration
+
+    def _add_outputs(self, exploration: Exploration, outputs: list[LumenOutput] | str):
+        memory = exploration.context
+        view = exploration.view
         if "sql" in memory:
             sql = memory.rx("sql")
             sql_pane = Markdown(
@@ -733,16 +797,16 @@ class ExplorerUI(UI):
                 margin=(-15, 0, 0, 0), sizing_mode='stretch_width', name='SQL'
             )
             if sql.count('\n') > 10:
-                sql_pane = Column(
+                sql_pane = PnColumn(
                     sql_pane, max_height=325, scroll='y-auto', name='SQL'
                 )
-            if len(exploration) and exploration[0].name == 'SQL':
-                exploration[0] = sql_pane
+            if len(view) and view[0].name == 'SQL':
+                view[0] = sql_pane
             else:
-                exploration.insert(0, sql_pane)
+                view.insert(0, sql_pane)
 
         content = []
-        if exploration.loading:
+        if view.loading:
             from panel_gwalker import GraphicWalker
             pipeline = memory['pipeline']
             content.append(
@@ -758,32 +822,28 @@ class ExplorerUI(UI):
             if len(title) > 25:
                 title = f"{title[:25]}..."
             content.append((title, ParamMethod(out.render, inplace=True, sizing_mode='stretch_both')))
-        if exploration.loading:
-            tabs = Tabs(*content, dynamic=True, active=len(outputs))
-            exploration.append(tabs)
+        if view.loading:
+            tabs = Tabs(*content, dynamic=True, active=len(outputs), sizing_mode='stretch_both')
+            view.append(tabs)
         else:
-            tabs = exploration[-1]
+            tabs = view[-1]
             tabs.extend(content)
         tabs.active = len(tabs)-1
 
     def _wrap_callback(self, callback):
         async def wrapper(contents: list | str, user: str, instance: ChatInterface):
-            if not self._explorations:
-                prev_memory = memory
-            else:
-                prev_memory = self._contexts[self._explorations.active]
+            prev = self._explorations.value
+            prev_memory = prev['view'].context
             new_exploration = False
-            prev = index = self._explorations.active if len(self._explorations) else -1
             local_memory = prev_memory.clone()
             local_memory["outputs"] = outputs = []
 
             async def render_plan(_, old, new):
-                nonlocal index, new_exploration
+                nonlocal new_exploration
                 plan = local_memory["plan"]
                 if any(step.actor in ('SQLAgent', 'DbtslAgent') for step in plan.steps):
                     # Expand the sidebar when the first exploration is created
                     await self._add_exploration(plan.title, local_memory)
-                    index = len(self._explorations)-1
                     new_exploration = True
 
             def sync_available_sources_memory(_, __, sources):
@@ -801,11 +861,11 @@ class ExplorerUI(UI):
 
             async def render_output(_, old, new):
                 added = [out for out in new if out not in old]
-                exploration = self._explorations[index]
-                self._add_outputs(exploration, added, local_memory)
-                exploration.loading = False
+                exploration = self._explorations.value['view']
+                self._add_outputs(exploration, added)
+                exploration.view.loading = False
                 outputs[:] = new
-                if len(self._explorations) == 1:
+                if self._split.collapsed and prev['label'] == 'Home':
                     self._split.param.update(
                         collapsed=False,
                         sizes=self._split.expanded_sizes,
@@ -815,40 +875,29 @@ class ExplorerUI(UI):
             # Remove exploration on error if no outputs have been
             # added yet and we launched a new exploration
             async def remove_output(_, __, ___):
-                nonlocal index, new_exploration
+                nonlocal new_exploration
                 if "__error__" in local_memory:
                     del memory['__error__']
                 if outputs or not new_exploration:
                     return
-                # Merge the current conversation with the conversation
-                # that initiated the new exploration
-                conversation = self._conversations.pop()
-                if prev == -1:
-                    self._root_conversation = conversation
-                else:
-                    self._conversations[prev] = conversation
-                self._last_synced = prev
-                self._contexts.pop()
-                self._titles.pop()
+                exploration = self._explorations.value['view']
+                prev['view'].conversation = exploration.conversation
                 with hold():
-                    self._explorations.active = prev
-                    await self._set_context(old=index, new=prev)
-                    self._explorations.pop(-1)
-                    if len(self._titles) == 0:
-                        self._output.active = 0
-                index -= 1
+                    self._explorations.param.update(
+                        items=self._explorations.items[:-1],
+                        value=prev
+                    )
+                    await self._update_conversation()
                 new_exploration = False
             local_memory.on_change('__error__', remove_output)
 
             try:
                 self._idle.clear()
                 with self._coordinator.param.update(memory=local_memory):
-                    await callback(contents, user, instance)
+                    plan = await callback(contents, user, instance)
+                self._explorations.value['view'].plan = plan
             finally:
-                if self._conversations:
-                    self._conversations[index] = self.interface.objects
-                else:
-                    self._root_conversation = self.interface.objects
+                self._explorations.value['view'].conversation = self.interface.objects
                 self._idle.set()
                 local_memory.remove_on_change('plan', render_plan)
                 local_memory.remove_on_change('__error__', remove_output)

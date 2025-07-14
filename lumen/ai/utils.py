@@ -421,16 +421,21 @@ async def get_data(pipeline):
     return await asyncio.to_thread(get_data_sync)
 
 
-async def describe_data(df: pd.DataFrame) -> str:
+async def describe_data(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool = True) -> str:
     def describe_data_sync(df):
         size = df.size
         shape = df.shape
         if size < 250:
+            # Use the first column as index to save tokens
+            if len(df.columns) > 1:
+                df = df.set_index(df.columns[0])
+            else:
+                df = df.to_dict("records")
             return df
 
-        is_summarized = False
+        is_sampled = False
         if shape[0] > 5000:
-            is_summarized = True
+            is_sampled = True
             df = df.sample(5000)
 
         df = df.sort_index()
@@ -445,7 +450,7 @@ async def describe_data(df: pd.DataFrame) -> str:
             sampled_columns = True
 
         describe_df = df.describe(percentiles=[])
-        columns_to_drop = ["min", "max"] # present if any numeric
+        columns_to_drop = ["min", "max", "count", "top", "freq"] # present if any numeric or object
         columns_to_drop = [col for col in columns_to_drop if col in describe_df.columns]
         df_describe_dict = describe_df.drop(columns=columns_to_drop).to_dict()
 
@@ -456,14 +461,13 @@ async def describe_data(df: pd.DataFrame) -> str:
                 # Get unique values for enum processing
                 unique_values = df[col].dropna().unique().tolist()
                 if unique_values:
-                    # Process enums just like in get_schema
                     temp_spec = {"enum": unique_values}
                     updated_spec, _ = process_enums(
                         temp_spec,
                         num_cols=len(df.columns),
-                        limit=5000,  # Using the sample limit
+                        limit=enum_limit,
                         include_enum=True,
-                        reduce_enums=True
+                        reduce_enums=reduce_enums,
                     )
                     if "enum" in updated_spec:
                         df_describe_dict[col]["enum"] = updated_spec["enum"]
@@ -472,11 +476,9 @@ async def describe_data(df: pd.DataFrame) -> str:
             except Exception:
                 df_describe_dict[col]["nunique"] = 'unknown'
             try:
-                df_describe_dict[col]["lengths"] = {
-                    "max": df[col].str.len().max(),
-                    "min": df[col].str.len().min(),
-                    "mean": format_float(float(df[col].str.len().mean())),
-                }
+                max_length = df[col].str.len().max()
+                if pd.notna(max_length):
+                    df_describe_dict[col]["max_length"] = int(max_length)
             except AttributeError:
                 pass
 
@@ -501,14 +503,20 @@ async def describe_data(df: pd.DataFrame) -> str:
         for col in df.select_dtypes(include=["float64"]).columns:
             df[col] = df[col].apply(format_float)
 
+        # Add head and tail samples (2 row each)
+        head_sample = df.head(2).to_dict('records')
+        tail_sample = df.tail(2).to_dict('records')
+
         return {
             "summary": {
-                "total_table_cells": size,
-                "total_shape": shape,
-                "sampled_columns": sampled_columns,
-                "is_summarized": is_summarized,
+                "n_cells": size,
+                "shape": shape,
+                "sampled_cols": sampled_columns,
+                "is_sampled": is_sampled,
             },
             "stats": df_describe_dict,
+            "head": head_sample[0] if head_sample else {},
+            "tail": tail_sample[0] if tail_sample else {},
         }
 
     return await asyncio.to_thread(describe_data_sync, df)
@@ -728,14 +736,14 @@ def parse_table_slug(table: str, sources: dict[str, Source], normalize: bool = T
     return a_source_obj, a_table
 
 
-def truncate_string(s, max_length=20, ellipsis="..."):
+def truncate_string(s, max_length=30, ellipsis="..."):
     if len(s) <= max_length:
         return s
     part_length = (max_length - len(ellipsis)) // 2
     return f"{s[:part_length]}{ellipsis}{s[-part_length:]}"
 
 
-def truncate_iterable(iterable, max_length=20) -> tuple[list, list, bool]:
+def truncate_iterable(iterable, max_length=150) -> tuple[list, list, bool]:
     iterable_list = list(iterable)
     if len(iterable_list) > max_length:
         half = max_length // 2

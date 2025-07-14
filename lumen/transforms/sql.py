@@ -724,8 +724,6 @@ class SQLRemoveSourceSeparator(SQLTransform):
     separator = param.String(default=SOURCE_TABLE_SEPARATOR, doc="""
         Separator used to split the source and table name in the SQL query.""")
 
-    _parsable_separator = "___AT___"
-
     def apply(self, sql_in: str) -> str:
         """
         Exclude the source and separator from the SQL query.
@@ -742,32 +740,29 @@ class SQLRemoveSourceSeparator(SQLTransform):
         """
         if self.separator not in sql_in:
             return sql_in
-        sql_in = sql_in.replace(SOURCE_TABLE_SEPARATOR, self._parsable_separator)
-        return self.to_sql(self.parse_sql(sql_in).transform(self._remove_source_separator))
 
-    def _remove_source_separator(self, node):
-        if isinstance(node, Table):
-            node_str = node.this
-            while hasattr(node_str, "this"):
-                node_str = node_str.this
-            after = node_str.split(self._parsable_separator)[-1]
-            filename = node.this.sql().replace(node_str, after)
-            return filename
-        elif isinstance(node, sqlglot.exp.Literal):
-            # Handle string literals that might contain the separator
-            if isinstance(node.this, str) and self._parsable_separator in node.this:
-                filename = node.this.split(self._parsable_separator)[-1]
-                # Preserve the original literal type and quotes
-                return sqlglot.exp.Literal.string(filename)
-            return node
-        elif hasattr(node, 'this') and isinstance(node.this, str) and self._parsable_separator in node.this:
-            # Handle other node types that might contain the separator in their string content
-            filename = node.this.split(self._parsable_separator)[-1]
-            # Create a new node of the same type with the cleaned string
-            new_node = node.__class__(this=filename)
-            return new_node
-        else:
-            return node
+        # Simple regex approach: find all occurrences of source__@__filename and replace with filename
+        # This pattern matches:
+        # - Optional quotes (captured in group 1)
+        # - Any non-quote/space characters followed by separator (source__@__)
+        # - The filename (captured in group 2)
+        # - Optional closing quote (captured in group 3)
+        pattern = r'(["\']?)\b[^\s"\']*?' + re.escape(self.separator) + r'([^\s"\']+)(["\']?)'
+
+        def replacer(match):
+            quote_start = match.group(1)
+            filename = match.group(2)
+            quote_end = match.group(3)
+
+            # If the filename contains dots and wasn't originally quoted, quote it
+            if '.' in filename and not quote_start:
+                return f'"{filename}"'
+            else:
+                return f'{quote_start}{filename}{quote_end}'
+
+        return self.to_sql(self.parse_sql(re.sub(pattern, replacer, sql_in)))
+
+
 
 
 __all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, SQLTransform)]

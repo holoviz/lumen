@@ -68,7 +68,7 @@ class Llm(param.Parameterized):
             if isinstance(params["mode"], str):
                 params["mode"] = Mode[params["mode"].upper()]
         super().__init__(**params)
-        self._status = StatusBadge(name="LLM Pending", description="Waiting for LLM to initialize")
+        self._status = StatusBadge(name="LLM Pending", description="Waiting for LLM to initialize", align="center")
         self._raw_client = None
         if not self.model_kwargs.get("default"):
             raise ValueError(
