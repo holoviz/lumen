@@ -647,7 +647,7 @@ class SQLAgent(LumenBaseAgent):
 
     async def _validate_sql(
         self, sql_query: str, expr_slug: str, dialect: str,
-        source, messages: list[Message], step, max_retries: int = 3
+        source, messages: list[Message], step, max_retries: int = 2
     ) -> str:
         """Validate and potentially fix SQL query."""
         # Clean SQL
@@ -742,7 +742,7 @@ class SQLAgent(LumenBaseAgent):
             title=step_title
         )
 
-    @retry_llm_output()
+    @retry_llm_output(retries=3)
     async def _execute_sql_step(
         self,
         action_description: str,
@@ -752,17 +752,12 @@ class SQLAgent(LumenBaseAgent):
         should_materialize: bool = True,
         context_entries: list[dict] | None = None,
         step_title: str | None = None,
+        step=None,
         sql_plan_context: str | None = None,
         errors: list | None = None,
     ) -> dict[str, Any]:
         """Execute a single SQL generation step."""
         with self.interface.param.update(callback_exception="raise"):
-            step = self._add_step(
-                title=step_title or f"Step {step_number}: Generating SQL",
-                steps_layout=self._steps_layout,
-                status="running"
-            )
-
             # Generate SQL queries
             messages = [{"role": "user", "content": action_description}]
             sql_queries = await self._generate_sql_queries(
@@ -794,6 +789,7 @@ class SQLAgent(LumenBaseAgent):
                 await self._finalize_execution(
                     results, context_entries, messages, step_title
                 )
+                step.status = "success"
                 return next(iter(results.values()))["pipeline"]
 
             step.status = "success"
@@ -902,7 +898,7 @@ class SQLAgent(LumenBaseAgent):
 
     async def _plan_next_step(self, messages: list[Message], sql_plan_context: str, total_steps: int) -> NextStep:
         """Plan the next step based on current context."""
-        with self._add_step(title=f"Planning step {total_steps + 1}", steps_layout=self._steps_layout) as step:
+        with self._add_step(title=f"Planning step {total_steps}", steps_layout=self._steps_layout) as step:
             system_prompt = await self._render_prompt(
                 "plan_next_step",
                 messages,
@@ -1024,44 +1020,39 @@ class SQLAgent(LumenBaseAgent):
             # Include roadmap context
             if roadmap_context and total_steps == 0:
                 sql_plan_context = roadmap_context + "\n\n" + sql_plan_context
+            total_steps += 1
 
             # Plan next step
             next_step = await self._plan_next_step(messages, sql_plan_context, total_steps)
 
-            if next_step.is_final_answer:
-                # Execute and return final result
-                pipeline = await self._execute_sql_step(
+            with self._add_step(
+                title=step_title or f"Step {total_steps}: Generating SQL",
+                steps_layout=self._steps_layout,
+                status="running"
+            ) as step:
+                result = await self._execute_sql_step(
                     next_step.action_description,
                     source,
-                    total_steps + 1,
-                    is_final=True,
+                    total_steps,
+                    is_final=next_step.is_final_answer,
                     context_entries=context_entries,
-                    step_title=step_title,
                     sql_plan_context=sql_plan_context,
+                    should_materialize=next_step.is_final_answer and next_step.should_materialize,
+                    step_title=step_title,
+                    step=step
                 )
-                return pipeline
-
-            # Execute discovery step
-            step_result = await self._execute_sql_step(
-                next_step.action_description,
-                source,
-                total_steps + 1,
-                is_final=False,
-                context_entries=context_entries,
-                should_materialize=next_step.should_materialize
-            )
+            if next_step.is_final_answer:
+                return result
 
             # Update context
             context_entry = self._build_context_entry(
-                total_steps + 1, next_step, step_result
+                total_steps, next_step, result
             )
             context_entries.append(context_entry)
 
             # Keep context window manageable
             if len(context_entries) > 10:
                 context_entries = context_entries[-10:]
-
-            total_steps += 1
 
         raise ValueError(f"Exceeded maximum steps ({self.max_steps}) without reaching a final answer.")
 
@@ -1335,8 +1326,10 @@ class BaseViewAgent(LumenBaseAgent):
                         steps_layout=self._steps_layout,
                     ) as retry_step:
                         view = await self._retry_output_by_line(e, messages, self._memory, yaml.safe_dump(spec), language="")
-                        retry_step.stream(f"\n\n```json\n{view}\n```")
-                    spec = yaml.safe_load(view)
+                        if "json_spec: " in view:
+                            view = view.split("json_spec: ")[-1].rstrip('"').rstrip("'")
+                        spec = json.loads(view)
+                        retry_step.stream(f"\n\n```json\n{spec}\n```")
                     if i == 2:
                         raise
 
@@ -1520,9 +1513,41 @@ class VegaLiteAgent(BaseViewAgent):
         self._handle_map_compatibility(vega_spec, vega_spec_str)
         return vega_spec
 
+    @classmethod
+    def _extract_as_keys(cls, transforms: list[dict]) -> list[str]:
+        """
+        Extracts all 'as' field names from a list of Vega-Lite transform definitions.
+
+        Parameters
+        ----------
+        transforms : list[dict]
+            A list of Vega-Lite transform objects.
+
+        Returns
+        -------
+        list[str]
+            A list of field names from 'as' keys (flattened, deduplicated).
+        """
+        as_fields = []
+        for t in transforms:
+            # Top-level 'as'
+            if "as" in t:
+                if isinstance(t["as"], list):
+                    as_fields.extend(t["as"])
+                elif isinstance(t["as"], str):
+                    as_fields.append(t["as"])
+            for key in ("aggregate", "joinaggregate", "window"):
+                if key in t and isinstance(t[key], list):
+                    for entry in t[key]:
+                        if "as" in entry:
+                            as_fields.append(entry["as"])
+
+        return list(dict.fromkeys(as_fields))
+
     async def _ensure_columns_exists(self, vega_spec: dict):
         schema = await get_schema(self._memory["pipeline"])
 
+        fields = self._extract_as_keys(vega_spec.get('transform', [])) + list(schema)
         for layer in vega_spec.get("layer", []):
             encoding = layer.get("encoding", {})
             if not encoding:
@@ -1537,7 +1562,7 @@ class VegaLiteAgent(BaseViewAgent):
                     fields_to_check.extend(item["field"] for item in enc_def if isinstance(item, dict) and "field" in item)
 
                 for field in fields_to_check:
-                    if field not in schema and field.lower() not in schema and field.upper() not in schema:
+                    if field not in fields and field.lower() not in fields and field.upper() not in fields:
                         raise ValueError(f"Field '{field}' not found in schema.")
 
     async def _extract_spec(self, spec: dict[str, Any]):

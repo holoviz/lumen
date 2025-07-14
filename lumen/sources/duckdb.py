@@ -17,6 +17,7 @@ from ..transforms import Filter
 from ..transforms.sql import (
     SQLCount, SQLFilter, SQLLimit, SQLSelectFrom,
 )
+from ..util import detect_file_encoding
 from .base import BaseSQLSource, Source, cached
 
 if TYPE_CHECKING:
@@ -176,7 +177,8 @@ class DuckDBSource(BaseSQLSource):
         file_lower = file_path.lower()
 
         if file_lower.endswith('.csv'):
-            return f"SELECT * FROM READ_CSV('{file_path}')"
+            encoding = detect_file_encoding(file_path)
+            return f"SELECT * FROM READ_CSV('{file_path}', encoding='{encoding}')"
         elif file_lower.endswith('.parquet'):
             return f"SELECT * FROM READ_PARQUET('{file_path}')"
         elif file_lower.endswith(('.json', '.jsonl', '.ndjson')):

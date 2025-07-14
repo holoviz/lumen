@@ -151,42 +151,28 @@ class SQLMetaset:
 
             # Only include columns if explicitly requested
             if include_columns and vector_metadata.columns:
-                max_length = 20
                 cols_to_show = vector_metadata.columns
-
-                original_indices = []
-                show_ellipsis = False
-                if truncate:
-                    cols_to_show, original_indices, show_ellipsis = truncate_iterable(cols_to_show, max_length)
-                else:
-                    cols_to_show = list(cols_to_show)
-                    original_indices = list(range(len(cols_to_show)))
-
-                for i, (col, orig_idx) in enumerate(zip(cols_to_show, original_indices, strict=False)):
-                    if show_ellipsis and i == len(cols_to_show) // 2:
-                        context += "...\n"
-
-                    if i == 0:
-                        context += "Columns:\n"
-
+                context += "Columns:\n"
+                for i, col in enumerate(cols_to_show):
                     schema_data = None
                     if sql_data and col.name in sql_data.schema:
                         schema_data = sql_data.schema[col.name]
                         if truncate and schema_data == "<null>":
                             continue
 
-                    # Get column name with optional truncation
-                    col_name = truncate_string(col.name) if truncate else col.name
-                    context += f"{orig_idx}. {col_name!r}"
+                    # Get column name
+                    context += f"\n{i}. {col.name}"
 
                     # Get column description with optional truncation
                     if col.description:
                         col_desc = truncate_string(col.description, max_length=100) if truncate else col.description
                         context += f": {col_desc}"
+                    else:
+                        context += ": "
 
                     # Add schema info for the column if available
                     if schema_data:
-                        if truncate:
+                        if truncate and schema_data.get('type') == 'enum':
                             schema_data = truncate_string(str(schema_data), max_length=50)
                         context += f" `{schema_data}`"
             context += "\n"
