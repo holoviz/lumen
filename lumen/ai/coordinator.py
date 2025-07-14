@@ -470,7 +470,11 @@ class Coordinator(Viewer, VectorLookupToolUser):
                     steps_layout=self.steps_layout, agents=list(agents.values())
                 ):
                     await plan.execute()
-            self.steps_layout.title = f"✅ Sucessfully completed {plan.title!r}"
+
+            if plan.status == 'success':
+                self.steps_layout.title = f"✅ Sucessfully completed {plan.title!r}"
+            else:
+                self.steps_layout.title = f"❌ Failed to execute {plan.title!r}"
 
             if "pipeline" in self._memory:
                 await self._add_analysis_suggestions()
