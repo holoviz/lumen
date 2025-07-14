@@ -595,7 +595,7 @@ class TestSQLRemoveSourceSeparator:
 
     def test_debug_complex_table_names(self):
         """Test the specific case that's failing with complex table names."""
-        sql_in = '''SELECT DISTINCT "NAME", "SEASON", "BASIN" FROM ProvidedSource00000__@__ibtracs.last3years.parquet WHERE "BASIN" = 'EP' AND "SEASON" IN (SELECT DISTINCT CAST("year" AS VARCHAR) FROM ProvidedSource00000__@__oni.csv WHERE "season" = 'AMJ' AND "oni" IN ('el_nino', 'la_nina')) AND TRIM("NAME") != '' ORDER BY "SEASON" LIMIT 10'''
+        sql_in = '''SELECT DISTINCT "NAME", "SEASON", "BASIN" FROM ProvidedSource00000 ⦙ ibtracs.last3years.parquet WHERE "BASIN" = 'EP' AND "SEASON" IN (SELECT DISTINCT CAST("year" AS VARCHAR) FROM ProvidedSource00000 ⦙ oni.csv WHERE "season" = 'AMJ' AND "oni" IN ('el_nino', 'la_nina')) AND TRIM("NAME") != '' ORDER BY "SEASON" LIMIT 10'''
 
         result = SQLRemoveSourceSeparator.apply_to(sql_in)
         print(f"\nInput: {sql_in}")
