@@ -67,6 +67,9 @@ class Agent(Viewer, ToolUser, ContextProvider):
     contents such as forms or widgets to gather user input.
     """
 
+    agents = param.List(doc="""
+        List of agents this agent can invoke.""")
+
     debug = param.Boolean(default=False, doc="""
         Whether to enable verbose error reporting.""")
 
@@ -1567,6 +1570,7 @@ class VegaLiteAgent(BaseViewAgent):
 
 
 class AnalysisAgent(LumenBaseAgent):
+
     analyses = param.List([])
 
     conditions = param.List(
@@ -1598,8 +1602,7 @@ class AnalysisAgent(LumenBaseAgent):
     async def respond(
         self,
         messages: list[Message],
-        step_title: str | None = None,
-        agents: list[Agent] | None = None,
+        step_title: str | None = None
     ) -> Any:
         pipeline = self._memory["pipeline"]
         analyses = {a.name: a for a in self.analyses if await a.applies(pipeline)}
@@ -1644,7 +1647,7 @@ class AnalysisAgent(LumenBaseAgent):
         with self.interface.param.update(callback_exception="raise"):
             with self._add_step(title=step_title or "Creating view...", steps_layout=self._steps_layout) as step:
                 await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
-                analysis_callable = analyses[analysis_name].instance(agents=agents)
+                analysis_callable = analyses[analysis_name].instance(agents=self.agents)
 
                 data = await get_data(pipeline)
                 for field in analysis_callable._field_params:

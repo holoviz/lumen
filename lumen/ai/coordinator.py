@@ -45,6 +45,8 @@ class Plan(Section):
     A Plan is a Task that is a collection of other Tasks.
     """
 
+    agents = param.List(item_type=Actor, default=[])
+
     interface = param.ClassSelector(class_=ChatFeed)
 
     async def _run_task(self, i: int, task: Self | Actor, **kwargs):
@@ -52,14 +54,17 @@ class Plan(Section):
         with self.interface.add_step(title=f"{task.title}...", user="Runner", layout_params={"title": "🏗️ Plan Execution Steps"}, steps_layout=self.steps_layout) as step:
             step.stream(f"`Working on task {task.title}`:\n\n{task.instruction}")
             try:
+                kwargs = {"agents": self.agents} if 'agents' in task.param else {}
                 with task.param.update(
-                    memory=self.memory, interface=self.interface, steps_layout=self.steps_layout, history=self.history
+                    memory=self.memory, interface=self.interface, steps_layout=self.steps_layout,
+                        history=self.history, **kwargs
                 ):
                     outputs += await task.execute(**kwargs)
             except asyncio.CancelledError as e:
                 step.failed_title = f"{task.title} agent was cancelled"
                 raise e
             except Exception as e:
+                traceback.print_exception(e)
                 self.memory['__error__'] = str(e)
                 raise e
             unprovided = [p for actor in task.subtasks for p in actor.provides if p not in self.memory]
@@ -457,9 +462,12 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 self.interface.stream(msg, user='Lumen')
                 return msg
 
+            if '__error__' in self.memory:
+                del self.memory['__error__']
             with self.interface.param.update(callback_exception="raise"):
                 with plan.param.update(
-                    history=messages, memory=self._memory, interface=self.interface, steps_layout=self.steps_layout
+                    history=messages, memory=self._memory, interface=self.interface,
+                    steps_layout=self.steps_layout, agents=list(agents.values())
                 ):
                     await plan.execute()
             self.steps_layout.title = f"✅ Sucessfully completed {plan.title!r}"
