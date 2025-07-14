@@ -1511,9 +1511,41 @@ class VegaLiteAgent(BaseViewAgent):
         self._handle_map_compatibility(vega_spec, vega_spec_str)
         return vega_spec
 
+    @classmethod
+    def _extract_as_keys(cls, transforms: list[dict]) -> list[str]:
+        """
+        Extracts all 'as' field names from a list of Vega-Lite transform definitions.
+
+        Parameters
+        ----------
+        transforms : list[dict]
+            A list of Vega-Lite transform objects.
+
+        Returns
+        -------
+        list[str]
+            A list of field names from 'as' keys (flattened, deduplicated).
+        """
+        as_fields = []
+        for t in transforms:
+            # Top-level 'as'
+            if "as" in t:
+                if isinstance(t["as"], list):
+                    as_fields.extend(t["as"])
+                elif isinstance(t["as"], str):
+                    as_fields.append(t["as"])
+            for key in ("aggregate", "joinaggregate", "window"):
+                if key in t and isinstance(t[key], list):
+                    for entry in t[key]:
+                        if "as" in entry:
+                            as_fields.append(entry["as"])
+
+        return list(dict.fromkeys(as_fields))
+
     async def _ensure_columns_exists(self, vega_spec: dict):
         schema = await get_schema(self._memory["pipeline"])
 
+        fields = self._extract_as_keys(vega_spec.get('transform', [])) + list(schema)
         for layer in vega_spec.get("layer", []):
             encoding = layer.get("encoding", {})
             if not encoding:
@@ -1528,7 +1560,7 @@ class VegaLiteAgent(BaseViewAgent):
                     fields_to_check.extend(item["field"] for item in enc_def if isinstance(item, dict) and "field" in item)
 
                 for field in fields_to_check:
-                    if field not in schema and field.lower() not in schema and field.upper() not in schema:
+                    if field not in fields and field.lower() not in fields and field.upper() not in fields:
                         raise ValueError(f"Field '{field}' not found in schema.")
 
     async def _extract_spec(self, spec: dict[str, Any]):
