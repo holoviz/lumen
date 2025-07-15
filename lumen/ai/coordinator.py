@@ -852,18 +852,40 @@ class Planner(Coordinator):
         actors = []
         actors_in_graph = set()
 
-        # Check for consecutive agents of the same type
-        consecutive_found = False
-        for i in range(len(plan.steps) - 1):
-            current_actor = plan.steps[i].actor
-            next_actor = plan.steps[i + 1].actor
-            if current_actor == next_actor:
-                consecutive_found = True
-                unmet_dependencies.add(f"Do not use two {current_actor} consecutively!")
-                break
+        # Check for consecutive agents of the same type and merge them
+        merged_steps = []
+        i = 0
+        while i < len(plan.steps):
+            current_step = plan.steps[i]
 
-        if consecutive_found:
-            return Plan(subtasks=tasks, title=plan.title), unmet_dependencies, previous_actors
+            # Look ahead to see if there are consecutive steps with the same actor
+            consecutive_steps = [current_step]
+            j = i + 1
+            while j < len(plan.steps) and plan.steps[j].actor == current_step.actor:
+                consecutive_steps.append(plan.steps[j])
+                j += 1
+
+            if len(consecutive_steps) > 1:
+                # Join the consecutive steps into one
+                combined_instruction = f"{current_step.instruction}. Additionally: " + ". ".join(
+                    step.instruction for step in consecutive_steps[1:]
+                )
+                combined_title = f"{current_step.title} (combined {len(consecutive_steps)} steps)"
+
+                # Create a new step with combined instruction
+                merged_step = type(current_step)(
+                    actor=current_step.actor,
+                    instruction=combined_instruction,
+                    title=combined_title,
+                )
+                merged_steps.append(merged_step)
+            else:
+                merged_steps.append(current_step)
+
+            i = j
+
+        # Update the plan with merged steps
+        plan.steps = merged_steps
 
         for step in plan.steps:
             key = step.actor
