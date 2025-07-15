@@ -45,8 +45,8 @@ from .tools import ToolUser
 from .translate import param_to_pydantic
 from .utils import (
     apply_changes, clean_sql, describe_data, get_data, get_pipeline,
-    get_schema, load_json, log_debug, parse_table_slug, report_error,
-    retry_llm_output, stream_details,
+    get_schema, load_json, log_debug, mutate_user_message, parse_table_slug,
+    report_error, retry_llm_output, stream_details,
 )
 from .views import (
     AnalysisOutput, LumenOutput, SQLOutput, VegaLiteOutput,
@@ -731,7 +731,7 @@ class SQLAgent(LumenBaseAgent):
 
         # If dataframe is empty, raise error to fall back to planning
         if df.empty and raise_if_empty:
-            raise ValueError("Query returned empty results")
+            raise ValueError(f"\nQuery `{result['sql']}` returned empty results; ensure all the WHERE filter values exist in the dataset.")
 
         self._memory["data"] = await describe_data(df)
         self._memory["sql"] = result["sql"]
@@ -1123,8 +1123,9 @@ class SQLAgent(LumenBaseAgent):
         try:
             # Try one-shot approach first; if empty or fails, fallback to planning mode
             pipeline = await self._attempt_oneshot_sql(messages, source, step_title)
-        except Exception:
-            pipeline = self._execute_planning_mode(messages, source, step_title)
+        except Exception as e:
+            messages = mutate_user_message(str(e), messages)
+            pipeline = await self._execute_planning_mode(messages, source, step_title)
         return pipeline
 
 
