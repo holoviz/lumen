@@ -718,7 +718,8 @@ class SQLAgent(LumenBaseAgent):
 
     async def _finalize_execution(
         self, results: dict, context_entries: list[dict],
-        messages: list[Message], step_title: str | None
+        messages: list[Message], step_title: str | None,
+        raise_if_empty: bool = False
     ) -> None:
         """Finalize execution for final step."""
         # Get first result (typically only one for final step)
@@ -727,6 +728,11 @@ class SQLAgent(LumenBaseAgent):
         # Update memory
         pipeline = result["pipeline"]
         df = await get_data(pipeline)
+
+        # If dataframe is empty, raise error to fall back to planning
+        if df.empty and raise_if_empty:
+            raise ValueError("Query returned empty results")
+
         self._memory["data"] = await describe_data(df)
         self._memory["sql"] = result["sql"]
         self._memory["pipeline"] = pipeline
@@ -995,6 +1001,115 @@ class SQLAgent(LumenBaseAgent):
 
         return context
 
+    async def _attempt_oneshot_sql(
+        self,
+        messages: list[Message],
+        source: Source,
+        step_title: str | None = None,
+    ) -> Pipeline | None:
+        """
+        Attempt one-shot SQL generation without planning context.
+        Returns Pipeline if successful, None if fallback to planning is needed.
+        """
+        with self._add_step(
+            title="Attempting one-shot SQL generation...",
+            steps_layout=self._steps_layout,
+            status="running"
+        ) as step:
+            # Generate SQL without planning context
+            sql_queries = await self._generate_sql_queries(
+                messages, source.dialect, step_number=1,
+                is_final=True, context_entries=None
+            )
+
+            # Validate and execute the first query
+            expr_slug, sql_query = next(iter(sql_queries.items()))
+            validated_sql = await self._validate_sql(
+                sql_query, expr_slug, source.dialect, source, messages, step
+            )
+
+            # Execute and get results
+            pipeline, sql_expr_source, summary = await self._execute_query(
+                source, expr_slug, validated_sql, is_final=True,
+                should_materialize=True, step=step
+            )
+
+            # Use existing finalization logic
+            results = {expr_slug: {
+                "sql": validated_sql,
+                "summary": summary,
+                "pipeline": pipeline,
+                "source": sql_expr_source
+            }}
+
+            await self._finalize_execution(
+                results, [], messages, step_title, raise_if_empty=True
+            )
+
+            step.status = "success"
+            step.success_title = "One-shot SQL generation successful"
+            return pipeline
+
+    async def _execute_planning_mode(
+        self,
+        messages: list[Message],
+        source: Source,
+        step_title: str | None = None,
+    ) -> Pipeline:
+        """
+        Execute the planning mode with roadmap generation and iterative refinement.
+        """
+        # Generate initial roadmap for planning mode
+        roadmap = await self._generate_roadmap(messages)
+
+        # Initialize context tracking
+        context_entries = []
+        total_steps = 0
+        roadmap_context = self._format_roadmap(roadmap)
+
+        # Main execution loop (existing planning logic)
+        while total_steps < self.max_steps:
+            # Build context for planning
+            sql_plan_context = self._format_context(context_entries)
+            # Include roadmap context
+            if roadmap_context and total_steps == 0:
+                sql_plan_context = roadmap_context + "\n\n" + sql_plan_context
+            total_steps += 1
+
+            # Plan next step
+            next_step = await self._plan_next_step(messages, sql_plan_context, total_steps)
+
+            with self._add_step(
+                title=step_title or f"Step {total_steps}: Generating SQL",
+                steps_layout=self._steps_layout,
+                status="running"
+            ) as step:
+                result = await self._execute_sql_step(
+                    next_step.action_description,
+                    source,
+                    total_steps,
+                    is_final=next_step.is_final_answer,
+                    context_entries=context_entries,
+                    sql_plan_context=sql_plan_context,
+                    should_materialize=next_step.is_final_answer and next_step.should_materialize,
+                    step_title=step_title,
+                    step=step
+                )
+            if next_step.is_final_answer:
+                return result
+
+            # Update context
+            context_entry = self._build_context_entry(
+                total_steps, next_step, result
+            )
+            context_entries.append(context_entry)
+
+            # Keep context window manageable
+            if len(context_entries) > 10:
+                context_entries = context_entries[-10:]
+
+        raise ValueError(f"Exceeded maximum steps ({self.max_steps}) without reaching a final answer.")
+
     async def respond(
         self,
         messages: list[Message],
@@ -1005,115 +1120,12 @@ class SQLAgent(LumenBaseAgent):
         sources = self._memory["sources"] if isinstance(self._memory["sources"], dict) else {source.name: source for source in self._memory["sources"]}
         tables_to_source, source = self._setup_source(sources)
 
-        # Try one-shot approach first
         try:
-            with self._add_step(
-                title="Attempting one-shot SQL generation...",
-                steps_layout=self._steps_layout,
-                status="running"
-            ) as step:
-                # Generate SQL without planning context
-                sql_queries = await self._generate_sql_queries(
-                    messages, source.dialect, step_number=1,
-                    is_final=True, context_entries=None
-                )
-
-                # Validate and execute the first query
-                expr_slug, sql_query = next(iter(sql_queries.items()))
-                validated_sql = await self._validate_sql(
-                    sql_query, expr_slug, source.dialect, source, messages, step
-                )
-
-                # Execute and get results
-                pipeline, sql_expr_source, summary = await self._execute_query(
-                    source, expr_slug, validated_sql, is_final=True,
-                    should_materialize=True, step=step
-                )
-
-                # Get dataframe to check if it's empty
-                df = await get_data(pipeline)
-
-                # If dataframe is empty, fall back to planning
-                if df.empty:
-                    step.status = "warning"
-                    step.success_title = "One-shot returned empty results. Switching to planning mode"
-                    raise ValueError("Empty dataframe returned from one-shot query")
-
-                # Update memory with successful results
-                self._memory["data"] = await describe_data(df)
-                self._memory["sql"] = validated_sql
-                self._memory["pipeline"] = pipeline
-                self._memory["table"] = pipeline.table
-                self._memory["source"] = pipeline.source
-                self._memory["sql_plan_context"] = []
-
-                # Render output
-                self._render_lumen(
-                    pipeline,
-                    spec=validated_sql,
-                    messages=messages,
-                    title=step_title or "SQL Query Result"
-                )
-
-                step.status = "success"
-                step.success_title = "One-shot SQL generation successful"
-                return pipeline
-
-        except Exception as e:
-            # One-shot failed, fall back to planning mode
-            step.status = "warning"
-            step.success_title = f"One-shot failed: {str(e)[:100]}... Switching to planning mode"
-
-            # Generate initial roadmap for planning mode
-            roadmap = await self._generate_roadmap(messages)
-
-            # Initialize context tracking
-            context_entries = []
-            total_steps = 0
-            roadmap_context = self._format_roadmap(roadmap)
-
-            # Main execution loop (existing planning logic)
-            while total_steps < self.max_steps:
-                # Build context for planning
-                sql_plan_context = self._format_context(context_entries)
-                # Include roadmap context
-                if roadmap_context and total_steps == 0:
-                    sql_plan_context = roadmap_context + "\n\n" + sql_plan_context
-                total_steps += 1
-
-                # Plan next step
-                next_step = await self._plan_next_step(messages, sql_plan_context, total_steps)
-
-                with self._add_step(
-                    title=step_title or f"Step {total_steps}: Generating SQL",
-                    steps_layout=self._steps_layout,
-                    status="running"
-                ) as step:
-                    result = await self._execute_sql_step(
-                        next_step.action_description,
-                        source,
-                        total_steps,
-                        is_final=next_step.is_final_answer,
-                        context_entries=context_entries,
-                        sql_plan_context=sql_plan_context,
-                        should_materialize=next_step.is_final_answer and next_step.should_materialize,
-                        step_title=step_title,
-                        step=step
-                    )
-                if next_step.is_final_answer:
-                    return result
-
-                # Update context
-                context_entry = self._build_context_entry(
-                    total_steps, next_step, result
-                )
-                context_entries.append(context_entry)
-
-                # Keep context window manageable
-                if len(context_entries) > 10:
-                    context_entries = context_entries[-10:]
-
-            raise ValueError(f"Exceeded maximum steps ({self.max_steps}) without reaching a final answer.") from e
+            # Try one-shot approach first; if empty or fails, fallback to planning mode
+            pipeline = await self._attempt_oneshot_sql(messages, source, step_title)
+        except Exception:
+            pipeline = self._execute_planning_mode(messages, source, step_title)
+        return pipeline
 
 
 class DbtslAgent(LumenBaseAgent, DbtslMixin):
