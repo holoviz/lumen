@@ -294,10 +294,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
                     messages = [{"role": "user", "content": contents}]
                     original_memory = agent.memory
                     try:
-                        with agent.param.update(memory=memory):
-                            await agent.respond(
-                                messages, agents=self.agents
-                            )
+                        with agent.param.update(memory=memory, agents=self.agents):
+                            await agent.respond(messages)
                             # Pass the same memory to _add_analysis_suggestions
                             await self._add_analysis_suggestions(memory=memory)
                     finally:
