@@ -145,7 +145,8 @@ class SourceControls(Viewer):
 
     def __init__(self, **params):
         super().__init__(**params)
-        self.tables_tabs = Tabs(sizing_mode="stretch_width")
+        self.tables_tabs = Tabs(sizing_mode="stretch_width", visible=False)
+        self.tables_tabs.visible = self.tables_tabs.param["objects"].rx().rx.len() > 0
         self._markitdown = None
         self._file_input = FileDropper(
             layout="compact",
@@ -156,6 +157,7 @@ class SourceControls(Viewer):
         )
         self._file_input.param.watch(self._generate_media_controls, "value")
         self._upload_tabs = Tabs(sizing_mode="stretch_width", closable=True)
+        self._upload_tabs.visible = self._upload_tabs.param["objects"].rx().rx.len() > 0
 
         # URL input for downloading files
         self._url_input = ChatAreaInput(
@@ -202,7 +204,7 @@ class SourceControls(Viewer):
         self.menu = Column(
             self._input_tabs,
             self._upload_tabs,
-            Row(self._add_button, self._cancel_button),
+            Row(self._add_button, self._cancel_button, margin=(0, 10, 0, 10)),
             self.tables_tabs,
             self._error_placeholder,
             self._message_placeholder,
