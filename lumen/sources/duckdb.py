@@ -127,12 +127,10 @@ class DuckDBSource(BaseSQLSource):
                     view_sql = f"CREATE OR REPLACE VIEW {quoted_table} AS {sql_expr}"
                     try:
                         self._connection.execute(view_sql)
-                        processed_tables[table_name] = f"SELECT * FROM {quoted_table}"
                     except Exception:
-                        # If view creation fails, store the original SQL expression
-                        processed_tables[table_name] = sql_expr
-                else:
-                    processed_tables[table_name] = sql_expr
+                        pass  # View creation failed, but we'll still use the original SQL
+
+                processed_tables[table_name] = sql_expr
 
             self.tables = processed_tables
 
