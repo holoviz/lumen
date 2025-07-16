@@ -25,7 +25,7 @@ from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
 from .llm import LlamaCpp, Llm, Message
 from .logs import ChatLogs
 from .models import (
-    Reasoning, ThinkingYesNo, make_agent_model, make_plan_model,
+    BasePlan, Reasoning, ThinkingYesNo, make_agent_model, make_plan_model,
 )
 from .report import Section, Task
 from .tools import (
@@ -771,8 +771,8 @@ class Planner(Coordinator):
         tools: dict[str, Tool],
         unmet_dependencies: set[str],
         previous_actors: list[str],
-        previous_plans: list,
-        plan_model: type[BaseModel],
+        previous_plans: list[str],
+        plan_model: type[BasePlan],
         step: ChatStep,
         is_follow_up: bool = False,
     ) -> BaseModel:
@@ -837,7 +837,7 @@ class Planner(Coordinator):
 
     async def _resolve_plan(
         self,
-        raw_plan,
+        raw_plan: BasePlan,
         agents: dict[str, Agent],
         tools: dict[str, Tool],
         messages: list[Message],
