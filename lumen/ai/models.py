@@ -170,19 +170,22 @@ class LineChange(BaseModel):
         To remove a line set this to an empty string."""
     )
 
-class BaseStep(BaseModel):
+
+class RawStep(BaseModel):
     actor: str
     instruction: str
     title: str
 
-class BasePlan(BaseModel):
+
+class RawPlan(BaseModel):
     title: str = Field(description="A title that describes this plan, up to three words.")
-    steps: list[BaseStep] = Field(
+    steps: list[RawStep] = Field(
         description="""
         A list of steps to perform that will solve user query. Each step MUST use a DIFFERENT actor than the previous step.
         Review your plan to ensure this constraint is met.
         """
     )
+
 
 class Reasoning(BaseModel):
     chain_of_thought: str = Field(
@@ -201,7 +204,7 @@ class RetrySpec(BaseModel):
     lines_changes: list[LineChange] = Field(description="A list of changes made to the lines in the original text based on the chain_of_thought.")
 
 
-def make_plan_model(agents: list[str], tools: list[str]) -> type[BasePlan]:
+def make_plan_model(agents: list[str], tools: list[str]) -> type[RawPlan]:
     # TODO: make this inherit from PartialBaseModel
     step = create_model(
         "Step",
