@@ -45,6 +45,9 @@ class Plan(Section):
     A Plan is a Task that is a collection of other Tasks.
     """
 
+    abort_on_error = param.Boolean(default=False, doc="""
+        If True, the report will abort if an error occurs.""")
+
     agents = param.List(item_type=Actor, default=[])
 
     interface = param.ClassSelector(class_=ChatFeed)

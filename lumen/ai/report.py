@@ -1,4 +1,5 @@
 import asyncio
+import traceback as tb
 
 from types import FunctionType
 from typing import Self
@@ -26,26 +27,36 @@ class Task(Viewer):
     A Task is a single unit of work that can be executed and rendered.
     """
 
-    history = param.List()
+    abort_on_error = param.Boolean(default=False, doc="""
+        If True, the report will abort if an error occurs.""")
+
+    history = param.List(doc="""
+        Conversation history to include as context for the task.""")
 
     interface = param.ClassSelector(class_=ChatFeed)
 
-    instruction = param.String(default="")
+    instruction = param.String(default="", doc="""
+        The instruction to give to the task.""")
 
-    llm = param.ClassSelector(class_=Llm)
+    llm = param.ClassSelector(class_=Llm, doc="""
+        The LLM to use for the task.""")
 
     memory = param.ClassSelector(class_=_Memory)
 
-    title = param.String()
+    title = param.String(doc="""
+        The title of the task.""")
 
-    running = param.Boolean()
+    running = param.Boolean(doc="""
+        Whether the task is currently running.""")
 
-    status = param.String(default="idle")
+    status = param.Selector(objects=["idle", "success", "error"], default="idle", doc="""
+        The current status of the task.""")
 
     steps_layout = param.ClassSelector(default=None, class_=(ListLike, NamedListLike), allow_None=True, doc="""
         The layout progress updates will be streamed to.""")
 
-    subtasks = param.List()
+    subtasks = param.List(doc="""
+        The subtasks of the task.""")
 
     level = 3
 
@@ -124,8 +135,11 @@ class Task(Viewer):
         for i, task in enumerate(self.subtasks):
             try:
                 outputs += await self._run_task(i, task, **kwargs)
-            except Exception:
+            except Exception as e:
+                tb.print_exception(e)
                 self.status = "error"
+                if self.abort_on_error:
+                    break
             else:
                 self.status = "success"
         return outputs
