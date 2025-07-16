@@ -302,6 +302,55 @@ def test_automatic_csv_view_creation(sample_csv_files):
         os.chdir(original_cwd)
 
 
+def test_create_sql_expr_source_preserves_original_sql(sample_csv_files):
+    """Test that create_sql_expr_source preserves original SQL expressions, not generic SELECT * FROM."""
+    files = sample_csv_files
+    original_cwd = os.getcwd()
+    
+    try:
+        os.chdir(files['dir'])
+        
+        # Create initial source with CSV files
+        source = DuckDBSource(
+            uri=':memory:',
+            tables={
+                'customers': 'customers.csv',
+                'orders': 'orders.csv'
+            }
+        )
+        
+        # Create a new source with SQL expressions
+        new_tables = {
+            'filtered_customers': 'SELECT * FROM customers WHERE id > 1',
+            'order_summary': 'SELECT customer_id, COUNT(*) as order_count, SUM(total) as total_amount FROM orders GROUP BY customer_id'
+        }
+        
+        new_source = source.create_sql_expr_source(new_tables)
+        
+        # Check that the new source has the tables
+        tables = new_source.get_tables()
+        assert 'filtered_customers' in tables
+        assert 'order_summary' in tables
+        
+        # Most importantly: check that the stored SQL expressions are the original ones,
+        # not generic "SELECT * FROM table_name"
+        assert new_source.tables['filtered_customers'] == 'SELECT * FROM customers WHERE id > 1'
+        assert new_source.tables['order_summary'] == 'SELECT customer_id, COUNT(*) as order_count, SUM(total) as total_amount FROM orders GROUP BY customer_id'
+        
+        # Verify the SQL expressions actually work
+        filtered_result = new_source.get('filtered_customers')
+        assert len(filtered_result) == 2  # Only customers with id > 1 (Bob and Charlie)
+        assert all(filtered_result['id'] > 1)
+        
+        summary_result = new_source.get('order_summary')
+        assert len(summary_result) == 2  # 2 unique customer_ids
+        assert 'order_count' in summary_result.columns
+        assert 'total_amount' in summary_result.columns
+        
+    finally:
+        os.chdir(original_cwd)
+
+
 def test_user_examples(sample_csv_files):
     """Test the exact examples from the user's code."""
     files = sample_csv_files
