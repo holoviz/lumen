@@ -171,33 +171,46 @@ class LineChange(BaseModel):
     )
 
 
+class RawStep(BaseModel):
+    actor: str
+    instruction: str
+    title: str
+
+
+class RawPlan(BaseModel):
+    title: str = Field(description="A title that describes this plan, up to three words.")
+    steps: list[RawStep] = Field(
+        description="""
+        A list of steps to perform that will solve user query. Each step MUST use a DIFFERENT actor than the previous step.
+        Review your plan to ensure this constraint is met.
+        """
+    )
+
+
+class Reasoning(BaseModel):
+    chain_of_thought: str = Field(
+        description="""
+        Briefly summarize the user's goal and categorize the question type:
+        high-level, data-focused, or other. Identify the most relevant and compatible actors,
+        explaining their requirements, and what you already have satisfied. If there were previous failures, discuss them.
+        IMPORTANT: Ensure no consecutive steps use the same actor in your planned sequence.
+        """
+    )
+
 class RetrySpec(BaseModel):
     """Represents a revision of text with its content and changes."""
 
     chain_of_thought: str = Field(description="In a sentence or two, explain the plan to revise the text based on the feedback provided.")
     lines_changes: list[LineChange] = Field(description="A list of changes made to the lines in the original text based on the chain_of_thought.")
 
-def make_plan_models(agents: list[str], tools: list[str]):
+
+def make_plan_model(agents: list[str], tools: list[str]) -> type[RawPlan]:
     # TODO: make this inherit from PartialBaseModel
     step = create_model(
         "Step",
         actor=(Literal[tuple(agents+tools)], FieldInfo(description="The name of the actor to assign a task to.")),
         instruction=(str, FieldInfo(description="Instructions to the actor to assist in the task, and whether rendering is required.")),
         title=(str, FieldInfo(description="Short title of the task to be performed; up to three words.")),
-    )
-    reasoning = create_model(
-        'Reasoning',
-        chain_of_thought=(
-            str,
-            FieldInfo(
-                description="""
-                    Briefly summarize the user's goal and categorize the question type:
-                    high-level, data-focused, or other. Identify the most relevant and compatible actors,
-                    explaining their requirements, and what you already have satisfied. If there were previous failures, discuss them.
-                    IMPORTANT: Ensure no consecutive steps use the same actor in your planned sequence.
-                    """
-            ),
-        ),
     )
     plan = create_model(
         "Plan",
@@ -214,7 +227,7 @@ def make_plan_models(agents: list[str], tools: list[str]):
             )
         )
     )
-    return reasoning, plan
+    return plan
 
 
 def make_columns_selection(table_slugs: list[str], **context):

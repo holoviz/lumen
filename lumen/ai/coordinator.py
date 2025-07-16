@@ -24,7 +24,9 @@ from .agents import Agent, AnalysisAgent, ChatAgent
 from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
 from .llm import LlamaCpp, Llm, Message
 from .logs import ChatLogs
-from .models import ThinkingYesNo, make_agent_model, make_plan_models
+from .models import (
+    RawPlan, Reasoning, ThinkingYesNo, make_agent_model, make_plan_model,
+)
 from .report import Section, Task
 from .tools import (
     IterativeTableLookup, TableLookup, Tool, VectorLookupToolUser,
@@ -672,7 +674,7 @@ class Planner(Coordinator):
         default={
             "main": {
                 "template": PROMPTS_DIR / "Planner" / "main.jinja2",
-                "response_model": make_plan_models,
+                "response_model": make_plan_model,
             },
             "follow_up": {
                 "template": PROMPTS_DIR / "Planner" / "follow_up.jinja2",
@@ -772,9 +774,8 @@ class Planner(Coordinator):
         tools: dict[str, Tool],
         unmet_dependencies: set[str],
         previous_actors: list[str],
-        previous_plans: list,
-        reason_model: type[BaseModel],
-        plan_model: type[BaseModel],
+        previous_plans: list[str],
+        plan_model: type[RawPlan],
         step: ChatStep,
         is_follow_up: bool = False,
     ) -> BaseModel:
@@ -822,7 +823,7 @@ class Planner(Coordinator):
                 messages=messages,
                 system=system,
                 model_spec=model_spec,
-                response_model=reason_model,
+                response_model=Reasoning,
                 max_retries=3,
             ):
                 if reasoning.chain_of_thought:  # do not replace with empty string
@@ -839,7 +840,7 @@ class Planner(Coordinator):
 
     async def _resolve_plan(
         self,
-        plan,
+        raw_plan: RawPlan,
         agents: dict[str, Agent],
         tools: dict[str, Tool],
         messages: list[Message],
@@ -856,14 +857,14 @@ class Planner(Coordinator):
         # Check for consecutive agents of the same type and merge them
         merged_steps = []
         i = 0
-        while i < len(plan.steps):
-            current_step = plan.steps[i]
+        while i < len(raw_plan.steps):
+            current_step = raw_plan.steps[i]
 
             # Look ahead to see if there are consecutive steps with the same actor
             consecutive_steps = [current_step]
             j = i + 1
-            while j < len(plan.steps) and plan.steps[j].actor == current_step.actor:
-                consecutive_steps.append(plan.steps[j])
+            while j < len(raw_plan.steps) and raw_plan.steps[j].actor == current_step.actor:
+                consecutive_steps.append(raw_plan.steps[j])
                 j += 1
 
             if len(consecutive_steps) > 1:
@@ -885,10 +886,10 @@ class Planner(Coordinator):
 
             i = j
 
-        # Update the plan with merged steps
-        plan.steps = merged_steps
+        # Update the raw_plan with merged steps
+        raw_plan.steps = merged_steps
 
-        for step in plan.steps:
+        for step in raw_plan.steps:
             key = step.actor
             actors.append(key)
             if key in agents:
@@ -955,9 +956,9 @@ class Planner(Coordinator):
             if conflicts:
                 # Skip the summarization step if there's a conflict
                 log_debug(f"Skipping summarization with {actor} due to conflicts: {conflicts}")
-                plan.steps = steps
+                raw_plan.steps = steps
                 previous_actors = actors
-                return Plan(subtasks=tasks, title=plan.title), unmet_dependencies, previous_actors
+                return Plan(subtasks=tasks, title=raw_plan.title), unmet_dependencies, previous_actors
 
             summarize_step = type(step)(
                 actor=actor,
@@ -990,13 +991,13 @@ class Planner(Coordinator):
             )
             actors_in_graph.add("ValidationAgent")
 
-        plan.steps = steps
-        return Plan(subtasks=tasks, title=plan.title), unmet_dependencies, actors
+        raw_plan.steps = steps
+        return Plan(subtasks=tasks, title=raw_plan.title), unmet_dependencies, actors
 
     async def _compute_plan(self, messages: list[Message], agents: dict[str, Agent], tools: dict[str, Tool], pre_plan_output: dict[str, Any]) -> Plan:
         tool_names = list(tools)
         agent_names = list(agents)
-        reason_model, plan_model = self._get_model("main", agents=agent_names, tools=tool_names)
+        plan_model = self._get_model("main", agents=agent_names, tools=tool_names)
 
         planned = False
         unmet_dependencies = set()
@@ -1013,7 +1014,7 @@ class Planner(Coordinator):
                     try:
                         raw_plan = await self._make_plan(
                             messages, agents, tools, unmet_dependencies, previous_actors, previous_plans,
-                            reason_model, plan_model, istep, is_follow_up=pre_plan_output["is_follow_up"]
+                            plan_model, istep, is_follow_up=pre_plan_output["is_follow_up"]
                         )
                     except asyncio.CancelledError as e:
                         istep.failed_title = 'Planning was cancelled, please try again.'
