@@ -627,7 +627,7 @@ def log_debug(msg: str | list, offset: int = 24, prefix: str = "", suffix: str =
         log.debug(f"\033[90m{delimiter}\033[0m")
 
 
-def mutate_user_message(content: str, messages: list[dict[str, str]], suffix: bool = True, wrap: bool | str = False, inplace: bool = True):
+def mutate_user_message(content: str, messages: list[dict[str, str]], suffix: bool = True, wrap: bool | str = False, inplace: bool = True) -> list[dict[str, str]]:
     """
     Helper to mutate the last user message in a list of messages. Suffixes the content by default, else prefixes.
     """

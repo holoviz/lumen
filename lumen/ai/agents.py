@@ -45,8 +45,8 @@ from .tools import ToolUser
 from .translate import param_to_pydantic
 from .utils import (
     apply_changes, clean_sql, describe_data, get_data, get_pipeline,
-    get_schema, load_json, log_debug, parse_table_slug, report_error,
-    retry_llm_output, stream_details,
+    get_schema, load_json, log_debug, mutate_user_message, parse_table_slug,
+    report_error, retry_llm_output, stream_details,
 )
 from .views import (
     AnalysisOutput, LumenOutput, SQLOutput, VegaLiteOutput,
@@ -718,7 +718,8 @@ class SQLAgent(LumenBaseAgent):
 
     async def _finalize_execution(
         self, results: dict, context_entries: list[dict],
-        messages: list[Message], step_title: str | None
+        messages: list[Message], step_title: str | None,
+        raise_if_empty: bool = False
     ) -> None:
         """Finalize execution for final step."""
         # Get first result (typically only one for final step)
@@ -727,6 +728,11 @@ class SQLAgent(LumenBaseAgent):
         # Update memory
         pipeline = result["pipeline"]
         df = await get_data(pipeline)
+
+        # If dataframe is empty, raise error to fall back to planning
+        if df.empty and raise_if_empty:
+            raise ValueError(f"\nQuery `{result['sql']}` returned empty results; ensure all the WHERE filter values exist in the dataset.")
+
         self._memory["data"] = await describe_data(df)
         self._memory["sql"] = result["sql"]
         self._memory["pipeline"] = pipeline
@@ -995,17 +1001,65 @@ class SQLAgent(LumenBaseAgent):
 
         return context
 
-    async def respond(
+    async def _attempt_oneshot_sql(
         self,
         messages: list[Message],
+        source: Source,
         step_title: str | None = None,
-    ) -> Any:
-        """Execute SQL generation with iterative refinement."""
-        # Setup sources
-        sources = self._memory["sources"] if isinstance(self._memory["sources"], dict) else {source.name: source for source in self._memory["sources"]}
-        tables_to_source, source = self._setup_source(sources)
+    ) -> Pipeline | None:
+        """
+        Attempt one-shot SQL generation without planning context.
+        Returns Pipeline if successful, None if fallback to planning is needed.
+        """
+        with self._add_step(
+            title="Attempting one-shot SQL generation...",
+            steps_layout=self._steps_layout,
+            status="running"
+        ) as step:
+            # Generate SQL without planning context
+            sql_queries = await self._generate_sql_queries(
+                messages, source.dialect, step_number=1,
+                is_final=True, context_entries=None
+            )
 
-        # Generate initial roadmap
+            # Validate and execute the first query
+            expr_slug, sql_query = next(iter(sql_queries.items()))
+            validated_sql = await self._validate_sql(
+                sql_query, expr_slug, source.dialect, source, messages, step
+            )
+
+            # Execute and get results
+            pipeline, sql_expr_source, summary = await self._execute_query(
+                source, expr_slug, validated_sql, is_final=True,
+                should_materialize=True, step=step
+            )
+
+            # Use existing finalization logic
+            results = {expr_slug: {
+                "sql": validated_sql,
+                "summary": summary,
+                "pipeline": pipeline,
+                "source": sql_expr_source
+            }}
+
+            await self._finalize_execution(
+                results, [], messages, step_title, raise_if_empty=True
+            )
+
+            step.status = "success"
+            step.success_title = "One-shot SQL generation successful"
+            return pipeline
+
+    async def _execute_planning_mode(
+        self,
+        messages: list[Message],
+        source: Source,
+        step_title: str | None = None,
+    ) -> Pipeline:
+        """
+        Execute the planning mode with roadmap generation and iterative refinement.
+        """
+        # Generate initial roadmap for planning mode
         roadmap = await self._generate_roadmap(messages)
 
         # Initialize context tracking
@@ -1013,7 +1067,7 @@ class SQLAgent(LumenBaseAgent):
         total_steps = 0
         roadmap_context = self._format_roadmap(roadmap)
 
-        # Main execution loop
+        # Main execution loop (existing planning logic)
         while total_steps < self.max_steps:
             # Build context for planning
             sql_plan_context = self._format_context(context_entries)
@@ -1055,6 +1109,24 @@ class SQLAgent(LumenBaseAgent):
                 context_entries = context_entries[-10:]
 
         raise ValueError(f"Exceeded maximum steps ({self.max_steps}) without reaching a final answer.")
+
+    async def respond(
+        self,
+        messages: list[Message],
+        step_title: str | None = None,
+    ) -> Any:
+        """Execute SQL generation with one-shot attempt first, then iterative refinement if needed."""
+        # Setup sources
+        sources = self._memory["sources"] if isinstance(self._memory["sources"], dict) else {source.name: source for source in self._memory["sources"]}
+        tables_to_source, source = self._setup_source(sources)
+
+        try:
+            # Try one-shot approach first; if empty or fails, fallback to planning mode
+            pipeline = await self._attempt_oneshot_sql(messages, source, step_title)
+        except Exception as e:
+            messages = mutate_user_message(str(e), messages)
+            pipeline = await self._execute_planning_mode(messages, source, step_title)
+        return pipeline
 
 
 class DbtslAgent(LumenBaseAgent, DbtslMixin):
