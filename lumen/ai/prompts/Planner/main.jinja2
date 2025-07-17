@@ -87,9 +87,9 @@ Conditions for use:
 {%- endfor %}
 {% endif %}
 
-{%- if memory.get('tables_metadata') %}
+{%- if memory.get('visible_slugs') %}
 📊 Tables available:
-{%- set tables_list = memory['tables_metadata'].keys() | list %}
+{%- set tables_list = memory['visible_slugs'] | list %}
 {%- for table in tables_list[:10] %}
 - {{ table }}
 {%- endfor %}

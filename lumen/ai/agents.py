@@ -330,7 +330,10 @@ class ListAgent(Agent):
         """Handle when a user clicks on an item in the list"""
         if event.column != "show":
             return
-        item = self._df.iloc[event.row, 0]
+
+        # Get the item from the specific tabulator that was clicked
+        tabulator = event.obj
+        item = tabulator.value.iloc[event.row, 0]
 
         if self._message_format is None:
             raise ValueError("Subclass must define _message_format")
@@ -344,34 +347,72 @@ class ListAgent(Agent):
         step_title: str | None = None,
     ) -> Any:
         items = self._get_items()
-        header_filters = False
-        if len(items) > 10:
-            column_filter = {"type": "input", "placeholder": f"Filter by {self._column_name.lower()}..."}
-            header_filters = {self._column_name: column_filter}
 
-        self._df = pd.DataFrame({self._column_name: items})
-        item_list = pn.widgets.Tabulator(
-            self._df,
-            buttons={"show": '<i class="fa fa-eye"></i>'},
-            show_index=False,
-            min_height=150,
-            min_width=350,
-            widths={self._column_name: "90%"},
-            disabled=True,
-            page_size=10,
-            pagination="remote",
-            header_filters=header_filters,
-            sizing_mode="stretch_width",
-        )
+        # Check if items is a dict (grouped by source) or a list
+        if isinstance(items, dict):
+            # Create tabs with one tabulator per source
+            tabs = []
+            for source_name, source_items in items.items():
+                if not source_items:
+                    continue
 
-        item_list.on_click(self._use_item)
+                header_filters = False
+                if len(source_items) > 10:
+                    column_filter = {"type": "input", "placeholder": f"Filter by {self._column_name.lower()}..."}
+                    header_filters = {self._column_name: column_filter}
+
+                df = pd.DataFrame({self._column_name: source_items})
+                item_list = pn.widgets.Tabulator(
+                    df,
+                    buttons={"show": '<i class="fa fa-eye"></i>'},
+                    show_index=False,
+                    min_height=150,
+                    min_width=350,
+                    widths={self._column_name: "90%"},
+                    disabled=True,
+                    page_size=10,
+                    pagination="remote",
+                    header_filters=header_filters,
+                    sizing_mode="stretch_width",
+                    name=source_name
+                )
+                item_list.on_click(self._use_item)
+                tabs.append(item_list)
+
+            if tabs:
+                content = pn.Tabs(*tabs, sizing_mode="stretch_width")
+            else:
+                content = pn.pane.Markdown("No items available.")
+        else:
+            # Original single tabulator behavior
+            header_filters = False
+            if len(items) > 10:
+                column_filter = {"type": "input", "placeholder": f"Filter by {self._column_name.lower()}..."}
+                header_filters = {self._column_name: column_filter}
+
+            self._df = pd.DataFrame({self._column_name: items})
+            content = pn.widgets.Tabulator(
+                self._df,
+                buttons={"show": '<i class="fa fa-eye"></i>'},
+                show_index=False,
+                min_height=150,
+                min_width=350,
+                widths={self._column_name: "90%"},
+                disabled=True,
+                page_size=10,
+                pagination="remote",
+                header_filters=header_filters,
+                sizing_mode="stretch_width",
+            )
+            content.on_click(self._use_item)
+
         self.interface.stream(
             pn.Column(
-                "The available tables are listed below. Click on the eye icon to show the table contents.",
-                item_list
+                f"The available {self._column_name.lower()}s are listed below. Click on the eye icon to show the {self._column_name.lower()} contents.",
+                content
             ), user="Assistant"
         )
-        return item_list
+        return content
 
 
 class TableListAgent(ListAgent):
@@ -399,24 +440,36 @@ class TableListAgent(ListAgent):
 
     @classmethod
     async def applies(cls, memory: _Memory) -> bool:
-        # Check all sources' tables in memory and see if they have greater than 1 table
-        tables_count = 0
-        for source in memory.get("sources", []):
-            tables_count += len(source.get_tables())
-            if tables_count > 1:
-                return True
-        return False
+        return len(memory.get('visible_slugs', set())) > 1
 
-    def _get_items(self) -> list[str]:
-        tables = []
+    def _get_items(self) -> dict[str, list[str]] | list[str]:
         if "closest_tables" in self._memory:
-            tables = self._memory["closest_tables"]
+            # If we have closest_tables from search, return as a flat list
+            return self._memory["closest_tables"]
 
-        for source in self._memory["sources"]:
-            tables += source.get_tables()
+        # Group tables by source
+        visible_slugs = self._memory.get('visible_slugs', set())
+        if not visible_slugs:
+            return {}
 
-        # remove duplicates, keeps order in which they were added
-        return pd.unique(pd.Series(tables)).tolist()
+        tables_by_source = {}
+        for slug in visible_slugs:
+            if SOURCE_TABLE_SEPARATOR in slug:
+                source_name, table_name = slug.split(SOURCE_TABLE_SEPARATOR, 1)
+            else:
+                # Fallback if separator not found
+                source_name = "Unknown"
+                table_name = slug
+
+            if source_name not in tables_by_source:
+                tables_by_source[source_name] = []
+            tables_by_source[source_name].append(table_name)
+
+        # Sort tables within each source
+        for source in tables_by_source:
+            tables_by_source[source].sort()
+
+        return tables_by_source
 
 
 class DocumentListAgent(ListAgent):
@@ -836,6 +889,12 @@ class SQLAgent(LumenBaseAgent):
         """Setup the main source and handle multiple sources if needed."""
         vector_metaset = self._memory["sql_metaset"].vector_metaset
         selected_slugs = list(vector_metaset.vector_metadata_map) or self._memory["tables_metadata"].keys()
+
+        # Filter selected_slugs to only include visible tables
+        visible_slugs = self._memory.get('visible_slugs', set())
+        if visible_slugs:
+            selected_slugs = [slug for slug in selected_slugs if slug in visible_slugs]
+
         tables_to_source = {parse_table_slug(table_slug, sources)[1]: parse_table_slug(table_slug, sources)[0] for table_slug in selected_slugs}
         source = next(iter(tables_to_source.values()))
 
