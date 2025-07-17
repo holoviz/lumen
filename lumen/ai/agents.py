@@ -323,8 +323,8 @@ class ListAgent(Agent):
 
     __abstract = True
 
-    def _get_items(self) -> list[str]:
-        """Return the list of items to display"""
+    def _get_items(self) -> dict[str, list[str]]:
+        """Return dict of items grouped by source/category"""
 
     def _use_item(self, event):
         """Handle when a user clicks on an item in the list"""
@@ -348,51 +348,20 @@ class ListAgent(Agent):
     ) -> Any:
         items = self._get_items()
 
-        # Check if items is a dict (grouped by source) or a list
-        if isinstance(items, dict):
-            # Create tabs with one tabulator per source
-            tabs = []
-            for source_name, source_items in items.items():
-                if not source_items:
-                    continue
+        # Create tabs with one tabulator per source
+        tabs = []
+        for source_name, source_items in items.items():
+            if not source_items:
+                continue
 
-                header_filters = False
-                if len(source_items) > 10:
-                    column_filter = {"type": "input", "placeholder": f"Filter by {self._column_name.lower()}..."}
-                    header_filters = {self._column_name: column_filter}
-
-                df = pd.DataFrame({self._column_name: source_items})
-                item_list = pn.widgets.Tabulator(
-                    df,
-                    buttons={"show": '<i class="fa fa-eye"></i>'},
-                    show_index=False,
-                    min_height=150,
-                    min_width=350,
-                    widths={self._column_name: "90%"},
-                    disabled=True,
-                    page_size=10,
-                    pagination="remote",
-                    header_filters=header_filters,
-                    sizing_mode="stretch_width",
-                    name=source_name
-                )
-                item_list.on_click(self._use_item)
-                tabs.append(item_list)
-
-            if tabs:
-                content = pn.Tabs(*tabs, sizing_mode="stretch_width")
-            else:
-                content = pn.pane.Markdown("No items available.")
-        else:
-            # Original single tabulator behavior
             header_filters = False
-            if len(items) > 10:
+            if len(source_items) > 10:
                 column_filter = {"type": "input", "placeholder": f"Filter by {self._column_name.lower()}..."}
                 header_filters = {self._column_name: column_filter}
 
-            self._df = pd.DataFrame({self._column_name: items})
-            content = pn.widgets.Tabulator(
-                self._df,
+            df = pd.DataFrame({self._column_name: source_items})
+            item_list = pn.widgets.Tabulator(
+                df,
                 buttons={"show": '<i class="fa fa-eye"></i>'},
                 show_index=False,
                 min_height=150,
@@ -403,8 +372,15 @@ class ListAgent(Agent):
                 pagination="remote",
                 header_filters=header_filters,
                 sizing_mode="stretch_width",
+                name=source_name
             )
-            content.on_click(self._use_item)
+            item_list.on_click(self._use_item)
+            tabs.append(item_list)
+
+        if tabs:
+            content = pn.Tabs(*tabs, sizing_mode="stretch_width")
+        else:
+            content = pn.pane.Markdown("No items available.")
 
         self.interface.stream(
             pn.Column(
@@ -442,10 +418,10 @@ class TableListAgent(ListAgent):
     async def applies(cls, memory: _Memory) -> bool:
         return len(memory.get('visible_slugs', set())) > 1
 
-    def _get_items(self) -> dict[str, list[str]] | list[str]:
+    def _get_items(self) -> dict[str, list[str]]:
         if "closest_tables" in self._memory:
-            # If we have closest_tables from search, return as a flat list
-            return self._memory["closest_tables"]
+            # If we have closest_tables from search, return as a single group
+            return {"Search Results": self._memory["closest_tables"]}
 
         # Group tables by source
         visible_slugs = self._memory.get('visible_slugs', set())
@@ -501,9 +477,11 @@ class DocumentListAgent(ListAgent):
             return False  # source not loaded yet; always apply
         return len(sources) > 1
 
-    def _get_items(self) -> list[str]:
+    def _get_items(self) -> dict[str, list[str]]:
         # extract the filename, following this pattern `Filename: 'filename'``
-        return [doc["metadata"].get("filename", "untitled") for doc in self._memory.get("document_sources", [])]
+        documents = [doc["metadata"].get("filename", "untitled") for doc in self._memory.get("document_sources", [])]
+        # Return all documents under a single "Documents" category
+        return {"Documents": documents} if documents else {}
 
 
 class LumenBaseAgent(Agent):
