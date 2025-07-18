@@ -23,9 +23,9 @@ from panel.util import edit_readonly
 from panel.viewable import Child, Children, Viewer
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
-    Button, Card, ChatFeed, ChatInterface, ChatMessage, Checkbox,
-    CheckBoxGroup, Column, Dialog, FileDownload, IconButton, MenuList,
-    MultiChoice, Page, Paper, Row, Switch, Tabs, ToggleIcon,
+    Button, ChatFeed, ChatInterface, ChatMessage, Column, Dialog, FileDownload,
+    IconButton, MenuList, MultiChoice, Page, Paper, Row, Switch, Tabs,
+    ToggleIcon,
 )
 
 from ..pipeline import Pipeline
@@ -37,7 +37,7 @@ from .agents import (
     AnalysisAgent, AnalystAgent, ChatAgent, DocumentListAgent, SourceAgent,
     SQLAgent, TableListAgent, ValidationAgent, VegaLiteAgent,
 )
-from .components import SplitJS, StatusBadge
+from .components import SourceCatalog, SplitJS, StatusBadge
 from .config import PROVIDED_SOURCE_NAME, SOURCE_TABLE_SEPARATOR
 from .coordinator import Coordinator, Plan, Planner
 from .export import (
@@ -349,7 +349,8 @@ class UI(Viewer):
         self._table_lookup_tool = None  # Will be set after coordinator is initialized
 
         sources_open_icon = IconButton(icon="topic", color='light')
-        self._sources_dialog_content = Dialog(self._create_sources_dialog_content(init=True), close_on_click=True, show_close_button=True)
+        self._source_catalog = SourceCatalog()
+        self._sources_dialog_content = Dialog(self._source_catalog, close_on_click=True, show_close_button=True)
         sources_open_icon.js_on_click(args={'dialog': self._sources_dialog_content}, code="dialog.data.open = true")
         self._sources_dialog = Column(sources_open_icon, self._sources_dialog_content, sizing_mode="fixed")
         memory.on_change('sources', self._update_sources_dialog)
@@ -443,160 +444,14 @@ class UI(Viewer):
             self._table_lookup_tool.param.unwatch(self._update_vector_store_badge, '_ready')
         memory.remove_on_change('sources', self._update_sources_dialog)
 
-    def _create_sources_dialog_content(self, init: bool = False):
-        """
-        Create the content for the sources dialog showing all memory sources
-        with include/exclude options using Cards and CheckboxGroups.
-        """
-        # On source checkbox, set all table_checkbox = True / False
-        def on_source_toggle(source, value):
-            if value:
-                # Add all tables to visible_slugs
-                for table in source.get_tables():
-                    table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}"
-                    memory['visible_slugs'].add(table_slug)
-                table_checkbox.value = source.get_tables()
-            else:
-                # Remove all tables from visible_slugs
-                for table in source.get_tables():
-                    table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}"
-                    memory['visible_slugs'].discard(table_slug)
-                table_checkbox.value = []
-            memory.trigger('visible_slugs')
-
-        def on_checkbox_toggle(source, value, options):
-            if len(value) == len(options):
-                source_checkbox.value = True
-            elif len(value) == 0:
-                source_checkbox.value = False
-            elif len(value) < len(options):
-                with param.discard_events(source_checkbox):
-                    source_checkbox.value = False
-
-            # Update visible_slugs based on selection
-            for table in options:
-                table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}"
-                if table in value:
-                    # Table is selected, add to visible_slugs
-                    memory['visible_slugs'].add(table_slug)
-                else:
-                    # Table is not selected, remove from visible_slugs
-                    memory['visible_slugs'].discard(table_slug)
-            memory.trigger('visible_slugs')
-
-        def on_source_delete(source, clicks):
-            if source in memory["sources"]:
-                # Remove all tables from this source from visible_slugs
-                for table in source.get_tables():
-                    table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}"
-                    memory['visible_slugs'].discard(table_slug)
-
-                memory["sources"].remove(source)
-                memory.trigger("sources")
-                memory.trigger("visible_slugs")
-
-            if source is memory["source"]:
-                memory["source"] = next((iter(memory["sources"]), None))
-
-        sources = memory.get('sources', [])
-        if len(sources) == 0:
-            return "### No sources available. Please upload a data source to get started."
-
-        source_cards = []
-        for i, source in enumerate(sources):
-            # Get source info
-            source_name = getattr(source, 'name', f'Source {i+1}')
-
-            all_tables = source.get_tables()
-            if init:
-                visible_tables = all_tables
-            else:
-                visible_tables = [
-                    table for table in all_tables
-                    if f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}" in memory.get('visible_slugs', set())
-                ]
-
-            # Create include/exclude toggle for header
-            source_checkbox = Checkbox(
-                value=True,
-                margin=(5, 0, 0, 3),
-                sizing_mode='fixed',
-            )
-
-            # Create delete button for header
-            delete_icon = IconButton(
-                icon='delete',
-                icon_size='1em',
-                color="danger",
-                margin=(5, 0, 0, 0),
-                sizing_mode='fixed',
-                width=40,
-                height=40,
-                visible=len(sources) > 1
-            )
-
-            # Create checkbox group for tables
-            table_checkbox = CheckBoxGroup(
-                options=all_tables,
-                value=visible_tables,
-                sizing_mode='stretch_width',
-                margin=(0, 0)
-            )
-
-            param.bind(
-                on_source_toggle,
-                source=source,
-                value=source_checkbox.param.value,
-                watch=True
-            )
-            param.bind(
-                on_checkbox_toggle,
-                source=source,
-                value=table_checkbox.param.value,
-                options=table_checkbox.param.options,
-                watch=True
-            )
-
-            param.bind(
-                on_source_delete,
-                source=source,
-                clicks=delete_icon.param.clicks,
-                watch=True
-            )
-
-            card_header = Row(
-                source_checkbox,
-                Markdown(f"## {source_name}", margin=0, disable_anchors=True),
-                HSpacer(),
-                delete_icon,
-                sizing_mode='stretch_width',
-                align='start',
-                height=35,
-                margin=0
-            )
-
-            source_card = Card(
-                table_checkbox,
-                header=card_header,
-                collapsible=True,
-                collapsed=False,  # Start expanded
-                sizing_mode='stretch_width'
-            )
-            source_cards.append(source_card)
-
-        col = Column(
-            *source_cards,
-            sizing_mode='stretch_width'
-        )
-        return col
 
     def _update_sources_dialog(self, *args, **kwargs):
         """
         Update the sources dialog content when memory sources change.
         """
         # Update the dialog content using the stored reference
-        if hasattr(self, '_sources_dialog_content'):
-            self._sources_dialog_content.objects = [self._create_sources_dialog_content()]
+        if hasattr(self, '_sources_dialog_content') and hasattr(self, '_source_catalog'):
+            self._source_catalog.trigger()
 
     def _export_notebook(self):
         nb = export_notebook(self.interface.objects, preamble=self.notebook_preamble)
