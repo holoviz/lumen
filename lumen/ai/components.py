@@ -459,7 +459,7 @@ class TableSourceCard(Viewer):
     deletable = param.Boolean(default=True, doc="""
         Whether to show the delete button.""")
 
-    delete = param.Action(doc="""Action to delete this source from memory.""")
+    delete = param.Event(doc="""Action to delete this source from memory.""")
 
     selected = param.List(default=None, doc="""
         List of currently selected table names.""")
@@ -475,9 +475,7 @@ class TableSourceCard(Viewer):
         if self.selected is None:
             visible_tables = []
             for table in self.all_tables:
-                table_slug = f"{self.source.name}{SOURCE_TABLE_SEPARATOR}{table}"
-                if table_slug in memory.get('visible_slugs', set()):
-                    visible_tables.append(table)
+                visible_tables.append(table)
             self.selected = visible_tables
 
         # Create widgets once in init
@@ -538,10 +536,10 @@ class TableSourceCard(Viewer):
                 table_slug = f"{self.source.name}{SOURCE_TABLE_SEPARATOR}{table}"
                 memory['visible_slugs'].discard(table_slug)
 
-            memory["sources"].remove(self.source)
-            memory.trigger("sources")
-            memory.trigger("visible_slugs")
-
+            memory["sources"] = [
+                source for source in memory.get("sources", [])
+                if source is not self.source
+            ]
             if self.source is memory.get("source"):
                 memory["source"] = next(iter(memory.get("sources", [])), None)
 
@@ -583,16 +581,60 @@ class SourceCatalog(Viewer):
     sources = param.List(default=[], doc="""
         List of data sources to display in the catalog.""")
 
-    def trigger(self, sources=None):
+    def __init__(self, **params):
+        self._title = Markdown(
+            "## Source Catalog\n\nSelect the table and document sources you want visible to the LLM.",
+            margin=0,
+        )
+        self._cards_column = Column()
+        self._layout = Column(
+            self._title,
+            self._cards_column,
+            margin=(-20, 0, 0, 0),
+            sizing_mode='stretch_width'
+        )
+        super().__init__(**params)
+
+    @param.depends("sources", watch=True, on_init=True)
+    def _refresh(self, sources=None):
         """
         Trigger the catalog with new sources.
 
         Args:
             sources: Optional list of sources. If None, uses sources from memory.
         """
-        if sources is not None:
-            self.sources = sources
-        return self.__panel__()
+        sources = self.sources or memory.get('sources', [])
+        if len(sources) == 0:
+            return Column(
+                self._title,
+                Markdown("### No sources available. Please upload a data source to get started.", margin=0),
+            )
+
+        # Create a lookup of existing cards by source
+        existing_cards = {
+            card.source: card for card in self._cards_column.objects
+            if isinstance(card, TableSourceCard) and card.source in sources
+        }
+
+        # Build the new cards list
+        source_cards = []
+        multiple_sources = len(sources) > 1
+        for source in sources:
+            if source in existing_cards:
+                # Reuse existing card and update its deletable property
+                card = existing_cards[source]
+                card.deletable = multiple_sources
+                source_cards.append(card)
+            else:
+                # Create new card for new source
+                source_card = TableSourceCard(
+                    source=source,
+                    deletable=multiple_sources,
+                    collapsed=multiple_sources,
+                )
+                source_cards.append(source_card)
+
+        self._cards_column.objects = source_cards
 
     def __panel__(self):
         """
@@ -600,41 +642,4 @@ class SourceCatalog(Viewer):
 
         Returns a Column containing all source cards or a message if no sources exist.
         """
-        title = Markdown(
-            "## Source Catalog\n\nSelect the table and document sources you want visible to the LLM.",
-            margin=0,
-        )
-
-        sources = self.sources or memory.get('sources', [])
-        if len(sources) == 0:
-            title.object += "\n\n### No sources available. Please upload a data source to get started."
-            return title
-
-        # Initialize visible_slugs if it doesn't exist
-        if 'visible_slugs' not in memory:
-            memory['visible_slugs'] = set()
-
-        # If visible_slugs is empty, populate it with all tables (default all visible)
-        if not memory.get('visible_slugs'):
-            for source in sources:
-                for table in source.get_tables():
-                    table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}"
-                    memory['visible_slugs'].add(table_slug)
-
-        # Create source cards
-        source_cards = []
-        for source in sources:
-            # Create a TableSourceCard for each source
-            source_card = TableSourceCard(
-                source=source,
-                deletable=len(sources) > 1,
-                collapsed=False
-            )
-            source_cards.append(source_card)
-
-        return Column(
-            title,
-            *source_cards,
-            margin=(-20, 0, 0, 0),
-            sizing_mode='stretch_width'
-        )
+        return self._layout

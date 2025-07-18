@@ -117,16 +117,14 @@ class TableExplorer(Viewer):
             self._input_row, self._tabs, sizing_mode='stretch_both',
         )
 
-    def _update_source_map(self, old=None, new=None, sources=None, init=False):
+    def _update_source_map(self, key=None, old=None, sources=None, init=False):
         if sources is None:
             sources = memory['sources']
         selected = list(self._table_select.value)
         deduplicate = len(sources) > 1
         new = {}
 
-        # Track all available slugs
         all_slugs = set()
-
         for source in sources:
             tables = source.get_tables()
             for t in tables:
@@ -138,17 +136,14 @@ class TableExplorer(Viewer):
                 table_slug = f'{source.name}{SOURCE_TABLE_SEPARATOR}{original_table}'
                 all_slugs.add(table_slug)
 
-                # Only add to source map if table is visible
-                if table_slug in memory.get('visible_slugs', set()):
-                    if (t.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)[-1] not in self._source_map and
-                        not init and not len(selected) > self._table_select.max_items and state.loaded):
-                        selected.append(t)
-                    new[t] = source
+                if (t.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)[-1] not in self._source_map and
+                    not init and not len(selected) > self._table_select.max_items and state.loaded):
+                    selected.append(t)
+                new[t] = source
 
         # Ensure visible_slugs doesn't contain removed tables
         if 'visible_slugs' in memory:
             memory['visible_slugs'] = memory['visible_slugs'].intersection(all_slugs)
-            memory.trigger('visible_slugs')
 
         self._source_map.clear()
         self._source_map.update(new)
@@ -353,25 +348,16 @@ class UI(Viewer):
         self._sources_dialog_content = Dialog(self._source_catalog, close_on_click=True, show_close_button=True)
         sources_open_icon.js_on_click(args={'dialog': self._sources_dialog_content}, code="dialog.data.open = true")
         self._sources_dialog = Column(sources_open_icon, self._sources_dialog_content, sizing_mode="fixed")
-        memory.on_change('sources', self._update_sources_dialog)
+        memory.on_change("sources", self._update_source_catalog)
 
         if state.curdoc and state.curdoc.session_context:
             state.on_session_destroyed(self._destroy)
         state.onload(self._setup_llm_and_watchers)
 
-        # Initialize visible_slugs with all available tables
-        if 'visible_slugs' not in memory:
-            memory['visible_slugs'] = set()
-
-        # Populate visible_slugs and collect tables in one pass
         tables = set()
-        for source in memory.get('sources', []):
-            for table in source.get_tables():
-                table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}"
-                memory['visible_slugs'].add(table_slug)
-                tables.add(table)
-
         suggestions = self._coordinator.suggestions.copy()
+        for source in memory.get("sources", []):
+            tables |= set(source.get_tables())
         if len(tables) == 1:
             suggestions = [f"Show {next(iter(tables))}"] + self._coordinator.suggestions
         elif len(tables) > 1:
@@ -442,16 +428,6 @@ class UI(Viewer):
         """
         if self._table_lookup_tool:
             self._table_lookup_tool.param.unwatch(self._update_vector_store_badge, '_ready')
-        memory.remove_on_change('sources', self._update_sources_dialog)
-
-
-    def _update_sources_dialog(self, *args, **kwargs):
-        """
-        Update the sources dialog content when memory sources change.
-        """
-        # Update the dialog content using the stored reference
-        if hasattr(self, '_sources_dialog_content') and hasattr(self, '_source_catalog'):
-            self._source_catalog.trigger()
 
     def _export_notebook(self):
         nb = export_notebook(self.interface.objects, preamble=self.notebook_preamble)
@@ -527,6 +503,12 @@ class UI(Viewer):
         if self._source_agent:
             param.parameterized.async_executor(partial(self._source_agent.respond, []))
             self.interface._chat_log.scroll_to_latest()
+
+    def _update_source_catalog(self, *args, **kwargs):
+        """
+        Update the sources dialog content when memory sources change.
+        """
+        self._source_catalog.sources = memory['sources']
 
     def servable(self, title: str | None = None, **kwargs):
         if (state.curdoc and state.curdoc.session_context):
@@ -895,19 +877,10 @@ class ExplorerUI(UI):
                 """
                 For cases when the user uploads a dataset through SourceAgent
                 this will update the available_sources in the global memory
-                and add all new tables to visible_slugs
                 """
-                for source in sources:
-                    if source not in memory["sources"]:
-                        # Add all tables from new source to visible_slugs
-                        for table in source.get_tables():
-                            table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}"
-                            memory['visible_slugs'].add(table_slug)
-
                 memory["sources"] += [
                     source for source in sources if source not in memory["sources"]
                 ]
-                memory.trigger('visible_slugs')
 
             local_memory.on_change('plan', render_plan)
             local_memory.on_change('sources', sync_available_sources_memory)
