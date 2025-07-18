@@ -16,14 +16,14 @@ from panel.config import config, panel_extension
 from panel.io.document import hold
 from panel.io.resources import CSS_URLS
 from panel.io.state import state
-from panel.layout import Column as PnColumn, HSpacer
+from panel.layout import Column as PnColumn, HSpacer, Spacer
 from panel.pane import SVG, Markdown
 from panel.param import ParamMethod
 from panel.util import edit_readonly
 from panel.viewable import Child, Children, Viewer
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
-    Button, ChatFeed, ChatInterface, ChatMessage, Column, FileDownload,
+    Button, ChatFeed, ChatInterface, ChatMessage, Column, Dialog, FileDownload,
     IconButton, MenuList, MultiChoice, Page, Paper, Row, Switch, Tabs,
     ToggleIcon,
 )
@@ -37,7 +37,7 @@ from .agents import (
     AnalysisAgent, AnalystAgent, ChatAgent, DocumentListAgent, SourceAgent,
     SQLAgent, TableListAgent, ValidationAgent, VegaLiteAgent,
 )
-from .components import SplitJS, StatusBadge
+from .components import SourceCatalog, SplitJS, StatusBadge
 from .config import PROVIDED_SOURCE_NAME, SOURCE_TABLE_SEPARATOR
 from .coordinator import Coordinator, Plan, Planner
 from .export import (
@@ -117,21 +117,34 @@ class TableExplorer(Viewer):
             self._input_row, self._tabs, sizing_mode='stretch_both',
         )
 
-    def _update_source_map(self, old=None, new=None, sources=None, init=False):
+    def _update_source_map(self, key=None, old=None, sources=None, init=False):
         if sources is None:
             sources = memory['sources']
         selected = list(self._table_select.value)
         deduplicate = len(sources) > 1
         new = {}
+
+        all_slugs = set()
         for source in sources:
             tables = source.get_tables()
             for t in tables:
+                original_table = t
                 if deduplicate:
                     t = f'{source.name}{SOURCE_TABLE_SEPARATOR}{t}'
+
+                # Always use the full slug for checking visibility
+                table_slug = f'{source.name}{SOURCE_TABLE_SEPARATOR}{original_table}'
+                all_slugs.add(table_slug)
+
                 if (t.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)[-1] not in self._source_map and
                     not init and not len(selected) > self._table_select.max_items and state.loaded):
                     selected.append(t)
                 new[t] = source
+
+        # Ensure visible_slugs doesn't contain removed tables
+        if 'visible_slugs' in memory:
+            memory['visible_slugs'] = memory['visible_slugs'].intersection(all_slugs)
+
         self._source_map.clear()
         self._source_map.update(new)
         selected = selected if len(selected) == 1 else []
@@ -329,6 +342,14 @@ class UI(Viewer):
             name="Tables Vector Store Pending", align="center", description="Pending initialization"
         )
         self._table_lookup_tool = None  # Will be set after coordinator is initialized
+
+        sources_open_icon = IconButton(icon="topic", color='light')
+        self._source_catalog = SourceCatalog()
+        self._sources_dialog_content = Dialog(self._source_catalog, close_on_click=True, show_close_button=True)
+        sources_open_icon.js_on_click(args={'dialog': self._sources_dialog_content}, code="dialog.data.open = true")
+        self._sources_dialog = Column(sources_open_icon, self._sources_dialog_content, sizing_mode="fixed")
+        memory.on_change("sources", self._update_source_catalog)
+
         if state.curdoc and state.curdoc.session_context:
             state.on_session_destroyed(self._destroy)
         state.onload(self._setup_llm_and_watchers)
@@ -405,7 +426,6 @@ class UI(Viewer):
         """
         Cleanup on session destroy
         """
-        # Clean up parameter watchers
         if self._table_lookup_tool:
             self._table_lookup_tool.param.unwatch(self._update_vector_store_badge, '_ready')
 
@@ -463,7 +483,7 @@ class UI(Viewer):
             page = Page(
                 css_files=['https://fonts.googleapis.com/css2?family=Nunito:wght@700'],
                 title=self.title,
-                header=[self.llm.status(), self._vector_store_status_badge, self._report_toggle],
+                header=[self.llm.status(), self._vector_store_status_badge, self._report_toggle, self._sources_dialog],
                 main=[self._main],
                 sidebar=[] if self._sidebar is None else [self._sidebar],
                 sidebar_open=False,
@@ -474,6 +494,7 @@ class UI(Viewer):
                 page.header.append(
                     IconButton(icon="upload", on_click=self._trigger_source_agent, color='light')
                 )
+            page.header.append(Spacer(width=10, sizing_mode="fixed"))
             page.servable()
             return page
         return super()._create_view()
@@ -482,6 +503,12 @@ class UI(Viewer):
         if self._source_agent:
             param.parameterized.async_executor(partial(self._source_agent.respond, []))
             self.interface._chat_log.scroll_to_latest()
+
+    def _update_source_catalog(self, *args, **kwargs):
+        """
+        Update the sources dialog content when memory sources change.
+        """
+        self._source_catalog.sources = memory['sources']
 
     def servable(self, title: str | None = None, **kwargs):
         if (state.curdoc and state.curdoc.session_context):
@@ -850,7 +877,6 @@ class ExplorerUI(UI):
                 """
                 For cases when the user uploads a dataset through SourceAgent
                 this will update the available_sources in the global memory
-                so that the overview explorer can access it
                 """
                 memory["sources"] += [
                     source for source in sources if source not in memory["sources"]

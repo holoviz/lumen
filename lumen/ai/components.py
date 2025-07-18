@@ -4,7 +4,16 @@ from typing import Any
 import param
 
 from panel.custom import Child, JSComponent
+from panel.layout import Column, HSpacer, Row
+from panel.pane import Markdown
+from panel.viewable import Viewer
 from panel.widgets import Button
+from panel_material_ui import (
+    Card, CheckBoxGroup, IconButton, Switch,
+)
+
+from .config import SOURCE_TABLE_SEPARATOR
+from .memory import memory
 
 CSS = """
 /* Base styles for the split container */
@@ -429,3 +438,208 @@ class StatusBadge(Button):
             icon=param.rx(self._status_mapping)[self.param.status]["icon"],
             stylesheets=[self._base_stylesheet, param.rx(self._status_stylesheets)[self.param.status]],
         )
+
+
+class TableSourceCard(Viewer):
+    """
+    A component that displays a single data source as a card with table selection controls.
+
+    The card includes:
+    - A header with the source name and a checkbox to toggle all tables
+    - A delete button (if multiple sources exist)
+    - Individual checkboxes for each table in the source
+    """
+
+    all_selected = param.Boolean(default=True, doc="""
+        Whether all tables should be selected by default.""")
+
+    collapsed = param.Boolean(default=False, doc="""
+        Whether the card should start collapsed.""")
+
+    deletable = param.Boolean(default=True, doc="""
+        Whether to show the delete button.""")
+
+    delete = param.Event(doc="""Action to delete this source from memory.""")
+
+    selected = param.List(default=None, doc="""
+        List of currently selected table names.""")
+
+    source = param.Parameter(doc="""
+        The data source to display in this card.""")
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self.all_tables = self.source.get_tables()
+
+        # Determine which tables are currently visible
+        if self.selected is None:
+            visible_tables = []
+            for table in self.all_tables:
+                visible_tables.append(table)
+            self.selected = visible_tables
+
+        # Create widgets once in init
+        self.source_toggle = Switch.from_param(
+            self.param.all_selected,
+            name=f"{self.source.name}",
+            margin=(5, -5, 0, 3),
+            sizing_mode='fixed',
+        )
+
+        self.delete_button = IconButton.from_param(
+            self.param.delete,
+            icon='delete',
+            icon_size='1em',
+            color="danger",
+            margin=(5, 0, 0, 0),
+            sizing_mode='fixed',
+            width=40,
+            height=40,
+            visible=self.param.deletable
+        )
+
+        self.table_checkbox = CheckBoxGroup.from_param(
+            self.param.selected,
+            options=self.all_tables,
+            sizing_mode='stretch_width',
+            margin=(0, 10),
+            name="",
+        )
+
+    @param.depends('all_selected', watch=True)
+    def _on_source_toggle(self):
+        """Handle source checkbox toggle (all tables on/off)."""
+        if not self.all_selected and len(self.selected) == len(self.all_tables):
+            # Important to check to see if all tables are selected for intuitive behavior
+            self.selected = []
+        elif self.all_selected:
+            self.selected = self.all_tables
+
+    @param.depends('selected', watch=True)
+    def _update_visible_slugs(self):
+        """Update visible_slugs in memory based on selected tables."""
+        self.all_selected = len(self.selected) == len(self.all_tables)
+        for table in self.all_tables:
+            table_slug = f"{self.source.name}{SOURCE_TABLE_SEPARATOR}{table}"
+            if table in self.selected:
+                memory['visible_slugs'].add(table_slug)
+            else:
+                memory['visible_slugs'].discard(table_slug)
+        memory.trigger('visible_slugs')
+
+    @param.depends('delete', watch=True)
+    def _delete_source(self):
+        """Handle source deletion via param.Action."""
+        if self.source in memory.get("sources", []):
+            # Remove all tables from this source from visible_slugs
+            for table in self.all_tables:
+                table_slug = f"{self.source.name}{SOURCE_TABLE_SEPARATOR}{table}"
+                memory['visible_slugs'].discard(table_slug)
+
+            memory["sources"] = [
+                source for source in memory.get("sources", [])
+                if source is not self.source
+            ]
+            if self.source is memory.get("source"):
+                memory["source"] = next(iter(memory.get("sources", [])), None)
+
+    def __panel__(self):
+        card_header = Row(
+            self.source_toggle,
+            HSpacer(),
+            self.delete_button,
+            sizing_mode='stretch_width',
+            align='start',
+            height=35,
+            margin=0
+        )
+
+        # Create the card
+        return Card(
+            self.table_checkbox,
+            header=card_header,
+            collapsible=True,
+            collapsed=self.param.collapsed,
+            sizing_mode='stretch_width',
+            margin=0,
+        )
+
+
+class SourceCatalog(Viewer):
+    """
+    A component that displays all data sources with table selection controls.
+
+    This component shows each source as a collapsible card with:
+    - A header checkbox to toggle all tables in the source
+    - Individual checkboxes for each table
+    - A delete button to remove the source (if multiple sources exist)
+
+    Tables can be selectively shown/hidden using the checkboxes, which updates
+    the 'visible_slugs' set in memory.
+    """
+
+    sources = param.List(default=[], doc="""
+        List of data sources to display in the catalog.""")
+
+    def __init__(self, **params):
+        self._title = Markdown(
+            "## Source Catalog\n\nSelect the table and document sources you want visible to the LLM.",
+            margin=0,
+        )
+        self._cards_column = Column()
+        self._layout = Column(
+            self._title,
+            self._cards_column,
+            margin=(-20, 0, 0, 0),
+            sizing_mode='stretch_width'
+        )
+        super().__init__(**params)
+
+    @param.depends("sources", watch=True, on_init=True)
+    def _refresh(self, sources=None):
+        """
+        Trigger the catalog with new sources.
+
+        Args:
+            sources: Optional list of sources. If None, uses sources from memory.
+        """
+        sources = self.sources or memory.get('sources', [])
+        if len(sources) == 0:
+            return Column(
+                self._title,
+                Markdown("### No sources available. Please upload a data source to get started.", margin=0),
+            )
+
+        # Create a lookup of existing cards by source
+        existing_cards = {
+            card.source: card for card in self._cards_column.objects
+            if isinstance(card, TableSourceCard) and card.source in sources
+        }
+
+        # Build the new cards list
+        source_cards = []
+        multiple_sources = len(sources) > 1
+        for source in sources:
+            if source in existing_cards:
+                # Reuse existing card and update its deletable property
+                card = existing_cards[source]
+                card.deletable = multiple_sources
+                source_cards.append(card)
+            else:
+                # Create new card for new source
+                source_card = TableSourceCard(
+                    source=source,
+                    deletable=multiple_sources,
+                    collapsed=multiple_sources,
+                )
+                source_cards.append(source_card)
+
+        self._cards_column.objects = source_cards
+
+    def __panel__(self):
+        """
+        Create the source catalog UI.
+
+        Returns a Column containing all source cards or a message if no sources exist.
+        """
+        return self._layout
