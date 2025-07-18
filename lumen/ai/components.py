@@ -586,11 +586,13 @@ class SourceCatalog(Viewer):
             "## Source Catalog\n\nSelect the table and document sources you want visible to the LLM.",
             margin=0,
         )
-        self._cards_column = Column()
+        self._cards_column = Column(
+            margin=0,
+        )
         self._layout = Column(
             self._title,
             self._cards_column,
-            margin=(-20, 0, 0, 0),
+            margin=0,
             sizing_mode='stretch_width'
         )
         super().__init__(**params)
@@ -604,12 +606,6 @@ class SourceCatalog(Viewer):
             sources: Optional list of sources. If None, uses sources from memory.
         """
         sources = self.sources or memory.get('sources', [])
-        if len(sources) == 0:
-            return Column(
-                self._title,
-                Markdown("### No sources available. Please upload a data source to get started.", margin=0),
-            )
-
         # Create a lookup of existing cards by source
         existing_cards = {
             card.source: card for card in self._cards_column.objects
@@ -635,6 +631,10 @@ class SourceCatalog(Viewer):
                 source_cards.append(source_card)
 
         self._cards_column.objects = source_cards
+        if len(source_cards) == 0:
+            self._cards_column.objects = [
+                Markdown("No sources available. Please input a source to continue.")
+            ]
 
     def __panel__(self):
         """

@@ -1,6 +1,7 @@
 import asyncio
 import io
 import pathlib
+import re
 import zipfile
 
 from urllib.parse import urlparse
@@ -9,7 +10,7 @@ import aiohttp
 import pandas as pd
 import param
 
-from panel.pane.markup import HTML
+from panel.pane.markup import HTML, Markdown
 from panel.viewable import Viewer
 from panel.widgets import FileDropper, Tabulator, Tqdm
 from panel_material_ui import (
@@ -118,30 +119,37 @@ class TableControls(MediaControls):
 
 class SourceControls(Viewer):
 
-    add = param.Event(doc="Use uploaded file(s)")
+    active = param.Integer(default=0, doc="Active source index")
 
-    cancel = param.Event(doc="Cancel")
-
-    cancellable = param.Boolean(default=True, doc="Show cancel button")
+    cancellable = param.Boolean(default=False, doc="Show cancel button")
 
     clear_uploads = param.Boolean(default=True, doc="Clear uploaded file tabs")
+
+    disabled = param.Boolean(default=False, doc="Disable controls")
+
+    download_url = param.String(default="", doc="URL input for downloading files")
+
+    input_placeholder = param.String(default="Enter URLs, one per line, and press <Enter> to download")
+
+    trigger_add = param.Event(doc="Use uploaded file(s)")
+
+    trigger_cancel = param.Event(doc="Cancel")
 
     memory = param.ClassSelector(class_=_Memory, default=None, doc="""
         Local memory which will be used to provide the agent context.
         If None the global memory will be used.""")
 
-    multiple = param.Boolean(default=False, doc="Allow multiple files")
+    multiple = param.Boolean(default=True, doc="Allow multiple files")
 
-    replace_controls = param.Boolean(default=False, doc="Replace controls")
+    replace_controls = param.Boolean(default=False, doc="Replace controls on add")
 
-    table_upload_callbacks = param.Dict(default={}, doc="""
-        Dictionary mapping from file extensions to callback function,
-        e.g. {"hdf5": ...}. The callback function should accept the file bytes and
-        table alias.""")
+    table_upload_callbacks = {}
 
     _last_table = param.String(default="", doc="Last table added")
 
     _count = param.Integer(default=0, doc="Count of sources added")
+
+    downloaded_files = param.Dict(default={}, doc="Downloaded files to add as tabs")
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -152,17 +160,20 @@ class SourceControls(Viewer):
             multiple=self.param.multiple,
             margin=0,
             sizing_mode="stretch_width",
+            disabled=self.param.disabled,
             # accepted_filetypes=[".csv", ".parquet", ".parq", ".json", ".xlsx"],
         )
         self._file_input.param.watch(self._generate_media_controls, "value")
         self._upload_tabs = Tabs(sizing_mode="stretch_width", closable=True)
 
         # URL input for downloading files
-        self._url_input = ChatAreaInput(
-            placeholder="Enter URLs, one per line, and press <Enter> to download.",
+        self._url_input = ChatAreaInput.from_param(
+            self.param.download_url,
+            placeholder=self.param.input_placeholder,
             rows=4,
             margin=(10, 10, 0, 10),
             sizing_mode="stretch_width",
+            disabled=self.param.disabled,
         )
         self._url_input.param.watch(self._handle_urls, "enter_pressed")
 
@@ -171,10 +182,11 @@ class SourceControls(Viewer):
             ("Text Input", self._url_input),
             sizing_mode="stretch_both",
             dynamic=True,
+            active=self.param.active,
         )
 
         self._add_button = Button.from_param(
-            self.param.add,
+            self.param.trigger_add,
             name="Use file(s)",
             icon="table-plus",
             visible=self._upload_tabs.param["objects"].rx().rx.len() > 0,
@@ -182,10 +194,10 @@ class SourceControls(Viewer):
         )
 
         self._cancel_button = Button.from_param(
-            self.param.cancel,
+            self.param.trigger_cancel,
             name="Cancel",
             icon="circle-x",
-            visible=self.param.cancellable.rx().rx.bool() and self._add_button.param.clicks.rx() == 0,
+            visible=self.param.cancellable.rx().rx.bool() or self._add_button.param.clicks.rx() == 0,
         )
         self._cancel_button.param.watch(self._handle_cancel, "clicks")
 
@@ -200,6 +212,7 @@ class SourceControls(Viewer):
         )
 
         self.menu = Column(
+            Markdown("## Source Input", margin=0),
             self._input_tabs,
             self._upload_tabs,
             Row(self._add_button, self._cancel_button),
@@ -232,7 +245,7 @@ class SourceControls(Viewer):
         """Basic URL validation"""
         try:
             result = urlparse(url.strip())
-            return all([result.scheme, result.netloc]) and result.scheme in ['http', 'https']
+            return all([result.scheme, result.netloc])
         except Exception:
             return False
 
@@ -256,7 +269,6 @@ class SourceControls(Viewer):
         if 'content-disposition' not in response_headers:
             return default_filename
 
-        import re
         cd = response_headers['content-disposition']
         matches = re.findall('filename="?([^"]+)"?', cd)
         if matches:
@@ -336,8 +348,11 @@ class SourceControls(Viewer):
         else:
             return f"Download failed: {error!s}"
 
-    def _create_file_object(self, file_data: bytes, suffix: str):
+    def _create_file_object(self, file_data: bytes | io.BytesIO | io.StringIO, suffix: str):
         """Create appropriate file object based on file type"""
+        if isinstance(file_data, (io.BytesIO, io.StringIO)):
+            return file_data
+
         if suffix == "csv":
             encoding = detect_file_encoding(file_obj=file_data)
             return io.BytesIO(file_data.decode(encoding).encode("utf-8")) if isinstance(file_data, bytes) else io.StringIO(file_data)
@@ -480,8 +495,7 @@ class SourceControls(Viewer):
             raise
 
         # Add downloaded files as individual tabs to the main input tabs
-        if downloaded_files:
-            self._add_downloaded_files_as_tabs(downloaded_files)
+        self.downloaded_files = downloaded_files
 
         # Update status messages
         if errors:
@@ -497,9 +511,10 @@ class SourceControls(Viewer):
         else:
             self._message_placeholder.visible = False
 
-    def _add_downloaded_files_as_tabs(self, downloaded_files):
+    @param.depends("downloaded_files", watch=True)
+    def _add_downloaded_files_as_tabs(self):
         """Add downloaded files as individual tabs in the main input tabs"""
-        for filename, file_data in downloaded_files.items():
+        for filename, file_data in self.downloaded_files.items():
             suffix = pathlib.Path(filename).suffix.lstrip(".").lower()
 
             # Create file object using helper
@@ -634,7 +649,7 @@ class SourceControls(Viewer):
             self._memory["document_sources"] = [document]
         return 1
 
-    @param.depends("add", watch=True)
+    @param.depends("trigger_add", watch=True)
     def add_medias(self):
         # Combine both uploaded files and downloaded files for processing
         all_media_controls = self._media_controls + self._downloaded_media_controls

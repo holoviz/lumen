@@ -80,7 +80,9 @@ class Join(Analysis):
         self.table_name = event.new
 
     def controls(self):
-        self._source_controls = SourceControls()
+        self._source_controls = SourceControls(
+            multiple=True, replace_controls=False, memory=memory
+        )
         self._run_button = self._source_controls._add_button
         self._source_controls.param.watch(self._update_table_name, "_last_table")
 
