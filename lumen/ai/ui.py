@@ -501,6 +501,7 @@ class UI(Viewer):
                 sidebar_open=False,
                 sidebar_variant='temporary',
             )
+
             page.header.append(Spacer(width=10, sizing_mode="fixed"))
             page.servable()
             return page

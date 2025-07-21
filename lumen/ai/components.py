@@ -606,6 +606,7 @@ class SourceCatalog(Viewer):
             sources: Optional list of sources. If None, uses sources from memory.
         """
         sources = self.sources or memory.get('sources', [])
+
         # Create a lookup of existing cards by source
         existing_cards = {
             card.source: card for card in self._cards_column.objects
@@ -631,6 +632,7 @@ class SourceCatalog(Viewer):
                 source_cards.append(source_card)
 
         self._cards_column.objects = source_cards
+
         if len(source_cards) == 0:
             self._cards_column.objects = [
                 Markdown("No sources available. Please input a source to continue.")
