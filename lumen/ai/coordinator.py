@@ -258,6 +258,9 @@ class Coordinator(Viewer, VectorLookupToolUser):
         elif "sources" not in self._memory:
             self._memory["sources"] = []
 
+        if "visible_slugs" not in self._memory:
+            self._memory["visible_slugs"] = set()
+
     def __panel__(self):
         return self.interface
 

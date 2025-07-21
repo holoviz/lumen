@@ -593,8 +593,7 @@ class SourceControls(Viewer):
         self._memory["source"] = duckdb_source
         self._memory["table"] = table
         if "sources" in self._memory:
-            self._memory["sources"].append(duckdb_source)
-            self._memory.trigger("sources")
+            self._memory["sources"] = self._memory["sources"] + [duckdb_source]
         else:
             self._memory["sources"] = [duckdb_source]
         self._last_table = table
