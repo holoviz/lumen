@@ -5,7 +5,7 @@ import json
 import traceback
 
 from functools import partial
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 import pandas as pd
 import panel as pn
@@ -183,17 +183,13 @@ class SourceAgent(Agent):
             "Do NOT use if data sources already exist UNLESS user explicitly requests upload",
         ])
 
-    table_upload_callbacks = param.Dict(default={}, doc="""
-        Dictionary mapping from file extensions to callback function,
-        e.g. {"hdf5": ...}. The callback function should accept the file bytes and
-        table alias, add or modify the `source` in memory, and return a bool
-        (True if the table was successfully uploaded).""")
-
     purpose = param.String(default="The SourceAgent allows a user to upload new datasets, tables, or documents.")
 
     requires = param.List(default=[], readonly=True)
 
     provides = param.List(default=["sources", "source", "document_sources"], readonly=True)
+
+    source_controls: ClassVar[SourceControls] = SourceControls
 
     _extensions = ("filedropper",)
 
@@ -202,7 +198,7 @@ class SourceAgent(Agent):
         messages: list[Message],
         step_title: str | None = None,
     ) -> Any:
-        source_controls = SourceControls(multiple=True, replace_controls=False, memory=self.memory, table_upload_callbacks=self.table_upload_callbacks)
+        source_controls = self.source_controls(memory=self.memory, cancellable=True, replace_controls=True)
 
         output = pn.Column(source_controls)
         if "source" not in self._memory:

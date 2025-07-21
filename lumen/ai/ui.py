@@ -39,6 +39,7 @@ from .agents import (
 )
 from .components import SourceCatalog, SplitJS, StatusBadge
 from .config import PROVIDED_SOURCE_NAME, SOURCE_TABLE_SEPARATOR
+from .controls import SourceControls
 from .coordinator import Coordinator, Plan, Planner
 from .export import (
     export_notebook, make_md_cell, make_preamble, render_cells, write_notebook,
@@ -232,6 +233,11 @@ class UI(Viewer):
     notebook_preamble = param.String(default='', doc="""
         Preamble to add to exported notebook(s).""")
 
+    source_controls = param.ClassSelector(
+        class_=SourceControls, default=SourceControls,
+        instantiate=False, is_instance=False, doc="""
+        The source controls to use for managing data sources.""")
+
     table_upload_callbacks = param.Dict(default={}, doc="""
         Dictionary mapping from file extensions to callback function,
         e.g. {"hdf5": ...}. The callback function should accept the file bytes,
@@ -270,6 +276,9 @@ class UI(Viewer):
     ):
         params["log_level"] = params.get("log_level", self.param["log_level"].default).upper()
         super().__init__(**params)
+        SourceAgent.source_controls = self.source_controls
+        SourceControls.table_upload_callbacks = self.table_upload_callbacks
+        self._source_controls = self.source_controls(memory=memory)
         log.setLevel(self.log_level)
 
         agents = self.agents
@@ -345,9 +354,12 @@ class UI(Viewer):
 
         sources_open_icon = IconButton(icon="topic", color='light')
         self._source_catalog = SourceCatalog()
-        self._sources_dialog_content = Dialog(self._source_catalog, close_on_click=True, show_close_button=True)
+        self._sources_dialog_content = Dialog(
+            Tabs(("Input", self._source_controls), ("Catalog", self._source_catalog), margin=(-30, 0, 0, 0), sizing_mode="stretch_both"),
+            close_on_click=True, show_close_button=True, sizing_mode='stretch_width', width_option='lg'
+        )
         sources_open_icon.js_on_click(args={'dialog': self._sources_dialog_content}, code="dialog.data.open = true")
-        self._sources_dialog = Column(sources_open_icon, self._sources_dialog_content, sizing_mode="fixed")
+        self._sources_dialog = Column(sources_open_icon, self._sources_dialog_content, width=60, sizing_mode="fixed")
         memory.on_change("sources", self._update_source_catalog)
 
         if state.curdoc and state.curdoc.session_context:
@@ -489,11 +501,7 @@ class UI(Viewer):
                 sidebar_open=False,
                 sidebar_variant='temporary',
             )
-            if self._source_agent:
-                self._source_agent.table_upload_callbacks = self.table_upload_callbacks
-                page.header.append(
-                    IconButton(icon="upload", on_click=self._trigger_source_agent, color='light')
-                )
+
             page.header.append(Spacer(width=10, sizing_mode="fixed"))
             page.servable()
             return page
