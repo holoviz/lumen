@@ -30,7 +30,7 @@ Available Schema Context:
 {{ memory["sql_metaset"].compact_context }}
 
 📊 Available Tables:
-{%- set tables_list = memory.get('visible_slugs', set()) | list %}
+{%- set tables_list = memory.get('visible_slugs', []) | list %}
 {%- for table in tables_list[:10] %}
 - {{ table }}
 {%- endfor %}
