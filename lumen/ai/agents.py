@@ -327,8 +327,7 @@ class ListAgent(Agent):
         if event.column != "show":
             return
 
-        # Get the item from the specific tabulator that was clicked
-        tabulator = event.obj
+        tabulator = self._tabs[self._tabs.active]
         item = tabulator.value.iloc[event.row, 0]
 
         if self._message_format is None:
@@ -373,18 +372,15 @@ class ListAgent(Agent):
             item_list.on_click(self._use_item)
             tabs.append(item_list)
 
-        if tabs:
-            content = pn.Tabs(*tabs, sizing_mode="stretch_width")
-        else:
-            content = pn.pane.Markdown("No items available.")
+        self._tabs = pn.Tabs(*tabs, sizing_mode="stretch_width")
 
         self.interface.stream(
             pn.Column(
                 f"The available {self._column_name.lower()}s are listed below. Click on the eye icon to show the {self._column_name.lower()} contents.",
-                content
+                self._tabs
             ), user="Assistant"
         )
-        return content
+        return self._tabs
 
 
 class TableListAgent(ListAgent):
