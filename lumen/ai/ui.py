@@ -16,16 +16,16 @@ from panel.config import config, panel_extension
 from panel.io.document import hold
 from panel.io.resources import CSS_URLS
 from panel.io.state import state
-from panel.layout import Column as PnColumn, HSpacer, Spacer
+from panel.layout import Column as PnColumn
 from panel.pane import SVG, Markdown
 from panel.param import ParamMethod
 from panel.util import edit_readonly
 from panel.viewable import Child, Children, Viewer
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
-    Button, ChatFeed, ChatInterface, ChatMessage, Column, Dialog, FileDownload,
-    IconButton, MenuList, MultiChoice, Page, Paper, Row, Switch, Tabs,
-    ToggleIcon,
+    Button, ChatFeed, ChatInterface, ChatMessage, Column, Dialog, Divider,
+    FileDownload, IconButton, MenuList, MultiChoice, Page, Paper, Row, Switch,
+    Tabs, ToggleIcon,
 )
 
 from ..pipeline import Pipeline
@@ -69,13 +69,13 @@ On the chat interface...
 📝 Get summaries and key insights from your data  
 🧩 Apply custom analyses with a click of a button  
 
-If unsatisfied with the results...
+If unsatisfied with the results hover over the <span class="material-icons-outlined" style="font-size: 1.2em;">add_circle</span> menu and...
 
-🔄 Use the Rerun button to re-run the last query  
-⏪ Use the Undo button in the + menu to remove the last query  
-🗑️ Use the Clear button in the + menu to start a new session  
+<span class="material-icons">repeat</span> Use the Rerun button to re-run the last query  
+<span class="material-icons">undo</span> Use the Undo butto to remove the last query  
+<span class="material-icons">delete</span> Use the Clear button to start a new session  
 
-Click the toggle, or drag the edge, to expand the sidebar and...
+Click the toggle, or drag the right edge, to expand the results area and...
 
 🌐 Explore data with [Graphic Walker](https://docs.kanaries.net/graphic-walker) - filter, sort, download  
 💾 Navigate, reorder and delete explorations in the sidebar  
@@ -324,42 +324,38 @@ class UI(Viewer):
             **self.coordinator_params
         )
         self._notebook_export = FileDownload(
-            icon="notebook",
-            icon_size="1.5em",
-            button_type="primary",
             callback=self._export_notebook,
+            color="light",
+            icon_size="1.8em",
             filename=f"{self.title.replace(' ', '_')}.ipynb",
-            stylesheets=['.bk-btn a { padding: 0 6px; }'],
-            styles={'z-index': '1000'}
+            margin=(12, 0, 10, 0),
+            styles={'z-index': '1000'},
+            variant="text"
         )
         self._exports = Row(
-            HSpacer(),
             self._notebook_export, *(
                 Button(
-                    name=label, button_type='primary',
+                    label=label,
                     on_click=lambda _, e=e: e(self.interface),
                     stylesheets=['.bk-btn { padding: 4.5px 6px;']
                 )
                 for label, e in self.export_functions.items()
-            ),
-            styles={'position': 'relative', 'right': '20px', 'top': '-1px'},
-            sizing_mode='stretch_width'
+            )
         )
-        self._main = Column(self._exports, self._coordinator, sizing_mode='stretch_both', align="center")
+        self._main = Column(self._coordinator, sizing_mode='stretch_both', align="center")
         self._source_agent = next((agent for agent in self._coordinator.agents if isinstance(agent, SourceAgent)), None)
         self._vector_store_status_badge = StatusBadge(
             name="Tables Vector Store Pending", align="center", description="Pending initialization"
         )
         self._table_lookup_tool = None  # Will be set after coordinator is initialized
 
-        sources_open_icon = IconButton(icon="topic", color='light')
+        self._sources_open_icon = IconButton(icon="topic", color="light", margin=(10, 0))
         self._source_catalog = SourceCatalog()
         self._sources_dialog_content = Dialog(
             Tabs(("Input", self._source_controls), ("Catalog", self._source_catalog), margin=(-30, 0, 0, 0), sizing_mode="stretch_both"),
             close_on_click=True, show_close_button=True, sizing_mode='stretch_width', width_option='lg'
         )
-        sources_open_icon.js_on_click(args={'dialog': self._sources_dialog_content}, code="dialog.data.open = true")
-        self._sources_dialog = Column(sources_open_icon, self._sources_dialog_content, width=60, sizing_mode="fixed")
+        self._sources_open_icon.js_on_click(args={'dialog': self._sources_dialog_content}, code="dialog.data.open = true")
         memory.on_change("sources", self._update_source_catalog)
 
         if state.curdoc and state.curdoc.session_context:
@@ -495,14 +491,22 @@ class UI(Viewer):
             page = Page(
                 css_files=['https://fonts.googleapis.com/css2?family=Nunito:wght@700'],
                 title=self.title,
-                header=[self.llm.status(), self._vector_store_status_badge, self._report_toggle, self._sources_dialog],
-                main=[self._main],
+                header=[
+                    self.llm.status(),
+                    self._vector_store_status_badge,
+                    self._report_toggle,
+                    self._sources_open_icon,
+                    self._exports,
+                    Divider(
+                        orientation="vertical", height=30, margin=(17, 0, 17, 5),
+                        sx={'border-color': 'white', 'border-width': '1px'}
+                    )
+                ],
+                main=[self._main, self._sources_dialog_content],
                 sidebar=[] if self._sidebar is None else [self._sidebar],
                 sidebar_open=False,
-                sidebar_variant='temporary',
+                sidebar_variant="temporary",
             )
-
-            page.header.append(Spacer(width=10, sizing_mode="fixed"))
             page.servable()
             return page
         return super()._create_view()
@@ -628,7 +632,8 @@ class ExplorerUI(UI):
             active_icon="summarize",
             value=False,
             styles={"margin-left": "auto"},
-            sx={".MuiIcon-root": {"color": "white"}}
+            sx={".MuiIcon-root": {"color": "white"}},
+            margin=(12, 0, 10, 0)
         )
         self._report_toggle.param.watch(self._toggle_report, ['value'])
         self._last_synced = self._home = Exploration(
@@ -642,11 +647,13 @@ class ExplorerUI(UI):
         self._explorations.param.watch(self._cleanup_explorations, ['items'])
         self._explorations.param.watch(self._update_conversation, ['active'])
         self._global_notebook_export = FileDownload(
-            icon="notebook",
-            icon_size="1.5em",
-            button_type="primary",
             callback=self._global_export_notebook,
-            filename=f"{self.title.replace(' ', '_')}.ipynb"
+            color="light",
+            icon_size="1.8em",
+            filename=f"{self.title.replace(' ', '_')}.ipynb",
+            margin=(12, 0, 10, 0),
+            styles={'z-index': '1000'},
+            variant="text"
         )
         self._exports.visible = False
         self._output = Paper(
@@ -700,12 +707,14 @@ class ExplorerUI(UI):
 
     def _toggle_report(self, event):
         if event.new:
+            self._exports[0] = self._global_notebook_export
             self._main[:] = [Report(
                 subtasks=[
                     exploration['view'].plan for exploration in self._explorations.items[1:]
                 ]
             )]
         else:
+            self._exports[0] = self._notebook_export
             self._main[:] = [self._split]
 
     def _delete_exploration(self, item):
@@ -808,7 +817,12 @@ class ExplorerUI(UI):
             title=title,
             view=output
         )
-        view_item = {'label': title, 'view': exploration, 'icon': None, 'actions': [{'action': 'remove', 'label': 'Remove', 'icon': 'delete'}]}
+        view_item = {
+            'label': title,
+            'view': exploration,
+            'icon': None,
+            'actions': [{'action': 'remove', 'label': 'Remove', 'icon': 'delete'}]
+        }
         with hold():
             self.interface.objects = conversation
             self._idle.set()
@@ -886,7 +900,7 @@ class ExplorerUI(UI):
                 For cases when the user uploads a dataset through SourceAgent
                 this will update the available_sources in the global memory
                 """
-                memory["sources"] += [
+                self.memory["sources"] += [
                     source for source in sources if source not in memory["sources"]
                 ]
 
