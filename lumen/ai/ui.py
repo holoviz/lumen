@@ -900,7 +900,7 @@ class ExplorerUI(UI):
                 For cases when the user uploads a dataset through SourceAgent
                 this will update the available_sources in the global memory
                 """
-                self.memory["sources"] += [
+                memory["sources"] += [
                     source for source in sources if source not in memory["sources"]
                 ]
 
