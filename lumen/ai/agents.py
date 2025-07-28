@@ -198,7 +198,7 @@ class SourceAgent(Agent):
         messages: list[Message],
         step_title: str | None = None,
     ) -> Any:
-        source_controls = self.source_controls(memory=self.memory, cancellable=True, replace_controls=True)
+        source_controls = self.source_controls(memory=self._memory, cancellable=True, replace_controls=True)
 
         output = pn.Column(source_controls)
         if "source" not in self._memory:

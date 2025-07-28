@@ -468,8 +468,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 self.interface.stream(msg, user='Lumen')
                 return msg
 
-            if '__error__' in self.memory:
-                del self.memory['__error__']
+            if '__error__' in self._memory:
+                del self._memory['__error__']
             with self.interface.param.update(callback_exception="raise"):
                 with plan.param.update(
                     history=messages, memory=self._memory, interface=self.interface,
