@@ -12,17 +12,21 @@ Write a SQL query for the user's data transformation request, focusing on intent
 - Column names: Use double quotes (") to avoid identifier conflicts: `SELECT "column_name"`
 - No inline comments in SQL code
 - NULL handling: Exclude NULLs unless specified otherwise
-- Performance: Use LIMIT 100000 if unspecified, efficient ORDER BY, filter early
 - Discovery queries: One table at a time, no UNION
 - Subtitle rows: If dataset has subtitle/unit rows (e.g., "Title" then "Unit"), use OFFSET to skip them
 - NO CREATE statements: Materialization is handled automatically by the system
 - Data Quality: Filter out space-only values with `TRIM("column") != ''`
 - Header Rows: Use OFFSET 1 when data has header/metadata rows
+{% if not is_final_step %}- Discovery queries: Use ILIKE patterns and LIMIT 100 for exploration
 - Entity Discovery: When searching for enums:
   - Use multiple pattern variations: `ILIKE '%us%' OR ILIKE '%american%' OR ILIKE '%united%'`
   - Check multiple columns if available: country_name, country_code, country_3_letter_code
   - Consider common abbreviations and variations and case sensitivity
   - **Format variation checking**: When initial discovery fails, immediately check for format variations, underscores vs spaces using `ILIKE`
+- Limits can be applied to discovery steps
+{% else %}- Performance: Use LIMIT 100000 if unspecified, efficient ORDER BY, filter early
+- Limits should not be applied to final steps
+{% endif %}
 - Temporal Data Handling:
   - **Date range discovery**: Always check MIN/MAX dates before joining temporal datasets
   - **Period matching**: For seasonal/periodic data (e.g., ONI seasons JAS, ASO), understand the full period coverage
@@ -32,7 +36,6 @@ Write a SQL query for the user's data transformation request, focusing on intent
 - Progressive approach: each step builds on previous
 - Clean invalid values (-9999, empty strings)
 - Use CTEs only when necessary
-- Limits should not be applied to final steps.
 {%- endblock %}
 
 {% block context -%}
@@ -77,7 +80,6 @@ Additional instructions:
 - Use `strftime()` for formatting only, `TRY_CAST` for safe conversions
 - Conditional aggregates: `COUNT(*) FILTER (WHERE x)` > `SUM(CASE WHEN x THEN 1 END)`
 - Use `QUALIFY` for window filtering, `arg_max()` for correlated values
-- Prefer `ILIKE` > `LOWER() LIKE`, `USING` for joins, `DISTINCT ON` for unique rows
 - Use `PIVOT`/`UNPIVOT`, `LIST` aggregates, struct syntax `{'key': value}`
 - **Use materialized tables from previous steps when available** - critical for efficiency
 - **Temporal joins**: When joining on dates/periods:
