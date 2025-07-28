@@ -736,6 +736,24 @@ class AINavigator(OpenAI):
     mode = param.Selector(default=Mode.JSON_SCHEMA)
 
 
+class Ollama(OpenAI):
+    """
+    An LLM implementation using the Ollama cloud.
+    """
+
+    api_key = param.String(default="ollama", doc="The Ollama API key; required but unused.")
+
+    endpoint = param.String(default="http://localhost:11434/v1", doc="The Ollama API endpoint.")
+
+    mode = param.Selector(default=Mode.JSON)
+
+    temperature = param.Number(default=0.25, bounds=(0, None), constant=True)
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "qwen2.5-coder:7b"},
+    })
+
+
 class MessageModel(BaseModel):
     role: Literal["system", "user", "assistant"]
     content: str
