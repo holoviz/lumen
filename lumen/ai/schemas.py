@@ -20,7 +20,7 @@ class Column:
 
 
 @dataclass
-class VectorMetadata:
+class EmbeddingsMetadata:
     """Schema for vector lookup data for a single table."""
 
     table_slug: str  # Combined source_name and table_name with separator
@@ -32,11 +32,11 @@ class VectorMetadata:
 
 
 @dataclass
-class VectorMetaset:
+class EmbeddingsContext:
     """Schema container for vector data for multiple tables_metadata."""
 
     query: str
-    vector_metadata_map: dict[str, VectorMetadata]
+    embeddings_metadata_map: dict[str, EmbeddingsMetadata]
 
     def _generate_context(self, include_columns: bool = False, truncate: bool = False) -> str:
         """
@@ -47,7 +47,7 @@ class VectorMetaset:
             truncate: Whether to truncate strings and columns for brevity
         """
         context = ""
-        for table_slug, vector_metadata in self.vector_metadata_map.items():
+        for table_slug, vector_metadata in self.embeddings_metadata_map.items():
             base_sql = truncate_string(vector_metadata.base_sql, max_length=200) if truncate else vector_metadata.base_sql
             context += f"{table_slug!r} (access this table with: {base_sql})\n"
 
@@ -112,10 +112,10 @@ class SQLMetadata:
 
 
 @dataclass
-class SQLMetaset:
+class SQLContext:
     """Schema container for SQL data for multiple tables_metadata that builds on vector context."""
 
-    vector_metaset: VectorMetaset
+    embeddings_context: EmbeddingsContext
     sql_metadata_map: dict[str, SQLMetadata]
 
     def _generate_context(self, include_columns: bool = False, truncate: bool = False) -> str:
@@ -132,7 +132,7 @@ class SQLMetaset:
         context = ""
 
         for table_slug in self.sql_metadata_map.keys():
-            vector_metadata = self.vector_metaset.vector_metadata_map.get(table_slug)
+            vector_metadata = self.embeddings_context.embeddings_metadata_map.get(table_slug)
             if not vector_metadata:
                 continue
 
@@ -196,14 +196,14 @@ class SQLMetaset:
     @property
     def query(self) -> str:
         """Get the original query that generated this context."""
-        return self.vector_metaset.query
+        return self.embeddings_context.query
 
     def __str__(self) -> str:
         """String representation shows table context by default."""
         return self.table_context
 
 
-async def get_metaset(sources: dict[str, Source], tables: list[str]) -> SQLMetaset:
+async def get_context(sources: dict[str, Source], tables: list[str]) -> SQLContext:
     """
     Get the metaset for the given sources and tables.
 
@@ -216,7 +216,7 @@ async def get_metaset(sources: dict[str, Source], tables: list[str]) -> SQLMetas
 
     Returns
     -------
-    metaset: SQLMetaset
+    metaset: SQLContext
         The metaset for the given sources and tables.
     """
     tables_info, tables_metadata = {}, {}
@@ -244,7 +244,7 @@ async def get_metaset(sources: dict[str, Source], tables: list[str]) -> SQLMetas
         except Exception as e:
             log_debug(f"Failed to get metadata for table {table_name} in source {source_name}: {e}")
             metadata = {}
-        tables_metadata[table_name] = VectorMetadata(
+        tables_metadata[table_name] = EmbeddingsMetadata(
             table_slug=table_slug,
             similarity=1,
             base_sql=source.get_sql_expr(source.normalize_table(table_name)),
@@ -254,9 +254,9 @@ async def get_metaset(sources: dict[str, Source], tables: list[str]) -> SQLMetas
                 for col_name, col_values in metadata.get("columns").items()
             ],
         )
-    vector_metaset = VectorMetaset(vector_metadata_map=tables_metadata, query=None)
-    return SQLMetaset(
-        vector_metaset=vector_metaset,
+    embeddings_context = EmbeddingsContext(embeddings_metadata_map=tables_metadata, query=None)
+    return SQLContext(
+        embeddings_context=embeddings_context,
         sql_metadata_map=tables_info,
     )
 

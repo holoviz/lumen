@@ -48,7 +48,7 @@ Write a SQL query for the user's data transformation request, focusing on intent
 {% endif %}
 
 Available Schema Context:
-{{ memory["sql_metaset"].compact_context }}
+{{ memory["sql_context"].compact_context }}
 
 {%- if 'sql' in memory %}
 🗃️ Previous Plan's SQL:

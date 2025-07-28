@@ -40,7 +40,7 @@ Conditions for use:
   {%- endif %}
 {%- endfor %}
 {%- if missing_reqs %}
-❌ BLOCKED: Missing requirements: `{{ missing_reqs | join('`, `') }}`
+❌ Can be used once these are fulfilled: `{{ missing_reqs | join('`, `') }}`
 {%- else %}
 ✅ Ready!
 {%- endif %}
@@ -60,7 +60,7 @@ Conditions for use:
   {%- endif %}
 {%- endfor %}
 {%- if missing_reqs %}
-❌ BLOCKED: Missing requirements: `{{ missing_reqs | join('`, `') }}`
+❌ Can be used once these are fulfilled: `{{ missing_reqs | join('`, `') }}`
   {%- set providers = [] %}
   {%- for req in missing_reqs %}
     {%- for tool in tools %}
@@ -114,9 +114,9 @@ Conditions for use:
 {{ memory["data"] }}
 {%- endif -%}
 
-{%- if is_follow_up and 'vector_metaset' in memory %}
+{%- if is_follow_up and 'embeddings_context' in memory %}
 👉 Follow-up detected: Prioritize using existing data before retrieving new information
-{%- elif 'vector_metaset' in memory and not is_follow_up %}
+{%- elif 'embeddings_context' in memory and not is_follow_up %}
 👉 Existing metadata found: Evaluate if current data is sufficient before requesting more
 {%- endif %}
 

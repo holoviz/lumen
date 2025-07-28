@@ -215,20 +215,20 @@ class Coordinator(Viewer, VectorLookupToolUser):
             agent.interface = interface
             instantiated.append(agent)
 
-        # If none of the tools provide vector_metaset, add tablelookup
-        provides_vector_metaset = any(
-            "vector_metaset" in tool.provides
+        # If none of the tools provide embeddings_context, add tablelookup
+        provides_embeddings_context = any(
+            "embeddings_context" in tool.provides
             for tool in tools or []
         )
-        provides_sql_metaset = any(
-            "sql_metaset" in tool.provides
+        provides_sql_context = any(
+            "sql_context" in tool.provides
             for tool in tools or []
         )
-        if not provides_vector_metaset and not provides_sql_metaset:
+        if not provides_embeddings_context and not provides_sql_context:
             tools += [TableLookup, IterativeTableLookup]
-        elif not provides_vector_metaset:
+        elif not provides_embeddings_context:
             tools += [TableLookup]
-        elif not provides_sql_metaset:
+        elif not provides_sql_context:
             tools += [IterativeTableLookup]
 
         # Add user-provided tools to the list of tools of the coordinator
@@ -794,7 +794,7 @@ class Planner(Coordinator):
 
         # ensure these candidates are satisfiable
         # e.g. DbtslAgent is unsatisfiable if DbtslLookup was used in planning
-        # but did not provide dbtsl_metaset
+        # but did not provide dbtsl_context
         # also filter out agents where excluded keys exist in memory
         agents = [agent for agent in agents if len(set(agent.requires) - all_provides) == 0 and type(agent).__name__ != "ValidationAgent"]
         tools = [tool for tool in tools if len(set(tool.requires) - all_provides) == 0]

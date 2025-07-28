@@ -21,8 +21,8 @@ from .models import (
     ThinkingYesNo, make_iterative_selection_model, make_refined_query_model,
 )
 from .schemas import (
-    Column, DbtslMetadata, DbtslMetaset, SQLMetadata, SQLMetaset,
-    VectorMetadata, VectorMetaset,
+    Column, DbtslMetadata, DbtslMetaset, EmbeddingsContext, EmbeddingsMetadata,
+    SQLContext, SQLMetadata,
 )
 from .services import DbtslMixin
 from .translate import function_to_model
@@ -566,7 +566,7 @@ class TableLookup(VectorLookupTool):
         doc="Dictionary of available prompts for the tool."
     )
 
-    exclusions = param.List(default=["dbtsl_metaset"])
+    exclusions = param.List(default=["dbtsl_context"])
 
     not_with = param.List(default=["IterativeTableLookup"])
 
@@ -578,7 +578,7 @@ class TableLookup(VectorLookupTool):
     requires = param.List(default=["sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
 
-    provides = param.List(default=["tables_metadata", "vector_metaset"], readonly=True, doc="""
+    provides = param.List(default=["tables_metadata", "embeddings_context"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
 
     include_metadata = param.Boolean(default=True, doc="""
@@ -810,7 +810,7 @@ class TableLookup(VectorLookupTool):
         any_matches = any(result['similarity'] >= self.min_similarity for result in results)
         same_table = len([result["metadata"]["table_name"] for result in results])
 
-        vector_metadata_map = {}
+        embeddings_metadata_map = {}
         for result in results:
             source_name = result['metadata']["source"]
             table_name = result['metadata']["table_name"]
@@ -839,7 +839,7 @@ class TableLookup(VectorLookupTool):
                     )
                     columns.append(column_schema)
 
-            vector_metadata = VectorMetadata(
+            vector_metadata = EmbeddingsMetadata(
                 table_slug=table_slug,
                 similarity=similarity_score,
                 description=table_description,
@@ -847,23 +847,23 @@ class TableLookup(VectorLookupTool):
                 columns=columns,
                 metadata=self._memory["tables_metadata"].get(table_slug, {}).copy()
             )
-            vector_metadata_map[table_slug] = vector_metadata
+            embeddings_metadata_map[table_slug] = vector_metadata
 
         # If query contains an exact table name, mark it as max similarity
         for table_slug in self._memory["tables_metadata"]:
             if table_slug.split(SOURCE_TABLE_SEPARATOR)[-1].lower() in query.lower():
-                if table_slug in vector_metadata_map:
-                    vector_metadata_map[table_slug].similarity = 1
+                if table_slug in embeddings_metadata_map:
+                    embeddings_metadata_map[table_slug].similarity = 1
 
-        self._memory["vector_metaset"] = VectorMetaset(
-            vector_metadata_map=vector_metadata_map, query=query)
-        return vector_metadata_map
+        self._memory["embeddings_context"] = EmbeddingsContext(
+            embeddings_metadata_map=embeddings_metadata_map, query=query)
+        return embeddings_metadata_map
 
     def _format_context(self) -> str:
         """Generate formatted text representation from schema objects."""
         # Get schema objects from memory
-        vector_metaset = self._memory.get("vector_metaset")
-        return str(vector_metaset)
+        embeddings_context = self._memory.get("embeddings_context")
+        return str(embeddings_context)
 
     async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
         """
@@ -891,7 +891,7 @@ class IterativeTableLookup(TableLookup):
     purpose = param.String(default="""
         Looks up the most relevant tables and provides SQL schemas of those tables.""")
 
-    provides = param.List(default=["tables_metadata", "vector_metaset", "sql_metaset"], readonly=True, doc="""
+    provides = param.List(default=["tables_metadata", "embeddings_context", "sql_context"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
 
     max_selection_iterations = param.Integer(default=3, doc="""
@@ -924,12 +924,12 @@ class IterativeTableLookup(TableLookup):
         3. Gets complete schemas for these tables
         4. Repeats until the LLM is satisfied with the context
         """
-        vector_metadata_map = await super()._gather_info(messages)
-        vector_metaset = self._memory.get("vector_metaset")
+        embeddings_metadata_map = await super()._gather_info(messages)
+        embeddings_context = self._memory.get("embeddings_context")
 
         sql_metadata_map = {}
         examined_slugs = set(sql_metadata_map.keys())
-        all_slugs = list(vector_metadata_map.keys())
+        all_slugs = list(embeddings_metadata_map.keys())
         failed_slugs = []
         selected_slugs = []
         chain_of_thought = ""
@@ -955,12 +955,12 @@ class IterativeTableLookup(TableLookup):
                 if iteration == 1:
                     # For the first iteration, select tables based on similarity
                     # If any tables have a similarity score above the threshold, select up to 5 of those tables
-                    any_matches = any(schema.similarity > self.table_similarity_threshold for schema in vector_metadata_map.values())
-                    limited_tables = len(vector_metadata_map) <= 5
+                    any_matches = any(schema.similarity > self.table_similarity_threshold for schema in embeddings_metadata_map.values())
+                    limited_tables = len(embeddings_metadata_map) <= 5
                     if any_matches or len(all_slugs) == 1 or limited_tables:
                         selected_slugs = sorted(
-                            vector_metadata_map.keys(),
-                            key=lambda x: vector_metadata_map[x].similarity,
+                            embeddings_metadata_map.keys(),
+                            key=lambda x: embeddings_metadata_map[x].similarity,
                             reverse=True
                         )[:5]
                         step.stream("Selected tables based on similarity threshold.\n\n")
@@ -982,7 +982,7 @@ class IterativeTableLookup(TableLookup):
                             failed_slugs=failed_slugs,
                             separator=SOURCE_TABLE_SEPARATOR,
                             sql_metadata_map=sql_metadata_map,
-                            vector_metadata_map=vector_metadata_map,
+                            embeddings_metadata_map=embeddings_metadata_map,
                             iteration=iteration,
                             max_iterations=max_iterations,
                         )
@@ -1019,7 +1019,7 @@ class IterativeTableLookup(TableLookup):
 
                 step.stream("\n\nFetching detailed schema information for tables\n")
                 for table_slug in selected_slugs:
-                    stream_details(str(vector_metaset.vector_metadata_map[table_slug]), step, title="Table details", auto=False)
+                    stream_details(str(embeddings_context.embeddings_metadata_map[table_slug]), step, title="Table details", auto=False)
                     try:
                         view_definition = truncate_string(
                             self._memory["tables_metadata"].get(table_slug, {}).get("view_definition", ""),
@@ -1059,18 +1059,18 @@ class IterativeTableLookup(TableLookup):
         # Filter sql_metadata_map to match satisfied_slugs
         sql_metadata_map = {table_slug: schema_data for table_slug, schema_data in sql_metadata_map.items()}
 
-        # Create SQLMetaset object using the vector schema and SQL data
-        sql_metaset = SQLMetaset(
-            vector_metaset=vector_metaset,
+        # Create SQLContext object using the vector schema and SQL data
+        sql_context = SQLContext(
+            embeddings_context=embeddings_context,
             sql_metadata_map=sql_metadata_map,
         )
-        self._memory["sql_metaset"] = sql_metaset
+        self._memory["sql_context"] = sql_context
         return sql_metadata_map
 
     def _format_context(self) -> str:
         """Generate formatted text representation from schema objects."""
-        sql_metaset = self._memory.get("sql_metaset")
-        return str(sql_metaset)
+        sql_context = self._memory.get("sql_context")
+        return str(sql_context)
 
 
 class DbtslLookup(VectorLookupTool, DbtslMixin):
@@ -1113,7 +1113,7 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
     requires = param.List(default=["source"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
 
-    provides = param.List(default=["dbtsl_metaset"], readonly=True, doc="""
+    provides = param.List(default=["dbtsl_context"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
 
     _item_type_name = "metrics"
@@ -1170,7 +1170,7 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
             if not closest_metrics:
                 search_step.stream("\n⚠️ No metrics found with sufficient relevance to the query.")
                 search_step.status = "failed"
-                self._memory.pop("dbtsl_metaset", None)
+                self._memory.pop("dbtsl_context", None)
                 return ""
 
             metrics_info = [f"- {r['metadata'].get('name')}" for r in closest_metrics]
@@ -1251,7 +1251,7 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
                 if metrics:
                     step.stream("\n\nEvaluating if found metrics can answer the query...")
                     try:
-                        result = await self._invoke_prompt("main", messages, dbtsl_metaset=metaset)
+                        result = await self._invoke_prompt("main", messages, dbtsl_context=metaset)
                         can_answer_query = result.yes
                         step.stream(f"\n\n{result.chain_of_thought}")
                     except Exception as e:
@@ -1259,10 +1259,10 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
                         step.status = "failed"
 
         if not can_answer_query:
-            self._memory.pop("dbtsl_metaset", None)
+            self._memory.pop("dbtsl_context", None)
             return ""
 
-        self._memory["dbtsl_metaset"] = metaset
+        self._memory["dbtsl_context"] = metaset
         return str(metaset)
 
     @pn_cache

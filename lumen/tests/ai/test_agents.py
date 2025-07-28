@@ -16,7 +16,7 @@ from lumen.ai.agents import (
 )
 from lumen.ai.llm import Llm
 from lumen.ai.models import NextStep, SQLRoadmap
-from lumen.ai.schemas import get_metaset
+from lumen.ai.schemas import get_context
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
 
@@ -134,7 +134,7 @@ class TestSoloAgentRespond:
         """Test SQLAgent instantiation and respond"""
         mock_memory["source"] = duckdb_source
         mock_memory["sources"] = sources = {"duckdb": duckdb_source}
-        mock_memory["sql_metaset"] = await get_metaset(sources, ["test_sql"])
+        mock_memory["sql_context"] = await get_context(sources, ["test_sql"])
 
         agent = SQLAgent(llm=mock_llm, memory=mock_memory)
 
@@ -171,7 +171,7 @@ class TestSoloAgentRespond:
         mock_memory["pipeline"] = Pipeline(source=duckdb_source, table="test_sql")
         mock_memory["table"] = "test_sql"
         mock_memory["sources"] = sources = {"duckdb": duckdb_source}
-        mock_memory["sql_metaset"] = await get_metaset(sources, ["test_sql"])
+        mock_memory["sql_context"] = await get_context(sources, ["test_sql"])
         mock_memory["data"] = duckdb_source.get("test_sql")
 
         agent = VegaLiteAgent(llm=mock_llm, memory=mock_memory)

@@ -48,9 +48,9 @@ Checklist:
 
 {{ tool_context | default('') }}
 
-{% if memory["dbtsl_metaset"] %}
+{% if memory["dbtsl_context"] %}
 # Available Metrics and Dimensions
-{{ memory["dbtsl_metaset"] }}
+{{ memory["dbtsl_context"] }}
 {% endif %}
 
 {% if "dbtsl_query_params" in memory %}

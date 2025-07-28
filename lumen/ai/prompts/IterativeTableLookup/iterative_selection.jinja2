@@ -24,13 +24,13 @@ Here are your previous thoughts:
 {% if available_slugs|length > 0 %}
 Here are the tables available for selection:
 {% for table_slug in available_slugs -%}
-{{ table_slug }} (Similarity: {{ vector_metadata_map[table_slug].similarity | round(3) }})
-{%- if vector_metadata_map[table_slug].description is defined and vector_metadata_map[table_slug].description -%}
-  Description: {{ vector_metadata_map[table_slug].description }}
+{{ table_slug }} (Similarity: {{ embeddings_metadata_map[table_slug].similarity | round(3) }})
+{%- if embeddings_metadata_map[table_slug].description is defined and embeddings_metadata_map[table_slug].description -%}
+  Description: {{ embeddings_metadata_map[table_slug].description }}
 {%- endif -%}
-{%- if vector_metadata_map[table_slug].columns is defined and vector_metadata_map[table_slug].columns|length > 0 %}
+{%- if embeddings_metadata_map[table_slug].columns is defined and embeddings_metadata_map[table_slug].columns|length > 0 %}
   Cols:
-  {% for col in vector_metadata_map[table_slug].columns -%}
+  {% for col in embeddings_metadata_map[table_slug].columns -%}
   - {{ col.name }}{% if col.description %}: {{ col.description }}{% endif %}
   {% endfor -%}
 {% endif %}

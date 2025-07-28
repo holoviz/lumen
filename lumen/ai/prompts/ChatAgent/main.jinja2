@@ -30,10 +30,10 @@ Here's a summary of the dataset the user just asked about:
 {% else %}
 No dataset has been loaded yet. Please ask the user to load a dataset or provide more context.
 {%- endif %}
-{%- if 'vector_metaset' not in memory and 'agent_tool_contexts' not in memory %}
+{%- if 'embeddings_context' not in memory and 'agent_tool_contexts' not in memory %}
 The user has not provided any data or documents to chat about. Please prompt the user
 to upload some data or documents.
-{%- elif 'vector_metaset' in memory %}
-{{ memory['vector_metaset'].table_context }}
+{%- elif 'embeddings_context' in memory %}
+{{ memory['embeddings_context'].table_context }}
 {%- endif %}
 {% endblock -%}

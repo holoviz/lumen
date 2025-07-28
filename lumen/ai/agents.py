@@ -39,7 +39,7 @@ from .models import (
     DbtslQueryParams, NextStep, PartialBaseModel, QueryCompletionValidation,
     RetrySpec, Sql, SQLRoadmap, VegaLiteSpec,
 )
-from .schemas import get_metaset
+from .schemas import get_context
 from .services import DbtslMixin
 from .tools import ToolUser
 from .translate import param_to_pydantic
@@ -256,9 +256,9 @@ class ChatAgent(Agent):
         step_title: str | None = None,
     ) -> Any:
         context = {"tool_context": await self._use_tools("main", messages)}
-        if "vector_metaset" not in self._memory and "source" in self._memory and "table" in self._memory:
+        if "embeddings_context" not in self._memory and "source" in self._memory and "table" in self._memory:
             source = self._memory["source"]
-            self._memory["vector_metaset"] = await get_metaset(
+            self._memory["embeddings_context"] = await get_context(
                 {source.name: source}, [f"{source.name}{SOURCE_TABLE_SEPARATOR}{self._memory['table']}"],
             )
         system_prompt = await self._render_prompt("main", messages, **context)
@@ -562,16 +562,16 @@ class SQLAgent(LumenBaseAgent):
             "Use when user asks about data contained in tables (e.g., 'show me sales data', 'filter by date')",
             "Use for calculations that require data from tables (e.g., 'calculate average', 'sum by category')",
             "Use when user wants to display or examine table contents",
-            "If sql_metaset is not in memory, use with IterativeTableLookup",
             "Commonly used with AnalystAgent to analyze query results",
             "For existing tables, only use if additional calculations are needed",
             "NOT for technical questions about programming, functions, or libraries",
             "NOT for questions that don't require data table access",
             "NOT useful if the user is using the same data for plotting",
+            "If sql_context is not in memory, use with IterativeTableLookup",
         ]
     )
 
-    exclusions = param.List(default=["dbtsl_metaset"])
+    exclusions = param.List(default=["dbtsl_context"])
 
     max_discovery_iterations = param.Integer(default=5, doc="""
         Maximum number of discovery iterations before requiring a final answer.""")
@@ -607,7 +607,7 @@ class SQLAgent(LumenBaseAgent):
 
     provides = param.List(default=["table", "sql", "pipeline", "data"], readonly=True)
 
-    requires = param.List(default=["sources", "source", "sql_metaset"], readonly=True)
+    requires = param.List(default=["sources", "source", "sql_context"], readonly=True)
 
     max_steps = param.Integer(default=20, doc="""
         Maximum number of steps before requiring a final answer (safety limit).""")
@@ -857,8 +857,8 @@ class SQLAgent(LumenBaseAgent):
 
     def _setup_source(self, sources: dict) -> tuple[dict, Any]:
         """Setup the main source and handle multiple sources if needed."""
-        vector_metaset = self._memory["sql_metaset"].vector_metaset
-        selected_slugs = list(vector_metaset.vector_metadata_map) or self._memory["tables_metadata"].keys()
+        embeddings_context = self._memory["sql_context"].embeddings_context
+        selected_slugs = list(embeddings_context.embeddings_metadata_map) or self._memory["tables_metadata"].keys()
 
         # Filter selected_slugs to only include visible tables
         visible_slugs = self._memory.get('visible_slugs', set())
@@ -1166,7 +1166,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
 
     conditions = param.List(
         default=[
-            "Always use this when dbtsl_metaset is available",
+            "Always use this when dbtsl_context is available",
         ]
     )
 
@@ -1187,9 +1187,9 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
         }
     )
 
-    provides = param.List(default=["table", "sql", "pipeline", "data", "dbtsl_vector_metaset", "dbtsl_sql_metaset"], readonly=True)
+    provides = param.List(default=["table", "sql", "pipeline", "data", "dbtsl_embeddings_context", "dbtsl_sql_context"], readonly=True)
 
-    requires = param.List(default=["source", "dbtsl_metaset"], readonly=True)
+    requires = param.List(default=["source", "dbtsl_context"], readonly=True)
 
     source = param.ClassSelector(
         class_=BaseSQLSource,
@@ -1298,8 +1298,8 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
             pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms)
 
             df = await get_data(pipeline)
-            sql_metaset = await get_metaset({sql_expr_source.name: sql_expr_source}, [expr_slug])
-            vector_metaset = sql_metaset.vector_metaset
+            sql_context = await get_context({sql_expr_source.name: sql_expr_source}, [expr_slug])
+            embeddings_context = sql_context.embeddings_context
 
             # Update memory
             self._memory["data"] = await describe_data(df)
@@ -1307,8 +1307,8 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
             self._memory["source"] = sql_expr_source
             self._memory["pipeline"] = pipeline
             self._memory["table"] = pipeline.table
-            self._memory["dbtsl_vector_metaset"] = vector_metaset
-            self._memory["dbtsl_sql_metaset"] = sql_metaset
+            self._memory["dbtsl_embeddings_context"] = embeddings_context
+            self._memory["dbtsl_sql_context"] = sql_context
             self._memory.trigger("sources")
             return sql_query, pipeline
         except Exception as e:
@@ -1366,15 +1366,15 @@ class BaseViewAgent(LumenBaseAgent):
             except Exception:
                 last_output = ""
 
-            vector_metadata_map = None
-            if "sql_metaset" in self._memory:
-                vector_metadata_map = self._memory["sql_metaset"].vector_metaset.vector_metadata_map
-            elif "dbtsl_sql_metaset" in self._memory:
-                vector_metadata_map = self._memory["dbtsl_sql_metaset"].vector_metaset.vector_metadata_map
+            embeddings_metadata_map = None
+            if "sql_context" in self._memory:
+                embeddings_metadata_map = self._memory["sql_context"].embeddings_context.embeddings_metadata_map
+            elif "dbtsl_sql_context" in self._memory:
+                embeddings_metadata_map = self._memory["dbtsl_sql_context"].embeddings_context.embeddings_metadata_map
 
             columns_context = ""
-            if vector_metadata_map is not None:
-                for table_slug, vector_metadata in vector_metadata_map.items():
+            if embeddings_metadata_map is not None:
+                for table_slug, vector_metadata in embeddings_metadata_map.items():
                     table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
                     if table_name in pipeline.table:
                         columns = [col.name for col in vector_metadata.columns]

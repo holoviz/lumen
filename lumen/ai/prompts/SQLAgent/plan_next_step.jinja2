@@ -45,7 +45,7 @@ Plan the NEXT SINGLE STEP toward answering the user's query.
 
 {% block context %}
 Available Schema Context:
-{{ memory["sql_metaset"].compact_context }}
+{{ memory["sql_context"].compact_context }}
 
 Steps Already Taken: {{ total_steps }}
 
