@@ -71,8 +71,10 @@ huggingface_hub = "*"
 [feature.ai-llama.pypi-dependencies]
 llama-cpp-python = ">=0.3.0"
 
-[feature.ai-google.pypi-dependencies]
+[feature.bq-dev.pypi-dependencies]
 google-generativeai = "*"
+protobuf = "<5.0.0"
+google-auth = ">=2.15.0"
 
 [feature.ai-litellm.pypi-dependencies]
 litellm = "*"
