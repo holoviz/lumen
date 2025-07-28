@@ -16,7 +16,6 @@ from instructor.dsl.partial import Partial
 from instructor.patch import Mode, patch
 from pydantic import BaseModel
 
-from .components import StatusBadge
 from .interceptor import Interceptor
 from .models import YesNo
 from .utils import format_exception, log_debug, truncate_string
@@ -55,6 +54,9 @@ class Llm(param.Parameterized):
         'default', 'reasoning' and 'sql'. Agents may pick which model to
         invoke for different reasons.""")
 
+    _ready = param.Boolean(default=False, doc="""
+        Whether the LLM has been initialized and is ready to use.""")
+
     # Whether the LLM supports streaming of any kind
     _supports_stream = True
 
@@ -68,7 +70,6 @@ class Llm(param.Parameterized):
             if isinstance(params["mode"], str):
                 params["mode"] = Mode[params["mode"].upper()]
         super().__init__(**params)
-        self._status = StatusBadge(name="LLM Pending", description="Waiting for LLM to initialize", align="center")
         if not self.model_kwargs.get("default"):
             raise ValueError(
                 f"Please specify a 'default' model in the model_kwargs "
@@ -162,24 +163,17 @@ class Llm(param.Parameterized):
             return chunk.choices[0].delta.content or ""
         return ""
 
-    def status(self):
-        return self._status
-
     async def initialize(self, log_level: str):
         try:
-            self._status.status = "running"
+            self._ready = False
             await self.invoke(
                 messages=[{'role': 'user', 'content': 'Are you there? YES | NO'}],
                 model_spec="ui",
                 response_model=YesNo
             )
-            self._status.param.update(status="success", name='LLM Ready', description=f"Ready to use LLM from {self.__class__.__name__} (default: {self.model_kwargs['default'].get('model', 'unknown')}).")
+            self._ready = True
         except Exception as e:
-            self._status.param.update(
-                status="failed",
-                name="LLM Not Connected",
-                description='❌ '+(format_exception(e, limit=3) if log_level == 'DEBUG' else "Failed to connect to LLM"),
-            )
+            self._ready = False
             raise e
 
     async def stream(
