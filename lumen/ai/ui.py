@@ -312,6 +312,12 @@ class UI(Viewer):
         if levels.get(self.log_level) < 20:
             self.interface.callback_exception = "verbose"
         self.interface.disabled = True
+        self._verbose_toggle = Switch(
+            label="Verbose",
+            value=False,
+            color="default",
+            margin=(12, 0, 10, 10)
+        )
         self._coordinator = self.coordinator(
             agents=agents,
             interface=self.interface,
@@ -321,6 +327,7 @@ class UI(Viewer):
             within_ui=True,
             vector_store=self.vector_store,
             document_vector_store=self.document_vector_store,
+            verbose=self._verbose_toggle.param.value,
             **self.coordinator_params
         )
         self._notebook_export = FileDownload(
@@ -349,7 +356,9 @@ class UI(Viewer):
         )
         self._table_lookup_tool = None  # Will be set after coordinator is initialized
 
-        self._sources_open_icon = IconButton(icon="topic", color="light", margin=(10, 0))
+        self._sources_open_icon = IconButton(
+            icon="cloud_upload", color="light", description="Upload Data", margin=(10, 0)
+        )
         self._source_catalog = SourceCatalog()
         self._sources_dialog_content = Dialog(
             Tabs(("Input", self._source_controls), ("Catalog", self._source_catalog), margin=(-30, 0, 0, 0), sizing_mode="stretch_both"),
@@ -497,8 +506,9 @@ class UI(Viewer):
                     self._report_toggle,
                     self._sources_open_icon,
                     self._exports,
+                    self._verbose_toggle,
                     Divider(
-                        orientation="vertical", height=30, margin=(17, 0, 17, 5),
+                        orientation="vertical", height=30, margin=(18, 0, 17, 5),
                         sx={'border-color': 'white', 'border-width': '1px'}
                     )
                 ],
@@ -630,6 +640,7 @@ class ExplorerUI(UI):
         self._report_toggle = ToggleIcon(
             icon="chat",
             active_icon="summarize",
+            description="Toggle Report Mode",
             value=False,
             styles={"margin-left": "auto"},
             sx={".MuiIcon-root": {"color": "white"}},

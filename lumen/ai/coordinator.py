@@ -57,6 +57,7 @@ class Plan(Section):
     async def _run_task(self, i: int, task: Self | Actor, **kwargs):
         outputs = []
         with self.interface.add_step(title=f"{task.title}...", user="Runner", layout_params={"title": "🏗️ Plan Execution Steps"}, steps_layout=self.steps_layout) as step:
+            self.steps_layout.title = f"⚙️ Working on task {task.title!r}..."
             step.stream(f"`Working on task {task.title}`:\n\n{task.instruction}")
             try:
                 kwargs = {"agents": self.agents} if 'agents' in task.param else {}
@@ -102,9 +103,6 @@ class Coordinator(Viewer, VectorLookupToolUser):
         },
     )
 
-    within_ui = param.Boolean(default=False, constant=True, doc="""
-        Whether this coordinator is being used within the UI.""")
-
     agents = param.List(default=[ChatAgent], doc="""
         List of agents to coordinate.""")
 
@@ -119,6 +117,12 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
     suggestions = param.List(default=GETTING_STARTED_SUGGESTIONS, doc="""
         Initial list of suggestions of actions the user can take.""")
+
+    verbose = param.Boolean(default=False, allow_refs=True, doc="""
+        Whether to show verbose output.""")
+
+    within_ui = param.Boolean(default=False, constant=True, doc="""
+        Whether this coordinator is being used within the UI.""")
 
     __abstract = True
 
@@ -1008,7 +1012,7 @@ class Planner(Coordinator):
         attempts = 0
         plan = None
         with self.interface.param.update(callback_exception="raise"):
-            with self.interface.add_step(title="Planning how to solve user query...", user="Planner", layout_params={"title": "📝 Planner Steps"}) as istep:
+            with self.interface.add_step(title="Planning how to solve user query...", user="Planner", layout_params={"title": "📝 Planner Steps", "collapsed": not self.verbose}) as istep:
                 self.steps_layout = self.interface.objects[-1].object
                 while not planned:
                     if attempts > 0:
@@ -1020,11 +1024,11 @@ class Planner(Coordinator):
                             plan_model, istep, is_follow_up=pre_plan_output["is_follow_up"]
                         )
                     except asyncio.CancelledError as e:
-                        istep.failed_title = 'Planning was cancelled, please try again.'
+                        self.steps_layout.title = istep.failed_title = 'Planning was cancelled, please try again.'
                         traceback.print_exception(e)
                         raise e
                     except Exception as e:
-                        istep.failed_title = 'Failed to make plan. Ensure LLM is configured correctly and/or try again.'
+                        self.steps_layout.title = istep.failed_title = 'Failed to make plan. Ensure LLM is configured correctly and/or try again.'
                         traceback.print_exception(e)
                         raise e
                     plan, unmet_dependencies, previous_actors = await self._resolve_plan(
