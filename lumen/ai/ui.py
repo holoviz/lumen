@@ -316,7 +316,7 @@ class UI(Viewer):
             label="Verbose",
             value=False,
             color="light",
-            margin=(18, 10, 10, 10),
+            margin=(18, 10, 10, 15),
             size="small"
         )
         self._coordinator = self.coordinator(
