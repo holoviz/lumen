@@ -58,7 +58,7 @@ class LLMModelCard(Viewer):
     Card component for displaying and configuring a single LLM model type.
 
     Shows:
-    - Model type name (default, reasoning, sql, etc.)
+    - Model type name (default, edit, sql, etc.)
     - Model selection dropdown
     - Current model info
     """
@@ -69,7 +69,7 @@ class LLMModelCard(Viewer):
 
     llm_choices = param.List(default=[], doc="Available model choices for this card")
 
-    model_type = param.String(doc="The model type key (e.g., 'default', 'reasoning')")
+    model_type = param.String(doc="The model type key (e.g., 'default', 'edit')")
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -322,7 +322,7 @@ class LLMConfigDialog(Viewer):
         # Add common predefined types first (only non-duplicate ones)
         predefined_types = {
             "default": "General purpose model for most tasks",
-            "edit": "Advanced model for complex reasoning tasks",
+            "edit": "Advanced model for retry & edit tasks",
             "ui": "Lightweight model for UI interactions"
         }
         agent_types.update(predefined_types)
