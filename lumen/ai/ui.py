@@ -319,6 +319,13 @@ class UI(Viewer):
         if levels.get(self.log_level) < 20:
             self.interface.callback_exception = "verbose"
         self.interface.disabled = True
+        self._verbose_toggle = Switch(
+            label="Verbose",
+            value=False,
+            color="light",
+            margin=(18, 10, 10, 15),
+            size="small"
+        )
         self._coordinator = self.coordinator(
             agents=agents,
             interface=self.interface,
@@ -328,14 +335,18 @@ class UI(Viewer):
             within_ui=True,
             vector_store=self.vector_store,
             document_vector_store=self.document_vector_store,
+            verbose=self._verbose_toggle.param.value,
             **self.coordinator_params
         )
         self._notebook_export = FileDownload(
             callback=self._export_notebook,
             color="light",
+            description="Export Notebook",
             icon_size="1.8em",
             filename=f"{self.title.replace(' ', '_')}.ipynb",
-            margin=(12, 0, 10, 0),
+            label=" ",
+            margin=(12, 0, 10, 5),
+            sx={"p": "6px 0", "minWidth": "32px"},
             styles={'z-index': '1000'},
             variant="text"
         )
@@ -364,7 +375,7 @@ class UI(Viewer):
 
         self._data_sources_chip = Chip(
             object="Loading Data Sources",
-            icon="storage",
+            icon="cloud_upload",
             color="primary",
             align="center",
             on_click=self._open_sources_dialog,
@@ -372,7 +383,6 @@ class UI(Viewer):
             loading=True,
         )
         self._table_lookup_tool = None  # Will be set after coordinator is initialized
-
         self._source_catalog = SourceCatalog()
         self._sources_dialog_content = Dialog(
             Tabs(("Input", self._source_controls), ("Catalog", self._source_catalog), margin=(-30, 0, 0, 0), sizing_mode="stretch_both"),
@@ -596,6 +606,7 @@ class UI(Viewer):
                     self._data_sources_chip,
                     *([self._report_toggle] if self._report_toggle else []),
                     self._exports,
+                    self._verbose_toggle,
                     Divider(
                         orientation="vertical", height=30, margin=(17, 0, 17, 5),
                         sx={'border-color': 'white', 'border-width': '1px'}
@@ -735,6 +746,7 @@ class ExplorerUI(UI):
         self._report_toggle = ToggleIcon(
             icon="chat",
             active_icon="summarize",
+            description="Toggle Report Mode",
             value=False,
             styles={"margin-left": "auto"},
             sx={".MuiIcon-root": {"color": "white"}},
@@ -754,10 +766,13 @@ class ExplorerUI(UI):
         self._global_notebook_export = FileDownload(
             callback=self._global_export_notebook,
             color="light",
+            description="Export Notebook",
             icon_size="1.8em",
             filename=f"{self.title.replace(' ', '_')}.ipynb",
-            margin=(12, 0, 10, 0),
+            label=" ",
+            margin=(12, 0, 10, 5),
             styles={'z-index': '1000'},
+            sx={"p": "6px 0", "minWidth": "32px"},
             variant="text"
         )
         self._exports.visible = False
