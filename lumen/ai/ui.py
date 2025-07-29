@@ -315,8 +315,9 @@ class UI(Viewer):
         self._verbose_toggle = Switch(
             label="Verbose",
             value=False,
-            color="default",
-            margin=(12, 0, 10, 10)
+            color="light",
+            margin=(18, 10, 10, 10),
+            size="small"
         )
         self._coordinator = self.coordinator(
             agents=agents,
