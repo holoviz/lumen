@@ -833,6 +833,7 @@ class Planner(Coordinator):
                 response_model=Reasoning,
                 max_retries=3,
             ):
+                self.steps_layout.title = "🧠 Reasoning about the plan..."
                 if reasoning.chain_of_thought:  # do not replace with empty string
                     self._memory["reasoning"] = reasoning.chain_of_thought
                     step.stream(reasoning.chain_of_thought, replace=True)
@@ -1012,7 +1013,10 @@ class Planner(Coordinator):
         attempts = 0
         plan = None
         with self.interface.param.update(callback_exception="raise"):
-            with self.interface.add_step(title="Planning how to solve user query...", user="Planner", layout_params={"title": "📝 Planner Steps", "collapsed": not self.verbose}) as istep:
+            with self.interface.add_step(
+                title="Planning how to solve user query...", user="Planner",
+                layout_params={"title": "📝 Planning out tasks", "collapsed": not self.verbose}
+            ) as istep:
                 self.steps_layout = self.interface.objects[-1].object
                 while not planned:
                     if attempts > 0:
@@ -1034,6 +1038,7 @@ class Planner(Coordinator):
                     plan, unmet_dependencies, previous_actors = await self._resolve_plan(
                         raw_plan, agents, tools, messages, previous_actors
                     )
+                    self.steps_layout.title = f"📋 Planned out steps for {plan.title!r}"
                     if unmet_dependencies:
                         istep.stream(f"The plan didn't account for {unmet_dependencies!r}", replace=True)
                         attempts += 1
