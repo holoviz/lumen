@@ -334,9 +334,12 @@ class UI(Viewer):
         self._notebook_export = FileDownload(
             callback=self._export_notebook,
             color="light",
+            description="Export Notebook",
             icon_size="1.8em",
             filename=f"{self.title.replace(' ', '_')}.ipynb",
-            margin=(12, 0, 10, 0),
+            label=" ",
+            margin=(12, 0, 10, 5),
+            sx={"p": "6px 0", "minWidth": "32px"},
             styles={'z-index': '1000'},
             variant="text"
         )
@@ -509,7 +512,7 @@ class UI(Viewer):
                     self._exports,
                     self._verbose_toggle,
                     Divider(
-                        orientation="vertical", height=30, margin=(18, 0, 17, 5),
+                        orientation="vertical", height=30, margin=(17, 0, 17, 5),
                         sx={'border-color': 'white', 'border-width': '1px'}
                     )
                 ],
@@ -661,10 +664,13 @@ class ExplorerUI(UI):
         self._global_notebook_export = FileDownload(
             callback=self._global_export_notebook,
             color="light",
+            description="Export Notebook",
             icon_size="1.8em",
             filename=f"{self.title.replace(' ', '_')}.ipynb",
-            margin=(12, 0, 10, 0),
+            label=" ",
+            margin=(12, 0, 10, 5),
             styles={'z-index': '1000'},
+            sx={"p": "6px 0", "minWidth": "32px"},
             variant="text"
         )
         self._exports.visible = False
