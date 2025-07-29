@@ -10,8 +10,9 @@ import param
 from panel.layout import Column, HSpacer, Row
 from panel.pane import Markdown
 from panel.viewable import Viewer
-from panel.widgets import FloatSlider, Select
-from panel_material_ui import Button, Dialog, Divider
+from panel_material_ui import (
+    Button, Dialog, Divider, FloatSlider, Select,
+)
 
 from .llm import (
     AnthropicAI, GoogleAI, LiteLLM, LlamaCpp, Llm, MistralAI, Ollama, OpenAI,
