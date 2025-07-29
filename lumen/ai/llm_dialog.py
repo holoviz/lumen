@@ -59,7 +59,7 @@ class LLMModelCard(Viewer):
             value=default_value,
             options=self.llm_choices,
             sizing_mode="stretch_width",
-            margin=(0, 5)
+            margin=0
         )
 
         # Watch for changes
@@ -119,7 +119,7 @@ class LLMModelCard(Viewer):
         }
 
         description = descriptions.get(self.model_type, f"Model for {self.model_type} tasks")
-        return Column(Markdown(f"**{description}**"), self.model_select)
+        return Column(Markdown(f"**{description}**", margin=0), self.model_select)
 
 
 class LLMConfigDialog(Viewer):
@@ -162,7 +162,7 @@ class LLMConfigDialog(Viewer):
             }
 
         # Title
-        self._title = Markdown("## LLM Configuration\n\nConfigure your language model provider, settings and select models for different tasks.", margin=(0, 0, 16, 0))
+        self._title = Markdown("## LLM Configuration\n\nConfigure your language model provider, settings and select models for different tasks.", margin=(0, 0, 8, 0))
 
         # Provider selection
         current_provider_name = self._get_provider_display_name(type(self.llm).__name__)
@@ -184,44 +184,47 @@ class LLMConfigDialog(Viewer):
         self._model_cards = Column(margin=(5, 0))
 
         # Buttons
-        self._apply_button = Button(name="Apply Changes", button_type="primary", on_click=self._apply_changes, margin=(12, 8, 0, 0))
+        self._apply_button = Button(
+            label="Apply Changes", color="primary", on_click=self._apply_changes, margin=(12, 0, 0, 0)
+        )
 
-        self._cancel_button = Button(name="Cancel", on_click=self._cancel_changes, margin=(12, 5, 0, 8))
+        self._cancel_button = Button(
+            label="Cancel", on_click=self._cancel_changes, margin=(12, 0, 0, 12), variant="outlined"
+        )
 
-        self._reset_button = Button(name="Reset to Defaults", button_type="light", on_click=self._reset_to_defaults, margin=(12, 0, 0, 8))
+        self._reset_button = Button(
+            label="Reset to Defaults", color="light", on_click=self._reset_to_defaults, margin=(12, 0, 0, 0)
+        )
 
         self._buttons = Row(self._reset_button, HSpacer(), self._cancel_button, self._apply_button, sizing_mode="stretch_width")
 
         # Create the dialog content
         self._content = Column(
             self._title,
-            Divider(),
-            Markdown("### Provider Selection", margin=(12, 0, 5, 0)),
+            Divider(sizing_mode="stretch_width"),
+            Markdown("### Provider Selection", margin=0),
             Markdown(
                 "Choose your LLM provider. Different providers offer different models and capabilities.",
-                margin=(0, 0, 8, 0),
-                styles={"font-size": "0.9em", "color": "#666"},
+                margin=0, styles={"font-size": "0.9em", "color": "#666"},
             ),
             self._provider_select,
-            Divider(margin=(12, 0)),
-            Markdown("### Temperature Setting", margin=(12, 0, 5, 0)),
+            Divider(margin=(12, 0), sizing_mode="stretch_width"),
+            Markdown("### Temperature Setting", margin=0),
             Markdown(
                 "Controls randomness in responses. Lower values (0.1-0.3) for focused tasks, higher values (0.7-1.0) for creative tasks.",
-                margin=(0, 0, 8, 0),
-                styles={"font-size": "0.9em", "color": "#666"},
+                margin=0, styles={"font-size": "0.9em", "color": "#666"},
             ),
             self._temperature_slider,
-            Divider(margin=(12, 0)),
-            Markdown("### Model Selection", margin=(12, 0, 5, 0)),
+            Divider(margin=(12, 0), sizing_mode="stretch_width"),
+            Markdown("### Model Selection", margin=0),
             Markdown(
                 "Choose different models for different types of tasks. More powerful models may be slower but provide better results.",
-                margin=(0, 0, 8, 0),
-                styles={"font-size": "0.9em", "color": "#666"},
+                margin=0, styles={"font-size": "0.9em", "color": "#666"},
             ),
             self._model_cards,
             self._buttons,
             sizing_mode="stretch_width",
-            margin=(0, 32),
+            margin=(0, 24, 8, 24),
         )
 
         # Create dialog wrapper
@@ -231,6 +234,7 @@ class LLMConfigDialog(Viewer):
             show_close_button=True,
             sizing_mode="stretch_width",
             width_option="md",
+            sx={".MuiDialogContent-root": {"p": "0 24px 20px 24px"}}
         )
 
         # Initialize model cards
