@@ -3,6 +3,7 @@ LLM Selection Dialog Component
 
 This component provides a dialog for selecting LLM models and adjusting temperature.
 Similar to the SourceCatalog but for LLM management.
+Uses param.concrete_descendents to automatically detect all agent types.
 """
 
 import param
@@ -14,9 +15,42 @@ from panel_material_ui import (
     Button, Dialog, Divider, FloatSlider, Select,
 )
 
-from .llm import (
-    AnthropicAI, GoogleAI, LiteLLM, LlamaCpp, Llm, MistralAI, Ollama, OpenAI,
-)
+from .agents import Agent
+from .llm import Llm
+
+
+def _class_name_to_llm_spec_key(class_name: str) -> str:
+    """
+    Convert class name to llm_spec_key using the same logic as Actor.llm_spec_key.
+    Removes "Agent" suffix and converts to snake_case.
+    """
+    # Remove "Agent" suffix from class name
+    name = class_name.replace("Agent", "")
+
+    if not name:  # Handle case where class name is just "Agent"
+        return "agent"
+
+    result = ""
+    i = 0
+    while i < len(name):
+        char = name[i]
+
+        # Check if this is part of an acronym (current char is uppercase and next char is uppercase too)
+        is_part_of_acronym = (
+            char.isupper() and
+            i + 1 < len(name) and
+            name[i + 1].isupper()
+        )
+
+        # Add underscore before uppercase letters, unless it's part of an acronym
+        if char.isupper() and i > 0 and not is_part_of_acronym and not name[i - 1].isupper():
+            result += "_"
+
+        # Add the lowercase character
+        result += char.lower()
+        i += 1
+
+    return result
 
 
 class LLMModelCard(Viewer):
@@ -29,11 +63,13 @@ class LLMModelCard(Viewer):
     - Current model info
     """
 
+    description = param.String(default="The description of the model type", doc="Description of the model type")
+
     llm = param.ClassSelector(class_=Llm, doc="The LLM instance to configure")
 
-    model_type = param.String(doc="The model type key (e.g., 'default', 'reasoning')")
-
     llm_choices = param.List(default=[], doc="Available model choices for this card")
+
+    model_type = param.String(doc="The model type key (e.g., 'default', 'reasoning')")
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -66,33 +102,19 @@ class LLMModelCard(Viewer):
         self.model_select.param.watch(self._on_model_change, "value")
 
     def _get_default_models(self):
-        """Get list of available models based on LLM provider type."""
-        llm_type = type(self.llm).__name__
+        """Get models for the select dropdown from the LLM class."""
+        llm_type = type(self.llm)
 
-        # Default models based on LLM provider
-        model_options = {
-            "OpenAI": ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"],
-            "AnthropicAI": ["claude-3-5-haiku-latest", "claude-3-5-sonnet-latest", "claude-4-sonnet-latest"],
-            "GoogleAI": ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"],
-            "LiteLLM": ["gpt-4o-mini", "claude-3-5-sonnet-latest", "gemini/gemini-pro"],
-            "Ollama": ["qwen2.5-coder:7b", "llama3.2:latest", "mistral:latest"],
-            "LlamaCpp": ["Qwen/Qwen2.5-Coder-7B-Instruct-GGUF"],
-            "MistralAI": ["mistral-large-latest", "mistral-small-latest", "codestral-latest"],
-            "AzureOpenAI": ["gpt-4o-mini", "gpt-4o"],
-            "AINavigator": ["gpt-4o-mini", "gpt-4o"],
-            "WebLLM": ["Qwen2.5-7B-Instruct-q4f16_1-MLC"],
-        }
+        # Check if the LLM class has a select_models attribute (now a param)
+        if hasattr(llm_type, 'select_models'):
+            available = list(llm_type.select_models)
+        else:
+            # Fallback to empty list
+            available = []
 
         # Get current model to ensure it's included
         current_config = self.llm.model_kwargs.get(self.model_type, {})
         current_model = current_config.get("model", "")
-
-        # Get available models for this provider
-        available = model_options.get(llm_type, [])
-
-        # If no provider-specific models, use a sensible default
-        if not available:
-            available = ["gpt-4o-mini"]  # fallback
 
         # Ensure current model is in the list if it exists and is not "unknown"
         if current_model and current_model != "unknown" and current_model not in available:
@@ -110,16 +132,7 @@ class LLMModelCard(Viewer):
             self.llm.model_kwargs[self.model_type]["model"] = new_model
 
     def __panel__(self):
-        descriptions = {
-            "default": "General purpose model for most tasks",
-            "reasoning": "Advanced model for complex reasoning tasks",
-            "sql": "Optimized model for SQL query generation",
-            "vega_lite": "Specialized model for data visualization",
-            "ui": "Lightweight model for UI interactions",
-        }
-
-        description = descriptions.get(self.model_type, f"Model for {self.model_type} tasks")
-        return Column(Markdown(f"**{description}**", margin=0), self.model_select)
+        return Column(Markdown(f"**{self.description}**", margin=0), self.model_select)
 
 
 class LLMConfigDialog(Viewer):
@@ -133,13 +146,15 @@ class LLMConfigDialog(Viewer):
     - Apply/Cancel buttons
     """
 
+    agent_types = param.List(default=[], doc="Available agents in the UI")
+
     llm = param.ClassSelector(class_=Llm, doc="The LLM instance to configure")
 
     llm_choices = param.List(default=[], doc="Available model choices to display in dropdowns")
 
-    provider_choices = param.Dict(default={}, doc="Available LLM providers to choose from")
-
     on_llm_change = param.Callable(default=None, doc="Callback function called when LLM provider changes")
+
+    provider_choices = param.Dict(default={}, doc="Available LLM providers to choose from")
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -149,27 +164,19 @@ class LLMConfigDialog(Viewer):
         self._original_models = dict(self.llm.model_kwargs)
         self._original_provider = type(self.llm).__name__
 
-        # Set up available providers if not provided
+        # Auto-detect available providers if not provided
         if not self.provider_choices:
-            self.provider_choices = {
-                "OpenAI": OpenAI,
-                "Anthropic": AnthropicAI,
-                "Google AI": GoogleAI,
-                "LiteLLM": LiteLLM,
-                "Ollama": Ollama,
-                "Llama.cpp": LlamaCpp,
-                "Mistral AI": MistralAI,
-            }
+            self.provider_choices = self._get_available_providers()
 
         # Title
         self._title = Markdown("## LLM Configuration\n\nConfigure your language model provider, settings and select models for different tasks.", margin=(0, 0, 8, 0))
 
         # Provider selection
-        current_provider_name = self._get_provider_display_name(type(self.llm).__name__)
+        current_provider_class = type(self.llm)
         self._provider_select = Select(
             name="LLM Provider",
-            value=current_provider_name,
-            options=list(self.provider_choices.keys()),
+            value=current_provider_class,
+            options=self.provider_choices,
             sizing_mode="stretch_width",
             margin=(5, 0)
         )
@@ -181,7 +188,7 @@ class LLMConfigDialog(Viewer):
         )
 
         # Model type cards
-        self._model_cards = Column(margin=(5, 0))
+        self._model_cards = Column(margin=(5, 0), height=300, scroll="y")
 
         # Buttons
         self._apply_button = Button(
@@ -243,18 +250,27 @@ class LLMConfigDialog(Viewer):
         # Flag to prevent update loops during provider changes
         self._updating_provider = False
 
+    def _get_available_providers(self):
+        """Auto-detect available LLM providers using param.concrete_descendents."""
+        providers = {}
+
+        # Get all concrete descendant classes of Llm
+        for cls in param.concrete_descendents(Llm).values():
+            # Get display name from class param or fallback to class name
+            display_name = getattr(cls, 'display_name', cls.__name__)
+            # Use display name as key, class as value
+            providers[display_name] = cls
+        return providers
+
     def _get_provider_display_name(self, class_name):
-        """Convert class name to display name."""
-        name_mapping = {
-            "OpenAI": "OpenAI",
-            "AnthropicAI": "Anthropic",
-            "GoogleAI": "Google AI",
-            "LiteLLM": "LiteLLM",
-            "Ollama": "Ollama",
-            "LlamaCpp": "Llama.cpp",
-            "MistralAI": "Mistral AI",
-        }
-        return name_mapping.get(class_name, class_name)
+        """Convert class name to display name using class variable or mapping."""
+        # First check if the class has a display_name attribute
+        for display_name, cls in self.provider_choices.items():
+            if cls.__name__ == class_name:
+                return display_name
+
+        # Fallback to class name
+        return class_name
 
     def _on_provider_change(self, event):
         """Handle provider selection change."""
@@ -262,11 +278,8 @@ class LLMConfigDialog(Viewer):
         if getattr(self, '_updating_provider', False):
             return
 
-        new_provider_name = event.new
-        if new_provider_name and new_provider_name != event.old:
-            # Get the provider class
-            provider_class = self.provider_choices[new_provider_name]
-
+        new_provider_class = event.new
+        if new_provider_class and new_provider_class != event.old:
             # Create new instance with default settings
             try:
                 # Set flag to prevent recursion
@@ -276,7 +289,7 @@ class LLMConfigDialog(Viewer):
                 current_temp = getattr(self.llm, 'temperature', 0.7)
 
                 # Create new LLM instance - it will use its default model_kwargs
-                new_llm = provider_class(temperature=current_temp)
+                new_llm = new_provider_class(temperature=current_temp)
 
                 # Update the dialog's LLM reference
                 self.llm = new_llm
@@ -284,8 +297,7 @@ class LLMConfigDialog(Viewer):
                 # Update temperature slider to match new provider's default
                 self._temperature_slider.value = getattr(new_llm, 'temperature', 0.7)
 
-                # Refresh model cards for new provider - this will now work correctly
-                # because the new LLM has proper model_kwargs structure
+                # Refresh model cards for new provider
                 self._refresh_model_cards()
 
                 # Notify parent UI of the change immediately (for instant feedback)
@@ -300,24 +312,90 @@ class LLMConfigDialog(Viewer):
                 # Always reset the flag
                 self._updating_provider = False
 
+    def _get_all_agent_types(self):
+        """
+        Get all possible agent types by using param.concrete_descendents to find all Agent classes.
+        Returns a dict mapping llm_spec_key to description.
+        """
+        agent_types = {}
+
+        # Add common predefined types first (only non-duplicate ones)
+        predefined_types = {
+            "default": "General purpose model for most tasks",
+            "edit": "Advanced model for complex reasoning tasks",
+            "ui": "Lightweight model for UI interactions"
+        }
+        agent_types.update(predefined_types)
+
+        # Get all concrete descendant classes of Agent
+        agent_classes = []
+        for cls in param.concrete_descendents(Agent).values():
+            if cls in self.agent_types:
+                agent_classes.append(cls)
+
+        # Sort agent classes alphabetically by class name
+        agent_classes.sort(key=lambda cls: cls.__name__)
+
+        for cls in agent_classes:
+            # Convert class name to llm_spec_key
+            llm_spec_key = _class_name_to_llm_spec_key(cls.__name__)
+            # Create description based on class name and docstring
+            description = cls.purpose.strip()
+            # Truncate long descriptions
+            if len(description) > 80:
+                description = description[:77] + "..."
+            # Add agent name prefix
+            agent_name = cls.__name__
+            description = f"{agent_name}: {description}"
+            agent_types[llm_spec_key] = description
+
+        return agent_types
+
+
     def _refresh_model_cards(self):
-        """Create cards for each model type in the LLM."""
+        """Create cards for each model type, including all agent types."""
         cards = []
 
-        # Get all model types from the LLM
-        model_types = list(self.llm.model_kwargs.keys())
+        # Get all possible agent types (not just those in model_kwargs)
+        all_agent_types = self._get_all_agent_types()
 
-        for model_type in sorted(model_types):
+        # Combine existing model_kwargs with all agent types
+        all_model_types = set(self.llm.model_kwargs.keys())
+        all_model_types.update(all_agent_types.keys())
+
+        # Sort model types with predefined types first, then alphabetically
+        predefined_order = ["default", "edit", "ui"]
+        sorted_model_types = []
+
+        # Add predefined types first (in order)
+        for ptype in predefined_order:
+            if ptype in all_model_types:
+                sorted_model_types.append(ptype)
+
+        # Add remaining types alphabetically
+        remaining_types = sorted(all_model_types - set(predefined_order))
+        sorted_model_types.extend(remaining_types)
+
+        for model_type in sorted_model_types:
+            # Ensure this model type exists in model_kwargs
+            if model_type not in self.llm.model_kwargs:
+                # Use the default model from model_kwargs if available, otherwise use first select_models
+                default_model_config = self.llm.model_kwargs.get("default", {}).copy()
+                if not default_model_config and hasattr(self.llm, 'select_models') and self.llm.select_models:
+                    default_model_config = {"model": self.llm.select_models[0]}
+                self.llm.model_kwargs[model_type] = default_model_config
+
             # Create a temporary card to get provider-specific defaults
-            temp_card = LLMModelCard(llm=self.llm, model_type=model_type, llm_choices=[])
+            temp_card = LLMModelCard(llm=self.llm, model_type=model_type, llm_choices=[], description="")
             provider_defaults = temp_card._get_default_models()
 
             # For provider-specific filtering, only use llm_choices if they're compatible
             llm_choices = []
             if self.llm_choices:
                 # Only use llm_choices that are valid for this provider
-                llm_choices = [model for model in self.llm_choices
-                                  if model in provider_defaults or not provider_defaults]
+                llm_choices = [
+                    model for model in self.llm_choices
+                    if model in provider_defaults or not provider_defaults]
 
             # If no valid choices or no llm_choices provided, use provider defaults
             if not llm_choices:
@@ -339,7 +417,8 @@ class LLMConfigDialog(Viewer):
             card = LLMModelCard(
                 llm=self.llm,
                 model_type=model_type,
-                llm_choices=llm_choices
+                llm_choices=llm_choices,
+                description=all_agent_types[model_type],
             )
 
             # Ensure the card's select widget shows the correct current model
@@ -390,20 +469,19 @@ class LLMConfigDialog(Viewer):
     def _cancel_changes(self, event):
         """Cancel changes and reset to original values."""
         # Reset provider if changed
-        current_provider = self._get_provider_display_name(type(self.llm).__name__)
-        original_provider_display = self._get_provider_display_name(self._original_provider)
+        current_provider_class = type(self.llm)
+        original_provider_class = None
 
-        if current_provider != original_provider_display:
+        # Find the original provider class
+        for cls in self.provider_choices.values():
+            if cls.__name__ == self._original_provider:
+                original_provider_class = cls
+                break
+
+        if current_provider_class != original_provider_class and original_provider_class:
             # Revert to original provider
-            provider_class = None
-            for cls in self.provider_choices.values():
-                if cls.__name__ == self._original_provider:
-                    provider_class = cls
-                    break
-
-            if provider_class:
-                self.llm = provider_class(temperature=self._original_temp)
-                self._provider_select.value = original_provider_display
+            self.llm = original_provider_class(temperature=self._original_temp)
+            self._provider_select.value = original_provider_class
 
         # Reset temperature slider
         self._temperature_slider.value = self._original_temp

@@ -394,7 +394,8 @@ class UI(Viewer):
             llm=self.llm,
             llm_choices=self.llm_choices,
             provider_choices=self.provider_choices,
-            on_llm_change=self._on_llm_change
+            on_llm_change=self._on_llm_change,
+            agent_types=[type(agent) for agent in self._coordinator.agents],
         )
 
         # Initialize _report_toggle for compatibility with header
