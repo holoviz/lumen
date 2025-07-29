@@ -2,56 +2,54 @@
 
 {%- block instructions %}
 ## Instructions
-**BEFORE VALIDATING: Read the SQL query AND summary data results to understand what filtering was applied and what was returned.**
+**First, analyze:**
+1. User's request
+2. SQL query logic
+3. Whether SQL correctly captures intent
 
-**REQUIRED FIRST STEP: Restate in your own words:**
-1. What the user originally asked for
-2. What the SQL query actually does (step by step)
-3. What data was returned in the summary
-
-Then validate if the executed plan answered the user's query. Focus on completeness, correctness, and user intent.
-
-**Validation Rules:**
-- Base validation on BOTH SQL logic AND summary results
-- Verify SQL filters match user request AND summary answer the question
-- A query succeeds if both logic is correct AND data is relevant
+**Validation Rule:**
+Query is VALID if the SQL correctly attempts what the user asked for. Focus on SQL logic, not result size:
+- Correct filters, joins, and aggregations
+- Appropriate columns selected
+- Reasonable interpretation of ambiguous requests
 {%- endblock %}
 
 {%- block examples -%}
 ## Examples
-**Query:** "Top 5 revenue products + profit margins"
-**Steps:** SQLAgent returned top 5 revenue only, no margins
-**Response:** yes=false, missing=["profit margins"], should_rerun=true
 
-**Query:** "Which European country has the highest sales?"
-**SQL:** SELECT country, SUM(sales) FROM data WHERE region='Europe' GROUP BY country ORDER BY sales DESC LIMIT 1
-**Data Returned:** Germany: $2.1M
-**Response:** yes=true, should_rerun=false (query correctly filtered and returned answer)
+**Query:** "Top 5 products + margins"
+**SQL:** SELECT product, revenue FROM sales ORDER BY revenue DESC LIMIT 5
+**Response:** yes=false, missing=["profit margins"] (SQL missing margin calculation)
 
-**Query:** "Show me the table"
-**SQL:** SELECT * FROM data LIMIT 100000
-**Data Returned:** Full table with 100,000 rows
-**Response:** yes=true, should_rerun=false
+**Query:** "Show 100k rows"
+**SQL:** SELECT * FROM obs LIMIT 100000
+**Response:** yes=true (SQL correctly attempts to get 100k rows)
+
+**Query:** "Show 1k rows"
+**SQL:** SELECT * FROM obs LIMIT 50
+**Response:** yes=false, missing=["LIMIT should be 1000, not 50"]
+
+**Query:** "Sales in March 2025"
+**SQL:** SELECT * FROM sales WHERE month='2025-03'
+**Response:** yes=true (SQL correctly filters for March 2025)
+
+**Query:** "How many orders?"
+**SQL:** SELECT COUNT(*) FROM orders
+**Response:** yes=true (SQL correctly counts)
+
+**Query:** "Revenue by region"
+**SQL:** SELECT SUM(revenue) FROM sales
+**Response:** yes=false, missing=["GROUP BY region"]
 {%- endblock %}
 
 {% block context %}
-## Context
 {%- if executed_steps %}
-**Executed Steps:**
-{%- for step in executed_steps %}
-- {{ step }}
-{%- endfor %}
+**Steps:** {% for step in executed_steps %}{{ step }}{% if not loop.last %}, {% endif %}{% endfor %}
 {% endif %}
-
 {%- if memory.get('sql') %}
-**SQL Executed:**
-```sql
-{{ memory.sql }}
-```
+**SQL:** `{{ memory.sql }}`
 {%- endif -%}
-
 {%- if memory.get('data') is not none %}
-**Summary of the data returned:**
-{{ memory["data"] }}
+**Data:** {{ memory["data"] }}
 {%- endif -%}
 {%- endblock -%}
