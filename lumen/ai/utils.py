@@ -796,3 +796,37 @@ def apply_changes(original_lines: list[str], changes: list[LineChange]) -> str:
     for change in changes:
         original_lines[change.line_no - 1] = change.replacement
     return "\n".join(original_lines)
+
+
+def class_name_to_llm_spec_key(class_name: str) -> str:
+    """
+    Convert class name to llm_spec_key using the same logic as Actor.llm_spec_key.
+    Removes "Agent" suffix and converts to snake_case.
+    """
+    # Remove "Agent" suffix from class name
+    name = class_name.replace("Agent", "")
+
+    if not name:  # Handle case where class name is just "Agent"
+        return "agent"
+
+    result = ""
+    i = 0
+    while i < len(name):
+        char = name[i]
+
+        # Check if this is part of an acronym (current char is uppercase and next char is uppercase too)
+        is_part_of_acronym = (
+            char.isupper() and
+            i + 1 < len(name) and
+            name[i + 1].isupper()
+        )
+
+        # Add underscore before uppercase letters, unless it's part of an acronym
+        if char.isupper() and i > 0 and not is_part_of_acronym and not name[i - 1].isupper():
+            result += "_"
+
+        # Add the lowercase character
+        result += char.lower()
+        i += 1
+
+    return result

@@ -183,7 +183,7 @@ class SourceAgent(Agent):
             "Do NOT use if data sources already exist UNLESS user explicitly requests upload",
         ])
 
-    purpose = param.String(default="The SourceAgent allows a user to upload new datasets, tables, or documents.")
+    purpose = param.String(default="Allows a user to upload new datasets, tables, or documents.")
 
     requires = param.List(default=[], readonly=True)
 
@@ -521,7 +521,7 @@ class LumenBaseAgent(Agent):
             messages=messages,
             system=system,
             response_model=retry_model,
-            model_spec="reasoning",
+            model_spec="edit",
         )
         result = await self.llm.invoke(**invoke_kwargs)
         return apply_changes(original_lines, result.lines_changes)
