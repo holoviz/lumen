@@ -41,15 +41,28 @@ if TYPE_CHECKING:
 
 
 def format_float(num):
+    """
+    Process a float value, returning numeric types instead of strings.
+    For very large/small numbers, returns a float that will display in scientific notation.
+    """
     if pd.isna(num) or math.isinf(num):
         return num
-    # if is integer, round to 0 decimals
+
+    # For integers, return as int
     if num == int(num):
-        return f"{int(num)}"
-    elif 0.01 <= abs(num) < 100:
-        return f"{num:.1f}"  # Regular floating-point notation with one decimal
+        # But if it's a very large integer, keep as float for potential sci notation
+        if abs(num) >= 1e5:
+            return f"{num:.1e}"  # Format as scientific notation
+        return int(num)
+
+    # For normal range numbers, round but keep as float
+    elif 0.01 <= abs(num) < 1e6:
+        return round(num, 1)
+
+    # For very small or very large numbers, return as-is
+    # These will naturally display in scientific notation when converted to string
     else:
-        return f"{num:.1e}"  # Exponential notation with one decimal
+        return f"{num:.1e}"  # Format as scientific notation
 
 
 def fuse_messages(messages: list[dict], max_user_messages: int = 2) -> list[dict]:
@@ -372,6 +385,12 @@ async def get_schema(
                 spec["type"] = "num"
             elif spec["type"] == "boolean":
                 spec["type"] = "bool"
+
+            # If it's obvious that this is a numeric range, remove type
+            # Yes `{'min': 2017, 'max': 2020}`  # implicitly infer
+            # Not `{'type': 'num', 'min': '2.0e+06', 'max': '6.2e+06'}`  # explicitly show type
+            if isinstance(spec.get("min"), (int, float)) and isinstance(spec.get("max"), (int, float)):
+                spec.pop("type")
 
         # Process enums using the extracted function
         if "enum" in spec:
