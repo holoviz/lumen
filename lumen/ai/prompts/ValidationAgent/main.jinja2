@@ -2,54 +2,48 @@
 
 {%- block instructions %}
 ## Instructions
-**First, analyze:**
-1. User's request
-2. SQL query logic
-3. Whether SQL correctly captures intent
+Analyze if the SQL query matches the user's request by checking:
+1. What the user asked for
+2. What the SQL actually does (read it carefully)
+3. If they align
 
-**Validation Rule:**
-Query is VALID if the SQL correctly attempts what the user asked for. Focus on SQL logic, not result size:
-- Correct filters, joins, and aggregations
-- Appropriate columns selected
-- Reasonable interpretation of ambiguous requests
+VALID = SQL implements the user's intent correctly
+- Check actual SQL syntax, not assumptions
+- Verify GROUP BY, WHERE, SELECT match request
+- Accept reasonable interpretations
 {%- endblock %}
 
 {%- block examples -%}
 ## Examples
+User: "by region?"
+SQL: SELECT region, SUM(sales) FROM data GROUP BY region
+✓ VALID - has GROUP BY region
 
-**Query:** "Top 5 products + margins"
-**SQL:** SELECT product, revenue FROM sales ORDER BY revenue DESC LIMIT 5
-**Response:** correct=false, missing=["profit margins"] (SQL missing margin calculation)
+User: "by region?"
+SQL: SELECT SUM(sales) FROM data
+✗ INVALID - missing GROUP BY region
 
-**Query:** "Show 100k rows"
-**SQL:** SELECT * FROM obs LIMIT 100000
-**Response:** correct=true (SQL correctly attempts to get 100k rows)
+User: "top 5"
+SQL: SELECT * FROM data ORDER BY revenue DESC LIMIT 5
+✓ VALID - has LIMIT 5
 
-**Query:** "Show 1k rows"
-**SQL:** SELECT * FROM obs LIMIT 50
-**Response:** correct=false, missing=["LIMIT should be 1000, not 50"]
+User: "show 1000 rows"
+SQL: SELECT * FROM data LIMIT 50
+✗ INVALID - wrong LIMIT value
 
-**Query:** "Sales in March 2025"
-**SQL:** SELECT * FROM sales WHERE month='2025-03'
-**Response:** correct=true (SQL correctly filters for March 2025)
-
-**Query:** "How many orders?"
-**SQL:** SELECT COUNT(*) FROM orders
-**Response:** correct=true (SQL correctly counts)
-
-**Query:** "Revenue by region"
-**SQL:** SELECT SUM(revenue) FROM sales
-**Response:** correct=false, missing=["GROUP BY region"]
+User: "total by state"
+SQL: SELECT state, SUM(amount) FROM data GROUP BY state
+✓ VALID - groups by state with SUM
 {%- endblock %}
 
 {% block context %}
 {%- if executed_steps %}
-**Steps:** {% for step in executed_steps %}{{ step }}{% if not loop.last %}, {% endif %}{% endfor %}
+Steps: {% for step in executed_steps %}{{ step }}{% if not loop.last %}, {% endif %}{% endfor %}
 {% endif %}
 {%- if memory.get('sql') %}
-**SQL:** `{{ memory.sql }}`
+SQL: `{{ memory.sql }}`
 {%- endif -%}
 {%- if memory.get('data') is not none %}
-**Data:** {{ memory["data"] }}
+Data Overview: {{ memory["data"] }}
 {%- endif -%}
 {%- endblock -%}

@@ -179,8 +179,7 @@ class SourceAgent(Agent):
 
     conditions = param.List(
         default=[
-            "Use ONLY when user explicitly asks to upload or connect to NEW data sources",
-            "Do NOT use if data sources already exist UNLESS user explicitly requests upload",
+            "Use ONLY when user explicitly asks to upload or connect to NEW data sources (NOT if data sources already exist)",
         ])
 
     purpose = param.String(default="Allows a user to upload new datasets, tables, or documents.")
@@ -224,12 +223,9 @@ class ChatAgent(Agent):
 
     conditions = param.List(
         default=[
-            "Best for high-level information about data or general conversation",
-            "Can be used to describe available tables",
-            "Use for technical questions about programming, functions, methods, or libraries",
-            "Use for 'how to' questions about specific functions or code usage",
-            "Use for questions about software tools, APIs, or programming concepts",
-            "Not useful for answering data specific questions that require querying tables",
+            "Use for high-level data information or general conversation",
+            "Use for technical questions about programming, functions, methods, libraries, APIs, software tools, or 'how to' code usage",
+            "NOT for data-specific questions that require querying tables",
         ]
     )
 
@@ -269,9 +265,7 @@ class AnalystAgent(ChatAgent):
     conditions = param.List(
         default=[
             "Use for interpreting and analyzing results from executed queries",
-            "Use to explain trends, patterns, or relationships in query results",
-            "NOT for initial data queries or table exploration",
-            "NOT for technical programming questions",
+            "NOT for initial data queries, table exploration, or technical programming questions",
         ]
     )
 
@@ -390,9 +384,7 @@ class TableListAgent(ListAgent):
 
     conditions = param.List(default=[
         "Use when user explicitly asks to 'list tables', 'show available tables', or 'what tables do you have'",
-        "Use for listing available data tables & datasets in source to the user, but not for planning",
-        "NOT for showing actual table contents or data within tables",
-        "NOT when user wants to query or analyze table data",
+        "NOT for showing actual table contents, querying, or analyzing table data",
     ])
 
     not_with = param.List(default=["DbtslAgent", "SQLAgent"])
@@ -447,8 +439,7 @@ class DocumentListAgent(ListAgent):
 
     conditions = param.List(
         default=[
-            "Use when user explicitly asks to 'list documents', 'show available documents', or 'what documents do you have'",
-            "Use when user wants to see all uploaded documents",
+            "Use when user asks to list or see all available documents",
             "NOT when user asks about specific document content",
         ]
     )
@@ -559,13 +550,10 @@ class LumenBaseAgent(Agent):
 class SQLAgent(LumenBaseAgent):
     conditions = param.List(
         default=[
-            "Use when user asks about data contained in tables (e.g., 'show me sales data', 'filter by date')",
+            "Use for displaying, examining, or querying data in tables",
             "Use for calculations that require data from tables (e.g., 'calculate average', 'sum by category')",
-            "Use when user wants to display or examine table contents",
             "Commonly used with AnalystAgent to analyze query results",
-            "For existing tables, only use if additional calculations are needed",
-            "NOT for technical questions about programming, functions, or libraries",
-            "NOT for questions that don't require data table access",
+            "NOT for non-data questions or technical programming help",
             "NOT useful if the user is using the same data for plotting",
             "If sql_metaset is not in memory, use with IterativeTableLookup",
         ]
@@ -1474,10 +1462,8 @@ class BaseViewAgent(LumenBaseAgent):
 class hvPlotAgent(BaseViewAgent):
     conditions = param.List(
         default=[
-            "Use for exploratory data analysis and interactive plots",
+            "Use for exploratory data analysis, interactive plots, and dynamic filtering",
             "Use for quick, iterative data visualization during analysis",
-            "Use when user requests plots or charts for data exploration",
-            "Use for interactive widgets and dynamic filtering",
         ]
     )
 
@@ -1537,8 +1523,7 @@ class hvPlotAgent(BaseViewAgent):
 class VegaLiteAgent(BaseViewAgent):
     conditions = param.List(
         default=[
-            "Use for explanatory, publication-ready visualizations",
-            "Use when user specifically requests Vega-Lite charts",
+            "Use for publication-ready visualizations or when user specifically requests Vega-Lite charts",
             "Use for polished charts intended for presentation or sharing",
         ]
     )
@@ -1701,9 +1686,8 @@ class AnalysisAgent(LumenBaseAgent):
 
     conditions = param.List(
         default=[
-            "Use when user requests custom analysis or advanced analytics",
+            "Use for custom analysis, advanced analytics, or domain-specific analysis methods",
             "Use when built-in SQL/visualization agents are insufficient",
-            "Use when user wants to apply domain-specific analysis methods",
             "NOT for simple queries or basic visualizations",
         ]
     )
@@ -1826,10 +1810,8 @@ class ValidationAgent(Agent):
     conditions = param.List(
         default=[
             "Use to validate whether executed plans fully answered user queries",
-            "Use when plan execution is complete but validation is needed",
             "Use to identify missing elements from the original user request",
-            "NOT for data analysis or pattern identification",
-            "NOT for technical programming questions",
+            "NOT for data analysis, pattern identification, or technical programming questions",
         ]
     )
 
