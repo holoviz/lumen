@@ -797,11 +797,11 @@ class AINavigator(OpenAI):
 
     mode = param.Selector(default=Mode.JSON_SCHEMA)
 
-    select_models = param.List(default=[
-        "claude-3-5-sonnet",
-        "gpt-4o",
-        "gpt-4o-mini"
-    ], constant=True, doc="Available models for selection dropdowns")
+    model_kwargs = param.Dict(default={
+        "default": {"model": "server-model"},
+    })
+
+    select_models = param.List(default=["server-model"], constant=True, doc="Available models for selection dropdowns")
 
 
 class Ollama(OpenAI):
