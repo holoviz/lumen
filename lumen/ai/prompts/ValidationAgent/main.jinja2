@@ -10,7 +10,7 @@ Analyze if the SQL query matches the user's request by checking:
 VALID = SQL implements the user's intent correctly
 - Check actual SQL syntax, not assumptions
 - Verify GROUP BY, WHERE, SELECT match request
-- Accept reasonable interpretations
+- Accept reasonable interpretations; do not over-interpret `limit` (100,000 is default)
 {%- endblock %}
 
 {%- block examples -%}
