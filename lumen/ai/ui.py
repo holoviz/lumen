@@ -23,8 +23,8 @@ from panel.util import edit_readonly
 from panel.viewable import Child, Children, Viewer
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
-    Button, ChatFeed, ChatInterface, ChatMessage, Column, Dialog, Divider,
-    FileDownload, IconButton, MenuList, MultiChoice, Page, Paper, Row, Switch,
+    Button, ChatFeed, ChatInterface, ChatMessage, Chip, Column, Dialog,
+    Divider, FileDownload, MenuList, MultiChoice, Page, Paper, Row, Switch,
     Tabs, ToggleIcon,
 )
 
@@ -37,7 +37,7 @@ from .agents import (
     AnalysisAgent, AnalystAgent, ChatAgent, DocumentListAgent, SourceAgent,
     SQLAgent, TableListAgent, ValidationAgent, VegaLiteAgent,
 )
-from .components import SourceCatalog, SplitJS, StatusBadge
+from .components import SourceCatalog, SplitJS
 from .config import PROVIDED_SOURCE_NAME, SOURCE_TABLE_SEPARATOR
 from .controls import SourceControls
 from .coordinator import Coordinator, Plan, Planner
@@ -45,6 +45,7 @@ from .export import (
     export_notebook, make_md_cell, make_preamble, render_cells, write_notebook,
 )
 from .llm import Llm, OpenAI
+from .llm_dialog import LLMConfigDialog
 from .memory import _Memory, memory
 from .report import Report
 from .tools import TableLookup
@@ -224,6 +225,12 @@ class UI(Viewer):
     llm = param.ClassSelector(class_=Llm, default=OpenAI(), doc="""
         The LLM provider to be used by default""")
 
+    llm_choices = param.List(default=[], doc="""
+        List of available LLM model choices to show in the configuration dialog.""")
+
+    provider_choices = param.Dict(default={}, doc="""
+        Available LLM providers to show in the configuration dialog.""")
+
     log_level = param.ObjectSelector(default='DEBUG', objects=['DEBUG', 'INFO', 'WARNING', 'ERROR'], doc="""
         The log level to use.""")
 
@@ -355,21 +362,51 @@ class UI(Viewer):
         )
         self._main = Column(self._coordinator, sizing_mode='stretch_both', align="center")
         self._source_agent = next((agent for agent in self._coordinator.agents if isinstance(agent, SourceAgent)), None)
-        self._vector_store_status_badge = StatusBadge(
-            name="Tables Vector Store Pending", align="center", description="Pending initialization"
+        # Create LLM status chip
+        self._llm_chip = Chip(
+            object="Loading LLM...",
+            icon="auto_awesome",
+            color="primary",
+            align="center",
+            margin=(0, 5, 0, 10),
+            on_click=self._open_llm_dialog,
+            loading=True,
+        )
+
+        self._data_sources_chip = Chip(
+            object="Loading Data Sources",
+            icon="cloud_upload",
+            color="primary",
+            align="center",
+            on_click=self._open_sources_dialog,
+            margin=(0, 5, 0, 5),
+            loading=True,
         )
         self._table_lookup_tool = None  # Will be set after coordinator is initialized
-
-        self._sources_open_icon = IconButton(
-            icon="cloud_upload", color="light", description="Upload Data", margin=(10, 0)
-        )
         self._source_catalog = SourceCatalog()
         self._sources_dialog_content = Dialog(
             Tabs(("Input", self._source_controls), ("Catalog", self._source_catalog), margin=(-30, 0, 0, 0), sizing_mode="stretch_both"),
             close_on_click=True, show_close_button=True, sizing_mode='stretch_width', width_option='lg'
         )
-        self._sources_open_icon.js_on_click(args={'dialog': self._sources_dialog_content}, code="dialog.data.open = true")
+
+        # Create LLM configuration dialog
+        self._llm_dialog = LLMConfigDialog(
+            llm=self.llm,
+            llm_choices=self.llm_choices,
+            provider_choices=self.provider_choices,
+            on_llm_change=self._on_llm_change,
+            agent_types=[type(agent) for agent in self._coordinator.agents],
+        )
+
+        # Initialize _report_toggle for compatibility with header
+        self._report_toggle = None
+        self._sidebar = None
+
         memory.on_change("sources", self._update_source_catalog)
+
+        # Set up LLM status watching
+        self.llm.param.watch(self._update_llm_chip, '_ready')
+        self._update_llm_chip()  # Set initial state
 
         if state.curdoc and state.curdoc.session_context:
             state.on_session_destroyed(self._destroy)
@@ -394,6 +431,56 @@ class UI(Viewer):
             suggestions=suggestions
         )
 
+    def _update_llm_chip(self, event=None):
+        """Update the LLM chip based on readiness state."""
+        if self.llm._ready:
+            model_name = self.llm.model_kwargs.get('default', {}).get('model', 'unknown')
+            self._llm_chip.param.update(
+                object=f"Manage LLM: {model_name}",
+                icon="auto_awesome",
+                loading=False
+            )
+        else:
+            self._llm_chip.param.update(
+                object="Loading LLM",
+                loading=True
+            )
+
+    def _open_llm_dialog(self, event=None):
+        """Open the LLM configuration dialog when the LLM chip is clicked."""
+        self._llm_dialog.open = True
+
+    def _on_llm_change(self, new_llm):
+        """Handle LLM provider change from the dialog."""
+        # Update the UI's LLM reference
+        self.llm = new_llm
+
+        # Update the coordinator's LLM reference
+        self._coordinator.llm = new_llm
+
+        # Update all agent LLMs
+        for agent in self._coordinator.agents:
+            agent.llm = new_llm
+
+        # Initialize the new LLM and set up watchers
+        self.llm.param.watch(self._update_llm_chip, '_ready')
+
+        # Update the chip display immediately
+        self._update_llm_chip()
+
+        # Initialize the new LLM asynchronously
+        import param
+        param.parameterized.async_executor(self._initialize_new_llm)
+
+    async def _initialize_new_llm(self):
+        """Initialize the new LLM after provider change."""
+        try:
+            await self.llm.initialize(log_level=self.log_level)
+            self.interface.disabled = False
+        except Exception:
+            import traceback
+            traceback.print_exc()
+
     async def _setup_llm_and_watchers(self):
         """Initialize LLM and set up reactive watchers for TableLookup readiness."""
         try:
@@ -409,18 +496,21 @@ class UI(Viewer):
                 break
 
         if not self._table_lookup_tool:
-            self._vector_store_status_badge.param.update(
-                status="success", name='Tables Vector Store Ready', description="No tables stored.")
+            self._data_sources_chip.param.update(
+                object='Manage Data Sources',
+                icon="storage",
+                color="primary",
+            )
             return
 
         # Set up reactive watching of the _ready parameter
-        self._table_lookup_tool.param.watch(self._update_vector_store_badge, '_ready')
+        self._table_lookup_tool.param.watch(self._update_data_sources_chip, '_ready')
 
-        # Set initial badge state
-        self._update_vector_store_badge()
+        # Set initial chip state
+        self._update_data_sources_chip()
 
-    def _update_vector_store_badge(self, event=None):
-        """Update the vector store badge based on TableLookup readiness state."""
+    def _update_data_sources_chip(self, event=None):
+        """Update the data sources chip based on TableLookup readiness state."""
         if not self._table_lookup_tool:
             return
 
@@ -428,27 +518,35 @@ class UI(Viewer):
 
         if ready_state is False:
             # Not ready yet - show as running/pending
-            self._vector_store_status_badge.param.update(
-                status="running", name="Tables Vector Store Pending", description="Pending initialization"
+            self._data_sources_chip.param.update(
+                object="Loading Tables",
+                loading=True,
             )
         elif ready_state is True:
             # Ready - show as success
-            num_tables = len(memory["tables_metadata"])
-            self._vector_store_status_badge.param.update(
-                status="success", name="Tables Vector Store Ready", description=f"Embedded {num_tables} table(s)"
+            self._data_sources_chip.param.update(
+                object="Manage Data Sources",
+                loading=False,
             )
         elif ready_state is None:
             # Error state
-            self._vector_store_status_badge.param.update(
-                status="danger", name="Tables Vector Store Error", description="Error initializing tables vector store"
+            self._data_sources_chip.param.update(
+                object="Data Sources Error",
+                loading=False,
+                color="error"
             )
+
+    def _open_sources_dialog(self, event=None):
+        """Open the sources dialog when the vector store badge is clicked."""
+        self._sources_dialog_content.open = True
 
     def _destroy(self, session_context):
         """
         Cleanup on session destroy
         """
         if self._table_lookup_tool:
-            self._table_lookup_tool.param.unwatch(self._update_vector_store_badge, '_ready')
+            self._table_lookup_tool.param.unwatch(self._update_data_sources_chip, '_ready')
+        self.llm.param.unwatch(self._update_llm_chip, '_ready')
 
     def _export_notebook(self):
         nb = export_notebook(self.interface.objects, preamble=self.notebook_preamble)
@@ -505,10 +603,9 @@ class UI(Viewer):
                 css_files=['https://fonts.googleapis.com/css2?family=Nunito:wght@700'],
                 title=self.title,
                 header=[
-                    self.llm.status(),
-                    self._vector_store_status_badge,
-                    self._report_toggle,
-                    self._sources_open_icon,
+                    self._llm_chip,
+                    self._data_sources_chip,
+                    *([self._report_toggle] if self._report_toggle else []),
                     self._exports,
                     self._verbose_toggle,
                     Divider(
@@ -516,7 +613,7 @@ class UI(Viewer):
                         sx={'border-color': 'white', 'border-width': '1px'}
                     )
                 ],
-                main=[self._main, self._sources_dialog_content],
+                main=[self._main, self._sources_dialog_content, self._llm_dialog],
                 sidebar=[] if self._sidebar is None else [self._sidebar],
                 sidebar_open=False,
                 sidebar_variant="temporary",
@@ -570,6 +667,12 @@ class ChatUI(UI):
     """
 
     title = param.String(default='Lumen ChatUI', doc="Title of the app.")
+
+    llm_choices = param.List(default=[], doc="""
+        List of available LLM model choices to show in the configuration dialog.""")
+
+    provider_choices = param.Dict(default={}, doc="""
+        Available LLM providers to show in the configuration dialog.""")
 
 
 class Exploration(param.Parameterized):
