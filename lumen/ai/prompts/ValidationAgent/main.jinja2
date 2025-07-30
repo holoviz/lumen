@@ -19,27 +19,27 @@ Query is VALID if the SQL correctly attempts what the user asked for. Focus on S
 
 **Query:** "Top 5 products + margins"
 **SQL:** SELECT product, revenue FROM sales ORDER BY revenue DESC LIMIT 5
-**Response:** yes=false, missing=["profit margins"] (SQL missing margin calculation)
+**Response:** correct=false, missing=["profit margins"] (SQL missing margin calculation)
 
 **Query:** "Show 100k rows"
 **SQL:** SELECT * FROM obs LIMIT 100000
-**Response:** yes=true (SQL correctly attempts to get 100k rows)
+**Response:** correct=true (SQL correctly attempts to get 100k rows)
 
 **Query:** "Show 1k rows"
 **SQL:** SELECT * FROM obs LIMIT 50
-**Response:** yes=false, missing=["LIMIT should be 1000, not 50"]
+**Response:** correct=false, missing=["LIMIT should be 1000, not 50"]
 
 **Query:** "Sales in March 2025"
 **SQL:** SELECT * FROM sales WHERE month='2025-03'
-**Response:** yes=true (SQL correctly filters for March 2025)
+**Response:** correct=true (SQL correctly filters for March 2025)
 
 **Query:** "How many orders?"
 **SQL:** SELECT COUNT(*) FROM orders
-**Response:** yes=true (SQL correctly counts)
+**Response:** correct=true (SQL correctly counts)
 
 **Query:** "Revenue by region"
 **SQL:** SELECT SUM(revenue) FROM sales
-**Response:** yes=false, missing=["GROUP BY region"]
+**Response:** correct=false, missing=["GROUP BY region"]
 {%- endblock %}
 
 {% block context %}
