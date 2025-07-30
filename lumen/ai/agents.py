@@ -1880,9 +1880,8 @@ class ValidationAgent(Agent):
         self._memory["validation_result"] = result
 
         response_parts = []
-        if result.yes:
+        if result.correct:
             return result
-
 
         response_parts.append(f"**Query Validation: ✗ Incomplete** - {result.chain_of_thought}")
         if result.missing_elements:

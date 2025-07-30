@@ -384,7 +384,7 @@ class QueryCompletionValidation(PartialBaseModel):
         default_factory=list,
         description="Suggestions for additional steps that could complete the query if not fully answered"
     )
-    yes: bool = Field(description="True if query successfully completed, otherwise False.")
+    correct: bool = Field(description="True if query correctly solves user request, otherwise False.")
 
 
 def make_refined_query_model(item_type_name: str = "items"):
