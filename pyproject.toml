@@ -50,7 +50,7 @@ tests = ['pytest', 'pytest-rerunfailures', 'pytest-asyncio']
 sql = ['duckdb', 'intake-sql', 'sqlalchemy']
 ai = [
     'griffe', 'nbformat', 'duckdb >= 1.2.0', 'pyarrow', 'instructor >=1.6.4', 'pydantic >=2.8.0', 'pydantic-extra-types', 'panel-graphic-walker[kernel] >=0.6.4',
-    'markitdown', 'semchunk', 'tiktoken', 'chardet',
+    'markitdown', 'semchunk', 'tiktoken', 'chardet', "panel-material-ui >=0.3.2"
 ]
 ai-local = ['lumen[ai]', 'huggingface_hub']
 ai-openai = ['lumen[ai]', 'openai']
@@ -59,6 +59,7 @@ ai-anthropic = ['lumen[ai]', 'anthropic']
 ai-llama = ['lumen[ai-local]', 'llama-cpp-python >=0.3.0']
 ai-google = ['lumen[ai]', 'google-genai']
 ai-litellm = ['lumen[ai]', 'litellm']
+ai-ollama = ['lumen[ai]', 'ollama']
 bigquery = ['google-cloud-bigquery', 'sqlalchemy-bigquery']
 
 [project.scripts]

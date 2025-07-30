@@ -4,7 +4,15 @@ from typing import Any
 import param
 
 from panel.custom import Child, JSComponent
-from panel.widgets import Button
+from panel.layout import Column, HSpacer, Row
+from panel.pane import Markdown
+from panel.viewable import Viewer
+from panel_material_ui import (
+    Card, CheckBoxGroup, IconButton, Switch,
+)
+
+from .config import SOURCE_TABLE_SEPARATOR
+from .memory import memory
 
 CSS = """
 /* Base styles for the split container */
@@ -25,14 +33,7 @@ CSS = """
 /* Max width for comfortable reading */
 .left-panel-content {
     max-width: clamp(450px, 95vw, 1200px);
-    margin: 0px auto;  /* Center the content */
-    background-color: var(--panel-background-color);
-    border-radius: 10px; /* Slight rounded corners */
-    overflow-y: auto;   /* Enable scrolling if content is taller than the area */
-    box-sizing: border-box; /* Include padding in size calculations */
-    padding-inline: 0.5rem; /* Increased padding for better visual spacing */
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08); /* Subtle shadow for depth */
-    border: 1px solid rgba(0, 0, 0, 0.08); /* Subtle border for definition */
+    margin: 0px auto;
 }
 
 /* Split panel styles */
@@ -50,10 +51,9 @@ CSS = """
 .content-wrapper {
     width: 100%;
     height: 100%;
-    display: block;
+    display: contents;
     background-color: var(--panel-background-color);
     border-radius: 10px; /* Slight rounded corners */
-    overflow-y: auto;   /* Enable scrolling if content is taller than the area */
     box-sizing: border-box; /* Include padding in size calculations */
     padding-inline: 0.5rem; /* Increased padding for better visual spacing */
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08); /* Subtle shadow for depth */
@@ -285,155 +285,208 @@ class Details(JSComponent):
                 self.collapsed = collapsed
 
 
-class StatusBadge(Button):
+class TableSourceCard(Viewer):
     """
-    A customizable badge component that can show different statuses with visual effects.
-    """
+    A component that displays a single data source as a card with table selection controls.
 
-    status = param.Selector(
-        default="pending", objects=["pending", "running", "success", "failed"]
-    )
-
-    description = param.String(default="", doc="""
-        Optional description text to show as a tooltip when hovering over the status badge.
-        If empty, no tooltip will be displayed.""")
-
-    _base_stylesheet = """
-    :host {
-        position: relative;
-    }
-
-    /* Base badge styles */
-    :host(.solid) .bk-btn.bk-btn-default {
-        border-radius: 16px;
-        padding: 6px 10px;
-        transition: all 0.3s ease;
-        cursor: not-allowed;
-        pointer-events: none;
-    }
-
-    :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon {
-        display: inline-flex;
-        border-radius: 50%;
-        margin-right: 5px;
-        margin-bottom: 2px;
-    }
-
-    :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon path {
-        stroke: inherit;
-        fill: inherit;
-    }
+    The card includes:
+    - A header with the source name and a checkbox to toggle all tables
+    - A delete button (if multiple sources exist)
+    - Individual checkboxes for each table in the source
     """
 
-    # Status-specific stylesheets
-    _status_stylesheets = {
-        "pending": """
-            /* Badge pending state */
-            :host(.solid) .bk-btn.bk-btn-default {
-                background-color: #f0f0f0;
-                border-color: #d0d0d0;
-                color: #606060;
-            }
+    all_selected = param.Boolean(default=True, doc="""
+        Whether all tables should be selected by default.""")
 
-            :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon {
-                color: #808080;
-            }
+    collapsed = param.Boolean(default=False, doc="""
+        Whether the card should start collapsed.""")
 
-            :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon path {
-                stroke: #808080;
-                fill: #808080;
-            }
-        """,
-        "running": """
-            /* Badge running state */
-            :host(.solid) .bk-btn.bk-btn-default {
-                background-color: #fffceb;
-                border-color: #ffe066;
-                color: #997a00;
-            }
+    deletable = param.Boolean(default=True, doc="""
+        Whether to show the delete button.""")
 
-            :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon {
-                color: #FFD700;
-                animation: pulse-gold 2.5s infinite;
-            }
+    delete = param.Event(doc="""Action to delete this source from memory.""")
 
-            :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon path {
-                stroke: #FFD700;
-                fill: #FFD700;
-            }
+    selected = param.List(default=None, doc="""
+        List of currently selected table names.""")
 
-            @keyframes pulse-gold {
-                0% {
-                    box-shadow: 0 0 0 0 rgba(255, 215, 0, 0.7);
-                }
-                70% {
-                    box-shadow: 0 0 0 7px rgba(255, 215, 0, 0);
-                }
-                100% {
-                    box-shadow: 0 0 0 0 rgba(255, 215, 0, 0);
-                }
-            }
-        """,
-        "success": """
-            /* Badge success state */
-            :host(.solid) .bk-btn.bk-btn-default {
-                background-color: #e8f5e9;
-                border-color: #a5d6a7;
-                color: #2e7d32;
-            }
-
-            :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon {
-                color: #4CAF50;
-            }
-
-            :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon path {
-                stroke: #4CAF50;
-                fill: #4CAF50;
-            }
-        """,
-        "failed": """
-            /* Badge failed state */
-            :host(.solid) .bk-btn.bk-btn-default {
-                background-color: #ffebee;
-                border-color: #ef9a9a;
-                color: #c62828 !important;
-            }
-
-            :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon {
-                color: #f44336;
-            }
-
-            :host(.solid) .bk-btn.bk-btn-default .bk-TablerIcon path {
-                stroke: #f44336;
-                fill: #f44336;
-            }
-        """,
-    }
-
-    # Status mapping for other properties
-    _status_mapping = {
-        "pending": {
-            "icon": "circle",
-        },
-        "running": {
-            "icon": "circle-filled",
-        },
-        "success": {
-            "icon": "circle-check",
-        },
-        "failed": {
-            "icon": "circle-x",
-        },
-    }
-
-    _rename = {
-        "status": None,
-        **Button._rename,
-    }
+    source = param.Parameter(doc="""
+        The data source to display in this card.""")
 
     def __init__(self, **params):
         super().__init__(**params)
-        self.param.update(
-            icon=param.rx(self._status_mapping)[self.param.status]["icon"],
-            stylesheets=[self._base_stylesheet, param.rx(self._status_stylesheets)[self.param.status]],
+        self.all_tables = self.source.get_tables()
+
+        # Determine which tables are currently visible
+        if self.selected is None:
+            visible_tables = []
+            for table in self.all_tables:
+                visible_tables.append(table)
+            self.selected = visible_tables
+
+        # Create widgets once in init
+        self.source_toggle = Switch.from_param(
+            self.param.all_selected,
+            name=f"{self.source.name}",
+            margin=(5, -5, 0, 3),
+            sizing_mode='fixed',
         )
+
+        self.delete_button = IconButton.from_param(
+            self.param.delete,
+            icon='delete',
+            icon_size='1em',
+            color="danger",
+            margin=(5, 0, 0, 0),
+            sizing_mode='fixed',
+            width=40,
+            height=40,
+            visible=self.param.deletable
+        )
+
+        self.table_checkbox = CheckBoxGroup.from_param(
+            self.param.selected,
+            options=self.all_tables,
+            sizing_mode='stretch_width',
+            margin=(0, 10),
+            name="",
+        )
+
+    @param.depends('all_selected', watch=True)
+    def _on_source_toggle(self):
+        """Handle source checkbox toggle (all tables on/off)."""
+        if not self.all_selected and len(self.selected) == len(self.all_tables):
+            # Important to check to see if all tables are selected for intuitive behavior
+            self.selected = []
+        elif self.all_selected:
+            self.selected = self.all_tables
+
+    @param.depends('selected', watch=True)
+    def _update_visible_slugs(self):
+        """Update visible_slugs in memory based on selected tables."""
+        self.all_selected = len(self.selected) == len(self.all_tables)
+        for table in self.all_tables:
+            table_slug = f"{self.source.name}{SOURCE_TABLE_SEPARATOR}{table}"
+            if table in self.selected:
+                memory['visible_slugs'].add(table_slug)
+            else:
+                memory['visible_slugs'].discard(table_slug)
+        memory.trigger('visible_slugs')
+
+    @param.depends('delete', watch=True)
+    def _delete_source(self):
+        """Handle source deletion via param.Action."""
+        if self.source in memory.get("sources", []):
+            # Remove all tables from this source from visible_slugs
+            for table in self.all_tables:
+                table_slug = f"{self.source.name}{SOURCE_TABLE_SEPARATOR}{table}"
+                memory['visible_slugs'].discard(table_slug)
+
+            memory["sources"] = [
+                source for source in memory.get("sources", [])
+                if source is not self.source
+            ]
+            if self.source is memory.get("source"):
+                memory["source"] = next(iter(memory.get("sources", [])), None)
+
+    def __panel__(self):
+        card_header = Row(
+            self.source_toggle,
+            HSpacer(),
+            self.delete_button,
+            sizing_mode='stretch_width',
+            align='start',
+            height=35,
+            margin=0
+        )
+
+        # Create the card
+        return Card(
+            self.table_checkbox,
+            header=card_header,
+            collapsible=True,
+            collapsed=self.param.collapsed,
+            sizing_mode='stretch_width',
+            margin=0,
+        )
+
+
+class SourceCatalog(Viewer):
+    """
+    A component that displays all data sources with table selection controls.
+
+    This component shows each source as a collapsible card with:
+    - A header checkbox to toggle all tables in the source
+    - Individual checkboxes for each table
+    - A delete button to remove the source (if multiple sources exist)
+
+    Tables can be selectively shown/hidden using the checkboxes, which updates
+    the 'visible_slugs' set in memory.
+    """
+
+    sources = param.List(default=[], doc="""
+        List of data sources to display in the catalog.""")
+
+    def __init__(self, **params):
+        self._title = Markdown(
+            "## Source Catalog\n\nSelect the table and document sources you want visible to the LLM.",
+            margin=0,
+        )
+        self._cards_column = Column(
+            margin=0,
+        )
+        self._layout = Column(
+            self._title,
+            self._cards_column,
+            margin=0,
+            sizing_mode='stretch_width'
+        )
+        super().__init__(**params)
+
+    @param.depends("sources", watch=True, on_init=True)
+    def _refresh(self, sources=None):
+        """
+        Trigger the catalog with new sources.
+
+        Args:
+            sources: Optional list of sources. If None, uses sources from memory.
+        """
+        sources = self.sources or memory.get('sources', [])
+
+        # Create a lookup of existing cards by source
+        existing_cards = {
+            card.source: card for card in self._cards_column.objects
+            if isinstance(card, TableSourceCard) and card.source in sources
+        }
+
+        # Build the new cards list
+        source_cards = []
+        multiple_sources = len(sources) > 1
+        for source in sources:
+            if source in existing_cards:
+                # Reuse existing card and update its deletable property
+                card = existing_cards[source]
+                card.deletable = multiple_sources
+                source_cards.append(card)
+            else:
+                # Create new card for new source
+                source_card = TableSourceCard(
+                    source=source,
+                    deletable=multiple_sources,
+                    collapsed=multiple_sources,
+                )
+                source_cards.append(source_card)
+
+        self._cards_column.objects = source_cards
+
+        if len(source_cards) == 0:
+            self._cards_column.objects = [
+                Markdown("No sources available. Please input a source to continue.")
+            ]
+
+    def __panel__(self):
+        """
+        Create the source catalog UI.
+
+        Returns a Column containing all source cards or a message if no sources exist.
+        """
+        return self._layout

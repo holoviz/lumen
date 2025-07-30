@@ -1,0 +1,13 @@
+{% extends 'LumenBaseAgent/retry_output.jinja2' %}
+
+{% block instructions %}
+{{ super() }}
+
+SQL-Specific Requirements:
+- For "column not found" errors: Replace the invalid column name with a valid column from the available schema
+- For "table not found" errors: Use the correct table name from the available tables
+- For syntax errors: Fix only the specific syntax issue while preserving the query structure
+- For DuckDB dialect: Use double quotes for column names, single quotes for string literals
+- Preserve the original query intent - don't completely rewrite unless the structure is fundamentally broken
+- Use exact column names from the schema (case-sensitive)
+{% endblock %}

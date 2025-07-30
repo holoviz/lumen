@@ -1,0 +1,45 @@
+{% extends 'Agent/main.jinja2' %}
+
+{%- block instructions %}
+# Generate SQL Execution Roadmap
+
+Create a high-level roadmap for answering the user's query. This roadmap will guide the step-by-step execution.
+
+## Key Principles:
+1. **Temporal Alignment**: Check date range overlaps between datasets FIRST
+2. **Data Discovery**: Batch related discoveries (enums, ranges, patterns) together
+3. **Progressive Refinement**: Structure → Relationships → Aggregations → Final Answer
+4. **Efficiency Focus**: Identify what can be reused or combined
+
+## Roadmap Components:
+- **Discovery Phase**: What needs exploration? Group related discoveries
+- **Validation Phase**: What compatibility checks are needed?
+- **Join Strategy**: If joins needed, what are the key relationships?
+- **Aggregation Plan**: What calculations/groupings required?
+- **Output Format**: What's the final deliverable?
+
+## Common Patterns to Consider:
+- **Temporal Data**: Season/period matching, date range overlaps, time series alignment
+- **Categorical Analysis**: Group by categories, compare distributions
+- **Multi-Source Joins**: Validate key compatibility before attempting joins
+- **Hierarchical Data**: Parent-child relationships, nested aggregations
+{% endblock %}
+
+{% block context %}
+Available Schema Context:
+{{ memory["sql_metaset"].compact_context }}
+
+📊 Available Tables:
+{%- set tables_list = memory.get('visible_slugs', []) | list %}
+{%- for table in tables_list[:10] %}
+- {{ table }}
+{%- endfor %}
+{%- if tables_list | length > 10 %}
+- ... and {{ tables_list | length - 10 }} more tables
+{%- endif %}
+
+User Query Analysis:
+- Query Type: {{ query_type | default('Not specified') }}
+- Involves Joins: {{ requires_joins | default('Unknown') }}
+- Temporal Component: {{ has_temporal | default('Unknown') }}
+{% endblock %}

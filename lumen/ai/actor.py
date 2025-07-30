@@ -9,19 +9,24 @@ from typing import Any
 import param
 
 from panel.chat import ChatFeed
+from panel.layout.base import ListLike, NamedListLike
 from pydantic import BaseModel
 
 from .config import PROMPTS_DIR
 from .llm import Llm, Message
 from .memory import _Memory, memory
-from .utils import log_debug, render_template, warn_on_unused_variables
+from .utils import (
+    class_name_to_llm_spec_key, log_debug, render_template,
+    warn_on_unused_variables,
+)
 
 
 class NullStep:
+
     def __init__(self):
         self.status = None
 
-    def stream(self, text):
+    def stream(self, text, **kwargs):
         log_debug(f"[{text}")
 
 
@@ -40,6 +45,9 @@ class LLMUser(param.Parameterized):
         A dictionary of prompts, indexed by prompt name.
         Each prompt should be defined as a dictionary containing a template
         'template' and optionally a 'model' and 'tools'.""")
+
+    steps_layout = param.ClassSelector(default=None, class_=(ListLike, NamedListLike), allow_None=True, doc="""
+        The layout progress updates will be streamed to.""")
 
     template_overrides = param.Dict(default={}, doc="""
         Overrides the template's blocks (instructions, context, tools, examples).
@@ -111,6 +119,16 @@ class LLMUser(param.Parameterized):
         else:
             model = model_spec
         return model
+
+    def _add_step(self, title: str = "", **kwargs):
+        """Private contextmanager for adding steps to the interface.
+
+        If self.interface is None, returns a nullcontext that captures calls.
+        Otherwise, returns the interface's add_step contextmanager.
+        """
+        if self.steps_layout is not None and 'steps_layout' not in kwargs:
+            kwargs['steps_layout'] = self.steps_layout
+        return nullcontext(self._null_step) if self.interface is None else self.interface.add_step(title=title, **kwargs)
 
     async def _gather_prompt_context(self, prompt_name: str, messages: list[Message], **context):
         """Gather context for the prompt template."""
@@ -262,30 +280,7 @@ class LLMUser(param.Parameterized):
         Converts class name to a snake_case model identifier.
         Used for looking up model configurations in model_kwargs.
         """
-        # Remove "Agent" suffix from class name
-        name = self.__class__.__name__.replace("Agent", "")
-
-        result = ""
-        i = 0
-        while i < len(name):
-            char = name[i]
-
-            # Check if this is part of an acronym (current char is uppercase and next char is uppercase too)
-            is_part_of_acronym = (
-                char.isupper() and
-                i + 1 < len(name) and
-                name[i + 1].isupper()
-            )
-
-            # Add underscore before uppercase letters, unless it's part of an acronym
-            if char.isupper() and i > 0 and not is_part_of_acronym and not name[i - 1].isupper():
-                result += "_"
-
-            # Add the lowercase character
-            result += char.lower()
-            i += 1
-
-        return result
+        return class_name_to_llm_spec_key(type(self).__name__)
 
 
 class Actor(LLMUser):
