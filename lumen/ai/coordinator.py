@@ -229,6 +229,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
             for tool in tools or []
         )
         if not provides_vector_metaset and not provides_sql_metaset:
+            # Add both tools - they will share the same vector store through VectorLookupToolUser
+            # Both need to be added as classes, not instances, for proper initialization
             tools += [TableLookup, IterativeTableLookup]
         elif not provides_vector_metaset:
             tools += [TableLookup]
