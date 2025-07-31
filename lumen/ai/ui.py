@@ -794,8 +794,8 @@ class ExplorerUI(UI):
         ]
         self._report_toggle = None  # Keep for compatibility
 
-        # Override the settings click handler to include report mode logic
-        self._settings_menu.on_click = self._handle_explorer_settings_click
+        # Watch for toggle changes to handle report mode
+        self._settings_menu.param.watch(self._handle_explorer_settings_toggle, 'toggled')
 
         self._last_synced = self._home = Exploration(
             context=memory,
@@ -873,16 +873,26 @@ class ExplorerUI(UI):
         """Get the current report mode toggle state from the settings menu."""
         return 1 in self._settings_menu.toggled
 
-    def _handle_explorer_settings_click(self, event):
-        """Handle clicks on items in the settings menu for ExplorerUI."""
-        if event['label'] == 'Report Mode':
-            # Handle report mode toggle
+    def _handle_explorer_settings_toggle(self, event):
+        """Handle toggle changes in the settings menu for ExplorerUI."""
+        print(f"Settings toggled: {event.new}, old: {event.old}")
+
+        # Check if Report Mode toggle changed (index 1)
+        old_report_mode = 1 in (event.old or [])
+        new_report_mode = 1 in (event.new or [])
+
+        if old_report_mode != new_report_mode:
+            print(f"Report mode changed from {old_report_mode} to {new_report_mode}")
             self._toggle_report_mode()
+
         # Verbose state is automatically updated through reactive expressions
 
     def _toggle_report_mode(self):
         """Toggle between regular and report mode."""
-        if self._get_report_mode_value():
+        report_mode = self._get_report_mode_value()
+        print(f"Toggling report mode: {report_mode}")
+        if report_mode:
+            print("Switching to report mode")
             self._exports[0] = self._global_notebook_export
             self._main[:] = [Report(
                 subtasks=[
@@ -890,12 +900,9 @@ class ExplorerUI(UI):
                 ]
             )]
         else:
+            print("Switching to regular mode")
             self._exports[0] = self._notebook_export
             self._main[:] = [self._split]
-
-    def _toggle_report(self, event):
-        """Legacy method for backwards compatibility."""
-        self._toggle_report_mode()
 
     def _delete_exploration(self, item):
         self._explorations.items = [it for it in self._explorations.items if it is not item]
