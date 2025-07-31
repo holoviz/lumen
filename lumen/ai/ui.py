@@ -16,7 +16,7 @@ from panel.config import config, panel_extension
 from panel.io.document import hold
 from panel.io.resources import CSS_URLS
 from panel.io.state import state
-from panel.layout import Column as PnColumn
+from panel.layout import Column as PnColumn, HSpacer
 from panel.pane import SVG, Markdown
 from panel.param import ParamMethod
 from panel.util import edit_readonly
@@ -323,16 +323,9 @@ class UI(Viewer):
         self._settings_menu = MenuToggle(
             label="Toggle Settings",
             icon="settings",
-            items=[
-                {
-                    'label': 'Verbose',
-                    'icon': 'visibility_off',
-                    'active_icon': 'visibility',
-                    'toggled': False
-                }
-            ],
             color="primary",
             margin=(0, 5, 0, 5),
+            align="center",
             persistent=True,
             on_click=self._handle_settings_click,
             sx={
@@ -629,22 +622,23 @@ class UI(Viewer):
             panel_extension(
                 *{ext for agent in self._coordinator.agents for ext in agent._extensions}
             )
-            page = Page(
+            self._page = Page(
                 css_files=['https://fonts.googleapis.com/css2?family=Nunito:wght@700'],
                 title=self.title,
                 header=[
                     self._llm_chip,
                     self._data_sources_chip,
-                    self._exports,
                     self._settings_menu,
+                    HSpacer(),
+                    self._exports,
                 ],
                 main=[self._main, self._sources_dialog_content, self._llm_dialog],
                 sidebar=[] if self._sidebar is None else [self._sidebar],
                 sidebar_open=False,
                 sidebar_variant="temporary",
             )
-            page.servable()
-            return page
+            self._page.servable()
+            return self._page
         return super()._create_view()
 
     def _trigger_source_agent(self, event=None):
@@ -777,19 +771,37 @@ class ExplorerUI(UI):
             sizing_mode='stretch_width',
             visible=self._explorations.param["items"].rx.bool().rx.not_()
         )
-        # Override the settings menu to include report toggle
+        # Override the settings menu to include all toggles
         self._settings_menu.items = [
             {
-                'label': 'Verbose',
+                'label': 'Chain of Thought',
                 'icon': 'visibility_off',
                 'active_icon': 'visibility',
                 'toggled': False
             },
             {
-                'label': 'Report Mode',
+                'label': 'Chat / Report',
                 'icon': 'chat',
                 'active_icon': 'summarize',
                 'toggled': False
+            },
+            {
+                'label': 'Explorations',
+                'icon': 'menu',
+                'active_icon': 'menu_open',
+                'toggled': False
+            },
+            {
+                'label': 'Artifacts',
+                'icon': 'arrow_forward_ios_new',
+                'active_icon': 'arrow_back_ios_new',
+                'toggled': False
+            },
+            {
+                'label': 'SQL Planning',
+                'icon': 'close',
+                'active_icon': 'check',
+                'toggled': True
             }
         ]
         self._report_toggle = None  # Keep for compatibility
@@ -875,24 +887,40 @@ class ExplorerUI(UI):
 
     def _handle_explorer_settings_toggle(self, event):
         """Handle toggle changes in the settings menu for ExplorerUI."""
-        print(f"Settings toggled: {event.new}, old: {event.old}")
-
         # Check if Report Mode toggle changed (index 1)
         old_report_mode = 1 in (event.old or [])
         new_report_mode = 1 in (event.new or [])
 
         if old_report_mode != new_report_mode:
-            print(f"Report mode changed from {old_report_mode} to {new_report_mode}")
             self._toggle_report_mode()
+
+        # Check if Sidebar toggle changed (index 2)
+        old_sidebar = 2 in (event.old or [])
+        new_sidebar = 2 in (event.new or [])
+
+        if old_sidebar != new_sidebar:
+            self._toggle_sidebar()
+
+        # Check if Split Panel toggle changed (index 3)
+        old_split = 3 in (event.old or [])
+        new_split = 3 in (event.new or [])
+
+        if old_split != new_split:
+            self._toggle_split_panel()
+
+        # Check if SQL Planning toggle changed (index 4)
+        old_sql_planning = 4 in (event.old or [])
+        new_sql_planning = 4 in (event.new or [])
+
+        if old_sql_planning != new_sql_planning:
+            self._toggle_sql_planning()
 
         # Verbose state is automatically updated through reactive expressions
 
     def _toggle_report_mode(self):
         """Toggle between regular and report mode."""
         report_mode = self._get_report_mode_value()
-        print(f"Toggling report mode: {report_mode}")
         if report_mode:
-            print("Switching to report mode")
             self._exports[0] = self._global_notebook_export
             self._main[:] = [Report(
                 subtasks=[
@@ -900,9 +928,32 @@ class ExplorerUI(UI):
                 ]
             )]
         else:
-            print("Switching to regular mode")
             self._exports[0] = self._notebook_export
             self._main[:] = [self._split]
+
+    def _toggle_sidebar(self):
+        """Toggle sidebar open/closed state."""
+        sidebar_open = 2 in self._settings_menu.toggled
+        # Find the page in the view hierarchy
+        if hasattr(self, '_page') and self._page:
+            self._page.sidebar_open = sidebar_open
+
+    def _toggle_split_panel(self):
+        """Toggle split panel collapsed state."""
+        should_open = 3 in self._settings_menu.toggled
+        self._split.collapsed = not should_open
+
+    def _toggle_sql_planning(self):
+        """Toggle SQL planning mode for SQLAgent."""
+        planning_enabled = 4 in self._settings_menu.toggled
+
+        # Update the SQLAgent directly if it exists
+        sql_agent = next(
+            (agent for agent in self._coordinator.agents if isinstance(agent, SQLAgent)),
+            None
+        )
+        if sql_agent:
+            sql_agent.planning_enabled = planning_enabled
 
     def _delete_exploration(self, item):
         self._explorations.items = [it for it in self._explorations.items if it is not item]
