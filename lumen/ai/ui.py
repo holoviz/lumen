@@ -24,8 +24,8 @@ from panel.viewable import Child, Children, Viewer
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
     Button, ChatFeed, ChatInterface, ChatMessage, Chip, Column, Dialog,
-    Divider, FileDownload, MenuList, MultiChoice, Page, Paper, Row, Switch,
-    Tabs, ToggleIcon,
+    FileDownload, MenuList, MenuToggle, MultiChoice, Page, Paper, Row, Switch,
+    Tabs,
 )
 
 from ..pipeline import Pipeline
@@ -319,12 +319,28 @@ class UI(Viewer):
         if levels.get(self.log_level) < 20:
             self.interface.callback_exception = "verbose"
         self.interface.disabled = True
-        self._verbose_toggle = Switch(
-            label="Verbose",
-            value=False,
-            color="light",
-            margin=(18, 10, 10, 15),
-            size="small"
+        # Create consolidated settings menu toggle
+        self._settings_menu = MenuToggle(
+            label="Toggle Settings",
+            icon="settings",
+            items=[
+                {
+                    'label': 'Verbose',
+                    'icon': 'visibility_off',
+                    'active_icon': 'visibility',
+                    'toggled': False
+                }
+            ],
+            color="primary",
+            margin=(0, 5, 0, 5),
+            persistent=True,
+            on_click=self._handle_settings_click,
+            sx={
+                'borderRadius': '6px',  # Less rounded corners
+                'boxShadow': '0px 3px 5px -1px rgba(0,0,0,0.2)',  # Matching shadow
+                'width': '200px',  # Consistent width
+                'fontSize': '13px'  # Consistent font size
+            }
         )
         self._coordinator = self.coordinator(
             agents=agents,
@@ -335,7 +351,7 @@ class UI(Viewer):
             within_ui=True,
             vector_store=self.vector_store,
             document_vector_store=self.document_vector_store,
-            verbose=self._verbose_toggle.param.value,
+            verbose=self._settings_menu.param.toggled.rx().rx.pipe(lambda toggled: 0 in toggled),
             **self.coordinator_params
         )
         self._notebook_export = FileDownload(
@@ -364,13 +380,20 @@ class UI(Viewer):
         self._source_agent = next((agent for agent in self._coordinator.agents if isinstance(agent, SourceAgent)), None)
         # Create LLM status chip
         self._llm_chip = Chip(
-            object="Loading LLM...",
+            object="Manage LLM:",
             icon="auto_awesome",
             color="primary",
             align="center",
             margin=(0, 5, 0, 10),
             on_click=self._open_llm_dialog,
             loading=True,
+            sx={
+                'borderRadius': '6px',  # Less rounded corners
+                'boxShadow': '0px 3px 5px -1px rgba(0,0,0,0.2)',  # Matching shadow
+                'paddingY': '18px',  # More vertical padding
+                'width': '200px',  # Consistent width
+                'fontSize': '13px'  # Consistent font size
+            }
         )
 
         self._data_sources_chip = Chip(
@@ -381,6 +404,13 @@ class UI(Viewer):
             on_click=self._open_sources_dialog,
             margin=(0, 5, 0, 5),
             loading=True,
+            sx={
+                'borderRadius': '6px',  # Less rounded corners
+                'boxShadow': '0px 3px 5px -1px rgba(0,0,0,0.2)',  # Matching shadow
+                'paddingY': '18px',  # More vertical padding
+                'width': '200px',  # Consistent width
+                'fontSize': '13px'  # Consistent font size
+            }
         )
         self._table_lookup_tool = None  # Will be set after coordinator is initialized
         self._source_catalog = SourceCatalog()
@@ -605,13 +635,8 @@ class UI(Viewer):
                 header=[
                     self._llm_chip,
                     self._data_sources_chip,
-                    *([self._report_toggle] if self._report_toggle else []),
                     self._exports,
-                    self._verbose_toggle,
-                    Divider(
-                        orientation="vertical", height=30, margin=(17, 0, 17, 5),
-                        sx={'border-color': 'white', 'border-width': '1px'}
-                    )
+                    self._settings_menu,
                 ],
                 main=[self._main, self._sources_dialog_content, self._llm_dialog],
                 sidebar=[] if self._sidebar is None else [self._sidebar],
@@ -632,6 +657,14 @@ class UI(Viewer):
         Update the sources dialog content when memory sources change.
         """
         self._source_catalog.sources = memory['sources']
+
+    def _get_verbose_value(self):
+        """Get the current verbose toggle state from the settings menu."""
+        return 0 in self._settings_menu.toggled
+
+    def _handle_settings_click(self, event):
+        """Handle clicks on items in the settings menu."""
+        # The verbose state is automatically updated through reactive expressions
 
     def servable(self, title: str | None = None, **kwargs):
         if (state.curdoc and state.curdoc.session_context):
@@ -744,16 +777,26 @@ class ExplorerUI(UI):
             sizing_mode='stretch_width',
             visible=self._explorations.param["items"].rx.bool().rx.not_()
         )
-        self._report_toggle = ToggleIcon(
-            icon="chat",
-            active_icon="summarize",
-            description="Toggle Report Mode",
-            value=False,
-            styles={"margin-left": "auto"},
-            sx={".MuiIcon-root": {"color": "white"}},
-            margin=(12, 0, 10, 0)
-        )
-        self._report_toggle.param.watch(self._toggle_report, ['value'])
+        # Override the settings menu to include report toggle
+        self._settings_menu.items = [
+            {
+                'label': 'Verbose',
+                'icon': 'visibility_off',
+                'active_icon': 'visibility',
+                'toggled': False
+            },
+            {
+                'label': 'Report Mode',
+                'icon': 'chat',
+                'active_icon': 'summarize',
+                'toggled': False
+            }
+        ]
+        self._report_toggle = None  # Keep for compatibility
+
+        # Override the settings click handler to include report mode logic
+        self._settings_menu.on_click = self._handle_explorer_settings_click
+
         self._last_synced = self._home = Exploration(
             context=memory,
             title='Home',
@@ -826,8 +869,20 @@ class ExplorerUI(UI):
             items.append(item)
         self._explorations.items = items
 
-    def _toggle_report(self, event):
-        if event.new:
+    def _get_report_mode_value(self):
+        """Get the current report mode toggle state from the settings menu."""
+        return 1 in self._settings_menu.toggled
+
+    def _handle_explorer_settings_click(self, event):
+        """Handle clicks on items in the settings menu for ExplorerUI."""
+        if event['label'] == 'Report Mode':
+            # Handle report mode toggle
+            self._toggle_report_mode()
+        # Verbose state is automatically updated through reactive expressions
+
+    def _toggle_report_mode(self):
+        """Toggle between regular and report mode."""
+        if self._get_report_mode_value():
             self._exports[0] = self._global_notebook_export
             self._main[:] = [Report(
                 subtasks=[
@@ -837,6 +892,10 @@ class ExplorerUI(UI):
         else:
             self._exports[0] = self._notebook_export
             self._main[:] = [self._split]
+
+    def _toggle_report(self, event):
+        """Legacy method for backwards compatibility."""
+        self._toggle_report_mode()
 
     def _delete_exploration(self, item):
         self._explorations.items = [it for it in self._explorations.items if it is not item]
