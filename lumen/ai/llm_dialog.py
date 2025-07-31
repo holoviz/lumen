@@ -62,6 +62,7 @@ class LLMModelCard(Viewer):
             value=default_value,
             options=self.llm_choices,
             sizing_mode="stretch_width",
+            disabled=self.param.llm_choices.rx().rx.len() <= 1,
             margin=0
         )
 
