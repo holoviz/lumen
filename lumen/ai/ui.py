@@ -783,6 +783,13 @@ class ExplorerUI(UI):
                 'toggled': False
             },
             {
+                'label': 'SQL Planning',
+                'icon': 'close',
+                'active_icon': 'check',
+                'toggled': True
+            },
+            None,
+            {
                 'label': 'Chat / Report',
                 'icon': 'chat',
                 'active_icon': 'summarize',
@@ -800,12 +807,6 @@ class ExplorerUI(UI):
                 'active_icon': 'arrow_back_ios_new',
                 'toggled': False
             },
-            {
-                'label': 'SQL Planning',
-                'icon': 'close',
-                'active_icon': 'check',
-                'toggled': True
-            }
         ]
         self._report_toggle = None  # Keep for compatibility
 
