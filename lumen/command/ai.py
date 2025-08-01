@@ -36,6 +36,7 @@ LLM_PROVIDERS = {
     'azure-openai': 'AzureOpenAI',
     'azure-mistral': 'AzureMistralAI',
     "ai-navigator": "AINavigator",
+    'ollama': 'Ollama',
     'llama-cpp': 'LlamaCpp',
     'litellm': 'LiteLLM',
 }

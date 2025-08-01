@@ -183,7 +183,7 @@ class SourceAgent(Agent):
             "Do NOT use if data sources already exist UNLESS user explicitly requests upload",
         ])
 
-    purpose = param.String(default="The SourceAgent allows a user to upload new datasets, tables, or documents.")
+    purpose = param.String(default="Allows a user to upload new datasets, tables, or documents.")
 
     requires = param.List(default=[], readonly=True)
 
@@ -198,7 +198,7 @@ class SourceAgent(Agent):
         messages: list[Message],
         step_title: str | None = None,
     ) -> Any:
-        source_controls = self.source_controls(memory=self.memory, cancellable=True, replace_controls=True)
+        source_controls = self.source_controls(memory=self._memory, cancellable=True, replace_controls=True)
 
         output = pn.Column(source_controls)
         if "source" not in self._memory:
@@ -521,7 +521,7 @@ class LumenBaseAgent(Agent):
             messages=messages,
             system=system,
             response_model=retry_model,
-            model_spec="reasoning",
+            model_spec="edit",
         )
         result = await self.llm.invoke(**invoke_kwargs)
         return apply_changes(original_lines, result.lines_changes)
@@ -562,12 +562,12 @@ class SQLAgent(LumenBaseAgent):
             "Use when user asks about data contained in tables (e.g., 'show me sales data', 'filter by date')",
             "Use for calculations that require data from tables (e.g., 'calculate average', 'sum by category')",
             "Use when user wants to display or examine table contents",
-            "If sql_metaset is not in memory, use with IterativeTableLookup",
             "Commonly used with AnalystAgent to analyze query results",
             "For existing tables, only use if additional calculations are needed",
             "NOT for technical questions about programming, functions, or libraries",
             "NOT for questions that don't require data table access",
             "NOT useful if the user is using the same data for plotting",
+            "If sql_metaset is not in memory, use with IterativeTableLookup",
         ]
     )
 
@@ -1880,9 +1880,8 @@ class ValidationAgent(Agent):
         self._memory["validation_result"] = result
 
         response_parts = []
-        if result.yes:
+        if result.correct:
             return result
-
 
         response_parts.append(f"**Query Validation: ✗ Incomplete** - {result.chain_of_thought}")
         if result.missing_elements:

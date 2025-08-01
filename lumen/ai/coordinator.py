@@ -57,6 +57,7 @@ class Plan(Section):
     async def _run_task(self, i: int, task: Self | Actor, **kwargs):
         outputs = []
         with self.interface.add_step(title=f"{task.title}...", user="Runner", layout_params={"title": "🏗️ Plan Execution Steps"}, steps_layout=self.steps_layout) as step:
+            self.steps_layout.title = f"⚙️ Working on task {task.title!r}..."
             step.stream(f"`Working on task {task.title}`:\n\n{task.instruction}")
             try:
                 kwargs = {"agents": self.agents} if 'agents' in task.param else {}
@@ -102,9 +103,6 @@ class Coordinator(Viewer, VectorLookupToolUser):
         },
     )
 
-    within_ui = param.Boolean(default=False, constant=True, doc="""
-        Whether this coordinator is being used within the UI.""")
-
     agents = param.List(default=[ChatAgent], doc="""
         List of agents to coordinate.""")
 
@@ -119,6 +117,12 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
     suggestions = param.List(default=GETTING_STARTED_SUGGESTIONS, doc="""
         Initial list of suggestions of actions the user can take.""")
+
+    verbose = param.Boolean(default=False, allow_refs=True, doc="""
+        Whether to show verbose output.""")
+
+    within_ui = param.Boolean(default=False, constant=True, doc="""
+        Whether this coordinator is being used within the UI.""")
 
     __abstract = True
 
@@ -229,6 +233,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
             for tool in tools or []
         )
         if not provides_vector_metaset and not provides_sql_metaset:
+            # Add both tools - they will share the same vector store through VectorLookupToolUser
+            # Both need to be added as classes, not instances, for proper initialization
             tools += [TableLookup, IterativeTableLookup]
         elif not provides_vector_metaset:
             tools += [TableLookup]
@@ -472,8 +478,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 self.interface.stream(msg, user='Lumen')
                 return msg
 
-            if '__error__' in self.memory:
-                del self.memory['__error__']
+            if '__error__' in self._memory:
+                del self._memory['__error__']
             with self.interface.param.update(callback_exception="raise"):
                 with plan.param.update(
                     history=messages, memory=self._memory, interface=self.interface,
@@ -833,6 +839,7 @@ class Planner(Coordinator):
                 response_model=Reasoning,
                 max_retries=3,
             ):
+                self.steps_layout.title = "🧠 Reasoning about the plan..."
                 if reasoning.chain_of_thought:  # do not replace with empty string
                     self._memory["reasoning"] = reasoning.chain_of_thought
                     step.stream(reasoning.chain_of_thought, replace=True)
@@ -1012,7 +1019,10 @@ class Planner(Coordinator):
         attempts = 0
         plan = None
         with self.interface.param.update(callback_exception="raise"):
-            with self.interface.add_step(title="Planning how to solve user query...", user="Planner", layout_params={"title": "📝 Planner Steps"}) as istep:
+            with self.interface.add_step(
+                title="Planning how to solve user query...", user="Planner",
+                layout_params={"title": "📝 Planning out tasks", "collapsed": not self.verbose}
+            ) as istep:
                 self.steps_layout = self.interface.objects[-1].object
                 while not planned:
                     if attempts > 0:
@@ -1024,16 +1034,17 @@ class Planner(Coordinator):
                             plan_model, istep, is_follow_up=pre_plan_output["is_follow_up"]
                         )
                     except asyncio.CancelledError as e:
-                        istep.failed_title = 'Planning was cancelled, please try again.'
+                        self.steps_layout.title = istep.failed_title = 'Planning was cancelled, please try again.'
                         traceback.print_exception(e)
                         raise e
                     except Exception as e:
-                        istep.failed_title = 'Failed to make plan. Ensure LLM is configured correctly and/or try again.'
+                        self.steps_layout.title = istep.failed_title = 'Failed to make plan. Ensure LLM is configured correctly and/or try again.'
                         traceback.print_exception(e)
                         raise e
                     plan, unmet_dependencies, previous_actors = await self._resolve_plan(
                         raw_plan, agents, tools, messages, previous_actors
                     )
+                    self.steps_layout.title = f"📋 Planned out steps for {plan.title!r}"
                     if unmet_dependencies:
                         istep.stream(f"The plan didn't account for {unmet_dependencies!r}", replace=True)
                         attempts += 1

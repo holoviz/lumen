@@ -93,6 +93,8 @@ class SessionCache:
         new = type(self)()
         new._global_context = self._global_context.copy()
         new._session_contexts = self._session_contexts.copy()
+        if state.curdoc and state.curdoc in self._session_contexts:
+            new._session_contexts[state.curdoc] = self._curcontext.copy()
         return new
 
 

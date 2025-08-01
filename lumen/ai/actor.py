@@ -15,7 +15,10 @@ from pydantic import BaseModel
 from .config import PROMPTS_DIR
 from .llm import Llm, Message
 from .memory import _Memory, memory
-from .utils import log_debug, render_template, warn_on_unused_variables
+from .utils import (
+    class_name_to_llm_spec_key, log_debug, render_template,
+    warn_on_unused_variables,
+)
 
 
 class NullStep:
@@ -277,30 +280,7 @@ class LLMUser(param.Parameterized):
         Converts class name to a snake_case model identifier.
         Used for looking up model configurations in model_kwargs.
         """
-        # Remove "Agent" suffix from class name
-        name = self.__class__.__name__.replace("Agent", "")
-
-        result = ""
-        i = 0
-        while i < len(name):
-            char = name[i]
-
-            # Check if this is part of an acronym (current char is uppercase and next char is uppercase too)
-            is_part_of_acronym = (
-                char.isupper() and
-                i + 1 < len(name) and
-                name[i + 1].isupper()
-            )
-
-            # Add underscore before uppercase letters, unless it's part of an acronym
-            if char.isupper() and i > 0 and not is_part_of_acronym and not name[i - 1].isupper():
-                result += "_"
-
-            # Add the lowercase character
-            result += char.lower()
-            i += 1
-
-        return result
+        return class_name_to_llm_spec_key(type(self).__name__)
 
 
 class Actor(LLMUser):
