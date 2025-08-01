@@ -7,24 +7,17 @@ Plan the NEXT SINGLE STEP toward answering the user's query.
 
 ## EFFICIENCY PRIORITY:
 🎯 **Each step costs significant resources:**
-1. **Reuse before rebuild**: Check for existing materialized tables
+1. **Reuse before rebuild**: Check for existing materialized data
 2. **Batch discoveries**: Combine multiple explorations into single steps
 3. **Progress decisively**: Move toward final answer quickly
 
-## Pre-Discovery Checklist:
-- **Materialized table check**: Can existing tables provide this information?
-- **Batch discoveries**: Combine multiple explorations + min/max ranges into one step
-- **Format variations**: Check underscores vs spaces if initial discovery fails
-- **Join keys**: Discover join keys before attempting joins
-- **Temporal alignment**: Verify date ranges overlap between datasets
-- **Data compatibility**: Check value formats match (e.g., year as int vs string)
-
 ## Decision Process:
-1. **Check materialized tables** - can existing tables answer the question?
+1. **Check materialized data** - can existing data answer the question?
 2. **Direct query check** - if simple request, mark as final answer
-3. **Validate compatibility** - temporal overlaps, key formats, data types
-4. **Batch discoveries** - combine multiple explorations + min/max ranges
-5. **Progress logically**: structures → patterns → relationships → final query
+3. **Batch discoveries** - combine multiple explorations + min/max ranges into one step
+4. **Validate compatibility** - temporal overlaps, key formats, join keys, data types
+5. **Handle format variations** - check underscores vs spaces if initial discovery fails
+6. **Progress logically**: structures → patterns → relationships → final query
 
 ## Common Pitfalls to Avoid:
 - **Temporal mismatch**: Don't join datasets without overlapping date ranges
@@ -36,11 +29,11 @@ Plan the NEXT SINGLE STEP toward answering the user's query.
 {% block examples %}
 ## Examples:
 
-**Direct Query:** "Show me table" → Final answer immediately
+**Direct Query:** "Show me data" → Final answer immediately
 
 **Multi-Step:** "Find categories + min/max ranges + quality" → "Final analysis"
 
-**Reuse:** "Use existing distinct_year_season_from_oni table" not "Find distinct years..."
+**Reuse:** "Use existing distinct_year_season_from_oni data" not "Find distinct years..."
 {% endblock %}
 
 {% block context %}
@@ -54,12 +47,12 @@ Current Knowledge:
 {{ sql_plan_context }}
 
 {%- if 'materialized' in sql_plan_context.lower() or 'DuckDBSource' in sql_plan_context %}
-⚠️  **MATERIALIZED TABLES AVAILABLE**: Check above for existing tables before planning new queries.
+⚠️  **MATERIALIZED DATA AVAILABLE**: Check above for existing data before planning new queries.
 Please take into account all the steps and results as to not repeat previous work!
 {%- endif %}
 {%- else %}
 Starting fresh - no previous steps taken yet
 {%- endif %}
 
-**Planning Reminder**: Simple "show table" requests = final answer immediately. Complex requests = check materialized tables first.
+**Planning Reminder**: Simple "show data" requests = final answer immediately. Complex requests = check materialized data first.
 {% endblock %}

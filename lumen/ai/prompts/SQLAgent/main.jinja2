@@ -5,7 +5,7 @@
 Write a SQL query for the user's data transformation request, focusing on intent over literal interpretation.
 
 ## EFFICIENCY FIRST:
-- **Reuse materialized tables**: Check "Current Knowledge" for existing tables before writing CTEs
+- **Reuse materialized data**: Check "Current Knowledge" for existing data before writing CTEs
 - **Cost awareness**: Each step costs resources - leverage previous work
 
 ## Critical Rules:
@@ -24,8 +24,7 @@ Write a SQL query for the user's data transformation request, focusing on intent
   - Consider common abbreviations and variations and case sensitivity
   - **Format variation checking**: When initial discovery fails, immediately check for format variations, underscores vs spaces using `ILIKE`
 - Limits can be applied to discovery steps
-{% else %}- Performance: Use LIMIT 100000 if unspecified, efficient ORDER BY, filter early
-- Limits should not be applied to final steps
+{% else %}- Set LIMIT 100000, unless specified, efficient ORDER BY, filter early
 {% endif %}
 - Temporal Data Handling:
   - **Date range discovery**: Always check MIN/MAX dates before joining temporal datasets
