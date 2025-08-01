@@ -174,6 +174,7 @@ class SourceControls(Viewer):
             margin=(10, 10, 0, 10),
             sizing_mode="stretch_width",
             disabled=self.param.disabled,
+            enable_upload=False
         )
         self._url_input.param.watch(self._handle_urls, "enter_pressed")
 
