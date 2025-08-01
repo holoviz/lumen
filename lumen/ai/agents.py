@@ -578,6 +578,9 @@ class SQLAgent(LumenBaseAgent):
 
     not_with = param.List(default=["DbtslAgent", "TableLookup", "TableListAgent"])
 
+    planning_enabled = param.Boolean(default=True, doc="""
+        Whether to enable SQL planning mode. When False, only attempts oneshot SQL generation.""")
+
     purpose = param.String(
         default="""
         Handles the display of tables and the creation, modification, and execution
@@ -1150,9 +1153,13 @@ class SQLAgent(LumenBaseAgent):
         tables_to_source, source = self._setup_source(sources)
 
         try:
-            # Try one-shot approach first; if empty or fails, fallback to planning mode
+            # Try one-shot approach first
             pipeline = await self._attempt_oneshot_sql(messages, source, step_title)
         except Exception as e:
+            if not self.planning_enabled:
+                # If planning is disabled, re-raise the error instead of falling back
+                raise e
+            # Fall back to planning mode if enabled
             messages = mutate_user_message(str(e), messages)
             pipeline = await self._execute_planning_mode(messages, source, step_title)
         return pipeline
