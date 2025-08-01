@@ -19,7 +19,7 @@ Here's a summary of the dataset the user just asked about:
 {{ memory['data'] }}
 ```
 {% elif 'visible_slugs' in memory and memory['visible_slugs']|length > 0 %}
-📊 Tables available:
+📊 Data available:
 {%- set tables_list = memory['visible_slugs'] | list %}
 {%- for table in tables_list[:10] %}
 - {{ table }}
