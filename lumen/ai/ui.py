@@ -321,18 +321,19 @@ class UI(Viewer):
         self.interface.disabled = True
         # Create consolidated settings menu toggle
         self._settings_menu = MenuToggle(
-            label="Toggle Settings",
+            label="Toggles",
             icon="settings",
             color="primary",
             margin=(0, 5, 0, 5),
             align="center",
             persistent=True,
             on_click=self._handle_settings_click,
+            sizing_mode='fixed',
+            width=200,
             sx={
-                'borderRadius': '6px',  # Less rounded corners
-                'boxShadow': '0px 3px 5px -1px rgba(0,0,0,0.2)',  # Matching shadow
-                'width': '200px',  # Consistent width
-                'fontSize': '13px'  # Consistent font size
+                'borderRadius': '0.375rem',  # Less rounded corners
+                'boxShadow': 'var(--mui-shadows-2)',  # MUI shadow variable
+                'fontSize': '0.8125rem'  # Consistent font size in em
             }
         )
         self._coordinator = self.coordinator(
@@ -380,12 +381,13 @@ class UI(Viewer):
             margin=(0, 5, 0, 10),
             on_click=self._open_llm_dialog,
             loading=True,
+            sizing_mode='fixed',
+            width=200,
             sx={
-                'borderRadius': '6px',  # Less rounded corners
-                'boxShadow': '0px 3px 5px -1px rgba(0,0,0,0.2)',  # Matching shadow
-                'paddingY': '18px',  # More vertical padding
-                'width': '200px',  # Consistent width
-                'fontSize': '13px'  # Consistent font size
+                'borderRadius': '0.375rem',  # Less rounded corners
+                'boxShadow': 'var(--mui-shadows-2)',  # MUI shadow variable
+                'paddingY': '1.125rem',  # More vertical padding in rem
+                'fontSize': '0.8125rem'  # Consistent font size in rem
             }
         )
 
@@ -397,12 +399,13 @@ class UI(Viewer):
             on_click=self._open_sources_dialog,
             margin=(0, 5, 0, 5),
             loading=True,
+            sizing_mode='fixed',
+            width=180,
             sx={
-                'borderRadius': '6px',  # Less rounded corners
-                'boxShadow': '0px 3px 5px -1px rgba(0,0,0,0.2)',  # Matching shadow
-                'paddingY': '18px',  # More vertical padding
-                'width': '200px',  # Consistent width
-                'fontSize': '13px'  # Consistent font size
+                'borderRadius': '0.375rem',  # Less rounded corners
+                'boxShadow': 'var(--mui-shadows-2)',  # MUI shadow variable
+                'paddingY': '1.125rem',  # More vertical padding in rem
+                'fontSize': '0.8125rem'  # Consistent font size in rem
             }
         )
         self._table_lookup_tool = None  # Will be set after coordinator is initialized
