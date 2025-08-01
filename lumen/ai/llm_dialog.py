@@ -62,6 +62,7 @@ class LLMModelCard(Viewer):
             value=default_value,
             options=self.llm_choices,
             sizing_mode="stretch_width",
+            disabled=self.param.llm_choices.rx().rx.len() <= 1,
             margin=0
         )
 
@@ -344,6 +345,10 @@ class LLMConfigDialog(Viewer):
         sorted_model_types.extend(remaining_types)
 
         for model_type in sorted_model_types:
+            if model_type not in all_agent_types:
+                # If this model type is not an agent type, skip it
+                continue
+
             # Ensure this model type exists in model_kwargs
             if model_type not in self.llm.model_kwargs:
                 # Use the default model from model_kwargs if available, otherwise use first select_models

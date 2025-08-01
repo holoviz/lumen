@@ -556,6 +556,10 @@ class TableLookup(VectorLookupTool):
         "Not useful for data related queries",
     ])
 
+    # Class variable to track which sources are currently being processed
+    _sources_in_progress = {}
+    _progress_lock = asyncio.Lock()  # Lock for thread-safe access
+
     prompts = param.Dict(
         default={
             "refine_query": {
@@ -714,17 +718,25 @@ class TableLookup(VectorLookupTool):
 
         # Use class variable to track which sources are currently being processed
         vector_store_id = id(self.vector_store)
-        if vector_store_id not in self._sources_in_progress:
-            self._sources_in_progress[vector_store_id] = set()
+
+        async with self._progress_lock:
+            if vector_store_id not in self._sources_in_progress:
+                self._sources_in_progress[vector_store_id] = set()
+
+
+        log_debug(f"[TableLookup] Starting _update_vector_store for {len(sources)} sources")
 
         for source in sources:
-            # Skip this source if it's already being processed for this vector store
-            if source.name in self._sources_in_progress[vector_store_id]:
-                continue
+            async with self._progress_lock:
+                # Skip this source if it's already being processed for this vector store
+                if source.name in self._sources_in_progress[vector_store_id]:
+                    log_debug(f"[TableLookup] Skipping source {source.name} - already in progress")
+                    continue
 
-            # Mark this source as in progress for this vector store
-            self._sources_in_progress[vector_store_id].add(source.name)
-            processed_sources.append(source.name)
+                # Mark this source as in progress for this vector store
+                self._sources_in_progress[vector_store_id].add(source.name)
+                processed_sources.append(source.name)
+                log_debug(f"[TableLookup] Processing source {source.name}")
 
             if self.include_metadata and self._raw_metadata.get(source.name) is None:
                 if isinstance(source, DuckDBSource):
@@ -759,30 +771,61 @@ class TableLookup(VectorLookupTool):
 
     def _cleanup_sources_in_progress(self, vector_store_id, processed_sources):
         """Clean up the sources_in_progress tracking after tasks are completed."""
-        try:
-            for source_name in processed_sources:
-                if vector_store_id in self._sources_in_progress and source_name in self._sources_in_progress[vector_store_id]:
-                    self._sources_in_progress[vector_store_id].remove(source_name)
+        async def _async_cleanup():
+            async with self._progress_lock:
+                try:
+                    log_debug(f"[TableLookup] Cleaning up sources: {processed_sources}")
+                    for source_name in processed_sources:
+                        if vector_store_id in self._sources_in_progress:
+                            self._sources_in_progress[vector_store_id].discard(source_name)
+                            log_debug(f"[TableLookup] Removed {source_name} from in-progress")
 
-            # Remove the vector_store_id entry if empty
-            if vector_store_id in self._sources_in_progress and not self._sources_in_progress[vector_store_id]:
-                del self._sources_in_progress[vector_store_id]
-        except Exception as e:
-            log_debug(f"Error cleaning up sources_in_progress: {e!s}")  # Don't let cleanup errors propagate
+                    # Remove the vector_store_id entry if empty
+                    if vector_store_id in self._sources_in_progress and not self._sources_in_progress[vector_store_id]:
+                        del self._sources_in_progress[vector_store_id]
+                        log_debug(f"[TableLookup] Removed empty vector_store_id {vector_store_id}")
+                except Exception as e:
+                    log_debug(f"[TableLookup] Error cleaning up sources_in_progress: {e!s}")
+                    # Force cleanup on error
+                    if vector_store_id in self._sources_in_progress:
+                        self._sources_in_progress[vector_store_id].clear()
+
+        # Schedule the async cleanup and store the task reference
+        # This prevents the task from being garbage collected
+        cleanup_task = asyncio.create_task(_async_cleanup())
+        # Optionally, we can add error handling for the task
+        cleanup_task.add_done_callback(lambda t: t.exception() if t.done() else None)
 
     async def _mark_ready_when_done(self, tasks, vector_store_id=None, processed_sources=None):
         """Wait for all tasks to complete, collect results for batch upsert, and mark the tool as ready."""
         try:
-            async with asyncio.Semaphore(self.max_concurrent):
-                enriched_entries = [
-                    result for result in await asyncio.gather(*tasks, return_exceptions=True)
-                    if isinstance(result, dict) and "text" in result
-                ]
+            log_debug(f"[TableLookup] Waiting for {len(tasks)} tasks to complete")
+            # Add timeout to prevent indefinite waiting (5 minutes)
+            try:
+                async def _gather_with_semaphore():
+                    async with asyncio.Semaphore(self.max_concurrent):
+                        return [
+                            result for result in await asyncio.gather(*tasks, return_exceptions=True)
+                            if isinstance(result, dict) and "text" in result
+                        ]
+
+                enriched_entries = await asyncio.wait_for(_gather_with_semaphore(), timeout=300)
+            except asyncio.TimeoutError:
+                log_debug("[TableLookup] Timeout waiting for tasks to complete (5 minutes)")
+                self._ready = None  # Set to error state
+                return
+
             if enriched_entries:
-                log_debug(f"Upserting {len(enriched_entries)} enriched entries")
+                log_debug(f"[TableLookup] Upserting {len(enriched_entries)} enriched entries")
                 await self.vector_store.upsert(enriched_entries)
-            log_debug("All table metadata tasks completed.")
+            else:
+                log_debug("[TableLookup] No enriched entries to upsert")
+            log_debug("[TableLookup] All table metadata tasks completed.")
             self._ready = True
+        except Exception as e:
+            log_debug(f"[TableLookup] Error in _mark_ready_when_done: {e!s}")
+            self._ready = None  # Set to error state
+            raise
         finally:
             # Clean up sources_in_progress after tasks are done, even if there was an error
             if vector_store_id is not None and processed_sources:
@@ -893,6 +936,12 @@ class IterativeTableLookup(TableLookup):
 
     provides = param.List(default=["tables_metadata", "vector_metaset", "sql_metaset"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
+
+    # Override sync_sources to False by default to prevent duplicate processing
+    # when used together with TableLookup
+    sync_sources = param.Boolean(default=False, doc="""
+        Whether to automatically sync newly added data sources to the vector store.
+        Default is False to prevent duplicate processing when used with TableLookup.""")
 
     max_selection_iterations = param.Integer(default=3, doc="""
         Maximum number of iterations for the iterative table selection process.""")
