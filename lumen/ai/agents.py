@@ -182,7 +182,7 @@ class SourceAgent(Agent):
             "Use ONLY when user explicitly asks to upload or connect to NEW data sources (NOT if data sources already exist)",
         ])
 
-    purpose = param.String(default="Allows a user to upload new datasets, tables, or documents.")
+    purpose = param.String(default="Allows a user to upload new datasets, data, or documents.")
 
     requires = param.List(default=[], readonly=True)
 
@@ -225,7 +225,7 @@ class ChatAgent(Agent):
         default=[
             "Use for high-level data information or general conversation",
             "Use for technical questions about programming, functions, methods, libraries, APIs, software tools, or 'how to' code usage",
-            "NOT for data-specific questions that require querying tables",
+            "NOT for data-specific questions that require querying data",
         ]
     )
 
@@ -265,7 +265,7 @@ class AnalystAgent(ChatAgent):
     conditions = param.List(
         default=[
             "Use for interpreting and analyzing results from executed queries",
-            "NOT for initial data queries, table exploration, or technical programming questions",
+            "NOT for initial data queries, data exploration, or technical programming questions",
         ]
     )
 
@@ -379,24 +379,24 @@ class ListAgent(Agent):
 
 class TableListAgent(ListAgent):
     """
-    The TableListAgent lists all available tables and lets the user pick one.
+    The TableListAgent lists all available data and lets the user pick one.
     """
 
     conditions = param.List(default=[
-        "Use when user explicitly asks to 'list tables', 'show available tables', or 'what tables do you have'",
-        "NOT for showing actual table contents, querying, or analyzing table data",
+        "Use when user explicitly asks to 'list data', 'show available data', or 'what data do you have'",
+        "NOT for showing actual data contents, querying, or analyzing data",
     ])
 
     not_with = param.List(default=["DbtslAgent", "SQLAgent"])
 
     purpose = param.String(default="""
-        Displays a list of all available tables & datasets in memory. Not useful for identifying which table to use for analysis.""")
+        Displays a list of all available data & datasets in memory. Not useful for identifying which dataset to use for analysis.""")
 
     requires = param.List(default=["source"], readonly=True)
 
-    _column_name = "Table"
+    _column_name = "Data"
 
-    _message_format = "Show the table: {item}"
+    _message_format = "Show the data: {item}"
 
     @classmethod
     async def applies(cls, memory: _Memory) -> bool:
@@ -550,8 +550,8 @@ class LumenBaseAgent(Agent):
 class SQLAgent(LumenBaseAgent):
     conditions = param.List(
         default=[
-            "Use for displaying, examining, or querying data in tables",
-            "Use for calculations that require data from tables (e.g., 'calculate average', 'sum by category')",
+            "Use for displaying, examining, or querying data",
+            "Use for calculations that require data (e.g., 'calculate average', 'sum by category')",
             "Commonly used with AnalystAgent to analyze query results",
             "NOT for non-data questions or technical programming help",
             "NOT useful if the user is using the same data for plotting",
@@ -568,7 +568,7 @@ class SQLAgent(LumenBaseAgent):
 
     purpose = param.String(
         default="""
-        Handles the display of tables and the creation, modification, and execution
+        Handles the display of data and the creation, modification, and execution
         of SQL queries to address user queries about the data. Executes queries in
         a single step, encompassing tasks such as table joins, filtering, aggregations,
         and calculations. If additional columns are required, SQLAgent can join the
@@ -683,7 +683,7 @@ class SQLAgent(LumenBaseAgent):
                 step.stream(f"\n\n⚠️ SQL validation failed (attempt {i+1}/{max_retries}): {e}")
                 feedback = f"{type(e).__name__}: {e!s}"
                 if "KeyError" in feedback:
-                    feedback += " The table does not exist; select from available tables."
+                    feedback += " The data does not exist; select from available data sources."
 
                 retry_result = await self._retry_output_by_line(
                     feedback, messages, self._memory, sql_query, language=f"sql.{dialect}"
@@ -722,7 +722,7 @@ class SQLAgent(LumenBaseAgent):
             summary = summary[:1000-3] + "..."
         summary_formatted = f"\n```\n{summary}\n```"
         if should_materialize:
-            summary_formatted += f"\n\nMaterialized table: `{sql_expr_source.name}{SOURCE_TABLE_SEPARATOR}{expr_slug}`"
+            summary_formatted += f"\n\nMaterialized data: `{sql_expr_source.name}{SOURCE_TABLE_SEPARATOR}{expr_slug}`"
         stream_details(f"{summary_formatted}", step, title=expr_slug)
 
         return pipeline, sql_expr_source, summary
@@ -896,7 +896,7 @@ class SQLAgent(LumenBaseAgent):
         base_context = ""
         if materialized_tables:
             recent_tables = materialized_tables[-5:]  # Keep only recent 5 tables
-            base_context = "**Available Materialized Tables (for reuse):**\n"
+            base_context = "**Available Materialized Data (for reuse):**\n"
             for table in recent_tables:
                 base_context += f"- `{table}`\n"
             if len(materialized_tables) > 5:
@@ -1160,7 +1160,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
 
     purpose = param.String(
         default="""
-        Responsible for displaying tables to answer user queries about
+        Responsible for displaying data to answer user queries about
         business metrics using dbt Semantic Layers. This agent can compile
         and execute metric queries against a dbt Semantic Layer."""
     )
