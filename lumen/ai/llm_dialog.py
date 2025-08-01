@@ -386,7 +386,7 @@ class LLMConfigDialog(Viewer):
                 llm=self.llm,
                 model_type=model_type,
                 llm_choices=llm_choices,
-                description=all_agent_types[model_type],
+                description=all_agent_types.get(model_type, ""),
             )
 
             # Ensure the card's select widget shows the correct current model
