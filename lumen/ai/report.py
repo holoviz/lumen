@@ -102,10 +102,8 @@ class Task(Viewer):
         plan_steps = []
 
         # Get the plan from memory if available
-        if hasattr(self.memory, 'get') and self.memory.get('plan'):
-            plan = self.memory['plan']
-            if hasattr(plan, 'steps'):
-                plan_steps = [(step.actor, step.instruction) for step in plan.steps]
+        plan = self.memory['plan']
+        plan_steps = [(step.actor, step.instruction) for step in plan.steps]
 
         for msg in reversed(self.history):
             if msg.get('role') == 'user':
@@ -124,27 +122,23 @@ class Task(Viewer):
         # Build todos from plan steps, marking completed tasks
         formatted_content = f"User Request: {original_query}\n\nTodos:\n\n"
 
-        if plan_steps:
-            current_task_index = None
-            # Find the index of the current task
-            for idx, (_, instruction) in enumerate(plan_steps):
-                if instruction == self.instruction:
-                    current_task_index = idx
-                    break
+        current_task_index = None
+        # Find the index of the current task
+        for idx, (_, instruction) in enumerate(plan_steps):
+            if instruction == self.instruction:
+                current_task_index = idx
+                break
 
-            for idx, (_, instruction) in enumerate(plan_steps):
-                if current_task_index is not None and idx < current_task_index:
-                    # Tasks before current are completed
-                    formatted_content += f"- [x] {instruction}\n"
-                elif instruction == self.instruction:
-                    # Current task is pending (about to be executed)
-                    formatted_content += f"- [ ] {instruction}\n"
-                else:
-                    # Future tasks are also pending
-                    formatted_content += f"- [ ] {instruction}\n"
-        else:
-            # Fallback if no plan available
-            formatted_content += f"- [x] {self.instruction}\n"
+        for idx, (_, instruction) in enumerate(plan_steps):
+            if current_task_index is not None and idx < current_task_index:
+                # Tasks before current are completed
+                formatted_content += f"- [x] {instruction}\n"
+            elif instruction == self.instruction:
+                # Current task is pending (about to be executed)
+                formatted_content += f"- [ ] {instruction}\n"
+            else:
+                # Future tasks are also pending
+                formatted_content += f"- [ ] {instruction}\n"
 
         # Replace last user message with complete todo format
         messages = []
