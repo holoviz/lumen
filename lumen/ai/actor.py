@@ -303,7 +303,7 @@ class Actor(LLMUser):
         If self.interface is None, returns a nullcontext that captures calls.
         Otherwise, returns the interface's add_step contextmanager.
         """
-        return nullcontext(self._null_step) if self.interface is None else self.interface.add_step(title=title, **kwargs)
+        return nullcontext(self._null_step) if self.interface is None else self.interface.add_step(title=title, collapsed=True, **kwargs)
 
     @property
     def _memory(self) -> _Memory:
