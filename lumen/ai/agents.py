@@ -14,6 +14,7 @@ import yaml
 
 from panel.chat import ChatInterface
 from panel.viewable import Viewable, Viewer
+from panel_material_ui.chat import ChatMessage
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
@@ -89,17 +90,17 @@ class Agent(Viewer, ToolUser, ContextProvider):
 
     def __init__(self, **params):
         def _exception_handler(exception):
+            traceback.print_exception(exception)
+            if self.interface is None:
+                return
             messages = self.interface.serialize()
             if messages and str(exception) in messages[-1]["content"]:
                 return
 
-            import traceback
+            self.interface.send(
+                f"Error cannot be resolved:\n\n{exception}", user="System", respond=False
+            )
 
-            traceback.print_exception(exception)
-            self.interface.send(f"Error cannot be resolved:\n\n{exception}", user="System", respond=False)
-
-        if "interface" not in params:
-            params["interface"] = ChatInterface(callback=self._interface_callback)
         super().__init__(**params)
         if not self.debug:
             pn.config.exception_handler = _exception_handler
@@ -127,7 +128,14 @@ class Agent(Viewer, ToolUser, ContextProvider):
         message = None
         model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
         async for output_chunk in self.llm.stream(messages, system=system_prompt, model_spec=model_spec, field="output"):
-            message = self.interface.stream(output_chunk, replace=True, message=message, user=self.user, max_width=self._max_width)
+
+            if self.interface is None:
+                if message is None:
+                    message = ChatMessage(output_chunk, user=self.user)
+                else:
+                    message.object = output_chunk
+            else:
+                message = self.interface.stream(output_chunk, replace=True, message=message, user=self.user, max_width=self._max_width)
         return message
 
     async def _gather_prompt_context(self, prompt_name: str, messages: list, **context):
@@ -552,8 +560,9 @@ class LumenBaseAgent(Agent):
             # since inplace updates will not trigger updates
             # and won't allow diffing between old and new values
             self._memory["outputs"] = self._memory["outputs"] + [out]
-        message_kwargs = dict(value=out, user=self.user)
-        self.interface.stream(replace=True, max_width=self._max_width, **message_kwargs)
+        if self.interface is not None:
+            message_kwargs = dict(value=out, user=self.user)
+            self.interface.stream(replace=True, max_width=self._max_width, **message_kwargs)
 
 
 class SQLAgent(LumenBaseAgent):

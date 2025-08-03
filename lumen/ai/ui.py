@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import logging
 import traceback
 
@@ -860,7 +861,9 @@ class ExplorerUI(UI):
             for ext in msg_exts:
                 if ext not in extensions:
                     extensions.append(ext)
-        preamble = make_preamble(self.notebook_preamble, extensions=extensions)
+        now = dt.datetime.now()
+        title = f'# Lumen.ai - Chat Logs {now}'
+        preamble = make_preamble(self.notebook_preamble, extensions=extensions, title=title)
         return StringIO(write_notebook(preamble+cells))
 
     async def _update_conversation(self, event=None):

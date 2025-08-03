@@ -10,12 +10,13 @@ import yaml
 
 from jsonschema import Draft7Validator, ValidationError
 from panel.config import config
+from panel.layout import Column, Row
 from panel.pane import Markdown
 from panel.param import ParamRef
 from panel.viewable import Viewer
-from panel.widgets import CodeEditor, LoadingSpinner
+from panel.widgets import CodeEditor
 from panel_material_ui import (
-    Alert, Button, Checkbox, Column, IconButton, Row, Tabs,
+    Alert, Button, Checkbox, CircularProgress, IconButton, Tabs,
 )
 from param.parameterized import discard_events
 
@@ -150,8 +151,8 @@ class LumenOutput(Viewer):
 
     @param.depends('spec', 'active')
     async def render(self):
-        yield LoadingSpinner(
-            value=True, name="Rendering component...", height=50, width=50
+        yield CircularProgress(
+            value=True, label="Rendering component...", height=50, width=50
         )
 
         if self.spec in self._last_output:
@@ -203,7 +204,7 @@ class VegaLiteOutput(LumenOutput):
     @pn.cache
     @staticmethod
     def _load_vega_lite_schema(schema_url: str | None = None):
-        return requests.get(schema_url).json()
+        return requests.get(schema_url, timeout=0.5).json()
 
     @staticmethod
     def _format_validation_error(error: ValidationError) -> str:
@@ -244,9 +245,12 @@ class VegaLiteOutput(LumenOutput):
     def _validate_spec(cls, spec):
         if "spec" in spec:
             spec = spec["spec"]
-        vega_lite_schema = cls._load_vega_lite_schema(
-            spec.get("$schema", "https://vega.github.io/schema/vega-lite/v5.json")
-        )
+        try:
+            vega_lite_schema = cls._load_vega_lite_schema(
+                spec.get("$schema", "https://vega.github.io/schema/vega-lite/v5.json")
+            )
+        except Exception:
+            return super()._validate_spec(spec)
         vega_lite_validator = Draft7Validator(vega_lite_schema)
         try:
             # the zoomable params work, but aren't officially valid
@@ -325,8 +329,8 @@ class SQLOutput(LumenOutput):
 
     @param.depends('spec', 'active')
     async def render(self):
-        yield LoadingSpinner(
-            value=True, name="Executing SQL query...", height=50, width=50
+        yield CircularProgress(
+            value=True, label="Executing SQL query...", height=50, width=50
         )
         if self.active != 1:
             return

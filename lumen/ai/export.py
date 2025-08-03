@@ -1,5 +1,4 @@
 import base64
-import datetime as dt
 import os
 import re
 
@@ -23,9 +22,11 @@ from .views import LumenOutput
 def make_md_cell(text: str):
     return nbformat.v4.new_markdown_cell(source=text)
 
-def make_preamble(preamble: str, extensions: list[str]):
-    now = dt.datetime.now()
-    header = make_md_cell(f'# Lumen.ai - Chat Logs {now}')
+def make_preamble(preamble: str, extensions: list[str] | None = None, title: str | None = None):
+    if extensions is None:
+        extensions = []
+    if title:
+        header = make_md_cell(title)
     if 'tabulator' not in extensions:
         extensions = ['tabulator'] + extensions
     exts = ', '.join([repr(ext) for ext in extensions])
@@ -40,8 +41,7 @@ def make_preamble(preamble: str, extensions: list[str]):
         """
     )).strip()
     imports = nbformat.v4.new_code_cell(source=source)
-    return [header, imports]
-
+    return [header, imports] if title else []
 
 def serialize_avatar(avatar: str | BytesIO, size: int = 45) -> str:
     """
@@ -73,7 +73,6 @@ def serialize_avatar(avatar: str | BytesIO, size: int = 45) -> str:
     else:
         return f'<span class="text-avatar" style="width: {size}px; height: {size}px; display: inline-flex; align-items: center; justify-content: center; background-color: #f0f0f0; border-radius: 50%;">{str(avatar)[:2].upper()}</span>'
 
-
 def format_markdown(msg: ChatMessage):
     avatar_html = serialize_avatar(msg.avatar)
     header = f'<div style="display: flex; flex-direction: row; font-weight: bold; font-size: 2em;">{avatar_html}<span style="margin-left: 0.5em">{msg.user}</span></div>'
@@ -81,9 +80,7 @@ def format_markdown(msg: ChatMessage):
     content = prefix.join(msg.serialize().split('\n'))
     return [nbformat.v4.new_markdown_cell(source=f'{header}\n{prefix}{content}')]
 
-
-def format_output(msg: ChatMessage):
-    output = msg.object
+def format_output(output: LumenOutput):
     ext = None
     code = []
     with config.param.update(serializer='csv'):
@@ -116,7 +113,7 @@ def render_cells(messages: list[ChatMessage]) -> tuple[Any, list[str]]:
         elif isinstance(msg.object, str):
             cells += format_markdown(msg)
         elif isinstance(msg.object, LumenOutput):
-            out, ext = format_output(msg)
+            out, ext = format_output(msg.object)
             cells += out
             if ext and ext not in extensions:
                 extensions.append(ext)
@@ -124,7 +121,7 @@ def render_cells(messages: list[ChatMessage]) -> tuple[Any, list[str]]:
             for obj in msg.object:
                 if isinstance(obj, ChatStep):
                     continue
-                cells += format_output(obj)
+                cells += format_output(obj.object)
     return cells, extensions
 
 def write_notebook(cells):

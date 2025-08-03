@@ -294,8 +294,7 @@ class Actor(LLMUser):
 
     def __init__(self, **params):
         super().__init__(**params)
-        if self.interface is None:
-            self._null_step = NullStep()
+        self._null_step = NullStep()
 
     def _add_step(self, title: str = "", **kwargs):
         """Private contextmanager for adding steps to the interface.
