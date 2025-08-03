@@ -14,6 +14,7 @@ import yaml
 
 from panel.chat import ChatInterface
 from panel.viewable import Viewable, Viewer
+from panel_material_ui import Button
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
@@ -1873,7 +1874,7 @@ class ValidationAgent(Agent):
             for i, suggestion in enumerate(result.suggestions, 1):
                 response_parts.append(f"{i}. {suggestion}")
 
-        button = pn.widgets.Button(name="Rerun", on_click=on_click, button_type="primary")
+        button = Button(name="Rerun", on_click=on_click)
         footer_objects = [button]
         formatted_response = "\n\n".join(response_parts)
         self.interface.stream(formatted_response, user=self.user, max_width=self._max_width, footer_objects=footer_objects)
