@@ -21,6 +21,7 @@ lint = ["py311", "lint"]
 [dependencies]
 bokeh = "*"
 holoviews = ">=1.17.0"
+panel-material-ui = ">=0.4.0rc2"
 hvplot = "*"
 intake = "<2"
 jinja2 = ">3.0"
