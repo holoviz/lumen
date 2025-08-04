@@ -70,11 +70,6 @@ duckdb = "*"
 intake-sql = "*"
 sqlalchemy = "*"
 
-# Windows does not have google-cloud-sdk available in conda-forge.
-[feature.bigquery]
-platforms = ["linux-64", "osx-arm64", "osx-64"]
-dependencies = {google-cloud-bigquery = "*", google-cloud-sdk = "*"}
-
 # =============================================
 # =================== TESTS ===================
 # =============================================
