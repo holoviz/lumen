@@ -25,9 +25,7 @@ from panel.pane.perspective import (
 )
 from panel.param import Param
 from panel.util import classproperty
-from panel.viewable import (
-    Child, Children, Viewable, Viewer,
-)
+from panel.viewable import Child, Viewable, Viewer
 
 from ..base import MultiTypeComponent
 from ..config import _INDICATORS
@@ -573,7 +571,6 @@ class View(MultiTypeComponent, Viewer):
         """
 
 
-
 class Panel(View):
     """
     `Panel` views provide a way to declaratively wrap a Panel component.
@@ -606,6 +603,10 @@ class Panel(View):
     _requires_source: ClassVar[bool] = False
 
     @classmethod
+    def _resolve_object(cls, spec, objects=None, unresolved=None, depth=0):
+        return cls._materialize_object(spec, objects, unresolved, depth, obj_type=Viewable)
+
+    @classmethod
     def from_spec(
         cls, spec: dict[str, Any] | str, source=None, filters=None, pipeline=None
     ) -> View:
@@ -613,61 +614,48 @@ class Panel(View):
             spec['object'] = spec.pop('spec')
         return super().from_spec(spec, source=source, filters=filters, pipeline=pipeline)
 
-    @classmethod
-    def _resolve_object(cls, spec, objects=None, unresolved=None, depth=0):
-        if spec is None:
-            return None
-        elif not isinstance(spec, dict) or 'type' not in spec:
-            return spec
-        elif spec['type'] in ('rx', 'param'):
-            try:
-                return cls._materialize_param_ref(spec, objects=objects)
-            except KeyError:
-                return None
+    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        spec = super().to_spec(context)
+        spec['object'] = self._serialize_parameterized(self.object)
+        return spec
 
-        if unresolved is None:
-            unresolved = []
-        spec_type = spec.pop('type')
-        ptype = resolve_module_reference(spec_type, Viewable)
-        params, refs = {}, {}
-        for p, v in spec.items():
-            if isinstance(v, dict) and 'type' in v:
-                vtype = v['type']
-                v = cls._resolve_object(v, objects=objects, unresolved=unresolved, depth=depth+1)
-                if vtype in ('param', 'rx') and v is None:
-                    refs[p] = spec[p]
-                    continue
-            elif isinstance(v, list) and all(isinstance(o, dict) and 'type' in o for o in v):
-                resolved = []
-                for sv in v:
-                    robj = cls._resolve_object(sv, objects=objects, unresolved=unresolved, depth=depth+1)
-                    resolved.append(robj)
-                v = resolved
-            elif is_ref(v):
-                if v == '$data':
-                    v = objects['pipeline'].param.data
-                else:
-                    v = state.resolve_reference(v)
-            else:
+    def get_panel(self):
+        return self.object
+
+
+class HoloViews(View):
+    """
+    `HoloViews` renders the data as a HoloViews plot.
+    """
+
+    object = param.Parameter()
+
+    view_type = 'holoviews'
+
+    _panel_type = pn.pane.HoloViews
+
+    @classmethod
+    def _serialize_dimension(self, dim):
+        components = {}
+        for name, p in dim.param.objects('existing').items():
+            value = dim.param.get_value_generator(name)
+            skip = value is p.default
+            if not skip:
                 try:
-                    v = ptype.param.deserialize_value(p, v)
+                    skip = value == p.default
                 except Exception:
                     pass
-            params[p] = v
-        obj = ptype(**params)
-        objects[obj.name] = obj
-        if refs:
-            unresolved.append((obj, refs))
-        if depth == 0:
-            for obj, refs in unresolved:
-                param_refs = {}
-                for p, ref in refs.items():
-                     param_refs[p] = cls._resolve_object(ref, objects=objects, depth=depth+1)
-                obj.param.update(param_refs)
-        return obj
+            if skip:
+                continue
+            components[name] = p.serialize(value)
+        return components
 
-    def _serialize_object(self, obj, objects=None, refs=None, depth=0):
-        obj_type = type(obj)
+    def _serialize_parameterized(self, obj, objects=None, refs=None, depth=0):
+        if isinstance(obj, pn.pane.HoloViews):
+            obj = obj.object
+        from holoviews import (
+            Dataset, Dimension, DynamicMap, Element,
+        )
         if obj is None:
             return None
         elif objects is None:
@@ -677,51 +665,86 @@ class Panel(View):
 
         if refs is None:
             refs = []
-        type_spec = f'{obj_type.__module__}.{obj_type.__name__}'
-        prefs = obj._param__private.refs
-        params = {}
-        for p, pobj in obj.param.objects().items():
-            value = getattr(obj, p)
-            if p in prefs:
-                pref = prefs[p]
-                params[p] = ref = self._serialize_param_ref(
-                    pref, objects=objects
-                )
-                refs.append(ref)
-                continue
-            elif p in ('design',):
-                continue
 
-            if value is obj_type.param[p].default:
-                continue
-            try:
-                equal = value == obj_type.param[p].default
-            except Exception:
-                equal = False
-            if equal:
-                continue
-            elif isinstance(pobj, Child):
-                value = self._serialize_object(value, objects=objects, refs=refs, depth=depth+1)
-            elif isinstance(pobj, Children):
-                value = [
-                    self._serialize_object(child, objects=objects, refs=refs, depth=depth+1)
-                    for child in value
-                ]
-            else:
-                value = obj.param.serialize_value(p)
-            params[p] = value
-
-        if depth != 0:
-            return {'type': type_spec, **params}
-
+        if isinstance(obj, Dimension):
+            spec = self._serialize_dimension(obj)
+        elif isinstance(obj, DynamicMap):
+            return self._serialize_parameterized(obj[obj._initial_key()], objects, refs, depth)
+        elif isinstance(obj, Dataset):
+            spec = {
+                'type': 'holoviews.core.data.Dataset',
+                'data': '$data' if obj.dataset.data is self.pipeline.data else obj.dataset.data,
+                'operation': self._serialize_parameterized(obj.pipeline, objects, refs, depth+1),
+            }
+        else:
+            spec = super()._serialize_parameterized(obj, objects=objects, refs=refs, depth=depth)
+            if isinstance(obj, Element):
+                spec['data'] = self._serialize_container(obj.data, objects, refs, depth)
+            return spec
         for ref in refs:
             self._finalize_param_ref(ref, objects)
-        return {'type': type_spec, **params}
+        return spec
+
+    @classmethod
+    def _resolve_object(cls, spec, objects=None, unresolved=None, depth=0, as_panel=True):
+        if spec is None:
+            return None
+        elif not isinstance(spec, dict) or 'type' not in spec:
+            return spec
+        elif spec['type'] in ('rx', 'param'):
+            try:
+                return cls._materialize_param_ref(spec, objects=objects)
+            except KeyError:
+                return None
+        if unresolved is None:
+            unresolved = []
+
+        from holoviews.core import (
+            Dataset, Dimensioned, NdMapping, ViewableTree,
+        )
+        from holoviews.element import Annotation
+        spec = dict(spec)
+        spec_type = spec.pop('type')
+        obj_type = resolve_module_reference(spec_type)
+        if obj_type is Dataset:
+            data_spec = spec.pop('data')
+            if data_spec != '$data':
+                raise ValueError("Can only resolve data that is derived directly from the Pipeline.")
+            operation = spec.pop('operation')
+            dataset = Dataset(objects['pipeline'].data, **spec)
+            op = cls._materialize_object(operation, objects, unresolved, depth)
+            obj = op(dataset)
+        elif issubclass(obj_type, (NdMapping, ViewableTree)):
+            items = [
+                (tuple(k), cls._resolve_object(v, objects, unresolved, depth, as_panel=False))
+                for k, v in spec.pop('data').items()
+            ]
+            obj = obj_type(items=items)
+        elif issubclass(obj_type, Annotation):
+            data = spec.pop('data')
+            obj = obj_type(*data, **spec) if isinstance(data, (list, tuple)) else obj_type(data, **spec)
+        else:
+            obj = cls._materialize_object(spec, objects, unresolved, depth)
+        return pn.pane.HoloViews(obj) if as_panel and isinstance(obj, Dimensioned) else obj
+
+    def _get_params(self) -> dict[str, Any]:
+        spec = self.to_spec(context={'pipeline': self.pipeline})
+        del spec['pipeline']
+        obj = self.from_spec(spec, pipeline=self.pipeline).object.object
+        return dict(object=obj)
 
     def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
         spec = super().to_spec(context)
-        spec['object'] = self._serialize_object(self.object)
+        spec['object'] = self._serialize_parameterized(self.object)
         return spec
+
+    @classmethod
+    def from_spec(
+        cls, spec: dict[str, Any] | str, source=None, filters=None, pipeline=None
+    ) -> View:
+        if isinstance(spec, dict) and 'spec' in spec:
+            spec['object'] = spec.pop('spec')
+        return super().from_spec(spec, source=source, filters=filters, pipeline=pipeline)
 
     def get_panel(self):
         return self.object
