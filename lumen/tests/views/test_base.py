@@ -333,10 +333,10 @@ def test_panel_view_roundtrip():
     assert spec == {
         'type': 'panel',
         'object': {
-            'name': f'"{md.name}"',
-            'object': '"TEST"',
+            'name': f'{md.name}',
+            'object': 'TEST',
             'type': 'panel.pane.markup.Markdown',
-            'width': '420',
+            'width': 420,
         }
     }
 
@@ -356,10 +356,10 @@ def test_panel_layout_roundtrip():
     assert spec == {
         'type': 'panel',
         'object': {
-            'name': f'"{column.name}"',
+            'name': f'{column.name}',
             'objects': [
-                {'type': 'panel.pane.markup.Markdown', 'object': '"A"', 'name': f'"{a.name}"'},
-                {'type': 'panel.pane.markup.Markdown', 'object': '"B"', 'name': f'"{b.name}"'}
+                {'type': 'panel.pane.markup.Markdown', 'object': 'A', 'name': f'{a.name}'},
+                {'type': 'panel.pane.markup.Markdown', 'object': 'B', 'name': f'{b.name}'}
             ],
             'type': 'panel.layout.base.Column'
         }
@@ -374,16 +374,16 @@ def test_panel_cross_reference_param():
     assert spec == {
         'type': 'panel',
         'object': {
-            'name': f'"{column.name}"',
+            'name': f'{column.name}',
             'objects': [
                 {
                     'type': 'panel.widgets.input.Checkbox',
-                    'name': f'"{a.name}"'
+                    'name': f'{a.name}'
                 },
                 {
                     'type': 'panel.pane.markup.Markdown',
-                    'object': '"B"',
-                    'name': f'"{b.name}"',
+                    'object': 'B',
+                    'name': f'{b.name}',
                     'visible': {
                         'name': 'value',
                         'owner': 'A',
@@ -403,16 +403,16 @@ def test_panel_cross_reference_rx():
     assert spec == {
         'type': 'panel',
         'object': {
-            'name': f'"{column.name}"',
+            'name': f'{column.name}',
             'objects': [
                 {
                     'type': 'panel.widgets.input.Checkbox',
-                    'name': f'"{a.name}"'
+                    'name': f'{a.name}'
                 },
                 {
                     'type': 'panel.pane.markup.Markdown',
-                    'object': '"B"',
-                    'name': f'"{b.name}"',
+                    'object': 'B',
+                    'name': f'{b.name}',
                     'visible': {
                         'input_obj': None,
                         'kwargs': {},
