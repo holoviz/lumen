@@ -1,6 +1,9 @@
 """Test suite for LLM implementations."""
 
-from lumen.ai.llm import AzureOpenAI
+try:
+	from lumen.ai.llm import AzureOpenAI  # noqa
+except ModuleNotFoundError:
+	pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
 
 async def test_azure_open_ai_get_model_kwargs():
@@ -9,7 +12,7 @@ async def test_azure_open_ai_get_model_kwargs():
         "default": {"model": "d_m", "azure_ad_token_provider": "d_aatp"},
         "other": {"model": "r_m", "azure_ad_token_provider": "r_aatp"},
     }
-    
+
     llm = AzureOpenAI(api_version="av", endpoint="ep", model_kwargs=model_kwargs)
 
     # Test default model inherits instance config
