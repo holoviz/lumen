@@ -21,15 +21,15 @@ lint = ["py311", "lint"]
 [dependencies]
 bokeh = "*"
 holoviews = ">=1.17.0"
-panel-material-ui = ">=0.4.0rc2"
+panel-material-ui = ">=0.4.0"
 hvplot = "*"
 intake = "<2"
 jinja2 = ">3.0"
 numpy = "*"
 packaging = "*"
 pandas = "*"
-panel = ">=1.5.0"
-param = ">=1.9.0"
+panel = ">=1.7.5"
+param = ">=2.2.1"
 pip = "*"
 sqlglot = "*"
 
