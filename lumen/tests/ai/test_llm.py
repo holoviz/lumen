@@ -1,5 +1,7 @@
 """Test suite for LLM implementations."""
 
+import pytest
+
 try:
 	from lumen.ai.llm import AzureOpenAI  # noqa
 except ModuleNotFoundError:
