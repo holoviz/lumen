@@ -221,19 +221,25 @@ class Component(Parameterized):
         return expr
 
     @classmethod
-    def _serialize_container(cls, value, objects, refs, depth):
+    def _serialize_container(cls, value, objects, refs, depth, include_name=True):
         if isinstance(value, dict):
-            value = {k: cls._serialize_container(v, objects, refs, depth) for k, v in value.items()}
+            value = {k: cls._serialize_container(
+                v, objects, refs, depth, include_name=include_name
+            ) for k, v in value.items()}
         elif isinstance(value, list):
             value = [
-                cls._serialize_container(v, objects, refs, depth) for v in value
+                cls._serialize_container(
+                    v, objects, refs, depth, include_name=include_name
+                ) for v in value
             ]
         elif isinstance(value, Parameterized):
-            return cls._serialize_parameterized(cls, value, objects, refs, depth)
+            return cls._serialize_parameterized(
+                cls, value, objects, refs, depth, include_name=include_name
+            )
         return value
 
     @bothmethod
-    def _serialize_parameterized(self, obj, objects=None, refs=None, depth=0):
+    def _serialize_parameterized(self, obj, objects=None, refs=None, depth=0, include_name=True):
         obj_type = type(obj)
         if obj is None:
             return None
@@ -256,7 +262,7 @@ class Component(Parameterized):
                 )
                 refs.append(ref)
                 continue
-            elif p in ('design',):
+            elif p == 'design' or (not include_name and p == 'name'):
                 continue
 
             if value is pobj.default:
@@ -268,14 +274,14 @@ class Component(Parameterized):
             if equal:
                 continue
             elif isinstance(pobj, Child):
-                value = self._serialize_parameterized(value, objects=objects, refs=refs, depth=depth+1)
+                value = self._serialize_parameterized(value, objects=objects, refs=refs, depth=depth+1, include_name=include_name)
             elif isinstance(pobj, Children):
                 value = [
-                    self._serialize_parameterized(child, objects=objects, refs=refs, depth=depth+1)
+                    self._serialize_parameterized(child, objects=objects, refs=refs, depth=depth+1, include_name=include_name)
                     for child in value
                 ]
             elif isinstance(value, (list, dict)):
-                value = self._serialize_container(value, objects, refs, depth)
+                value = self._serialize_container(value, objects, refs, depth, include_name=include_name)
             elif isinstance(value, type):
                 value = {'type': f"{value.__module__}.{value.__name__}", 'instance': False}
             else:
