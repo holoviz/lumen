@@ -52,17 +52,32 @@ class Plan(Section):
 
     interface = param.ClassSelector(class_=ChatFeed)
 
+    def _render_task_history(self, i: int) -> list[Message]:
+        user_query = None
+        for msg in reversed(self.history):
+            if msg.get('role') == 'user':
+                user_query = msg
+                break
+        todos = '\n'.join(
+            f"- [{'x' if idx < i else ' '}] {task.instruction}\n" for idx, task in enumerate(self.subtasks)
+        )
+        formatted_content = f"User Request: {user_query['content']}\n\nTodos:\n\n{todos}"
+        return [
+            {'content': formatted_content, 'role': 'user'} if msg is user_query else msg
+            for msg in self.history
+        ]
+
     async def _run_task(self, i: int, task: Self | Actor, **kwargs):
         outputs = []
         with self.interface.add_step(title=f"{task.title}...", user="Runner", layout_params={"title": "🏗️ Plan Execution Steps"}, steps_layout=self.steps_layout) as step:
             self._coordinator._todos_title.object = f"⚙️ Working on task {task.title!r}..."
             step.stream(f"`Working on task {task.title}`:\n\n{task.instruction}")
-
+            history = self._render_task_history(i)
             try:
                 kwargs = {"agents": self.agents} if 'agents' in task.param else {}
                 with task.param.update(
                     memory=self.memory, interface=self.interface, steps_layout=self.steps_layout,
-                        history=self.history, **kwargs
+                    history=history, **kwargs
                 ):
                     outputs += await task.execute(**kwargs)
             except asyncio.CancelledError as e:

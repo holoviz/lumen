@@ -97,56 +97,8 @@ class Task(Viewer):
         pre = len(self.memory['outputs'])
         outputs = []
         memory = task.memory or self.memory
-        # Extract original user query and build complete todo list from plan
-        original_query = ""
-        plan_steps = []
+        messages = self.history + [{'content': self.instruction, 'role': 'user'}]
 
-        # Get the plan from memory if available
-        plan = self.memory['plan']
-        plan_steps = [(step.actor, step.instruction) for step in plan.steps]
-
-        for msg in reversed(self.history):
-            if msg.get('role') == 'user':
-                content = msg['content']
-                if 'User Request:' in content:
-                    # Extract from existing structured format
-                    lines = content.split('\n')
-                    for line in lines:
-                        if line.startswith('User Request:'):
-                            original_query = line.replace('User Request:', '').strip()
-                            break
-                else:
-                    original_query = content
-                break
-
-        # Build todos from plan steps, marking completed tasks
-        formatted_content = f"User Request: {original_query}\n\nTodos:\n\n"
-
-        current_task_index = None
-        # Find the index of the current task
-        for idx, (_, instruction) in enumerate(plan_steps):
-            if instruction == self.instruction:
-                current_task_index = idx
-                break
-
-        for idx, (_, instruction) in enumerate(plan_steps):
-            if current_task_index is not None and idx < current_task_index:
-                # Tasks before current are completed
-                formatted_content += f"- [x] {instruction}\n"
-            elif instruction == self.instruction:
-                # Current task is pending (about to be executed)
-                formatted_content += f"- [ ] {instruction}\n"
-            else:
-                # Future tasks are also pending
-                formatted_content += f"- [ ] {instruction}\n"
-
-        # Replace last user message with complete todo format
-        messages = []
-        for msg in self.history:
-            if msg.get('role') == 'user':
-                messages.append({'content': formatted_content, 'role': 'user'})
-            else:
-                messages.append(msg)
         with task.param.update(
             interface=self.interface, llm=task.llm or self.llm, memory=memory,
             steps_layout=self.steps_layout
