@@ -191,20 +191,7 @@ class DuckDBSource(BaseSQLSource):
     def _recursive_resolve(
         cls, spec: dict[str, Any], source_type: type[Source]
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        mirrors = spec.pop('mirrors', {})
         spec, refs = super()._recursive_resolve(spec, source_type)
-        resolved_mirrors = {}
-        for table, mirror in mirrors.items():
-            if isinstance(mirror, tuple):
-                src_spec, src_table = mirror
-                source = cls.from_spec(src_spec)
-                resolved_mirrors[table] = (source, src_table)
-            elif mirror.get('type') == 'pipeline':
-                from ..pipeline import Pipeline
-                resolved_mirrors[table] = Pipeline.from_spec(mirror)
-            else:
-                resolved_mirrors[table] = Serializer.deserialize(mirror)
-        spec['mirrors'] = resolved_mirrors
         return spec, refs
 
     def _serialize_tables(self):
@@ -301,6 +288,8 @@ class DuckDBSource(BaseSQLSource):
         else:
             ephemeral_tables = {}
 
+        mirrors = spec.pop("mirrors", {})
+
         source = super().from_spec(spec)
         if not ephemeral_tables:
             return source
@@ -313,6 +302,19 @@ class DuckDBSource(BaseSQLSource):
                 continue
             new_tables[t] = source.sql_expr.format(table=t)
         source.tables = new_tables
+
+        resolved_mirrors = {}
+        for table, mirror in mirrors.items():
+            if isinstance(mirror, tuple):
+                src_spec, src_table = mirror
+                source = cls.from_spec(src_spec)
+                resolved_mirrors[table] = (source, src_table)
+            elif mirror.get('type') == 'pipeline':
+                from ..pipeline import Pipeline
+                resolved_mirrors[table] = Pipeline.from_spec(mirror)
+            else:
+                resolved_mirrors[table] = Serializer.deserialize(mirror)
+        spec['mirrors'] = resolved_mirrors
         return source
 
     def create_sql_expr_source(
