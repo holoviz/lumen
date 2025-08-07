@@ -4,7 +4,6 @@ import asyncio
 import re
 import traceback
 
-from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
 import param
@@ -55,7 +54,7 @@ class Plan(Section):
 
     async def _run_task(self, i: int, task: Self | Actor, **kwargs):
         outputs = []
-        with self.interface.add_step(title=f"{task.title}...", user="Runner", layout_params={"title": "🏗️ Plan Execution Steps"}, steps_layout=self.steps_layout, collapsed=True) as step:
+        with self.interface.add_step(title=f"{task.title}...", user="Runner", layout_params={"title": "🏗️ Plan Execution Steps"}, steps_layout=self.steps_layout) as step:
             self._coordinator._todos_title.object = f"⚙️ Working on task {task.title!r}..."
             step.stream(f"`Working on task {task.title}`:\n\n{task.instruction}")
 
