@@ -52,7 +52,7 @@ class Plan(Section):
 
     interface = param.ClassSelector(class_=ChatFeed)
 
-    def _render_task_history(self, i: int) -> list[Message]:
+    def _render_task_history(self, i: int) -> tuple[list[Message], str]:
         user_query = None
         for msg in reversed(self.history):
             if msg.get('role') == 'user':
@@ -65,14 +65,16 @@ class Plan(Section):
         return [
             {'content': formatted_content, 'role': 'user'} if msg is user_query else msg
             for msg in self.history
-        ]
+        ], todos
 
     async def _run_task(self, i: int, task: Self | Actor, **kwargs):
         outputs = []
         with self.interface.add_step(title=f"{task.title}...", user="Runner", layout_params={"title": "🏗️ Plan Execution Steps"}, steps_layout=self.steps_layout) as step:
             self._coordinator._todos_title.object = f"⚙️ Working on task {task.title!r}..."
             step.stream(f"`Working on task {task.title}`:\n\n{task.instruction}")
-            history = self._render_task_history(i)
+            history, todos = self._render_task_history(i)
+            todos_obj = self._coordinator._todos
+            todos_obj.object = todos
             try:
                 kwargs = {"agents": self.agents} if 'agents' in task.param else {}
                 with task.param.update(
@@ -94,19 +96,13 @@ class Plan(Section):
             log_debug(f"\033[96mCompleted: {task.title}\033[0m", show_length=False)
             step.stream(f"\n\nSuccessfully completed task {task.title}:\n\n> {task.instruction}", replace=True)
             step.success_title = f"{task.title} successfully completed"
-
-            todos_obj = self._coordinator._todos
-            updated_todos = ""
-            for idx, subtask in enumerate(self.subtasks):
-                if idx <= i:
-                    # Completed tasks
-                    updated_todos += f"- [x] {subtask.instruction}\n"
-                else:
-                    # Future tasks
-                    updated_todos += f"- [ ] {subtask.instruction}\n"
-            todos_obj.object = updated_todos
-
         return outputs
+
+    async def execute(self, **kwargs):
+        ret = await super().execute(**kwargs)
+        _, todos = self._render_task_history(len(self.subtasks))
+        self._coordinator._todos.object = todos
+        return ret
 
 
 class Coordinator(Viewer, VectorLookupToolUser):
