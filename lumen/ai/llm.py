@@ -494,18 +494,26 @@ class AzureOpenAI(Llm):
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
+    def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
+        model_kwargs = super()._get_model_kwargs(model_spec)
+
+        # specific values takes precedence over default values
+        if self.api_version:
+            model_kwargs["api_version"] = model_kwargs.get("api_version", self.api_version)
+        if self.api_key:
+            model_kwargs["api_key"] = model_kwargs.get("api_key", self.api_key)
+        if self.endpoint:
+            model_kwargs["azure_endpoint"] = model_kwargs.get("azure_endpoint", self.endpoint)
+
+        return model_kwargs
+
     async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         import openai
 
         model_kwargs = self._get_model_kwargs(model_spec)
         model = model_kwargs.pop("model")
         mode = model_kwargs.pop("mode", self.mode)
-        if self.api_version:
-            model_kwargs["api_version"] = self.api_version
-        if self.api_key:
-            model_kwargs["api_key"] = self.api_key
-        if self.endpoint:
-            model_kwargs["azure_endpoint"] = self.endpoint
+
         llm = openai.AsyncAzureOpenAI(**model_kwargs)
 
         if self.interceptor:
