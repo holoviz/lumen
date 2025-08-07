@@ -16,7 +16,7 @@ from panel.config import config, panel_extension
 from panel.io.document import hold
 from panel.io.resources import CSS_URLS
 from panel.io.state import state
-from panel.layout import Column as PnColumn
+from panel.layout import Column as PnColumn, HSpacer
 from panel.pane import SVG, Markdown
 from panel.param import ParamMethod
 from panel.util import edit_readonly
@@ -24,8 +24,8 @@ from panel.viewable import Child, Children, Viewer
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
     Button, ChatFeed, ChatInterface, ChatMessage, Chip, Column, Dialog,
-    Divider, FileDownload, MenuList, MultiChoice, Page, Paper, Row, Switch,
-    Tabs, ToggleIcon,
+    Divider, FileDownload, MenuList, MenuToggle, MultiChoice, Page, Paper, Row,
+    Switch, Tabs, ToggleIcon,
 )
 
 from ..pipeline import Pipeline
@@ -319,13 +319,33 @@ class UI(Viewer):
         if levels.get(self.log_level) < 20:
             self.interface.callback_exception = "verbose"
         self.interface.disabled = True
-        self._verbose_toggle = Switch(
-            label="Verbose",
-            value=False,
+        # Create consolidated settings menu toggle
+        self._settings_menu = MenuToggle(
+            items=[
+                {
+                    'label': 'Chain of Thought',
+                    'icon': 'visibility_off',
+                    'active_icon': 'visibility',
+                    'toggled': False
+                },
+                {
+                    'label': 'SQL Planning',
+                    'icon': 'close',
+                    'active_icon': 'check',
+                    'toggled': True
+                }
+            ],
+            align="center",
             color="light",
-            margin=(18, 10, 10, 15),
-            size="small"
+            description="Setings",
+            icon="settings",
+            size="large",
+            margin=(0, 5, 0, 5),
+            persistent=True,
+            sx={'.MuiButton-startIcon': {'mr': 0}},
+            variant='text'
         )
+        self._settings_menu.param.watch(self._toggle_sql_planning, 'toggled')
         self._coordinator = self.coordinator(
             agents=agents,
             interface=self.interface,
@@ -335,7 +355,7 @@ class UI(Viewer):
             within_ui=True,
             vector_store=self.vector_store,
             document_vector_store=self.document_vector_store,
-            verbose=self._verbose_toggle.param.value,
+            verbose=self._settings_menu.param.toggled.rx().rx.pipe(lambda toggled: 0 in toggled),
             **self.coordinator_params
         )
         self._notebook_export = FileDownload(
@@ -364,23 +384,25 @@ class UI(Viewer):
         self._source_agent = next((agent for agent in self._coordinator.agents if isinstance(agent, SourceAgent)), None)
         # Create LLM status chip
         self._llm_chip = Chip(
-            object="Loading LLM...",
+            object="Manage LLM:",
             icon="auto_awesome",
-            color="primary",
             align="center",
+            color="light",
             margin=(0, 5, 0, 10),
             on_click=self._open_llm_dialog,
             loading=True,
+            variant="outlined"
         )
 
         self._data_sources_chip = Chip(
             object="Loading Data Sources",
             icon="cloud_upload",
-            color="primary",
             align="center",
+            color="light",
             on_click=self._open_sources_dialog,
             margin=(0, 5, 0, 5),
             loading=True,
+            variant="outlined"
         )
         self._table_lookup_tool = None  # Will be set after coordinator is initialized
         self._source_catalog = SourceCatalog()
@@ -599,15 +621,16 @@ class UI(Viewer):
             panel_extension(
                 *{ext for agent in self._coordinator.agents for ext in agent._extensions}
             )
-            page = Page(
+            self._page = Page(
                 css_files=['https://fonts.googleapis.com/css2?family=Nunito:wght@700'],
                 title=self.title,
                 header=[
                     self._llm_chip,
                     self._data_sources_chip,
-                    *([self._report_toggle] if self._report_toggle else []),
+                    HSpacer(),
                     self._exports,
-                    self._verbose_toggle,
+                    *([self._report_toggle] if self._report_toggle else []),
+                    self._settings_menu,
                     Divider(
                         orientation="vertical", height=30, margin=(17, 0, 17, 5),
                         sx={'border-color': 'white', 'border-width': '1px'}
@@ -618,8 +641,8 @@ class UI(Viewer):
                 sidebar_open=False,
                 sidebar_variant="temporary",
             )
-            page.servable()
-            return page
+            self._page.servable()
+            return self._page
         return super()._create_view()
 
     def _trigger_source_agent(self, event=None):
@@ -747,13 +770,13 @@ class ExplorerUI(UI):
         self._report_toggle = ToggleIcon(
             icon="chat",
             active_icon="summarize",
+            color="light",
             description="Toggle Report Mode",
             value=False,
-            styles={"margin-left": "auto"},
-            sx={".MuiIcon-root": {"color": "white"}},
-            margin=(12, 0, 10, 0)
+            margin=(13, 0, 10, 0)
         )
-        self._report_toggle.param.watch(self._toggle_report, ['value'])
+        self._report_toggle.param.watch(self._toggle_report_mode, ['value'])
+
         self._last_synced = self._home = Exploration(
             context=memory,
             title='Home',
@@ -826,7 +849,8 @@ class ExplorerUI(UI):
             items.append(item)
         self._explorations.items = items
 
-    def _toggle_report(self, event):
+    def _toggle_report_mode(self, event):
+        """Toggle between regular and report mode."""
         if event.new:
             self._exports[0] = self._global_notebook_export
             self._main[:] = [Report(
@@ -837,6 +861,18 @@ class ExplorerUI(UI):
         else:
             self._exports[0] = self._notebook_export
             self._main[:] = [self._split]
+
+    def _toggle_sql_planning(self, event: param.Event):
+        """Toggle SQL planning mode for SQLAgent."""
+        planning_enabled = 1 in event.new
+
+        # Update the SQLAgent directly if it exists
+        sql_agent = next(
+            (agent for agent in self._coordinator.agents if isinstance(agent, SQLAgent)),
+            None
+        )
+        if sql_agent:
+            sql_agent.planning_enabled = planning_enabled
 
     def _delete_exploration(self, item):
         self._explorations.items = [it for it in self._explorations.items if it is not item]
