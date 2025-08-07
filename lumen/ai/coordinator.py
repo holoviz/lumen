@@ -4,8 +4,7 @@ import asyncio
 import re
 import traceback
 
-from copy import deepcopy
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any
 
 import param
 
@@ -15,9 +14,10 @@ from panel.layout import FlexBox
 from panel.pane import HTML
 from panel.viewable import Viewer
 from panel_material_ui import (
-    Button, Card, ChatInterface, ChatStep, Column, Tabs,
+    Button, Card, ChatInterface, ChatStep, Column, Tabs, Typography,
 )
 from pydantic import BaseModel
+from typing_extensions import Self
 
 from .actor import Actor
 from .agents import Agent, AnalysisAgent, ChatAgent
@@ -31,9 +31,7 @@ from .report import Section, Task
 from .tools import (
     IterativeTableLookup, TableLookup, Tool, VectorLookupToolUser,
 )
-from .utils import (
-    fuse_messages, log_debug, mutate_user_message, stream_details,
-)
+from .utils import fuse_messages, log_debug, stream_details
 from .views import AnalysisOutput
 
 if TYPE_CHECKING:
@@ -54,16 +52,34 @@ class Plan(Section):
 
     interface = param.ClassSelector(class_=ChatFeed)
 
+    def _render_task_history(self, i: int) -> tuple[list[Message], str]:
+        user_query = None
+        for msg in reversed(self.history):
+            if msg.get('role') == 'user':
+                user_query = msg
+                break
+        todos = '\n'.join(
+            f"- [{'x' if idx < i else ' '}] {task.instruction}\n" for idx, task in enumerate(self.subtasks)
+        )
+        formatted_content = f"User Request: {user_query['content']}\n\nTodos:\n\n{todos}"
+        return [
+            {'content': formatted_content, 'role': 'user'} if msg is user_query else msg
+            for msg in self.history
+        ], todos
+
     async def _run_task(self, i: int, task: Self | Actor, **kwargs):
         outputs = []
         with self.interface.add_step(title=f"{task.title}...", user="Runner", layout_params={"title": "🏗️ Plan Execution Steps"}, steps_layout=self.steps_layout) as step:
-            self.steps_layout.title = f"⚙️ Working on task {task.title!r}..."
+            self._coordinator._todos_title.object = f"⚙️ Working on task {task.title!r}..."
             step.stream(f"`Working on task {task.title}`:\n\n{task.instruction}")
+            history, todos = self._render_task_history(i)
+            todos_obj = self._coordinator._todos
+            todos_obj.object = todos
             try:
                 kwargs = {"agents": self.agents} if 'agents' in task.param else {}
                 with task.param.update(
                     memory=self.memory, interface=self.interface, steps_layout=self.steps_layout,
-                        history=self.history, **kwargs
+                    history=history, **kwargs
                 ):
                     outputs += await task.execute(**kwargs)
             except asyncio.CancelledError as e:
@@ -81,6 +97,12 @@ class Plan(Section):
             step.stream(f"\n\nSuccessfully completed task {task.title}:\n\n> {task.instruction}", replace=True)
             step.success_title = f"{task.title} successfully completed"
         return outputs
+
+    async def execute(self, **kwargs):
+        ret = await super().execute(**kwargs)
+        _, todos = self._render_task_history(len(self.subtasks))
+        self._coordinator._todos.object = todos
+        return ret
 
 
 class Coordinator(Viewer, VectorLookupToolUser):
@@ -481,12 +503,14 @@ class Coordinator(Viewer, VectorLookupToolUser):
                     history=messages, memory=self._memory, interface=self.interface,
                     steps_layout=self.steps_layout, agents=list(agents.values())
                 ):
+                    # Pass coordinator reference to plan for todo updates
+                    plan._coordinator = self
                     await plan.execute()
 
             if plan.status == 'success':
-                self.steps_layout.title = f"✅ Sucessfully completed {plan.title!r}"
+                self._todos_title.object = f"✅ Sucessfully completed {plan.title!r}"
             else:
-                self.steps_layout.title = f"❌ Failed to execute {plan.title!r}"
+                self._todos_title.object = f"❌ Failed to execute {plan.title!r}"
 
             if "pipeline" in self._memory:
                 await self._add_analysis_suggestions()
@@ -840,13 +864,9 @@ class Planner(Coordinator):
                     self._memory["reasoning"] = reasoning.chain_of_thought
                     step.stream(reasoning.chain_of_thought, replace=True)
                     previous_plans.append(reasoning.chain_of_thought)
-        mutated_messages = mutate_user_message(
-            f"Follow this latest plan: {reasoning.chain_of_thought!r} to finish answering: ",
-            deepcopy(messages),
-            suffix=False,
-            wrap=True,
-        )
-        return await self._fill_model(mutated_messages, system, plan_model)
+
+        system_with_plan = system + f"\n\n# Plan to Follow\n{reasoning.chain_of_thought}"
+        return await self._fill_model(messages, system_with_plan, plan_model)
 
     async def _resolve_plan(
         self,
@@ -1014,10 +1034,13 @@ class Planner(Coordinator):
         previous_plans, previous_actors = [], []
         attempts = 0
         plan = None
+
+        self._todos_title = Typography("📋 Building checklist...", css_classes=["todos-title"], margin=0, styles={"font-weight": "normal", "font-size": "1.1em"})
+        self._todos = Typography(css_classes=["todos"], margin=0, styles={"font-weight": "normal"})
         with self.interface.param.update(callback_exception="raise"):
             with self.interface.add_step(
                 title="Planning how to solve user query...", user="Planner",
-                layout_params={"title": "📝 Planning out tasks", "collapsed": not self.verbose}
+                layout_params={"header": Column(self._todos_title, self._todos), "collapsed": not self.verbose}
             ) as istep:
                 self.steps_layout = self.interface.objects[-1].object
                 while not planned:
@@ -1030,17 +1053,16 @@ class Planner(Coordinator):
                             plan_model, istep, is_follow_up=pre_plan_output["is_follow_up"]
                         )
                     except asyncio.CancelledError as e:
-                        self.steps_layout.title = istep.failed_title = 'Planning was cancelled, please try again.'
+                        self._todos_title.object = istep.failed_title = 'Planning was cancelled, please try again.'
                         traceback.print_exception(e)
                         raise e
                     except Exception as e:
-                        self.steps_layout.title = istep.failed_title = 'Failed to make plan. Ensure LLM is configured correctly and/or try again.'
+                        self._todos_title.object = istep.failed_title = 'Failed to make plan. Ensure LLM is configured correctly and/or try again.'
                         traceback.print_exception(e)
                         raise e
                     plan, unmet_dependencies, previous_actors = await self._resolve_plan(
                         raw_plan, agents, tools, messages, previous_actors
                     )
-                    self.steps_layout.title = f"📋 Planned out steps for {plan.title!r}"
                     if unmet_dependencies:
                         istep.stream(f"The plan didn't account for {unmet_dependencies!r}", replace=True)
                         attempts += 1
@@ -1048,14 +1070,14 @@ class Planner(Coordinator):
                         planned = True
                     if attempts > 5:
                         istep.failed_title = "Planning failed to come up with viable plan, please restate the problem and try again."
-                        self.steps_layout.title = "❌ Planning failed"
+                        self._todos_title.object = "❌ Planning failed"
                         e = RuntimeError("Planner failed to come up with viable plan after 5 attempts.")
                         traceback.print_exception(e)
                         raise e
             self._memory["plan"] = raw_plan
-            istep.stream('\n\nHere are the steps:\n\n')
-            for i, step in enumerate(raw_plan.steps):
-                istep.stream(f"{i+1}. {step.actor}: {step.instruction}\n")
+
+            # Store the todo message reference for later updates
+            self._todo_step = istep
             if attempts > 0:
                 istep.success_title = f"Plan with {len(raw_plan.steps)} steps created after {attempts + 1} attempts"
             else:

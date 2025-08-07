@@ -4,7 +4,6 @@ import traceback as tb
 
 from functools import partial
 from types import FunctionType
-from typing import Self
 
 import panel as pn
 import param
@@ -19,6 +18,7 @@ from panel_material_ui import (
     FileDownload, IconButton, Progress, Tabs, TextAreaInput, TextInput,
     Typography,
 )
+from typing_extensions import Self
 
 from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource
@@ -135,6 +135,7 @@ class Task(Viewer):
         outputs = []
         memory = task.memory or self.memory
         messages = self.history + [{'content': self.instruction, 'role': 'user'}]
+
         with task.param.update(
             interface=self.interface, llm=task.llm or self.llm, memory=memory,
             steps_layout=self.steps_layout

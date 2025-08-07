@@ -14,6 +14,7 @@ import yaml
 
 from panel.chat import ChatInterface
 from panel.viewable import Viewable, Viewer
+from panel_material_ui import Button
 from panel_material_ui.chat import ChatMessage
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
@@ -128,7 +129,6 @@ class Agent(Viewer, ToolUser, ContextProvider):
         message = None
         model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
         async for output_chunk in self.llm.stream(messages, system=system_prompt, model_spec=model_spec, field="output"):
-
             if self.interface is None:
                 if message is None:
                     message = ChatMessage(output_chunk, user=self.user)
@@ -187,11 +187,10 @@ class SourceAgent(Agent):
 
     conditions = param.List(
         default=[
-            "Use ONLY when user explicitly asks to upload or connect to NEW data sources",
-            "Do NOT use if data sources already exist UNLESS user explicitly requests upload",
+            "Use ONLY when user explicitly asks to upload or connect to NEW data sources (NOT if data sources already exist)",
         ])
 
-    purpose = param.String(default="Allows a user to upload new datasets, tables, or documents.")
+    purpose = param.String(default="Allows a user to upload new datasets, data, or documents.")
 
     requires = param.List(default=[], readonly=True)
 
@@ -232,12 +231,9 @@ class ChatAgent(Agent):
 
     conditions = param.List(
         default=[
-            "Best for high-level information about data or general conversation",
-            "Can be used to describe available tables",
-            "Use for technical questions about programming, functions, methods, or libraries",
-            "Use for 'how to' questions about specific functions or code usage",
-            "Use for questions about software tools, APIs, or programming concepts",
-            "Not useful for answering data specific questions that require querying tables",
+            "Use for high-level data information or general conversation",
+            "Use for technical questions about programming, functions, methods, libraries, APIs, software tools, or 'how to' code usage",
+            "NOT for data-specific questions that require querying data",
         ]
     )
 
@@ -277,9 +273,7 @@ class AnalystAgent(ChatAgent):
     conditions = param.List(
         default=[
             "Use for interpreting and analyzing results from executed queries",
-            "Use to explain trends, patterns, or relationships in query results",
-            "NOT for initial data queries or table exploration",
-            "NOT for technical programming questions",
+            "NOT for initial data queries, data exploration, or technical programming questions",
         ]
     )
 
@@ -393,26 +387,24 @@ class ListAgent(Agent):
 
 class TableListAgent(ListAgent):
     """
-    The TableListAgent lists all available tables and lets the user pick one.
+    The TableListAgent lists all available data and lets the user pick one.
     """
 
     conditions = param.List(default=[
-        "Use when user explicitly asks to 'list tables', 'show available tables', or 'what tables do you have'",
-        "Use for listing available data tables & datasets in source to the user, but not for planning",
-        "NOT for showing actual table contents or data within tables",
-        "NOT when user wants to query or analyze table data",
+        "Use when user explicitly asks to 'list data', 'show available data', or 'what data do you have'",
+        "NOT for showing actual data contents, querying, or analyzing data",
     ])
 
     not_with = param.List(default=["DbtslAgent", "SQLAgent"])
 
     purpose = param.String(default="""
-        Displays a list of all available tables & datasets in memory. Not useful for identifying which table to use for analysis.""")
+        Displays a list of all available data & datasets in memory. Not useful for identifying which dataset to use for analysis.""")
 
     requires = param.List(default=["source"], readonly=True)
 
-    _column_name = "Table"
+    _column_name = "Data"
 
-    _message_format = "Show the table: {item}"
+    _message_format = "Show the data: {item}"
 
     @classmethod
     async def applies(cls, memory: _Memory) -> bool:
@@ -455,8 +447,7 @@ class DocumentListAgent(ListAgent):
 
     conditions = param.List(
         default=[
-            "Use when user explicitly asks to 'list documents', 'show available documents', or 'what documents do you have'",
-            "Use when user wants to see all uploaded documents",
+            "Use when user asks to list or see all available documents",
             "NOT when user asks about specific document content",
         ]
     )
@@ -568,13 +559,10 @@ class LumenBaseAgent(Agent):
 class SQLAgent(LumenBaseAgent):
     conditions = param.List(
         default=[
-            "Use when user asks about data contained in tables (e.g., 'show me sales data', 'filter by date')",
-            "Use for calculations that require data from tables (e.g., 'calculate average', 'sum by category')",
-            "Use when user wants to display or examine table contents",
+            "Use for displaying, examining, or querying data",
+            "Use for calculations that require data (e.g., 'calculate average', 'sum by category')",
             "Commonly used with AnalystAgent to analyze query results",
-            "For existing tables, only use if additional calculations are needed",
-            "NOT for technical questions about programming, functions, or libraries",
-            "NOT for questions that don't require data table access",
+            "NOT for non-data questions or technical programming help",
             "NOT useful if the user is using the same data for plotting",
             "If sql_metaset is not in memory, use with IterativeTableLookup",
         ]
@@ -587,9 +575,12 @@ class SQLAgent(LumenBaseAgent):
 
     not_with = param.List(default=["DbtslAgent", "TableLookup", "TableListAgent"])
 
+    planning_enabled = param.Boolean(default=True, doc="""
+        Whether to enable SQL planning mode. When False, only attempts oneshot SQL generation.""")
+
     purpose = param.String(
         default="""
-        Handles the display of tables and the creation, modification, and execution
+        Handles the display of data and the creation, modification, and execution
         of SQL queries to address user queries about the data. Executes queries in
         a single step, encompassing tasks such as table joins, filtering, aggregations,
         and calculations. If additional columns are required, SQLAgent can join the
@@ -704,7 +695,7 @@ class SQLAgent(LumenBaseAgent):
                 step.stream(f"\n\n⚠️ SQL validation failed (attempt {i+1}/{max_retries}): {e}")
                 feedback = f"{type(e).__name__}: {e!s}"
                 if "KeyError" in feedback:
-                    feedback += " The table does not exist; select from available tables."
+                    feedback += " The data does not exist; select from available data sources."
 
                 retry_result = await self._retry_output_by_line(
                     feedback, messages, self._memory, sql_query, language=f"sql.{dialect}"
@@ -743,7 +734,7 @@ class SQLAgent(LumenBaseAgent):
             summary = summary[:1000-3] + "..."
         summary_formatted = f"\n```\n{summary}\n```"
         if should_materialize:
-            summary_formatted += f"\n\nMaterialized table: `{sql_expr_source.name}{SOURCE_TABLE_SEPARATOR}{expr_slug}`"
+            summary_formatted += f"\n\nMaterialized data: `{sql_expr_source.name}{SOURCE_TABLE_SEPARATOR}{expr_slug}`"
         stream_details(f"{summary_formatted}", step, title=expr_slug)
 
         return pipeline, sql_expr_source, summary
@@ -917,7 +908,7 @@ class SQLAgent(LumenBaseAgent):
         base_context = ""
         if materialized_tables:
             recent_tables = materialized_tables[-5:]  # Keep only recent 5 tables
-            base_context = "**Available Materialized Tables (for reuse):**\n"
+            base_context = "**Available Materialized Data (for reuse):**\n"
             for table in recent_tables:
                 base_context += f"- `{table}`\n"
             if len(materialized_tables) > 5:
@@ -1159,9 +1150,13 @@ class SQLAgent(LumenBaseAgent):
         tables_to_source, source = self._setup_source(sources)
 
         try:
-            # Try one-shot approach first; if empty or fails, fallback to planning mode
+            # Try one-shot approach first
             pipeline = await self._attempt_oneshot_sql(messages, source, step_title)
         except Exception as e:
+            if not self.planning_enabled:
+                # If planning is disabled, re-raise the error instead of falling back
+                raise e
+            # Fall back to planning mode if enabled
             messages = mutate_user_message(str(e), messages)
             pipeline = await self._execute_planning_mode(messages, source, step_title)
         return pipeline
@@ -1181,7 +1176,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
 
     purpose = param.String(
         default="""
-        Responsible for displaying tables to answer user queries about
+        Responsible for displaying data to answer user queries about
         business metrics using dbt Semantic Layers. This agent can compile
         and execute metric queries against a dbt Semantic Layer."""
     )
@@ -1483,10 +1478,8 @@ class BaseViewAgent(LumenBaseAgent):
 class hvPlotAgent(BaseViewAgent):
     conditions = param.List(
         default=[
-            "Use for exploratory data analysis and interactive plots",
+            "Use for exploratory data analysis, interactive plots, and dynamic filtering",
             "Use for quick, iterative data visualization during analysis",
-            "Use when user requests plots or charts for data exploration",
-            "Use for interactive widgets and dynamic filtering",
         ]
     )
 
@@ -1546,8 +1539,7 @@ class hvPlotAgent(BaseViewAgent):
 class VegaLiteAgent(BaseViewAgent):
     conditions = param.List(
         default=[
-            "Use for explanatory, publication-ready visualizations",
-            "Use when user specifically requests Vega-Lite charts",
+            "Use for publication-ready visualizations or when user specifically requests Vega-Lite charts",
             "Use for polished charts intended for presentation or sharing",
         ]
     )
@@ -1710,9 +1702,8 @@ class AnalysisAgent(LumenBaseAgent):
 
     conditions = param.List(
         default=[
-            "Use when user requests custom analysis or advanced analytics",
+            "Use for custom analysis, advanced analytics, or domain-specific analysis methods",
             "Use when built-in SQL/visualization agents are insufficient",
-            "Use when user wants to apply domain-specific analysis methods",
             "NOT for simple queries or basic visualizations",
         ]
     )
@@ -1835,10 +1826,8 @@ class ValidationAgent(Agent):
     conditions = param.List(
         default=[
             "Use to validate whether executed plans fully answered user queries",
-            "Use when plan execution is complete but validation is needed",
             "Use to identify missing elements from the original user request",
-            "NOT for data analysis or pattern identification",
-            "NOT for technical programming questions",
+            "NOT for data analysis, pattern identification, or technical programming questions",
         ]
     )
 
@@ -1900,7 +1889,7 @@ class ValidationAgent(Agent):
             for i, suggestion in enumerate(result.suggestions, 1):
                 response_parts.append(f"{i}. {suggestion}")
 
-        button = pn.widgets.Button(name="Rerun", on_click=on_click)
+        button = Button(name="Rerun", on_click=on_click)
         footer_objects = [button]
         formatted_response = "\n\n".join(response_parts)
         self.interface.stream(formatted_response, user=self.user, max_width=self._max_width, footer_objects=footer_objects)
