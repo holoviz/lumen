@@ -98,6 +98,7 @@ class Task(Viewer):
         outputs = []
         memory = task.memory or self.memory
         messages = self.history + [{'content': self.instruction, 'role': 'user'}]
+
         with task.param.update(
             interface=self.interface, llm=task.llm or self.llm, memory=memory,
             steps_layout=self.steps_layout
