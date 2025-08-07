@@ -24,8 +24,8 @@ from panel.viewable import Child, Children, Viewer
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
     Button, ChatFeed, ChatInterface, ChatMessage, Chip, Column, Dialog,
-    FileDownload, MenuList, MenuToggle, MultiChoice, Page, Paper, Row, Switch,
-    Tabs,
+    Divider, FileDownload, MenuList, MenuToggle, MultiChoice, Page, Paper, Row,
+    Switch, Tabs, ToggleIcon,
 )
 
 from ..pipeline import Pipeline
@@ -321,21 +321,31 @@ class UI(Viewer):
         self.interface.disabled = True
         # Create consolidated settings menu toggle
         self._settings_menu = MenuToggle(
-            label="Toggles",
-            icon="settings",
-            color="primary",
-            margin=(0, 5, 0, 5),
+            items=[
+                {
+                    'label': 'Chain of Thought',
+                    'icon': 'visibility_off',
+                    'active_icon': 'visibility',
+                    'toggled': False
+                },
+                {
+                    'label': 'SQL Planning',
+                    'icon': 'close',
+                    'active_icon': 'check',
+                    'toggled': True
+                }
+            ],
             align="center",
+            color="light",
+            description="Setings",
+            icon="settings",
+            size="large",
+            margin=(0, 5, 0, 5),
             persistent=True,
-            on_click=self._handle_settings_click,
-            sizing_mode='fixed',
-            width=200,
-            sx={
-                'borderRadius': '0.375rem',  # Less rounded corners
-                'boxShadow': 'var(--mui-shadows-2)',  # MUI shadow variable
-                'fontSize': '0.8125rem'  # Consistent font size in em
-            }
+            sx={'.MuiButton-startIcon': {'mr': 0}},
+            variant='text'
         )
+        self._settings_menu.param.watch(self._toggle_sql_planning, 'toggled')
         self._coordinator = self.coordinator(
             agents=agents,
             interface=self.interface,
@@ -376,37 +386,23 @@ class UI(Viewer):
         self._llm_chip = Chip(
             object="Manage LLM:",
             icon="auto_awesome",
-            color="primary",
             align="center",
+            color="light",
             margin=(0, 5, 0, 10),
             on_click=self._open_llm_dialog,
             loading=True,
-            sizing_mode='fixed',
-            width=200,
-            sx={
-                'borderRadius': '0.375rem',  # Less rounded corners
-                'boxShadow': 'var(--mui-shadows-2)',  # MUI shadow variable
-                'paddingY': '1.125rem',  # More vertical padding in rem
-                'fontSize': '0.8125rem'  # Consistent font size in rem
-            }
+            variant="outlined"
         )
 
         self._data_sources_chip = Chip(
             object="Loading Data Sources",
             icon="cloud_upload",
-            color="primary",
             align="center",
+            color="light",
             on_click=self._open_sources_dialog,
             margin=(0, 5, 0, 5),
             loading=True,
-            sizing_mode='fixed',
-            width=180,
-            sx={
-                'borderRadius': '0.375rem',  # Less rounded corners
-                'boxShadow': 'var(--mui-shadows-2)',  # MUI shadow variable
-                'paddingY': '1.125rem',  # More vertical padding in rem
-                'fontSize': '0.8125rem'  # Consistent font size in rem
-            }
+            variant="outlined"
         )
         self._table_lookup_tool = None  # Will be set after coordinator is initialized
         self._source_catalog = SourceCatalog()
@@ -631,9 +627,14 @@ class UI(Viewer):
                 header=[
                     self._llm_chip,
                     self._data_sources_chip,
-                    self._settings_menu,
                     HSpacer(),
                     self._exports,
+                    *([self._report_toggle] if self._report_toggle else []),
+                    self._settings_menu,
+                    Divider(
+                        orientation="vertical", height=30, margin=(17, 0, 17, 5),
+                        sx={'border-color': 'white', 'border-width': '1px'}
+                    )
                 ],
                 main=[self._main, self._sources_dialog_content, self._llm_dialog],
                 sidebar=[] if self._sidebar is None else [self._sidebar],
@@ -774,44 +775,15 @@ class ExplorerUI(UI):
             sizing_mode='stretch_width',
             visible=self._explorations.param["items"].rx.bool().rx.not_()
         )
-        # Override the settings menu to include all toggles
-        self._settings_menu.items = [
-            {
-                'label': 'Chain of Thought',
-                'icon': 'visibility_off',
-                'active_icon': 'visibility',
-                'toggled': False
-            },
-            {
-                'label': 'SQL Planning',
-                'icon': 'close',
-                'active_icon': 'check',
-                'toggled': True
-            },
-            None,
-            {
-                'label': 'Chat / Report',
-                'icon': 'chat',
-                'active_icon': 'summarize',
-                'toggled': False
-            },
-            {
-                'label': 'Explorations',
-                'icon': 'menu',
-                'active_icon': 'menu_open',
-                'toggled': False
-            },
-            {
-                'label': 'Artifacts',
-                'icon': 'arrow_forward_ios_new',
-                'active_icon': 'arrow_back_ios_new',
-                'toggled': False
-            },
-        ]
-        self._report_toggle = None  # Keep for compatibility
-
-        # Watch for toggle changes to handle report mode
-        self._settings_menu.param.watch(self._handle_explorer_settings_toggle, 'toggled')
+        self._report_toggle = ToggleIcon(
+            icon="chat",
+            active_icon="summarize",
+            color="light",
+            description="Toggle Report Mode",
+            value=False,
+            margin=(13, 0, 10, 0)
+        )
+        self._report_toggle.param.watch(self._toggle_report_mode, ['value'])
 
         self._last_synced = self._home = Exploration(
             context=memory,
@@ -885,46 +857,9 @@ class ExplorerUI(UI):
             items.append(item)
         self._explorations.items = items
 
-    def _get_report_mode_value(self):
-        """Get the current report mode toggle state from the settings menu."""
-        return 1 in self._settings_menu.toggled
-
-    def _handle_explorer_settings_toggle(self, event):
-        """Handle toggle changes in the settings menu for ExplorerUI."""
-        # Check if Report Mode toggle changed (index 1)
-        old_report_mode = 1 in (event.old or [])
-        new_report_mode = 1 in (event.new or [])
-
-        if old_report_mode != new_report_mode:
-            self._toggle_report_mode()
-
-        # Check if Sidebar toggle changed (index 2)
-        old_sidebar = 2 in (event.old or [])
-        new_sidebar = 2 in (event.new or [])
-
-        if old_sidebar != new_sidebar:
-            self._toggle_sidebar()
-
-        # Check if Split Panel toggle changed (index 3)
-        old_split = 3 in (event.old or [])
-        new_split = 3 in (event.new or [])
-
-        if old_split != new_split:
-            self._toggle_split_panel()
-
-        # Check if SQL Planning toggle changed (index 4)
-        old_sql_planning = 4 in (event.old or [])
-        new_sql_planning = 4 in (event.new or [])
-
-        if old_sql_planning != new_sql_planning:
-            self._toggle_sql_planning()
-
-        # Verbose state is automatically updated through reactive expressions
-
-    def _toggle_report_mode(self):
+    def _toggle_report_mode(self, event):
         """Toggle between regular and report mode."""
-        report_mode = self._get_report_mode_value()
-        if report_mode:
+        if event.new:
             self._exports[0] = self._global_notebook_export
             self._main[:] = [Report(
                 subtasks=[
@@ -935,21 +870,9 @@ class ExplorerUI(UI):
             self._exports[0] = self._notebook_export
             self._main[:] = [self._split]
 
-    def _toggle_sidebar(self):
-        """Toggle sidebar open/closed state."""
-        sidebar_open = 2 in self._settings_menu.toggled
-        # Find the page in the view hierarchy
-        if hasattr(self, '_page') and self._page:
-            self._page.sidebar_open = sidebar_open
-
-    def _toggle_split_panel(self):
-        """Toggle split panel collapsed state."""
-        should_open = 3 in self._settings_menu.toggled
-        self._split.collapsed = not should_open
-
-    def _toggle_sql_planning(self):
+    def _toggle_sql_planning(self, event: param.Event):
         """Toggle SQL planning mode for SQLAgent."""
-        planning_enabled = 4 in self._settings_menu.toggled
+        planning_enabled = 4 in event.new
 
         # Update the SQLAgent directly if it exists
         sql_agent = next(
