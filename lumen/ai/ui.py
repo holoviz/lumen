@@ -307,6 +307,9 @@ class UI(Viewer):
                 sizing_mode="stretch_both",
                 show_button_tooltips=True,
                 show_button_name=False,
+                input_params={
+                    "enable_upload": False
+                },
             )
             self.interface._widget.color = "primary"
             welcome_message = UI_INTRO_MESSAGE

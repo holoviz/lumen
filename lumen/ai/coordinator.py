@@ -204,7 +204,11 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
         if interface is None:
             interface = ChatInterface(
-                callback=self._chat_invoke, load_buffer=5, show_button_tooltips=True, show_button_name=False,
+                callback=self._chat_invoke, load_buffer=5,
+                show_button_tooltips=True, show_button_name=False,
+                input_params={
+                    "enable_upload": False
+                },
             )
         else:
             interface.callback = self._chat_invoke
