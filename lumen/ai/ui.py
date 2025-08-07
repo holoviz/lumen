@@ -656,14 +656,6 @@ class UI(Viewer):
         """
         self._source_catalog.sources = memory['sources']
 
-    def _get_verbose_value(self):
-        """Get the current verbose toggle state from the settings menu."""
-        return 0 in self._settings_menu.toggled
-
-    def _handle_settings_click(self, event):
-        """Handle clicks on items in the settings menu."""
-        # The verbose state is automatically updated through reactive expressions
-
     def servable(self, title: str | None = None, **kwargs):
         if (state.curdoc and state.curdoc.session_context):
             self._create_view()
@@ -872,7 +864,7 @@ class ExplorerUI(UI):
 
     def _toggle_sql_planning(self, event: param.Event):
         """Toggle SQL planning mode for SQLAgent."""
-        planning_enabled = 4 in event.new
+        planning_enabled = 1 in event.new
 
         # Update the SQLAgent directly if it exists
         sql_agent = next(
