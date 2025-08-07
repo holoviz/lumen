@@ -2,7 +2,6 @@ import asyncio
 import traceback as tb
 
 from types import FunctionType
-from typing import Self
 
 import panel as pn
 import param
@@ -13,6 +12,7 @@ from panel_material_ui import (
     Accordion, ChatFeed, ChatMessage, Column, Container, Paper, Progress, Tabs,
     Typography,
 )
+from typing_extensions import Self
 
 from ..views.base import Panel, View
 from .actor import Actor

@@ -4,7 +4,8 @@ import asyncio
 import re
 import traceback
 
-from typing import TYPE_CHECKING, Any, Self
+from copy import deepcopy
+from typing import TYPE_CHECKING, Any
 
 import param
 
@@ -17,6 +18,7 @@ from panel_material_ui import (
     Button, Card, ChatInterface, ChatStep, Column, Tabs, Typography,
 )
 from pydantic import BaseModel
+from typing_extensions import Self
 
 from .actor import Actor
 from .agents import Agent, AnalysisAgent, ChatAgent

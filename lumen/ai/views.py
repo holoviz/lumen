@@ -24,6 +24,7 @@ from ..dashboard import load_yaml
 from ..downloads import Download
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
+from ..util import NumpyDumper
 from ..views.base import Table
 from .config import VEGA_ZOOMABLE_MAP_ITEMS
 from .utils import get_data
@@ -49,7 +50,7 @@ class LumenOutput(Viewer):
         if 'spec' not in params and 'component' in params and params['component'] is not None:
             try:
                 component_spec = params['component'].to_spec()
-                params['spec'] = yaml.dump(component_spec)
+                params['spec'] = yaml.dump(component_spec, Dumper=NumpyDumper)
             except Exception:
                 params['spec'] = None
         super().__init__(**params)
