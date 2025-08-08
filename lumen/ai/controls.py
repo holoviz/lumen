@@ -85,7 +85,7 @@ class TableControls(MediaControls):
     def __init__(self, file_obj: io.BytesIO, **params):
         super().__init__(file_obj, **params)
         self._name_input = TextInput.from_param(
-            self.param.alias, name="Table alias", allow_upload=False
+            self.param.alias, name="Table alias",
         )
         self._sheet_select = Select.from_param(
             self.param.sheet, name="Sheet", visible=False
@@ -179,7 +179,7 @@ class SourceControls(Viewer):
         self._url_input.param.watch(self._handle_urls, "enter_pressed")
 
         self._input_tabs = Tabs(
-            ("Upload File", self._file_input),
+            ("Upload Files", self._file_input),
             ("Download from URL", self._url_input),
             sizing_mode="stretch_both",
             dynamic=True,
