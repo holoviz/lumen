@@ -742,11 +742,7 @@ class SQLAgent(LumenBaseAgent):
         )
 
         if should_materialize:
-            if isinstance(self._memory["sources"], dict):
-                self._memory["sources"][expr_slug] = sql_expr_source
-            else:
-                self._memory["sources"].append(sql_expr_source)
-            self._memory.trigger("sources")
+            self._memory["source"] = sql_expr_source
 
         # Create pipeline
         if is_final:
@@ -1174,7 +1170,7 @@ class SQLAgent(LumenBaseAgent):
     ) -> Any:
         """Execute SQL generation with one-shot attempt first, then iterative refinement if needed."""
         # Setup sources
-        sources = self._memory["sources"] if isinstance(self._memory["sources"], dict) else {source.name: source for source in self._memory["sources"]}
+        sources = self._memory["sources"]
         tables_to_source, source = self._setup_source(sources)
 
         try:
@@ -1335,13 +1331,11 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
 
             # Update memory
             self._memory["data"] = await describe_data(df)
-            self._memory["sources"].append(sql_expr_source)
             self._memory["source"] = sql_expr_source
             self._memory["pipeline"] = pipeline
             self._memory["table"] = pipeline.table
             self._memory["dbtsl_vector_metaset"] = vector_metaset
             self._memory["dbtsl_sql_metaset"] = sql_metaset
-            self._memory.trigger("sources")
             return sql_query, pipeline
         except Exception as e:
             report_error(e, step)

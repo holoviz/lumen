@@ -608,10 +608,6 @@ class SourceControls(Viewer):
         duckdb_source.tables[table] = sql_expr
         self._memory["source"] = duckdb_source
         self._memory["table"] = table
-        if "sources" in self._memory:
-            self._memory["sources"] = self._memory["sources"] + [duckdb_source]
-        else:
-            self._memory["sources"] = [duckdb_source]
         self._last_table = table
         return 1
 

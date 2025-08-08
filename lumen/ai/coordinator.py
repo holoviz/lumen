@@ -286,22 +286,17 @@ class Coordinator(Viewer, VectorLookupToolUser):
             "clear": {"callback": on_clear},
         }
 
-        if "source" in self._memory and "sources" not in self._memory:
-            self._memory["sources"] = [self._memory["source"]]
-        elif "source" not in self._memory and self._memory.get("sources"):
-            self._memory["source"] = self._memory["sources"][0]
-        elif "sources" not in self._memory:
-            self._memory["sources"] = []
+        # Set up automatic synchronization between source and sources FIRST
+        # so the initial setup below triggers automatic sync
+        self._memory.on_change("source", self._sync_source_to_sources)
+        self._memory.on_change("sources", self._sync_sources_to_source)
+        self._memory.on_change("sources", self._update_visible_slugs)
 
-        if "visible_slugs" not in self._memory:
-            self._memory["visible_slugs"] = set()
-
-        # Set up visible_slugs management in coordinator
-        self._memory.on_change('sources', self._update_visible_slugs)
-
-        # Update visible_slugs based on current sources
-        if self._memory.get("sources"):
-            self._update_visible_slugs(None, None, self._memory["sources"])
+        # Initialize memory
+        self._memory["sources"] = self._memory.get("sources", [])
+        self._sync_source_to_sources(None, None, self._memory.get("source", None))
+        self._sync_sources_to_source(None, None, self._memory["sources"])
+        self._update_visible_slugs(None, None, self._memory["sources"])
 
     def _update_visible_slugs(self, key=None, old_sources=None, new_sources=None):
         """
@@ -330,6 +325,44 @@ class Coordinator(Viewer, VectorLookupToolUser):
         else:
             # If no visible_slugs set, make all tables visible
             self._memory['visible_slugs'] = all_slugs
+
+    def _sync_source_to_sources(self, key, old_source, new_source):
+        """
+        When source is set/changed, automatically add it to sources if it doesn't exist.
+        This eliminates the need for manual dual updates.
+        """
+        if new_source is None:
+            return
+
+        current_sources = self._memory.get("sources", [])
+        # Check if the new source already exists in sources (by name)
+        existing_source = next(
+            (source for source in current_sources if source.name == new_source.name),
+            None
+        )
+
+        if existing_source is None:
+            # Add new source to sources list
+            self._memory["sources"] = current_sources + [new_source]
+        elif existing_source is not new_source:
+            # Replace existing source with new one (in case it's updated)
+            updated_sources = [
+                new_source if source.name == new_source.name else source
+                for source in current_sources
+            ]
+            self._memory["sources"] = updated_sources
+
+    def _sync_sources_to_source(self, key, old_sources, new_sources):
+        """
+        When sources changes, ensure source is set to the first source.
+        """
+        if not new_sources:
+            return
+
+        current_source = self._memory.get('source')
+        # If current source is not in the new sources list, update it
+        if current_source is None or current_source not in new_sources:
+            self._memory['source'] = new_sources[0]
 
     def __panel__(self):
         return self.interface

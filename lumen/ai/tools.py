@@ -627,9 +627,9 @@ class TableLookup(VectorLookupTool):
         self._raw_metadata = {}
         self._semaphore = asyncio.Semaphore(self.max_concurrent)
         if self.sync_sources:
-            self._memory.on_change('sources', self._update_vector_store)
+            self._memory.on_change("sources", self._update_vector_store)
         if "sources" in self._memory:
-            state.execute(partial(self._update_vector_store, None, None, self._memory['sources']))
+            state.execute(partial(self._update_vector_store, None, None, self._memory["sources"]))
 
     def _format_results_for_refinement(self, results: list[dict[str, Any]]) -> str:
         """

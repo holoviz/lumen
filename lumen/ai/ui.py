@@ -116,7 +116,7 @@ class TableExplorer(Viewer):
         )
         self._input_row = Row(self._table_select, self._explore_button)
         self._source_map = {}
-        memory.on_change('sources', self._update_source_map)
+        memory.on_change("sources", self._update_source_map)
         self._update_source_map(init=True)
 
         self._tabs = Tabs(dynamic=True, sizing_mode='stretch_both')
@@ -126,7 +126,7 @@ class TableExplorer(Viewer):
 
     def _update_source_map(self, key=None, old=None, sources=None, init=False):
         if sources is None:
-            sources = memory['sources']
+            sources = memory["sources"]
         selected = list(self._table_select.value)
         deduplicate = len(sources) > 1
         new = {}
@@ -607,9 +607,7 @@ class UI(Viewer):
                 uri=':memory:'
             )
             sources.append(source)
-        memory['sources'] = sources
-        if sources:
-            memory['source'] = sources[0]
+        memory["sources"] = sources
 
     def show(self, **kwargs):
         return self._create_view(server=True).show(**kwargs)
@@ -653,7 +651,7 @@ class UI(Viewer):
         """
         Update the sources dialog content when memory sources change.
         """
-        self._source_catalog.sources = memory['sources']
+        self._source_catalog.sources = memory["sources"]
 
     def servable(self, title: str | None = None, **kwargs):
         if (state.curdoc and state.curdoc.session_context):
