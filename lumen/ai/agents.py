@@ -255,7 +255,7 @@ class ChatAgent(Agent):
         if "vector_metaset" not in self._memory and "source" in self._memory and "table" in self._memory:
             source = self._memory["source"]
             self._memory["vector_metaset"] = await get_metaset(
-                {source.name: source}, [f"{source.name}{SOURCE_TABLE_SEPARATOR}{self._memory['table']}"],
+                [source], [f"{source.name}{SOURCE_TABLE_SEPARATOR}{self._memory['table']}"],
             )
         system_prompt = await self._render_prompt("main", messages, **context)
         return await self._stream(messages, system_prompt)
@@ -1294,7 +1294,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
             pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms)
 
             df = await get_data(pipeline)
-            sql_metaset = await get_metaset({sql_expr_source.name: sql_expr_source}, [expr_slug])
+            sql_metaset = await get_metaset([sql_expr_source], [expr_slug])
             vector_metaset = sql_metaset.vector_metaset
 
             # Update memory

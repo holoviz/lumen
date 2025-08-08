@@ -203,13 +203,13 @@ class SQLMetaset:
         return self.table_context
 
 
-async def get_metaset(sources: dict[str, Source], tables: list[str]) -> SQLMetaset:
+async def get_metaset(sources: list[Source], tables: list[str]) -> SQLMetaset:
     """
     Get the metaset for the given sources and tables.
 
     Parameters
     ----------
-    sources: dict[str, Source]
+    sources: list[Source]
         The sources to get the metaset for.
     tables: list[str]
         The tables to get the metaset for.
@@ -233,7 +233,7 @@ async def get_metaset(sources: dict[str, Source], tables: list[str]) -> SQLMetas
         else:
             source_name = next(iter(sources))
             table_name = table_slug
-        source = sources[source_name]
+        source = next((s for s in sources if s.name == source_name), None)
         schema = await get_schema(source, table_name, include_count=True)
         tables_info[table_name] = SQLMetadata(
             table_slug=table_slug,
