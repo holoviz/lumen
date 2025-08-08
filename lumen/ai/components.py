@@ -427,10 +427,7 @@ class SourceCatalog(Viewer):
         List of data sources to display in the catalog.""")
 
     def __init__(self, **params):
-        self._title = Markdown(
-            "## Source Catalog\n\nSelect the table and document sources you want visible to the LLM.",
-            margin=0,
-        )
+        self._title = Markdown(margin=0)
         self._cards_column = Column(
             margin=0,
         )
@@ -478,10 +475,10 @@ class SourceCatalog(Viewer):
 
         self._cards_column.objects = source_cards
 
-        if len(source_cards) == 0:
-            self._cards_column.objects = [
-                Markdown("No sources available. Please input a source to continue.")
-            ]
+        if len(self.sources) == 0:
+            self._title.object = "No sources available. Add a source to get started."
+        else:
+            self._title.object = "Select the table and document sources you want visible to the LLM."
 
     def __panel__(self):
         """

@@ -23,9 +23,9 @@ from panel.util import edit_readonly
 from panel.viewable import Child, Children, Viewer
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
-    Button, ChatFeed, ChatInterface, ChatMessage, Chip, Column, Dialog,
-    Divider, FileDownload, MenuList, MenuToggle, MultiChoice, Page, Paper, Row,
-    Switch, Tabs, ToggleIcon,
+    Accordion, Button, ChatFeed, ChatInterface, ChatMessage, Chip, Column,
+    Dialog, Divider, FileDownload, MenuList, MenuToggle, MultiChoice, Page,
+    Paper, Row, Switch, Tabs, ToggleIcon,
 )
 
 from ..pipeline import Pipeline
@@ -409,9 +409,13 @@ class UI(Viewer):
         )
         self._table_lookup_tool = None  # Will be set after coordinator is initialized
         self._source_catalog = SourceCatalog()
+        self._source_accordion = Accordion(
+            ("Add Sources", self._source_controls), ("View Sources", self._source_catalog),
+            margin=(-30, 10, 0, 10), sizing_mode="stretch_both", toggle=True, active=[0]
+        )
         self._sources_dialog_content = Dialog(
-            Tabs(("Input", self._source_controls), ("Catalog", self._source_catalog), margin=(-30, 0, 0, 0), sizing_mode="stretch_both"),
-            close_on_click=True, show_close_button=True, sizing_mode='stretch_width', width_option='lg'
+            self._source_accordion, close_on_click=True, show_close_button=True,
+            sizing_mode='stretch_width', width_option='lg',
         )
 
         # Create LLM configuration dialog
@@ -657,7 +661,8 @@ class UI(Viewer):
         """
         Update the sources dialog content when memory sources change.
         """
-        self._source_catalog.sources = memory['sources']
+        self._source_catalog.sources = memory["sources"]
+        self._source_accordion.active = [1]
 
     def servable(self, title: str | None = None, **kwargs):
         if (state.curdoc and state.curdoc.session_context):
