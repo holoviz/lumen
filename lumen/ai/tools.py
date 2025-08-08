@@ -985,6 +985,39 @@ class IterativeTableLookup(TableLookup):
         },
     )
 
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._memory.on_change('visible_slugs', self._update_sql_metaset_for_visible_tables)
+
+    async def _update_sql_metaset_for_visible_tables(self, key, old_slugs, new_slugs):
+        """
+        Update sql_metaset when visible_slugs changes.
+        This ensures SQL operations only work with visible tables by regenerating
+        the sql_metaset using get_metaset.
+        """
+        if new_slugs is None:
+            new_slugs = set()
+
+        # If no visible slugs or no sources, clear sql_metaset
+        if not new_slugs or not self._memory.get("sources"):
+            if "sql_metaset" in self._memory:
+                del self._memory["sql_metaset"]
+            return
+
+        # Only update if we have an existing sql_metaset to work with
+        if "sql_metaset" not in self._memory:
+            return
+
+        try:
+            sources = self._memory["sources"]
+            visible_tables = list(new_slugs)
+            if visible_tables:
+                new_sql_metaset = await get_metaset(sources, visible_tables)
+                self._memory["sql_metaset"] = new_sql_metaset
+                log_debug(f"[IterativeTableLookup] Updated sql_metaset with {len(visible_tables)} visible tables")
+        except Exception as e:
+            log_debug(f"[IterativeTableLookup] Error updating sql_metaset: {e}")
+
     async def _gather_info(self, messages: list[dict[str, str]]) -> dict:
         """
         Performs an iterative table selection process to gather context.
@@ -1152,7 +1185,7 @@ class IterativeTableLookup(TableLookup):
         visible_slugs = memory.get('visible_slugs', set())
         is_necessary = len(visible_slugs) > 1
         if not is_necessary:
-            memory["sql_metaset"] = get_metaset(sources=memory["sources"], tables=visible_slugs)
+            memory["sql_metaset"] = await get_metaset(sources=memory["sources"], tables=visible_slugs)
         return is_necessary
 
 

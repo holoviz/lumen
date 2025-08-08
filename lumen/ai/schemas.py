@@ -250,7 +250,7 @@ async def get_metaset(sources: list[Source], tables: list[str]) -> SQLMetaset:
             base_sql=source.get_sql_expr(source.normalize_table(table_name)),
             description=metadata.get("description"),
             columns=[
-                Column(name=col_name, description=col_values.pop("description"), metadata=col_values)
+                Column(name=col_name, description=col_values.pop("description", None), metadata=col_values)
                 for col_name, col_values in metadata.get("columns").items()
             ],
         )
