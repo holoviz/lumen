@@ -89,13 +89,13 @@ class Join(Analysis):
 
     def controls(self):
         self._source_controls = SourceControls(
-            multiple=True, replace_controls=False, memory=memory
+            multiple=True, replace_controls=False, memory=self._memory
         )
         self._run_button = self._source_controls._add_button
         self._source_controls.param.watch(self._update_table_name, "_last_table")
 
-        source = memory.get("source")
-        table = memory.get("table")
+        source = self._memory.get("source")
+        table = self._memory.get("table")
         self._previous_source = source
         self._previous_table = table
         columns = list(source.get_schema(table).keys())
@@ -118,7 +118,7 @@ class Join(Analysis):
             content = (
                 "Join these tables: "
                 f"'{self._previous_source}{SOURCE_TABLE_SEPARATOR}{self._previous_table}' "
-                f"and '{memory['source']}{SOURCE_TABLE_SEPARATOR}{self.table_name}'"
+                f"and '{self._memory['source']}{SOURCE_TABLE_SEPARATOR}{self.table_name}'"
             )
             if self.index_col:
                 content += f" left join on {self.index_col}"
@@ -127,7 +127,7 @@ class Join(Analysis):
             if self.context:
                 content += f"\nadditional context:\n{self.context!r}"
             await agent.answer(messages=[{"role": "user", "content": content}])
-            pipeline = memory["pipeline"]
+            pipeline = self._memory["pipeline"]
 
         self.message = f"Joined {self._previous_table} with {self.table_name}."
         return pipeline
