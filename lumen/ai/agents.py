@@ -1788,6 +1788,7 @@ class AnalysisAgent(LumenBaseAgent):
                     # Ensure data reflects processed pipeline
                     if pipeline is not self._memory["pipeline"]:
                         pipeline = self._memory["pipeline"]
+                        data = await get_data(pipeline)
                         if len(data) > 0:
                             self._memory["data"] = await describe_data(data)
                     yaml_spec = yaml.dump(spec)
