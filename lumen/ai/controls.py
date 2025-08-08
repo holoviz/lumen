@@ -738,12 +738,13 @@ class RetryControls(Viewer):
         super().__init__(**params)
         icon = ToggleIcon.from_param(
             self.param.active,
-            label=" ",
+            active_icon="cancel",
+            color="default",
             description="Prompt LLM to retry",
             icon="edit",
-            active_icon="cancel",
+            label="",
             margin=(5, 0),
-            size="1em"
+            size="small"
         )
         self._text_input = TextInput(
             placeholder="Enter feedback and press the <Enter> to retry.",
