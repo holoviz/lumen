@@ -10,7 +10,7 @@ import aiohttp
 import pandas as pd
 import param
 
-from panel.pane.markup import HTML, Markdown
+from panel.pane.markup import HTML
 from panel.viewable import Viewer
 from panel.widgets import FileDropper, Tabulator, Tqdm
 from panel_material_ui import (
@@ -85,7 +85,7 @@ class TableControls(MediaControls):
     def __init__(self, file_obj: io.BytesIO, **params):
         super().__init__(file_obj, **params)
         self._name_input = TextInput.from_param(
-            self.param.alias, name="Table alias",
+            self.param.alias, name="Table alias", allow_upload=False
         )
         self._sheet_select = Select.from_param(
             self.param.sheet, name="Sheet", visible=False
@@ -127,6 +127,8 @@ class SourceControls(Viewer):
 
     disabled = param.Boolean(default=False, doc="Disable controls")
 
+    downloaded_files = param.Dict(default={}, doc="Downloaded files to add as tabs")
+
     download_url = param.String(default="", doc="URL input for downloading files")
 
     input_placeholder = param.String(default="Enter URLs, one per line, and press <Enter> to download")
@@ -148,8 +150,6 @@ class SourceControls(Viewer):
     _last_table = param.String(default="", doc="Last table added")
 
     _count = param.Integer(default=0, doc="Count of sources added")
-
-    downloaded_files = param.Dict(default={}, doc="Downloaded files to add as tabs")
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -179,8 +179,8 @@ class SourceControls(Viewer):
         self._url_input.param.watch(self._handle_urls, "enter_pressed")
 
         self._input_tabs = Tabs(
-            ("File Input", self._file_input),
-            ("Text Input", self._url_input),
+            ("Upload File", self._file_input),
+            ("Download from URL", self._url_input),
             sizing_mode="stretch_both",
             dynamic=True,
             active=self.param.active,
@@ -213,7 +213,6 @@ class SourceControls(Viewer):
         )
 
         self.menu = Column(
-            Markdown("## Source Input", margin=0),
             self._input_tabs,
             self._upload_tabs,
             Row(self._add_button, self._cancel_button),

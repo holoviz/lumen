@@ -383,18 +383,18 @@ class UI(Viewer):
         self._source_agent = next((agent for agent in self._coordinator.agents if isinstance(agent, SourceAgent)), None)
         # Create LLM status chip
         self._llm_chip = Chip(
-            object="Manage LLM:",
+            object="Manage LLM: Loading...",
             icon="auto_awesome",
             align="center",
             color="light",
             margin=(0, 5, 0, 10),
             on_click=self._open_llm_dialog,
             loading=True,
-            variant="outlined"
+            variant="outlined",
         )
 
         self._data_sources_chip = Chip(
-            object="Loading Data Sources",
+            object="Manage Data",
             icon="cloud_upload",
             align="center",
             color="light",
@@ -406,7 +406,7 @@ class UI(Viewer):
         self._table_lookup_tool = None  # Will be set after coordinator is initialized
         self._source_catalog = SourceCatalog()
         self._sources_dialog_content = Dialog(
-            Tabs(("Input", self._source_controls), ("Catalog", self._source_catalog), margin=(-30, 0, 0, 0), sizing_mode="stretch_both"),
+            Tabs(("Add Sources", self._source_controls), ("View Sources", self._source_catalog), margin=(-30, 0, 0, 0), sizing_mode="stretch_both"),
             close_on_click=True, show_close_button=True, sizing_mode='stretch_width', width_option='lg'
         )
 
@@ -463,7 +463,7 @@ class UI(Viewer):
             )
         else:
             self._llm_chip.param.update(
-                object="Loading LLM",
+                object="Manage LLM: Loading...",
                 loading=True
             )
 
@@ -518,7 +518,7 @@ class UI(Viewer):
 
         if not self._table_lookup_tool:
             self._data_sources_chip.param.update(
-                object='Manage Data Sources',
+                object='Manage Data',
                 icon="storage",
                 color="primary",
             )
@@ -546,7 +546,7 @@ class UI(Viewer):
         elif ready_state is True:
             # Ready - show as success
             self._data_sources_chip.param.update(
-                object="Manage Data Sources",
+                object="Manage Data",
                 loading=False,
             )
         elif ready_state is None:
