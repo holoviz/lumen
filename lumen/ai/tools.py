@@ -17,12 +17,13 @@ from .actor import Actor, ContextProvider
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .embeddings import NumpyEmbeddings
 from .llm import Message
+from .memory import _Memory
 from .models import (
     ThinkingYesNo, make_iterative_selection_model, make_refined_query_model,
 )
 from .schemas import (
     Column, DbtslMetadata, DbtslMetaset, SQLMetadata, SQLMetaset,
-    VectorMetadata, VectorMetaset,
+    VectorMetadata, VectorMetaset, get_metaset,
 )
 from .services import DbtslMixin
 from .translate import function_to_model
@@ -218,6 +219,13 @@ class Tool(Actor, ContextProvider):
     conditions = param.List(default=[
         "Always requires a supporting agent to interpret results"
     ])
+
+    @classmethod
+    async def applies(cls, memory: _Memory) -> bool:
+        """
+        Additional checks to determine if the tool should be used.
+        """
+        return True
 
 
 class VectorLookupTool(Tool):
@@ -637,13 +645,16 @@ class TableLookup(VectorLookupTool):
         str
             Formatted description of table results
         """
+        visible_slugs = self._memory.get('visible_slugs', set())
         formatted_results = []
         for result in results:
             source_name = result['metadata'].get("source", "unknown")
             table_name = result['metadata'].get("table_name", "unknown")
-            text = result["text"]
             table_slug = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
+            if visible_slugs and table_slug not in visible_slugs:
+                continue
 
+            text = result["text"]
             description = f"- {text} {table_slug} (Similarity: {result.get('similarity', 0):.3f})"
             if tables_vector_data := self._memory["tables_metadata"].get(table_slug):
                 if table_description := tables_vector_data.get("description"):
@@ -863,6 +874,11 @@ class TableLookup(VectorLookupTool):
                     break
             table_slug = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
             similarity_score = result['similarity']
+            # Filter by visible_slugs if specified
+            visible_slugs = self._memory.get('visible_slugs', set())
+            if visible_slugs and table_slug not in visible_slugs:
+                continue
+
             if any_matches and result['similarity'] < self.min_similarity and not same_table:
                 continue
 
@@ -893,7 +909,12 @@ class TableLookup(VectorLookupTool):
             vector_metadata_map[table_slug] = vector_metadata
 
         # If query contains an exact table name, mark it as max similarity
-        for table_slug in self._memory["tables_metadata"]:
+        visible_slugs = self._memory.get('visible_slugs', set())
+        tables_to_check = self._memory["tables_metadata"]
+        if visible_slugs:
+            tables_to_check = {slug: data for slug, data in tables_to_check.items() if slug in visible_slugs}
+
+        for table_slug in tables_to_check:
             if table_slug.split(SOURCE_TABLE_SEPARATOR)[-1].lower() in query.lower():
                 if table_slug in vector_metadata_map:
                     vector_metadata_map[table_slug].similarity = 1
@@ -978,7 +999,12 @@ class IterativeTableLookup(TableLookup):
 
         sql_metadata_map = {}
         examined_slugs = set(sql_metadata_map.keys())
+        # Filter to only include visible tables
         all_slugs = list(vector_metadata_map.keys())
+        visible_slugs = self._memory.get('visible_slugs', set())
+        if visible_slugs:
+            all_slugs = [slug for slug in all_slugs if slug in visible_slugs]
+
         failed_slugs = []
         selected_slugs = []
         chain_of_thought = ""
@@ -1120,6 +1146,14 @@ class IterativeTableLookup(TableLookup):
         """Generate formatted text representation from schema objects."""
         sql_metaset = self._memory.get("sql_metaset")
         return str(sql_metaset)
+
+    @classmethod
+    async def applies(cls, memory: _Memory) -> bool:
+        visible_slugs = memory.get('visible_slugs', set())
+        is_necessary = len(visible_slugs) > 1
+        if not is_necessary:
+            memory["sql_metaset"] = get_metaset(sources=memory["sources"], tables=visible_slugs)
+        return is_necessary
 
 
 class DbtslLookup(VectorLookupTool, DbtslMixin):

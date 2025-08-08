@@ -21,7 +21,10 @@ from typing_extensions import Self
 
 from .actor import Actor
 from .agents import Agent, AnalysisAgent, ChatAgent
-from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
+from .config import (
+    DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR,
+    SOURCE_TABLE_SEPARATOR,
+)
 from .llm import LlamaCpp, Llm, Message
 from .logs import ChatLogs
 from .models import (
@@ -293,6 +296,41 @@ class Coordinator(Viewer, VectorLookupToolUser):
         if "visible_slugs" not in self._memory:
             self._memory["visible_slugs"] = set()
 
+        # Set up visible_slugs management in coordinator
+        self._memory.on_change('sources', self._update_visible_slugs)
+
+        # Update visible_slugs based on current sources
+        if self._memory.get("sources"):
+            self._update_visible_slugs(None, None, self._memory["sources"])
+
+    def _update_visible_slugs(self, key=None, old_sources=None, new_sources=None):
+        """
+        Update visible_slugs when sources change.
+        This is the central place where table visibility is managed.
+        """
+        if not new_sources:
+            self._memory['visible_slugs'] = set()
+            return
+
+        # Calculate all available table slugs from sources
+        all_slugs = set()
+        for source in new_sources:
+            tables = source.get_tables()
+            for table in tables:
+                table_slug = f'{source.name}{SOURCE_TABLE_SEPARATOR}{table}'
+                all_slugs.add(table_slug)
+
+        # Update visible_slugs, preserving existing visibility where possible
+        # This ensures removed tables are filtered out, new tables are added
+        current_visible = self._memory.get('visible_slugs', set())
+        if current_visible:
+            # Keep intersection of current visible and available slugs
+            # Plus add any new slugs that weren't previously available
+            self._memory['visible_slugs'] = current_visible.intersection(all_slugs) | (all_slugs - current_visible)
+        else:
+            # If no visible_slugs set, make all tables visible
+            self._memory['visible_slugs'] = all_slugs
+
     def __panel__(self):
         return self.interface
 
@@ -435,8 +473,25 @@ class Coordinator(Viewer, VectorLookupToolUser):
         Pre-plan step to prepare the agents and tools for the execution graph.
         This is where we can modify the agents and tools based on the messages.
         """
+        # Filter agents by exclusions and applies
         agents = {agent_name: agent for agent_name, agent in agents.items() if not any(excluded_key in self._memory for excluded_key in agent.exclusions)}
-        tools = {tool_name: tool for tool_name, tool in tools.items()  if not any(excluded_key in self._memory for excluded_key in tool.exclusions)}
+        filtered_agents = {}
+        for agent_name, agent in agents.items():
+            if await agent.applies(self._memory):
+                filtered_agents[agent_name] = agent
+        agents = filtered_agents
+
+        # Filter tools by exclusions and applies
+        tools = {tool_name: tool for tool_name, tool in tools.items() if not any(excluded_key in self._memory for excluded_key in tool.exclusions)}
+        filtered_tools = {}
+        for tool_name, tool in tools.items():
+            if hasattr(tool, 'applies') and await tool.applies(self._memory):
+                filtered_tools[tool_name] = tool
+            elif not hasattr(tool, 'applies'):
+                # If tool doesn't have applies method, include it by default
+                filtered_tools[tool_name] = tool
+        tools = filtered_tools
+
         return agents, tools, {}
 
     async def _compute_plan(self, messages: list[Message], agents: dict[str, Agent], tools: dict[str, Tool], pre_plan_output: dict) -> Plan:
@@ -627,7 +682,8 @@ class DependencyResolver(Coordinator):
         if agents is None:
             agents = self.agents
         agents = [agent for agent in agents if await agent.applies(self._memory)]
-        tools = self._tools["main"]
+        tools = [tool for tool in self._tools["main"] if await tool.applies(self._memory)]
+
         agent_names = tuple(sagent.name[:-5] for sagent in agents) + tuple(tool.name for tool in tools)
         agent_model = self._get_model("main", agent_names=agent_names, primary=primary)
         if len(agent_names) == 0:

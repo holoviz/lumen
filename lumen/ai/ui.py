@@ -94,6 +94,11 @@ EXPLORATIONS_INTRO = """
 
 
 class TableExplorer(Viewer):
+    """
+    TableExplorer provides a high-level entrypoint to explore tables in a split UI.
+    It allows users to load tables, explore them using Graphic Walker, and then
+    interrogate the data via a chat interface.
+    """
 
     interface = param.ClassSelector(class_=ChatFeed, doc="""
         The interface for the Coordinator to interact with.""")
@@ -126,26 +131,17 @@ class TableExplorer(Viewer):
         deduplicate = len(sources) > 1
         new = {}
 
-        all_slugs = set()
+        # Build the source map for UI display
         for source in sources:
             tables = source.get_tables()
-            for t in tables:
-                original_table = t
+            for table in tables:
                 if deduplicate:
-                    t = f'{source.name}{SOURCE_TABLE_SEPARATOR}{t}'
+                    table = f'{source.name}{SOURCE_TABLE_SEPARATOR}{table}'
 
-                # Always use the full slug for checking visibility
-                table_slug = f'{source.name}{SOURCE_TABLE_SEPARATOR}{original_table}'
-                all_slugs.add(table_slug)
-
-                if (t.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)[-1] not in self._source_map and
+                if (table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)[-1] not in self._source_map and
                     not init and not len(selected) > self._table_select.max_items and state.loaded):
-                    selected.append(t)
-                new[t] = source
-
-        # Ensure visible_slugs doesn't contain removed tables
-        if 'visible_slugs' in memory:
-            memory['visible_slugs'] = memory['visible_slugs'].intersection(all_slugs)
+                    selected.append(table)
+                new[table] = source
 
         self._source_map.clear()
         self._source_map.update(new)

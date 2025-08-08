@@ -610,6 +610,42 @@ class SQLAgent(LumenBaseAgent):
 
     _output_type = SQLOutput
 
+    def __init__(self, **params):
+        super().__init__(**params)
+        # SQLAgent watches visible_slugs and filters its sql_metaset accordingly
+        self._memory.on_change('visible_slugs', self._filter_sql_metaset_by_visibility)
+
+    def _filter_sql_metaset_by_visibility(self, key, old_slugs, new_slugs):
+        """
+        Filter sql_metaset when visible_slugs changes.
+        This ensures SQL operations only work with visible tables.
+        """
+        if new_slugs is None:
+            new_slugs = set()
+
+        sql_metaset = self._memory.get('sql_metaset')
+        if not sql_metaset:
+            return  # No sql_metaset to filter
+
+        # Filter vector metadata to only include visible tables
+        if sql_metaset.vector_metaset and sql_metaset.vector_metaset.vector_metadata_map:
+            sql_metaset.vector_metaset.vector_metadata_map = {
+                slug: metadata
+                for slug, metadata in sql_metaset.vector_metaset.vector_metadata_map.items()
+                if slug in new_slugs
+            }
+
+        # Filter SQL metadata to only include visible tables
+        if sql_metaset.sql_metadata_map:
+            sql_metaset.sql_metadata_map = {
+                slug: metadata
+                for slug, metadata in sql_metaset.sql_metadata_map.items()
+                if slug in new_slugs
+            }
+
+        # Trigger memory update to notify other components that depend on sql_metaset
+        self._memory.trigger('sql_metaset')
+
     def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
         memory["sql"] = event.new
 
