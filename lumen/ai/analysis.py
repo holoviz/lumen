@@ -8,7 +8,7 @@ from panel.viewable import Viewable
 from ..base import Component
 from .config import SOURCE_TABLE_SEPARATOR
 from .controls import SourceControls
-from .memory import memory
+from .memory import _Memory, memory
 from .utils import get_data
 
 
@@ -29,6 +29,10 @@ class Analysis(param.ParameterizedFunction):
        The columns required for the analysis. May use tuples to declare that one of
        the columns must be present.""")
 
+    memory = param.ClassSelector(class_=_Memory, default=None, doc="""
+        Local memory which will be used to provide the agent context.
+        If None the global memory will be used.""")
+
     message = param.String(default="", doc="The message to display on interface when the analysis is run.")
 
     _run_button = param.Parameter(default=None)
@@ -39,6 +43,10 @@ class Analysis(param.ParameterizedFunction):
     _callable_by_llm = True
 
     _field_params = []
+
+    @property
+    def _memory(self):
+        return memory if self.memory is None else self.memory
 
     @classmethod
     async def applies(cls, pipeline) -> bool:
@@ -81,13 +89,13 @@ class Join(Analysis):
 
     def controls(self):
         self._source_controls = SourceControls(
-            multiple=True, replace_controls=False, memory=memory
+            multiple=True, replace_controls=False, memory=self._memory
         )
         self._run_button = self._source_controls._add_button
         self._source_controls.param.watch(self._update_table_name, "_last_table")
 
-        source = memory.get("source")
-        table = memory.get("table")
+        source = self._memory.get("source")
+        table = self._memory.get("table")
         self._previous_source = source
         self._previous_table = table
         columns = list(source.get_schema(table).keys())
@@ -110,7 +118,7 @@ class Join(Analysis):
             content = (
                 "Join these tables: "
                 f"'{self._previous_source}{SOURCE_TABLE_SEPARATOR}{self._previous_table}' "
-                f"and '{memory['source']}{SOURCE_TABLE_SEPARATOR}{self.table_name}'"
+                f"and '{self._memory['source']}{SOURCE_TABLE_SEPARATOR}{self.table_name}'"
             )
             if self.index_col:
                 content += f" left join on {self.index_col}"
@@ -119,7 +127,7 @@ class Join(Analysis):
             if self.context:
                 content += f"\nadditional context:\n{self.context!r}"
             await agent.answer(messages=[{"role": "user", "content": content}])
-            pipeline = memory["pipeline"]
+            pipeline = self._memory["pipeline"]
 
         self.message = f"Joined {self._previous_table} with {self.table_name}."
         return pipeline

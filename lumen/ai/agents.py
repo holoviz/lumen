@@ -1765,7 +1765,7 @@ class AnalysisAgent(LumenBaseAgent):
         with self.interface.param.update(callback_exception="raise"):
             with self._add_step(title=step_title or "Creating view...", steps_layout=self._steps_layout) as step:
                 await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
-                analysis_callable = analyses[analysis_name].instance(agents=self.agents)
+                analysis_callable = analyses[analysis_name].instance(agents=self.agents, memory=self._memory)
 
                 data = await get_data(pipeline)
                 for field in analysis_callable._field_params:
