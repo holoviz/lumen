@@ -537,8 +537,6 @@ def test_absolute_vs_relative_paths(sample_csv_files):
     finally:
         os.chdir(original_cwd)
 
-
-
 def test_mirrors_not_in_tables_from_spec():
     """Test that mirrors are not included in the tables from_spec."""
     spec = DuckDBSource(tables={"obs": "SELECT * FROM obs"}).to_spec()
