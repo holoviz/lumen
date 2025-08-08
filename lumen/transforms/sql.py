@@ -465,25 +465,35 @@ class SQLColumns(SQLTransform):
         return self.to_sql(expression)
 
 
-class SQLFilter(SQLTransform):
+class SQLFilterBase(SQLTransform):
+    """
+    Base class for SQL filtering transforms that provides common filtering logic.
+    """
 
-    conditions = param.List(doc="""
-      List of filter conditions expressed as tuples of the column
-      name and the filter value.""")
+    def _build_filter_conditions(self, conditions: list) -> list:
+        """
+        Build sqlglot filter expressions from condition tuples.
 
-    transform_type: ClassVar[str] = 'sql_filter'
+        Parameters
+        ----------
+        conditions : list
+            List of (column, value) tuples for filtering
 
-    def apply(self, sql_in: str) -> str:
-        if not self.conditions:
-            return sql_in
-
-        subquery = self.parse_sql(sql_in).subquery()
+        Returns
+        -------
+        list
+            List of sqlglot filter expressions
+        """
         filters = []
 
-        for col, val in self.conditions:
+        for col, val in conditions:
             column_expr = Column(this=col)
 
-            if val is None:
+            # Skip boolean values - they are not supported
+            if isinstance(val, bool):
+                self.param.warning(f"Boolean condition {val!r} on {col!r} column not supported. Filter query will not be applied.")
+                continue
+            elif val is None:
                 filters.append(column_expr.is_(Null()))
             elif isinstance(val, (int, float)):
                 filters.append(column_expr.eq(SQLLiteral.number(val)))
@@ -509,6 +519,11 @@ class SQLFilter(SQLTransform):
 
                 filters.append(column_expr.between(SQLLiteral.string(start_str), SQLLiteral.string(end_str)))
             elif isinstance(val, list):
+                # Check for boolean values in list and skip them
+                if any(isinstance(v, bool) for v in val):
+                    self.param.warning(f"Boolean values in list condition on {col!r} column not supported. Filter query will not be applied.")
+                    continue
+
                 if all(isinstance(v, tuple) and len(v) == 2 for v in val):
                     range_filters = []
                     for v1, v2 in val:
@@ -544,8 +559,133 @@ class SQLFilter(SQLTransform):
                 self.param.warning(f"Condition {val!r} on {col!r} column not understood. Filter query will not be applied.")
                 continue
 
+        return filters
+
+
+class SQLFilter(SQLFilterBase):
+    """
+    Apply WHERE clause filtering to the entire query result.
+
+    This transform wraps the input query in a subquery and applies filters
+    to the result set.
+    """
+
+    conditions = param.List(doc="""
+      List of filter conditions expressed as tuples of the column
+      name and the filter value.""")
+
+    transform_type: ClassVar[str] = 'sql_filter'
+
+    def apply(self, sql_in: str) -> str:
+        if not self.conditions:
+            return sql_in
+
+        subquery = self.parse_sql(sql_in).subquery()
+        filters = self._build_filter_conditions(self.conditions)
+
+        if not filters:
+            return sql_in
+
         expression = select("*").from_(subquery).where(and_(*filters))
         return self.to_sql(expression)
+
+
+class SQLPreFilter(SQLFilterBase):
+    """
+    Apply filtering conditions to source tables before executing the main query.
+
+    This transform wraps source tables in subqueries with WHERE clauses,
+    allowing filtering to be applied even when the main query doesn't select
+    the filter columns.
+
+    For example:
+    Input: "SELECT n_genes FROM obs"
+    With conditions: [("obs", [("obs_id", ["cell1", "cell2"])])]
+    Output: "SELECT n_genes FROM (SELECT * FROM obs WHERE obs_id IN ('cell1', 'cell2'))"
+    """
+
+    conditions = param.List(doc="""
+        List of filter conditions expressed as tuples of (table_name, filter_conditions)
+        where filter_conditions is a list of (column_name, filter_value) tuples.
+        Example: [("obs", [("obs_id", ["cell1", "cell2"])])]""")
+
+    transform_type: ClassVar[str] = 'sql_prefilter'
+
+    def apply(self, sql_in: str) -> str:
+        if not self.conditions:
+            return sql_in
+
+        try:
+            expression = self.parse_sql(sql_in)
+
+            # Build mapping of table names to filter conditions
+            table_conditions = {}
+            for table_name, filter_conditions in self.conditions:
+                if filter_conditions:  # Only add if there are actual conditions
+                    table_conditions[table_name] = filter_conditions
+
+            if not table_conditions:
+                return sql_in
+
+            # Find all table references in the query and replace with filtered subqueries
+            tables_to_replace = {}
+
+            for table_expr in expression.find_all(Table):
+                # Get the table name, stripping quotes for matching
+                table_name = str(table_expr.this).strip('"\'')
+
+                # Check if this table has prefilter conditions
+                if table_name in table_conditions:
+                    # Create a filtered subquery for this table
+                    filtered_subquery = self._create_filtered_subquery(
+                        table_name, table_conditions[table_name], table_expr.alias
+                    )
+                    tables_to_replace[table_expr] = filtered_subquery
+
+            if not tables_to_replace:
+                return sql_in
+
+            # Replace tables with filtered subqueries
+            replaced_expression = replace_tables(expression, tables_to_replace, dialect=self.read)
+            return self.to_sql(replaced_expression)
+
+        except Exception as e:
+            # If transformation fails, return original SQL
+            self.param.warning(f"SQLPreFilter failed to apply: {e}")
+            return sql_in
+
+    def _create_filtered_subquery(self, table_name: str, filter_conditions: list, alias: str | None = None) -> Table:
+        """
+        Create a filtered subquery for a table.
+
+        Parameters
+        ----------
+        table_name : str
+            Name of the table to filter
+        filter_conditions : list
+            List of (column, value) tuples for filtering
+        alias : str, optional
+            Alias for the table
+
+        Returns
+        -------
+        Table
+            Subquery expression that can replace the original table
+        """
+        from sqlglot.expressions import Identifier
+
+        # Start with SELECT * FROM table_name
+        base_table = Table(this=Identifier(this=table_name, quoted=True))
+        subquery = select("*").from_(base_table)
+
+        # Build WHERE conditions using the shared filtering logic
+        filters = self._build_filter_conditions(filter_conditions)
+
+        if filters:
+            subquery = subquery.where(and_(*filters))
+
+        # Return as a subquery that can replace the original table
+        return subquery.subquery(alias=alias or table_name)
 
 
 class SQLOverride(SQLTransform):

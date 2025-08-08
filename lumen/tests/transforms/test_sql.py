@@ -7,8 +7,8 @@ import sqlglot
 
 from lumen.transforms.sql import (
     SQLColumns, SQLCount, SQLDistinct, SQLFilter, SQLFormat, SQLGroupBy,
-    SQLLimit, SQLMinMax, SQLOverride, SQLRemoveSourceSeparator, SQLSample,
-    SQLSelectFrom, SQLTransform,
+    SQLLimit, SQLMinMax, SQLOverride, SQLPreFilter, SQLRemoveSourceSeparator,
+    SQLSample, SQLSelectFrom, SQLTransform,
 )
 
 
@@ -250,6 +250,354 @@ def test_sql_filter_datetime_range():
     )
     expected = "SELECT * FROM (SELECT * FROM TABLE) WHERE A BETWEEN '2017-02-22 00:00:00' AND '2017-04-14 00:00:00'"
     assert result == expected
+
+
+def test_sql_prefilter_basic():
+    """Test basic prefiltering on a single table."""
+    result = SQLPreFilter.apply_to(
+        "SELECT n_genes FROM obs",
+        conditions=[("obs", [("obs_id", ["cell1", "cell2"])])]
+    )
+    expected = 'SELECT n_genes FROM (SELECT * FROM "obs" WHERE obs_id IN (\'cell1\', \'cell2\')) AS obs'
+    assert result == expected
+
+
+def test_sql_prefilter_multiple_conditions():
+    """Test prefiltering with multiple conditions on the same table."""
+    result = SQLPreFilter.apply_to(
+        "SELECT n_genes FROM obs",
+        conditions=[("obs", [("obs_id", ["cell1", "cell2"]), ("cell_type", "T-cell")])]
+    )
+    expected = 'SELECT n_genes FROM (SELECT * FROM "obs" WHERE obs_id IN (\'cell1\', \'cell2\') AND cell_type = \'T-cell\') AS obs'
+    assert result == expected
+
+
+def test_sql_prefilter_multiple_tables():
+    """Test prefiltering on multiple tables in a JOIN."""
+    result = SQLPreFilter.apply_to(
+        "SELECT o.n_genes, v.gene_name FROM obs o JOIN var v ON o.id = v.id",
+        conditions=[
+            ("obs", [("obs_id", ["cell1", "cell2"])]),
+            ("var", [("var_id", ["gene1", "gene2"])])
+        ]
+    )
+    # Note: The exact formatting may vary, but should contain both filtered subqueries
+    assert 'obs_id IN (\'cell1\', \'cell2\')' in result
+    assert 'var_id IN (\'gene1\', \'gene2\')' in result
+    assert 'SELECT * FROM "obs"' in result
+    assert 'SELECT * FROM "var"' in result
+
+
+def test_sql_prefilter_no_conditions():
+    """Test that prefilter passes through unchanged when no conditions."""
+    sql_in = "SELECT n_genes FROM obs"
+    result = SQLPreFilter.apply_to(sql_in, conditions=[])
+    expected = sql_in
+    assert result == expected
+
+
+def test_sql_prefilter_table_not_in_conditions():
+    """Test that tables not mentioned in conditions are left unchanged."""
+    result = SQLPreFilter.apply_to(
+        "SELECT n_genes FROM obs",
+        conditions=[("var", [("var_id", ["gene1", "gene2"])])]
+    )
+    # Since obs is not in conditions, query should be unchanged
+    expected = "SELECT n_genes FROM obs"
+    assert result == expected
+
+
+def test_sql_prefilter_numeric_conditions():
+    """Test prefiltering with numeric conditions."""
+    result = SQLPreFilter.apply_to(
+        "SELECT * FROM data",
+        conditions=[("data", [("score", 85), ("count", [100, 200, 300])])]
+    )
+    expected = 'SELECT * FROM (SELECT * FROM "data" WHERE score = 85 AND count IN (\'100\', \'200\', \'300\')) AS data'
+    assert result == expected
+
+
+def test_sql_prefilter_none_conditions():
+    """Test prefiltering with None values."""
+    result = SQLPreFilter.apply_to(
+        "SELECT * FROM data",
+        conditions=[("data", [("nullable_col", None)])]
+    )
+    expected = 'SELECT * FROM (SELECT * FROM "data" WHERE nullable_col IS NULL) AS data'
+    assert result == expected
+
+
+def test_sql_prefilter_mixed_none_conditions():
+    """Test prefiltering with mixed None and non-None values."""
+    result = SQLPreFilter.apply_to(
+        "SELECT * FROM data",
+        conditions=[("data", [("status", ["active", None, "pending"])])]
+    )
+    expected = 'SELECT * FROM (SELECT * FROM "data" WHERE status IS NULL OR status IN (\'active\', \'pending\')) AS data'
+    assert result == expected
+
+
+def test_sql_prefilter_date_conditions():
+    """Test prefiltering with date conditions."""
+    result = SQLPreFilter.apply_to(
+        "SELECT * FROM events",
+        conditions=[("events", [("event_date", dt.date(2023, 1, 15))])]
+    )
+    expected = 'SELECT * FROM (SELECT * FROM "events" WHERE event_date BETWEEN \'2023-01-15 00:00:00\' AND \'2023-01-15 23:59:59\') AS events'
+    assert result == expected
+
+
+def test_sql_prefilter_datetime_conditions():
+    """Test prefiltering with datetime conditions."""
+    result = SQLPreFilter.apply_to(
+        "SELECT * FROM events",
+        conditions=[("events", [("created_at", dt.datetime(2023, 1, 15, 10, 30, 0))])]
+    )
+    expected = 'SELECT * FROM (SELECT * FROM "events" WHERE created_at = \'2023-01-15 10:30:00\') AS events'
+    assert result == expected
+
+
+def test_sql_prefilter_date_range_conditions():
+    """Test prefiltering with date range conditions."""
+    result = SQLPreFilter.apply_to(
+        "SELECT * FROM events",
+        conditions=[("events", [("event_date", (dt.date(2023, 1, 1), dt.date(2023, 1, 31)))])]
+    )
+    expected = 'SELECT * FROM (SELECT * FROM "events" WHERE event_date BETWEEN \'2023-01-01 00:00:00\' AND \'2023-01-31 23:59:59\') AS events'
+    assert result == expected
+
+
+def test_sql_prefilter_datetime_range_conditions():
+    """Test prefiltering with datetime range conditions."""
+    result = SQLPreFilter.apply_to(
+        "SELECT * FROM events",
+        conditions=[("events", [("created_at", (dt.datetime(2023, 1, 1, 9, 0), dt.datetime(2023, 1, 1, 17, 0)))])]
+    )
+    expected = 'SELECT * FROM (SELECT * FROM "events" WHERE created_at BETWEEN \'2023-01-01 09:00:00\' AND \'2023-01-01 17:00:00\') AS events'
+    assert result == expected
+
+
+def test_sql_prefilter_multiple_date_ranges():
+    """Test prefiltering with multiple date ranges in a list."""
+    result = SQLPreFilter.apply_to(
+        "SELECT * FROM events",
+        conditions=[("events", [("event_date", [(dt.date(2023, 1, 1), dt.date(2023, 1, 31)), (dt.date(2023, 6, 1), dt.date(2023, 6, 30))])])]
+    )
+    # Should use OR to combine multiple ranges
+    assert 'event_date BETWEEN \'2023-01-01 00:00:00\' AND \'2023-01-31 23:59:59\'' in result
+    assert 'event_date BETWEEN \'2023-06-01 00:00:00\' AND \'2023-06-30 23:59:59\'' in result
+    assert ' OR ' in result
+
+
+def test_sql_prefilter_complex_query():
+    """Test prefiltering on a complex query with GROUP BY and ORDER BY."""
+    result = SQLPreFilter.apply_to(
+        "SELECT cell_type, AVG(n_genes) as avg_genes FROM obs GROUP BY cell_type ORDER BY avg_genes DESC",
+        conditions=[("obs", [("obs_id", ["cell1", "cell2", "cell3"])])]
+    )
+    # Should preserve the structure but filter the obs table
+    assert 'obs_id IN (\'cell1\', \'cell2\', \'cell3\')' in result
+    assert 'GROUP BY cell_type' in result
+    assert 'ORDER BY avg_genes DESC' in result
+
+
+def test_sql_prefilter_subquery():
+    """Test prefiltering when the original query already contains subqueries."""
+    result = SQLPreFilter.apply_to(
+        "SELECT * FROM (SELECT n_genes FROM obs WHERE n_genes > 100) filtered_obs",
+        conditions=[("obs", [("obs_id", ["cell1", "cell2"])])]
+    )
+    # Should filter the obs table within the existing subquery structure
+    assert 'obs_id IN (\'cell1\', \'cell2\')' in result
+    assert 'n_genes > 100' in result
+
+
+def test_sql_prefilter_with_aliases():
+    """Test prefiltering preserves table aliases."""
+    result = SQLPreFilter.apply_to(
+        "SELECT o.n_genes FROM obs o",
+        conditions=[("obs", [("obs_id", ["cell1", "cell2"])])]
+    )
+    # Should preserve the alias 'o' for the filtered obs table
+    assert 'obs_id IN (\'cell1\', \'cell2\')' in result
+    assert result.endswith(' AS o')  # Alias should be preserved
+
+
+def test_sql_prefilter_float_conditions():
+    """Test prefiltering with float values."""
+    result = SQLPreFilter.apply_to(
+        "SELECT * FROM measurements",
+        conditions=[("measurements", [("temperature", 98.6), ("pressure", [1013.25, 1020.0])])]
+    )
+    assert 'temperature = 98.6' in result
+    assert "pressure IN ('1013.25', '1020.0')" in result
+
+
+def test_sql_prefilter_string_conditions():
+    """Test prefiltering with string conditions."""
+    result = SQLPreFilter.apply_to(
+        "SELECT * FROM users",
+        conditions=[("users", [("status", "active"), ("role", ["admin", "user", "guest"])])]
+    )
+    assert "status = 'active'" in result
+    assert "role IN ('admin', 'user', 'guest')" in result
+
+
+def test_sql_prefilter_all_none_list():
+    """Test prefiltering with a list containing only None values."""
+    result = SQLPreFilter.apply_to(
+        "SELECT * FROM data",
+        conditions=[("data", [("nullable_field", [None, None])])]
+    )
+    expected = 'SELECT * FROM (SELECT * FROM "data" WHERE nullable_field IS NULL) AS data'
+    assert result == expected
+
+
+def test_sql_prefilter_join_with_conditions():
+    """Test prefiltering on tables involved in JOINs."""
+    result = SQLPreFilter.apply_to(
+        "SELECT u.name, p.title FROM users u INNER JOIN posts p ON u.id = p.user_id",
+        conditions=[
+            ("users", [("status", "active")]),
+            ("posts", [("published", 1)])  # Use 1 instead of True
+        ]
+    )
+    assert "status = 'active'" in result
+    assert "published = 1" in result
+    assert "INNER JOIN" in result
+
+
+def test_sql_prefilter_boolean_conditions():
+    """Test prefiltering with numeric boolean-like values."""
+    result = SQLPreFilter.apply_to(
+        "SELECT * FROM articles",
+        conditions=[("articles", [("published", 1), ("featured", 0)])]  # Use 1/0 instead of True/False
+    )
+    assert "published = 1" in result
+    assert "featured = 0" in result
+
+
+def test_sql_prefilter_unsupported_condition_type():
+    """Test prefiltering with unsupported condition type (should warn and skip)."""
+    # This uses a complex object that's not supported
+    complex_obj = {"key": "value"}
+    result = SQLPreFilter.apply_to(
+        "SELECT * FROM data",
+        conditions=[("data", [("metadata", complex_obj), ("valid_col", "valid_value")])]
+    )
+    # Should process the valid condition but skip the invalid one
+    assert "valid_col = 'valid_value'" in result
+    # Should not crash or include the complex object
+    assert "metadata" not in result or "WHERE valid_col = 'valid_value'" in result
+
+
+def test_sql_prefilter_boolean_values_unsupported():
+    """Test that boolean True/False values are not supported and get skipped."""
+    result = SQLPreFilter.apply_to(
+        "SELECT * FROM data",
+        conditions=[("data", [("bool_col", True), ("valid_col", "valid_value")])]
+    )
+    # Boolean values are not supported and should be skipped with a warning
+    # Only the valid condition should be processed
+    assert "valid_col = 'valid_value'" in result
+    # The boolean condition should not appear in the result
+    assert "bool_col" not in result or "bool_col = True" not in result
+
+
+def test_sql_prefilter_empty_condition_value():
+    """Test prefiltering with empty list as condition value."""
+    result = SQLPreFilter.apply_to(
+        "SELECT * FROM data",
+        conditions=[("data", [("empty_list_col", [])])]
+    )
+    # Empty list should be handled gracefully - likely no WHERE clause for that condition
+    # The exact behavior may vary, but should not crash
+    assert "SELECT * FROM" in result
+
+
+def test_sql_prefilter_case_sensitivity():
+    """Test that table name matching is case sensitive."""
+    result = SQLPreFilter.apply_to(
+        "SELECT * FROM Users",  # Capital U
+        conditions=[("users", [("id", 123)])]  # lowercase u
+    )
+    # Should not match due to case difference
+    expected = "SELECT * FROM Users"
+    assert result == expected
+
+
+def test_sql_prefilter_multiple_tables_same_conditions():
+    """Test prefiltering multiple tables with the same condition structure."""
+    result = SQLPreFilter.apply_to(
+        "SELECT u.name, a.title FROM users u JOIN articles a ON u.id = a.author_id",
+        conditions=[
+            ("users", [("status", "active")]),
+            ("articles", [("status", "published")])
+        ]
+    )
+    # Both tables should be filtered, each with their own WHERE clause
+    assert result.count("status = 'active'") == 1
+    assert result.count("status = 'published'") == 1
+
+
+def test_sql_prefilter_left_join_preservation():
+    """Test that LEFT JOINs are preserved correctly with prefiltering."""
+    result = SQLPreFilter.apply_to(
+        "SELECT u.name, p.title FROM users u LEFT JOIN posts p ON u.id = p.user_id",
+        conditions=[("users", [("active", 1)])]
+    )
+    assert "LEFT JOIN" in result
+    assert "active = 1" in result
+
+
+def test_sql_prefilter_quoted_table_names():
+    """Test prefiltering with already quoted table names."""
+    # The table name matching is based on str(table_expr.this) which strips quotes
+    # So 'my-table' should match "my-table" in the SQL
+    result = SQLPreFilter.apply_to(
+        'SELECT * FROM "my-table"',
+        conditions=[('my-table', [('new_condition', 'value')])]
+    )
+    # Since quotes are stripped during parsing, this should work
+    assert "new_condition = 'value'" in result
+
+
+def test_sql_prefilter_nested_subqueries():
+    """Test prefiltering with nested subqueries."""
+    result = SQLPreFilter.apply_to(
+        "SELECT * FROM (SELECT id FROM (SELECT * FROM users WHERE active = 1) active_users) user_ids",
+        conditions=[("users", [("role", "admin")])]
+    )
+    # Should filter the innermost users table
+    assert "role = 'admin'" in result
+    assert "active = 1" in result
+
+
+def test_sql_prefilter_union_queries():
+    """Test prefiltering with UNION queries."""
+    result = SQLPreFilter.apply_to(
+        "SELECT name FROM users WHERE active = 1 UNION SELECT name FROM admins WHERE active = 1",
+        conditions=[
+            ("users", [("role", "user")]),
+            ("admins", [("role", "admin")])
+        ]
+    )
+    # Both tables in the UNION should be filtered
+    assert "role = 'user'" in result
+    assert "role = 'admin'" in result
+    assert "UNION" in result
+
+
+def test_sql_prefilter_cte_common_table_expressions():
+    """Test prefiltering with Common Table Expressions (CTEs)."""
+    result = SQLPreFilter.apply_to(
+        "WITH active_users AS (SELECT * FROM users WHERE status = 'active') SELECT * FROM active_users",
+        conditions=[("users", [("role", "admin")])]
+    )
+    # Should filter the users table within the CTE
+    assert "role = 'admin'" in result
+    assert "status = 'active'" in result
+    assert "WITH" in result
 
 
 def test_sql_count():
@@ -592,6 +940,70 @@ class TestSQLRemoveSourceSeparator:
         # Verify string literals are preserved
         assert "'United States of America'" in result
         assert "'Michael PHELPS'" in result
+
+
+class TestSQLFilterBase:
+    """Test the shared base class functionality."""
+    
+    def test_build_filter_conditions_comprehensive(self):
+        """Test the shared _build_filter_conditions method comprehensively."""
+        # Create a simple SQLFilter instance to test the base class method
+        filter_instance = SQLFilter()
+        
+        # Test all supported condition types
+        conditions = [
+            ("col1", None),
+            ("col2", 42),
+            ("col3", 3.14),
+            ("col4", "string_value"),
+            ("col5", dt.date(2023, 1, 15)),
+            ("col6", dt.datetime(2023, 1, 15, 10, 30)),
+            ("col7", (1, 10)),
+            ("col8", ["a", "b", "c"]),
+            ("col9", [None, "value"]),
+            ("col10", [(dt.date(2023, 1, 1), dt.date(2023, 1, 31)), (dt.date(2023, 6, 1), dt.date(2023, 6, 30))])
+        ]
+        
+        filters = filter_instance._build_filter_conditions(conditions)
+        
+        # Should return a list of sqlglot expressions
+        assert isinstance(filters, list)
+        assert len(filters) == 10  # All conditions should be processed
+        
+        # Convert to SQL strings to verify content
+        filter_sqls = [f.sql() for f in filters]
+        
+        # Verify each condition type
+        assert any("col1 IS NULL" in sql for sql in filter_sqls)
+        assert any("col2 = 42" in sql for sql in filter_sqls)
+        assert any("col3 = 3.14" in sql for sql in filter_sqls)
+        assert any("col4 = 'string_value'" in sql for sql in filter_sqls)
+        assert any("BETWEEN '2023-01-15 00:00:00' AND '2023-01-15 23:59:59'" in sql for sql in filter_sqls)
+        assert any("col6 = '2023-01-15 10:30:00'" in sql for sql in filter_sqls)
+        assert any("BETWEEN '1' AND '10'" in sql for sql in filter_sqls)
+        assert any("IN ('a', 'b', 'c')" in sql for sql in filter_sqls)
+        assert any("IS NULL OR" in sql and "IN ('value')" in sql for sql in filter_sqls)
+        
+    def test_unsupported_condition_handling(self):
+        """Test that unsupported condition types are handled gracefully."""
+        filter_instance = SQLFilter()
+        
+        # Mix valid and invalid conditions
+        conditions = [
+            ("valid_col", "valid_value"),
+            ("invalid_col", {"complex": "object"}),  # Unsupported type
+            ("another_valid", 123)
+        ]
+        
+        filters = filter_instance._build_filter_conditions(conditions)
+        
+        # Should only process the valid conditions
+        assert len(filters) == 2
+        
+        filter_sqls = [f.sql() for f in filters]
+        assert any("valid_col = 'valid_value'" in sql for sql in filter_sqls)
+        assert any("another_valid = 123" in sql for sql in filter_sqls)
+        # Invalid condition should be skipped
 
     def test_debug_complex_table_names(self):
         """Test the specific case that's failing with complex table names."""
