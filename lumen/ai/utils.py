@@ -743,12 +743,12 @@ def load_json(json_spec: str) -> dict:
     return json.loads(json_spec.encode().decode('unicode_escape'))
 
 
-def parse_table_slug(table: str, sources: dict[str, Source], normalize: bool = True) -> tuple[Source | None, str]:
+def parse_table_slug(table: str, sources: list[Source], normalize: bool = True) -> tuple[Source | None, str]:
     if SOURCE_TABLE_SEPARATOR in table:
         a_source_name, a_table = table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
-        a_source_obj = sources.get(a_source_name)
+        a_source_obj = next((s for s in sources if s.name == a_source_name), None)
     else:
-        a_source_obj = next(iter(sources.values()))
+        a_source_obj = sources[0] if sources else None
         a_table = table
     if normalize:
         a_table = a_source_obj.normalize_table(a_table)

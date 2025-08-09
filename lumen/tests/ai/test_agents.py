@@ -133,7 +133,7 @@ class TestSoloAgentRespond:
     async def test_sql_agent(self, mock_llm, mock_memory, duckdb_source, test_messages):
         """Test SQLAgent instantiation and respond"""
         mock_memory["source"] = duckdb_source
-        mock_memory["sources"] = sources = {"duckdb": duckdb_source}
+        mock_memory["sources"] = sources = [duckdb_source]
         mock_memory["sql_metaset"] = await get_metaset(sources, ["test_sql"])
 
         agent = SQLAgent(llm=mock_llm, memory=mock_memory)
@@ -170,7 +170,7 @@ class TestSoloAgentRespond:
         mock_memory["source"] = duckdb_source
         mock_memory["pipeline"] = Pipeline(source=duckdb_source, table="test_sql")
         mock_memory["table"] = "test_sql"
-        mock_memory["sources"] = sources = {"duckdb": duckdb_source}
+        mock_memory["sources"] = sources = [duckdb_source]
         mock_memory["sql_metaset"] = await get_metaset(sources, ["test_sql"])
         mock_memory["data"] = duckdb_source.get("test_sql")
 

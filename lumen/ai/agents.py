@@ -22,7 +22,6 @@ from ..base import Component
 from ..dashboard import Config
 from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource, Source
-from ..sources.duckdb import DuckDBSource
 from ..state import state
 from ..transforms.sql import SQLLimit
 from ..views import (
@@ -46,8 +45,8 @@ from .tools import ToolUser
 from .translate import param_to_pydantic
 from .utils import (
     apply_changes, clean_sql, describe_data, get_data, get_pipeline,
-    get_schema, load_json, log_debug, mutate_user_message, parse_table_slug,
-    report_error, retry_llm_output, stream_details,
+    get_schema, load_json, log_debug, mutate_user_message, report_error,
+    retry_llm_output, stream_details,
 )
 from .views import (
     AnalysisOutput, LumenOutput, SQLOutput, VegaLiteOutput,
@@ -256,7 +255,7 @@ class ChatAgent(Agent):
         if "vector_metaset" not in self._memory and "source" in self._memory and "table" in self._memory:
             source = self._memory["source"]
             self._memory["vector_metaset"] = await get_metaset(
-                {source.name: source}, [f"{source.name}{SOURCE_TABLE_SEPARATOR}{self._memory['table']}"],
+                [source], [f"{source.name}{SOURCE_TABLE_SEPARATOR}{self._memory['table']}"],
             )
         system_prompt = await self._render_prompt("main", messages, **context)
         return await self._stream(messages, system_prompt)
@@ -706,11 +705,7 @@ class SQLAgent(LumenBaseAgent):
         )
 
         if should_materialize:
-            if isinstance(self._memory["sources"], dict):
-                self._memory["sources"][expr_slug] = sql_expr_source
-            else:
-                self._memory["sources"].append(sql_expr_source)
-            self._memory.trigger("sources")
+            self._memory["source"] = sql_expr_source
 
         # Create pipeline
         if is_final:
@@ -846,35 +841,6 @@ class SQLAgent(LumenBaseAgent):
                 entry["materialized_tables"].append(expr_slug)
 
         return entry
-
-    def _setup_source(self, sources: dict) -> tuple[dict, Any]:
-        """Setup the main source and handle multiple sources if needed."""
-        vector_metaset = self._memory["sql_metaset"].vector_metaset
-        selected_slugs = list(vector_metaset.vector_metadata_map) or self._memory["tables_metadata"].keys()
-
-        # Filter selected_slugs to only include visible tables
-        visible_slugs = self._memory.get('visible_slugs', set())
-        if visible_slugs:
-            selected_slugs = [slug for slug in selected_slugs if slug in visible_slugs]
-
-        tables_to_source = {parse_table_slug(table_slug, sources)[1]: parse_table_slug(table_slug, sources)[0] for table_slug in selected_slugs}
-        source = next(iter(tables_to_source.values()))
-
-        # Handle multiple sources if needed
-        if len(set(tables_to_source.values())) > 1:
-            mirrors = {}
-            for a_table, a_source in tables_to_source.items():
-                if not any(a_table.rstrip(")").rstrip("'").rstrip('"').endswith(ext)
-                           for ext in [".csv", ".parquet", ".parq", ".json", ".xlsx"]):
-                    renamed_table = a_table.replace(".", "_")
-                else:
-                    renamed_table = a_table
-                if SOURCE_TABLE_SEPARATOR in renamed_table:
-                    _, renamed_table = renamed_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
-                mirrors[renamed_table] = (a_source, renamed_table)
-            source = DuckDBSource(uri=":memory:", mirrors=mirrors)
-
-        return tables_to_source, source
 
     def _update_context_for_next_iteration(self, sql_plan_context: str, iteration: int) -> str:
         """Update context with results from current iteration."""
@@ -1138,9 +1104,7 @@ class SQLAgent(LumenBaseAgent):
     ) -> Any:
         """Execute SQL generation with one-shot attempt first, then iterative refinement if needed."""
         # Setup sources
-        sources = self._memory["sources"] if isinstance(self._memory["sources"], dict) else {source.name: source for source in self._memory["sources"]}
-        tables_to_source, source = self._setup_source(sources)
-
+        source = self._memory["source"]
         try:
             # Try one-shot approach first
             pipeline = await self._attempt_oneshot_sql(messages, source, step_title)
@@ -1294,18 +1258,16 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
             pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms)
 
             df = await get_data(pipeline)
-            sql_metaset = await get_metaset({sql_expr_source.name: sql_expr_source}, [expr_slug])
+            sql_metaset = await get_metaset([sql_expr_source], [expr_slug])
             vector_metaset = sql_metaset.vector_metaset
 
             # Update memory
             self._memory["data"] = await describe_data(df)
-            self._memory["sources"].append(sql_expr_source)
             self._memory["source"] = sql_expr_source
             self._memory["pipeline"] = pipeline
             self._memory["table"] = pipeline.table
             self._memory["dbtsl_vector_metaset"] = vector_metaset
             self._memory["dbtsl_sql_metaset"] = sql_metaset
-            self._memory.trigger("sources")
             return sql_query, pipeline
         except Exception as e:
             report_error(e, step)
