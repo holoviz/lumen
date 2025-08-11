@@ -501,29 +501,22 @@ class Coordinator(Viewer, VectorLookupToolUser):
         )
         return out
 
-    async def _pre_plan(self, messages: list[Message], agents: dict[str, Agent], tools: dict[str, Tool]) -> tuple[dict[str, Agent], dict[str, Tool], dict[str, Any]]:
+    async def _pre_plan(
+        self, messages: list[Message], agents: dict[str, Agent], tools: dict[str, Tool]
+    ) -> tuple[dict[str, Agent], dict[str, Tool], dict[str, Any]]:
         """
         Pre-plan step to prepare the agents and tools for the execution graph.
         This is where we can modify the agents and tools based on the messages.
         """
         # Filter agents by exclusions and applies
         agents = {agent_name: agent for agent_name, agent in agents.items() if not any(excluded_key in self._memory for excluded_key in agent.exclusions)}
-        filtered_agents = {}
-        for agent_name, agent in agents.items():
-            if await agent.applies(self._memory):
-                filtered_agents[agent_name] = agent
-        agents = filtered_agents
+        applies = await asyncio.gather(*[agent.applies(self._memory) for agent in agents.values()])
+        agents = {agent_name: agent for (agent_name, agent), aapply in zip(agents.items(), applies, strict=False) if aapply}
 
         # Filter tools by exclusions and applies
         tools = {tool_name: tool for tool_name, tool in tools.items() if not any(excluded_key in self._memory for excluded_key in tool.exclusions)}
-        filtered_tools = {}
-        for tool_name, tool in tools.items():
-            if hasattr(tool, 'applies') and await tool.applies(self._memory):
-                filtered_tools[tool_name] = tool
-            elif not hasattr(tool, 'applies'):
-                # If tool doesn't have applies method, include it by default
-                filtered_tools[tool_name] = tool
-        tools = filtered_tools
+        applies = await asyncio.gather(*[tool.applies(self._memory) for tool in tools.values()])
+        tools = {tool_name: tool for (tool_name, tool), tapply in zip(tools.items(), applies, strict=False) if tapply}
 
         return agents, tools, {}
 
@@ -714,8 +707,10 @@ class DependencyResolver(Coordinator):
     ):
         if agents is None:
             agents = self.agents
-        agents = [agent for agent in agents if await agent.applies(self._memory)]
-        tools = [tool for tool in self._tools["main"] if await tool.applies(self._memory)]
+        applies = await asyncio.gather(*[agent.applies(self._memory) for agent in agents])
+        agents = [agent for agent, aapply in zip(agents, applies, strict=False) if aapply]
+        applies = await asyncio.gather(*[tool.applies(self._memory) for tool in self._tools['main']])
+        tools = [tool for tool, tapply in zip(self._tools['main'], applies, strict=False) if tapply]
 
         agent_names = tuple(sagent.name[:-5] for sagent in agents) + tuple(tool.name for tool in tools)
         agent_model = self._get_model("main", agent_names=agent_names, primary=primary)
