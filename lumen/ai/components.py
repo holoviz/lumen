@@ -385,8 +385,6 @@ class TableSourceCard(Viewer):
                 source for source in memory.get("sources", [])
                 if source is not self.source
             ]
-            if self.source is memory.get("source"):
-                memory["source"] = next(iter(memory.get("sources", [])), None)
 
     def __panel__(self):
         card_header = Row(

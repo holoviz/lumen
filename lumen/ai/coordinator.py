@@ -21,7 +21,10 @@ from typing_extensions import Self
 
 from .actor import Actor
 from .agents import Agent, AnalysisAgent, ChatAgent
-from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
+from .config import (
+    DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR,
+    SOURCE_TABLE_SEPARATOR,
+)
 from .llm import LlamaCpp, Llm, Message
 from .logs import ChatLogs
 from .models import (
@@ -283,15 +286,83 @@ class Coordinator(Viewer, VectorLookupToolUser):
             "clear": {"callback": on_clear},
         }
 
-        if "source" in self._memory and "sources" not in self._memory:
-            self._memory["sources"] = [self._memory["source"]]
-        elif "source" not in self._memory and self._memory.get("sources"):
-            self._memory["source"] = self._memory["sources"][0]
-        elif "sources" not in self._memory:
-            self._memory["sources"] = []
+        # Set up automatic synchronization between source and sources FIRST
+        # so the initial setup below triggers automatic sync
+        self._memory.on_change("source", self._sync_source_to_sources)
+        self._memory.on_change("sources", self._sync_sources_to_source)
+        self._memory.on_change("sources", self._update_visible_slugs)
 
-        if "visible_slugs" not in self._memory:
-            self._memory["visible_slugs"] = set()
+        # Initialize memory
+        self._memory["sources"] = self._memory.get("sources", [])
+        self._sync_source_to_sources(None, None, self._memory.get("source", None))
+        self._sync_sources_to_source(None, None, self._memory["sources"])
+        self._update_visible_slugs(None, None, self._memory["sources"])
+
+    def _update_visible_slugs(self, key=None, old_sources=None, new_sources=None):
+        """
+        Update visible_slugs when sources change.
+        This is the central place where table visibility is managed.
+        """
+        if not new_sources:
+            self._memory['visible_slugs'] = set()
+            return
+
+        # Calculate all available table slugs from sources
+        all_slugs = set()
+        for source in new_sources:
+            tables = source.get_tables()
+            for table in tables:
+                table_slug = f'{source.name}{SOURCE_TABLE_SEPARATOR}{table}'
+                all_slugs.add(table_slug)
+
+        # Update visible_slugs, preserving existing visibility where possible
+        # This ensures removed tables are filtered out, new tables are added
+        current_visible = self._memory.get('visible_slugs', set())
+        if current_visible:
+            # Keep intersection of current visible and available slugs
+            # Plus add any new slugs that weren't previously available
+            self._memory['visible_slugs'] = current_visible.intersection(all_slugs) | (all_slugs - current_visible)
+        else:
+            # If no visible_slugs set, make all tables visible
+            self._memory['visible_slugs'] = all_slugs
+
+    def _sync_source_to_sources(self, key, old_source, new_source):
+        """
+        When source is set/changed, automatically add it to sources if it doesn't exist.
+        This eliminates the need for manual dual updates.
+        """
+        if new_source is None:
+            return
+
+        current_sources = self._memory.get("sources", [])
+        # Check if the new source already exists in sources (by name)
+        existing_source = next(
+            (source for source in current_sources if source.name == new_source.name),
+            None
+        )
+
+        if existing_source is None:
+            # Add new source to sources list
+            self._memory["sources"] = current_sources + [new_source]
+        elif existing_source is not new_source:
+            # Replace existing source with new one (in case it's updated)
+            updated_sources = [
+                new_source if source.name == new_source.name else source
+                for source in current_sources
+            ]
+            self._memory["sources"] = updated_sources
+
+    def _sync_sources_to_source(self, key, old_sources, new_sources):
+        """
+        When sources changes, ensure source is set to the first source.
+        """
+        if not new_sources:
+            return
+
+        current_source = self._memory.get('source')
+        # If current source is not in the new sources list, update it
+        if current_source is None or current_source not in new_sources:
+            self._memory['source'] = new_sources[0]
 
     def __panel__(self):
         return self.interface
@@ -430,13 +501,23 @@ class Coordinator(Viewer, VectorLookupToolUser):
         )
         return out
 
-    async def _pre_plan(self, messages: list[Message], agents: dict[str, Agent], tools: dict[str, Tool]) -> tuple[dict[str, Agent], dict[str, Tool], dict[str, Any]]:
+    async def _pre_plan(
+        self, messages: list[Message], agents: dict[str, Agent], tools: dict[str, Tool]
+    ) -> tuple[dict[str, Agent], dict[str, Tool], dict[str, Any]]:
         """
         Pre-plan step to prepare the agents and tools for the execution graph.
         This is where we can modify the agents and tools based on the messages.
         """
+        # Filter agents by exclusions and applies
         agents = {agent_name: agent for agent_name, agent in agents.items() if not any(excluded_key in self._memory for excluded_key in agent.exclusions)}
-        tools = {tool_name: tool for tool_name, tool in tools.items()  if not any(excluded_key in self._memory for excluded_key in tool.exclusions)}
+        applies = await asyncio.gather(*[agent.applies(self._memory) for agent in agents.values()])
+        agents = {agent_name: agent for (agent_name, agent), aapply in zip(agents.items(), applies, strict=False) if aapply}
+
+        # Filter tools by exclusions and applies
+        tools = {tool_name: tool for tool_name, tool in tools.items() if not any(excluded_key in self._memory for excluded_key in tool.exclusions)}
+        applies = await asyncio.gather(*[tool.applies(self._memory) for tool in tools.values()])
+        tools = {tool_name: tool for (tool_name, tool), tapply in zip(tools.items(), applies, strict=False) if tapply}
+
         return agents, tools, {}
 
     async def _compute_plan(self, messages: list[Message], agents: dict[str, Agent], tools: dict[str, Tool], pre_plan_output: dict) -> Plan:
@@ -626,8 +707,11 @@ class DependencyResolver(Coordinator):
     ):
         if agents is None:
             agents = self.agents
-        agents = [agent for agent in agents if await agent.applies(self._memory)]
-        tools = self._tools["main"]
+        applies = await asyncio.gather(*[agent.applies(self._memory) for agent in agents])
+        agents = [agent for agent, aapply in zip(agents, applies, strict=False) if aapply]
+        applies = await asyncio.gather(*[tool.applies(self._memory) for tool in self._tools['main']])
+        tools = [tool for tool, tapply in zip(self._tools['main'], applies, strict=False) if tapply]
+
         agent_names = tuple(sagent.name[:-5] for sagent in agents) + tuple(tool.name for tool in tools)
         agent_model = self._get_model("main", agent_names=agent_names, primary=primary)
         if len(agent_names) == 0:

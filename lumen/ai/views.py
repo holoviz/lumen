@@ -69,7 +69,7 @@ class LumenOutput(Viewer):
         )
         copy_icon = IconButton(
             icon="content_copy", active_icon="check", margin=(5, 0), toggle_duration=1000,
-            description="Copy YAML to clipboard", size="0.7em", color="default"
+            description="Copy YAML to clipboard", size="small", color="default"
         )
         copy_icon.js_on_click(
             args={"code_editor": code_editor},
@@ -77,7 +77,7 @@ class LumenOutput(Viewer):
         )
         download_icon = IconButton(
             icon="download", active_icon="check", margin=(5, 0), toggle_duration=1000,
-            description="Download YAML to file", size="0.8em", color="default"
+            description="Download YAML to file", size="small", color="default"
         )
         download_icon.js_on_click(
             args={"code_editor": code_editor},
