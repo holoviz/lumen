@@ -244,7 +244,7 @@ async def get_metaset(sources: list[Source], tables: list[str]) -> SQLMetaset:
         except Exception as e:
             log_debug(f"Failed to get metadata for table {table_name} in source {source_name}: {e}")
             metadata = {}
-        tables_metadata[table_name] = VectorMetadata(
+        tables_metadata[table_slug] = VectorMetadata(
             table_slug=table_slug,
             similarity=1,
             base_sql=source.get_sql_expr(source.normalize_table(table_name)),
