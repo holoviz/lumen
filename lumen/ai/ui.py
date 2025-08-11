@@ -94,6 +94,11 @@ EXPLORATIONS_INTRO = """
 
 
 class TableExplorer(Viewer):
+    """
+    TableExplorer provides a high-level entrypoint to explore tables in a split UI.
+    It allows users to load tables, explore them using Graphic Walker, and then
+    interrogate the data via a chat interface.
+    """
 
     interface = param.ClassSelector(class_=ChatFeed, doc="""
         The interface for the Coordinator to interact with.""")
@@ -111,7 +116,7 @@ class TableExplorer(Viewer):
         )
         self._input_row = Row(self._table_select, self._explore_button)
         self._source_map = {}
-        memory.on_change('sources', self._update_source_map)
+        memory.on_change("sources", self._update_source_map)
         self._update_source_map(init=True)
 
         self._tabs = Tabs(dynamic=True, sizing_mode='stretch_both')
@@ -121,31 +126,22 @@ class TableExplorer(Viewer):
 
     def _update_source_map(self, key=None, old=None, sources=None, init=False):
         if sources is None:
-            sources = memory['sources']
+            sources = memory["sources"]
         selected = list(self._table_select.value)
         deduplicate = len(sources) > 1
         new = {}
 
-        all_slugs = set()
+        # Build the source map for UI display
         for source in sources:
             tables = source.get_tables()
-            for t in tables:
-                original_table = t
+            for table in tables:
                 if deduplicate:
-                    t = f'{source.name}{SOURCE_TABLE_SEPARATOR}{t}'
+                    table = f'{source.name}{SOURCE_TABLE_SEPARATOR}{table}'
 
-                # Always use the full slug for checking visibility
-                table_slug = f'{source.name}{SOURCE_TABLE_SEPARATOR}{original_table}'
-                all_slugs.add(table_slug)
-
-                if (t.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)[-1] not in self._source_map and
+                if (table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)[-1] not in self._source_map and
                     not init and not len(selected) > self._table_select.max_items and state.loaded):
-                    selected.append(t)
-                new[t] = source
-
-        # Ensure visible_slugs doesn't contain removed tables
-        if 'visible_slugs' in memory:
-            memory['visible_slugs'] = memory['visible_slugs'].intersection(all_slugs)
+                    selected.append(table)
+                new[table] = source
 
         self._source_map.clear()
         self._source_map.update(new)
@@ -387,18 +383,18 @@ class UI(Viewer):
         self._source_agent = next((agent for agent in self._coordinator.agents if isinstance(agent, SourceAgent)), None)
         # Create LLM status chip
         self._llm_chip = Chip(
-            object="Manage LLM:",
+            object="Manage LLM: Loading...",
             icon="auto_awesome",
             align="center",
             color="light",
             margin=(0, 5, 0, 10),
             on_click=self._open_llm_dialog,
             loading=True,
-            variant="outlined"
+            variant="outlined",
         )
 
         self._data_sources_chip = Chip(
-            object="Loading Data Sources",
+            object="Manage Data",
             icon="cloud_upload",
             align="center",
             color="light",
@@ -410,7 +406,7 @@ class UI(Viewer):
         self._table_lookup_tool = None  # Will be set after coordinator is initialized
         self._source_catalog = SourceCatalog()
         self._sources_dialog_content = Dialog(
-            Tabs(("Input", self._source_controls), ("Catalog", self._source_catalog), margin=(-30, 0, 0, 0), sizing_mode="stretch_both"),
+            Tabs(("Add Sources", self._source_controls), ("View Sources", self._source_catalog), margin=(-30, 0, 0, 0), sizing_mode="stretch_both"),
             close_on_click=True, show_close_button=True, sizing_mode='stretch_width', width_option='lg'
         )
 
@@ -467,7 +463,7 @@ class UI(Viewer):
             )
         else:
             self._llm_chip.param.update(
-                object="Loading LLM",
+                object="Manage LLM: Loading...",
                 loading=True
             )
 
@@ -522,7 +518,7 @@ class UI(Viewer):
 
         if not self._table_lookup_tool:
             self._data_sources_chip.param.update(
-                object='Manage Data Sources',
+                object='Manage Data',
                 icon="storage",
                 color="primary",
             )
@@ -550,7 +546,7 @@ class UI(Viewer):
         elif ready_state is True:
             # Ready - show as success
             self._data_sources_chip.param.update(
-                object="Manage Data Sources",
+                object="Manage Data",
                 loading=False,
             )
         elif ready_state is None:
@@ -611,9 +607,7 @@ class UI(Viewer):
                 uri=':memory:'
             )
             sources.append(source)
-        memory['sources'] = sources
-        if sources:
-            memory['source'] = sources[0]
+        memory["sources"] = sources
 
     def show(self, **kwargs):
         return self._create_view(server=True).show(**kwargs)
@@ -657,7 +651,7 @@ class UI(Viewer):
         """
         Update the sources dialog content when memory sources change.
         """
-        self._source_catalog.sources = memory['sources']
+        self._source_catalog.sources = memory["sources"]
 
     def servable(self, title: str | None = None, **kwargs):
         if (state.curdoc and state.curdoc.session_context):
