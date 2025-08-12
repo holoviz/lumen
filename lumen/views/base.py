@@ -7,12 +7,14 @@ from __future__ import annotations
 import html
 import sys
 
+from copy import deepcopy
 from io import BytesIO, StringIO
 from typing import (
     IO, TYPE_CHECKING, Any, ClassVar, Literal,
 )
 from weakref import WeakKeyDictionary
 
+import holoviews as hv
 import numpy as np
 import panel as pn
 import param  # type: ignore
@@ -47,7 +49,12 @@ if TYPE_CHECKING:
     from holoviews.selection import link_selections  # type: ignore
 
 DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
-
+VALID_HV_OPERATIONS = tuple([
+    getattr(hv.operation, op)
+    for op in hv.operation.__all__
+    if issubclass(getattr(hv.operation, op), hv.operation.Operation)
+    and op not in ("function", "method")
+] + [param.ParameterizedFunction])
 
 class View(MultiTypeComponent, Viewer):
     """
@@ -970,15 +977,14 @@ class hvPlotUIView(hvPlotBaseView):
         return hvDataFrameExplorer(*args, **kwargs)
 
 
-class hvPlotView(hvPlotBaseView):
+class HoloViewsElementView(View):
     """
-    `hvPlotView` renders the queried data as a bokeh plot generated with hvPlot.
-
-    hvPlot allows for a concise but powerful declaration of a plot via
-    its simple API.
+    Abstract base class for HoloViews element views. This class
+    provides a base implementation for HoloViews elements and
+    provides a way to link selections across multiple plots.
     """
 
-    operations = param.List(item_type=param.ParameterizedFunction, doc="""
+    operations = param.List(item_type=VALID_HV_OPERATIONS, doc="""
         Operations to apply to HoloViews plot.""")
 
     opts = param.Dict(default={}, doc="HoloViews options to apply on the plot.")
@@ -990,40 +996,11 @@ class hvPlotView(hvPlotBaseView):
         A selection expression caputirng the current selection applied
         on the plot.""")
 
-    view_type = 'hvplot'
-
     _ignore_kwargs = ['tables']
 
     _panel_type = pn.pane.HoloViews
 
     _supports_selections = True
-
-    def __init__(self, **params):
-        self._data_stream = None
-        self._linked_objs = []
-        super().__init__(**params)
-
-    def get_plot(self, df):
-        processed = {}
-        for k, v in self.kwargs.items():
-            if k in self._ignore_kwargs:
-                continue
-            if k.endswith('formatter') and isinstance(v, str) and '%' not in v:
-                v = NumeralTickFormatter(format=v)
-            processed[k] = v
-        if self.streaming:
-            processed['stream'] = self._data_stream
-
-        plot = df.hvplot(
-            kind=self.kind, x=self.x, y=self.y, by=self.by, groupby=self.groupby, **processed
-        )
-        if self.operations:
-            for operation in self.operations:
-                plot = operation(plot)
-        plot = plot.opts(**self.opts) if self.opts else plot
-        if self.selection_group or 'selection_expr' in self.param.watchers:
-            plot = self._link_plot(plot)
-        return plot
 
     def _link_plot(self, plot):
         self._init_link_selections()
@@ -1093,6 +1070,77 @@ class hvPlotView(hvPlotBaseView):
         else:
             self._data_stream.send(self.get_data())
 
+    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        spec = super().to_spec(context)
+        operations = spec.pop("operations", None)
+        if not operations:
+            return spec
+
+        spec["operations"] = []
+        for operation in operations:
+            op_spec = {"type": f"{operation.__module__}.{operation.__name__}"}
+            for k, v in operation.param.values().items():
+                default = getattr(type(operation), k)
+                try:
+                    is_equal = default is v
+                    if not is_equal:
+                        is_equal = default == v
+                except Exception:
+                    is_equal = False
+                if k == 'name' or is_equal:
+                    continue
+                else:
+                    op_spec[k] = v
+            spec['operations'].append(op_spec)
+        return spec
+
+    @classmethod
+    def from_spec(cls, spec: dict[str, Any] | str, source=None, filters=None, pipeline=None) -> View:
+        operation_specs = spec.pop("operations", [])
+        if operation_specs:
+            operations = []
+            for op_spec in deepcopy(operation_specs):
+                operations.append(resolve_module_reference(op_spec.pop('type')).instance(**op_spec))
+            spec["operations"] = operations
+        return super().from_spec(spec, source=source, filters=filters, pipeline=pipeline)
+
+
+class hvPlotView(hvPlotBaseView, HoloViewsElementView):
+    """
+    `hvPlotView` renders the queried data as a bokeh plot generated with hvPlot.
+
+    hvPlot allows for a concise but powerful declaration of a plot via
+    its simple API.
+    """
+
+    view_type = 'hvplot'
+
+    def __init__(self, **params):
+        self._data_stream = None
+        self._linked_objs = []
+        super().__init__(**params)
+
+    def get_plot(self, df):
+        processed = {}
+        for k, v in self.kwargs.items():
+            if k in self._ignore_kwargs:
+                continue
+            if k.endswith('formatter') and isinstance(v, str) and '%' not in v:
+                v = NumeralTickFormatter(format=v)
+            processed[k] = v
+        if self.streaming:
+            processed['stream'] = self._data_stream
+
+        plot = df.hvplot(
+            kind=self.kind, x=self.x, y=self.y, by=self.by, groupby=self.groupby, **processed
+        )
+        for operation in self.operations:
+            plot = operation(plot)
+        plot = plot.opts(**self.opts) if self.opts else plot
+        if self.selection_group or 'selection_expr' in self.param.watchers:
+            plot = self._link_plot(plot)
+        return plot
+
 
 class hvOverlayView(View):
     """
@@ -1118,6 +1166,117 @@ class hvOverlayView(View):
     def get_panel(self):
         params = self._get_params()
         return self._panel_type(**params)
+
+
+class HoloViewsView(HoloViewsElementView):
+
+    backend = param.Selector(
+        default='bokeh', objects=["bokeh", "matplotlib", "plotly"], doc="""
+        The backend to use for rendering the plot.""")
+
+    geo = param.Boolean(
+        default=False, doc="Toggle True if the plot is on a geographic map."
+    )
+
+    groupby = param.ListSelector(doc="""
+        The columns to group by when rendering the plot.""")
+
+    kind = param.Selector(
+        default="Points", doc="The HoloViews element to use.",
+        objects=[
+            'Curve',
+            'Bars',
+            'Points',
+            'Scatter',
+            'ErrorBars',
+            'Spread',
+            'Spikes',
+            'Area',
+            'VectorField',
+            'Histogram',
+            'Image',
+            'RGB',
+            'HSV',
+            'Raster',
+            'HeatMap',
+            'QuadMesh',
+            'ImageStack',
+            'Path',
+            'Contours',
+            'Box',
+            'Bounds',
+            'Ellipse',
+            'Polygons',
+            'Rectangles',
+            'Segments',
+            'VLines',
+            'HLines',
+            'HSpans',
+            'VSpans',
+            'HLine',
+            'VLine',
+            'HSpan',
+            'VSpan',
+            'Slope',
+            'Text',
+            'Labels',
+            'Spline',
+            'Arrow',
+            'Div',
+            'Tiles',
+            'Graph',
+            'Chord',
+            'Nodes',
+            'EdgePaths',
+            'TriMesh',
+            'Sankey',
+            'Table',
+            'ItemTable',
+            'Distribution',
+            'Bivariate',
+            'BoxWhisker',
+            'Violin',
+            'HexTiles',
+        ]
+    )
+
+    kdims = param.ListSelector(doc="""
+        The columns to render on the x-axis and/or y-axis.""")
+
+    vdims = param.ListSelector(doc="""
+        The columns to render on the y-axis and/or z-axis.""")
+
+    view_type = 'holoviews'
+
+    def get_plot(self, df):
+        processed = {}
+        for k, v in self.kwargs.items():
+            if k in self._ignore_kwargs:
+                continue
+            if k.endswith('formatter') and isinstance(v, str) and '%' not in v:
+                v = NumeralTickFormatter(format=v)
+            processed[k] = v
+        if self.streaming:
+            processed['stream'] = self._data_stream
+
+        key_dims = (self.kdims or []) + (self.groupby or [])
+        if self.geo:
+            import geoviews as gv
+            plot = gv.Dataset(df, kdims=key_dims, vdims=self.vdims).to(
+                getattr(gv, self.kind, gv.Points)
+            ) * gv.feature.coastline()
+        else:
+            plot = hv.Dataset(df, kdims=key_dims, vdims=self.vdims).to(
+                getattr(hv, self.kind, hv.Points)
+            )
+        if self.opts:
+            plot = plot.opts(self.kind, **self.opts)
+        plot = plot.opts(tools=["hover"])
+        for operation in self.operations:
+            plot = operation(plot)
+        if self.selection_group or 'selection_expr' in self.param.watchers:
+            plot = self._link_plot(plot)
+        return plot
 
 
 class Table(View):
