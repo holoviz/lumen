@@ -6,6 +6,8 @@ from pathlib import Path
 import numpy as np
 import param
 
+from .services import AzureOpenAIMixin, LlamaCppMixin, OpenAIMixin
+
 STOP_WORDS = (Path(__file__).parent / "embeddings_stop_words.txt").read_text().splitlines()
 STOP_WORDS_RE = re.compile(r"\b(?:{})\b".format("|".join(STOP_WORDS)), re.IGNORECASE)
 
@@ -68,7 +70,7 @@ class NumpyEmbeddings(Embeddings):
         return embeddings
 
 
-class OpenAIEmbeddings(Embeddings):
+class OpenAIEmbeddings(Embeddings, OpenAIMixin):
     """
     OpenAIEmbeddings is an embeddings class that uses the OpenAI API to generate embeddings.
 
@@ -77,17 +79,13 @@ class OpenAIEmbeddings(Embeddings):
     >>> await embeddings.embed(["Hello, world!", "Goodbye, world!"])
     """
 
-    api_key = param.String(default=None, doc="The OpenAI API key.")
-
     model = param.String(
         default="text-embedding-3-small", doc="The OpenAI model to use."
     )
 
     def __init__(self, **params):
         super().__init__(**params)
-        from openai import AsyncOpenAI
-
-        self.client = AsyncOpenAI(api_key=self.api_key)
+        self.client = self._instantiate_client(async_client=True)
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         texts = [text.replace("\n", " ").strip() for text in texts]
@@ -95,19 +93,16 @@ class OpenAIEmbeddings(Embeddings):
         return [r.embedding for r in response.data]
 
 
-class AzureOpenAIEmbeddings(Embeddings):
+class AzureOpenAIEmbeddings(Embeddings, AzureOpenAIMixin):
     """
     AzureOpenAIEmbeddings is an embeddings class that uses the Azure OpenAI API to generate embeddings.
+    Inherits from AzureOpenAIMixin which extends OpenAIMixin, so it has access to all OpenAI functionality
+    plus Azure-specific configuration.
 
     :Example:
     >>> embeddings = AzureOpenAIEmbeddings()
     >>> await embeddings.embed(["Hello, world!", "Goodbye, world!"])
     """
-    api_key = param.String(doc="The Azure API key.")
-
-    api_version = param.String(doc="The Azure AI Studio API version.")
-
-    provider_endpoint = param.String(doc="The Azure AI Studio endpoint.")
 
     model = param.String(
         default="text-embedding-3-large", doc="The OpenAI model to use."
@@ -115,13 +110,7 @@ class AzureOpenAIEmbeddings(Embeddings):
 
     def __init__(self, **params):
         super().__init__(**params)
-        from openai import AsyncAzureOpenAI
-
-        self.client = AsyncAzureOpenAI(
-            api_key=self.api_key,
-            api_version=self.api_version,
-            azure_endpoint=self.provider_endpoint,
-        )
+        self.client = self._instantiate_client(async_client=True)
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         texts = [text.replace("\n", " ") for text in texts]
@@ -131,8 +120,8 @@ class AzureOpenAIEmbeddings(Embeddings):
 
 class HuggingFaceEmbeddings(Embeddings):
     """
-    HuggingFaceEmbeddings is an embeddings class that uses sentence-transformers plus
-    a tokenizer model downloaded from Hugging Face to generate embeddings.
+    HuggingFaceEmbeddings is an embeddings class that uses sentence-transformers
+    to generate embeddings from Hugging Face models.
 
     :Example:
     >>> embeddings = HuggingFaceEmbeddings()
@@ -143,18 +132,66 @@ class HuggingFaceEmbeddings(Embeddings):
     model = param.String(default="sentence-transformers/all-MiniLM-L6-v2", doc="""
         The Hugging Face model to use.""")
 
+    prompt_name = param.String(default=None, doc="""
+        The prompt name to use for encoding queries. If None, no prompt is used.""")
+
     def __init__(self, **params):
         super().__init__(**params)
-        from transformers import AutoModel, AutoTokenizer
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model)
-        self._model = AutoModel.from_pretrained(self.model).to(self.device)
-        self.embedding_dim = self._model.config.hidden_size
+        from sentence_transformers import SentenceTransformer
+        self._model = SentenceTransformer(self.model, device=self.device)
+        self.embedding_dim = self._model.get_sentence_embedding_dimension()
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
-        import torch
         texts = [text.replace("\n", " ") for text in texts]
-        inputs = self.tokenizer(texts, padding=True, truncation=True, return_tensors="pt").to(self.device)
-        with torch.no_grad():
-            outputs = self._model(**inputs)
-        embeddings = outputs.last_hidden_state[:, 0, :].cpu().tolist()  # Use [CLS] token embeddings
+
+        # Use prompt_name if specified
+        if self.prompt_name:
+            embeddings = self._model.encode(texts, prompt_name=self.prompt_name)
+        else:
+            embeddings = self._model.encode(texts)
+
+        return embeddings.tolist()
+
+
+class LlamaCppEmbeddings(Embeddings, LlamaCppMixin):
+    """
+    LlamaCppEmbeddings is an embeddings class that uses the llama-cpp-python
+    library to generate embeddings from GGUF models.
+
+    :Example:
+    >>> embeddings = LlamaCppEmbeddings(
+    ...     model_kwargs={
+    ...         "repo_id": "Qwen/Qwen3-Embedding-4B-GGUF",
+    ...         "filename": "Qwen3-Embedding-4B-Q4_K_M.gguf",
+    ...         "n_ctx": 512,
+    ...         "n_batch": 64
+    ...     }
+    ... )
+    >>> await embeddings.embed(["Hello, world!", "Goodbye, world!"])
+    """
+
+    def __init__(self, **params):
+        # Handle backward compatibility for direct repo_id/filename parameters
+        if 'repo_id' in params and 'filename' in params:
+            model_kwargs = params.pop('model_kwargs', {})
+            model_kwargs.update({
+                'repo_id': params.pop('repo_id'),
+                'filename': params.pop('filename')
+            })
+            # Also move other llama.cpp specific params to model_kwargs
+            for key in ['n_ctx', 'n_batch', 'verbose']:
+                if key in params:
+                    model_kwargs[key] = params.pop(key)
+            params['model_kwargs'] = model_kwargs
+
+        super().__init__(**params)
+
+        self.llm = self._instantiate_client(embedding=True)
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        texts = [text.replace("\n", " ") for text in texts]
+
+        # Generate embeddings for all texts at once
+        embeddings = self.llm.embed(texts)
+
         return embeddings

@@ -1247,7 +1247,7 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
         This method fetches all metrics from the dbt semantic layer client and
         adds them to the vector store for semantic search.
         """
-        client = self._get_dbtsl_client()
+        client = self._instantiate_client()
         async with client.session():
             self._metric_objs = {metric.name: metric for metric in await client.metrics()}
 
@@ -1302,7 +1302,7 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
             metric_objects = {name: self._metric_objs[name] for name in metric_names if name in self._metric_objs}
 
             # Create flat list of all dimension fetch tasks
-            client = self._get_dbtsl_client()
+            client = self._instantiate_client()
             async with client.session():
                 num_cols = len(closest_metrics)
 
