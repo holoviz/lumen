@@ -572,7 +572,7 @@ class SourceControls(Viewer):
         params = {}
         conversion = None
         if extension.endswith("csv"):
-            df = pd.read_csv(file, parse_dates=True)
+            df = pd.read_csv(file, parse_dates=True, sep=None, engine='python')
         elif extension.endswith(("parq", "parquet")):
             df = pd.read_parquet(file)
         elif extension.endswith("json"):
