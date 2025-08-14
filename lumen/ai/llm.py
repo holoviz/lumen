@@ -283,14 +283,6 @@ class LlamaCpp(Llm, LlamaCppMixin):
 
     mode = param.Selector(default=Mode.JSON_SCHEMA, objects=BASE_MODES)
 
-    model_kwargs = param.Dict(default={
-        "default": {
-            "repo_id": "unsloth/Qwen3-8B-GGUF",
-            "filename": "Qwen3-8B-Q5_K_M.gguf",
-            "chat_format": "qwen",
-        },
-    })
-
     select_models = param.List(default=[
         "unsloth/Qwen3-8B-GGUF",
         "microsoft/Phi-3-mini-4k-instruct-gguf",
@@ -320,7 +312,16 @@ class LlamaCpp(Llm, LlamaCppMixin):
         if "n_ctx" not in model_kwargs:
             # 0 = from model
             model_kwargs["n_ctx"] = 0
-        return dict(model_kwargs)
+
+        # For LlamaCpp, merge with instance-level configuration
+        # Note: _instantiate_client_kwargs expects model_kwargs as a parameter
+        # so we call it with the resolved model_kwargs to get the full config
+        try:
+            full_kwargs = self._instantiate_client_kwargs(model_kwargs=model_kwargs)
+            return full_kwargs
+        except Exception:
+            # Fallback to just model_kwargs if there's an issue with instance config
+            return dict(model_kwargs)
 
     @property
     def _client_kwargs(self) -> dict[str, Any]:
@@ -411,6 +412,17 @@ class OpenAI(Llm, OpenAIMixin):
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
+    def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
+        model_kwargs = super()._get_model_kwargs(model_spec)
+
+        # Merge with instance-level client configuration from the mixin
+        instance_kwargs = self._instantiate_client_kwargs()
+
+        # Model-specific kwargs should override instance defaults
+        merged_kwargs = {**instance_kwargs, **model_kwargs}
+
+        return merged_kwargs
+
     async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         model_kwargs = self._get_model_kwargs(model_spec)
         model = model_kwargs.pop("model")
@@ -469,7 +481,14 @@ class AzureOpenAI(Llm, AzureOpenAIMixin):
 
     def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
         model_kwargs = super()._get_model_kwargs(model_spec)
-        return model_kwargs
+
+        # Merge with instance-level client configuration from the mixin
+        instance_kwargs = self._instantiate_client_kwargs()
+
+        # Model-specific kwargs should override instance defaults
+        merged_kwargs = {**instance_kwargs, **model_kwargs}
+
+        return merged_kwargs
 
     async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         model_kwargs = self._get_model_kwargs(model_spec)

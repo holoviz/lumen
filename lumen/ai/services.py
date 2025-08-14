@@ -87,6 +87,14 @@ class LlamaCppMixin(ServiceMixin):
     between LLM implementations and embedding classes.
     """
 
+    model_kwargs = param.Dict(default={
+        "default": {
+            "repo_id": "unsloth/Qwen3-8B-GGUF",
+            "filename": "Qwen3-8B-Q5_K_M.gguf",
+            "chat_format": "qwen",
+        },
+    })
+
     n_ctx = param.Integer(default=2048, doc="""
         Context length for the model.""")
 

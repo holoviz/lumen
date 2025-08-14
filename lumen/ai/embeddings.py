@@ -171,21 +171,7 @@ class LlamaCppEmbeddings(Embeddings, LlamaCppMixin):
     """
 
     def __init__(self, **params):
-        # Handle backward compatibility for direct repo_id/filename parameters
-        if 'repo_id' in params and 'filename' in params:
-            model_kwargs = params.pop('model_kwargs', {})
-            model_kwargs.update({
-                'repo_id': params.pop('repo_id'),
-                'filename': params.pop('filename')
-            })
-            # Also move other llama.cpp specific params to model_kwargs
-            for key in ['n_ctx', 'n_batch', 'verbose']:
-                if key in params:
-                    model_kwargs[key] = params.pop(key)
-            params['model_kwargs'] = model_kwargs
-
         super().__init__(**params)
-
         self.llm = self._instantiate_client(embedding=True)
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
