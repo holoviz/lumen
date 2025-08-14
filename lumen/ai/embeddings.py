@@ -127,9 +127,10 @@ class HuggingFaceEmbeddings(Embeddings):
     >>> embeddings = HuggingFaceEmbeddings()
     >>> await embeddings.embed(["Hello, world!", "Goodbye, world!"])
     """
+
     device = param.String(default="cpu", doc="Device to run the model on (e.g., 'cpu' or 'cuda').")
 
-    model = param.String(default="sentence-transformers/all-MiniLM-L6-v2", doc="""
+    model = param.String(default="ibm-granite/granite-embedding-107m-multilingual", doc="""
         The Hugging Face model to use.""")
 
     prompt_name = param.String(default=None, doc="""
