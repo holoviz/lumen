@@ -676,9 +676,6 @@ class SourceControls(Viewer):
                     n_tables += int(table_upload_callbacks[media_controls.extension](
                         media_controls.file_obj, media_controls.alias, media_controls.filename
                     ))
-                    if "filenames" not in source.info:
-                        source.info["filenames"] = []
-                    source.info["filenames"].append(f"{media_controls.filename}.{media_controls.extension}")
                 elif media_controls.extension.endswith(TABLE_EXTENSIONS):
                     if source is None:
                         source_id = f"UploadedSource{self._count:06d}"
