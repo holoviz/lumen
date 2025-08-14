@@ -65,8 +65,8 @@ CSS = """
     height: 100%;
 }
 
-/* Toggle icon basic styles */
-.toggle-icon, .toggle-icon-inverted {
+/* Toggle button basic styles */
+.toggle-button-left, .toggle-button-right {
     position: absolute;
     width: 24px;
     height: 24px;
@@ -74,40 +74,44 @@ CSS = """
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    z-index: 10;
-    opacity: 0.75;
+    z-index: 100; /* High z-index to ensure always on top */
+    opacity: 0.5;
     top: 50%;
     transform: translateY(-50%);
+    transition: opacity 0.2s;
+    border-radius: 4px;
+    padding: 2px;
 }
 
-/* Regular toggle icon */
-.toggle-icon {
-    transition: opacity 0.2s, left 0.3s ease;
-    left: 5px; /* Default expanded position */
+/* Left button (<) - positioned on left side of divider */
+.toggle-button-left {
+    left: -34px; /* 24px width + 10px spacing from divider */
 }
 
-.toggle-icon.collapsed {
-    left: -30px; /* Position when collapsed */
+/* Right button (>) - positioned on right side of divider */
+.toggle-button-right {
+    left: 2px;
 }
 
-/* Inverted toggle icon */
-.toggle-icon-inverted {
-    transition: opacity 0.2s, right 0.3s ease;
-    right: 5px; /* Default expanded position */
+/* Ensure buttons stay visible even when panels are collapsed */
+.split > div:first-child {
+    min-width: 0 !important; /* Override any minimum width */
 }
 
-.toggle-icon-inverted.collapsed {
-    right: -30px; /* Position when collapsed */
+.split > div:nth-child(2) {
+    overflow: visible !important; /* Ensure buttons remain visible */
+    position: relative !important;
 }
 
-.toggle-icon:hover, .toggle-icon-inverted:hover {
+.toggle-button-left:hover, .toggle-button-right:hover {
     opacity: 1;
+    background-color: var(--panel-border-color);
 }
 
 /* SVG icon styling */
-.toggle-icon svg, .toggle-icon-inverted svg {
-    width: 50px;
-    height: 50px;
+.toggle-button-left svg, .toggle-button-right svg {
+    width: 20px;
+    height: 20px;
     fill: none;
     stroke: currentColor;
     stroke-width: 2px;
@@ -139,11 +143,11 @@ CSS = """
     width: 8px;
 }
 
-.split > div:nth-child(2) > div:not(.toggle-icon) {
+.split > div:nth-child(2) > div:not(.toggle-button-left):not(.toggle-button-right) {
     width: 100%;
     height: 100%;
     overflow: auto;
-    padding-top: 36px; /* Space for the toggle icon */
+    padding-top: 36px; /* Space for the toggle buttons */
 }
 
 /* Animation for toggle icon */
@@ -154,7 +158,7 @@ CSS = """
     75% { transform: translate(4px, -50%); }
 }
 
-.toggle-icon.animated, .toggle-icon-inverted.animated {
+.toggle-button-left.animated, .toggle-button-right.animated {
     animation-name: jumpLeftRight;
     animation-duration: 0.5s;
     animation-timing-function: ease;
@@ -204,10 +208,10 @@ class SplitJS(JSComponent):
         and the right panel takes up 65% when expanded.
         When invert=True, these percentages are automatically swapped.""")
 
-    min_sizes = param.NumericTuple(default=(300, 0), length=2, doc="""
+    min_sizes = param.NumericTuple(default=(0, 0), length=2, doc="""
         The minimum sizes of the two panels (in pixels).
-        Default is (300, 0) which means the left panel has a minimum width of 300px
-        and the right panel has no minimum width.
+        Default is (0, 0) which allows both panels to fully collapse.
+        Set to (300, 0) or similar values if you want to enforce minimum widths during dragging.
         When invert=True, these values are automatically swapped.""")
 
     collapsed = param.Boolean(default=True, doc="""
