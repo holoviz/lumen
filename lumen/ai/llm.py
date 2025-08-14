@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 
 from functools import partial
@@ -283,6 +282,14 @@ class LlamaCpp(Llm, LlamaCppMixin):
 
     mode = param.Selector(default=Mode.JSON_SCHEMA, objects=BASE_MODES)
 
+    model_kwargs = param.Dict(default={
+        "default": {
+            "repo_id": "unsloth/Qwen3-8B-GGUF",
+            "filename": "Qwen3-8B-Q5_K_M.gguf",
+            "chat_format": "qwen",
+        },
+    })
+
     select_models = param.List(default=[
         "unsloth/Qwen3-8B-GGUF",
         "microsoft/Phi-3-mini-4k-instruct-gguf",
@@ -296,26 +303,19 @@ class LlamaCpp(Llm, LlamaCppMixin):
         if isinstance(model_spec, dict):
             return model_spec
 
-        model_kwargs = self.model_kwargs["default"]
+        # First get base model kwargs using parent implementation
         if model_spec in self.model_kwargs or "/" not in model_spec:
             model_kwargs = super()._get_model_kwargs(model_spec)
         else:
-            repo_id, model_spec = model_spec.rsplit("/", 1)
-            if ":" in model_spec:
-                filename, chat_format = model_spec.split(":")
-                model_kwargs["chat_format"] = chat_format
-            else:
-                filename = model_spec
-            model_kwargs["repo_id"] = repo_id
-            model_kwargs["filename"] = filename
+            # Use mixin to resolve repo_id/filename from model spec string
+            base_kwargs = self.model_kwargs["default"]
+            model_kwargs = self.resolve_model_spec(model_spec, base_kwargs)
 
+        # Ensure n_ctx is set (0 = from model)
         if "n_ctx" not in model_kwargs:
-            # 0 = from model
             model_kwargs["n_ctx"] = 0
 
-        # For LlamaCpp, merge with instance-level configuration
-        # Note: _instantiate_client_kwargs expects model_kwargs as a parameter
-        # so we call it with the resolved model_kwargs to get the full config
+        # Merge with instance-level configuration from the mixin
         try:
             full_kwargs = self._instantiate_client_kwargs(model_kwargs=model_kwargs)
             return full_kwargs
@@ -342,20 +342,8 @@ class LlamaCpp(Llm, LlamaCppMixin):
         model_kwargs = model_kwargs or cls.model_kwargs
         if 'default' not in model_kwargs:
             model_kwargs['default'] = cls.model_kwargs['default']
-        huggingface_models = {
-            model: llm_spec for model, llm_spec in model_kwargs.items()
-            if 'repo_id' in llm_spec and 'filename' in llm_spec
-        }
-        if not huggingface_models:
-            return
-
-        from huggingface_hub import hf_hub_download
-        print(f"{cls.__name__} provider is downloading following models:\n\n{json.dumps(huggingface_models, indent=2)}")  # noqa: T201
-        for kwargs in model_kwargs.values():
-            repo_id = kwargs.get('repo_id')
-            filename = kwargs.get('filename')
-            if repo_id and filename:
-                hf_hub_download(repo_id, filename)
+        # Use the mixin's warmup functionality
+        cls._warmup_models(model_kwargs)
 
     async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         model_kwargs = self._get_model_kwargs(model_spec)

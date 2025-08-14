@@ -87,14 +87,6 @@ class LlamaCppMixin(ServiceMixin):
     between LLM implementations and embedding classes.
     """
 
-    model_kwargs = param.Dict(default={
-        "default": {
-            "repo_id": "unsloth/Qwen3-8B-GGUF",
-            "filename": "Qwen3-8B-Q5_K_M.gguf",
-            "chat_format": "qwen",
-        },
-    })
-
     n_ctx = param.Integer(default=2048, doc="""
         Context length for the model.""")
 
@@ -117,7 +109,7 @@ class LlamaCppMixin(ServiceMixin):
         """
         Get the model path, either from local path or by downloading from HuggingFace.
         """
-        kwargs = model_kwargs or self.model_kwargs
+        kwargs = (model_kwargs or self.model_kwargs)
 
         if 'model_path' in kwargs:
             return kwargs['model_path']
@@ -137,7 +129,11 @@ class LlamaCppMixin(ServiceMixin):
         """
         Get the keyword arguments for initializing a Llama instance.
         """
-        kwargs = model_kwargs or self.model_kwargs
+        if model_kwargs is None:
+            # If no specific model_kwargs provided, use the default model configuration
+            kwargs = self.model_kwargs.get("default", {})
+        else:
+            kwargs = model_kwargs
         model_path = self._get_model_path(kwargs)
 
         llama_kwargs = {
@@ -167,6 +163,52 @@ class LlamaCppMixin(ServiceMixin):
 
         kwargs = self._instantiate_client_kwargs(model_kwargs=model_kwargs, **extra_kwargs)
         return Llama(**kwargs)
+
+    def resolve_model_spec(self, model_spec: str, base_model_kwargs: dict) -> dict:
+        """
+        Resolve a model specification string into model kwargs with repo_id/filename.
+        Handles formats like "repo/model:chat_format" or "repo/model".
+        """
+        if "/" not in model_spec:
+            return base_model_kwargs
+
+        repo_id, model_spec = model_spec.rsplit("/", 1)
+        model_kwargs = dict(base_model_kwargs)
+
+        if ":" in model_spec:
+            filename, chat_format = model_spec.split(":")
+            model_kwargs["chat_format"] = chat_format
+        else:
+            filename = model_spec
+
+        model_kwargs["repo_id"] = repo_id
+        model_kwargs["filename"] = filename
+        return model_kwargs
+
+    @classmethod
+    def _warmup_models(cls, model_kwargs_dict: dict | None):
+        """
+        Download models from HuggingFace Hub for offline use.
+        """
+        if not model_kwargs_dict:
+            return
+
+        huggingface_models = {
+            model: llm_spec for model, llm_spec in model_kwargs_dict.items()
+            if 'repo_id' in llm_spec and 'filename' in llm_spec
+        }
+        if not huggingface_models:
+            return
+
+        import json
+
+        from huggingface_hub import hf_hub_download
+        print(f"{cls.__name__} provider is downloading following models:\n\n{json.dumps(huggingface_models, indent=2)}")  # noqa: T201
+        for kwargs in model_kwargs_dict.values():
+            repo_id = kwargs.get('repo_id')
+            filename = kwargs.get('filename')
+            if repo_id and filename:
+                hf_hub_download(repo_id, filename)
 
 
 class OpenAIMixin(ServiceMixin):

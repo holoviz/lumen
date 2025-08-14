@@ -170,14 +170,20 @@ class LlamaCppEmbeddings(Embeddings, LlamaCppMixin):
     >>> await embeddings.embed(["Hello, world!", "Goodbye, world!"])
     """
 
+    model_kwargs = param.Dict(default={
+        "default": {
+            "repo_id": "Qwen/Qwen3-Embedding-4B-GGUF",
+            "filename": "Qwen3-Embedding-4B-Q4_K_M.gguf",
+        },
+    })
+
     def __init__(self, **params):
+        import llama_cpp
         super().__init__(**params)
+        if "pooling_type" not in self.model_kwargs["default"]:
+            self.model_kwargs["default"]["pooling_type"] = llama_cpp.LLAMA_POOLING_TYPE_CLS
         self.llm = self._instantiate_client(embedding=True)
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
-        texts = [text.replace("\n", " ") for text in texts]
-
-        # Generate embeddings for all texts at once
-        embeddings = self.llm.embed(texts)
-
+        embeddings = [self.llm.embed(text.replace("\n", " ")) for text in texts]
         return embeddings
