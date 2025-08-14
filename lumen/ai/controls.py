@@ -354,8 +354,14 @@ class SourceControls(Viewer):
             return file_data
 
         if suffix == "csv":
-            encoding = detect_file_encoding(file_obj=file_data)
-            return io.BytesIO(file_data.decode(encoding).encode("utf-8")) if isinstance(file_data, bytes) else io.StringIO(file_data)
+            if isinstance(file_data, bytes):
+                # Create a BytesIO object first for encoding detection
+                temp_obj = io.BytesIO(file_data)
+                encoding = detect_file_encoding(file_obj=temp_obj)
+                return io.BytesIO(file_data.decode(encoding).encode("utf-8"))
+            else:
+                # file_data is already a string, return as StringIO
+                return io.StringIO(file_data)
         else:
             return io.BytesIO(file_data) if isinstance(file_data, bytes) else io.StringIO(file_data)
 
@@ -670,10 +676,16 @@ class SourceControls(Viewer):
                     n_tables += int(table_upload_callbacks[media_controls.extension](
                         media_controls.file_obj, media_controls.alias, media_controls.filename
                     ))
+                    if "filenames" not in source.info:
+                        source.info["filenames"] = []
+                    source.info["filenames"].append(f"{media_controls.filename}.{media_controls.extension}")
                 elif media_controls.extension.endswith(TABLE_EXTENSIONS):
                     if source is None:
                         source_id = f"UploadedSource{self._count:06d}"
                         source = DuckDBSource(uri=":memory:", ephemeral=True, name=source_id, tables={})
+                    if "filenames" not in source.info:
+                        source.info["filenames"] = []
+                    source.info["filenames"].append(f"{media_controls.filename}.{media_controls.extension}")
                     n_tables += self._add_table(source, media_controls.file_obj, media_controls)
                 else:
                     n_docs += self._add_document(media_controls.file_obj, media_controls)

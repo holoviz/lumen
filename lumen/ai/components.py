@@ -8,7 +8,7 @@ from panel.layout import Column, HSpacer, Row
 from panel.pane import Markdown
 from panel.viewable import Viewer
 from panel_material_ui import (
-    Card, CheckBoxGroup, IconButton, Switch,
+    Card, CheckBoxGroup, IconButton, Switch, Typography,
 )
 
 from .config import SOURCE_TABLE_SEPARATOR
@@ -293,6 +293,7 @@ class TableSourceCard(Viewer):
     - A header with the source name and a checkbox to toggle all tables
     - A delete button (if multiple sources exist)
     - Individual checkboxes for each table in the source
+    - Metadata display showing source information like filenames and other key-value pairs
     """
 
     all_selected = param.Boolean(default=True, doc="""
@@ -351,6 +352,40 @@ class TableSourceCard(Viewer):
             name="",
         )
 
+        # Create metadata display
+        self.metadata_display = self._create_metadata_display()
+
+    def _create_metadata_display(self):
+        """Create a metadata display widget showing source.info data."""
+        metadata_parts = []
+
+        if self.source.info:
+            info = self.source.info
+            for key, value in info.items():
+                if isinstance(value, list):
+                    value_str = ', '.join(str(v) for v in value)
+                else:
+                    value_str = str(value)
+                metadata_parts.append(f"{key}: {value_str}")
+
+        if metadata_parts:
+            metadata_text = '; '.join(metadata_parts)
+            return Typography(
+                metadata_text,
+                variant="caption",  # Small font
+                color="text.secondary",  # Gray text
+                margin=(0, 10, 5, 10),
+                sizing_mode='stretch_width',
+            )
+        else:
+            # Return empty div if no metadata
+            return Typography(
+                "",
+                margin=(0, 0, 0, 0),
+                sizing_mode='stretch_width',
+                visible=False
+            )
+
     @param.depends('all_selected', watch=True)
     def _on_source_toggle(self):
         """Handle source checkbox toggle (all tables on/off)."""
@@ -397,9 +432,17 @@ class TableSourceCard(Viewer):
             margin=0
         )
 
+        # Create the card content with metadata display
+        card_content = Column(
+            self.metadata_display,
+            self.table_checkbox,
+            margin=0,
+            sizing_mode='stretch_width'
+        )
+
         # Create the card
         return Card(
-            self.table_checkbox,
+            card_content,
             header=card_header,
             collapsible=True,
             collapsed=self.param.collapsed,

@@ -228,6 +228,10 @@ class Source(MultiTypeComponent):
         dashboard. If set to `True` the Source will be loaded on
         initial server load.""")
 
+    info = param.Dict(default={}, doc="""
+        Optional metadata about the source, such as its origin or
+        description.""")
+
     source_type: ClassVar[str | None] = None
 
     __abstract = True
