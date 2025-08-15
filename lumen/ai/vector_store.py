@@ -1,5 +1,4 @@
 import asyncio
-import fnmatch
 import importlib
 import io
 import json
@@ -8,6 +7,7 @@ import typing as t
 
 from abc import abstractmethod
 from collections.abc import Callable
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import IO, Any
 
@@ -359,6 +359,56 @@ class VectorStore(LLMUser):
         # Implement in derived classes
         raise NotImplementedError("Subclasses must implement upsert.")
 
+    async def _process_file_with_semaphore(
+        self,
+        file_path: Path,
+        semaphore: asyncio.Semaphore,
+        base_metadata: dict[str, Any],
+        situate: bool | None,
+        upsert: bool,
+        raise_on_error: bool,
+    ) -> list[int]:
+        """Process a single file with semaphore control.
+
+        Parameters
+        ----------
+        file_path : Path
+            Path to the file to process.
+        semaphore : asyncio.Semaphore
+            Semaphore for controlling concurrent access.
+        base_metadata : dict[str, Any]
+            Base metadata to extend with file-specific metadata.
+        situate : bool | None
+            Whether to insert a `llm_context` key in the metadata.
+        upsert : bool
+            If True, will update existing items if similar content is found.
+        raise_on_error : bool
+            If True, will raise an error if the file fails to process.
+
+        Returns
+        -------
+        list[int]
+            List of IDs for the added items from this file.
+        """
+        async with semaphore:
+            # Create file-specific metadata by extending base metadata
+            file_metadata = base_metadata.copy()
+            file_metadata["filename"] = str(file_path)
+
+            try:
+                return await self.add_file(
+                    filename=file_path,
+                    metadata=file_metadata,
+                    situate=situate,
+                    upsert=upsert
+                )
+            except Exception as e:
+                if raise_on_error:
+                    raise e
+                else:
+                    self.param.warning(f"Failed to process {file_path}: {e}")
+                    return []
+
     async def add_directory(
         self,
         directory: str | os.PathLike,
@@ -367,6 +417,8 @@ class VectorStore(LLMUser):
         metadata: dict[str, Any] | None = None,
         situate: bool | None = None,
         upsert: bool = False,
+        raise_on_error = False,
+        max_concurrent: int = 5,
     ) -> list[int]:
         """
         Recursively add files from a directory that match the pattern and don't match exclude patterns.
@@ -385,6 +437,10 @@ class VectorStore(LLMUser):
             Whether to insert a `llm_context` key in the metadata. If None, uses the class default.
         upsert : bool
             If True, will update existing items if similar content is found. Default is False.
+        raise_on_error: bool
+            If True, will raise an error if any file fails to process. Default is False.
+        max_concurrent: int
+            Maximum number of files to process concurrently. Default is 5.
 
         Returns
         -------
@@ -397,36 +453,49 @@ class VectorStore(LLMUser):
         directory_path = Path(directory)
         if not directory_path.exists() or not directory_path.is_dir():
             raise ValueError(f"Directory {directory} does not exist or is not a directory")
-        file_paths = list(directory_path.rglob(pattern))
+
+        # Collect all matching file paths
+        file_paths = [
+            file_path for file_path in directory_path.rglob(pattern)
+            if file_path.is_file() and not any(
+                fnmatch(str(file_path.relative_to(directory_path)), exclude_pattern)
+                for exclude_pattern in exclude_patterns
+            )
+        ]
 
         base_metadata = metadata or {}
 
-        # Collect files that match the pattern and don't match exclude patterns
-        all_ids = []
-        for file_path in tqdm(file_paths, unit="file", desc="Embedding files"):
-            # Skip directories
-            if not file_path.is_file():
-                continue
+        # Create a semaphore to limit concurrent file processing
+        semaphore = asyncio.Semaphore(max_concurrent)
 
-            # Get the relative path for exclusion checking and metadata
-            rel_path = file_path.relative_to(directory_path)
-
-            # Check against exclusion patterns
-            if any(fnmatch(str(rel_path), exclude_pattern) for exclude_pattern in exclude_patterns):
-                continue
-
-            # Create file-specific metadata by extending base metadata
-            file_metadata = base_metadata.copy()
-            file_metadata["filename"] = str(file_path)
-
-            all_ids.extend(
-                await self.add_file(
-                    filename=file_path,
-                    metadata=file_metadata,
+        # Process all files concurrently with progress bar
+        if file_paths:
+            # Create tasks for all files
+            tasks = [
+                self._process_file_with_semaphore(
+                    file_path=file_path,
+                    semaphore=semaphore,
+                    base_metadata=base_metadata,
                     situate=situate,
-                    upsert=upsert
+                    upsert=upsert,
+                    raise_on_error=raise_on_error,
                 )
-            )
+                for file_path in file_paths
+            ]
+
+            # Use tqdm to show progress
+            results = []
+            with tqdm(total=len(tasks), unit="file", desc="Embedding files") as pbar:
+                for coro in asyncio.as_completed(tasks):
+                    result = await coro
+                    results.append(result)
+                    pbar.update(1)
+
+            # Flatten the list of IDs
+            all_ids = [id_ for ids in results for id_ in ids]
+        else:
+            all_ids = []
+
         return all_ids
 
     async def add_file(
