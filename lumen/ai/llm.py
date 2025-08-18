@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 
 from functools import partial
@@ -18,6 +17,7 @@ from pydantic import BaseModel
 
 from .interceptor import Interceptor
 from .models import YesNo
+from .services import AzureOpenAIMixin, LlamaCppMixin, OpenAIMixin
 from .utils import format_exception, log_debug, truncate_string
 
 
@@ -270,7 +270,7 @@ class Llm(param.Parameterized):
         return result
 
 
-class LlamaCpp(Llm):
+class LlamaCpp(Llm, LlamaCppMixin):
     """
     A LLM implementation using Llama.cpp Python wrapper together
     with huggingface_hub to fetch the models.
@@ -284,16 +284,16 @@ class LlamaCpp(Llm):
 
     model_kwargs = param.Dict(default={
         "default": {
-            "repo": "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
-            "model_file": "qwen2.5-coder-7b-instruct-q5_k_m.gguf",
+            "repo_id": "unsloth/Qwen3-8B-GGUF",
+            "filename": "Qwen3-8B-Q5_K_M.gguf",
             "chat_format": "qwen",
         },
     })
 
     select_models = param.List(default=[
+        "unsloth/Qwen3-8B-GGUF",
         "microsoft/Phi-3-mini-4k-instruct-gguf",
         "meta-llama/Llama-2-7b-chat-hf",
-        "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
         "TheBloke/CodeLlama-7B-Instruct-GGUF"
     ], constant=True, doc="Available models for selection dropdowns")
 
@@ -303,23 +303,25 @@ class LlamaCpp(Llm):
         if isinstance(model_spec, dict):
             return model_spec
 
-        model_kwargs = self.model_kwargs["default"]
+        # First get base model kwargs using parent implementation
         if model_spec in self.model_kwargs or "/" not in model_spec:
-            model_kwargs = super()._get_model_kwargs(model_kwargs)
+            model_kwargs = super()._get_model_kwargs(model_spec)
         else:
-            repo, model_spec = model_spec.rsplit("/", 1)
-            if ":" in model_spec:
-                model_file, chat_format = model_spec.split(":")
-                model_kwargs["chat_format"] = chat_format
-            else:
-                model_file = model_spec
-            model_kwargs["repo"] = repo
-            model_kwargs["model_file"] = model_file
+            # Use mixin to resolve repo_id/filename from model spec string
+            base_kwargs = self.model_kwargs["default"]
+            model_kwargs = self.resolve_model_spec(model_spec, base_kwargs)
 
+        # Ensure n_ctx is set (0 = from model)
         if "n_ctx" not in model_kwargs:
-            # 0 = from model
             model_kwargs["n_ctx"] = 0
-        return dict(model_kwargs)
+
+        # Merge with instance-level configuration from the mixin
+        try:
+            full_kwargs = self._instantiate_client_kwargs(model_kwargs=model_kwargs)
+            return full_kwargs
+        except Exception:
+            # Fallback to just model_kwargs if there's an issue with instance config
+            return dict(model_kwargs)
 
     @property
     def _client_kwargs(self) -> dict[str, Any]:
@@ -340,47 +342,23 @@ class LlamaCpp(Llm):
         model_kwargs = model_kwargs or cls.model_kwargs
         if 'default' not in model_kwargs:
             model_kwargs['default'] = cls.model_kwargs['default']
-        huggingface_models = {
-            model: llm_spec for model, llm_spec in model_kwargs.items()
-            if 'repo' in llm_spec or 'repo_id' in llm_spec
-        }
-        if not huggingface_models:
-            return
-
-        from huggingface_hub import hf_hub_download
-        print(f"{cls.__name__} provider is downloading following models:\n\n{json.dumps(huggingface_models, indent=2)}")  # noqa: T201
-        for kwargs in model_kwargs.values():
-            repo = kwargs.get('repo', kwargs.get('repo_id'))
-            model_file = kwargs.get('model_file')
-            hf_hub_download(repo, model_file)
+        # Use the mixin's warmup functionality
+        cls._warmup_models(model_kwargs)
 
     async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         model_kwargs = self._get_model_kwargs(model_spec)
         mode = model_kwargs.pop("mode", self.mode)
         if client_callable := pn.state.cache.get((model_spec, mode)):
             return client_callable
-        if 'repo' in model_kwargs:
-            from huggingface_hub import hf_hub_download
-            repo = model_kwargs.get('repo', model_kwargs.get('repo_id'))
-            model_file = model_kwargs.get('model_file')
-            model_path = await asyncio.to_thread(hf_hub_download, repo, model_file)
-        elif 'model_path' in model_kwargs:
-            model_path = model_kwargs['model_path']
-        else:
-            raise ValueError(
-                "LlamaCpp.model_kwargs must contain either a 'repo' and 'model_file' "
-                "(to fetch a model using `huggingface_hub` or a 'model_path' pointing "
-                "to a model on disk."
-            )
-        llm_kwargs = dict(
-            model_path=model_path,
+
+        # Use the mixin to handle model path resolution and kwargs
+        llm_kwargs = self._instantiate_client_kwargs(
+            model_kwargs=model_kwargs,
             n_gpu_layers=-1,
             seed=128,
             logits_all=False,
-            use_mlock=True,
-            verbose=False,
         )
-        llm_kwargs.update(model_kwargs)
+
         client_callable = await asyncio.to_thread(self._cache_model, model_spec, mode=mode, **llm_kwargs)
         return client_callable
 
@@ -389,16 +367,12 @@ class LlamaCpp(Llm):
         return client(messages=messages, **kwargs)
 
 
-class OpenAI(Llm):
+class OpenAI(Llm, OpenAIMixin):
     """
     An LLM implementation using the OpenAI cloud.
     """
 
-    api_key = param.String(doc="The OpenAI API key.")
-
     display_name = param.String(default="OpenAI", constant=True, doc="Display name for UI")
-
-    endpoint = param.String(doc="The OpenAI API endpoint.")
 
     mode = param.Selector(default=Mode.TOOLS)
 
@@ -408,8 +382,6 @@ class OpenAI(Llm):
         "vega_lite": {"model": "gpt-4.1-mini"},
         "edit": {"model": "gpt-4.1-mini"},
     })
-
-    organization = param.String(doc="The OpenAI organization to charge.")
 
     select_models = param.List(default=[
         "gpt-3.5-turbo",
@@ -428,19 +400,24 @@ class OpenAI(Llm):
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
-    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
-        import openai
+    def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
+        model_kwargs = super()._get_model_kwargs(model_spec)
 
+        # Merge with instance-level client configuration from the mixin
+        instance_kwargs = self._instantiate_client_kwargs()
+
+        # Model-specific kwargs should override instance defaults
+        merged_kwargs = {**instance_kwargs, **model_kwargs}
+
+        return merged_kwargs
+
+    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         model_kwargs = self._get_model_kwargs(model_spec)
         model = model_kwargs.pop("model")
         mode = model_kwargs.pop("mode", self.mode)
-        if self.endpoint:
-            model_kwargs["base_url"] = self.endpoint
-        if self.api_key:
-            model_kwargs["api_key"] = self.api_key
-        if self.organization:
-            model_kwargs["organization"] = self.organization
-        llm = openai.AsyncOpenAI(**model_kwargs)
+
+        # Use the mixin to create the OpenAI client
+        llm = self._instantiate_client(async_client=True, **model_kwargs)
 
         if self.interceptor:
             self.interceptor.patch_client(llm, mode="store_inputs")
@@ -461,18 +438,14 @@ class OpenAI(Llm):
         return client_callable
 
 
-class AzureOpenAI(Llm):
+class AzureOpenAI(Llm, AzureOpenAIMixin):
     """
     A LLM implementation that uses the Azure OpenAI integration.
+    Inherits from AzureOpenAIMixin which extends OpenAIMixin, so it has access to all OpenAI functionality
+    plus Azure-specific configuration.
     """
 
-    api_key = param.String(default=os.getenv("AZUREAI_ENDPOINT_KEY"), doc="The Azure API key.")
-
-    api_version = param.String(default="2024-10-21", doc="The Azure AI Studio API version.")
-
     display_name = param.String(default="Azure OpenAI", constant=True, doc="Display name for UI")
-
-    endpoint = param.String(default=os.getenv('AZUREAI_ENDPOINT_URL'), doc="The Azure AI Studio endpoint.")
 
     mode = param.Selector(default=Mode.TOOLS)
 
@@ -497,24 +470,21 @@ class AzureOpenAI(Llm):
     def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
         model_kwargs = super()._get_model_kwargs(model_spec)
 
-        # specific values takes precedence over default values
-        if self.api_version:
-            model_kwargs["api_version"] = model_kwargs.get("api_version", self.api_version)
-        if self.api_key:
-            model_kwargs["api_key"] = model_kwargs.get("api_key", self.api_key)
-        if self.endpoint:
-            model_kwargs["azure_endpoint"] = model_kwargs.get("azure_endpoint", self.endpoint)
+        # Merge with instance-level client configuration from the mixin
+        instance_kwargs = self._instantiate_client_kwargs()
 
-        return model_kwargs
+        # Model-specific kwargs should override instance defaults
+        merged_kwargs = {**instance_kwargs, **model_kwargs}
+
+        return merged_kwargs
 
     async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
-        import openai
-
         model_kwargs = self._get_model_kwargs(model_spec)
         model = model_kwargs.pop("model")
         mode = model_kwargs.pop("mode", self.mode)
 
-        llm = openai.AsyncAzureOpenAI(**model_kwargs)
+        # Use the mixin to create the Azure OpenAI client
+        llm = self._instantiate_client(async_client=True, **model_kwargs)
 
         if self.interceptor:
             self.interceptor.patch_client(llm, mode="store_inputs")
