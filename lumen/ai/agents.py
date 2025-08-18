@@ -1230,7 +1230,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
 
         try:
             # Execute the query against the dbt Semantic Layer
-            client = self._get_dbtsl_client()
+            client = self._instantiate_client()
             async with client.session():
                 sql_query = await client.compile_sql(
                     metrics=query_params.get("metrics", []),
