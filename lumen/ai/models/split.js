@@ -15,117 +15,135 @@ export function render({ model, view }) {
     const contentWrapper = document.createElement('div');
     contentWrapper.classList.add('content-wrapper');
 
-    // Create toggle icon for panel toggling
-    const toggleIcon = document.createElement('div');
+    // Create toggle icons for both sides of the divider
+    const leftArrowButton = document.createElement('div');  // < button
+    const rightArrowButton = document.createElement('div'); // > button
 
-    // Set class and initial arrow direction based on invert parameter
-    if (model.invert) {
-        // For inverted layout, toggle icon is on the left panel
-        toggleIcon.className = 'toggle-icon-inverted';
-        if (model.collapsed) toggleIcon.classList.add('collapsed');
-        toggleIcon.innerHTML = model.collapsed
-            ? `<svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>`  // Right arrow when collapsed
-            : `<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>`;  // Left arrow when expanded
-    } else {
-        // For regular layout, toggle icon is on the right panel
-        toggleIcon.className = 'toggle-icon';
-        if (model.collapsed) toggleIcon.classList.add('collapsed');
-        toggleIcon.innerHTML = model.collapsed
-            ? `<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>`  // Left arrow when collapsed
-            : `<svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>`;  // Right arrow when expanded
+    // Left arrow button (<) - positioned on left side of divider
+    leftArrowButton.className = 'toggle-button-left';
+    leftArrowButton.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>`; // < arrow
+
+    // Right arrow button (>) - positioned on right side of divider
+    rightArrowButton.className = 'toggle-button-right';
+    rightArrowButton.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>`; // > arrow
+    
+    // Add both buttons to the right panel (split1) so they're positioned relative to the divider
+    split1.appendChild(leftArrowButton);
+    split1.appendChild(rightArrowButton);
+
+    // Determine initial state - collapsed means right panel is hidden
+    const initSizes = model.collapsed ? [100, 0] : model.expanded_sizes;
+
+    // Track click counts for toggle behavior
+    let leftClickCount = 0;  // For < button
+    let rightClickCount = 0; // For > button
+
+    // Function to reset click counts when sizes change via dragging
+    function resetClickCounts() {
+        leftClickCount = 0;
+        rightClickCount = 0;
     }
 
-    // Determine which panel gets the toggle based on invert parameter
-    const togglePanel = model.invert ? split0 : split1;
-    const toggleTarget = model.invert ? split1 : split0;
-
-    // Add the toggle icon to the appropriate panel but positioned relative to the gutter
-    // Position handled by CSS
-    togglePanel.appendChild(toggleIcon);
-
-    // Determine initial state based on the invert parameter
-    let initSizes;
-    if (model.invert) {
-        // In inverted mode, right panel is shown first
-        initSizes = model.collapsed ? [0, 100] : model.expanded_sizes;
-    } else {
-        // In normal mode, left panel is shown first
-        initSizes = model.collapsed ? [100, 0] : model.expanded_sizes;
-    }
-
+    // Use minSize of 0 to allow full collapse via buttons
     const splitInstance = Split([split0, split1], {
         sizes: initSizes,
-        minSize: model.min_sizes,
+        minSize: [0, 0], // Allow full collapse for both panels
         gutterSize: 8, // Match the 8px width in CSS
         onDragEnd: (sizes) => {
             view.invalidate_layout();
 
-            // Update collapsed state based on panel size and invert parameter
-            const newCollapsedState = model.invert ? sizes[0] <= 5 : sizes[1] <= 5;
+            // Determine the new collapsed state based on panel sizes
+            const rightPanelCollapsed = sizes[1] <= 5;
+            const leftPanelCollapsed = sizes[0] <= 5;
+            
+            // The model's collapsed state represents whether the right panel is collapsed
+            const newCollapsedState = rightPanelCollapsed;
 
             if (model.collapsed !== newCollapsedState) {
                 // Send message to Python about collapsed state change
                 model.send_msg({ collapsed: newCollapsedState });
-
                 model.collapsed = newCollapsedState;
-
-                // Update UI based on new collapsed state
-                updateUIForCollapsedState(newCollapsedState);
             }
+
+            // Update UI based on current sizes
+            updateUIForCollapsedState(newCollapsedState, sizes);
+            
+            // Reset click counts when user drags the splitter
+            resetClickCounts();
         },
     });
 
     // Function to update UI elements based on collapsed state
-    function updateUIForCollapsedState(isCollapsed) {
-        if (isCollapsed) {
-            // Collapsed state UI updates
-            if (model.invert) {
-                toggleIcon.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>`; // Right arrow
-                toggleIcon.classList.add('collapsed');
-                // Hide left content (which is the target content in inverted mode)
-                leftContentWrapper.className = 'collapsed-content';
-            } else {
-                toggleIcon.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>`; // Left arrow
-                toggleIcon.classList.add('collapsed');
-                contentWrapper.className = 'collapsed-content';
-            }
+    function updateUIForCollapsedState(isCollapsed, sizes = null) {
+        // Determine current panel state
+        const leftPanelHidden = sizes ? sizes[0] <= 5 : false;
+        const rightPanelHidden = sizes ? sizes[1] <= 5 : false;
+        
+        // Update content visibility
+        if (rightPanelHidden) {
+            contentWrapper.className = 'collapsed-content';
         } else {
-            // Expanded state UI updates
-            if (model.invert) {
-                leftContentWrapper.className = 'left-content-wrapper';
-                toggleIcon.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>`; // Left arrow
-                toggleIcon.classList.remove('collapsed');
-            } else {
-                contentWrapper.className = 'content-wrapper';
-                toggleIcon.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>`; // Right arrow
-                toggleIcon.classList.remove('collapsed');
-            }
+            contentWrapper.className = 'content-wrapper';
+        }
+        
+        if (leftPanelHidden) {
+            leftContentWrapper.className = 'collapsed-content';
+        } else {
+            leftContentWrapper.className = 'left-content-wrapper';
         }
     }
 
-    // Toggle button event listener
-    toggleIcon.addEventListener('click', () => {
-        const newCollapsedState = !model.collapsed;
-
-        if (newCollapsedState) {
-            // Collapse with appropriate sizes based on invert parameter
-            if (model.invert) {
-                splitInstance.setSizes([0, 100]);
-            } else {
-                splitInstance.setSizes([100, 0]);
-            }
+    // Left arrow button (<) event listener - two-step toggle
+    leftArrowButton.addEventListener('click', () => {
+        leftClickCount++;
+        rightClickCount = 0; // Reset other button's count
+        
+        let newSizes;
+        
+        if (leftClickCount === 1) {
+            // First tap: make sizes 50, 50
+            newSizes = [50, 50];
         } else {
-            // Expand
-            splitInstance.setSizes(model.expanded_sizes);
+            // Second tap (or more): make sizes 0, 100
+            newSizes = [0, 100];
+            leftClickCount = 0; // Reset after second tap
         }
-
-        // Send message to Python about collapsed state change
+        
+        splitInstance.setSizes(newSizes);
+        
+        // Update collapsed state based on new sizes
+        const newCollapsedState = newSizes[1] <= 5;
         model.send_msg({ collapsed: newCollapsedState });
-
-        // Update model and UI
         model.collapsed = newCollapsedState;
-        updateUIForCollapsedState(newCollapsedState);
+        
+        updateUIForCollapsedState(newCollapsedState, newSizes);
+        view.invalidate_layout();
+    });
 
+    // Right arrow button (>) event listener - two-step toggle
+    rightArrowButton.addEventListener('click', () => {
+        rightClickCount++;
+        leftClickCount = 0; // Reset other button's count
+        
+        let newSizes;
+        
+        if (rightClickCount === 1) {
+            // First tap: make sizes 50, 50
+            newSizes = [50, 50];
+        } else {
+            // Second tap (or more): make sizes 100, 0
+            newSizes = [100, 0];
+            rightClickCount = 0; // Reset after second tap
+        }
+        
+        splitInstance.setSizes(newSizes);
+        
+        // Update collapsed state based on new sizes
+        const newCollapsedState = newSizes[1] <= 5;
+        model.send_msg({ collapsed: newCollapsedState });
+        model.collapsed = newCollapsedState;
+        
+        updateUIForCollapsedState(newCollapsedState, newSizes);
         view.invalidate_layout();
     });
 
@@ -139,14 +157,10 @@ export function render({ model, view }) {
 
             // Update split sizes based on new collapsed state
             if (newCollapsedState) {
-                // Collapse
-                if (model.invert) {
-                    splitInstance.setSizes([0, 100]);
-                } else {
-                    splitInstance.setSizes([100, 0]);
-                }
+                // Collapse right panel (show only left)
+                splitInstance.setSizes([100, 0]);
             } else {
-                // Expand
+                // Expand to show both panels
                 splitInstance.setSizes(model.expanded_sizes);
             }
 
@@ -163,11 +177,13 @@ export function render({ model, view }) {
             // Only add animation on initial load
             if (!window._toggleAnimationShown) {
                 // Add animation on first load only
-                toggleIcon.classList.add('animated');
+                leftArrowButton.classList.add('animated');
+                rightArrowButton.classList.add('animated');
 
                 // Remove animation after it completes and set flag
                 setTimeout(() => {
-                    toggleIcon.classList.remove('animated');
+                    leftArrowButton.classList.remove('animated');
+                    rightArrowButton.classList.remove('animated');
                     window._toggleAnimationShown = true;
                 }, 1500);
             }
@@ -180,23 +196,13 @@ export function render({ model, view }) {
     const leftContentWrapper = document.createElement('div');
     leftContentWrapper.classList.add('left-content-wrapper');
 
-    // Set initial display based on collapsed state and invert parameter
+    // Set initial display based on collapsed state
     if (model.collapsed) {
-        if (model.invert) {
-            leftContentWrapper.className = 'collapsed-content';
-        } else {
-            contentWrapper.className = 'collapsed-content';
-        }
+        contentWrapper.className = 'collapsed-content';
     }
 
-    // Apply left-panel-content class to the appropriate panel based on invert parameter
-    if (model.invert) {
-        contentWrapper.classList.add('left-panel-content');
-        // Background color handled by split container
-    } else {
-        leftContentWrapper.classList.add('left-panel-content');
-        // Background color handled by split container
-    }
+    // Apply left-panel-content class to the left panel
+    leftContentWrapper.classList.add('left-panel-content');
 
     // Append children to the appropriate containers
     leftContentWrapper.append(model.get_child("left"));
