@@ -10,11 +10,12 @@ import param
 
 from panel import bind
 from panel.chat import ChatFeed
-from panel.layout import FlexBox
-from panel.pane import HTML
+from panel.layout import FlexBox, VSpacer
+from panel.pane import HTML, Placeholder
 from panel.viewable import Viewer
 from panel_material_ui import (
-    Button, Card, ChatInterface, ChatStep, Column, Tabs, Typography,
+    Button, Card, ChatAreaInput, ChatInterface, ChatStep, Column, Tabs,
+    Typography,
 )
 from pydantic import BaseModel
 from typing_extensions import Self
@@ -365,6 +366,92 @@ class Coordinator(Viewer, VectorLookupToolUser):
             self._memory['source'] = new_sources[0]
 
     def __panel__(self):
+        if len(self.interface) == 0:
+            # Initialize placeholder if not already done
+            if not hasattr(self, '_panel_placeholder'):
+
+                welcome_text = Typography(
+                    "# 💡 Illuminate your data\nUpload your dataset to begin, then ask any question or select a quick action below. You can also simply start by typing your question.",
+                    css_classes=["welcome-text"],
+                    styles={"text-align": "center", "margin": "20px 0"},
+                    disable_anchors=True,
+                )
+
+                # Create chat input that will send message to interface when submitted
+                def on_chat_submit(value):
+                    if value.strip():
+                        # Send the message to the actual interface
+                        self.interface.send(value, user="User")
+                        # Replace placeholder with the actual interface
+                        self._panel_placeholder.object = self.interface
+
+                chat_input = ChatAreaInput(
+                    placeholder="Ask a question...",
+                    sizing_mode="stretch_width",
+                    css_classes=["welcome-chat-input"]
+                )
+
+                # Bind the chat input to send messages
+                chat_input.param.watch(lambda event: on_chat_submit(event.new), 'value')
+
+                # Create suggestion buttons based on self.suggestions
+                from panel.layout import FlexBox
+                from panel_material_ui import Button
+
+                def on_suggestion_click(event):
+                    suggestion_text = event.obj.name
+                    # Send the suggestion to the actual interface
+                    self.interface.send(suggestion_text, user="User")
+                    # Replace placeholder with the actual interface
+                    self._panel_placeholder.object = self.interface
+
+                suggestion_buttons = []
+                for suggestion in self.suggestions:
+                    btn = Button(
+                        name=suggestion,
+                        button_style="outlined",
+                        margin=5,
+                        on_click=on_suggestion_click
+                    )
+                    suggestion_buttons.append(btn)
+
+                suggestions_layout = FlexBox(
+                    *suggestion_buttons,
+                    justify_content="center",
+                    flex_wrap="wrap",
+                    margin=(20, 0)
+                )
+
+                # Create the welcome screen layout
+                welcome_screen = Column(
+                    welcome_text,
+                    chat_input,
+                    suggestions_layout,
+                    css_classes=["welcome-screen"],
+                    sizing_mode="stretch_both",
+                    align="center",
+                    styles={
+                        "padding": "40px 20px",
+                        "max-width": "800px",
+                        "margin": "0 auto",
+                        "border-radius": "12px",
+                        "border": "1px solid #e0e0e0",
+                        "background-color": "#ffffff"
+                    }
+                )
+
+                # Create placeholder with the welcome screen
+                self._panel_placeholder = Placeholder(
+                    Column(
+                        VSpacer(),
+                        welcome_screen,
+                        VSpacer(),
+                        sizing_mode="stretch_both"
+                    )
+                )
+
+            return self._panel_placeholder
+
         return self.interface
 
     def _add_suggestions_to_footer(

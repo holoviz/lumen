@@ -24,8 +24,8 @@ from panel.viewable import Child, Children, Viewer
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
     Accordion, Button, ChatFeed, ChatInterface, ChatMessage, Chip, Column,
-    Dialog, Divider, FileDownload, MenuList, MenuToggle, MultiChoice, Page,
-    Paper, Row, Switch, Tabs, ToggleIcon,
+    Dialog, Divider, FileDownload, IconButton, MenuList, MenuToggle,
+    MultiChoice, Page, Paper, Row, Switch, Tabs, ToggleIcon,
 )
 
 from ..pipeline import Pipeline
@@ -56,6 +56,12 @@ if TYPE_CHECKING:
 
 DataT = str | Path | Source | Pipeline
 
+CHIP_SX = {
+    "paddingLeft": "8px",
+    "paddingRight": "8px",
+    "paddingTop": "16px",
+    "paddingBottom": "16px"
+}
 
 UI_INTRO_MESSAGE = """
 👋 Click a suggestion below or upload a data source to get started!
@@ -308,11 +314,6 @@ class UI(Viewer):
                 },
             )
             self.interface._widget.color = "primary"
-            welcome_message = UI_INTRO_MESSAGE
-            self.interface.send(
-                Markdown(welcome_message, sizing_mode="stretch_width"),
-                user="Help", respond=False, show_reaction_icons=False, show_copy_icon=False
-            )
 
         levels = logging.getLevelNamesMapping()
         if levels.get(self.log_level) < 20:
@@ -369,7 +370,30 @@ class UI(Viewer):
             styles={'z-index': '1000'},
             variant="text"
         )
+
+        # Create info icon button for intro message
+        self._info_button = IconButton(
+            icon="info",
+            color="light",
+            description="Help & Getting Started",
+            margin=(12, 0, 10, 5),
+            on_click=self._open_info_dialog,
+            variant="text",
+            sx={"p": "6px 0", "minWidth": "32px"},
+        )
+
+        # Create info dialog with intro message
+        self._info_dialog = Dialog(
+            Markdown(UI_INTRO_MESSAGE, sizing_mode="stretch_width"),
+            close_on_click=True,
+            show_close_button=True,
+            sizing_mode='stretch_width',
+            width_option='md',
+            title="Welcome to Lumen AI"
+        )
+
         self._exports = Row(
+            self._info_button,
             self._notebook_export, *(
                 Button(
                     label=label,
@@ -391,6 +415,8 @@ class UI(Viewer):
             on_click=self._open_llm_dialog,
             loading=True,
             variant="outlined",
+            sx={**CHIP_SX
+            }
         )
 
         self._data_sources_chip = Chip(
@@ -401,7 +427,8 @@ class UI(Viewer):
             on_click=self._open_sources_dialog,
             margin=(0, 5, 0, 5),
             loading=True,
-            variant="outlined"
+            variant="outlined",
+            sx={**CHIP_SX}
         )
         self._table_lookup_tool = None  # Will be set after coordinator is initialized
         self._source_catalog = SourceCatalog()
@@ -452,9 +479,9 @@ class UI(Viewer):
                 param.parameterized.async_executor(partial(table_list_agent.respond, []))
         elif self._source_agent and len(memory.get("document_sources", [])) == 0:
             param.parameterized.async_executor(partial(self._source_agent.respond, []))
-        self._coordinator._add_suggestions_to_footer(
-            suggestions=suggestions
-        )
+        # self._coordinator._add_suggestions_to_footer(
+        #     suggestions=suggestions
+        # )
 
     def _update_llm_chip(self, event=None):
         """Update the LLM chip based on readiness state."""
@@ -565,6 +592,10 @@ class UI(Viewer):
         """Open the sources dialog when the vector store badge is clicked."""
         self._sources_dialog_content.open = True
 
+    def _open_info_dialog(self, event=None):
+        """Open the info dialog when the info button is clicked."""
+        self._info_dialog.open = True
+
     def _destroy(self, session_context):
         """
         Cleanup on session destroy
@@ -637,7 +668,7 @@ class UI(Viewer):
                         sx={'border-color': 'white', 'border-width': '1px'}
                     )
                 ],
-                main=[self._main, self._sources_dialog_content, self._llm_dialog],
+                main=[self._main, self._sources_dialog_content, self._llm_dialog, self._info_dialog],
                 sidebar=[] if self._sidebar is None else [self._sidebar],
                 sidebar_open=False,
                 sidebar_variant="temporary",
