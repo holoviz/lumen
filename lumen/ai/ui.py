@@ -371,12 +371,12 @@ class UI(Viewer):
             variant="text"
         )
 
-        # Create info icon button for intro message
+        # Create help icon button for intro message
         self._info_button = IconButton(
-            icon="info",
+            icon="help",
             color="light",
             description="Help & Getting Started",
-            margin=(12, 0, 10, 5),
+            margin=(14, 0, 10, 5),
             on_click=self._open_info_dialog,
             variant="text",
             sx={"p": "6px 0", "minWidth": "32px"},
@@ -393,7 +393,6 @@ class UI(Viewer):
         )
 
         self._exports = Row(
-            self._info_button,
             self._notebook_export, *(
                 Button(
                     label=label,
@@ -641,6 +640,7 @@ class UI(Viewer):
                     self._llm_chip,
                     self._data_sources_chip,
                     HSpacer(),
+                    self._info_button,
                     self._exports,
                     *([self._report_toggle] if self._report_toggle else []),
                     self._settings_menu,
