@@ -35,8 +35,8 @@ THIS_DIR = Path(__file__).parent
 PROMPTS_DIR = THIS_DIR / "prompts"
 
 GETTING_STARTED_SUGGESTIONS = [
-    "What datasets are available?",
-    "What's interesting to analyze?",
+    "What data is available?",
+    "Describe the dataset",
     "Can you visualize the data?",
 ]
 

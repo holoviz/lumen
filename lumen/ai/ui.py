@@ -464,25 +464,6 @@ class UI(Viewer):
             state.on_session_destroyed(self._destroy)
         state.onload(self._setup_llm_and_watchers)
 
-        tables = set()
-        suggestions = self._coordinator.suggestions.copy()
-        for source in memory.get("sources", []):
-            tables |= set(source.get_tables())
-        if len(tables) == 1:
-            suggestions = [f"Show {next(iter(tables))}"] + self._coordinator.suggestions
-        elif len(tables) > 1:
-            table_list_agent = next(
-                (agent for agent in self._coordinator.agents if isinstance(agent, TableListAgent)),
-                None
-            )
-            if table_list_agent:
-                param.parameterized.async_executor(partial(table_list_agent.respond, []))
-        elif self._source_agent and len(memory.get("document_sources", [])) == 0:
-            param.parameterized.async_executor(partial(self._source_agent.respond, []))
-        # self._coordinator._add_suggestions_to_footer(
-        #     suggestions=suggestions
-        # )
-
     def _update_llm_chip(self, event=None):
         """Update the LLM chip based on readiness state."""
         if self.llm._ready:
@@ -806,7 +787,8 @@ class ExplorerUI(UI):
             color="light",
             description="Toggle Report Mode",
             value=False,
-            margin=(13, 0, 10, 0)
+            margin=(13, 0, 10, 0),
+            visible=self.interface.param["objects"].rx().rx.len() > 0
         )
         self._report_toggle.param.watch(self._toggle_report_mode, ['value'])
 

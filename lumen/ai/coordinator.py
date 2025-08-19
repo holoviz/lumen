@@ -205,6 +205,13 @@ class Coordinator(Viewer, VectorLookupToolUser):
         def on_clear(instance, _):
             self._memory.cleanup()
 
+        def on_welcome_submit(event):
+            value = event.new
+            if value.strip():
+                # Send the message to the actual interface
+                self.interface.send(value, user="User")
+                # Replace placeholder with the actual interface
+                self._panel_placeholder.update(self.interface)
 
         if interface is None:
             interface = ChatInterface(
@@ -299,6 +306,57 @@ class Coordinator(Viewer, VectorLookupToolUser):
         self._sync_sources_to_source(None, None, self._memory["sources"])
         self._update_visible_slugs(None, None, self._memory["sources"])
 
+        # Create welcome
+        welcome_text = Typography(
+            "# Illuminate your data\nUpload your dataset to begin, then ask any question, or select a quick action below.",
+            css_classes=["welcome-text"],
+            disable_anchors=True,
+        )
+
+        chat_input = ChatAreaInput(
+            placeholder="Ask a question...",
+            sizing_mode="stretch_width",
+            css_classes=["welcome-chat-input"]
+        )
+        chat_input.param.watch(on_welcome_submit, 'value')
+
+        # Create the welcome screen layout
+        welcome_screen = Column(
+            welcome_text,
+            chat_input,
+            css_classes=["welcome-screen"],
+            sizing_mode="stretch_both",
+            align="center",
+            styles={
+                "padding": "40px 20px",
+                "max-width": "800px",
+                "margin": "0 auto",
+                "border-radius": "12px",
+                "border": "1px solid #e0e0e0",
+                "background-color": "#ffffff"
+            }
+        )
+
+        # Create placeholder with the welcome screen
+        self._panel_placeholder = Placeholder(
+            Column(
+                VSpacer(),
+                welcome_screen,
+                VSpacer(),
+                sizing_mode="stretch_both"
+            )
+        )
+
+        # Use existing method to create suggestions
+        self._add_suggestions_to_footer(
+            self.suggestions,
+            num_objects=1,
+            inplace=True,
+            analysis=False,
+            append_demo=True,
+            hide_after_use=False
+        )
+
     def _update_visible_slugs(self, key=None, old_sources=None, new_sources=None):
         """
         Update visible_slugs when sources change.
@@ -366,93 +424,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
             self._memory['source'] = new_sources[0]
 
     def __panel__(self):
-        if len(self.interface) == 0:
-            # Initialize placeholder if not already done
-            if not hasattr(self, '_panel_placeholder'):
-
-                welcome_text = Typography(
-                    "# 💡 Illuminate your data\nUpload your dataset to begin, then ask any question or select a quick action below. You can also simply start by typing your question.",
-                    css_classes=["welcome-text"],
-                    styles={"text-align": "center", "margin": "20px 0"},
-                    disable_anchors=True,
-                )
-
-                # Create chat input that will send message to interface when submitted
-                def on_chat_submit(value):
-                    if value.strip():
-                        # Send the message to the actual interface
-                        self.interface.send(value, user="User")
-                        # Replace placeholder with the actual interface
-                        self._panel_placeholder.object = self.interface
-
-                chat_input = ChatAreaInput(
-                    placeholder="Ask a question...",
-                    sizing_mode="stretch_width",
-                    css_classes=["welcome-chat-input"]
-                )
-
-                # Bind the chat input to send messages
-                chat_input.param.watch(lambda event: on_chat_submit(event.new), 'value')
-
-                # Create suggestion buttons based on self.suggestions
-                from panel.layout import FlexBox
-                from panel_material_ui import Button
-
-                def on_suggestion_click(event):
-                    suggestion_text = event.obj.name
-                    # Send the suggestion to the actual interface
-                    self.interface.send(suggestion_text, user="User")
-                    # Replace placeholder with the actual interface
-                    self._panel_placeholder.object = self.interface
-
-                suggestion_buttons = []
-                for suggestion in self.suggestions:
-                    btn = Button(
-                        name=suggestion,
-                        button_style="outlined",
-                        margin=5,
-                        on_click=on_suggestion_click
-                    )
-                    suggestion_buttons.append(btn)
-
-                suggestions_layout = FlexBox(
-                    *suggestion_buttons,
-                    justify_content="center",
-                    flex_wrap="wrap",
-                    margin=(20, 0)
-                )
-
-                # Create the welcome screen layout
-                welcome_screen = Column(
-                    welcome_text,
-                    chat_input,
-                    suggestions_layout,
-                    css_classes=["welcome-screen"],
-                    sizing_mode="stretch_both",
-                    align="center",
-                    styles={
-                        "padding": "40px 20px",
-                        "max-width": "800px",
-                        "margin": "0 auto",
-                        "border-radius": "12px",
-                        "border": "1px solid #e0e0e0",
-                        "background-color": "#ffffff"
-                    }
-                )
-
-                # Create placeholder with the welcome screen
-                self._panel_placeholder = Placeholder(
-                    Column(
-                        VSpacer(),
-                        welcome_screen,
-                        VSpacer(),
-                        sizing_mode="stretch_both"
-                    )
-                )
-
-            return self._panel_placeholder
-
-        return self.interface
+        return self._panel_placeholder
 
     def _add_suggestions_to_footer(
         self,
@@ -475,6 +447,9 @@ class Coordinator(Viewer, VectorLookupToolUser):
             memory = self._memory
 
         async def use_suggestion(event):
+            if self._panel_placeholder.object != self.interface:
+                self._panel_placeholder.update(self.interface)
+
             button = event.obj
             with button.param.update(loading=True), self.interface.active_widget.param.update(loading=True):
                 contents = button.name
@@ -540,13 +515,16 @@ class Coordinator(Viewer, VectorLookupToolUser):
         for b in suggestion_buttons:
             b.js_on_click(code=disable_js)
 
-        message = self.interface.objects[-1]
-        if inplace:
-            footer_objects = message.footer_objects or []
-            message.footer_objects = footer_objects + [suggestion_buttons]
+        if len(self.interface) != 0:
+            message = self.interface.objects[-1]
+            if inplace:
+                footer_objects = message.footer_objects or []
+                message.footer_objects = footer_objects + [suggestion_buttons]
+        else:
+            self._panel_placeholder.object[1].append(suggestion_buttons)
+
 
         self.interface.param.watch(hide_suggestions, "objects")
-        return message
 
     async def _add_analysis_suggestions(self, memory=None):
         if memory is None:
