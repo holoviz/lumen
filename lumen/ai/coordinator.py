@@ -228,8 +228,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
             value = Column(*objects) if len(objects) > 1 else objects[0]
             instance.send(value=value, respond=chat_input.value)
 
-            if self._panel_placeholder != instance:
-                self._panel_placeholder.update(instance)
+            if self._main_placeholder != instance:
+                self._main_placeholder.update(instance)
 
         log_debug("New Session: \033[92mStarted\033[0m", show_sep="above")
 
@@ -257,7 +257,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
         )
 
         # Create placeholder with the welcome screen
-        self._panel_placeholder = Placeholder(
+        self._main_placeholder = Placeholder(
             Column(
                 VSpacer(),
                 welcome_screen,
@@ -440,7 +440,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
             self._memory['source'] = new_sources[0]
 
     def __panel__(self):
-        return self._panel_placeholder
+        return self._main_placeholder
 
     def _add_suggestions_to_footer(
         self,
@@ -463,8 +463,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
             memory = self._memory
 
         async def use_suggestion(event):
-            if self._panel_placeholder.object != self.interface:
-                self._panel_placeholder.update(self.interface)
+            if self._main_placeholder.object != self.interface:
+                self._main_placeholder.update(self.interface)
 
             button = event.obj
             with button.param.update(loading=True), self.interface.active_widget.param.update(loading=True):
@@ -537,7 +537,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 footer_objects = message.footer_objects or []
                 message.footer_objects = footer_objects + [suggestion_buttons]
         else:
-            self._panel_placeholder.object[1].append(suggestion_buttons)
+            self._main_placeholder.object[1].append(suggestion_buttons)
 
 
         self.interface.param.watch(hide_suggestions, "objects")
