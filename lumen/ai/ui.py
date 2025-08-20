@@ -301,24 +301,6 @@ class UI(Viewer):
             agents.append(AnalysisAgent(analyses=self.analyses))
 
         self._resolve_data(data)
-        if self.interface is None:
-            self.interface = ChatInterface(
-                callback_exception='verbose',
-                load_buffer=5,
-                margin=(0, 5, 10, 10),
-                sizing_mode="stretch_both",
-                show_button_tooltips=True,
-                show_button_name=False,
-                input_params={
-                    "enable_upload": False
-                },
-            )
-            self.interface._widget.color = "primary"
-
-        levels = logging.getLevelNamesMapping()
-        if levels.get(self.log_level) < 20:
-            self.interface.callback_exception = "verbose"
-        self.interface.disabled = True
         # Create consolidated settings menu toggle
         self._settings_menu = MenuToggle(
             items=[
@@ -358,6 +340,13 @@ class UI(Viewer):
             verbose=self._settings_menu.param.toggled.rx().rx.pipe(lambda toggled: 0 in toggled),
             **self.coordinator_params
         )
+
+        self.interface = self._coordinator.interface
+        levels = logging.getLevelNamesMapping()
+        if levels.get(self.log_level) < 20:
+            self.interface.callback_exception = "verbose"
+        self.interface.disabled = True
+
         self._notebook_export = FileDownload(
             callback=self._export_notebook,
             color="light",

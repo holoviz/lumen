@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import re
 import traceback
 
@@ -11,11 +12,10 @@ import param
 from panel import bind
 from panel.chat import ChatFeed
 from panel.layout import FlexBox, VSpacer
-from panel.pane import HTML, Placeholder
+from panel.pane import HTML, Markdown, Placeholder
 from panel.viewable import Viewer
 from panel_material_ui import (
-    Button, Card, ChatAreaInput, ChatInterface, ChatStep, Column, Tabs,
-    Typography,
+    Button, Card, ChatInterface, ChatStep, Column, Tabs, Typography,
 )
 from pydantic import BaseModel
 from typing_extensions import Self
@@ -26,6 +26,7 @@ from .config import (
     DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR,
     SOURCE_TABLE_SEPARATOR,
 )
+from .controls import SourceControls
 from .llm import LlamaCpp, Llm, Message
 from .logs import ChatLogs
 from .models import (
@@ -163,8 +164,6 @@ class Coordinator(Viewer, VectorLookupToolUser):
         logs_db_path: str = "",
         **params,
     ):
-        log_debug("New Session: \033[92mStarted\033[0m", show_sep="above")
-
         def on_message(message, instance):
             def update_on_reaction(reactions):
                 if not self._logs:
@@ -205,24 +204,82 @@ class Coordinator(Viewer, VectorLookupToolUser):
         def on_clear(instance, _):
             self._memory.cleanup()
 
-        def on_welcome_submit(event):
-            value = event.new
-            if value.strip():
-                # Send the message to the actual interface
-                self.interface.send(value, user="User")
-                # Replace placeholder with the actual interface
-                self._panel_placeholder.update(self.interface)
+        def on_submit(event=None, instance=None):
+            objects = []
+            chat_input = self._chat_input
+
+            # Process uploaded files through SourceControls if any exist
+            if chat_input.value_uploaded:
+                source_controls = SourceControls(
+                    downloaded_files={key: io.BytesIO(value["value"]) for key, value in chat_input.value_uploaded.items()},
+                    memory=self._memory,
+                    replace_controls=False,
+                    clear_uploads=True  # Clear the uploads after processing
+                )
+                source_controls.param.trigger("trigger_add")
+                objects.extend(chat_input.views)
+                chat_input.value_uploaded = {}
+
+            if chat_input.value:
+                objects.append(Markdown(chat_input.value))
+
+            if not objects:
+                return
+            value = Column(*objects) if len(objects) > 1 else objects[0]
+            instance.send(value=value, respond=chat_input.value)
+
+            if self._panel_placeholder != instance:
+                self._panel_placeholder.update(instance)
+
+        log_debug("New Session: \033[92mStarted\033[0m", show_sep="above")
+
+        # Create welcome
+        welcome_text = Typography(
+            "# Illuminate your data\nUpload your dataset to begin, then ask any question, or select a quick action below.",
+            css_classes=["welcome-text"],
+            disable_anchors=True,
+        )
+
+        # Create the welcome screen layout
+        welcome_screen = Column(
+            welcome_text,
+            css_classes=["welcome-screen"],
+            sizing_mode="stretch_both",
+            align="center",
+            styles={
+                "padding": "40px 20px",
+                "max-width": "800px",
+                "margin": "0 auto",
+                "border-radius": "12px",
+                "border": "1px solid #e0e0e0",
+                "background-color": "#ffffff"
+            }
+        )
+
+        # Create placeholder with the welcome screen
+        self._panel_placeholder = Placeholder(
+            Column(
+                VSpacer(),
+                welcome_screen,
+                VSpacer(),
+                sizing_mode="stretch_both"
+            )
+        )
 
         if interface is None:
             interface = ChatInterface(
-                callback=self._chat_invoke, load_buffer=5,
-                show_button_tooltips=True, show_button_name=False,
-                input_params={
-                    "enable_upload": False
-                },
+                callback=self._chat_invoke,
+                load_buffer=5,
+                # on_submit=on_submit,
+                show_button_tooltips=True,
+                show_button_name=False,
+                sizing_mode="stretch_both"
             )
         else:
             interface.callback = self._chat_invoke
+            # interface.on_submit = on_submit
+        self._chat_input = interface._widget
+        welcome_screen.append(self._chat_input)
 
         self._session_id = id(self)
 
@@ -305,47 +362,6 @@ class Coordinator(Viewer, VectorLookupToolUser):
         self._sync_source_to_sources(None, None, self._memory.get("source", None))
         self._sync_sources_to_source(None, None, self._memory["sources"])
         self._update_visible_slugs(None, None, self._memory["sources"])
-
-        # Create welcome
-        welcome_text = Typography(
-            "# Illuminate your data\nUpload your dataset to begin, then ask any question, or select a quick action below.",
-            css_classes=["welcome-text"],
-            disable_anchors=True,
-        )
-
-        chat_input = ChatAreaInput(
-            placeholder="Ask a question...",
-            sizing_mode="stretch_width",
-            css_classes=["welcome-chat-input"]
-        )
-        chat_input.param.watch(on_welcome_submit, 'value')
-
-        # Create the welcome screen layout
-        welcome_screen = Column(
-            welcome_text,
-            chat_input,
-            css_classes=["welcome-screen"],
-            sizing_mode="stretch_both",
-            align="center",
-            styles={
-                "padding": "40px 20px",
-                "max-width": "800px",
-                "margin": "0 auto",
-                "border-radius": "12px",
-                "border": "1px solid #e0e0e0",
-                "background-color": "#ffffff"
-            }
-        )
-
-        # Create placeholder with the welcome screen
-        self._panel_placeholder = Placeholder(
-            Column(
-                VSpacer(),
-                welcome_screen,
-                VSpacer(),
-                sizing_mode="stretch_both"
-            )
-        )
 
         # Use existing method to create suggestions
         self._add_suggestions_to_footer(
