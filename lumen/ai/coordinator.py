@@ -206,7 +206,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
         def on_submit(event=None, instance=None):
             objects = []
-            chat_input = self._chat_input
+            chat_input = self.interface.active_widget
 
             # Process uploaded files through SourceControls if any exist
             if chat_input.value_uploaded:
@@ -278,8 +278,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
         else:
             interface.callback = self._chat_invoke
             # interface.on_submit = on_submit
-        self._chat_input = interface._widget
-        welcome_screen.append(self._chat_input)
+        welcome_screen.append(interface._widget)
 
         self._session_id = id(self)
 
