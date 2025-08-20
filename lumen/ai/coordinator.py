@@ -206,9 +206,9 @@ class Coordinator(Viewer, VectorLookupToolUser):
             self._memory.cleanup()
 
         def on_submit(event=None, instance=None):
-            objects = []
             chat_input = self.interface.active_widget
 
+            objects = []
             # Process uploaded files through SourceControls if any exist
             if chat_input.value_uploaded:
                 source_controls = SourceControls(
@@ -217,7 +217,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
                     replace_controls=False,
                     clear_uploads=True  # Clear the uploads after processing
                 )
-                source_controls.param.trigger("trigger_add")
+                source_controls.add_medias()
                 objects.extend(chat_input.views)
                 chat_input.value_uploaded = {}
 
@@ -234,19 +234,18 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
         log_debug("New Session: \033[92mStarted\033[0m", show_sep="above")
 
-
         if interface is None:
             interface = ChatInterface(
                 callback=self._chat_invoke,
                 load_buffer=5,
-                # on_submit=on_submit,
+                on_submit=on_submit,
                 show_button_tooltips=True,
                 show_button_name=False,
                 sizing_mode="stretch_both"
             )
         else:
             interface.callback = self._chat_invoke
-            # interface.on_submit = on_submit
+            interface.on_submit = on_submit
 
         welcome_text = Typography(
             "# Illuminate your data\nUpload your dataset to begin, then ask any question, or select a quick action below.",
