@@ -11,11 +11,12 @@ import param
 
 from panel import bind
 from panel.chat import ChatFeed
-from panel.layout import FlexBox, VSpacer
-from panel.pane import HTML, Markdown, Placeholder
+from panel.layout import Column, FlexBox
+from panel.pane import HTML, Markdown
 from panel.viewable import Viewer
 from panel_material_ui import (
-    Button, Card, ChatInterface, ChatStep, Column, Tabs, Typography,
+    Button, Card, ChatInterface, ChatStep, Column as MuiColumn, Paper, Tabs,
+    Typography,
 )
 from pydantic import BaseModel
 from typing_extensions import Self
@@ -228,43 +229,11 @@ class Coordinator(Viewer, VectorLookupToolUser):
             value = Column(*objects) if len(objects) > 1 else objects[0]
             instance.send(value=value, respond=chat_input.value)
 
-            if self._main_placeholder != instance:
-                self._main_placeholder.update(instance)
+            if self._main[0] is not instance:
+                self._main[:] = [instance]
 
         log_debug("New Session: \033[92mStarted\033[0m", show_sep="above")
 
-        # Create welcome
-        welcome_text = Typography(
-            "# Illuminate your data\nUpload your dataset to begin, then ask any question, or select a quick action below.",
-            css_classes=["welcome-text"],
-            disable_anchors=True,
-        )
-
-        # Create the welcome screen layout
-        welcome_screen = Column(
-            welcome_text,
-            css_classes=["welcome-screen"],
-            sizing_mode="stretch_both",
-            align="center",
-            styles={
-                "padding": "40px 20px",
-                "max-width": "800px",
-                "margin": "0 auto",
-                "border-radius": "12px",
-                "border": "1px solid #e0e0e0",
-                "background-color": "#ffffff"
-            }
-        )
-
-        # Create placeholder with the welcome screen
-        self._main_placeholder = Placeholder(
-            Column(
-                VSpacer(),
-                welcome_screen,
-                VSpacer(),
-                sizing_mode="stretch_both"
-            )
-        )
 
         if interface is None:
             interface = ChatInterface(
@@ -278,7 +247,26 @@ class Coordinator(Viewer, VectorLookupToolUser):
         else:
             interface.callback = self._chat_invoke
             # interface.on_submit = on_submit
-        welcome_screen.append(interface._widget)
+
+        welcome_text = Typography(
+            "# Illuminate your data\nUpload your dataset to begin, then ask any question, or select a quick action below.",
+            css_classes=["welcome-text"],
+            disable_anchors=True,
+        )
+
+        welcome_screen = Paper(
+            welcome_text,
+            interface._widget,
+            max_width=800,
+            styles={'margin': 'auto'},
+            sx={'p': '0 20px 20px 20px'}
+        )
+
+        self._main = MuiColumn(
+            welcome_screen,
+            sx={'display': 'flex', 'align-items': 'center'},
+            height_policy='max'
+        )
 
         self._session_id = id(self)
 
@@ -439,7 +427,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
             self._memory['source'] = new_sources[0]
 
     def __panel__(self):
-        return self._main_placeholder
+        return self._main
 
     def _add_suggestions_to_footer(
         self,
@@ -462,8 +450,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
             memory = self._memory
 
         async def use_suggestion(event):
-            if self._main_placeholder.object != self.interface:
-                self._main_placeholder.update(self.interface)
+            if self._main[0] is not self.interface:
+                self._main[:] = [self.interface]
 
             button = event.obj
             with button.param.update(loading=True), self.interface.active_widget.param.update(loading=True):
@@ -536,8 +524,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 footer_objects = message.footer_objects or []
                 message.footer_objects = footer_objects + [suggestion_buttons]
         else:
-            self._main_placeholder.object[1].append(suggestion_buttons)
-
+            self._main[0].append(suggestion_buttons)
 
         self.interface.param.watch(hide_suggestions, "objects")
 

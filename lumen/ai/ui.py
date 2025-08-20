@@ -403,8 +403,7 @@ class UI(Viewer):
             on_click=self._open_llm_dialog,
             loading=True,
             variant="outlined",
-            sx={**CHIP_SX
-            }
+            sx={**CHIP_SX}
         )
 
         self._data_sources_chip = Chip(
