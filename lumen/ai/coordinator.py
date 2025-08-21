@@ -248,7 +248,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
             interface.on_submit = on_submit
 
         welcome_text = Typography(
-            "# Illuminate your data\nUpload your dataset to begin, then ask any question, or select a quick action below.",
+            "# Illuminate your data\nAdd your dataset to begin, then ask any question, or select a quick action below.",
             css_classes=["welcome-text"],
             disable_anchors=True,
         )
@@ -256,7 +256,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
         welcome_screen = Paper(
             welcome_text,
             interface._widget,
-            max_width=800,
+            max_width=850,
             styles={'margin': 'auto'},
             sx={'p': '0 20px 20px 20px'}
         )
@@ -454,7 +454,13 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
             button = event.obj
             with button.param.update(loading=True), self.interface.active_widget.param.update(loading=True):
-                contents = button.name
+                # Find the original suggestion tuple to get the text
+                button_index = suggestion_buttons.objects.index(button)
+                if button_index < len(suggestions):
+                    suggestion = suggestions[button_index]
+                    contents = suggestion[1] if isinstance(suggestion, tuple) else suggestion
+                else:
+                    contents = button.name
                 if hide_after_use:
                     suggestion_buttons.visible = False
                     if event.new > 1:  # prevent double clicks
@@ -494,7 +500,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
         suggestion_buttons = FlexBox(
             *[
                 Button(
-                    name=suggestion,
+                    name=suggestion[1] if isinstance(suggestion, tuple) else suggestion,
+                    icon=suggestion[0] if isinstance(suggestion, tuple) else None,
                     button_style="outlined",
                     on_click=use_suggestion,
                     margin=5,
@@ -508,7 +515,9 @@ class Coordinator(Viewer, VectorLookupToolUser):
         if append_demo and self.demo_inputs:
             suggestion_buttons.append(Button(
                 name="Show a demo",
+                icon="play_arrow",
                 button_type="primary",
+                variant="outlined",
                 on_click=run_demo,
                 margin=5,
                 disabled=self.interface.param.loading

@@ -23,9 +23,9 @@ from panel.util import edit_readonly
 from panel.viewable import Child, Children, Viewer
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
-    Accordion, Button, ChatFeed, ChatInterface, ChatMessage, Chip, Column,
-    Dialog, Divider, FileDownload, IconButton, MenuList, MenuToggle,
-    MultiChoice, Page, Paper, Row, Switch, Tabs, ToggleIcon,
+    Accordion, Button, ChatFeed, ChatInterface, ChatMessage, Column, Dialog,
+    Divider, FileDownload, IconButton, MenuList, MenuToggle, MultiChoice, Page,
+    Paper, Row, Switch, Tabs, ToggleIcon,
 )
 
 from ..pipeline import Pipeline
@@ -48,7 +48,6 @@ from .llm import Llm, OpenAI
 from .llm_dialog import LLMConfigDialog
 from .memory import _Memory, memory
 from .report import Report
-from .tools import TableLookup
 from .vector_store import VectorStore
 
 if TYPE_CHECKING:
@@ -56,12 +55,6 @@ if TYPE_CHECKING:
 
 DataT = str | Path | Source | Pipeline
 
-CHIP_SX = {
-    "paddingLeft": "8px",
-    "paddingRight": "8px",
-    "paddingTop": "16px",
-    "paddingBottom": "16px"
-}
 
 UI_INTRO_MESSAGE = """
 👋 Click a suggestion below or upload a data source to get started!
@@ -365,7 +358,7 @@ class UI(Viewer):
             icon="help",
             color="light",
             description="Help & Getting Started",
-            margin=(14, 0, 10, 5),
+            margin=(14, 10, 10, 5),
             on_click=self._open_info_dialog,
             variant="text",
             sx={"p": "6px 0", "minWidth": "32px"},
@@ -393,30 +386,9 @@ class UI(Viewer):
         )
         self._main = Column(self._coordinator, sizing_mode='stretch_both', align="center")
         self._source_agent = next((agent for agent in self._coordinator.agents if isinstance(agent, SourceAgent)), None)
-        # Create LLM status chip
-        self._llm_chip = Chip(
-            object="Manage LLM: Loading...",
-            icon="auto_awesome",
-            align="center",
-            color="light",
-            margin=(0, 5, 0, 10),
-            on_click=self._open_llm_dialog,
-            loading=True,
-            variant="outlined",
-            sx={**CHIP_SX}
-        )
 
-        self._data_sources_chip = Chip(
-            object="Manage Data",
-            icon="cloud_upload",
-            align="center",
-            color="light",
-            on_click=self._open_sources_dialog,
-            margin=(0, 5, 0, 5),
-            loading=True,
-            variant="outlined",
-            sx={**CHIP_SX}
-        )
+        # Set up actions for the ChatAreaInput speed dial
+        self._setup_actions()
         self._table_lookup_tool = None  # Will be set after coordinator is initialized
         self._source_catalog = SourceCatalog()
         self._source_accordion = Accordion(
@@ -443,28 +415,28 @@ class UI(Viewer):
 
         memory.on_change("sources", self._update_source_catalog)
 
-        # Set up LLM status watching
-        self.llm.param.watch(self._update_llm_chip, '_ready')
-        self._update_llm_chip()  # Set initial state
+        # LLM status is now managed through actions
 
         if state.curdoc and state.curdoc.session_context:
             state.on_session_destroyed(self._destroy)
         state.onload(self._setup_llm_and_watchers)
 
-    def _update_llm_chip(self, event=None):
-        """Update the LLM chip based on readiness state."""
-        if self.llm._ready:
-            model_name = self.llm.model_kwargs.get('default', {}).get('model', 'unknown')
-            self._llm_chip.param.update(
-                object=f"Manage LLM: {model_name}",
-                icon="auto_awesome",
-                loading=False
-            )
-        else:
-            self._llm_chip.param.update(
-                object="Manage LLM: Loading...",
-                loading=True
-            )
+    def _setup_actions(self):
+        """Set up actions for the ChatAreaInput speed dial."""
+        existing_actions = self.interface.active_widget.actions
+        self.interface.active_widget.actions = {
+            'manage_data': {
+                'icon': 'cloud_upload',
+                'callback': self._open_sources_dialog,
+                'label': 'Manage Data'
+            },
+            'manage_llm': {
+                'icon': 'auto_awesome',
+                'callback': self._open_llm_dialog,
+                'label': 'Select LLM'
+            },
+            **existing_actions,
+        }
 
     def _open_llm_dialog(self, event=None):
         """Open the LLM configuration dialog when the LLM chip is clicked."""
@@ -481,12 +453,6 @@ class UI(Viewer):
         # Update all agent LLMs
         for agent in self._coordinator.agents:
             agent.llm = new_llm
-
-        # Initialize the new LLM and set up watchers
-        self.llm.param.watch(self._update_llm_chip, '_ready')
-
-        # Update the chip display immediately
-        self._update_llm_chip()
 
         # Initialize the new LLM asynchronously
         import param
@@ -509,53 +475,6 @@ class UI(Viewer):
         except Exception:
             traceback.print_exc()
 
-        # Find the TableLookup tool and set up reactive watching
-        for tool in self._coordinator._tools["main"]:
-            if isinstance(tool, TableLookup):
-                self._table_lookup_tool = tool
-                break
-
-        if not self._table_lookup_tool:
-            self._data_sources_chip.param.update(
-                object='Manage Data',
-                icon="storage",
-                color="primary",
-            )
-            return
-
-        # Set up reactive watching of the _ready parameter
-        self._table_lookup_tool.param.watch(self._update_data_sources_chip, '_ready')
-
-        # Set initial chip state
-        self._update_data_sources_chip()
-
-    def _update_data_sources_chip(self, event=None):
-        """Update the data sources chip based on TableLookup readiness state."""
-        if not self._table_lookup_tool:
-            return
-
-        ready_state = self._table_lookup_tool._ready
-
-        if ready_state is False:
-            # Not ready yet - show as running/pending
-            self._data_sources_chip.param.update(
-                object="Loading Tables",
-                loading=True,
-            )
-        elif ready_state is True:
-            # Ready - show as success
-            self._data_sources_chip.param.update(
-                object="Manage Data",
-                loading=False,
-            )
-        elif ready_state is None:
-            # Error state
-            self._data_sources_chip.param.update(
-                object="Data Sources Error",
-                loading=False,
-                color="error"
-            )
-
     def _open_sources_dialog(self, event=None):
         """Open the sources dialog when the vector store badge is clicked."""
         self._sources_dialog_content.open = True
@@ -569,8 +488,7 @@ class UI(Viewer):
         Cleanup on session destroy
         """
         if self._table_lookup_tool:
-            self._table_lookup_tool.param.unwatch(self._update_data_sources_chip, '_ready')
-        self.llm.param.unwatch(self._update_llm_chip, '_ready')
+            self._table_lookup_tool.param.unwatch(self._update_data_sources_action, '_ready')
 
     def _export_notebook(self):
         nb = export_notebook(self.interface.objects, preamble=self.notebook_preamble)
@@ -625,8 +543,6 @@ class UI(Viewer):
                 css_files=['https://fonts.googleapis.com/css2?family=Nunito:wght@700'],
                 title=self.title,
                 header=[
-                    self._llm_chip,
-                    self._data_sources_chip,
                     HSpacer(),
                     self._info_button,
                     self._exports,
