@@ -228,9 +228,9 @@ class Source(MultiTypeComponent):
         dashboard. If set to `True` the Source will be loaded on
         initial server load.""")
 
-    info = param.Dict(default={}, doc="""
-        Optional metadata about the source, such as its origin or
-        description.""")
+    metadata = param.Dict(default={}, doc="""
+        Optional metadata about the source tables. Should follow the format:
+        {"table_name": {"description": ..., "columns": {"column_name": "..."}}}""")
 
     source_type: ClassVar[str | None] = None
 
@@ -632,6 +632,13 @@ class Source(MultiTypeComponent):
             metadata = self.metadata_func(tables)
         else:
             metadata = self._get_table_metadata(tables)
+
+        # Merge source.metadata with metadata_func output
+        for table_name in tables:
+            for key, value in self.metadata.get(table_name, {}).items():
+                if key not in metadata[table_name]:
+                    metadata[table_name][key] = value
+
         return metadata
 
     def get(self, table: str, **query) -> DataFrame:

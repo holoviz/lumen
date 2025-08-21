@@ -680,9 +680,11 @@ class SourceControls(Viewer):
                     if source is None:
                         source_id = f"UploadedSource{self._count:06d}"
                         source = DuckDBSource(uri=":memory:", ephemeral=True, name=source_id, tables={})
-                    if "filenames" not in source.info:
-                        source.info["filenames"] = []
-                    source.info["filenames"].append(f"{media_controls.filename}.{media_controls.extension}")
+                    table_name = media_controls.alias
+                    filename = f"{media_controls.filename}.{media_controls.extension}"
+                    if table_name not in source.metadata:
+                        source.metadata[table_name] = {}
+                    source.metadata[table_name]["filename"] = filename
                     n_tables += self._add_table(source, media_controls.file_obj, media_controls)
                 else:
                     n_docs += self._add_document(media_controls.file_obj, media_controls)
