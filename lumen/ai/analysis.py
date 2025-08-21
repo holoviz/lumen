@@ -3,6 +3,7 @@ from __future__ import annotations
 import panel as pn
 import param
 
+from panel.chat import ChatFeed
 from panel.viewable import Viewable
 
 from ..base import Component
@@ -28,6 +29,9 @@ class Analysis(param.ParameterizedFunction):
     columns = param.List(default=[], constant=True, doc="""
        The columns required for the analysis. May use tuples to declare that one of
        the columns must be present.""")
+
+    interface = param.ClassSelector(class_=ChatFeed, doc="""
+        The ChatInterface instance that will be used to stream messages.""")
 
     memory = param.ClassSelector(class_=_Memory, default=None, doc="""
         Local memory which will be used to provide the agent context.
