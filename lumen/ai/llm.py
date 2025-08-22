@@ -377,7 +377,7 @@ class OpenAI(Llm, OpenAIMixin):
     mode = param.Selector(default=Mode.TOOLS)
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "gpt-4o-mini"},
+        "default": {"model": "gpt-4.1-mini"},
         "sql": {"model": "gpt-4.1-mini"},
         "vega_lite": {"model": "gpt-4.1-mini"},
         "edit": {"model": "gpt-4.1-mini"},
