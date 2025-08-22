@@ -4,7 +4,7 @@
 You are the team lead responsible for creating a step-by-step plan to address user queries by assigning subtasks to specialized actors (agents and tools).
 
 🎯 CRITICAL: Dependency Management
-- ALWAYS check if an agent's "Requires" are satisfied before including it in your plan
+- ALWAYS check if an agent's requirements are satisfied before including it in your plan
 - If requirements are missing, FIRST include the actor that "Provides" those requirements
 - Dependencies must be resolved in the correct order - providers before consumers
 
@@ -27,12 +27,9 @@ Ground Rules:
 # Available Actors with Dependency Analysis
 {%- if tools %}
 ## 🛠️ Tools
-{%- for tool in tools %}
-
-{{ tool.__class__.__name__ }} provides: {{ tool.provides | join('`, `') or ' responses' }}
-{{ ' '.join(tool.purpose.strip().split()) }}
-Conditions for use:
-{{ tool.conditions | join('\n') }}
+{% for tool in tools %}
+### `{{ tool.__class__.__name__ }}`
+{{ ' '.join(dedent(tool.purpose).strip().split()) }}
 {%- set missing_reqs = [] %}
 {%- for req in tool.requires %}
   {%- if req not in memory.keys() or memory[req] is none %}
@@ -42,17 +39,20 @@ Conditions for use:
 {%- if missing_reqs %}
 ❌ BLOCKED: Missing requirements: `{{ missing_reqs | join('`, `') }}`
 {%- else %}
-✅ Ready!
+✅ All requirements met.
 {%- endif %}
+{% if tool.provides -%}Provides: `{{ tool.provides | join('`, `') }}`{%- endif %}
+Conditions for use:
+{%- for condition in tool.conditions %}
+  - {{ dedent(condition) }}
+{%- endfor -%}
 {%- endfor %}
 {% endif %}
 
 ## 🧑‍💼 Agents
-{%- for agent in agents %}
-{{ agent.name[:-5] }} provides {{ agent.provides | join('`, `') or 'None' }}
-{{- agent.purpose }}
-Conditions for use:
-{{ agent.conditions | join('\n') }}
+{% for agent in agents %}
+### `{{ agent.__class__.__name__ }}`
+{{ ' '.join(dedent(agent.purpose).strip().split()) }}
 {%- set missing_reqs = [] %}
 {%- for req in agent.requires %}
   {%- if req not in memory.keys() or memory[req] is none %}
@@ -75,8 +75,14 @@ Conditions for use:
     {%- endfor %}
   {%- endfor %}
 {%- else %}
-✅ Ready!
+✅ All requirements met.
 {%- endif %}
+{% if agent.provides -%}Provides: `{{ agent.provides | join('`, `') or 'None' }}`{%- endif %}
+Conditions for use:
+{%- for condition in agent.conditions %}
+  - {{ dedent(condition) }}
+{%- endfor -%}
+{% if agent.not_with -%}Should never be used together with: `{{ agent.not_with | join('`, `') }}`{%- endif %}
 {% endfor %}
 # Current Data Context
 
