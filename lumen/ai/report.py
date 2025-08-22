@@ -97,7 +97,7 @@ class Task(Viewer):
         pre = len(self.memory['outputs'])
         outputs = []
         memory = task.memory or self.memory
-        messages = self.history + [{'content': self.instruction, 'role': 'user'}]
+        messages = self.history
 
         with task.param.update(
             interface=self.interface, llm=task.llm or self.llm, memory=memory,
