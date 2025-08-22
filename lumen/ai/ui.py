@@ -720,7 +720,7 @@ class ExplorerUI(UI):
         )
         self._exports.visible = False
         self._output = Paper(
-            self._home.view, elevation=2, margin=(0, 10, 10, 5), sx={'p': 4},
+            self._home.view, elevation=2, margin=(0, 10, 5, 5), sx={'p': 4},
             height_policy='max', sizing_mode="stretch_both"
         )
         self._split = SplitJS(
@@ -879,11 +879,10 @@ class ExplorerUI(UI):
         last_exploration = self._explorations.value['view']
         is_home = last_exploration is self._home
         if is_home:
-            last_exploration.conversation = [self.interface.objects[0]]
-            conversation = self.interface.objects[1:]
+            last_exploration.conversation = []
         else:
             last_exploration.conversation = self._snapshot_messages(new=True)
-            conversation = list(self.interface.objects)
+        conversation = list(self.interface.objects)
 
         # Create new exploration
         output = Column(sizing_mode='stretch_both', loading=True)

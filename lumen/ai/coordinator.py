@@ -230,6 +230,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
             instance.send(value=value, respond=chat_input.value)
 
             if self._main[0] is not instance:
+                # Reset value input because reset has no time to propagate
+                instance._widget.value_input = ""
                 self._main[:] = [instance]
 
         log_debug("New Session: \033[92mStarted\033[0m", show_sep="above")
@@ -1062,7 +1064,7 @@ class Planner(Coordinator):
 
             if len(consecutive_steps) > 1:
                 # Join the consecutive steps into one
-                combined_instruction = f"{current_step.instruction}. Additionally: " + ". ".join(
+                combined_instruction = f"{current_step.instruction} Additionally: " + ". ".join(
                     step.instruction for step in consecutive_steps[1:]
                 )
                 combined_title = f"{current_step.title} (combined {len(consecutive_steps)} steps)"

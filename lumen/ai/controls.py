@@ -741,9 +741,11 @@ class RetryControls(Viewer):
             color="default",
             description="Prompt LLM to retry",
             icon="edit",
+            icon_size="1em",
             label="",
             margin=(5, 0),
-            size="small"
+            size="small",
+            sx={".MuiIcon-root": {"color": "var(--mui-palette-default-dark)"}}
         )
         self._text_input = TextInput(
             placeholder="Enter feedback and press the <Enter> to retry.",
