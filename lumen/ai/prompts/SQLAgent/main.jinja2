@@ -4,131 +4,83 @@
 # Instructions:
 Write a SQL query for the user's data transformation request, focusing on intent over literal interpretation.
 
-## EFFICIENCY FIRST:
-- **Reuse materialized data**: Check "Current Knowledge" for existing data before writing CTEs
-- **Cost awareness**: Each step costs resources - leverage previous work
+## 🎯 PRIMARY RULES:
+1. Reuse materialized data - Check "Current Knowledge" first before writing CTEs
+2. Column quotes - Use double quotes: `"column_name"`
+3. String quotes - Single quotes: `'string_value'`
+4. No CREATE statements - System handles materialization
+5. No LIMIT clauses - SQLTransform handles pagination unless explicitly requested
+6. Progressive approach - Each step builds on previous
 
-## Critical Rules:
-- Column names: Use double quotes (") to avoid identifier conflicts: `SELECT "column_name"`
+## Query Patterns:
+- NULL handling: Exclude unless specified
+- Clean data: `TRIM("column") != ''`, filter -9999, empty strings
+- Headers: Use OFFSET 1 for header/metadata rows
+- Time conversion: `CASE WHEN "col" LIKE '%ms' THEN TRY_CAST(REGEXP_REPLACE("col", 'ms', '') AS DECIMAL)/1000 WHEN "col" LIKE '%s' THEN TRY_CAST(REGEXP_REPLACE("col", 's', '') AS DECIMAL) END`
+- Temporal data: Check MIN/MAX dates before joining, ensure overlap validation
 - No inline comments in SQL code
-- NULL handling: Exclude NULLs unless specified otherwise
-- Discovery queries: One table at a time, no UNION
-- Subtitle rows: If dataset has subtitle/unit rows (e.g., "Title" then "Unit"), use OFFSET to skip them
-- NO CREATE statements: Materialization is handled automatically by the system
-- Data Quality: Filter out space-only values with `TRIM("column") != ''`
-- Header Rows: Use OFFSET 1 when data has header/metadata rows
-{% if not is_final_step %}- Discovery queries: Use ILIKE patterns and LIMIT 100 for exploration
-- Entity Discovery: When searching for enums:
-  - Use multiple pattern variations: `ILIKE '%us%' OR ILIKE '%american%' OR ILIKE '%united%'`
-  - Check multiple columns if available: country_name, country_code, country_3_letter_code
-  - Consider common abbreviations and variations and case sensitivity
-  - **Format variation checking**: When initial discovery fails, immediately check for format variations, underscores vs spaces using `ILIKE`
-- Limits can be applied to discovery steps
-{% else %}- Unless requested to return a subset never set a LIMIT
-{% endif %}
-- Temporal Data Handling:
-  - **Date range discovery**: Always check MIN/MAX dates before joining temporal datasets
-  - **Period matching**: For seasonal/periodic data, understand the full period coverage
-  - **Overlap validation**: Ensure temporal datasets have overlapping date ranges before attempting joins
-  - **Flexible matching**: Consider all relevant time periods, not just exact matches
-- Only filter by confirmed values from previous results
-- Progressive approach: each step builds on previous
-- Clean invalid values (-9999, empty strings)
 - Use CTEs only when necessary
+
+{% if not is_final_step %}## Discovery Mode:
+- LIMIT 100 for exploration only
+- One table at a time, no UNION
+- Entity search: Use multiple ILIKE patterns with variations
+- Format variation checking: underscores vs spaces using ILIKE
+{% endif %}
 {%- endblock %}
 
 {% block context -%}
 {%- if memory.get('visible_slugs') %}
-📊 Tables available:
+📊 Available: 
 {%- set tables_list = memory['visible_slugs'] | list %}
-{%- for table in tables_list[:10] %}
-- {{ table }}
-{%- endfor %}
-{%- if tables_list | length > 10 %}
-- (showing first 10 of {{ tables_list | length }} tables)
-{%- endif %}
+{{- tables_list[:5] | join(', ') }}
+{%- if tables_list | length > 5 %} (+{{tables_list | length - 5}} more){%- endif %}
 {% endif %}
 
-Available Schema Context:
 {{ memory["sql_metaset"].compact_context }}
 
 {%- if 'sql' in memory %}
-🗃️ Previous Plan's SQL:
-```sql
-{{ memory['sql'] }}
-```
+🗃️ Previous: `{{ memory['sql'][:100] }}...`
 {%- endif %}
 
 {%- if memory.get('data') is not none %}
-📊 Summary of the data returned from the Previous Plan's SQL:
+📊 Data Summary:
 {{ memory["data"] }}
 {%- endif %}
 
-Additional instructions:
-- Use only `{{ dialect }}` SQL dialect.
+Use `{{ dialect }}` SQL dialect.
 {%- if dialect == 'duckdb' %}
-- If the table name originally did not have `read_*` prefix, use the original table name
-- Use table names verbatim; e.g. if table is read_csv('table.csv') then use read_csv('table.csv') and not 'table' or 'table.csv'
-- If `read_*` is used, use with alias, e.g. read_parquet('table.parq') as table_parq
-- Use double quotes (") for column names and single quotes (') for ALL string literal values (e.g., ILIKE '%pattern%', 'text_value', '2023-01-01')
-- Be sure to reference the full table slug, e.g. `source {{ separator }} table`
 
-## DuckDB Performance Tips:
-- Date extraction: For filtering, use `month("ISO_TIME"::DATE) IN (6,7,8)` or range predicates, NOT `CAST(SUBSTRING(...))`
-- Range predicates are fastest: `"date" >= '2023-06-01' AND "date" < '2023-09-01'`
-- Use `strftime()` for formatting only, `TRY_CAST` for safe conversions
-- Conditional aggregates: `COUNT(*) FILTER (WHERE x)` > `SUM(CASE WHEN x THEN 1 END)`
-- Use `QUALIFY` for window filtering, `arg_max()` for correlated values
-- Use `PIVOT`/`UNPIVOT`, `LIST` aggregates, struct syntax `{'key': value}`
-- **Use materialized tables from previous steps when available** - critical for efficiency
-- **Temporal joins**: When joining on dates/periods:
-  - Extract year/month consistently: `EXTRACT(YEAR FROM date_col)`
-  - Consider range overlaps, not just exact matches
-  - Validate data exists for the join period BEFORE joining
+## DuckDB Essentials:
+- Table references: Use exact names `read_csv('table.csv')`, alias if needed `as table_name`
+- Reference full slugs: `source {{ separator }} table`
+- Range predicates: `"date" >= '2023-06-01' AND "date" < '2023-09-01'`
+- Window filtering: `QUALIFY ROW_NUMBER() OVER (...) <= 5`
+- Safe conversions: Use `TRY_CAST` for type conversions
+- Use materialized tables when available
 {% endif %}
 {%- if dialect == 'snowflake' %}
-- Do not under any circumstances add quotes around the database, schema or table name.
+- No quotes around database/schema/table names
 {%- endif %}
 Step {{ step_number }}: {{ current_step }}
 
-## Step Guidance:
-
 {%- if sql_plan_context %}
-Current Knowledge:
+## Current Knowledge:
 {{ sql_plan_context }}
 
-⚠️  **REMINDER**: If materialized tables are listed above, use them instead of rebuilding CTEs.
+⚠️ Use materialized tables above instead of rebuilding CTEs
 {%- else %}
-Starting fresh - no previous steps taken yet
+## Starting fresh
 {%- endif %}
 {% endblock %}
 
 {%- block errors %}
 {{ super() }}
 {% if errors is defined and errors %}
-Quick Fixes:
-- String literals: single quotes only
-- Table names: use verbatim `read_parquet('file.parq')`
-- Numeric cast errors: use `TRY_CAST`, check for header rows (OFFSET 1)
-- Date errors: `TRY_CAST`, filter `TRIM(col) != ''`, check length
-- UNION: only ONE LIMIT at end
-
-DuckDB Examples:
-```sql
--- GOOD: Filter by month using date functions
-SELECT * FROM "table"
-WHERE month("ISO_TIME"::DATE) IN (6, 7, 8);
-
--- BETTER: Use range predicates for best performance
-SELECT * FROM "table"
-WHERE "ISO_TIME" >= '2023-06-01' AND "ISO_TIME" < '2023-09-01';
-
--- Top 5 with QUALIFY
-SELECT "region", SUM(TRY_CAST(REPLACE("amount", '$', '') AS DECIMAL)) AS total
-FROM read_csv('sales.csv')
-WHERE "sale_date" >= '2022-02-22'::DATE
-GROUP BY "region"
-QUALIFY ROW_NUMBER() OVER (ORDER BY total DESC) <= 5;
-```
+## Quick Fixes:
+- Mixed time units: Use CASE conversion pattern from above
+- Cast errors: Use `TRY_CAST`, check for headers with OFFSET 1  
+- Table names: Use exact `read_parquet('file.parq')`
+- String quotes: Single quotes only `'text_value'`
 {%- endif -%}
 {% endblock -%}
