@@ -22,7 +22,7 @@ CSS = """
     height: 100%;
     width: 100%;
     background-color: var(--panel-surface-color);
-    overflow-y: clip; /* Clip overflow to prevent scrollbars; inner content will have their own */
+    overflow: clip; /* Clip overflow to prevent scrollbars; inner content will have their own */
 }
 
 /* Style for initial load to prevent FOUC */

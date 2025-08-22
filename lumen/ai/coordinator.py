@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import re
 import traceback
 
@@ -10,11 +11,12 @@ import param
 
 from panel import bind
 from panel.chat import ChatFeed
-from panel.layout import FlexBox
-from panel.pane import HTML
+from panel.layout import Column, FlexBox
+from panel.pane import HTML, Markdown
 from panel.viewable import Viewer
 from panel_material_ui import (
-    Button, Card, ChatInterface, ChatStep, Column, Tabs, Typography,
+    Button, Card, ChatInterface, ChatStep, Column as MuiColumn, Paper, Tabs,
+    Typography,
 )
 from pydantic import BaseModel
 from typing_extensions import Self
@@ -25,6 +27,7 @@ from .config import (
     DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR,
     SOURCE_TABLE_SEPARATOR,
 )
+from .controls import SourceControls
 from .llm import LlamaCpp, Llm, Message
 from .logs import ChatLogs
 from .models import (
@@ -162,8 +165,6 @@ class Coordinator(Viewer, VectorLookupToolUser):
         logs_db_path: str = "",
         **params,
     ):
-        log_debug("New Session: \033[92mStarted\033[0m", show_sep="above")
-
         def on_message(message, instance):
             def update_on_reaction(reactions):
                 if not self._logs:
@@ -204,17 +205,74 @@ class Coordinator(Viewer, VectorLookupToolUser):
         def on_clear(instance, _):
             self._memory.cleanup()
 
+        def on_submit(event=None, instance=None):
+            chat_input = self.interface.active_widget
+
+            objects = []
+            # Process uploaded files through SourceControls if any exist
+            if chat_input.value_uploaded:
+                source_controls = SourceControls(
+                    downloaded_files={key: io.BytesIO(value["value"]) for key, value in chat_input.value_uploaded.items()},
+                    memory=self._memory,
+                    replace_controls=False,
+                    clear_uploads=True  # Clear the uploads after processing
+                )
+                source_controls.add_medias()
+                objects.extend(chat_input.views)
+                chat_input.value_uploaded = {}
+
+            if chat_input.value:
+                objects.append(Markdown(chat_input.value))
+
+            if not objects:
+                return
+            value = Column(*objects) if len(objects) > 1 else objects[0]
+            instance.send(value=value, respond=chat_input.value)
+
+            if self._main[0] is not instance:
+                # Reset value input because reset has no time to propagate
+                instance._widget.value_input = ""
+                self._main[:] = [instance]
+
+        log_debug("New Session: \033[92mStarted\033[0m", show_sep="above")
 
         if interface is None:
             interface = ChatInterface(
-                callback=self._chat_invoke, load_buffer=5,
-                show_button_tooltips=True, show_button_name=False,
-                input_params={
-                    "enable_upload": False
-                },
+                callback=self._chat_invoke,
+                load_buffer=5,
+                on_submit=on_submit,
+                show_button_tooltips=True,
+                show_button_name=False,
+                sizing_mode="stretch_both"
             )
         else:
             interface.callback = self._chat_invoke
+            interface.on_submit = on_submit
+
+        welcome_title = Typography(
+            "Illuminate your data",
+            disable_anchors=True,
+            variant="h1"
+        )
+
+        welcome_text = Typography(
+            "Add your dataset to begin, then ask any question, or select a quick action below."
+        )
+
+        welcome_screen = Paper(
+            welcome_title,
+            welcome_text,
+            interface._widget,
+            max_width=850,
+            styles={'margin': 'auto'},
+            sx={'p': '0 20px 20px 20px'}
+        )
+
+        self._main = MuiColumn(
+            welcome_screen,
+            sx={'display': 'flex', 'align-items': 'center'},
+            height_policy='max'
+        )
 
         self._session_id = id(self)
 
@@ -298,6 +356,16 @@ class Coordinator(Viewer, VectorLookupToolUser):
         self._sync_sources_to_source(None, None, self._memory["sources"])
         self._update_visible_slugs(None, None, self._memory["sources"])
 
+        # Use existing method to create suggestions
+        self._add_suggestions_to_footer(
+            self.suggestions,
+            num_objects=1,
+            inplace=True,
+            analysis=False,
+            append_demo=True,
+            hide_after_use=False
+        )
+
     def _update_visible_slugs(self, key=None, old_sources=None, new_sources=None):
         """
         Update visible_slugs when sources change.
@@ -365,7 +433,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
             self._memory['source'] = new_sources[0]
 
     def __panel__(self):
-        return self.interface
+        return self._main
 
     def _add_suggestions_to_footer(
         self,
@@ -388,9 +456,18 @@ class Coordinator(Viewer, VectorLookupToolUser):
             memory = self._memory
 
         async def use_suggestion(event):
+            if self._main[0] is not self.interface:
+                self._main[:] = [self.interface]
+
             button = event.obj
             with button.param.update(loading=True), self.interface.active_widget.param.update(loading=True):
-                contents = button.name
+                # Find the original suggestion tuple to get the text
+                button_index = suggestion_buttons.objects.index(button)
+                if button_index < len(suggestions):
+                    suggestion = suggestions[button_index]
+                    contents = suggestion[1] if isinstance(suggestion, tuple) else suggestion
+                else:
+                    contents = button.name
                 if hide_after_use:
                     suggestion_buttons.visible = False
                     if event.new > 1:  # prevent double clicks
@@ -430,7 +507,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
         suggestion_buttons = FlexBox(
             *[
                 Button(
-                    name=suggestion,
+                    name=suggestion[1] if isinstance(suggestion, tuple) else suggestion,
+                    icon=suggestion[0] if isinstance(suggestion, tuple) else None,
                     button_style="outlined",
                     on_click=use_suggestion,
                     margin=5,
@@ -444,7 +522,9 @@ class Coordinator(Viewer, VectorLookupToolUser):
         if append_demo and self.demo_inputs:
             suggestion_buttons.append(Button(
                 name="Show a demo",
+                icon="play_arrow",
                 button_type="primary",
+                variant="outlined",
                 on_click=run_demo,
                 margin=5,
                 disabled=self.interface.param.loading
@@ -453,13 +533,15 @@ class Coordinator(Viewer, VectorLookupToolUser):
         for b in suggestion_buttons:
             b.js_on_click(code=disable_js)
 
-        message = self.interface.objects[-1]
-        if inplace:
-            footer_objects = message.footer_objects or []
-            message.footer_objects = footer_objects + [suggestion_buttons]
+        if len(self.interface) != 0:
+            message = self.interface.objects[-1]
+            if inplace:
+                footer_objects = message.footer_objects or []
+                message.footer_objects = footer_objects + [suggestion_buttons]
+        else:
+            self._main[0].append(suggestion_buttons)
 
         self.interface.param.watch(hide_suggestions, "objects")
-        return message
 
     async def _add_analysis_suggestions(self, memory=None):
         if memory is None:
@@ -987,7 +1069,7 @@ class Planner(Coordinator):
 
             if len(consecutive_steps) > 1:
                 # Join the consecutive steps into one
-                combined_instruction = f"{current_step.instruction}. Additionally: " + ". ".join(
+                combined_instruction = f"{current_step.instruction} Additionally: " + ". ".join(
                     step.instruction for step in consecutive_steps[1:]
                 )
                 combined_title = f"{current_step.title} (combined {len(consecutive_steps)} steps)"
