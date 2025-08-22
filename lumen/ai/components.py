@@ -434,7 +434,7 @@ class TableSourceCard(Viewer):
         else:
             return Typography(
                 "",
-                margin=(0, 0, 0, 0),
+                margin=0,
                 sizing_mode='stretch_width',
                 visible=False
             )

@@ -377,13 +377,13 @@ def slugify(value, allow_unicode=False) -> str:
     return re.sub(r"[-\s]+", "-", value).strip("-_")
 
 
-def detect_file_encoding(file_obj: Path | str | io.BytesIO | io.StringIO, sample_size: int = 8192) -> str:
+def detect_file_encoding(file_obj: Path | str | io.BytesIO | io.StringIO | bytes, sample_size: int = 8192) -> str:
     """
     Simple, fast file encoding detection.
 
     Parameters
     ----------
-    file_obj : Path | str | io.BytesIO | io.StringIO
+    file_obj : Path | str | io.BytesIO | io.StringIO | bytes
         File path or file-like object to detect encoding
     sample_size : int, default=8192
         Bytes to read for detection
@@ -394,7 +394,9 @@ def detect_file_encoding(file_obj: Path | str | io.BytesIO | io.StringIO, sample
         Detected encoding
     """
     # Get bytes data from different input types
-    if isinstance(file_obj, (str, Path)):
+    if isinstance(file_obj, bytes):
+        data = file_obj
+    elif isinstance(file_obj, (str, Path)):
         # File path
         file_path = Path(file_obj)
         if not file_path.exists():

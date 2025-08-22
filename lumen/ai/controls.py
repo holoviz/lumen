@@ -353,17 +353,10 @@ class SourceControls(Viewer):
         if isinstance(file_data, (io.BytesIO, io.StringIO)):
             return file_data
 
-        if suffix == "csv":
-            if isinstance(file_data, bytes):
-                # Create a BytesIO object first for encoding detection
-                temp_obj = io.BytesIO(file_data)
-                encoding = detect_file_encoding(file_obj=temp_obj)
-                return io.BytesIO(file_data.decode(encoding).encode("utf-8"))
-            else:
-                # file_data is already a string, return as StringIO
-                return io.StringIO(file_data)
-        else:
-            return io.BytesIO(file_data) if isinstance(file_data, bytes) else io.StringIO(file_data)
+        if suffix == "csv" and isinstance(file_data, bytes):
+            encoding = detect_file_encoding(file_data)
+            file_data = file_data.decode(encoding).encode("utf-8")
+        return io.BytesIO(file_data) if isinstance(file_data, bytes) else io.StringIO(file_data)
 
     def _create_media_controls(self, file_obj: io.BytesIO, filename: str):
         """Factory method to create appropriate media controls"""
