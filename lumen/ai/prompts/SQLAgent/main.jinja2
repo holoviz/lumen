@@ -16,7 +16,7 @@ Write a SQL query for the user's data transformation request, focusing on intent
 - NULL handling: Exclude unless specified
 - Clean data: `TRIM("column") != ''`, filter -9999, empty strings
 - Headers: Use OFFSET 1 for header/metadata rows
-- Time conversion: `CASE WHEN "col" LIKE '%ms' THEN TRY_CAST(REGEXP_REPLACE("col", 'ms', '') AS DECIMAL)/1000 WHEN "col" LIKE '%s' THEN TRY_CAST(REGEXP_REPLACE("col", 's', '') AS DECIMAL) END`
+- Mixed units: Use CASE to normalize before aggregating
 - Temporal data: Check MIN/MAX dates before joining, ensure overlap validation
 - No inline comments in SQL code
 - Use CTEs only when necessary
@@ -78,7 +78,7 @@ Step {{ step_number }}: {{ current_step }}
 {{ super() }}
 {% if errors is defined and errors %}
 ## Quick Fixes:
-- Mixed time units: Use CASE conversion pattern from above
+- Mixed units: Use CASE to normalize units before aggregating
 - Cast errors: Use `TRY_CAST`, check for headers with OFFSET 1  
 - Table names: Use exact `read_parquet('file.parq')`
 - String quotes: Single quotes only `'text_value'`
