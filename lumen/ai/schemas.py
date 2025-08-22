@@ -235,7 +235,7 @@ async def get_metaset(sources: list[Source], tables: list[str]) -> SQLMetaset:
             table_name = table_slug
         source = next((s for s in sources if s.name == source_name), None)
         schema = await get_schema(source, table_name, include_count=True)
-        tables_info[table_name] = SQLMetadata(
+        tables_info[table_slug] = SQLMetadata(
             table_slug=table_slug,
             schema=schema,
         )

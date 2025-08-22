@@ -6,6 +6,7 @@ import inspect
 import json
 import math
 import re
+import textwrap
 import time
 import traceback
 
@@ -154,6 +155,7 @@ def render_template(template_path: Path | str, overrides: dict | None = None, re
     else:
         env = Environment(loader=fs_loader, undefined=StrictUndefined)
 
+    env.globals["dedent"] = lambda text: textwrap.dedent(text).strip()
     template = env.get_template(template_name)
     return template.render(**context)
 

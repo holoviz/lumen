@@ -24,11 +24,11 @@ Write a SQL query for the user's data transformation request, focusing on intent
   - Consider common abbreviations and variations and case sensitivity
   - **Format variation checking**: When initial discovery fails, immediately check for format variations, underscores vs spaces using `ILIKE`
 - Limits can be applied to discovery steps
-{% else %}- Set LIMIT 100000, unless specified, efficient ORDER BY, filter early
+{% else %}- Unless requested to return a subset never set a LIMIT
 {% endif %}
 - Temporal Data Handling:
   - **Date range discovery**: Always check MIN/MAX dates before joining temporal datasets
-  - **Period matching**: For seasonal/periodic data (e.g., ONI seasons JAS, ASO), understand the full period coverage
+  - **Period matching**: For seasonal/periodic data, understand the full period coverage
   - **Overlap validation**: Ensure temporal datasets have overlapping date ranges before attempting joins
   - **Flexible matching**: Consider all relevant time periods, not just exact matches
 - Only filter by confirmed values from previous results
