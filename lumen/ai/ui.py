@@ -78,10 +78,8 @@ If unsatisfied with the results hover over the <span class="material-icons-outli
 Click the toggle, or drag the right edge, to expand the results area and...
 
 🌐 Explore data with [Graphic Walker](https://docs.kanaries.net/graphic-walker) - filter, sort, download  
-💾 Navigate, reorder and delete explorations in the sidebar  
+💾 Navigate, reorder and delete explorations in the contextbar  
 📤 Export your session as a reproducible notebook  
-
-<div id="table-preview-section" style="margin-top: 20px; text-align: center;"></div>
 """  # noqa: W291
 
 EXPLORATIONS_INTRO = """
@@ -368,11 +366,7 @@ class UI(Viewer):
 
         # Create info dialog with intro message
         self._info_dialog = Dialog(
-            Column(
-                Markdown(UI_INTRO_MESSAGE, sizing_mode="stretch_width"),
-                self._create_table_preview_button(),
-                sizing_mode="stretch_width"
-            ),
+            Markdown(UI_INTRO_MESSAGE, sizing_mode="stretch_width"),
             close_on_click=True,
             show_close_button=True,
             sizing_mode='stretch_width',
@@ -417,7 +411,7 @@ class UI(Viewer):
 
         # Initialize _report_toggle for compatibility with header
         self._report_toggle = None
-        self._sidebar = None
+        self._contextbar = None
 
         memory.on_change("sources", self._update_source_catalog)
 
@@ -489,12 +483,6 @@ class UI(Viewer):
         """Open the info dialog when the info button is clicked."""
         self._info_dialog.open = True
 
-    def _create_table_preview_button(self):
-        """Create a placeholder button for table preview (overridden in ExplorerUI)."""
-        # Default implementation for base UI class - returns empty component
-        # ExplorerUI will override this after _explorer is initialized
-        return Row()
-
     def _destroy(self, session_context):
         """
         Cleanup on session destroy
@@ -564,9 +552,8 @@ class UI(Viewer):
                     )
                 ],
                 main=[self._main, self._sources_dialog_content, self._llm_dialog, self._info_dialog],
-                sidebar=[] if self._sidebar is None else [self._sidebar],
-                sidebar_open=False,
-                sidebar_variant="temporary",
+                contextbar=[] if self._contextbar is None else [self._contextbar],
+                contextbar_open=False,
             )
             self._page.servable()
             return self._page
@@ -689,20 +676,6 @@ class ExplorerUI(UI):
         self._explorations.on_action('down', self._move_down)
         self._explorations.on_action('remove', self._delete_exploration)
         self._explorer = TableExplorer(interface=self.interface)
-
-        # Now that _explorer exists, recreate the info dialog with the proper table preview button
-        self._info_dialog = Dialog(
-            Column(
-                Markdown(UI_INTRO_MESSAGE, sizing_mode="stretch_width"),
-                self._create_table_preview_button(),
-                sizing_mode="stretch_width"
-            ),
-            close_on_click=True,
-            show_close_button=True,
-            sizing_mode='stretch_width',
-            width_option='md',
-            title="Welcome to Lumen AI"
-        )
         self._explorations_intro = Markdown(
             EXPLORATIONS_INTRO,
             margin=(0, 0, 10, 10),
@@ -755,72 +728,9 @@ class ExplorerUI(UI):
         )
         self._report = Column()
         self._main = Column(self._split)
-        self._sidebar = Column(self._reorder_switch, self._explorations)
+        self._contextbar = Column(self._reorder_switch, self._explorations)
         self._idle = asyncio.Event()
         self._idle.set()
-
-    def _create_table_preview_button(self):
-        """Create a button that shows table count on hover and expands split view on click."""
-        # Check if explorer exists (it should by the time this is called in ExplorerUI)
-        if not hasattr(self, '_explorer'):
-            return Row()  # Return empty component if explorer doesn't exist yet
-
-        # Get table count from explorer's source map using reactive expression
-        def get_table_count():
-            return len(self._explorer._source_map)
-
-        # Create button with dynamic text based on table count
-        table_button = Button(
-            name="Preview Available Tables",
-            icon='table_view',
-            button_type='primary',
-            on_click=self._expand_and_preview_tables,
-            margin=(10, 0),
-            width=200,
-            visible=get_table_count() > 0
-        )
-
-        # Update button text based on table count
-        def update_button():
-            count = get_table_count()
-            if count > 0:
-                table_button.label = f"Preview {count} table{'s' if count != 1 else ''}"
-                table_button.visible = True
-                table_button.disabled = False
-            else:
-                table_button.visible = False
-
-        # Watch for changes in memory sources to update button
-        memory.on_change("sources", lambda *args: update_button())
-        update_button()  # Initial update
-
-        return table_button
-
-    def _expand_and_preview_tables(self, event):
-        """Expand the split view and select the first available table for preview."""
-        # Safety checks
-        if not hasattr(self, '_explorer') or not self._explorer._source_map:
-            return
-
-        # Get the first table from source map
-        first_table = next(self._explorer._source_map.keys())[0]
-
-        # Select the first table
-        self._explorer._table_select.value = [first_table]
-
-        # Expand the split view if collapsed
-        if hasattr(self, '_split') and self._split.collapsed:
-            self._split.param.update(
-                collapsed=False,
-                sizes=self._split.expanded_sizes or [50, 50],
-            )
-
-        # Trigger the explore button to load the table
-        self._explorer._explore_button.param.trigger("value")
-
-        # Close the info dialog
-        if hasattr(self, '_info_dialog'):
-            self._info_dialog.open = False
 
     def _move_up(self, item):
         items = list(self._explorations.items)
@@ -1053,7 +963,7 @@ class ExplorerUI(UI):
                 nonlocal new_exploration
                 plan = local_memory["plan"]
                 if any(step.actor in ('SQLAgent', 'DbtslAgent') for step in plan.steps):
-                    # Expand the sidebar when the first exploration is created
+                    # Expand the contextbar when the first exploration is created
                     await self._add_exploration(plan.title, local_memory)
                     new_exploration = True
 
