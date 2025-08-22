@@ -206,16 +206,20 @@ class Llm(param.Parameterized):
         ------
         The string or response_model field.
         """
-        if ((response_model and not self._supports_model_stream) or
-            not self._supports_stream):
-            yield await self.invoke(
-                messages,
-                system=system,
-                response_model=response_model,
-                model_spec=model_spec,
-                **kwargs,
-            )
-            return
+        # DEBUGGING...
+        output = await self.invoke(
+            messages,
+            system=system,
+            response_model=response_model,
+            model_spec=model_spec,
+            **kwargs,
+        )
+        if field is not None and hasattr(output, field):
+            output = getattr(output, field)
+        elif hasattr(output, "choices"):
+            output = output.choices[0].message.content
+        yield output
+        return
 
         string = ""
         chunks = await self.invoke(
@@ -377,7 +381,7 @@ class OpenAI(Llm, OpenAIMixin):
     mode = param.Selector(default=Mode.TOOLS)
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "gpt-4o-mini"},
+        "default": {"model": "gpt-4.1-mini"},
         "sql": {"model": "gpt-4.1-mini"},
         "vega_lite": {"model": "gpt-4.1-mini"},
         "edit": {"model": "gpt-4.1-mini"},
@@ -393,7 +397,7 @@ class OpenAI(Llm, OpenAIMixin):
 
     temperature = param.Number(default=0.25, bounds=(0, None), constant=True)
 
-    use_logfire = param.Boolean(default=False, doc="""
+    use_logfire = param.Boolean(default=True, doc="""
         Whether to log LLM calls and responses to logfire.""")
 
     @property
