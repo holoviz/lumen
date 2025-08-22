@@ -299,14 +299,20 @@ class UI(Viewer):
             items=[
                 {
                     'label': 'Chain of Thought',
-                    'icon': 'visibility_off',
-                    'active_icon': 'visibility',
+                    'icon': 'toggle_off',
+                    'active_icon': 'toggle_on',
                     'toggled': False
                 },
                 {
                     'label': 'SQL Planning',
-                    'icon': 'close',
-                    'active_icon': 'check',
+                    'icon': 'toggle_off',
+                    'active_icon': 'toggle_on',
+                    'toggled': True
+                },
+                {
+                    'label': 'Validation Agent',
+                    'icon': 'toggle_off',
+                    'active_icon': 'toggle_on',
                     'toggled': True
                 }
             ],
@@ -321,6 +327,7 @@ class UI(Viewer):
             variant='text'
         )
         self._settings_menu.param.watch(self._toggle_sql_planning, 'toggled')
+        self._settings_menu.param.watch(self._toggle_validation_agent, 'toggled')
         self._coordinator = self.coordinator(
             agents=agents,
             interface=self.interface,
@@ -790,6 +797,13 @@ class ExplorerUI(UI):
         )
         if sql_agent:
             sql_agent.planning_enabled = planning_enabled
+
+    def _toggle_validation_agent(self, event: param.Event):
+        """Toggle ValidationAgent usage."""
+        validation_enabled = 2 in event.new
+
+        # Update the coordinator's validation agent setting
+        self._coordinator.validation_enabled = validation_enabled
 
     def _delete_exploration(self, item):
         self._explorations.items = [it for it in self._explorations.items if it is not item]

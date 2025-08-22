@@ -152,6 +152,9 @@ class Coordinator(Viewer, VectorLookupToolUser):
     within_ui = param.Boolean(default=False, constant=True, doc="""
         Whether this coordinator is being used within the UI.""")
 
+    validation_enabled = param.Boolean(default=True, doc="""
+        Whether to enable the ValidationAgent in the planning process.""")
+
     __abstract = True
 
     def __init__(
@@ -1175,7 +1178,7 @@ class Planner(Coordinator):
             )
             actors_in_graph.add(actor)
 
-        if "ValidationAgent" in agents and len(actors_in_graph) > 1:
+        if "ValidationAgent" in agents and len(actors_in_graph) > 1 and self.validation_enabled:
             validation_step = type(step)(
                 actor="ValidationAgent",
                 instruction='Validate whether the executed plan fully answered the user\'s original query.',
