@@ -310,7 +310,7 @@ class UI(Viewer):
                     'toggled': True
                 },
                 {
-                    'label': 'Validation Agent',
+                    'label': 'Validation Step',
                     'icon': 'toggle_off',
                     'active_icon': 'toggle_on',
                     'toggled': True
