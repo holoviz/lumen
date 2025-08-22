@@ -364,7 +364,7 @@ class TableSourceCard(Viewer):
                 value=[table] if table in self.selected else [],
                 options=[table],
                 sizing_mode='stretch_width',
-                margin=(2, 10, 2, 10),
+                margin=(2, 10),
                 name="",
             )
 
