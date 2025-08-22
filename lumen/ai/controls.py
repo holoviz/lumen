@@ -152,6 +152,8 @@ class SourceControls(Viewer):
     _count = param.Integer(default=0, doc="Count of sources added")
 
     def __init__(self, **params):
+        super().__init__(**params)
+
         self.tables_tabs = Tabs(sizing_mode="stretch_width")
         self._markitdown = None
         self._file_input = FileDropper(
@@ -225,7 +227,7 @@ class SourceControls(Viewer):
         self._media_controls = []
         self._downloaded_media_controls = []  # Track downloaded file controls separately
         self._active_download_task = None  # Track active download task for cancellation
-        super().__init__(**params)
+        self._add_downloaded_files_as_tabs()
 
     @property
     def _memory(self):
@@ -510,7 +512,7 @@ class SourceControls(Viewer):
         else:
             self._message_placeholder.visible = False
 
-    @param.depends("downloaded_files", watch=True, on_init=True)
+    @param.depends("downloaded_files", watch=True)
     def _add_downloaded_files_as_tabs(self):
         """Add downloaded files as individual tabs in the main input tabs"""
         for filename, file_data in self.downloaded_files.items():
