@@ -357,7 +357,7 @@ class UI(Viewer):
         self._info_button = IconButton(
             icon="help",
             description="Help & Getting Started",
-            margin=(5, 10, 10, -10),
+            margin=(5, 10, 10, -8),
             on_click=self._open_info_dialog,
             variant="text",
             sx={"p": "6px 0", "minWidth": "32px"},
@@ -547,7 +547,7 @@ class UI(Viewer):
                     *([self._report_toggle] if self._report_toggle else []),
                     self._settings_menu,
                     Divider(
-                        orientation="vertical", height=30, margin=(17, 0, 17, 5),
+                        orientation="vertical", height=30, margin=(17, 5, 17, 5),
                         sx={'border-color': 'white', 'border-width': '1px'}
                     )
                 ],
@@ -718,7 +718,7 @@ class ExplorerUI(UI):
         )
         self._exports.visible = False
         self._output = Paper(
-            self._home.view, elevation=2, margin=(0, 10, 5, 5), sx={'p': 3, 'pb': 2},
+            self._home.view, elevation=2, margin=(5, 10, 5, 5), sx={'p': 3, 'pb': 2},
             height_policy='max', sizing_mode="stretch_both"
         )
         self._split = SplitJS(
