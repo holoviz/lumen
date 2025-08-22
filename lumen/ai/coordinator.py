@@ -255,8 +255,10 @@ class Coordinator(Viewer, VectorLookupToolUser):
             variant="h1"
         )
 
+        num_sources = len(self._memory["sources"])
+        prefix_text = "Add your dataset to begin, then" if num_sources == 0 else f"{num_sources} source{'s' if num_sources > 1 else ''} connected;"
         welcome_text = Typography(
-            "Add your dataset to begin, then ask any question, or select a quick action below."
+            f"{prefix_text} ask any question, or select a quick action below."
         )
 
         welcome_screen = Paper(
