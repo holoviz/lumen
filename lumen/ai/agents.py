@@ -550,12 +550,11 @@ class LumenBaseAgent(Agent):
 class SQLAgent(LumenBaseAgent):
     conditions = param.List(
         default=[
-            "Use for displaying, examining, or querying data",
+            "Use for displaying, examining, or querying data resulting in a data pipeline",
             "Use for calculations that require data (e.g., 'calculate average', 'sum by category')",
             "Commonly used with AnalystAgent to analyze query results",
             "NOT for non-data questions or technical programming help",
             "NOT useful if the user is using the same data for plotting",
-            "If sql_metaset is not in memory, use with IterativeTableLookup",
         ]
     )
 
@@ -1035,7 +1034,7 @@ class SQLAgent(LumenBaseAgent):
 
             step.status = "success"
             step.success_title = "One-shot SQL generation successful"
-            return pipeline
+        return pipeline
 
     async def _execute_planning_mode(
         self,
