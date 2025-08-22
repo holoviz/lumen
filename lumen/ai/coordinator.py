@@ -249,13 +249,18 @@ class Coordinator(Viewer, VectorLookupToolUser):
             interface.callback = self._chat_invoke
             interface.on_submit = on_submit
 
-        welcome_text = Typography(
-            "# Illuminate your data\nAdd your dataset to begin, then ask any question, or select a quick action below.",
-            css_classes=["welcome-text"],
+        welcome_title = Typography(
+            "Illuminate your data",
             disable_anchors=True,
+            variant="h1"
+        )
+
+        welcome_text = Typography(
+            "Add your dataset to begin, then ask any question, or select a quick action below."
         )
 
         welcome_screen = Paper(
+            welcome_title,
             welcome_text,
             interface._widget,
             max_width=850,

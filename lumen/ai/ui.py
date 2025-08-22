@@ -356,13 +356,13 @@ class UI(Viewer):
         # Create help icon button for intro message
         self._info_button = IconButton(
             icon="help",
-            color="light",
             description="Help & Getting Started",
-            margin=(14, 10, 10, 5),
+            margin=(5, 10, 10, -10),
             on_click=self._open_info_dialog,
             variant="text",
             sx={"p": "6px 0", "minWidth": "32px"},
         )
+        self._coordinator._main[0][0] = Row(self._coordinator._main[0][0], self._info_button)
 
         # Create info dialog with intro message
         self._info_dialog = Dialog(
@@ -540,11 +540,9 @@ class UI(Viewer):
                 *{ext for agent in self._coordinator.agents for ext in agent._extensions}
             )
             self._page = Page(
-                css_files=['https://fonts.googleapis.com/css2?family=Nunito:wght@700'],
                 title=self.title,
                 header=[
                     HSpacer(),
-                    self._info_button,
                     self._exports,
                     *([self._report_toggle] if self._report_toggle else []),
                     self._settings_menu,
@@ -713,14 +711,14 @@ class ExplorerUI(UI):
             icon_size="1.8em",
             filename=f"{self.title.replace(' ', '_')}.ipynb",
             label=" ",
-            margin=(12, 0, 10, 5),
+            margin=(14, 0, 10, 5),
             styles={'z-index': '1000'},
             sx={"p": "6px 0", "minWidth": "32px"},
             variant="text"
         )
         self._exports.visible = False
         self._output = Paper(
-            self._home.view, elevation=2, margin=(0, 10, 5, 5), sx={'p': 4},
+            self._home.view, elevation=2, margin=(0, 10, 5, 5), sx={'p': 3, 'pb': 2},
             height_policy='max', sizing_mode="stretch_both"
         )
         self._split = SplitJS(
