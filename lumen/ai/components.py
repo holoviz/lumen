@@ -8,7 +8,7 @@ from panel.layout import Column, HSpacer, Row
 from panel.pane import Markdown
 from panel.viewable import Viewer
 from panel_material_ui import (
-    Card, CheckBoxGroup, IconButton, Switch,
+    Card, CheckBoxGroup, IconButton, Switch, Typography,
 )
 
 from .config import SOURCE_TABLE_SEPARATOR
@@ -297,6 +297,7 @@ class TableSourceCard(Viewer):
     - A header with the source name and a checkbox to toggle all tables
     - A delete button (if multiple sources exist)
     - Individual checkboxes for each table in the source
+    - Metadata display showing source information like filenames and other key-value pairs
     """
 
     all_selected = param.Boolean(default=True, doc="""
@@ -347,13 +348,96 @@ class TableSourceCard(Viewer):
             visible=self.param.deletable
         )
 
-        self.table_checkbox = CheckBoxGroup.from_param(
-            self.param.selected,
-            options=self.all_tables,
-            sizing_mode='stretch_width',
-            margin=(0, 10),
-            name="",
-        )
+        # Create table checkboxes with metadata
+        self.table_controls = self._create_table_controls()
+
+        # Create source-level metadata display (if any non-table metadata exists)
+        self.metadata_display = self._create_source_metadata_display()
+
+    def _create_table_controls(self):
+        """Create table checkboxes with per-table metadata displayed next to each checkbox."""
+        table_controls = []
+
+        for table in self.all_tables:
+            # Create checkbox for this table
+            checkbox = CheckBoxGroup(
+                value=[table] if table in self.selected else [],
+                options=[table],
+                sizing_mode='stretch_width',
+                margin=(2, 10),
+                name="",
+            )
+
+            # Get metadata for this table
+            table_metadata = self.source.metadata.get(table, {}) if self.source.metadata else {}
+            metadata_parts = []
+
+            for key, value in table_metadata.items():
+                if isinstance(value, list):
+                    value_str = ', '.join(str(v) for v in value)
+                else:
+                    value_str = str(value)
+                metadata_parts.append(f"{key}: {value_str}")
+
+            if metadata_parts:
+                metadata_text = '; '.join(metadata_parts)
+                metadata_display = Typography(
+                    metadata_text,
+                    variant="caption",
+                    color="text.secondary",
+                    margin=(-10, 10, 0, 42),
+                    sizing_mode='stretch_width',
+                )
+                table_controls.extend([checkbox, metadata_display])
+            else:
+                table_controls.append(checkbox)
+
+            # Watch checkbox changes
+            checkbox.param.watch(self._on_table_checkbox_change, 'value')
+
+        return Column(*table_controls, margin=0, sizing_mode='stretch_width')
+
+    def _on_table_checkbox_change(self, event):
+        """Handle individual table checkbox changes."""
+        # Collect all selected tables from all checkboxes
+        selected_tables = []
+        for obj in self.table_controls.objects:
+            if obj.value:
+                selected_tables.extend(obj.value)
+
+        # Update selected parameter
+        self.selected = selected_tables
+
+    def _create_source_metadata_display(self):
+        """Create a metadata display widget for source-level metadata (non-table metadata)."""
+        metadata_parts = []
+
+        if self.source.metadata:
+            # Only show metadata that's not table-specific
+            for key, value in self.source.metadata.items():
+                if key not in self.all_tables:  # Skip table-specific metadata
+                    if isinstance(value, list):
+                        value_str = ', '.join(str(v) for v in value)
+                    else:
+                        value_str = str(value)
+                    metadata_parts.append(f"{key}: {value_str}")
+
+        if metadata_parts:
+            metadata_text = '; '.join(metadata_parts)
+            return Typography(
+                metadata_text,
+                variant="caption",
+                color="text.secondary",
+                margin=(0, 10, 5, 10),
+                sizing_mode='stretch_width',
+            )
+        else:
+            return Typography(
+                "",
+                margin=0,
+                sizing_mode='stretch_width',
+                visible=False
+            )
 
     @param.depends('all_selected', watch=True)
     def _on_source_toggle(self):
@@ -401,9 +485,17 @@ class TableSourceCard(Viewer):
             margin=0
         )
 
+        # Create the card content with metadata display
+        card_content = Column(
+            self.metadata_display,
+            self.table_controls,
+            margin=0,
+            sizing_mode='stretch_width'
+        )
+
         # Create the card
         return Card(
-            self.table_checkbox,
+            card_content,
             header=card_header,
             collapsible=True,
             collapsed=self.param.collapsed,
