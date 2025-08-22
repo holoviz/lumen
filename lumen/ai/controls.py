@@ -185,12 +185,12 @@ class SourceControls(Viewer):
             active=self.param.active,
         )
 
-        self._add_button = Button.from_param(
-            self.param.trigger_add,
+        self._add_button = Button(
             name="Use file(s)",
             icon="table-plus",
             visible=self._upload_tabs.param["objects"].rx().rx.len() > 0,
             button_type="success",
+            on_click=self.add_medias,
         )
 
         self._cancel_button = Button.from_param(
@@ -644,8 +644,7 @@ class SourceControls(Viewer):
             self._memory["document_sources"] = [document]
         return 1
 
-    @param.depends("trigger_add", watch=True)
-    def add_medias(self):
+    def add_medias(self, event=None):
         # Combine both uploaded files and downloaded files for processing
         all_media_controls = self._media_controls + self._downloaded_media_controls
 
