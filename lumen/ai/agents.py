@@ -856,34 +856,38 @@ class SQLAgent(LumenBaseAgent):
         if not context_entries:
             return ""
 
-        # Build materialized tables section
+        # Build materialized tables section - deduplicate
         materialized_tables = []
+        seen = set()
         for entry in context_entries:
-            materialized_tables.extend(entry.get("materialized_tables", []))
+            for table in entry.get("materialized_tables", []):
+                if table not in seen:
+                    materialized_tables.append(table)
+                    seen.add(table)
 
         # Format materialized tables
         base_context = ""
         if materialized_tables:
-            recent_tables = materialized_tables[-5:]  # Keep only recent 5 tables
+            recent_tables = materialized_tables[-3:]  # Keep only recent 3 tables
             base_context = "**Available Materialized Data (for reuse):**\n"
             for table in recent_tables:
                 base_context += f"- `{table}`\n"
-            if len(materialized_tables) > 5:
-                base_context += f"- ... and {len(materialized_tables) - 5} more\n"
+            if len(materialized_tables) > 3:
+                base_context += f"- ... and {len(materialized_tables) - 3} more\n"
             base_context += "\n"
 
-        # Build recent steps section
+        # Build recent steps section - show last 3 steps with full context
         steps_context = "**Recent Steps:**\n"
-        for entry in context_entries:
+        for entry in context_entries[-3:]:  # Only last 3 steps
             steps_context += f"**Step {entry['step_number']}:** {entry['action_description']}\n"
 
-            # Add query information
+            # Add query information with full context
             if entry['queries']:
                 for query in entry['queries']:
-                    steps_context += f"\n`{query['expr_slug']}:`\n```sql\n{query['sql']}\n```\n"
+                    steps_context += f"`{query['expr_slug']}:` {query['sql']}\n"
                     steps_context += f"Result: {query['summary']}\n"
                     if query['table_status'] != "<unmaterialized>":
-                        steps_context += f"`Can be referenced as {query['table_status']}`\n"
+                        steps_context += f"`Referenced as {query['table_status']}`\n"
             steps_context += "\n"
 
         return base_context + steps_context
