@@ -387,6 +387,7 @@ class TableSourceCard(Viewer):
                     color="text.secondary",
                     margin=(-10, 10, 0, 42),
                     sizing_mode='stretch_width',
+                    styles={"min-height": "unset"} # Override ChatMessage CSS
                 )
                 table_controls.extend([checkbox, metadata_display])
             else:
