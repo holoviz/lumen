@@ -23,6 +23,7 @@ from typing_extensions import Self
 
 from .actor import Actor
 from .agents import Agent, AnalysisAgent, ChatAgent
+from .components import TableSourceCard
 from .config import (
     DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR,
     SOURCE_TABLE_SEPARATOR,
@@ -210,32 +211,51 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
         def on_submit(event=None, instance=None):
             chat_input = self.interface.active_widget
-
-            objects = []
-            # Process uploaded files through SourceControls if any exist
-            if chat_input.value_uploaded:
-                source_controls = SourceControls(
-                    downloaded_files={key: io.BytesIO(value["value"]) for key, value in chat_input.value_uploaded.items()},
-                    memory=self._memory,
-                    replace_controls=False,
-                    clear_uploads=True  # Clear the uploads after processing
-                )
-                source_controls.add_medias()
-                objects.extend(chat_input.views)
-                chat_input.value_uploaded = {}
-
-            if chat_input.value:
-                objects.append(Markdown(chat_input.value))
-
-            if not objects:
+            if not chat_input.value:
                 return
-            value = Column(*objects) if len(objects) > 1 else objects[0]
-            instance.send(value=value, respond=chat_input.value)
-
+            instance.send(value=Markdown(chat_input.value), respond=True)
             if self._main[0] is not instance:
                 # Reset value input because reset has no time to propagate
                 instance._widget.value_input = ""
                 self._main[:] = [instance]
+
+        def on_upload(event=None):
+            chat_input = self.interface.active_widget
+            uploaded = chat_input.value_uploaded
+            if not uploaded:
+                return
+            # Process uploaded files through SourceControls if any exist
+            source_controls = SourceControls(
+                downloaded_files={key: io.BytesIO(value["value"]) for key, value in uploaded.items()},
+                memory=self._memory,
+                replace_controls=False,
+                show_input=False,
+                clear_uploads=True  # Clear the uploads after processing
+            )
+            chat_input.value_uploaded = {}
+            old_source = self._memory.get("source")
+            msg = interface.send(
+                Column(
+                    f"Successfully uploaded {len(uploaded)} file(s). Confirm files to add to context.",
+                    source_controls.menu,
+                    height=260
+                ),
+                user='Upload',
+                respond=False
+            )
+
+            def display_uploaded(_):
+                source = self._memory["source"]
+                if old_source is not source:
+                    msg.object = Column(
+                        f"Successfully added {source.name}",
+                        TableSourceCard(source=source)
+                    )
+
+            source_controls.param.watch(display_uploaded, '_count')
+            if self._main[0] is not self.interface:
+                # Reset value input because reset has no time to propagate
+                self._main[:] = [self.interface]
 
         log_debug("New Session: \033[92mStarted\033[0m", show_sep="above")
 
@@ -251,6 +271,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
         else:
             interface.callback = self._chat_invoke
             interface.on_submit = on_submit
+
+        interface.active_widget.param.watch(on_upload, 'value_uploaded')
 
         welcome_title = Typography(
             "Illuminate your data",

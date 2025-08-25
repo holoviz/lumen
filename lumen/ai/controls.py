@@ -143,6 +143,8 @@ class SourceControls(Viewer):
 
     multiple = param.Boolean(default=True, doc="Allow multiple files")
 
+    show_input = param.Boolean(default=True, doc="Whether to show the input controls")
+
     replace_controls = param.Boolean(default=False, doc="Replace controls on add")
 
     table_upload_callbacks = {}
@@ -214,7 +216,7 @@ class SourceControls(Viewer):
         )
 
         self.menu = Column(
-            self._input_tabs,
+            *((self._input_tabs,) if self.show_input else ()),
             self._upload_tabs,
             Row(self._add_button, self._cancel_button),
             self.tables_tabs,
@@ -698,6 +700,7 @@ class SourceControls(Viewer):
                     self.tables_tabs.visible = False
                     self.menu.height = 70
 
+            total_files = len(self._upload_tabs) + len(self._downloaded_media_controls)
             if self.clear_uploads:
                 # Clear uploaded files from view
                 self._upload_tabs.clear()
@@ -716,7 +719,6 @@ class SourceControls(Viewer):
 
             # Clear uploaded files and URLs from memory
             if (n_tables + n_docs) > 0:
-                total_files = len(self._upload_tabs) + len(self._downloaded_media_controls)
                 self._message_placeholder.param.update(
                     object=f"Successfully processed {total_files} files ({n_tables} table(s), {n_docs} document(s)).",
                     visible=True,
