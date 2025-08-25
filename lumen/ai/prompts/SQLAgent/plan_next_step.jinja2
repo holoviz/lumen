@@ -1,58 +1,33 @@
 {% extends 'Agent/main.jinja2' %}
 
 {%- block instructions %}
-# Plan Next Step Instructions
+# Plan Next Step
 
-Plan the NEXT SINGLE STEP toward answering the user's query.
+## 🎯 EFFICIENCY PRIORITY:
+1. Reuse before rebuild - Check materialized data first
+2. Batch discoveries - Combine multiple explorations  
+3. Progress decisively - Move toward final answer quickly
 
-## EFFICIENCY PRIORITY:
-🎯 **Each step costs significant resources:**
-1. **Reuse before rebuild**: Check for existing materialized data
-2. **Batch discoveries**: Combine multiple explorations into single steps
-3. **Progress decisively**: Move toward final answer quickly
+## Decision Logic:
+- Materialized data exists? → Use it
+- Simple request? → Final answer immediately
+- Complex request? → Batch discoveries → Final query
 
-## Decision Process:
-1. **Check materialized data** - can existing data answer the question?
-2. **Direct query check** - if simple request, mark as final answer
-3. **Batch discoveries** - combine multiple explorations + min/max ranges into one step
-4. **Validate compatibility** - temporal overlaps, key formats, join keys, data types
-5. **Handle format variations** - check underscores vs spaces if initial discovery fails
-6. **Progress logically**: structures → patterns → relationships → final query
-
-## Common Pitfalls to Avoid:
-- **Temporal mismatch**: Don't join datasets without overlapping date ranges
-- **Single-point mapping**: Avoid mapping single values to ranges (e.g., month to season)
-- **Format assumptions**: Verify formats match before joins (spaces vs underscores)
-- **Overly narrow discovery**: Include all relevant months/periods in initial exploration
-{% endblock %}
+## Avoid:
+- Temporal mismatches (check date overlaps)
+- Format assumptions (spaces vs underscores)
+- Repeating previous work
+{%- endblock %}
 
 {% block examples %}
-## Examples:
-
-**Direct Query:** "Show me data" → Final answer immediately
-
-**Multi-Step:** "Find categories + min/max ranges + quality" → "Final analysis"
-
-**Reuse:** "Use existing distinct_year_season_from_oni data" not "Find distinct years..."
+Examples: Direct query → Final | Complex → Batch discoveries → Final | Reuse existing materialized data
 {% endblock %}
 
 {% block context %}
-Available Schema Context:
 {{ memory["sql_metaset"].compact_context }}
 
-Steps Already Taken: {{ total_steps }}
-
+Steps: {{ total_steps }}
 {%- if sql_plan_context %}
-Current Knowledge:
 {{ sql_plan_context }}
-
-{%- if 'materialized' in sql_plan_context.lower() or 'DuckDBSource' in sql_plan_context %}
-⚠️  **MATERIALIZED DATA AVAILABLE**: Check above for existing data before planning new queries.
-Please take into account all the steps and results as to not repeat previous work!
 {%- endif %}
-{%- else %}
-Starting fresh - no previous steps taken yet
-{%- endif %}
-
-**Planning Reminder**: Simple "show data" requests = final answer immediately. Complex requests = check materialized data first.
 {% endblock %}

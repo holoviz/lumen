@@ -78,7 +78,7 @@ If unsatisfied with the results hover over the <span class="material-icons-outli
 Click the toggle, or drag the right edge, to expand the results area and...
 
 🌐 Explore data with [Graphic Walker](https://docs.kanaries.net/graphic-walker) - filter, sort, download  
-💾 Navigate, reorder and delete explorations in the sidebar  
+💾 Navigate, reorder and delete explorations in the contextbar  
 📤 Export your session as a reproducible notebook  
 """  # noqa: W291
 
@@ -299,14 +299,20 @@ class UI(Viewer):
             items=[
                 {
                     'label': 'Chain of Thought',
-                    'icon': 'visibility_off',
-                    'active_icon': 'visibility',
+                    'icon': 'toggle_off',
+                    'active_icon': 'toggle_on',
                     'toggled': False
                 },
                 {
                     'label': 'SQL Planning',
-                    'icon': 'close',
-                    'active_icon': 'check',
+                    'icon': 'toggle_off',
+                    'active_icon': 'toggle_on',
+                    'toggled': True
+                },
+                {
+                    'label': 'Validation Step',
+                    'icon': 'toggle_off',
+                    'active_icon': 'toggle_on',
                     'toggled': True
                 }
             ],
@@ -321,6 +327,7 @@ class UI(Viewer):
             variant='text'
         )
         self._settings_menu.param.watch(self._toggle_sql_planning, 'toggled')
+        self._settings_menu.param.watch(self._toggle_validation_agent, 'toggled')
         self._coordinator = self.coordinator(
             agents=agents,
             interface=self.interface,
@@ -411,7 +418,7 @@ class UI(Viewer):
 
         # Initialize _report_toggle for compatibility with header
         self._report_toggle = None
-        self._sidebar = None
+        self._contextbar = None
 
         memory.on_change("sources", self._update_source_catalog)
 
@@ -552,9 +559,8 @@ class UI(Viewer):
                     )
                 ],
                 main=[self._main, self._sources_dialog_content, self._llm_dialog, self._info_dialog],
-                sidebar=[] if self._sidebar is None else [self._sidebar],
-                sidebar_open=False,
-                sidebar_variant="temporary",
+                contextbar=[] if self._contextbar is None else [self._contextbar],
+                contextbar_open=False,
             )
             self._page.servable()
             return self._page
@@ -729,7 +735,7 @@ class ExplorerUI(UI):
         )
         self._report = Column()
         self._main = Column(self._split)
-        self._sidebar = Column(self._reorder_switch, self._explorations)
+        self._contextbar = Column(self._reorder_switch, self._explorations)
         self._idle = asyncio.Event()
         self._idle.set()
 
@@ -790,6 +796,13 @@ class ExplorerUI(UI):
         )
         if sql_agent:
             sql_agent.planning_enabled = planning_enabled
+
+    def _toggle_validation_agent(self, event: param.Event):
+        """Toggle ValidationAgent usage."""
+        validation_enabled = 2 in event.new
+
+        # Update the coordinator's validation agent setting
+        self._coordinator.validation_enabled = validation_enabled
 
     def _delete_exploration(self, item):
         self._explorations.items = [it for it in self._explorations.items if it is not item]
@@ -964,7 +977,7 @@ class ExplorerUI(UI):
                 nonlocal new_exploration
                 plan = local_memory["plan"]
                 if any(step.actor in ('SQLAgent', 'DbtslAgent') for step in plan.steps):
-                    # Expand the sidebar when the first exploration is created
+                    # Expand the contextbar when the first exploration is created
                     await self._add_exploration(plan.title, local_memory)
                     new_exploration = True
 
