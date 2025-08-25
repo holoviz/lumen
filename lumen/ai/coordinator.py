@@ -37,7 +37,9 @@ from .report import Section, Task
 from .tools import (
     IterativeTableLookup, TableLookup, Tool, VectorLookupToolUser,
 )
-from .utils import fuse_messages, log_debug, stream_details
+from .utils import (
+    fuse_messages, log_debug, stream_details, wrap_logfire,
+)
 from .views import AnalysisOutput
 
 if TYPE_CHECKING:
@@ -574,7 +576,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
     async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface) -> Plan:
         log_debug(f"New Message: \033[91m{contents!r}\033[0m", show_sep="above")
-        return await self.respond(contents)
+        return await wrap_logfire(self.respond, self.llm)(contents)
 
     async def _fill_model(self, messages, system, agent_model):
         model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
@@ -1221,7 +1223,7 @@ class Planner(Coordinator):
                         log_debug(f"\033[91m!! Attempt {attempts}\033[0m")
                     plan = None
                     try:
-                        raw_plan = await self._make_plan(
+                        raw_plan = await wrap_logfire(self._make_plan, self.llm, extract_args=["messages", "previous_plans"])(
                             messages, agents, tools, unmet_dependencies, previous_actors, previous_plans,
                             plan_model, istep, is_follow_up=pre_plan_output["is_follow_up"]
                         )

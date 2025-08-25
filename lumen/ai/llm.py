@@ -54,8 +54,14 @@ class Llm(param.Parameterized):
         'default', 'reasoning' and 'sql'. Agents may pick which model to
         invoke for different reasons.""")
 
+    use_logfire = param.Boolean(default=True, doc="""
+        Whether to log LLM calls and responses to logfire.""")
+
     _ready = param.Boolean(default=False, doc="""
         Whether the LLM has been initialized and is ready to use.""")
+
+    # Whether the LLM supports logging to logfire
+    _supports_logfire = False
 
     # Whether the LLM supports streaming of any kind
     _supports_stream = True
@@ -70,6 +76,10 @@ class Llm(param.Parameterized):
             if isinstance(params["mode"], str):
                 params["mode"] = Mode[params["mode"].upper()]
         super().__init__(**params)
+        if self.use_logfire and not self._supports_logfire:
+            raise ValueError(
+                f"LLM {self.__class__.__name__} does not support logfire."
+            )
         if not self.model_kwargs.get("default"):
             raise ValueError(
                 f"Please specify a 'default' model in the model_kwargs "
@@ -167,7 +177,7 @@ class Llm(param.Parameterized):
         try:
             self._ready = False
             await self.invoke(
-                messages=[{'role': 'user', 'content': 'Are you there? YES | NO'}],
+                messages=[{'role': 'user', 'content': 'Init?'}],
                 model_spec="ui",
                 response_model=YesNo
             )
@@ -381,11 +391,13 @@ class OpenAI(Llm, OpenAIMixin):
         "sql": {"model": "gpt-4.1-mini"},
         "vega_lite": {"model": "gpt-4.1-mini"},
         "edit": {"model": "gpt-4.1-mini"},
+        "ui": {"model": "gpt-4.1-nano"},
     })
 
     select_models = param.List(default=[
-        "gpt-3.5-turbo",
         "gpt-4.1-mini",
+        "gpt-4.1-nano",
+        "gpt-5-mini",
         "gpt-4-turbo",
         "gpt-4o",
         "gpt-4o-mini"
@@ -393,8 +405,7 @@ class OpenAI(Llm, OpenAIMixin):
 
     temperature = param.Number(default=0.25, bounds=(0, None), constant=True)
 
-    use_logfire = param.Boolean(default=False, doc="""
-        Whether to log LLM calls and responses to logfire.""")
+    _supports_logfire = True
 
     @property
     def _client_kwargs(self):
@@ -419,6 +430,11 @@ class OpenAI(Llm, OpenAIMixin):
         # Use the mixin to create the OpenAI client
         llm = self._instantiate_client(async_client=True, **model_kwargs)
 
+        if self.use_logfire:
+            import logfire
+            logfire.configure()
+            logfire.instrument_openai(llm)
+
         if self.interceptor:
             self.interceptor.patch_client(llm, mode="store_inputs")
 
@@ -430,11 +446,6 @@ class OpenAI(Llm, OpenAIMixin):
             self.interceptor.patch_client_response(llm)
 
         client_callable = partial(llm.chat.completions.create, model=model, **self.create_kwargs)
-
-        if self.use_logfire:
-            import logfire
-            logfire.configure()
-            logfire.instrument_openai(llm)
         return client_callable
 
 

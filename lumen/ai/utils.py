@@ -10,6 +10,7 @@ import textwrap
 import time
 import traceback
 
+from collections.abc import Callable
 from functools import wraps
 from pathlib import Path
 from shutil import get_terminal_size
@@ -37,6 +38,7 @@ from .config import (
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
 
+    from lumen.ai.llm import Llm
     from lumen.ai.models import LineChange
     from lumen.sources.base import Source
 
@@ -851,3 +853,14 @@ def class_name_to_llm_spec_key(class_name: str) -> str:
         i += 1
 
     return result
+
+
+def wrap_logfire(func: Callable, llm: Llm, span_name: str | None = None, extract_args: bool = True, **instrument_kwargs):
+    if llm.use_logfire:
+        import logfire
+        if span_name is None:
+            span_name = func.__name__.strip("_")
+        wrapped_func = logfire.instrument(span_name, extract_args=extract_args, **instrument_kwargs)(func)
+    else:
+        wrapped_func = func
+    return wrapped_func
