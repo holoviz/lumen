@@ -216,10 +216,14 @@ class Coordinator(Viewer, VectorLookupToolUser):
             if not user_prompt and not uploaded:
                 return
 
-            old_sources = self._memory.get("sources", [])
-            if uploaded:
-                # Process uploaded files through SourceControls if any exist
-                with self.interface.param.update(loading=True):
+            with self.interface.param.update(disabled=True, loading=True):
+                if self._main[0] is not self.interface:
+                    # Reset value input because reset has no time to propagate
+                    self._main[:] = [self.interface]
+
+                old_sources = self._memory.get("sources", [])
+                if uploaded:
+                    # Process uploaded files through SourceControls if any exist
                     source_controls = SourceControls(
                         downloaded_files={key: value["value"] for key, value in uploaded.items()},
                         memory=self._memory,
@@ -228,25 +232,22 @@ class Coordinator(Viewer, VectorLookupToolUser):
                         clear_uploads=True  # Clear the uploads after processing
                     )
                     source_controls.param.trigger("add")
-                chat_input.value_uploaded = {}
-                source_cards = [
-                    TableSourceCard(source=source, name=source.name)
-                    for source in self._memory.get("sources", []) if source not in old_sources
-                ]
-                if len(source_cards) > 1:
-                    source_view = Accordion(*source_cards, sizing_mode="stretch_width", name="TableSourceCard")
+                    chat_input.value_uploaded = {}
+                    source_cards = [
+                        TableSourceCard(source=source, name=source.name)
+                        for source in self._memory.get("sources", []) if source not in old_sources
+                    ]
+                    if len(source_cards) > 1:
+                        source_view = Accordion(*source_cards, sizing_mode="stretch_width", name="TableSourceCard")
+                    else:
+                        source_view = source_cards[0]
+                    msg = Column(chat_input.value, source_view) if user_prompt else source_view
                 else:
-                    source_view = source_cards[0]
-                msg = Column(chat_input.value, source_view) if user_prompt else source_view
-            else:
-                msg = Markdown(user_prompt)
+                    msg = Markdown(user_prompt)
 
-            with hold():
-                if self._main[0] is not self.interface:
-                    # Reset value input because reset has no time to propagate
-                    self._main[:] = [self.interface]
-                self.interface.send(msg, respond=bool(user_prompt))
-                chat_input.value_input = ""
+                with hold():
+                    self.interface.send(msg, respond=bool(user_prompt))
+                    chat_input.value_input = ""
 
         log_debug("New Session: \033[92mStarted\033[0m", show_sep="above")
 
