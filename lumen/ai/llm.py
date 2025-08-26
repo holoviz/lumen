@@ -407,6 +407,12 @@ class OpenAI(Llm, OpenAIMixin):
 
     _supports_logfire = True
 
+    def __init__(self, **params):
+        super().__init__()
+        if self.use_logfire:
+            import logfire
+            logfire.configure()
+
     @property
     def _client_kwargs(self):
         return {"temperature": self.temperature}
@@ -432,7 +438,6 @@ class OpenAI(Llm, OpenAIMixin):
 
         if self.use_logfire:
             import logfire
-            logfire.configure()
             logfire.instrument_openai(llm)
 
         if self.interceptor:

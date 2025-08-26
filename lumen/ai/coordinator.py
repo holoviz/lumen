@@ -107,7 +107,7 @@ class Plan(Section):
         return outputs
 
     async def execute(self, **kwargs):
-        ret = await super().execute(**kwargs)
+        ret = await wrap_logfire(super().execute, llm=self.agents[0].llm, span_name=self.title)(**kwargs)
         _, todos = self._render_task_history(len(self.subtasks))
         self._coordinator._todos.object = todos
         return ret
@@ -956,7 +956,7 @@ class Planner(Coordinator):
                     title=f"Gathering context with {tool_name}",
                     steps_layout=steps_layout,
                 )
-                await task.execute()
+                await wrap_logfire(task.execute, task.llm, span_name=task.__class__.name)()
                 if task.status != "error":
                     step.stream(f"\n\n✗ Failed to gather context from {tool_name}")
                     continue
