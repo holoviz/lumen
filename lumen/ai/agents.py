@@ -94,9 +94,12 @@ class Agent(Viewer, ToolUser, ContextProvider):
                 return
 
             import traceback
+
             traceback.print_exception(exception)
             self.interface.send(f"Error cannot be resolved:\n\n{exception}", user="System", respond=False)
 
+        if "interface" not in params:
+            params["interface"] = ChatInterface(callback=self._interface_callback, callback_exception="raise" if self.debug else "summary")
         super().__init__(**params)
         if not self.debug:
             pn.config.exception_handler = _exception_handler
