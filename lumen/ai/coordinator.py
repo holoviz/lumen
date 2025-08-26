@@ -234,7 +234,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
                     for source in self._memory.get("sources", []) if source not in old_sources
                 ]
                 if len(source_cards) > 1:
-                    source_view = Accordion(*source_cards, sizing_mode="stretch_width")
+                    source_view = Accordion(*source_cards, sizing_mode="stretch_width", name="TableSourceCard")
                 else:
                     source_view = source_cards[0]
                 msg = Column(chat_input.value, source_view) if user_prompt else source_view
@@ -626,7 +626,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
         if isinstance(obj, (Column, Card, Tabs)):
             string = ""
             for o in obj:
-                if isinstance(o, ChatStep):
+                if isinstance(o, ChatStep) or o.name == "TableSourceCard":
                     # Drop context from steps; should be irrelevant now
                     continue
                 string += self._serialize(o)

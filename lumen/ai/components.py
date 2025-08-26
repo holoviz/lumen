@@ -502,6 +502,7 @@ class TableSourceCard(Viewer):
             collapsed=self.param.collapsed,
             sizing_mode='stretch_width',
             margin=0,
+            name="TableSourceCard"
         )
 
 
