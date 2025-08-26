@@ -649,7 +649,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
             # TODO INVESTIGATE
             messages = fuse_messages(
-                self.interface.serialize(custom_serializer=self._serialize, limit=10),
+                self.interface.serialize(custom_serializer=self._serialize, limit=10) or messages,
                 max_user_messages=self.history
             )
 
