@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import re
 import traceback
 
@@ -220,14 +219,15 @@ class Coordinator(Viewer, VectorLookupToolUser):
             old_sources = self._memory.get("sources", [])
             if uploaded:
                 # Process uploaded files through SourceControls if any exist
-                source_controls = SourceControls(
-                    downloaded_files={key: io.BytesIO(value["value"]) for key, value in uploaded.items()},
-                    memory=self._memory,
-                    replace_controls=False,
-                    show_input=False,
-                    clear_uploads=True  # Clear the uploads after processing
-                )
-                source_controls.param.trigger("add")
+                with self.interface.param.update(loading=True):
+                    source_controls = SourceControls(
+                        downloaded_files={key: value["value"] for key, value in uploaded.items()},
+                        memory=self._memory,
+                        replace_controls=False,
+                        show_input=False,
+                        clear_uploads=True  # Clear the uploads after processing
+                    )
+                    source_controls.param.trigger("add")
                 chat_input.value_uploaded = {}
                 source_cards = [
                     TableSourceCard(source=source, name=source.name)
@@ -246,6 +246,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
                     # Reset value input because reset has no time to propagate
                     self._main[:] = [self.interface]
                 self.interface.send(msg, respond=bool(user_prompt))
+                chat_input.value_input = ""
 
         log_debug("New Session: \033[92mStarted\033[0m", show_sep="above")
 
