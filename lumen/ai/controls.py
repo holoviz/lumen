@@ -133,9 +133,9 @@ class SourceControls(Viewer):
 
     input_placeholder = param.String(default="Enter URLs, one per line, and press <Enter> to download")
 
-    trigger_add = param.Event(doc="Use uploaded file(s)")
+    add = param.Event(doc="Use uploaded file(s)")
 
-    trigger_cancel = param.Event(doc="Cancel")
+    cancel = param.Event(doc="Cancel")
 
     memory = param.ClassSelector(class_=_Memory, default=None, doc="""
         Local memory which will be used to provide the agent context.
@@ -190,7 +190,7 @@ class SourceControls(Viewer):
         )
 
         self._add_button = Button.from_param(
-            self.param.trigger_add,
+            self.param.add,
             name="Use file(s)",
             icon="table-plus",
             visible=self._upload_tabs.param["objects"].rx().rx.len() > 0,
@@ -198,7 +198,7 @@ class SourceControls(Viewer):
         )
 
         self._cancel_button = Button.from_param(
-            self.param.trigger_cancel,
+            self.param.cancel,
             name="Cancel",
             icon="circle-x",
             visible=self.param.cancellable.rx().rx.bool() or self._add_button.param.clicks.rx() == 0,
@@ -648,7 +648,7 @@ class SourceControls(Viewer):
             self._memory["document_sources"] = [document]
         return 1
 
-    @param.depends("trigger_add", watch=True)
+    @param.depends("add", watch=True)
     def add_medias(self):
         # Combine both uploaded files and downloaded files for processing
         all_media_controls = self._media_controls + self._downloaded_media_controls

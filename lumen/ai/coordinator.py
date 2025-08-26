@@ -11,12 +11,13 @@ import param
 
 from panel import bind
 from panel.chat import ChatFeed
+from panel.io.document import hold
 from panel.layout import Column, FlexBox
 from panel.pane import HTML, Markdown
 from panel.viewable import Viewer
 from panel_material_ui import (
-    Button, Card, ChatInterface, ChatStep, Column as MuiColumn, Paper, Tabs,
-    Typography,
+    Accordion, Button, Card, ChatInterface, ChatStep, Column as MuiColumn,
+    Paper, Tabs, Typography,
 )
 from pydantic import BaseModel
 from typing_extensions import Self
@@ -211,51 +212,40 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
         def on_submit(event=None, instance=None):
             chat_input = self.interface.active_widget
-            if not chat_input.value:
-                return
-            instance.send(value=Markdown(chat_input.value), respond=True)
-            if self._main[0] is not instance:
-                # Reset value input because reset has no time to propagate
-                instance._widget.value_input = ""
-                self._main[:] = [instance]
-
-        def on_upload(event=None):
-            chat_input = self.interface.active_widget
             uploaded = chat_input.value_uploaded
-            if not uploaded:
+            user_prompt = chat_input.value_input
+            if not user_prompt and not uploaded:
                 return
-            # Process uploaded files through SourceControls if any exist
-            source_controls = SourceControls(
-                downloaded_files={key: io.BytesIO(value["value"]) for key, value in uploaded.items()},
-                memory=self._memory,
-                replace_controls=False,
-                show_input=False,
-                clear_uploads=True  # Clear the uploads after processing
-            )
-            chat_input.value_uploaded = {}
-            old_source = self._memory.get("source")
-            msg = interface.send(
-                Column(
-                    f"Successfully uploaded {len(uploaded)} file(s). Confirm files to add to context.",
-                    source_controls.menu,
-                    height=260
-                ),
-                user='Upload',
-                respond=False
-            )
 
-            def display_uploaded(_):
-                source = self._memory["source"]
-                if old_source is not source:
-                    msg.object = Column(
-                        f"Successfully added {source.name}",
-                        TableSourceCard(source=source)
-                    )
+            old_sources = self._memory.get("sources", [])
+            if uploaded:
+                # Process uploaded files through SourceControls if any exist
+                source_controls = SourceControls(
+                    downloaded_files={key: io.BytesIO(value["value"]) for key, value in uploaded.items()},
+                    memory=self._memory,
+                    replace_controls=False,
+                    show_input=False,
+                    clear_uploads=True  # Clear the uploads after processing
+                )
+                source_controls.param.trigger("add")
+                chat_input.value_uploaded = {}
+                source_cards = [
+                    TableSourceCard(source=source, name=source.name)
+                    for source in self._memory.get("sources", []) if source not in old_sources
+                ]
+                if len(source_cards) > 1:
+                    source_view = Accordion(*source_cards, sizing_mode="stretch_width")
+                else:
+                    source_view = source_cards[0]
+                msg = Column(chat_input.value, source_view) if user_prompt else source_view
+            else:
+                msg = Markdown(user_prompt)
 
-            source_controls.param.watch(display_uploaded, '_count')
-            if self._main[0] is not self.interface:
-                # Reset value input because reset has no time to propagate
-                self._main[:] = [self.interface]
+            with hold():
+                if self._main[0] is not self.interface:
+                    # Reset value input because reset has no time to propagate
+                    self._main[:] = [self.interface]
+                self.interface.send(msg, respond=bool(user_prompt))
 
         log_debug("New Session: \033[92mStarted\033[0m", show_sep="above")
 
@@ -271,8 +261,6 @@ class Coordinator(Viewer, VectorLookupToolUser):
         else:
             interface.callback = self._chat_invoke
             interface.on_submit = on_submit
-
-        interface.active_widget.param.watch(on_upload, 'value_uploaded')
 
         welcome_title = Typography(
             "Illuminate your data",
