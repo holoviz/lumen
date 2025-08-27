@@ -133,15 +133,17 @@ class SourceControls(Viewer):
 
     input_placeholder = param.String(default="Enter URLs, one per line, and press <Enter> to download")
 
-    trigger_add = param.Event(doc="Use uploaded file(s)")
+    add = param.Event(doc="Use uploaded file(s)")
 
-    trigger_cancel = param.Event(doc="Cancel")
+    cancel = param.Event(doc="Cancel")
 
     memory = param.ClassSelector(class_=_Memory, default=None, doc="""
         Local memory which will be used to provide the agent context.
         If None the global memory will be used.""")
 
     multiple = param.Boolean(default=True, doc="Allow multiple files")
+
+    show_input = param.Boolean(default=True, doc="Whether to show the input controls")
 
     replace_controls = param.Boolean(default=False, doc="Replace controls on add")
 
@@ -188,7 +190,7 @@ class SourceControls(Viewer):
         )
 
         self._add_button = Button.from_param(
-            self.param.trigger_add,
+            self.param.add,
             name="Use file(s)",
             icon="table-plus",
             visible=self._upload_tabs.param["objects"].rx().rx.len() > 0,
@@ -196,7 +198,7 @@ class SourceControls(Viewer):
         )
 
         self._cancel_button = Button.from_param(
-            self.param.trigger_cancel,
+            self.param.cancel,
             name="Cancel",
             icon="circle-x",
             visible=self.param.cancellable.rx().rx.bool() or self._add_button.param.clicks.rx() == 0,
@@ -214,7 +216,7 @@ class SourceControls(Viewer):
         )
 
         self.menu = Column(
-            self._input_tabs,
+            *((self._input_tabs,) if self.show_input else ()),
             self._upload_tabs,
             Row(self._add_button, self._cancel_button),
             self.tables_tabs,
@@ -646,7 +648,7 @@ class SourceControls(Viewer):
             self._memory["document_sources"] = [document]
         return 1
 
-    @param.depends("trigger_add", watch=True)
+    @param.depends("add", watch=True)
     def add_medias(self):
         # Combine both uploaded files and downloaded files for processing
         all_media_controls = self._media_controls + self._downloaded_media_controls
@@ -698,6 +700,7 @@ class SourceControls(Viewer):
                     self.tables_tabs.visible = False
                     self.menu.height = 70
 
+            total_files = len(self._upload_tabs) + len(self._downloaded_media_controls)
             if self.clear_uploads:
                 # Clear uploaded files from view
                 self._upload_tabs.clear()
@@ -716,7 +719,6 @@ class SourceControls(Viewer):
 
             # Clear uploaded files and URLs from memory
             if (n_tables + n_docs) > 0:
-                total_files = len(self._upload_tabs) + len(self._downloaded_media_controls)
                 self._message_placeholder.param.update(
                     object=f"Successfully processed {total_files} files ({n_tables} table(s), {n_docs} document(s)).",
                     visible=True,

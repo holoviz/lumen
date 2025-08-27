@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import re
 import traceback
 
@@ -11,18 +10,20 @@ import param
 
 from panel import bind
 from panel.chat import ChatFeed
+from panel.io.document import hold
 from panel.layout import Column, FlexBox
 from panel.pane import HTML, Markdown
 from panel.viewable import Viewer
 from panel_material_ui import (
-    Button, Card, ChatInterface, ChatStep, Column as MuiColumn, Paper, Tabs,
-    Typography,
+    Accordion, Button, Card, ChatInterface, ChatStep, Column as MuiColumn,
+    Paper, Tabs, Typography,
 )
 from pydantic import BaseModel
 from typing_extensions import Self
 
 from .actor import Actor
 from .agents import Agent, AnalysisAgent, ChatAgent
+from .components import TableSourceCard
 from .config import (
     DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR,
     SOURCE_TABLE_SEPARATOR,
@@ -212,32 +213,43 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
         def on_submit(event=None, instance=None):
             chat_input = self.interface.active_widget
-
-            objects = []
-            # Process uploaded files through SourceControls if any exist
-            if chat_input.value_uploaded:
-                source_controls = SourceControls(
-                    downloaded_files={key: io.BytesIO(value["value"]) for key, value in chat_input.value_uploaded.items()},
-                    memory=self._memory,
-                    replace_controls=False,
-                    clear_uploads=True  # Clear the uploads after processing
-                )
-                source_controls.add_medias()
-                objects.extend(chat_input.views)
-                chat_input.value_uploaded = {}
-
-            if chat_input.value:
-                objects.append(Markdown(chat_input.value))
-
-            if not objects:
+            uploaded = chat_input.value_uploaded
+            user_prompt = chat_input.value_input
+            if not user_prompt and not uploaded:
                 return
-            value = Column(*objects) if len(objects) > 1 else objects[0]
-            instance.send(value=value, respond=chat_input.value)
 
-            if self._main[0] is not instance:
-                # Reset value input because reset has no time to propagate
-                instance._widget.value_input = ""
-                self._main[:] = [instance]
+            with self.interface.param.update(disabled=True, loading=True):
+                if self._main[0] is not self.interface:
+                    # Reset value input because reset has no time to propagate
+                    self._main[:] = [self.interface]
+
+                old_sources = self._memory.get("sources", [])
+                if uploaded:
+                    # Process uploaded files through SourceControls if any exist
+                    source_controls = SourceControls(
+                        downloaded_files={key: value["value"] for key, value in uploaded.items()},
+                        memory=self._memory,
+                        replace_controls=False,
+                        show_input=False,
+                        clear_uploads=True  # Clear the uploads after processing
+                    )
+                    source_controls.param.trigger("add")
+                    chat_input.value_uploaded = {}
+                    source_cards = [
+                        TableSourceCard(source=source, name=source.name)
+                        for source in self._memory.get("sources", []) if source not in old_sources
+                    ]
+                    if len(source_cards) > 1:
+                        source_view = Accordion(*source_cards, sizing_mode="stretch_width", name="TableSourceCard")
+                    else:
+                        source_view = source_cards[0]
+                    msg = Column(chat_input.value, source_view) if user_prompt else source_view
+                else:
+                    msg = Markdown(user_prompt)
+
+                with hold():
+                    self.interface.send(msg, respond=bool(user_prompt))
+                    chat_input.value_input = ""
 
         log_debug("New Session: \033[92mStarted\033[0m", show_sep="above")
 
@@ -620,7 +632,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
         if isinstance(obj, (Column, Card, Tabs)):
             string = ""
             for o in obj:
-                if isinstance(o, ChatStep):
+                if isinstance(o, ChatStep) or o.name == "TableSourceCard":
                     # Drop context from steps; should be irrelevant now
                     continue
                 string += self._serialize(o)
