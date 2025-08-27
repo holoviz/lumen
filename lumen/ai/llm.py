@@ -54,7 +54,7 @@ class Llm(param.Parameterized):
         'default', 'reasoning' and 'sql'. Agents may pick which model to
         invoke for different reasons.""")
 
-    use_logfire = param.Boolean(default=True, doc="""
+    use_logfire = param.Boolean(default=False, doc="""
         Whether to log LLM calls and responses to logfire.""")
 
     _ready = param.Boolean(default=False, doc="""
