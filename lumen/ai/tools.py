@@ -167,7 +167,10 @@ class VectorLookupToolUser(ToolUser):
         kwargs = super()._get_tool_kwargs(tool, prompt_tools, **params)
 
         # If the tool is already instantiated and has a vector_store, use it
-        if (not issubclass(tool, VectorLookupTool) and not isinstance(tool, VectorLookupTool)) or (isinstance(tool, VectorLookupTool) and tool.vector_store is not None):
+        if (
+            ((isinstance(tool, type) and not issubclass(tool, VectorLookupTool)) and not isinstance(tool, VectorLookupTool)) or
+            (isinstance(tool, VectorLookupTool) and tool.vector_store is not None)
+        ):
             return kwargs
         elif isinstance(tool, VectorLookupTool) and tool._item_type_name == "document" and self.document_vector_store is not None:
             kwargs["vector_store"] = self.document_vector_store
