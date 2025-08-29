@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import parse_qs
 
 import pandas as pd
+import param
 
 from jinja2 import (
     ChoiceLoader, DictLoader, Environment, FileSystemLoader, StrictUndefined,
@@ -851,3 +852,14 @@ def class_name_to_llm_spec_key(class_name: str) -> str:
         i += 1
 
     return result
+
+
+def normalize_name(inst: param.Parameterized):
+    """
+    Returns the name of a Parameterized instance, stripping
+    the auto-generated object count.
+    """
+    class_name = inst.__class__.__name__
+    if re.match('^'+class_name+'[0-9]{5}$', inst.name):
+        return class_name
+    return inst.name
