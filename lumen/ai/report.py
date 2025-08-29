@@ -19,6 +19,7 @@ from .actor import Actor
 from .llm import Llm
 from .memory import _Memory
 from .tools import FunctionTool, Tool
+from .utils import wrap_logfire
 from .views import LumenOutput
 
 
@@ -104,7 +105,7 @@ class Task(Viewer):
             steps_layout=self.steps_layout
         ):
             if isinstance(task, Actor):
-                out = await task.respond(messages, **kwargs)
+                out = await wrap_logfire(task.respond, task.llm, span_name=task.__class__.name)(messages, **kwargs)
                 # Handle Tool specific behaviors
                 if isinstance(task, Tool):
                     # Handle View/Viewable results regardless of agent type
