@@ -273,7 +273,7 @@ class UI(Viewer):
 
     def __init__(
         self,
-        data: DataT | list[DataT] | None = None,
+        data: DataT | list[DataT] | dict[str, DataT] | None = None,
         **params
     ):
         params["log_level"] = params.get("log_level", self.param["log_level"].default).upper()
@@ -501,9 +501,11 @@ class UI(Viewer):
         nb = export_notebook(self.interface.objects, preamble=self.notebook_preamble)
         return StringIO(nb)
 
-    def _resolve_data(self, data: DataT | list[DataT] | None):
+    def _resolve_data(self, data: DataT | list[DataT] | dict[DataT] | None):
         if data is None:
             return
+        elif isinstance(data, dict):
+            data = data.items()
         elif not isinstance(data, list):
             data = [data]
         sources = []
@@ -514,8 +516,12 @@ class UI(Viewer):
                 sources.append(src)
             elif isinstance(src, Pipeline):
                 mirrors[src.name] = src
-            elif isinstance(src, (str, Path)):
-                src = str(src)
+            elif isinstance(src, (str, Path, tuple)):
+                if isinstance(src, tuple):
+                    name, src = src
+                    src = str(src)
+                else:
+                    name = src = str(src)
                 if src.startswith('http'):
                     remote = True
                 if src.endswith(('.parq', '.parquet', '.csv', '.json', '.tsv', '.jsonl', '.ndjson')):
@@ -524,7 +530,7 @@ class UI(Viewer):
                     raise ValueError(
                         f"Could not determine how to load {src} file."
                     )
-                tables[src] = table
+                tables[name] = table
         if tables or mirrors:
             initializers = ["INSTALL httpfs;", "LOAD httpfs;"] if remote else []
             source = DuckDBSource(
