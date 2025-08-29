@@ -9,10 +9,11 @@ import param
 
 from panel.io import cache as pn_cache
 from panel.io.state import state
+from panel.pane import HoloViews as HoloViewsPanel, panel as as_panel
 from panel.viewable import Viewable
 
 from ..sources.duckdb import DuckDBSource
-from ..views.base import View
+from ..views.base import HoloViews, View
 from .actor import Actor, ContextProvider
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .embeddings import NumpyEmbeddings
@@ -1436,6 +1437,9 @@ class FunctionTool(Tool):
     requires = param.List(default=[], readonly=False, constant=True, doc="""
         List of context values it requires to be in memory.""")
 
+    render_output = param.Boolean(default=False, doc="""
+        Whether to render the tool output directly, even if it is not already a Lumen View or Panel Viewable.""")
+
     prompts = param.Dict(
         default={
             "main": {
@@ -1474,6 +1478,11 @@ class FunctionTool(Tool):
             result = self.function(**arguments)
         if isinstance(result, (View, Viewable)):
             return result
+        elif self.render_output:
+            p = as_panel(result)
+            if isinstance(p, HoloViewsPanel):
+                return HoloViews(object=p.object)
+            return p
         if self.provides:
             if len(self.provides) == 1 and not isinstance(result, dict):
                 self._memory[self.provides[0]] = result
