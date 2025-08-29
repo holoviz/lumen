@@ -854,7 +854,7 @@ def class_name_to_llm_spec_key(class_name: str) -> str:
     return result
 
 
-def normalize_name(inst: param.Parameterized):
+def normalized_name(inst: param.Parameterized):
     """
     Returns the name of a Parameterized instance, stripping
     the auto-generated object count.
