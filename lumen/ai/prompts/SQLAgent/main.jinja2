@@ -55,6 +55,7 @@ Use `{{ dialect }}` SQL dialect.
 - Table references: Use exact names `read_csv('table.csv')`, alias if needed `as table_name`
 - Reference full slugs: `source {{ separator }} table`
 - Range predicates: `"date" >= '2023-06-01' AND "date" < '2023-09-01'`
+- Date selection: CAST(col as DATE) == '2023-06-01'
 - Window filtering: `QUALIFY ROW_NUMBER() OVER (...) <= 5`
 - Safe conversions: Use `TRY_CAST` for type conversions
 - Use materialized tables when available

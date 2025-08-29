@@ -52,6 +52,8 @@ class NumpyDumper(yaml.SafeDumper):
             data = bytes(data)
         elif isinstance(data, (np.str_,)):
             data = str(data)
+        elif isinstance(data, np.datetime64):
+            data = str(data)
         return super().represent_data(data)
 
 def get_dataframe_schema(df, columns=None):
