@@ -1413,7 +1413,6 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
 
 
 class FunctionTool(Tool):
-
     """
     FunctionTool wraps arbitrary functions and makes them available as a tool
     for an LLM to call. It inspects the arguments of the function and generates
@@ -1453,10 +1452,11 @@ class FunctionTool(Tool):
 
     def __init__(self, function, **params):
         model = function_to_model(function, skipped=self.requires)
+        if "purpose" not in params:
+            params["purpose"] = f"{model.__name__}: {model.__doc__}" if model.__doc__ else model.__name__
         super().__init__(
             function=function,
             name=function.__name__,
-            purpose=params.pop("purpose", model.__doc__) or "",
             **params
         )
         self._model = model
