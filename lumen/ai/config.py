@@ -8,9 +8,16 @@ import panel as pn
 import yaml
 
 from instructor.utils import disable_pydantic_error_url
+from panel_material_ui import ChatMessage
 
 from ..config import SOURCE_TABLE_SEPARATOR  # NOQA: F401
 
+ChatMessage.default_avatars.update({
+    "Planner": {"type": "icon", "icon": "checklist"},
+    "Runner": {"type": "icon", "icon": "playlist_play"},
+    "SQL": {"type": "icon", "icon": "storage"},
+    "DBT": {"type": "icon", "icon": "analytics"}
+})
 
 class LlmSetupError(Exception):
     """
@@ -28,9 +35,9 @@ THIS_DIR = Path(__file__).parent
 PROMPTS_DIR = THIS_DIR / "prompts"
 
 GETTING_STARTED_SUGGESTIONS = [
-    "What datasets are available?",
-    "What's interesting to analyze?",
-    "Can you visualize the data?",
+    ("search", "What data is available?"),
+    ("description", "Describe the dataset"),
+    ("bar_chart", "Can you visualize the data?"),
 ]
 
 DEMO_MESSAGES = [

@@ -9,20 +9,22 @@ import param
 
 from panel.io import cache as pn_cache
 from panel.io.state import state
+from panel.pane import HoloViews as HoloViewsPanel, panel as as_panel
 from panel.viewable import Viewable
 
 from ..sources.duckdb import DuckDBSource
-from ..views.base import View
+from ..views.base import HoloViews, View
 from .actor import Actor, ContextProvider
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .embeddings import NumpyEmbeddings
 from .llm import Message
+from .memory import _Memory
 from .models import (
     ThinkingYesNo, make_iterative_selection_model, make_refined_query_model,
 )
 from .schemas import (
     Column, DbtslMetadata, DbtslMetaset, SQLMetadata, SQLMetaset,
-    VectorMetadata, VectorMetaset,
+    VectorMetadata, VectorMetaset, get_metaset,
 )
 from .services import DbtslMixin
 from .translate import function_to_model
@@ -165,7 +167,10 @@ class VectorLookupToolUser(ToolUser):
         kwargs = super()._get_tool_kwargs(tool, prompt_tools, **params)
 
         # If the tool is already instantiated and has a vector_store, use it
-        if isinstance(tool, VectorLookupTool) and tool.vector_store is not None:
+        if (
+            ((isinstance(tool, type) and not issubclass(tool, VectorLookupTool)) and not isinstance(tool, VectorLookupTool)) or
+            (isinstance(tool, VectorLookupTool) and tool.vector_store is not None)
+        ):
             return kwargs
         elif isinstance(tool, VectorLookupTool) and tool._item_type_name == "document" and self.document_vector_store is not None:
             kwargs["vector_store"] = self.document_vector_store
@@ -218,6 +223,13 @@ class Tool(Actor, ContextProvider):
     conditions = param.List(default=[
         "Always requires a supporting agent to interpret results"
     ])
+
+    @classmethod
+    async def applies(cls, memory: _Memory) -> bool:
+        """
+        Additional checks to determine if the tool should be used.
+        """
+        return True
 
 
 class VectorLookupTool(Tool):
@@ -380,7 +392,7 @@ class VectorLookupTool(Tool):
         if all(result.get('metadata') == results[0].get('metadata') for result in results) or self.llm is None:
             return results
 
-        with self._add_step(title="Vector Search with Refinement") as step:
+        with self._add_step(title="Vector Search with Refinement", steps_layout=self.steps_layout) as step:
             best_similarity = max([result.get('similarity', 0) for result in results], default=0)
             best_results = results
             step.stream(f"Initial search found {len(results)} chunks with best similarity: {best_similarity:.3f}\n\n")
@@ -556,6 +568,10 @@ class TableLookup(VectorLookupTool):
         "Not useful for data related queries",
     ])
 
+    # Class variable to track which sources are currently being processed
+    _sources_in_progress = {}
+    _progress_lock = asyncio.Lock()  # Lock for thread-safe access
+
     prompts = param.Dict(
         default={
             "refine_query": {
@@ -571,7 +587,9 @@ class TableLookup(VectorLookupTool):
     not_with = param.List(default=["IterativeTableLookup"])
 
     purpose = param.String(default="""
-        Discovers relevant tables using vector search, providing context for other agents.""")
+        Discovers relevant tables using vector search, providing context for other agents.
+        Not to be used for finding tables for further analysis (e.g. SQL), because it does
+        not provide a schema.""")
 
     requires = param.List(default=["sources"], readonly=True, doc="""
         List of context that this Tool requires to be run.""")
@@ -613,9 +631,9 @@ class TableLookup(VectorLookupTool):
         self._raw_metadata = {}
         self._semaphore = asyncio.Semaphore(self.max_concurrent)
         if self.sync_sources:
-            self._memory.on_change('sources', self._update_vector_store)
+            self._memory.on_change("sources", self._update_vector_store)
         if "sources" in self._memory:
-            state.execute(partial(self._update_vector_store, None, None, self._memory['sources']))
+            state.execute(partial(self._update_vector_store, None, None, self._memory["sources"]))
 
     def _format_results_for_refinement(self, results: list[dict[str, Any]]) -> str:
         """
@@ -631,13 +649,16 @@ class TableLookup(VectorLookupTool):
         str
             Formatted description of table results
         """
+        visible_slugs = self._memory.get('visible_slugs', set())
         formatted_results = []
         for result in results:
             source_name = result['metadata'].get("source", "unknown")
             table_name = result['metadata'].get("table_name", "unknown")
-            text = result["text"]
             table_slug = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
+            if visible_slugs and table_slug not in visible_slugs:
+                continue
 
+            text = result["text"]
             description = f"- {text} {table_slug} (Similarity: {result.get('similarity', 0):.3f})"
             if tables_vector_data := self._memory["tables_metadata"].get(table_slug):
                 if table_description := tables_vector_data.get("description"):
@@ -712,17 +733,25 @@ class TableLookup(VectorLookupTool):
 
         # Use class variable to track which sources are currently being processed
         vector_store_id = id(self.vector_store)
-        if vector_store_id not in self._sources_in_progress:
-            self._sources_in_progress[vector_store_id] = set()
+
+        async with self._progress_lock:
+            if vector_store_id not in self._sources_in_progress:
+                self._sources_in_progress[vector_store_id] = set()
+
+
+        log_debug(f"[TableLookup] Starting _update_vector_store for {len(sources)} sources")
 
         for source in sources:
-            # Skip this source if it's already being processed for this vector store
-            if source.name in self._sources_in_progress[vector_store_id]:
-                continue
+            async with self._progress_lock:
+                # Skip this source if it's already being processed for this vector store
+                if source.name in self._sources_in_progress[vector_store_id]:
+                    log_debug(f"[TableLookup] Skipping source {source.name} - already in progress")
+                    continue
 
-            # Mark this source as in progress for this vector store
-            self._sources_in_progress[vector_store_id].add(source.name)
-            processed_sources.append(source.name)
+                # Mark this source as in progress for this vector store
+                self._sources_in_progress[vector_store_id].add(source.name)
+                processed_sources.append(source.name)
+                log_debug(f"[TableLookup] Processing source {source.name}")
 
             if self.include_metadata and self._raw_metadata.get(source.name) is None:
                 if isinstance(source, DuckDBSource):
@@ -757,36 +786,65 @@ class TableLookup(VectorLookupTool):
 
     def _cleanup_sources_in_progress(self, vector_store_id, processed_sources):
         """Clean up the sources_in_progress tracking after tasks are completed."""
-        try:
-            for source_name in processed_sources:
-                if vector_store_id in self._sources_in_progress and source_name in self._sources_in_progress[vector_store_id]:
-                    self._sources_in_progress[vector_store_id].remove(source_name)
+        async def _async_cleanup():
+            async with self._progress_lock:
+                try:
+                    log_debug(f"[TableLookup] Cleaning up sources: {processed_sources}")
+                    for source_name in processed_sources:
+                        if vector_store_id in self._sources_in_progress:
+                            self._sources_in_progress[vector_store_id].discard(source_name)
+                            log_debug(f"[TableLookup] Removed {source_name} from in-progress")
 
-            # Remove the vector_store_id entry if empty
-            if vector_store_id in self._sources_in_progress and not self._sources_in_progress[vector_store_id]:
-                del self._sources_in_progress[vector_store_id]
-        except Exception as e:
-            log_debug(f"Error cleaning up sources_in_progress: {e!s}")  # Don't let cleanup errors propagate
+                    # Remove the vector_store_id entry if empty
+                    if vector_store_id in self._sources_in_progress and not self._sources_in_progress[vector_store_id]:
+                        del self._sources_in_progress[vector_store_id]
+                        log_debug(f"[TableLookup] Removed empty vector_store_id {vector_store_id}")
+                except Exception as e:
+                    log_debug(f"[TableLookup] Error cleaning up sources_in_progress: {e!s}")
+                    # Force cleanup on error
+                    if vector_store_id in self._sources_in_progress:
+                        self._sources_in_progress[vector_store_id].clear()
+
+        # Schedule the async cleanup and store the task reference
+        # This prevents the task from being garbage collected
+        cleanup_task = asyncio.create_task(_async_cleanup())
+        # Optionally, we can add error handling for the task
+        cleanup_task.add_done_callback(lambda t: t.exception() if t.done() else None)
 
     async def _mark_ready_when_done(self, tasks, vector_store_id=None, processed_sources=None):
         """Wait for all tasks to complete, collect results for batch upsert, and mark the tool as ready."""
         try:
-            async with asyncio.Semaphore(self.max_concurrent):
-                enriched_entries = [
-                    result for result in await asyncio.gather(*tasks, return_exceptions=True)
-                    if isinstance(result, dict) and "text" in result
-                ]
+            log_debug(f"[TableLookup] Waiting for {len(tasks)} tasks to complete")
+            # Add timeout to prevent indefinite waiting (5 minutes)
+            try:
+                async def _gather_with_semaphore():
+                    async with asyncio.Semaphore(self.max_concurrent):
+                        return [
+                            result for result in await asyncio.gather(*tasks, return_exceptions=True)
+                            if isinstance(result, dict) and "text" in result
+                        ]
+
+                enriched_entries = await asyncio.wait_for(_gather_with_semaphore(), timeout=300)
+            except asyncio.TimeoutError:
+                log_debug("[TableLookup] Timeout waiting for tasks to complete (5 minutes)")
+                self._ready = None  # Set to error state
+                return
+
             if enriched_entries:
-                log_debug(f"Upserting {len(enriched_entries)} enriched entries")
+                log_debug(f"[TableLookup] Upserting {len(enriched_entries)} enriched entries")
                 await self.vector_store.upsert(enriched_entries)
-            log_debug("All table metadata tasks completed.")
+            else:
+                log_debug("[TableLookup] No enriched entries to upsert")
+            log_debug("[TableLookup] All table metadata tasks completed.")
             self._ready = True
+        except Exception as e:
+            log_debug(f"[TableLookup] Error in _mark_ready_when_done: {e!s}")
+            self._ready = None  # Set to error state
+            raise
         finally:
             # Clean up sources_in_progress after tasks are done, even if there was an error
             if vector_store_id is not None and processed_sources:
                 self._cleanup_sources_in_progress(vector_store_id, processed_sources)
-
-
 
     async def _gather_info(self, messages: list[dict[str, str]]) -> dict:
         """Gather relevant information about the tables based on the user query."""
@@ -820,6 +878,11 @@ class TableLookup(VectorLookupTool):
                     break
             table_slug = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
             similarity_score = result['similarity']
+            # Filter by visible_slugs if specified
+            visible_slugs = self._memory.get('visible_slugs', set())
+            if visible_slugs and table_slug not in visible_slugs:
+                continue
+
             if any_matches and result['similarity'] < self.min_similarity and not same_table:
                 continue
 
@@ -850,7 +913,12 @@ class TableLookup(VectorLookupTool):
             vector_metadata_map[table_slug] = vector_metadata
 
         # If query contains an exact table name, mark it as max similarity
-        for table_slug in self._memory["tables_metadata"]:
+        visible_slugs = self._memory.get('visible_slugs', set())
+        tables_to_check = self._memory["tables_metadata"]
+        if visible_slugs:
+            tables_to_check = {slug: data for slug, data in tables_to_check.items() if slug in visible_slugs}
+
+        for table_slug in tables_to_check:
             if table_slug.split(SOURCE_TABLE_SEPARATOR)[-1].lower() in query.lower():
                 if table_slug in vector_metadata_map:
                     vector_metadata_map[table_slug].similarity = 1
@@ -874,7 +942,6 @@ class TableLookup(VectorLookupTool):
         return self._format_context()
 
 
-
 class IterativeTableLookup(TableLookup):
     """
     Extended version of TableLookup that performs an iterative table selection process.
@@ -894,6 +961,12 @@ class IterativeTableLookup(TableLookup):
 
     provides = param.List(default=["tables_metadata", "vector_metaset", "sql_metaset"], readonly=True, doc="""
         List of context values this Tool provides to current working memory.""")
+
+    # Override sync_sources to False by default to prevent duplicate processing
+    # when used together with TableLookup
+    sync_sources = param.Boolean(default=False, doc="""
+        Whether to automatically sync newly added data sources to the vector store.
+        Default is False to prevent duplicate processing when used with TableLookup.""")
 
     max_selection_iterations = param.Integer(default=3, doc="""
         Maximum number of iterations for the iterative table selection process.""")
@@ -916,6 +989,39 @@ class IterativeTableLookup(TableLookup):
         },
     )
 
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._memory.on_change('visible_slugs', self._update_sql_metaset_for_visible_tables)
+
+    async def _update_sql_metaset_for_visible_tables(self, key, old_slugs, new_slugs):
+        """
+        Update sql_metaset when visible_slugs changes.
+        This ensures SQL operations only work with visible tables by regenerating
+        the sql_metaset using get_metaset.
+        """
+        if new_slugs is None:
+            new_slugs = set()
+
+        # If no visible slugs or no sources, clear sql_metaset
+        if not new_slugs or not self._memory.get("sources"):
+            if "sql_metaset" in self._memory:
+                del self._memory["sql_metaset"]
+            return
+
+        # Only update if we have an existing sql_metaset to work with
+        if "sql_metaset" not in self._memory:
+            return
+
+        try:
+            sources = self._memory["sources"]
+            visible_tables = list(new_slugs)
+            if visible_tables:
+                new_sql_metaset = await get_metaset(sources, visible_tables)
+                self._memory["sql_metaset"] = new_sql_metaset
+                log_debug(f"[IterativeTableLookup] Updated sql_metaset with {len(visible_tables)} visible tables")
+        except Exception as e:
+            log_debug(f"[IterativeTableLookup] Error updating sql_metaset: {e}")
+
     async def _gather_info(self, messages: list[dict[str, str]]) -> dict:
         """
         Performs an iterative table selection process to gather context.
@@ -930,7 +1036,12 @@ class IterativeTableLookup(TableLookup):
 
         sql_metadata_map = {}
         examined_slugs = set(sql_metadata_map.keys())
+        # Filter to only include visible tables
         all_slugs = list(vector_metadata_map.keys())
+        visible_slugs = self._memory.get('visible_slugs', set())
+        if visible_slugs:
+            all_slugs = [slug for slug in all_slugs if slug in visible_slugs]
+
         failed_slugs = []
         selected_slugs = []
         chain_of_thought = ""
@@ -938,7 +1049,11 @@ class IterativeTableLookup(TableLookup):
         sources = {source.name: source for source in self._memory["sources"]}
 
         for iteration in range(1, max_iterations + 1):
-            with self._add_step(title=f"Iterative table selection {iteration} / {max_iterations}", success_title=f"Selection iteration {iteration} / {max_iterations} completed") as step:
+            with self._add_step(
+                title=f"Iterative table selection {iteration} / {max_iterations}",
+                success_title=f"Selection iteration {iteration} / {max_iterations} completed",
+                steps_layout=self.steps_layout
+            ) as step:
                 available_slugs = [
                     table_slug for table_slug in all_slugs
                     if table_slug not in examined_slugs
@@ -1069,6 +1184,14 @@ class IterativeTableLookup(TableLookup):
         sql_metaset = self._memory.get("sql_metaset")
         return str(sql_metaset)
 
+    @classmethod
+    async def applies(cls, memory: _Memory) -> bool:
+        visible_slugs = memory.get('visible_slugs', set())
+        is_necessary = len(visible_slugs) > 1
+        if not is_necessary:
+            memory["sql_metaset"] = await get_metaset(sources=memory["sources"], tables=visible_slugs)
+        return is_necessary
+
 
 class DbtslLookup(VectorLookupTool, DbtslMixin):
     """
@@ -1128,7 +1251,7 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
         This method fetches all metrics from the dbt semantic layer client and
         adds them to the vector store for semantic search.
         """
-        client = self._get_dbtsl_client()
+        client = self._instantiate_client()
         async with client.session():
             self._metric_objs = {metric.name: metric for metric in await client.metrics()}
 
@@ -1183,7 +1306,7 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
             metric_objects = {name: self._metric_objs[name] for name in metric_names if name in self._metric_objs}
 
             # Create flat list of all dimension fetch tasks
-            client = self._get_dbtsl_client()
+            client = self._instantiate_client()
             async with client.session():
                 num_cols = len(closest_metrics)
 
@@ -1290,7 +1413,6 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
 
 
 class FunctionTool(Tool):
-
     """
     FunctionTool wraps arbitrary functions and makes them available as a tool
     for an LLM to call. It inspects the arguments of the function and generates
@@ -1317,6 +1439,9 @@ class FunctionTool(Tool):
     requires = param.List(default=[], readonly=False, constant=True, doc="""
         List of context values it requires to be in memory.""")
 
+    render_output = param.Boolean(default=False, doc="""
+        Whether to render the tool output directly, even if it is not already a Lumen View or Panel Viewable.""")
+
     prompts = param.Dict(
         default={
             "main": {
@@ -1327,10 +1452,11 @@ class FunctionTool(Tool):
 
     def __init__(self, function, **params):
         model = function_to_model(function, skipped=self.requires)
+        if "purpose" not in params:
+            params["purpose"] = f"{model.__name__}: {model.__doc__}" if model.__doc__ else model.__name__
         super().__init__(
             function=function,
             name=function.__name__,
-            purpose=params.pop("purpose", model.__doc__) or "",
             **params
         )
         self._model = model
@@ -1355,6 +1481,11 @@ class FunctionTool(Tool):
             result = self.function(**arguments)
         if isinstance(result, (View, Viewable)):
             return result
+        elif self.render_output:
+            p = as_panel(result)
+            if isinstance(p, HoloViewsPanel):
+                return HoloViews(object=p.object)
+            return p
         if self.provides:
             if len(self.provides) == 1 and not isinstance(result, dict):
                 self._memory[self.provides[0]] = result

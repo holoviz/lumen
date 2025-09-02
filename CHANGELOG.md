@@ -1,5 +1,117 @@
 # Releases
 
+## Version 0.10.1
+Version 0.10.1 focuses on refining the user experience and improving the robustness of the system. It introduces several bug fixes and minor enhancements to ensure smoother operation and better usability.
+
+### What's Changed
+- Add close methods ([#1238](https://github.com/holoviz/lumen/pull/1238))
+- Import numpy ([#1239](https://github.com/holoviz/lumen/pull/1239))
+- Remove del method ([#1240](https://github.com/holoviz/lumen/pull/1240))
+- Handle equality check ([#1242](https://github.com/holoviz/lumen/pull/1242))
+- Status badge watch ready ([#1243](https://github.com/holoviz/lumen/pull/1243))
+- Add tests for agents used alone ([#1205](https://github.com/holoviz/lumen/pull/1205))
+- Implement add_directory method to vector store ([#1221](https://github.com/holoviz/lumen/pull/1221))
+- Add status descriptions to badges ([#1246](https://github.com/holoviz/lumen/pull/1246))
+- Better initial onboarding experience ([#1249](https://github.com/holoviz/lumen/pull/1249))
+- Add back retry ([#1250](https://github.com/holoviz/lumen/pull/1250))
+- Add custom source controls ([#1241](https://github.com/holoviz/lumen/pull/1241))
+- Minor tweaks to prompts, aesthetics, UX ([#1251](https://github.com/holoviz/lumen/pull/1251))
+- More tweaks ([#1252](https://github.com/holoviz/lumen/pull/1252))
+- Make retries edit by line ([#1253](https://github.com/holoviz/lumen/pull/1253))
+- Optimization tweaks ([#1254](https://github.com/holoviz/lumen/pull/1254))
+- Bug fixes and tweaks ([#1256](https://github.com/holoviz/lumen/pull/1256))
+- Allow inputting data as URLs ([#1255](https://github.com/holoviz/lumen/pull/1255))
+
+## Version 0.10.0
+This release enhances the robustness and functionality of Lumen, focusing on improving the user interface and experience. It introduces new features and improvements to existing functionalities, particularly around vector stores and data handling.
+
+### Features
+- Meta context ([#1159](https://github.com/holoviz/lumen/pull/1159))
+- Add DbtslLookup and DbtslAgent ([#1160](https://github.com/holoviz/lumen/pull/1160))
+- Add global context ([#1181](https://github.com/holoviz/lumen/pull/1181))
+- Add situate for contextual RAG ([#1198](https://github.com/holoviz/lumen/pull/1198))
+
+### Enhancements
+- Various tweaks ([#1158](https://github.com/holoviz/lumen/pull/1158))
+- Fast track column selections ([#1164](https://github.com/holoviz/lumen/pull/1164))
+- Share the same vector store ([#1163](https://github.com/holoviz/lumen/pull/1163))
+- Add upsert methods to vector stores ([#1170](https://github.com/holoviz/lumen/pull/1170))
+- Optimize vector store usage ([#1175](https://github.com/holoviz/lumen/pull/1175))
+- Improve vegalite ([#1208](https://github.com/holoviz/lumen/pull/1208))
+- Set vector store badge to be ready if no tasks ([#1213](https://github.com/holoviz/lumen/pull/1213))
+- Update prompts and models ([#1216](https://github.com/holoviz/lumen/pull/1216))
+- Stylize vega-lite ([#1220](https://github.com/holoviz/lumen/pull/1220))
+
+### Bug Fixes
+- Fix Dbtsl issues ([#1182](https://github.com/holoviz/lumen/pull/1182))
+- Fix status badge ([#1189](https://github.com/holoviz/lumen/pull/1189))
+- Fix llama install command in docs ([#1191](https://github.com/holoviz/lumen/pull/1191))
+- Fix environment variable name for Anthropic API key ([#1199](https://github.com/holoviz/lumen/pull/1199))
+- Handle empty tables ([#1222](https://github.com/holoviz/lumen/pull/1222))
+- Missing await coroutine ([#1223](https://github.com/holoviz/lumen/pull/1223))
+- Add lock to prevent duckdb corruption ([#1227](https://github.com/holoviz/lumen/pull/1227))
+- Fix parquet loading ([#1235](https://github.com/holoviz/lumen/pull/1235))
+
+### Documentation
+- Move examples block above ([#1201](https://github.com/holoviz/lumen/pull/1201))
+
+## Version 0.9.0
+This release focuses on enhancing the integration and functionality of Lumen with various data sources and embedding models. It introduces new features and improvements to better handle data visualization and user interactions.
+
+### Features
+- Add HuggingFaceEmbeddings ([#1093](https://github.com/holoviz/lumen/pull/1093))
+- Add WebLLM based LLM provider ([#1153](https://github.com/holoviz/lumen/pull/1153))
+- Add BigQuerySource ([#1062](https://github.com/holoviz/lumen/pull/1062))
+
+### Enhancements
+- Use model n ctx ([#1083](https://github.com/holoviz/lumen/pull/1083))
+- Improve logging ([#1101](https://github.com/holoviz/lumen/pull/1101))
+- Improve to work with Sonnet ([#1102](https://github.com/holoviz/lumen/pull/1102))
+- Ensure memory callbacks and rx refs are cleaned up ([#1109](https://github.com/holoviz/lumen/pull/1109))
+- Refactor ListAgent and add pagination/filters ([#1111](https://github.com/holoviz/lumen/pull/1111))
+- Add Source.get_metadata ([#1074](https://github.com/holoviz/lumen/pull/1074))
+- Avoid repeatedly looking up and streaming context ([#1043](https://github.com/holoviz/lumen/pull/1043))
+
+### Bug Fixes
+- Fix VegaLite retry by moving the log outside ([#1069](https://github.com/holoviz/lumen/pull/1069))
+- Fix SQLSelectFrom ([#1117](https://github.com/holoviz/lumen/pull/1117))
+- Fix repeat follow up queries, with no errors at all ([#1046](https://github.com/holoviz/lumen/pull/1046))
+- Fix missing arg in set_context ([#991](https://github.com/holoviz/lumen/pull/991))
+- Fix validation error ([#1050](https://github.com/holoviz/lumen/pull/1050))
+- Fix for single table ([#1056](https://github.com/holoviz/lumen/pull/1056))
+
+## Version 0.8.0
+This release introduces significant enhancements and new features to Lumen, focusing on improving user interface elements and data handling capabilities. It also includes various bug fixes to enhance stability and performance.
+
+### Features
+- Add ability to add files to VectorStore easily ([#973](https://github.com/holoviz/lumen/pull/973))
+- Add GraphicWalker view and integrate in AI ExplorerUI ([#1003](https://github.com/holoviz/lumen/pull/1003))
+- Add support for more Snowflake authenticators ([#1006](https://github.com/holoviz/lumen/pull/1006))
+
+### Enhancements
+- Make ChatInterface configurable at UI level ([#982](https://github.com/holoviz/lumen/pull/982))
+- Separate context lookups in Planner ([#983](https://github.com/holoviz/lumen/pull/983))
+- Improve VegaLite and fix issue with removing count column ([#1008](https://github.com/holoviz/lumen/pull/1008))
+- Ensure extensions are loaded in notebook export ([#1007](https://github.com/holoviz/lumen/pull/1007))
+- Do not show error traceback on lumen-ai serve ([#1014](https://github.com/holoviz/lumen/pull/1014))
+
+### Bug Fixes
+- Fix suggestions showing ([#974](https://github.com/holoviz/lumen/pull/974))
+- Fix async race condition when setting context ([#988](https://github.com/holoviz/lumen/pull/988))
+- Fix missing arg in set_context ([#991](https://github.com/holoviz/lumen/pull/991))
+- Fix regressions ([#986](https://github.com/holoviz/lumen/pull/986))
+- Fix retry ([#992](https://github.com/holoviz/lumen/pull/992))
+
+### Documentation
+- Add docs list agent ([#882](https://github.com/holoviz/lumen/pull/882))
+- Add docs and fixes for LLM Providers ([#970](https://github.com/holoviz/lumen/pull/970))
+
+## Version 0.7.0
+This release marks a significant evolution in Lumen's capabilities by introducing the new lumen.ai subpackage. It transitions Lumen from a declarative dashboarding tool to an extensible agent-based framework, facilitating advanced data interactions and retrieval augmented generation (RAG).
+
+### Features
+- This release added the new lumen.ai subpackage to Lumen, marking a shift away from Lumen being solely a declarative dashboarding and monitoring tool. Instead, Lumen is now re-envisioned as an extensible agent-based framework for chatting with data and for retrieval augmented generation (RAG). The declarative nature of Lumen's data model makes it possible for LLMs to easily generate entire data transformation pipelines, visualizations, and many other types of output.
+
 ## Version 0.6.0
 
 This release updates Lumen for compatibility with latest Panel and Param releases. Additionally it adds a `DuckDb` source, focuses on a number of improvements for validation and serialization of Lumen specs.

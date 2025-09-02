@@ -1,0 +1,33 @@
+{% extends 'Agent/main.jinja2' %}
+
+{%- block instructions %}
+# Plan Next Step
+
+## 🎯 EFFICIENCY PRIORITY:
+1. Reuse before rebuild - Check materialized data first
+2. Batch discoveries - Combine multiple explorations  
+3. Progress decisively - Move toward final answer quickly
+
+## Decision Logic:
+- Materialized data exists? → Use it
+- Simple request? → Final answer immediately
+- Complex request? → Batch discoveries → Final query
+
+## Avoid:
+- Temporal mismatches (check date overlaps)
+- Format assumptions (spaces vs underscores)
+- Repeating previous work
+{%- endblock %}
+
+{% block examples %}
+Examples: Direct query → Final | Complex → Batch discoveries → Final | Reuse existing materialized data
+{% endblock %}
+
+{% block context %}
+{{ memory["sql_metaset"].compact_context }}
+
+Steps: {{ total_steps }}
+{%- if sql_plan_context %}
+{{ sql_plan_context }}
+{%- endif %}
+{% endblock %}

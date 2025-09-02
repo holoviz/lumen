@@ -4,158 +4,84 @@
 # Instructions:
 Write a SQL query for the user's data transformation request, focusing on intent over literal interpretation.
 
-## Critical Rules:
-- Column names: Use double quotes (") to avoid identifier conflicts: `SELECT "column_name"`
+## 🎯 PRIMARY RULES:
+1. Reuse materialized data - Check "Current Knowledge" first before writing CTEs
+2. Column quotes - Use double quotes: `"column_name"`
+3. String quotes - Single quotes: `'string_value'`
+4. No CREATE statements - System handles materialization
+5. No LIMIT clauses unless explicitly requested by the user - Pagination is automatically handled
+6. Progressive approach - Each step builds on previous
+
+## Query Patterns:
+- NULL handling: Exclude unless specified
+- Clean data: `TRIM("column") != ''`, filter -9999, empty strings
+- Headers: Use OFFSET 1 for header/metadata rows
+- Mixed units: Use CASE to normalize before aggregating
+- Temporal data: Check MIN/MAX dates before joining, ensure overlap validation
 - No inline comments in SQL code
-- NULL handling: Exclude NULLs unless specified otherwise
-- Performance: Use LIMIT 100000 if unspecified, efficient ORDER BY, filter early
-- Only single SQL query allowed: use  `UNION` for multiple queries
-- Subtitle rows: If dataset has subtitle/unit rows (e.g., "Title" then "Unit"), use OFFSET to skip them
-
-## Query Strategy:
-
-**Rules:**
-- Use pattern matching: `WHERE "column" ILIKE '%pattern%'`
-- Exclude NULLs: `AND "column" IS NOT NULL`
-- Only filter by confirmed values from previous results
-- Progressive approach: each step builds on previous
-- Clean invalid values (-9999, empty strings)
 - Use CTEs only when necessary
+
+{% if not is_final_step %}## Discovery Mode:
+- LIMIT 100 for exploration only
+- One table at a time, no UNION
+- Entity search: Use multiple ILIKE patterns with variations
+- Format variation checking: underscores vs spaces using ILIKE
+{% endif %}
 {%- endblock %}
 
-{% block examples %}
-**Examples:**
-
-```sql
--- Structure (LIMIT 1-3)
-SELECT * FROM "table" LIMIT 3;
-
--- Discovery (LIMIT 3-10)
-SELECT DISTINCT "column" FROM "table"
-WHERE "column" ILIKE '%pattern%' AND "column" IS NOT NULL LIMIT 10;
-
--- UNION (LIMIT only at end)
-SELECT "season" AS "value" FROM "table" WHERE "season" IS NOT NULL
-UNION ALL
-SELECT SUBSTR("date", 1, 4) AS "value" FROM "table" WHERE "date" IS NOT NULL
-LIMIT 10;
-```
-
--- Analysis (LIMIT 100000)
-SELECT "name", COUNT(*) AS "count" FROM "table"
-WHERE "type" = 'value' AND "name" IS NOT NULL
-GROUP BY "name" ORDER BY "count" DESC LIMIT 100000;
-{% endblock %}
-
 {% block context -%}
+{%- if memory.get('visible_slugs') %}
+📊 Available: 
+{%- set tables_list = memory['visible_slugs'] | list %}
+{{- tables_list[:5] | join(', ') }}
+{%- if tables_list | length > 5 %} (+{{tables_list | length - 5}} more){%- endif %}
+{% endif %}
+
+{{ memory["sql_metaset"].compact_context }}
 
 {%- if 'sql' in memory %}
-🗃️ Previous Plan's SQL:
-```sql
-{{ memory['sql'] }}
-```
+🗃️ Previous: `{{ memory['sql'][:100] }}...`
 {%- endif %}
 
 {%- if memory.get('data') is not none %}
-📊 Summary of the data returned from the Previous Plan's SQL:
+📊 Data Summary:
 {{ memory["data"] }}
-{%- endif -%}
+{%- endif %}
 
-Additional instructions:
-- Use only `{{ dialect }}` SQL dialect.
+Use `{{ dialect }}` SQL dialect.
 {%- if dialect == 'duckdb' %}
-- If the table name originally did not have `read_*` prefix, use the original table name
-- Use table names verbatim; e.g. if table is read_csv('table.csv') then use read_csv('table.csv') and not 'table' or 'table.csv'
-- If `read_*` is used, use with alias, e.g. read_parquet('table.parq') as table_parq
-- Use double quotes (") for column names and single quotes (') for ALL string literal values (e.g., ILIKE '%pattern%', 'text_value', '2023-01-01')
-- Be sure to reference the full table slug, e.g. `source {{ separator }} table`
+
+## DuckDB Essentials:
+- Table references: Use exact names `read_csv('table.csv')`, alias if needed `as table_name`
+- Reference full slugs: `source {{ separator }} table`
+- Range predicates: `"date" >= '2023-06-01' AND "date" < '2023-09-01'`
+- Date selection: CAST(col as DATE) == '2023-06-01'
+- Window filtering: `QUALIFY ROW_NUMBER() OVER (...) <= 5`
+- Safe conversions: Use `TRY_CAST` for type conversions
+- Use materialized tables when available
 {% endif %}
 {%- if dialect == 'snowflake' %}
-- Do not under any circumstances add quotes around the database, schema or table name.
-{% endif -%}
-
-Step {{ step_number }} of SQL Plan: {{ current_step }}
-
-## Step Guidance:
-
-{%- if query_complexity == "direct" or is_final_step %}
-**Show Table/File:** DO NOT USE ANY LIMIT - Display complete table/file contents as requested by user
-{%- elif query_complexity == "discovery_required" %}
-**Discovery Query:** LIMIT 3-10 for targeted value exploration, focus on query entities
-{%- elif query_complexity == "complex_analysis" %}
-**Analysis Query:** LIMIT 100000, use all previously discovered values
-{%- else %}
-**Default:** Use appropriate LIMIT based on step intent:
-- Structure: LIMIT 1-2
-- Discovery: LIMIT 3-10
-- Final analysis: LIMIT 100000
+- No quotes around database/schema/table names
 {%- endif %}
+Step {{ step_number }}: {{ current_step }}
 
-{%- if previous_sql_plan_results is defined and previous_sql_plan_results %}
-**Previous Results:**
-{{ previous_sql_plan_results }}
+{%- if sql_plan_context %}
+## Current Knowledge:
+{{ sql_plan_context }}
 
-Use confirmed values only, build on discoveries.
+⚠️ Use materialized tables above instead of rebuilding CTEs
 {%- else %}
-**First Step:** Execute as specified, use appropriate LIMIT.
+## Starting fresh
 {%- endif %}
-
-{{ memory["sql_metaset"].table_context }}
-{%- endblock -%}
+{% endblock %}
 
 {%- block errors %}
 {{ super() }}
 {% if errors is defined and errors %}
-**Error Fixes:**
-- Quote string literals with single quotes
-- Use table names verbatim: `read_parquet('file.parq')`
-- No inline comments
-- Handle NULLs with COALESCE/IS NULL
-- Cast dates with CAST/TO_DATE
-- Clean numeric values, use TRY_CAST for safety
-- If cannot cast string, it might be due to the second row being a subtitle/unit row, so use OFFSET to skip it
-- Use TRY_CAST for numeric conversions to avoid errors
-- Only ONE limit clause is allowed, even when using UNION
-
-Casting Examples:
-
-If the query is "Which five regions have the highest total sales from 2022-02-22?"...
-
-- GOOD:
-```sql
-WITH sales_summary AS (
-    SELECT
-        "region",
-        SUM(
-            TRY_CAST(
-                REPLACE(
-                    REPLACE("amount", '$', ''),
-                    ',', ''
-                ) AS DECIMAL(10,2)
-            )
-        ) AS total_sales
-    FROM read_csv('sales.csv')
-    WHERE "sale_date" >= DATE '2022-02-22'
-      AND TRY_CAST(REPLACE(REPLACE("amount", '$', ''), ',', '') AS DECIMAL(10,2)) IS NOT NULL
-      AND "region" IS NOT NULL
-    GROUP BY "region"
-)
-SELECT
-    "region",
-    total_sales
-FROM sales_summary
-WHERE total_sales > 0
-ORDER BY total_sales DESC
-LIMIT 100000;
-```
-
-- BAD:
-```sql
-SELECT region, SUM(amount) AS total_sales
-FROM sales
-WHERE sale_date >= '2022-02-22'
-GROUP BY region
-ORDER BY total_sales DESC;
-```
+## Quick Fixes:
+- Mixed units: Use CASE to normalize units before aggregating
+- Cast errors: Use `TRY_CAST`, check for headers with OFFSET 1  
+- Table names: Use exact `read_parquet('file.parq')`
+- String quotes: Single quotes only `'text_value'`
 {%- endif -%}
 {% endblock -%}

@@ -21,17 +21,18 @@ Ground your reasoning in specific elements of both the current query and previou
 {% block examples %}
 # Examples
 
-✅ FOLLOW-UP (YES):
+✅ YES:
 User query: "Can you create a time series?"
 Data in memory: Annual revenue data with time and dollars columns
 -> YES (query is asking to visualize the existing time-based data already in memory)
-
-✅ FOLLOW-UP (YES):
 User query: "Show only the last 3 months"
 Data in memory: Data with time column extending to the last 3 months
 -> YES (can be done with existing data)
 
-❌ NOT FOLLOW-UP (NO):
+❌ NO:
+User query: "What's the total capacity?"
+Data in memory: Only revenue data
+-> NO (explicitly asking for new/refreshed data)
 User query: "What's the total capacity?"
 Data in memory: Only revenue data
 -> NO (explicitly asking for new/refreshed data)

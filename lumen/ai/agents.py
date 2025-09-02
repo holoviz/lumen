@@ -5,7 +5,7 @@ import json
 import traceback
 
 from functools import partial
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 import pandas as pd
 import panel as pn
@@ -13,8 +13,8 @@ import param
 import yaml
 
 from panel.chat import ChatInterface
-from panel.layout import Column
 from panel.viewable import Viewable, Viewer
+from panel_material_ui import Button
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
@@ -22,7 +22,6 @@ from ..base import Component
 from ..dashboard import Config
 from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource, Source
-from ..sources.duckdb import DuckDBSource
 from ..state import state
 from ..transforms.sql import SQLLimit
 from ..views import (
@@ -37,8 +36,8 @@ from .controls import RetryControls, SourceControls
 from .llm import Llm, Message
 from .memory import _Memory
 from .models import (
-    CheckContext, DbtslQueryParams, PartialBaseModel,
-    QueryCompletionValidation, RetrySpec, Sql, VegaLiteSpec,
+    DbtslQueryParams, NextStep, PartialBaseModel, QueryCompletionValidation,
+    RetrySpec, Sql, SQLRoadmap, VegaLiteSpec,
 )
 from .schemas import get_metaset
 from .services import DbtslMixin
@@ -46,7 +45,7 @@ from .tools import ToolUser
 from .translate import param_to_pydantic
 from .utils import (
     apply_changes, clean_sql, describe_data, get_data, get_pipeline,
-    get_schema, load_json, log_debug, parse_table_slug, report_error,
+    get_schema, load_json, log_debug, mutate_user_message, report_error,
     retry_llm_output, stream_details,
 )
 from .views import (
@@ -68,14 +67,14 @@ class Agent(Viewer, ToolUser, ContextProvider):
     contents such as forms or widgets to gather user input.
     """
 
+    agents = param.List(doc="""
+        List of agents this agent can invoke.""")
+
     debug = param.Boolean(default=False, doc="""
         Whether to enable verbose error reporting.""")
 
     llm = param.ClassSelector(class_=Llm, doc="""
         The LLM implementation to query.""")
-
-    steps_layout = param.ClassSelector(default=None, class_=Column, allow_None=True, doc="""
-        The layout progress updates will be streamed to.""")
 
     user = param.String(default="Agent", doc="""
         The name of the user that will be respond to the user query.""")
@@ -100,7 +99,7 @@ class Agent(Viewer, ToolUser, ContextProvider):
             self.interface.send(f"Error cannot be resolved:\n\n{exception}", user="System", respond=False)
 
         if "interface" not in params:
-            params["interface"] = ChatInterface(callback=self._interface_callback)
+            params["interface"] = ChatInterface(callback=self._interface_callback, callback_exception="raise" if self.debug else "summary")
         super().__init__(**params)
         if not self.debug:
             pn.config.exception_handler = _exception_handler
@@ -152,7 +151,6 @@ class Agent(Viewer, ToolUser, ContextProvider):
     async def respond(
         self,
         messages: list[Message],
-        render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
         """
@@ -165,8 +163,6 @@ class Agent(Viewer, ToolUser, ContextProvider):
         messages: list[Message]
             The list of messages corresponding to the user query and any other
             system messages to be included.
-        render_output: bool
-            Whether to render the output to the chat interface.
         step_title: str | None
             If the Agent response is part of a longer query this describes
             the step currently being processed.
@@ -183,31 +179,25 @@ class SourceAgent(Agent):
 
     conditions = param.List(
         default=[
-            "Use ONLY when user explicitly asks to upload or connect to NEW data sources",
-            "Do NOT use if data sources already exist UNLESS user explicitly requests upload",
+            "Use ONLY when user explicitly asks to upload or connect to NEW data sources (NOT if data sources already exist)",
         ])
 
-    table_upload_callbacks = param.Dict(default={}, doc="""
-        Dictionary mapping from file extensions to callback function,
-        e.g. {"hdf5": ...}. The callback function should accept the file bytes and
-        table alias, add or modify the `source` in memory, and return a bool
-        (True if the table was successfully uploaded).""")
-
-    purpose = param.String(default="The SourceAgent allows a user to upload new datasets, tables, or documents.")
+    purpose = param.String(default="Allows a user to upload new datasets, data, or documents.")
 
     requires = param.List(default=[], readonly=True)
 
     provides = param.List(default=["sources", "source", "document_sources"], readonly=True)
+
+    source_controls: ClassVar[SourceControls] = SourceControls
 
     _extensions = ("filedropper",)
 
     async def respond(
         self,
         messages: list[Message],
-        render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
-        source_controls = SourceControls(multiple=True, replace_controls=False, memory=self.memory, table_upload_callbacks=self.table_upload_callbacks)
+        source_controls = self.source_controls(memory=self._memory, cancellable=True, replace_controls=True)
 
         output = pn.Column(source_controls)
         if "source" not in self._memory:
@@ -233,12 +223,9 @@ class ChatAgent(Agent):
 
     conditions = param.List(
         default=[
-            "Best for high-level information about data or general conversation",
-            "Can be used to describe available tables",
-            "Use for technical questions about programming, functions, methods, or libraries",
-            "Use for 'how to' questions about specific functions or code usage",
-            "Use for questions about software tools, APIs, or programming concepts",
-            "Not useful for answering data specific questions that require querying tables",
+            "Use for high-level data information or general conversation",
+            "Use for technical questions about programming, functions, methods, libraries, APIs, software tools, or 'how to' code usage",
+            "NOT for data-specific questions that require querying data",
         ]
     )
 
@@ -262,14 +249,13 @@ class ChatAgent(Agent):
     async def respond(
         self,
         messages: list[Message],
-        render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
         context = {"tool_context": await self._use_tools("main", messages)}
         if "vector_metaset" not in self._memory and "source" in self._memory and "table" in self._memory:
             source = self._memory["source"]
             self._memory["vector_metaset"] = await get_metaset(
-                {source.name: source}, [f"{source.name}{SOURCE_TABLE_SEPARATOR}{self._memory['table']}"],
+                [source], [f"{source.name}{SOURCE_TABLE_SEPARATOR}{self._memory['table']}"],
             )
         system_prompt = await self._render_prompt("main", messages, **context)
         return await self._stream(messages, system_prompt)
@@ -279,9 +265,7 @@ class AnalystAgent(ChatAgent):
     conditions = param.List(
         default=[
             "Use for interpreting and analyzing results from executed queries",
-            "Use to explain trends, patterns, or relationships in query results",
-            "NOT for initial data queries or table exploration",
-            "NOT for technical programming questions",
+            "NOT for initial data queries, data exploration, or technical programming questions",
         ]
     )
 
@@ -304,10 +288,9 @@ class AnalystAgent(ChatAgent):
     async def respond(
         self,
         messages: list[Message],
-        render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
-        messages = await super().respond(messages, render_output, step_title)
+        messages = await super().respond(messages, step_title)
         if len(self._memory.get("data", [])) == 0 and self._memory.get("sql"):
             self._memory["sql"] = f"{self._memory['sql']}\n-- No data was returned from the query."
         return messages
@@ -330,14 +313,16 @@ class ListAgent(Agent):
 
     __abstract = True
 
-    def _get_items(self) -> list[str]:
-        """Return the list of items to display"""
+    def _get_items(self) -> dict[str, list[str]]:
+        """Return dict of items grouped by source/category"""
 
     def _use_item(self, event):
         """Handle when a user clicks on an item in the list"""
         if event.column != "show":
             return
-        item = self._df.iloc[event.row, 0]
+
+        tabulator = self._tabs[self._tabs.active]
+        item = tabulator.value.iloc[event.row, 0]
 
         if self._message_format is None:
             raise ValueError("Subclass must define _message_format")
@@ -348,83 +333,103 @@ class ListAgent(Agent):
     async def respond(
         self,
         messages: list[Message],
-        render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
         items = self._get_items()
-        header_filters = False
-        if len(items) > 10:
-            column_filter = {"type": "input", "placeholder": f"Filter by {self._column_name.lower()}..."}
-            header_filters = {self._column_name: column_filter}
 
-        self._df = pd.DataFrame({self._column_name: items})
-        item_list = pn.widgets.Tabulator(
-            self._df,
-            buttons={"show": '<i class="fa fa-eye"></i>'},
-            show_index=False,
-            min_height=150,
-            min_width=350,
-            widths={self._column_name: "90%"},
-            disabled=True,
-            page_size=10,
-            pagination="remote",
-            header_filters=header_filters,
-            sizing_mode="stretch_width",
-        )
+        # Create tabs with one tabulator per source
+        tabs = []
+        for source_name, source_items in items.items():
+            if not source_items:
+                continue
 
-        item_list.on_click(self._use_item)
+            header_filters = False
+            if len(source_items) > 10:
+                column_filter = {"type": "input", "placeholder": f"Filter by {self._column_name.lower()}..."}
+                header_filters = {self._column_name: column_filter}
+
+            df = pd.DataFrame({self._column_name: source_items})
+            item_list = pn.widgets.Tabulator(
+                df,
+                buttons={"show": '<i class="fa fa-eye"></i>'},
+                show_index=False,
+                min_height=150,
+                min_width=350,
+                widths={self._column_name: "90%"},
+                disabled=True,
+                page_size=10,
+                pagination="remote",
+                header_filters=header_filters,
+                sizing_mode="stretch_width",
+                name=source_name
+            )
+            item_list.on_click(self._use_item)
+            tabs.append(item_list)
+
+        self._tabs = pn.Tabs(*tabs, sizing_mode="stretch_width")
+
         self.interface.stream(
             pn.Column(
-                "The available tables are listed below. Click on the eye icon to show the table contents.",
-                item_list
+                f"The available {self._column_name.lower()}s are listed below. Click on the eye icon to show the {self._column_name.lower()} contents.",
+                self._tabs
             ), user="Assistant"
         )
-        return item_list
+        return self._tabs
 
 
 class TableListAgent(ListAgent):
     """
-    The TableListAgent lists all available tables and lets the user pick one.
+    The TableListAgent lists all available data and lets the user pick one.
     """
 
     conditions = param.List(default=[
-        "Use when user explicitly asks to 'list tables', 'show available tables', or 'what tables do you have'",
-        "Use for listing available data tables & datasets in source to the user, but not for planning",
-        "NOT for showing actual table contents or data within tables",
-        "NOT when user wants to query or analyze table data",
+        "Use when user explicitly asks to 'list data', 'show available data', or 'what data do you have'",
+        "NOT for showing actual data contents, querying, or analyzing data",
     ])
 
     not_with = param.List(default=["DbtslAgent", "SQLAgent"])
 
     purpose = param.String(default="""
-        Displays a list of all available tables & datasets in memory.""")
+        Displays a list of all available data & datasets in memory. Not useful for identifying which dataset to use for analysis.""")
 
     requires = param.List(default=["source"], readonly=True)
 
-    _column_name = "Table"
+    _column_name = "Data"
 
-    _message_format = "Show the table: {item}"
+    _message_format = "Show the data: {item}"
 
     @classmethod
     async def applies(cls, memory: _Memory) -> bool:
-        # Check all sources' tables in memory and see if they have greater than 1 table
-        tables_count = 0
-        for source in memory.get("sources", []):
-            tables_count += len(source.get_tables())
-            if tables_count > 1:
-                return True
-        return False
+        return len(memory.get('visible_slugs', set())) > 1
 
-    def _get_items(self) -> list[str]:
-        tables = []
+    def _get_items(self) -> dict[str, list[str]]:
         if "closest_tables" in self._memory:
-            tables = self._memory["closest_tables"]
+            # If we have closest_tables from search, return as a single group
+            return {"Search Results": self._memory["closest_tables"]}
 
-        for source in self._memory["sources"]:
-            tables += source.get_tables()
+        # Group tables by source
+        visible_slugs = self._memory.get('visible_slugs', set())
+        if not visible_slugs:
+            return {}
 
-        # remove duplicates, keeps order in which they were added
-        return pd.unique(pd.Series(tables)).tolist()
+        tables_by_source = {}
+        for slug in visible_slugs:
+            if SOURCE_TABLE_SEPARATOR in slug:
+                source_name, table_name = slug.split(SOURCE_TABLE_SEPARATOR, 1)
+            else:
+                # Fallback if separator not found
+                source_name = "Unknown"
+                table_name = slug
+
+            if source_name not in tables_by_source:
+                tables_by_source[source_name] = []
+            tables_by_source[source_name].append(table_name)
+
+        # Sort tables within each source
+        for source in tables_by_source:
+            tables_by_source[source].sort()
+
+        return tables_by_source
 
 
 class DocumentListAgent(ListAgent):
@@ -434,8 +439,7 @@ class DocumentListAgent(ListAgent):
 
     conditions = param.List(
         default=[
-            "Use when user explicitly asks to 'list documents', 'show available documents', or 'what documents do you have'",
-            "Use when user wants to see all uploaded documents",
+            "Use when user asks to list or see all available documents",
             "NOT when user asks about specific document content",
         ]
     )
@@ -456,9 +460,11 @@ class DocumentListAgent(ListAgent):
             return False  # source not loaded yet; always apply
         return len(sources) > 1
 
-    def _get_items(self) -> list[str]:
+    def _get_items(self) -> dict[str, list[str]]:
         # extract the filename, following this pattern `Filename: 'filename'``
-        return [doc["metadata"].get("filename", "untitled") for doc in self._memory.get("document_sources", [])]
+        documents = [doc["metadata"].get("filename", "untitled") for doc in self._memory.get("document_sources", [])]
+        # Return all documents under a single "Documents" category
+        return {"Documents": documents} if documents else {}
 
 
 class LumenBaseAgent(Agent):
@@ -506,7 +512,7 @@ class LumenBaseAgent(Agent):
             messages=messages,
             system=system,
             response_model=retry_model,
-            model_spec="reasoning",
+            model_spec="edit",
         )
         result = await self.llm.invoke(**invoke_kwargs)
         return apply_changes(original_lines, result.lines_changes)
@@ -515,7 +521,6 @@ class LumenBaseAgent(Agent):
         self,
         component: Component,
         messages: list | None = None,
-        render_output: bool = False,
         title: str | None = None,
         **kwargs,
     ):
@@ -525,8 +530,13 @@ class LumenBaseAgent(Agent):
 
         memory = self._memory
         retry_controls = RetryControls()
-        out = self._output_type(component=component, footer=[retry_controls], render_output=render_output, title=title, **kwargs)
         retry_controls.param.watch(_retry_invoke, "reason")
+        out = self._output_type(
+            component=component,
+            footer=[retry_controls],
+            title=title,
+            **kwargs
+        )
         out.param.watch(partial(self._update_spec, self._memory), "spec")
         if "outputs" in self._memory:
             # We have to create a new list to trigger an event
@@ -540,25 +550,27 @@ class LumenBaseAgent(Agent):
 class SQLAgent(LumenBaseAgent):
     conditions = param.List(
         default=[
-            "Use when user asks about data contained in tables (e.g., 'show me sales data', 'filter by date')",
-            "Use for calculations that require data from tables (e.g., 'calculate average', 'sum by category')",
-            "Use when user wants to display or examine table contents",
-            "If sql_metaset is not in memory, use with IterativeTableLookup",
+            "Use for displaying, examining, or querying data resulting in a data pipeline",
+            "Use for calculations that require data (e.g., 'calculate average', 'sum by category')",
             "Commonly used with AnalystAgent to analyze query results",
-            "For existing tables, only use if additional calculations are needed",
-            "NOT for technical questions about programming, functions, or libraries",
-            "NOT for questions that don't require data table access",
+            "NOT for non-data questions or technical programming help",
             "NOT useful if the user is using the same data for plotting",
         ]
     )
 
     exclusions = param.List(default=["dbtsl_metaset"])
 
-    not_with = param.List(default=["DbtslAgent", "TableLookup"])
+    max_discovery_iterations = param.Integer(default=5, doc="""
+        Maximum number of discovery iterations before requiring a final answer.""")
+
+    not_with = param.List(default=["DbtslAgent", "TableLookup", "TableListAgent"])
+
+    planning_enabled = param.Boolean(default=True, doc="""
+        Whether to enable SQL planning mode. When False, only attempts oneshot SQL generation.""")
 
     purpose = param.String(
         default="""
-        Handles the display of tables and the creation, modification, and execution
+        Handles the display of data and the creation, modification, and execution
         of SQL queries to address user queries about the data. Executes queries in
         a single step, encompassing tasks such as table joins, filtering, aggregations,
         and calculations. If additional columns are required, SQLAgent can join the
@@ -571,9 +583,13 @@ class SQLAgent(LumenBaseAgent):
                 "response_model": Sql,
                 "template": PROMPTS_DIR / "SQLAgent" / "main.jinja2",
             },
-            "check_context": {
-                "response_model": CheckContext,
-                "template": PROMPTS_DIR / "SQLAgent" / "check_context.jinja2",
+            "plan_next_step": {
+                "response_model": NextStep,
+                "template": PROMPTS_DIR / "SQLAgent" / "plan_next_step.jinja2",
+            },
+            "generate_roadmap": {
+                "response_model": SQLRoadmap,
+                "template": PROMPTS_DIR / "SQLAgent" / "generate_roadmap.jinja2",
             },
             "retry_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "SQLAgent" / "retry_output.jinja2"},
         }
@@ -583,280 +599,247 @@ class SQLAgent(LumenBaseAgent):
 
     requires = param.List(default=["sources", "source", "sql_metaset"], readonly=True)
 
-    max_discovery_iterations = param.Integer(default=5, doc="""
-        Maximum number of discovery iterations before requiring a final answer.""")
+    max_steps = param.Integer(default=20, doc="""
+        Maximum number of steps before requiring a final answer (safety limit).""")
 
-    _extensions = (
-        "codeeditor",
-        "tabulator",
-    )
+    user = param.String(default="SQL")
+
+    _extensions = ("codeeditor", "tabulator")
 
     _output_type = SQLOutput
-
-    def _truncate_summary(self, summary: str, max_chars: int = 3000) -> str:
-        """Truncate summary to prevent context overflow."""
-        if len(summary) >= max_chars:
-            summary = summary[:max_chars-3] + "..."
-        return f"\n```\n{summary}\n```"
 
     def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
         memory["sql"] = event.new
 
-    async def _check_information_completeness(self, messages: list[Message], sql_plan_context: str) -> tuple[list[str], str]:
-        """
-        Check if we have complete information to answer the query or need discovery.
-        Returns (discovery_steps, query_complexity).
-        """
-        with self._add_step(title="Smart query analysis", steps_layout=self._steps_layout) as step:
-            system_prompt = await self._render_prompt("check_context", messages, previous_sql_plan_results=sql_plan_context)
-            model_spec = self.prompts["check_context"].get("llm_spec", self.llm_spec_key)
+    async def _generate_sql_queries(
+        self, messages: list[Message], dialect: str, step_number: int,
+        is_final: bool, context_entries: list[dict] | None,
+        sql_plan_context: str | None = None, errors: list | None = None
+    ) -> dict[str, str]:
+        """Generate SQL queries using LLM."""
+        # Build SQL history from context
+        sql_query_history = {}
+        if context_entries:
+            for entry in context_entries:
+                for query in entry.get("queries", []):
+                    sql_query_history[query["sql"]] = query["table_status"]
 
-            response = self.llm.stream(
-                messages,
-                system=system_prompt,
-                model_spec=model_spec,
-                response_model=self._get_model("check_context"),
-            )
+        # Render prompt
+        system_prompt = await self._render_prompt(
+            "main",
+            messages,
+            dialect=dialect,
+            separator=SOURCE_TABLE_SEPARATOR,
+            step_number=step_number,
+            is_final_step=is_final,
+            current_step=messages[0]["content"],
+            sql_query_history=sql_query_history,
+            current_iteration=getattr(self, '_current_iteration', 1),
+            sql_plan_context=sql_plan_context,
+            errors=errors,
+        )
 
-            output = None
-            async for output in response:
-                message = ""
-                if output.query_complexity:
-                    message += f"\n\n**Query Complexity:** {output.query_complexity}"
-                if hasattr(output, 'efficient_plan') and output.efficient_plan:
-                    message += f"\n\n**Token Efficiency Plan:** {output.efficient_plan}"
-                step.stream(message, replace=True)
+        # Generate SQL
+        model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
+        output = await self.llm.invoke(
+            messages,
+            system=system_prompt,
+            model_spec=model_spec,
+            response_model=self._get_model("main"),
+        )
 
-            # Handle case where streaming didn't complete properly
-            if not output:
-                step.stream("\n\n**Result:** Using fallback - proceeding with discovery")
-                return (["Examine the user's query and provide appropriate response"], "discovery_required")
+        sql_queries = {}
+        for query_obj in (output.queries if output else []):
+            if query_obj.query and query_obj.expr_slug:
+                sql_queries[query_obj.expr_slug.strip()] = query_obj.query.strip()
 
-            query_complexity = getattr(output, 'query_complexity', 'discovery_required')
+        if not sql_queries:
+            raise ValueError("No SQL queries were generated.")
 
-            # If no discovery needed, return empty list for direct answer
-            if query_complexity == "direct":
-                step.stream("\n\n**Result:** Direct answer - no discovery needed")
-                return ([], query_complexity)
+        return sql_queries
 
-            # Get discovery steps, with fallback
-            discovery_steps = getattr(output, 'discovery_steps', [])
-            if discovery_steps:
-                instructions_text = "\n".join(f"- {instruction}" for instruction in discovery_steps)
-                step.stream(f"\n\n**Discovery Plan:**\n{instructions_text}")
-            else:
-                # Fallback discovery steps
-                discovery_steps = ["Examine the user's query and provide appropriate response"]
-                step.stream("\n\n**Discovery Plan:** Using fallback discovery")
-
-            return (discovery_steps, query_complexity)
-
-    async def _validate_sql_with_retry(self, sql_query: str, expr_slug: str, dialect: str, source, messages: list[Message], step, max_retries: int = 3) -> tuple[str, Any]:
-        """
-        Validate SQL query with retry logic. Streams directly to the provided step.
-
-        Returns:
-            tuple: (validated_sql_query, sql_expr_source)
-        """
+    async def _validate_sql(
+        self, sql_query: str, expr_slug: str, dialect: str,
+        source, messages: list[Message], step, max_retries: int = 2
+    ) -> str:
+        """Validate and potentially fix SQL query."""
+        # Clean SQL
         try:
             sql_query = clean_sql(sql_query, dialect)
         except Exception as e:
             step.stream(f"\n\n❌ SQL cleaning failed: {e}")
 
+        # Validate with retries
         for i in range(max_retries):
             try:
                 step.stream(f"\n\n`{expr_slug}`\n```sql\n{sql_query}\n```")
-                sql_expr_source = source.create_sql_expr_source({expr_slug: sql_query})
-                if i > 0:
-                    step.stream("\n\n✅ SQL validation successful")
-                return sql_query, sql_expr_source
+                source.create_sql_expr_source({expr_slug: sql_query}, materialize=True)
+                step.stream("\n\n✅ SQL validation successful")
+                return sql_query
             except Exception as e:
-                feedback = f"{type(e).__name__}: {e!s}"
-                if "KeyError" in feedback:
-                    feedback += " The table does not exist; select from one of the available tables listed."
-
                 if i == max_retries - 1:
                     step.stream(f"\n\n❌ SQL validation failed after {max_retries} attempts: {e}")
                     raise e
 
+                # Retry with LLM fix
                 step.stream(f"\n\n⚠️ SQL validation failed (attempt {i+1}/{max_retries}): {e}")
-                sql_query = clean_sql(
-                    await self._retry_output_by_line(feedback, messages, self._memory, sql_query, language="sql"),
-                    source.dialect,
+                feedback = f"{type(e).__name__}: {e!s}"
+                if "KeyError" in feedback:
+                    feedback += " The data does not exist; select from available data sources."
+
+                retry_result = await self._retry_output_by_line(
+                    feedback, messages, self._memory, sql_query, language=f"sql.{dialect}"
                 )
-                step.stream(f"\n\n**Retry {i+1}:** `{expr_slug}`\n```sql\n{sql_query}\n```")
+                sql_query = clean_sql(retry_result, dialect)
+        return sql_query
 
-    @retry_llm_output()
-    async def _generate_and_validate_sql(
-        self,
-        messages: list[Message],
-        dialect: str,
-        source,
-        step_number: int,
-        is_final_step: bool,
-        current_step: str,
-        sql_plan_context: str,
-        step_title: str,
-        query_complexity: str | None = None,
-        errors: list | None = None,
-    ) -> tuple[pn.chat.ChatStep, str, str, Any]:
-        """
-        Generate and validate SQL for any message set. Returns (sql_query, expr_slug, sql_expr_source).
-        """
-        with self.interface.param.update(callback_exception="raise"):
-            step = self._add_step(title=step_title, steps_layout=self._steps_layout, status="running")
-            system_prompt = await self._render_prompt(
-                "main",
-                messages,
-                dialect=dialect,
-                separator=SOURCE_TABLE_SEPARATOR,
-                step_number=step_number,
-                is_final_step=is_final_step,
-                current_step=current_step,
-                previous_sql_plan_results=sql_plan_context,
-                query_complexity=query_complexity,
-                errors=errors,
-            )
+    async def _execute_query(
+        self, source, expr_slug: str, sql_query: str,
+        is_final: bool, should_materialize: bool, step
+    ) -> tuple[Pipeline, Source, str]:
+        """Execute SQL query and return pipeline and summary."""
+        # Create SQL source
+        sql_expr_source = source.create_sql_expr_source(
+            {expr_slug: sql_query}, materialize=should_materialize
+        )
 
-            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
-            response = self.llm.stream(
-                messages,
-                system=system_prompt,
-                model_spec=model_spec,
-                response_model=self._get_model("main"),
-            )
+        if should_materialize:
+            self._memory["source"] = sql_expr_source
 
-            output = None
-            async for out in response:
-                output = out
-                if output.chain_of_thought:
-                    step.stream(output.chain_of_thought, replace=True)
-
-            if not output or not output.query:
-                raise ValueError("No SQL query was generated.")
-
-            sql_query = output.query
-            try:
-                # Validate SQL
-                sql_query, sql_expr_source = await self._validate_sql_with_retry(
-                    sql_query, output.expr_slug, dialect, source, messages, step
-                )
-            except Exception as e:
-                step.param.update(
-                    status="failed",
-                    title=f"SQL Failed: {e}"
-                )
-                raise ValueError(f"Failed to execute SQL:\n```sql\n{sql_query}\n```\ndue to {e}") from e
-            return step, sql_query, output.expr_slug, sql_expr_source
-
-    async def _execute_single_step(self, chat_step: pn.chat.ChatStep, plan_step: str, sql_query: str, expr_slug: str, sql_expr_source, source, iteration: int, step_num: int, is_final_step: bool) -> dict:
-        """
-        Execute a single SQL plan step and return the result.
-        """
-        if is_final_step:
-            # Final step: create full pipeline with transforms
+        # Create pipeline
+        if is_final:
             sql_transforms = [SQLLimit(limit=1_000_000, write=source.dialect, pretty=True, identify=False)]
             pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms)
-            df = await get_data(pipeline)
-
-            result = {
-                "step": plan_step,
-                "sql_query": sql_query,
-                "expr_slug": expr_slug,
-                "sql_expr_source": sql_expr_source,
-                "pipeline": pipeline,
-                "data": df,
-                "has_data": len(df) > 0,
-                "summary": f"Final query returned {len(df)} rows",
-                "is_final": True
-            }
         else:
-            temp_source = source.create_sql_expr_source({expr_slug: sql_query}, materialize=False)
-            df = await get_data(await get_pipeline(source=temp_source, table=expr_slug))
+            pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug)
 
-            summary = str(df.to_dict()) if len(df) < 100 else f"Found {len(df)} rows: {df.head(100).to_dict()}"
-            # Truncate summary to prevent context overflow
-            summary = self._truncate_summary(summary)
-            result = {
-                "step": plan_step,
-                "sql_query": sql_query,
-                "summary": summary,
-                "has_data": len(df) > 0,
-                "is_final": False
-            }
-        stream_details(f"\n\n{result['summary']}\n", chat_step, title="Results")
-        chat_step.status = "success"
-        return result
+        # Get data summary
+        df = await get_data(pipeline)
+        summary = await describe_data(df, reduce_enums=False)
+        if len(summary) >= 1000:
+            summary = summary[:1000-3] + "..."
+        summary_formatted = f"\n```\n{summary}\n```"
+        if should_materialize:
+            summary_formatted += f"\n\nMaterialized data: `{sql_expr_source.name}{SOURCE_TABLE_SEPARATOR}{expr_slug}`"
+        stream_details(f"{summary_formatted}", step, title=expr_slug)
 
-    async def _execute_sql_plan_steps(self, discovery_steps: list[str], iteration: int, dialect: str, source, sql_plan_context: str, query_complexity: str) -> list[dict]:
-        """
-        Execute all SQL plan steps sequentially, with the last step being the final answer.
-        """
-        results = []
-        current_context = sql_plan_context
+        return pipeline, sql_expr_source, summary
 
-        for i, plan_step in enumerate(discovery_steps, 1):
-            is_final_step = (i == len(discovery_steps))
-            step_title = f"SQL Plan {iteration}.{i}"
+    async def _finalize_execution(
+        self, results: dict, context_entries: list[dict],
+        messages: list[Message], step_title: str | None,
+        raise_if_empty: bool = False
+    ) -> None:
+        """Finalize execution for final step."""
+        # Get first result (typically only one for final step)
+        expr_slug, result = next(iter(results.items()))
 
-            # Generate and validate SQL
-            step_messages = [{"role": "user", "content": plan_step}]
-            chat_step, sql_query, expr_slug, sql_expr_source = await self._generate_and_validate_sql(
-                step_messages, dialect, source, i, is_final_step, plan_step, current_context, step_title, query_complexity
+        # Update memory
+        pipeline = result["pipeline"]
+        df = await get_data(pipeline)
+
+        # If dataframe is empty, raise error to fall back to planning
+        if df.empty and raise_if_empty:
+            raise ValueError(f"\nQuery `{result['sql']}` returned empty results; ensure all the WHERE filter values exist in the dataset.")
+
+        self._memory["data"] = await describe_data(df)
+        self._memory["sql"] = result["sql"]
+        self._memory["pipeline"] = pipeline
+        self._memory["table"] = pipeline.table
+        self._memory["source"] = pipeline.source
+        self._memory["sql_plan_context"] = context_entries
+
+        # Render output
+        self._render_lumen(
+            pipeline,
+            spec=result["sql"],
+            messages=messages,
+            title=step_title
+        )
+
+    @retry_llm_output(retries=3)
+    async def _execute_sql_step(
+        self,
+        action_description: str,
+        source: Source,
+        step_number: int,
+        is_final: bool = False,
+        should_materialize: bool = True,
+        context_entries: list[dict] | None = None,
+        step_title: str | None = None,
+        step=None,
+        sql_plan_context: str | None = None,
+        errors: list | None = None,
+    ) -> dict[str, Any]:
+        """Execute a single SQL generation step."""
+        with self.interface.param.update(callback_exception="raise"):
+            # Generate SQL queries
+            messages = [{"role": "user", "content": action_description}]
+            sql_queries = await self._generate_sql_queries(
+                messages, source.dialect, step_number, is_final, context_entries, sql_plan_context, errors
             )
 
-            # Execute and collect result
-            try:
-                result = await self._execute_single_step(
-                    chat_step, plan_step, sql_query, expr_slug, sql_expr_source, source, iteration, i, is_final_step
+            # Validate and execute queries
+            results = {}
+            for expr_slug, sql_query in sql_queries.items():
+                # Validate SQL
+                validated_sql = await self._validate_sql(
+                    sql_query, expr_slug, source.dialect, source, messages, step
                 )
-                results.append(result)
-                current_context += f"\n{plan_step!r} Result: {result['summary']}"
 
-                # Stop if final step failed
-                if is_final_step and not result['has_data'] and 'Failed' in result['summary']:
-                    raise Exception(result['summary'])
-            except Exception as e:
-                chat_step.status = "failed"
-                if is_final_step:
-                    raise e
+                # Execute and get results
+                pipeline, sql_expr_source, summary = await self._execute_query(
+                    source, expr_slug, validated_sql, is_final, should_materialize, step
+                )
 
-        return results
+                results[expr_slug] = {
+                    "sql": validated_sql,
+                    "summary": summary,
+                    "pipeline": pipeline,
+                    "source": sql_expr_source
+                }
 
-    async def _execute_iteration(self, iteration: int, messages: list[Message], source, sql_plan_context: str) -> dict | None:
-        """
-        Execute a single iteration of SQL planning. Returns final result if successful, None otherwise.
-        """
-        # Get SQL plan
-        discovery_steps, query_complexity = await self._check_information_completeness(
-            messages, sql_plan_context
-        )
+            # Handle final step
+            if is_final and context_entries is not None:
+                await self._finalize_execution(
+                    results, context_entries, messages, step_title
+                )
+                step.status = "success"
+                return next(iter(results.values()))["pipeline"]
 
-        # Handle direct answer case (no discovery needed)
-        if not discovery_steps:
-            # Create direct answer step from user query
-            user_query = next((m.get("content", "") for m in messages if m.get("role") == "user"), "Display the data")
-            discovery_steps = [user_query]
+            step.status = "success"
+            return results
 
-        # Execute all SQL plan steps
-        dialect = self._memory["source"].dialect
-        results = await self._execute_sql_plan_steps(
-            discovery_steps, iteration, dialect, source, sql_plan_context, query_complexity
-        )
+    def _build_context_entry(
+        self, step_number: int, next_step: NextStep, step_result: dict[str, Any]
+    ) -> dict:
+        """Build context entry from step results."""
+        entry = {
+            "step_number": step_number,
+            "step_type": next_step.step_type,
+            "action_description": next_step.action_description,
+            "should_materialize": next_step.should_materialize,
+            "queries": [],
+            "materialized_tables": []
+        }
 
-        # The LAST result is always the final query/pipeline
-        final_result = results[-1]
-        if final_result["has_data"]:
-            # Save successful SQL plan context for potential follow-up queries
-            self._memory["sql_plan_context"] = sql_plan_context + f"\nIteration {iteration} Results:\n" + "\n".join(
-                f"{i+1}. {r['step']}\nResult: {self._truncate_summary(r['summary'])}"
-                for i, r in enumerate(results)
-            )
-            return final_result
+        for expr_slug, result in step_result.items():
+            if next_step.should_materialize:
+                table_status = f"{result['source']}{SOURCE_TABLE_SEPARATOR}{expr_slug}"
+            else:
+                table_status = "<unmaterialized>"
+            query_info = {
+                "sql": result["sql"],
+                "expr_slug": expr_slug,
+                "table_status": table_status,
+                "summary": result["summary"],
+            }
+            entry["queries"].append(query_info)
 
-        # Store results for context in next iteration
-        self._iteration_results = results
-        return None
+            if next_step.should_materialize:
+                entry["materialized_tables"].append(expr_slug)
+
+        return entry
 
     def _update_context_for_next_iteration(self, sql_plan_context: str, iteration: int) -> str:
         """Update context with results from current iteration."""
@@ -868,81 +851,274 @@ class SQLAgent(LumenBaseAgent):
             sql_plan_context += f"\nIteration {iteration} Results:\n{results_summary}"
         return sql_plan_context[-10000:]
 
-    async def _create_pipeline_from_result(self, result: dict, messages: list[Message], render_output: bool, step_title: str) -> Any:
-        """Create the final pipeline from the result of the last SQL plan step."""
-        # Update memory with final result
-        self._memory["data"] = await describe_data(result["data"])
-        self._memory["sql"] = result["sql_query"]
-        self._memory["pipeline"] = result["pipeline"]
-        self._memory["table"] = result["pipeline"].table
+    def _format_context(self, context_entries: list[dict]) -> str:
+        """Format the enhanced context entries into a readable string."""
+        if not context_entries:
+            return ""
 
-        # Update sources
-        if isinstance(self._memory["sources"], dict):
-            self._memory["sources"][result["expr_slug"]] = result["sql_expr_source"]
-        else:
-            self._memory["sources"].append(result["sql_expr_source"])
-        self._memory["source"] = result["sql_expr_source"]
-        self._memory.trigger("sources")
+        # Build materialized tables section - deduplicate
+        materialized_tables = []
+        seen = set()
+        for entry in context_entries:
+            for table in entry.get("materialized_tables", []):
+                if table not in seen:
+                    materialized_tables.append(table)
+                    seen.add(table)
 
-        # Render output
-        self._render_lumen(
-            result["pipeline"],
-            spec=result["sql_query"],
-            messages=messages,
-            render_output=render_output,
-            title=step_title
-        )
-        return result["pipeline"]
+        # Format materialized tables
+        base_context = ""
+        if materialized_tables:
+            recent_tables = materialized_tables[-3:]  # Keep only recent 3 tables
+            base_context = "**Available Materialized Data (for reuse):**\n"
+            for table in recent_tables:
+                base_context += f"- `{table}`\n"
+            if len(materialized_tables) > 3:
+                base_context += f"- ... and {len(materialized_tables) - 3} more\n"
+            base_context += "\n"
+
+        # Build recent steps section - show last 3 steps with full context
+        steps_context = "**Recent Steps:**\n"
+        for entry in context_entries[-3:]:  # Only last 3 steps
+            steps_context += f"**Step {entry['step_number']}:** {entry['action_description']}\n"
+
+            # Add query information with full context
+            if entry['queries']:
+                for query in entry['queries']:
+                    steps_context += f"`{query['expr_slug']}:` {query['sql']}\n"
+                    steps_context += f"Result: {query['summary']}\n"
+                    if query['table_status'] != "<unmaterialized>":
+                        steps_context += f"`Referenced as {query['table_status']}`\n"
+            steps_context += "\n"
+
+        return base_context + steps_context
+
+    async def _plan_next_step(self, messages: list[Message], sql_plan_context: str, total_steps: int) -> NextStep:
+        """Plan the next step based on current context."""
+        with self._add_step(title=f"Planning step {total_steps}", steps_layout=self._steps_layout) as step:
+            system_prompt = await self._render_prompt(
+                "plan_next_step",
+                messages,
+                sql_plan_context=sql_plan_context,
+                total_steps=total_steps,
+            )
+
+            model_spec = self.prompts.get("plan_next_step", {}).get("llm_spec", self.llm_spec_key)
+            response = self.llm.stream(
+                messages,
+                system=system_prompt,
+                model_spec=model_spec,
+                response_model=NextStep,
+            )
+
+            output = None
+            async for output in response:
+                message = f"**Step Validation:**\n{output.pre_step_validation}\n\n"
+                message += f"**Reasoning:** {output.reasoning}\n\n"
+                message += f"**Next Action ({output.step_type}):** {output.action_description}"
+                if output.is_final_answer:
+                    message += "\n\n**Ready to provide final answer!**"
+                step.stream(message, replace=True)
+
+            return output
+
+    async def _generate_roadmap(self, messages: list[Message]) -> SQLRoadmap:
+        """Generate initial execution roadmap."""
+        with self._add_step(title="Generating execution roadmap", steps_layout=self._steps_layout) as step:
+            # Analyze query for characteristics
+            query_content = messages[0].get("content", "") if messages else ""
+            query_type = "complex" if any(word in query_content.lower() for word in ["compare", "vs", "between", "join"]) else "simple"
+            requires_joins = "join" in query_content.lower() or "vs" in query_content.lower()
+            has_temporal = any(word in query_content.lower() for word in ["date", "time", "year", "month", "season", "period"])
+
+            system_prompt = await self._render_prompt(
+                "generate_roadmap",
+                messages,
+                query_type=query_type,
+                requires_joins=requires_joins,
+                has_temporal=has_temporal,
+            )
+
+            model_spec = self.prompts.get("generate_roadmap", {}).get("llm_spec", self.llm_spec_key)
+            response = self.llm.stream(
+                messages,
+                system=system_prompt,
+                model_spec=model_spec,
+                response_model=self._get_model("generate_roadmap"),
+            )
+
+            roadmap = None
+            async for output in response:
+                # Build summary progressively
+                summary = f"**Execution Plan ({output.estimated_steps} steps)**\n\n"
+
+                if output.discovery_steps:
+                    summary += "**Discovery Phase:**\n"
+                    for i, step_desc in enumerate(output.discovery_steps, 1):
+                        summary += f"{i}. {step_desc}\n"
+
+                if output.validation_checks:
+                    summary += "\n**Validation Checks:**\n"
+                    for check in output.validation_checks:
+                        summary += f"- {check}\n"
+
+                if output.potential_issues:
+                    summary += "\n**Potential Issues:**\n"
+                    for issue in output.potential_issues:
+                        summary += f"⚠️ {issue}\n"
+
+                step.stream(summary, replace=True)
+                roadmap = output
+
+            return roadmap
+
+    def _format_roadmap(self, roadmap: SQLRoadmap) -> str:
+        """Format roadmap for context."""
+        context = "**Execution Roadmap:**\n"
+        context += f"Estimated Steps: {roadmap.estimated_steps}\n\n"
+
+        if roadmap.discovery_steps:
+            context += "Discovery Steps:\n"
+            for step in roadmap.discovery_steps:
+                context += f"- {step}\n"
+
+        if roadmap.validation_checks:
+            context += "\nValidation Checks:\n"
+            for check in roadmap.validation_checks:
+                context += f"- {check}\n"
+
+        if roadmap.join_strategy:
+            context += f"\nJoin Strategy: {roadmap.join_strategy}\n"
+
+        return context
+
+    async def _attempt_oneshot_sql(
+        self,
+        messages: list[Message],
+        source: Source,
+        step_title: str | None = None,
+    ) -> Pipeline | None:
+        """
+        Attempt one-shot SQL generation without planning context.
+        Returns Pipeline if successful, None if fallback to planning is needed.
+        """
+        with self._add_step(
+            title="Attempting one-shot SQL generation...",
+            steps_layout=self._steps_layout,
+            status="running"
+        ) as step:
+            # Generate SQL without planning context
+            sql_queries = await self._generate_sql_queries(
+                messages, source.dialect, step_number=1,
+                is_final=True, context_entries=None
+            )
+
+            # Validate and execute the first query
+            expr_slug, sql_query = next(iter(sql_queries.items()))
+            validated_sql = await self._validate_sql(
+                sql_query, expr_slug, source.dialect, source, messages, step
+            )
+
+            # Execute and get results
+            pipeline, sql_expr_source, summary = await self._execute_query(
+                source, expr_slug, validated_sql, is_final=True,
+                should_materialize=True, step=step
+            )
+
+            # Use existing finalization logic
+            results = {expr_slug: {
+                "sql": validated_sql,
+                "summary": summary,
+                "pipeline": pipeline,
+                "source": sql_expr_source
+            }}
+
+            await self._finalize_execution(
+                results, [], messages, step_title, raise_if_empty=True
+            )
+
+            step.status = "success"
+            step.success_title = "One-shot SQL generation successful"
+        return pipeline
+
+    async def _execute_planning_mode(
+        self,
+        messages: list[Message],
+        source: Source,
+        step_title: str | None = None,
+    ) -> Pipeline:
+        """
+        Execute the planning mode with roadmap generation and iterative refinement.
+        """
+        # Generate initial roadmap for planning mode
+        roadmap = await self._generate_roadmap(messages)
+
+        # Initialize context tracking
+        context_entries = []
+        total_steps = 0
+        roadmap_context = self._format_roadmap(roadmap)
+
+        # Main execution loop (existing planning logic)
+        while total_steps < self.max_steps:
+            # Build context for planning
+            sql_plan_context = self._format_context(context_entries)
+            # Include roadmap context
+            if roadmap_context and total_steps == 0:
+                sql_plan_context = roadmap_context + "\n\n" + sql_plan_context
+            total_steps += 1
+
+            # Plan next step
+            next_step = await self._plan_next_step(messages, sql_plan_context, total_steps)
+
+            with self._add_step(
+                title=step_title or f"Step {total_steps}: Generating SQL",
+                steps_layout=self._steps_layout,
+                status="running"
+            ) as step:
+                result = await self._execute_sql_step(
+                    next_step.action_description,
+                    source,
+                    total_steps,
+                    is_final=next_step.is_final_answer,
+                    context_entries=context_entries,
+                    sql_plan_context=sql_plan_context,
+                    should_materialize=next_step.is_final_answer and next_step.should_materialize,
+                    step_title=step_title,
+                    step=step
+                )
+            if next_step.is_final_answer:
+                return result
+
+            # Update context
+            context_entry = self._build_context_entry(
+                total_steps, next_step, result
+            )
+            context_entries.append(context_entry)
+
+            # Keep context window manageable
+            if len(context_entries) > 10:
+                context_entries = context_entries[-10:]
+
+        raise ValueError(f"Exceeded maximum steps ({self.max_steps}) without reaching a final answer.")
 
     async def respond(
         self,
         messages: list[Message],
-        render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
-        """
-        Simplified SQL generation where the last SQL plan step is the final query.
-        """
-        # Setup sources and metadata
-        sources = self._memory["sources"] if isinstance(self._memory["sources"], dict) else {source.name: source for source in self._memory["sources"]}
-        vector_metaset = self._memory["sql_metaset"].vector_metaset
-        selected_slugs = list(vector_metaset.vector_metadata_map)
-        tables_to_source = {parse_table_slug(table_slug, sources)[1]: parse_table_slug(table_slug, sources)[0] for table_slug in selected_slugs}
-        source = next(iter(tables_to_source.values()))
-
-        # Handle multiple sources if needed
-        if len(set(tables_to_source.values())) > 1:
-            mirrors = {}
-            for a_table, a_source in tables_to_source.items():
-                if not any(a_table.rstrip(")").rstrip("'").rstrip('"').endswith(ext)
-                           for ext in [".csv", ".parquet", ".parq", ".json", ".xlsx"]):
-                    renamed_table = a_table.replace(".", "_")
-                else:
-                    renamed_table = a_table
-                if SOURCE_TABLE_SEPARATOR in renamed_table:
-                    _, renamed_table = renamed_table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
-                mirrors[renamed_table] = (a_source, renamed_table)
-            source = DuckDBSource(uri=":memory:", mirrors=mirrors)
-
-        # Execute SQL plan iterations
-        # Use saved context from previous queries if available (follow-up scenarios)
-        sql_plan_context = self._memory.get("sql_plan_context", "")
-
-        for iteration in range(1, self.max_discovery_iterations + 1):
-            final_result = await self._execute_iteration(
-                iteration, messages, source, sql_plan_context
-            )
-
-            if final_result:
-                return await self._create_pipeline_from_result(
-                    final_result, messages, render_output, step_title
-                )
-
-            # Update context for next iteration if no final result
-            sql_plan_context = self._update_context_for_next_iteration(
-                sql_plan_context, iteration
-            )
-        return self._memory["pipeline"]
+        """Execute SQL generation with one-shot attempt first, then iterative refinement if needed."""
+        # Setup sources
+        source = self._memory["source"]
+        try:
+            # Try one-shot approach first
+            pipeline = await self._attempt_oneshot_sql(messages, source, step_title)
+        except Exception as e:
+            if not self.planning_enabled:
+                # If planning is disabled, re-raise the error instead of falling back
+                raise e
+            # Fall back to planning mode if enabled
+            messages = mutate_user_message(str(e), messages)
+            pipeline = await self._execute_planning_mode(messages, source, step_title)
+        return pipeline
 
 
 class DbtslAgent(LumenBaseAgent, DbtslMixin):
@@ -959,7 +1135,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
 
     purpose = param.String(
         default="""
-        Responsible for displaying tables to answer user queries about
+        Responsible for displaying data to answer user queries about
         business metrics using dbt Semantic Layers. This agent can compile
         and execute metric queries against a dbt Semantic Layer."""
     )
@@ -984,10 +1160,9 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
         The source associated with the dbt Semantic Layer.""",
     )
 
-    _extensions = (
-        "codeeditor",
-        "tabulator",
-    )
+    user = param.String(default="DBT")
+
+    _extensions = ("codeeditor", "tabulator")
 
     _output_type = SQLOutput
 
@@ -1058,7 +1233,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
 
         try:
             # Execute the query against the dbt Semantic Layer
-            client = self._get_dbtsl_client()
+            client = self._instantiate_client()
             async with client.session():
                 sql_query = await client.compile_sql(
                     metrics=query_params.get("metrics", []),
@@ -1086,18 +1261,16 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
             pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms)
 
             df = await get_data(pipeline)
-            sql_metaset = await get_metaset({sql_expr_source.name: sql_expr_source}, [expr_slug])
+            sql_metaset = await get_metaset([sql_expr_source], [expr_slug])
             vector_metaset = sql_metaset.vector_metaset
 
             # Update memory
             self._memory["data"] = await describe_data(df)
-            self._memory["sources"].append(sql_expr_source)
             self._memory["source"] = sql_expr_source
             self._memory["pipeline"] = pipeline
             self._memory["table"] = pipeline.table
             self._memory["dbtsl_vector_metaset"] = vector_metaset
             self._memory["dbtsl_sql_metaset"] = sql_metaset
-            self._memory.trigger("sources")
             return sql_query, pipeline
         except Exception as e:
             report_error(e, step)
@@ -1106,7 +1279,6 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
     async def respond(
         self,
         messages: list[Message],
-        render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
         """
@@ -1119,7 +1291,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
             self._memory["__error__"] = str(e)
             return None
 
-        self._render_lumen(pipeline, spec=sql_query, messages=messages, render_output=render_output, title=step_title)
+        self._render_lumen(pipeline, spec=sql_query, messages=messages, title=step_title)
         return pipeline
 
 
@@ -1216,8 +1388,10 @@ class BaseViewAgent(LumenBaseAgent):
                         steps_layout=self._steps_layout,
                     ) as retry_step:
                         view = await self._retry_output_by_line(e, messages, self._memory, yaml.safe_dump(spec), language="")
-                        retry_step.stream(f"\n\n```json\n{view}\n```")
-                    spec = yaml.safe_load(view)
+                        if "json_spec: " in view:
+                            view = view.split("json_spec: ")[-1].rstrip('"').rstrip("'")
+                        spec = json.loads(view)
+                        retry_step.stream(f"\n\n```json\n{spec}\n```")
                     if i == 2:
                         raise
 
@@ -1238,7 +1412,6 @@ class BaseViewAgent(LumenBaseAgent):
     async def respond(
         self,
         messages: list[Message],
-        render_output: bool = False,
         step_title: str | None = None,
     ) -> Any:
         """
@@ -1255,17 +1428,15 @@ class BaseViewAgent(LumenBaseAgent):
         spec = await self._create_valid_spec(messages, pipeline, schema, step_title)
         self._memory["view"] = dict(spec, type=self.view_type)
         view = self.view_type(pipeline=pipeline, **spec)
-        self._render_lumen(view, messages=messages, render_output=render_output, title=step_title)
+        self._render_lumen(view, messages=messages, title=step_title)
         return view
 
 
 class hvPlotAgent(BaseViewAgent):
     conditions = param.List(
         default=[
-            "Use for exploratory data analysis and interactive plots",
+            "Use for exploratory data analysis, interactive plots, and dynamic filtering",
             "Use for quick, iterative data visualization during analysis",
-            "Use when user requests plots or charts for data exploration",
-            "Use for interactive widgets and dynamic filtering",
         ]
     )
 
@@ -1325,8 +1496,7 @@ class hvPlotAgent(BaseViewAgent):
 class VegaLiteAgent(BaseViewAgent):
     conditions = param.List(
         default=[
-            "Use for explanatory, publication-ready visualizations",
-            "Use when user specifically requests Vega-Lite charts",
+            "Use for publication-ready visualizations or when user specifically requests Vega-Lite charts",
             "Use for polished charts intended for presentation or sharing",
         ]
     )
@@ -1354,42 +1524,89 @@ class VegaLiteAgent(BaseViewAgent):
             return
         memory["view"] = dict(spec, type=self.view_type)
 
-    def _add_geographic_items(self, vega_spec: dict, vega_spec_str: str):
-        # standardize the vega spec, by migrating to layer
+    def _standardize_to_layers(self, vega_spec: dict) -> None:
+        """Standardize vega spec by migrating to layer format."""
         if "layer" not in vega_spec:
-            vega_spec["layer"] = [{"encoding": vega_spec.pop("encoding", None), "mark": vega_spec.pop("mark", None)}]
+            vega_spec["layer"] = [{
+                "encoding": vega_spec.pop("encoding", None),
+                "mark": vega_spec.pop("mark", None)
+            }]
 
-        # make it zoomable
+    def _add_zoom_params(self, vega_spec: dict) -> None:
+        """Add zoom parameters to vega spec."""
         if "params" not in vega_spec:
             vega_spec["params"] = []
 
-        # Get existing param names
-        existing_param_names = {param.get("name") for param in vega_spec["params"] if isinstance(param, dict) and "name" in param}
+        existing_param_names = {
+            param.get("name") for param in vega_spec["params"]
+            if isinstance(param, dict) and "name" in param
+        }
+
         for p in VEGA_ZOOMABLE_MAP_ITEMS["params"]:
             if p.get("name") not in existing_param_names:
                 vega_spec["params"].append(p)
 
+    def _setup_projection(self, vega_spec: dict) -> None:
+        """Setup map projection settings."""
         if "projection" not in vega_spec:
             vega_spec["projection"] = {"type": "mercator"}
         vega_spec["projection"].update(VEGA_ZOOMABLE_MAP_ITEMS["projection"])
 
-        # Handle map projections and add geographic outlines
-        # - albersUsa projection is incompatible with world map data
-        # - Each map type needs appropriate boundary outlines
+    def _handle_map_compatibility(self, vega_spec: dict, vega_spec_str: str) -> None:
+        """Handle map projection compatibility and add geographic outlines."""
         has_world_map = "world-110m.json" in vega_spec_str
         uses_albers_usa = vega_spec["projection"]["type"] == "albersUsa"
 
-        # If trying to use albersUsa with world map, switch to mercator projection
         if has_world_map and uses_albers_usa:
-            vega_spec["projection"] = "mercator"  # cannot use albersUsa with world-110m
-        # Add world map outlines if needed
+            # albersUsa incompatible with world map
+            vega_spec["projection"] = "mercator"
         elif not has_world_map and not uses_albers_usa:
+            # Add world map outlines if needed
             vega_spec["layer"].append(VEGA_MAP_LAYER["world"])
+
+    def _add_geographic_items(self, vega_spec: dict, vega_spec_str: str) -> dict:
+        """Add geographic visualization items to vega spec."""
+        self._standardize_to_layers(vega_spec)
+        self._add_zoom_params(vega_spec)
+        self._setup_projection(vega_spec)
+        self._handle_map_compatibility(vega_spec, vega_spec_str)
         return vega_spec
+
+    @classmethod
+    def _extract_as_keys(cls, transforms: list[dict]) -> list[str]:
+        """
+        Extracts all 'as' field names from a list of Vega-Lite transform definitions.
+
+        Parameters
+        ----------
+        transforms : list[dict]
+            A list of Vega-Lite transform objects.
+
+        Returns
+        -------
+        list[str]
+            A list of field names from 'as' keys (flattened, deduplicated).
+        """
+        as_fields = []
+        for t in transforms:
+            # Top-level 'as'
+            if "as" in t:
+                if isinstance(t["as"], list):
+                    as_fields.extend(t["as"])
+                elif isinstance(t["as"], str):
+                    as_fields.append(t["as"])
+            for key in ("aggregate", "joinaggregate", "window"):
+                if key in t and isinstance(t[key], list):
+                    for entry in t[key]:
+                        if "as" in entry:
+                            as_fields.append(entry["as"])
+
+        return list(dict.fromkeys(as_fields))
 
     async def _ensure_columns_exists(self, vega_spec: dict):
         schema = await get_schema(self._memory["pipeline"])
 
+        fields = self._extract_as_keys(vega_spec.get('transform', [])) + list(schema)
         for layer in vega_spec.get("layer", []):
             encoding = layer.get("encoding", {})
             if not encoding:
@@ -1404,7 +1621,7 @@ class VegaLiteAgent(BaseViewAgent):
                     fields_to_check.extend(item["field"] for item in enc_def if isinstance(item, dict) and "field" in item)
 
                 for field in fields_to_check:
-                    if field not in schema and field.lower() not in schema and field.upper() not in schema:
+                    if field not in fields and field.lower() not in fields and field.upper() not in fields:
                         raise ValueError(f"Field '{field}' not found in schema.")
 
     async def _extract_spec(self, spec: dict[str, Any]):
@@ -1437,13 +1654,13 @@ class VegaLiteAgent(BaseViewAgent):
 
 
 class AnalysisAgent(LumenBaseAgent):
+
     analyses = param.List([])
 
     conditions = param.List(
         default=[
-            "Use when user requests custom analysis or advanced analytics",
+            "Use for custom analysis, advanced analytics, or domain-specific analysis methods",
             "Use when built-in SQL/visualization agents are insufficient",
-            "Use when user wants to apply domain-specific analysis methods",
             "NOT for simple queries or basic visualizations",
         ]
     )
@@ -1468,9 +1685,7 @@ class AnalysisAgent(LumenBaseAgent):
     async def respond(
         self,
         messages: list[Message],
-        render_output: bool = False,
-        step_title: str | None = None,
-        agents: list[Agent] | None = None,
+        step_title: str | None = None
     ) -> Any:
         pipeline = self._memory["pipeline"]
         analyses = {a.name: a for a in self.analyses if await a.applies(pipeline)}
@@ -1515,7 +1730,7 @@ class AnalysisAgent(LumenBaseAgent):
         with self.interface.param.update(callback_exception="raise"):
             with self._add_step(title=step_title or "Creating view...", steps_layout=self._steps_layout) as step:
                 await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
-                analysis_callable = analyses[analysis_name].instance(agents=agents)
+                analysis_callable = analyses[analysis_name].instance(agents=self.agents, memory=self._memory, interface=self.interface)
 
                 data = await get_data(pipeline)
                 for field in analysis_callable._field_params:
@@ -1538,6 +1753,7 @@ class AnalysisAgent(LumenBaseAgent):
                     # Ensure data reflects processed pipeline
                     if pipeline is not self._memory["pipeline"]:
                         pipeline = self._memory["pipeline"]
+                        data = await get_data(pipeline)
                         if len(data) > 0:
                             self._memory["data"] = await describe_data(data)
                     yaml_spec = yaml.dump(spec)
@@ -1551,7 +1767,7 @@ class AnalysisAgent(LumenBaseAgent):
         if view is None and analysis.autorun:
             self.interface.stream("Failed to find an analysis that applies to this data")
         else:
-            self._render_lumen(view, analysis=analysis, pipeline=pipeline, render_output=render_output, title=step_title)
+            self._render_lumen(view, analysis=analysis, pipeline=pipeline, title=step_title)
             self.interface.stream(
                 analysis.message or f"Successfully created view with {analysis_name} analysis.", user="Assistant"
             )
@@ -1568,10 +1784,8 @@ class ValidationAgent(Agent):
     conditions = param.List(
         default=[
             "Use to validate whether executed plans fully answered user queries",
-            "Use when plan execution is complete but validation is needed",
             "Use to identify missing elements from the original user request",
-            "NOT for data analysis or pattern identification",
-            "NOT for technical programming questions",
+            "NOT for data analysis, pattern identification, or technical programming questions",
         ]
     )
 
@@ -1622,9 +1836,8 @@ class ValidationAgent(Agent):
         self._memory["validation_result"] = result
 
         response_parts = []
-        if result.yes:
+        if result.correct:
             return result
-
 
         response_parts.append(f"**Query Validation: ✗ Incomplete** - {result.chain_of_thought}")
         if result.missing_elements:
@@ -1634,7 +1847,7 @@ class ValidationAgent(Agent):
             for i, suggestion in enumerate(result.suggestions, 1):
                 response_parts.append(f"{i}. {suggestion}")
 
-        button = pn.widgets.Button(name="Rerun", on_click=on_click)
+        button = Button(name="Rerun", on_click=on_click)
         footer_objects = [button]
         formatted_response = "\n\n".join(response_parts)
         self.interface.stream(formatted_response, user=self.user, max_width=self._max_width, footer_objects=footer_objects)

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 
 from functools import partial
@@ -12,13 +11,13 @@ import instructor
 import panel as pn
 import param
 
+from instructor import Mode, patch
 from instructor.dsl.partial import Partial
-from instructor.patch import Mode, patch
 from pydantic import BaseModel
 
-from .components import StatusBadge
 from .interceptor import Interceptor
 from .models import YesNo
+from .services import AzureOpenAIMixin, LlamaCppMixin, OpenAIMixin
 from .utils import format_exception, log_debug, truncate_string
 
 
@@ -55,6 +54,9 @@ class Llm(param.Parameterized):
         'default', 'reasoning' and 'sql'. Agents may pick which model to
         invoke for different reasons.""")
 
+    _ready = param.Boolean(default=False, doc="""
+        Whether the LLM has been initialized and is ready to use.""")
+
     # Whether the LLM supports streaming of any kind
     _supports_stream = True
 
@@ -68,7 +70,6 @@ class Llm(param.Parameterized):
             if isinstance(params["mode"], str):
                 params["mode"] = Mode[params["mode"].upper()]
         super().__init__(**params)
-        self._status = StatusBadge(name="LLM Pending", description="Waiting for LLM to initialize")
         if not self.model_kwargs.get("default"):
             raise ValueError(
                 f"Please specify a 'default' model in the model_kwargs "
@@ -162,24 +163,17 @@ class Llm(param.Parameterized):
             return chunk.choices[0].delta.content or ""
         return ""
 
-    def status(self):
-        return self._status
-
     async def initialize(self, log_level: str):
         try:
-            self._status.status = "running"
+            self._ready = False
             await self.invoke(
                 messages=[{'role': 'user', 'content': 'Are you there? YES | NO'}],
                 model_spec="ui",
                 response_model=YesNo
             )
-            self._status.param.update(status="success", name='LLM Ready', description=f"Ready to use LLM from {self.__class__.__name__} (default: {self.model_kwargs['default'].get('model', 'unknown')}).")
+            self._ready = True
         except Exception as e:
-            self._status.param.update(
-                status="failed",
-                name="LLM Not Connected",
-                description='❌ '+(format_exception(e, limit=3) if log_level == 'DEBUG' else "Failed to connect to LLM"),
-            )
+            self._ready = False
             raise e
 
     async def stream(
@@ -276,7 +270,7 @@ class Llm(param.Parameterized):
         return result
 
 
-class LlamaCpp(Llm):
+class LlamaCpp(Llm, LlamaCppMixin):
     """
     A LLM implementation using Llama.cpp Python wrapper together
     with huggingface_hub to fetch the models.
@@ -284,39 +278,50 @@ class LlamaCpp(Llm):
 
     chat_format = param.String(constant=True)
 
-    temperature = param.Number(default=0.4, bounds=(0, None), constant=True)
+    display_name = param.String(default="Llama.cpp", constant=True, doc="Display name for UI")
 
     mode = param.Selector(default=Mode.JSON_SCHEMA, objects=BASE_MODES)
 
     model_kwargs = param.Dict(default={
         "default": {
-            "repo": "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
-            "model_file": "qwen2.5-coder-7b-instruct-q5_k_m.gguf",
+            "repo_id": "unsloth/Qwen3-8B-GGUF",
+            "filename": "Qwen3-8B-Q5_K_M.gguf",
             "chat_format": "qwen",
         },
     })
+
+    select_models = param.List(default=[
+        "unsloth/Qwen3-8B-GGUF",
+        "microsoft/Phi-3-mini-4k-instruct-gguf",
+        "meta-llama/Llama-2-7b-chat-hf",
+        "TheBloke/CodeLlama-7B-Instruct-GGUF"
+    ], constant=True, doc="Available models for selection dropdowns")
+
+    temperature = param.Number(default=0.4, bounds=(0, None), constant=True)
 
     def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
         if isinstance(model_spec, dict):
             return model_spec
 
-        model_kwargs = self.model_kwargs["default"]
+        # First get base model kwargs using parent implementation
         if model_spec in self.model_kwargs or "/" not in model_spec:
-            model_kwargs = super()._get_model_kwargs(model_kwargs)
+            model_kwargs = super()._get_model_kwargs(model_spec)
         else:
-            repo, model_spec = model_spec.rsplit("/", 1)
-            if ":" in model_spec:
-                model_file, chat_format = model_spec.split(":")
-                model_kwargs["chat_format"] = chat_format
-            else:
-                model_file = model_spec
-            model_kwargs["repo"] = repo
-            model_kwargs["model_file"] = model_file
+            # Use mixin to resolve repo_id/filename from model spec string
+            base_kwargs = self.model_kwargs["default"]
+            model_kwargs = self.resolve_model_spec(model_spec, base_kwargs)
 
+        # Ensure n_ctx is set (0 = from model)
         if "n_ctx" not in model_kwargs:
-            # 0 = from model
             model_kwargs["n_ctx"] = 0
-        return dict(model_kwargs)
+
+        # Merge with instance-level configuration from the mixin
+        try:
+            full_kwargs = self._instantiate_client_kwargs(model_kwargs=model_kwargs)
+            return full_kwargs
+        except Exception:
+            # Fallback to just model_kwargs if there's an issue with instance config
+            return dict(model_kwargs)
 
     @property
     def _client_kwargs(self) -> dict[str, Any]:
@@ -337,47 +342,23 @@ class LlamaCpp(Llm):
         model_kwargs = model_kwargs or cls.model_kwargs
         if 'default' not in model_kwargs:
             model_kwargs['default'] = cls.model_kwargs['default']
-        huggingface_models = {
-            model: llm_spec for model, llm_spec in model_kwargs.items()
-            if 'repo' in llm_spec or 'repo_id' in llm_spec
-        }
-        if not huggingface_models:
-            return
-
-        from huggingface_hub import hf_hub_download
-        print(f"{cls.__name__} provider is downloading following models:\n\n{json.dumps(huggingface_models, indent=2)}")  # noqa: T201
-        for kwargs in model_kwargs.values():
-            repo = kwargs.get('repo', kwargs.get('repo_id'))
-            model_file = kwargs.get('model_file')
-            hf_hub_download(repo, model_file)
+        # Use the mixin's warmup functionality
+        cls._warmup_models(model_kwargs)
 
     async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         model_kwargs = self._get_model_kwargs(model_spec)
         mode = model_kwargs.pop("mode", self.mode)
         if client_callable := pn.state.cache.get((model_spec, mode)):
             return client_callable
-        if 'repo' in model_kwargs:
-            from huggingface_hub import hf_hub_download
-            repo = model_kwargs.get('repo', model_kwargs.get('repo_id'))
-            model_file = model_kwargs.get('model_file')
-            model_path = await asyncio.to_thread(hf_hub_download, repo, model_file)
-        elif 'model_path' in model_kwargs:
-            model_path = model_kwargs['model_path']
-        else:
-            raise ValueError(
-                "LlamaCpp.model_kwargs must contain either a 'repo' and 'model_file' "
-                "(to fetch a model using `huggingface_hub` or a 'model_path' pointing "
-                "to a model on disk."
-            )
-        llm_kwargs = dict(
-            model_path=model_path,
+
+        # Use the mixin to handle model path resolution and kwargs
+        llm_kwargs = self._instantiate_client_kwargs(
+            model_kwargs=model_kwargs,
             n_gpu_layers=-1,
             seed=128,
             logits_all=False,
-            use_mlock=True,
-            verbose=False,
         )
-        llm_kwargs.update(model_kwargs)
+
         client_callable = await asyncio.to_thread(self._cache_model, model_spec, mode=mode, **llm_kwargs)
         return client_callable
 
@@ -386,27 +367,31 @@ class LlamaCpp(Llm):
         return client(messages=messages, **kwargs)
 
 
-class OpenAI(Llm):
+class OpenAI(Llm, OpenAIMixin):
     """
     An LLM implementation using the OpenAI cloud.
     """
 
-    api_key = param.String(doc="The OpenAI API key.")
-
-    endpoint = param.String(doc="The OpenAI API endpoint.")
+    display_name = param.String(default="OpenAI", constant=True, doc="Display name for UI")
 
     mode = param.Selector(default=Mode.TOOLS)
 
-    temperature = param.Number(default=0.25, bounds=(0, None), constant=True)
-
-    organization = param.String(doc="The OpenAI organization to charge.")
-
     model_kwargs = param.Dict(default={
-        "default": {"model": "gpt-4o-mini"},
+        "default": {"model": "gpt-4.1-mini"},
         "sql": {"model": "gpt-4.1-mini"},
         "vega_lite": {"model": "gpt-4.1-mini"},
-        "reasoning": {"model": "gpt-4.1-mini"},
+        "edit": {"model": "gpt-4.1-mini"},
     })
+
+    select_models = param.List(default=[
+        "gpt-3.5-turbo",
+        "gpt-4.1-mini",
+        "gpt-4-turbo",
+        "gpt-4o",
+        "gpt-4o-mini"
+    ], constant=True, doc="Available models for selection dropdowns")
+
+    temperature = param.Number(default=0.25, bounds=(0, None), constant=True)
 
     use_logfire = param.Boolean(default=False, doc="""
         Whether to log LLM calls and responses to logfire.""")
@@ -415,19 +400,24 @@ class OpenAI(Llm):
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
-    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
-        import openai
+    def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
+        model_kwargs = super()._get_model_kwargs(model_spec)
 
+        # Merge with instance-level client configuration from the mixin
+        instance_kwargs = self._instantiate_client_kwargs()
+
+        # Model-specific kwargs should override instance defaults
+        merged_kwargs = {**instance_kwargs, **model_kwargs}
+
+        return merged_kwargs
+
+    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         model_kwargs = self._get_model_kwargs(model_spec)
         model = model_kwargs.pop("model")
         mode = model_kwargs.pop("mode", self.mode)
-        if self.endpoint:
-            model_kwargs["base_url"] = self.endpoint
-        if self.api_key:
-            model_kwargs["api_key"] = self.api_key
-        if self.organization:
-            model_kwargs["organization"] = self.organization
-        llm = openai.AsyncOpenAI(**model_kwargs)
+
+        # Use the mixin to create the OpenAI client
+        llm = self._instantiate_client(async_client=True, **model_kwargs)
 
         if self.interceptor:
             self.interceptor.patch_client(llm, mode="store_inputs")
@@ -448,23 +438,28 @@ class OpenAI(Llm):
         return client_callable
 
 
-class AzureOpenAI(Llm):
+class AzureOpenAI(Llm, AzureOpenAIMixin):
     """
     A LLM implementation that uses the Azure OpenAI integration.
+    Inherits from AzureOpenAIMixin which extends OpenAIMixin, so it has access to all OpenAI functionality
+    plus Azure-specific configuration.
     """
 
-    api_key = param.String(default=os.getenv("AZUREAI_ENDPOINT_KEY"), doc="The Azure API key.")
-
-    api_version = param.String(default="2024-10-21", doc="The Azure AI Studio API version.")
-
-    endpoint = param.String(default=os.getenv('AZUREAI_ENDPOINT_URL'), doc="The Azure AI Studio endpoint.")
+    display_name = param.String(default="Azure OpenAI", constant=True, doc="Display name for UI")
 
     mode = param.Selector(default=Mode.TOOLS)
 
     model_kwargs = param.Dict(default={
         "default": {"model": "gpt-4o-mini"},
-        "reasoning": {"model": "gpt-4o"},
+        "edit": {"model": "gpt-4o"},
     })
+
+    select_models = param.List(default=[
+        "gpt-35-turbo",
+        "gpt-4-turbo",
+        "gpt-4o",
+        "gpt-4o-mini"
+    ], constant=True, doc="Available models for selection dropdowns")
 
     temperature = param.Number(default=1, bounds=(0, None), constant=True)
 
@@ -472,19 +467,24 @@ class AzureOpenAI(Llm):
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
-    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
-        import openai
+    def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
+        model_kwargs = super()._get_model_kwargs(model_spec)
 
+        # Merge with instance-level client configuration from the mixin
+        instance_kwargs = self._instantiate_client_kwargs()
+
+        # Model-specific kwargs should override instance defaults
+        merged_kwargs = {**instance_kwargs, **model_kwargs}
+
+        return merged_kwargs
+
+    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         model_kwargs = self._get_model_kwargs(model_spec)
         model = model_kwargs.pop("model")
         mode = model_kwargs.pop("mode", self.mode)
-        if self.api_version:
-            model_kwargs["api_version"] = self.api_version
-        if self.api_key:
-            model_kwargs["api_key"] = self.api_key
-        if self.endpoint:
-            model_kwargs["azure_endpoint"] = self.endpoint
-        llm = openai.AsyncAzureOpenAI(**model_kwargs)
+
+        # Use the mixin to create the Azure OpenAI client
+        llm = self._instantiate_client(async_client=True, **model_kwargs)
 
         if self.interceptor:
             self.interceptor.patch_client(llm, mode="store_inputs")
@@ -507,14 +507,24 @@ class MistralAI(Llm):
 
     api_key = param.String(default=os.getenv("MISTRAL_API_KEY"), doc="The Mistral AI API key.")
 
-    mode = param.Selector(default=Mode.MISTRAL_TOOLS, objects=[Mode.JSON_SCHEMA, Mode.MISTRAL_TOOLS])
+    display_name = param.String(default="Mistral AI", constant=True, doc="Display name for UI")
 
-    temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
+    mode = param.Selector(default=Mode.MISTRAL_TOOLS, objects=[Mode.JSON_SCHEMA, Mode.MISTRAL_TOOLS])
 
     model_kwargs = param.Dict(default={
         "default": {"model": "mistral-small-latest"},
-        "reasoning": {"model": "mistral-large-latest"},
+        "edit": {"model": "mistral-large-latest"},
     })
+
+    select_models = param.List(default=[
+        "codestral-latest",
+        "mistral-7b-instruct",
+        "mistral-large-latest",
+        "mistral-small-latest",
+        "mixtral-8x7b-instruct"
+    ], constant=True, doc="Available models for selection dropdowns")
+
+    temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
 
     _supports_model_stream = False  # instructor doesn't work with Mistral's streaming
 
@@ -561,11 +571,19 @@ class AzureMistralAI(MistralAI):
 
     api_key = param.String(default=os.getenv("AZUREAI_ENDPOINT_KEY"), doc="The Azure API key")
 
+    display_name = param.String(default="Azure Mistral AI", constant=True, doc="Display name for UI")
+
     endpoint = param.String(default=os.getenv('AZUREAI_ENDPOINT_URL'), doc="The Azure API endpoint to invoke.")
 
     model_kwargs = param.Dict(default={
         "default": {"model": "azureai"},
     })
+
+    select_models = param.List(default=[
+        "azureai",
+        "mistral-large",
+        "mistral-small"
+    ], constant=True, doc="Available models for selection dropdowns")
 
     async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         from mistralai_azure import MistralAzure
@@ -605,14 +623,24 @@ class AnthropicAI(Llm):
 
     api_key = param.String(default=os.getenv("ANTHROPIC_API_KEY"), doc="The Anthropic API key.")
 
-    mode = param.Selector(default=Mode.ANTHROPIC_TOOLS, objects=[Mode.ANTHROPIC_JSON, Mode.ANTHROPIC_TOOLS])
+    display_name = param.String(default="Anthropic", constant=True, doc="Display name for UI")
 
-    temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
+    mode = param.Selector(default=Mode.ANTHROPIC_TOOLS, objects=[Mode.ANTHROPIC_JSON, Mode.ANTHROPIC_TOOLS])
 
     model_kwargs = param.Dict(default={
         "default": {"model": "claude-3-5-haiku-latest"},
-        "reasoning": {"model": "claude-3-5-sonnet-latest"},
+        "edit": {"model": "claude-3-5-sonnet-latest"},
     })
+
+    select_models = param.List(default=[
+        "claude-3-5-haiku-latest",
+        "claude-3-5-sonnet-latest",
+        "claude-3-haiku-20240307",
+        "claude-3-sonnet-20240229",
+        "claude-4-sonnet-latest"
+    ], constant=True, doc="Available models for selection dropdowns")
+
+    temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
 
     _supports_model_stream = True
 
@@ -657,14 +685,24 @@ class GoogleAI(Llm):
 
     api_key = param.String(default=os.getenv("GEMINI_API_KEY"), doc="The Google API key.")
 
-    mode = param.Selector(default=Mode.GENAI_TOOLS, objects=[Mode.GENAI_TOOLS, Mode.GENAI_STRUCTURED_OUTPUTS])
+    display_name = param.String(default="Google AI", constant=True, doc="Display name for UI")
 
-    temperature = param.Number(default=1, bounds=(0, 1), constant=True)
+    mode = param.Selector(default=Mode.GENAI_TOOLS, objects=[Mode.GENAI_TOOLS, Mode.GENAI_STRUCTURED_OUTPUTS])
 
     model_kwargs = param.Dict(default={
         "default": {"model": "gemini-2.0-flash"},  # Cost-optimized, low latency
-        "reasoning": {"model": "gemini-2.5-flash-preview-05-20"},  # Thinking model, balanced price/performance
+        "edit": {"model": "gemini-2.5-flash-preview-05-20"},  # Thinking model, balanced price/performance
     })
+
+    select_models = param.List(default=[
+        "gemini-1.5-flash",
+        "gemini-1.5-pro",
+        "gemini-2.0-flash",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite"
+    ], constant=True, doc="Available models for selection dropdowns")
+
+    temperature = param.Number(default=1, bounds=(0, 1), constant=True)
 
     _supports_model_stream = True
 
@@ -729,11 +767,47 @@ class AINavigator(OpenAI):
     A LLM implementation that calls the [Anaconda AI Navigator](https://www.anaconda.com/products/ai-navigator) API.
     """
 
+    display_name = param.String(default="AI Navigator", constant=True, doc="Display name for UI")
+
     endpoint = param.String(
         default="http://localhost:8080/v1", doc="""
             The API endpoint; should include the full address, including the port.""")
 
     mode = param.Selector(default=Mode.JSON_SCHEMA)
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "server-model"},
+    })
+
+    select_models = param.List(default=["server-model"], constant=True, doc="Available models for selection dropdowns")
+
+
+class Ollama(OpenAI):
+    """
+    An LLM implementation using the Ollama cloud.
+    """
+
+    api_key = param.String(default="ollama", doc="The Ollama API key; required but unused.")
+
+    display_name = param.String(default="Ollama", constant=True, doc="Display name for UI")
+
+    endpoint = param.String(default="http://localhost:11434/v1", doc="The Ollama API endpoint.")
+
+    mode = param.Selector(default=Mode.JSON)
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "qwen2.5-coder:7b"},
+    })
+
+    select_models = param.List(default=[
+        "codellama:7b",
+        "llama2:13b",
+        "llama3.2:latest",
+        "mistral:latest",
+        "qwen2.5-coder:7b"
+    ], constant=True, doc="Available models for selection dropdowns")
+
+    temperature = param.Number(default=0.25, bounds=(0, None), constant=True)
 
 
 class MessageModel(BaseModel):
@@ -758,9 +832,17 @@ class Response(BaseModel):
 
 class WebLLM(Llm):
 
-    model_kwargs = param.Dict({'default': {'model_slug': 'Qwen2.5-7B-Instruct-q4f16_1-MLC'}})
+    display_name = param.String(default="WebLLM", constant=True, doc="Display name for UI")
 
     mode = param.Parameter(default=Mode.JSON_SCHEMA)
+
+    model_kwargs = param.Dict({'default': {'model_slug': 'Qwen2.5-7B-Instruct-q4f16_1-MLC'}})
+
+    select_models = param.List(default=[
+        "Llama-3.2-3B-Instruct-q4f16_1-MLC",
+        "Phi-3.5-mini-instruct-q4f16_1-MLC",
+        "Qwen2.5-7B-Instruct-q4f16_1-MLC"
+    ], constant=True, doc="Available models for selection dropdowns")
 
     temperature = param.Number(default=0.4, bounds=(0, None))
 
@@ -837,13 +919,24 @@ class LiteLLM(Llm):
     Hugging Face, Azure, Vertex AI, and more.
     """
 
-    mode = param.Selector(default=Mode.TOOLS, objects=BASE_MODES)
+    display_name = param.String(default="LiteLLM", constant=True, doc="Display name for UI")
 
-    temperature = param.Number(default=0.7, bounds=(0, 2), constant=True)
+    enable_caching = param.Boolean(default=False, doc="""
+        Enable LiteLLM's built-in caching for repeated queries.""")
+
+    fallback_models = param.List(default=[], doc="""
+        List of fallback models to try if the primary model fails.
+        Example: ["gpt-4o-mini", "claude-3-haiku", "gemini/gemini-1.5-flash"]""")
+
+    litellm_params = param.Dict(default={}, doc="""
+        Additional parameters to pass to litellm.acompletion().
+        Examples: custom_llm_provider, api_base, api_version, etc.""")
+
+    mode = param.Selector(default=Mode.TOOLS, objects=BASE_MODES)
 
     model_kwargs = param.Dict(default={
         "default": {"model": "gpt-4o-mini"},
-        "reasoning": {"model": "claude-3-5-sonnet-latest"},
+        "edit": {"model": "claude-3-5-sonnet-latest"},
         "sql": {"model": "gpt-4o-mini"},
     }, doc="""
         Model configurations by type. LiteLLM supports model strings like:
@@ -853,20 +946,20 @@ class LiteLLM(Llm):
         - And many more with format: "provider/model" or just "model" for defaults
     """)
 
-    litellm_params = param.Dict(default={}, doc="""
-        Additional parameters to pass to litellm.acompletion().
-        Examples: custom_llm_provider, api_base, api_version, etc.""")
-
-    enable_caching = param.Boolean(default=False, doc="""
-        Enable LiteLLM's built-in caching for repeated queries.""")
-
-    fallback_models = param.List(default=[], doc="""
-        List of fallback models to try if the primary model fails.
-        Example: ["gpt-4o-mini", "claude-3-haiku", "gemini/gemini-1.5-flash"]""")
-
     router_settings = param.Dict(default={}, doc="""
         Settings for LiteLLM Router for load balancing across multiple models.
         Example: {"routing_strategy": "least-busy", "num_retries": 3}""")
+
+    select_models = param.List(default=[
+        "anthropic/claude-3-haiku",
+        "azure/gpt-4",
+        "claude-3-5-sonnet-latest",
+        "gemini/gemini-pro",
+        "gpt-4o-mini",
+        "openai/gpt-4"
+    ], constant=True, doc="Available models for selection dropdowns")
+
+    temperature = param.Number(default=0.7, bounds=(0, 2), constant=True)
 
     _supports_stream = True
     _supports_model_stream = True

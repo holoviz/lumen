@@ -465,25 +465,35 @@ class SQLColumns(SQLTransform):
         return self.to_sql(expression)
 
 
-class SQLFilter(SQLTransform):
+class SQLFilterBase(SQLTransform):
+    """
+    Base class for SQL filtering transforms that provides common filtering logic.
+    """
 
-    conditions = param.List(doc="""
-      List of filter conditions expressed as tuples of the column
-      name and the filter value.""")
+    def _build_filter_conditions(self, conditions: list) -> list:
+        """
+        Build sqlglot filter expressions from condition tuples.
 
-    transform_type: ClassVar[str] = 'sql_filter'
+        Parameters
+        ----------
+        conditions : list
+            List of (column, value) tuples for filtering
 
-    def apply(self, sql_in: str) -> str:
-        if not self.conditions:
-            return sql_in
-
-        subquery = self.parse_sql(sql_in).subquery()
+        Returns
+        -------
+        list
+            List of sqlglot filter expressions
+        """
         filters = []
 
-        for col, val in self.conditions:
+        for col, val in conditions:
             column_expr = Column(this=col)
 
-            if val is None:
+            # Skip boolean values - they are not supported
+            if isinstance(val, bool):
+                self.param.warning(f"Boolean condition {val!r} on {col!r} column not supported. Filter query will not be applied.")
+                continue
+            elif val is None:
                 filters.append(column_expr.is_(Null()))
             elif isinstance(val, (int, float)):
                 filters.append(column_expr.eq(SQLLiteral.number(val)))
@@ -509,6 +519,11 @@ class SQLFilter(SQLTransform):
 
                 filters.append(column_expr.between(SQLLiteral.string(start_str), SQLLiteral.string(end_str)))
             elif isinstance(val, list):
+                # Check for boolean values in list and skip them
+                if any(isinstance(v, bool) for v in val):
+                    self.param.warning(f"Boolean values in list condition on {col!r} column not supported. Filter query will not be applied.")
+                    continue
+
                 if all(isinstance(v, tuple) and len(v) == 2 for v in val):
                     range_filters = []
                     for v1, v2 in val:
@@ -544,8 +559,133 @@ class SQLFilter(SQLTransform):
                 self.param.warning(f"Condition {val!r} on {col!r} column not understood. Filter query will not be applied.")
                 continue
 
+        return filters
+
+
+class SQLFilter(SQLFilterBase):
+    """
+    Apply WHERE clause filtering to the entire query result.
+
+    This transform wraps the input query in a subquery and applies filters
+    to the result set.
+    """
+
+    conditions = param.List(doc="""
+      List of filter conditions expressed as tuples of the column
+      name and the filter value.""")
+
+    transform_type: ClassVar[str] = 'sql_filter'
+
+    def apply(self, sql_in: str) -> str:
+        if not self.conditions:
+            return sql_in
+
+        subquery = self.parse_sql(sql_in).subquery()
+        filters = self._build_filter_conditions(self.conditions)
+
+        if not filters:
+            return sql_in
+
         expression = select("*").from_(subquery).where(and_(*filters))
         return self.to_sql(expression)
+
+
+class SQLPreFilter(SQLFilterBase):
+    """
+    Apply filtering conditions to source tables before executing the main query.
+
+    This transform wraps source tables in subqueries with WHERE clauses,
+    allowing filtering to be applied even when the main query doesn't select
+    the filter columns.
+
+    For example:
+    Input: "SELECT n_genes FROM obs"
+    With conditions: [("obs", [("obs_id", ["cell1", "cell2"])])]
+    Output: "SELECT n_genes FROM (SELECT * FROM obs WHERE obs_id IN ('cell1', 'cell2'))"
+    """
+
+    conditions = param.List(doc="""
+        List of filter conditions expressed as tuples of (table_name, filter_conditions)
+        where filter_conditions is a list of (column_name, filter_value) tuples.
+        Example: [("obs", [("obs_id", ["cell1", "cell2"])])]""")
+
+    transform_type: ClassVar[str] = 'sql_prefilter'
+
+    def apply(self, sql_in: str) -> str:
+        if not self.conditions:
+            return sql_in
+
+        try:
+            expression = self.parse_sql(sql_in)
+
+            # Build mapping of table names to filter conditions
+            table_conditions = {}
+            for table_name, filter_conditions in self.conditions:
+                if filter_conditions:  # Only add if there are actual conditions
+                    table_conditions[table_name] = filter_conditions
+
+            if not table_conditions:
+                return sql_in
+
+            # Find all table references in the query and replace with filtered subqueries
+            tables_to_replace = {}
+
+            for table_expr in expression.find_all(Table):
+                # Get the table name, stripping quotes for matching
+                table_name = str(table_expr.this).strip('"\'')
+
+                # Check if this table has prefilter conditions
+                if table_name in table_conditions:
+                    # Create a filtered subquery for this table
+                    filtered_subquery = self._create_filtered_subquery(
+                        table_name, table_conditions[table_name], table_expr.alias
+                    )
+                    tables_to_replace[table_expr] = filtered_subquery
+
+            if not tables_to_replace:
+                return sql_in
+
+            # Replace tables with filtered subqueries
+            replaced_expression = replace_tables(expression, tables_to_replace, dialect=self.read)
+            return self.to_sql(replaced_expression)
+
+        except Exception as e:
+            # If transformation fails, return original SQL
+            self.param.warning(f"SQLPreFilter failed to apply: {e}")
+            return sql_in
+
+    def _create_filtered_subquery(self, table_name: str, filter_conditions: list, alias: str | None = None) -> Table:
+        """
+        Create a filtered subquery for a table.
+
+        Parameters
+        ----------
+        table_name : str
+            Name of the table to filter
+        filter_conditions : list
+            List of (column, value) tuples for filtering
+        alias : str, optional
+            Alias for the table
+
+        Returns
+        -------
+        Table
+            Subquery expression that can replace the original table
+        """
+        from sqlglot.expressions import Identifier
+
+        # Start with SELECT * FROM table_name
+        base_table = Table(this=Identifier(this=table_name, quoted=True))
+        subquery = select("*").from_(base_table)
+
+        # Build WHERE conditions using the shared filtering logic
+        filters = self._build_filter_conditions(filter_conditions)
+
+        if filters:
+            subquery = subquery.where(and_(*filters))
+
+        # Return as a subquery that can replace the original table
+        return subquery.subquery(alias=alias or table_name)
 
 
 class SQLOverride(SQLTransform):
@@ -724,8 +864,6 @@ class SQLRemoveSourceSeparator(SQLTransform):
     separator = param.String(default=SOURCE_TABLE_SEPARATOR, doc="""
         Separator used to split the source and table name in the SQL query.""")
 
-    _parsable_separator = "___AT___"
-
     def apply(self, sql_in: str) -> str:
         """
         Exclude the source and separator from the SQL query.
@@ -742,36 +880,29 @@ class SQLRemoveSourceSeparator(SQLTransform):
         """
         if self.separator not in sql_in:
             return sql_in
-        sql_in = sql_in.replace(SOURCE_TABLE_SEPARATOR, self._parsable_separator)
-        try:
-            return self.to_sql(self.parse_sql(sql_in).transform(self._remove_source_separator))
-        except ValueError:
-            pattern = rf'"[^"]*{re.escape(SOURCE_TABLE_SEPARATOR)}([^"]+)"'
-            return self.to_sql(self.parse_sql(re.sub(pattern, r'"\1"', sql_in)))
 
-    def _remove_source_separator(self, node):
-        if isinstance(node, Table):
-            node_str = node.this
-            while hasattr(node_str, "this"):
-                node_str = node_str.this
-            after = node_str.split(self._parsable_separator)[-1]
-            filename = node.this.sql().replace(node_str, after)
-            return filename
-        elif isinstance(node, sqlglot.exp.Literal):
-            # Handle string literals that might contain the separator
-            if isinstance(node.this, str) and self._parsable_separator in node.this:
-                filename = node.this.split(self._parsable_separator)[-1]
-                # Preserve the original literal type and quotes
-                return sqlglot.exp.Literal.string(filename)
-            return node
-        elif hasattr(node, 'this') and isinstance(node.this, str) and self._parsable_separator in node.this:
-            # Handle other node types that might contain the separator in their string content
-            filename = node.this.split(self._parsable_separator)[-1]
-            # Create a new node of the same type with the cleaned string
-            new_node = node.__class__(this=filename)
-            return new_node
-        else:
-            return node
+        # Simple regex approach: find all occurrences of source__@__filename and replace with filename
+        # This pattern matches:
+        # - Optional quotes (captured in group 1)
+        # - Any non-quote/space characters followed by separator (source__@__)
+        # - The filename (captured in group 2)
+        # - Optional closing quote (captured in group 3)
+        pattern = r'(["\']?)\b[^\s"\']*?' + re.escape(self.separator) + r'([^\s"\']+)(["\']?)'
+
+        def replacer(match):
+            quote_start = match.group(1)
+            filename = match.group(2)
+            quote_end = match.group(3)
+
+            # If the filename contains dots and wasn't originally quoted, quote it
+            if '.' in filename and not quote_start:
+                return f'"{filename}"'
+            else:
+                return f'{quote_start}{filename}{quote_end}'
+
+        return self.to_sql(self.parse_sql(re.sub(pattern, replacer, sql_in)))
+
+
 
 
 __all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, SQLTransform)]

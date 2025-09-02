@@ -71,7 +71,7 @@ class _Memory(SessionCache):
     def _trigger_update(self, key, old, new):
         for cb in self._callbacks[key]:
             if param.parameterized.iscoroutinefunction(cb):
-                param.parameterized.async_executor(partial(cb, key, old, new))
+                state.execute(partial(cb, key, old, new))
             else:
                 cb(key, old, new)
         if key in self._rx:

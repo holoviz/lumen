@@ -25,9 +25,8 @@ from panel.pane.perspective import (
 )
 from panel.param import Param
 from panel.util import classproperty
-from panel.viewable import (
-    Child, Children, Viewable, Viewer,
-)
+from panel.viewable import Child, Viewable, Viewer
+from param.parameterized import bothmethod
 
 from ..base import MultiTypeComponent
 from ..config import _INDICATORS
@@ -235,7 +234,8 @@ class View(MultiTypeComponent, Viewer):
                 if updates is not None:
                     self._panel.param.update(**updates)
                     return False
-        self._panel = self.get_panel()
+        else:
+            self._panel = self.get_panel()
         return True
 
     @classmethod
@@ -573,7 +573,6 @@ class View(MultiTypeComponent, Viewer):
         """
 
 
-
 class Panel(View):
     """
     `Panel` views provide a way to declaratively wrap a Panel component.
@@ -606,6 +605,10 @@ class Panel(View):
     _requires_source: ClassVar[bool] = False
 
     @classmethod
+    def _resolve_object(cls, spec, objects=None, unresolved=None, depth=0):
+        return cls._materialize_object(spec, objects, unresolved, depth, obj_type=Viewable)
+
+    @classmethod
     def from_spec(
         cls, spec: dict[str, Any] | str, source=None, filters=None, pipeline=None
     ) -> View:
@@ -613,7 +616,133 @@ class Panel(View):
             spec['object'] = spec.pop('spec')
         return super().from_spec(spec, source=source, filters=filters, pipeline=pipeline)
 
+    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        spec = super().to_spec(context)
+        spec['object'] = self._serialize_parameterized(self.object)
+        return spec
+
+    def get_panel(self):
+        return self.object
+
+
+class HoloViews(View):
+    """
+    `HoloViews` renders the data as a HoloViews plot.
+    """
+
+    object = param.Parameter()
+
+    streaming = param.Boolean(default=False, doc="""
+        Whether to stream new data to the plot or rerender the plot.""")
+
+    view_type = 'holoviews'
+
+    _allows_refs: ClassVar[bool] = False
+    _requires_source: ClassVar[bool] = False
+    _panel_type = pn.pane.HoloViews
+
+
+    def __init__(self, **params):
+        from holoviews.streams import Pipe
+        super().__init__(**params)
+        self._object_data_id = None
+        self._data_stream = Pipe()
+
     @classmethod
+    def _serialize_dimension(self, dim):
+        components = {}
+        for name, p in dim.param.objects('existing').items():
+            value = dim.param.get_value_generator(name)
+            skip = value is p.default
+            if not skip:
+                try:
+                    skip = value == p.default
+                except Exception:
+                    pass
+            if skip:
+                continue
+            components[name] = p.serialize(value)
+        if components['name'] == components['label']:
+            del components['label']
+        return components
+
+    def _serialize_dataset(self, obj, objects, refs, depth=0):
+        el_type = type(obj)
+        pipeline = objects.get('pipeline')
+        if pipeline is not None and (id(obj.dataset.data) in (id(pipeline.data), self._object_data_id)):
+            data = '$data'
+        else:
+            data = {k: list(v) for k, v in obj.dataset.columns().items()}
+        hv_pipeline = obj.pipeline
+        if len(hv_pipeline.operations) == 1:
+            operation = None
+        else:
+            operations = hv_pipeline.operations[1:]
+            operation = {
+                'type': 'holoviews.operation.element.chain',
+                'operations': [
+                    self._serialize_parameterized(op, objects, refs, depth+1, include_name=False)
+                    for op in operations
+                ]
+            }
+        spec = {
+            'type': f'{el_type.__module__}.{el_type.__name__}',
+            'kdims': [self._serialize_dimension(dim) for dim in obj.kdims],
+            'vdims': [self._serialize_dimension(dim) for dim in obj.vdims],
+            'data': data
+        }
+        if operation is not None:
+            spec['operation'] = operation
+        return spec
+
+    def _serialize_parameterized(self, obj, objects=None, refs=None, depth=0, include_name=True):
+        if isinstance(obj, pn.pane.HoloViews):
+            obj = obj.object
+        from holoviews.core import (
+            Dataset, Dimension, DynamicMap, Element, NdMapping, ViewableTree,
+        )
+        if obj is None:
+            return None
+        pipeline = self.pipeline
+        if objects is None:
+            objects = {'pipeline': pipeline, obj.name: obj, 'streaming': self.streaming}
+        else:
+            objects[obj.name] = obj
+
+        if refs is None:
+            refs = []
+
+        if isinstance(obj, Dimension):
+            spec = self._serialize_dimension(obj)
+        elif isinstance(obj, DynamicMap):
+            return self._serialize_parameterized(
+                obj[obj._initial_key()], objects, refs, depth=depth, include_name=include_name
+            )
+        elif isinstance(obj, Dataset):
+            spec = self._serialize_dataset(obj, objects, refs, depth=depth)
+        else:
+            spec = super()._serialize_parameterized(
+                obj, objects=objects, refs=refs, depth=depth, include_name=include_name
+            )
+            if isinstance(obj, Element):
+                del spec['name']
+                spec['data'] = self._serialize_container(obj.data, objects, refs, depth)
+            elif isinstance(obj, (NdMapping, ViewableTree)):
+                del spec['name']
+                spec['data'] = [(k, self._serialize_parameterized(v, objects, refs, depth)) for k, v in obj.data.items()]
+            return spec
+        for ref in refs:
+            self._finalize_param_ref(ref, objects)
+        return spec
+
+    @classmethod
+    def _materialize_dimension(cls, spec):
+        from holoviews.core import Dimension
+        spec = dict(spec)
+        name = (spec.pop('name'), spec.pop('label')) if 'label' in spec else spec.pop('name')
+        return Dimension(name, **spec)
+
+    @bothmethod
     def _resolve_object(cls, spec, objects=None, unresolved=None, depth=0):
         if spec is None:
             return None
@@ -624,107 +753,80 @@ class Panel(View):
                 return cls._materialize_param_ref(spec, objects=objects)
             except KeyError:
                 return None
-
         if unresolved is None:
             unresolved = []
+
+        from holoviews.core import (
+            Dataset, DynamicMap, NdMapping, ViewableTree,
+        )
+        from holoviews.element import Annotation
+
+        spec = dict(spec)
         spec_type = spec.pop('type')
-        ptype = resolve_module_reference(spec_type, Viewable)
-        params, refs = {}, {}
-        for p, v in spec.items():
-            if isinstance(v, dict) and 'type' in v:
-                vtype = v['type']
-                v = cls._resolve_object(v, objects=objects, unresolved=unresolved, depth=depth+1)
-                if vtype in ('param', 'rx') and v is None:
-                    refs[p] = spec[p]
-                    continue
-            elif isinstance(v, list) and all(isinstance(o, dict) and 'type' in o for o in v):
-                resolved = []
-                for sv in v:
-                    robj = cls._resolve_object(sv, objects=objects, unresolved=unresolved, depth=depth+1)
-                    resolved.append(robj)
-                v = resolved
-            elif is_ref(v):
-                if v == '$data':
-                    v = objects['pipeline'].param.data
-                else:
-                    v = state.resolve_reference(v)
+        obj_type = resolve_module_reference(spec_type)
+        if issubclass(obj_type, Dataset):
+            data_spec = spec.pop('data')
+            data = objects['pipeline'].data if data_spec == '$data' else data_spec
+            operation = spec.pop('operation', None)
+            kdims = [cls._materialize_dimension(kd) for kd in spec.pop('kdims', [])]
+            vdims = [cls._materialize_dimension(vd) for vd in spec.pop('vdims', [])]
+            if cls.streaming:
+                obj = DynamicMap(lambda data: obj_type(data, kdims, vdims), streams=[cls._data_stream])
             else:
-                try:
-                    v = ptype.param.deserialize_value(p, v)
-                except Exception:
-                    pass
-            params[p] = v
-        obj = ptype(**params)
-        objects[obj.name] = obj
-        if refs:
-            unresolved.append((obj, refs))
-        if depth == 0:
-            for obj, refs in unresolved:
-                param_refs = {}
-                for p, ref in refs.items():
-                     param_refs[p] = cls._resolve_object(ref, objects=objects, depth=depth+1)
-                obj.param.update(param_refs)
+                obj = obj_type(data, kdims=kdims, vdims=vdims, **spec)
+            if operation is not None:
+                op = cls._materialize_object(operation, objects, unresolved, depth)
+                obj = op(obj)
+        elif issubclass(obj_type, (NdMapping, ViewableTree)):
+            items = [
+                (tuple(k), cls._resolve_object(v, objects, unresolved, depth))
+                for k, v in spec.pop('data')
+            ]
+            obj = obj_type(items=items)
+        elif issubclass(obj_type, Annotation):
+            data = spec.pop('data')
+            obj = obj_type(*data, **spec) if isinstance(data, (list, tuple)) else obj_type(data, **spec)
+        else:
+            obj = cls._materialize_object(spec, objects, unresolved, depth)
         return obj
 
-    def _serialize_object(self, obj, objects=None, refs=None, depth=0):
-        obj_type = type(obj)
-        if obj is None:
-            return None
-        elif objects is None:
-            objects = {'pipeline': self.pipeline, obj.name: obj}
+    def _rematerialize(self):
+        spec = self._serialize_parameterized(self.object)
+        return self._resolve_object(spec, {'pipeline': self.pipeline})
+
+    def _get_params(self) -> dict[str, Any]:
+        return dict(object=self._rematerialize())
+
+    def _stream(self):
+        if self.streaming:
+            self._data_stream.send(self.pipeline.data)
         else:
-            objects[obj.name] = obj
-
-        if refs is None:
-            refs = []
-        type_spec = f'{obj_type.__module__}.{obj_type.__name__}'
-        prefs = obj._param__private.refs
-        params = {}
-        for p, pobj in obj.param.objects().items():
-            value = getattr(obj, p)
-            if p in prefs:
-                pref = prefs[p]
-                params[p] = ref = self._serialize_param_ref(
-                    pref, objects=objects
-                )
-                refs.append(ref)
-                continue
-            elif p in ('design',):
-                continue
-
-            if value is obj_type.param[p].default:
-                continue
-            try:
-                equal = value == obj_type.param[p].default
-            except Exception:
-                equal = False
-            if equal:
-                continue
-            elif isinstance(pobj, Child):
-                value = self._serialize_object(value, objects=objects, refs=refs, depth=depth+1)
-            elif isinstance(pobj, Children):
-                value = [
-                    self._serialize_object(child, objects=objects, refs=refs, depth=depth+1)
-                    for child in value
-                ]
-            else:
-                value = obj.param.serialize_value(p)
-            params[p] = value
-
-        if depth != 0:
-            return {'type': type_spec, **params}
-
-        for ref in refs:
-            self._finalize_param_ref(ref, objects)
-        return {'type': type_spec, **params}
+            raise NotImplementedError('Streaming is disabled.')
 
     def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
         spec = super().to_spec(context)
-        spec['object'] = self._serialize_object(self.object)
+        spec['object'] = self._serialize_parameterized(self.object)
+        spec['streaming'] = self.streaming
         return spec
 
+    @classmethod
+    def from_spec(
+        cls, spec: dict[str, Any] | str, source=None, filters=None, pipeline=None
+    ) -> View:
+        if isinstance(spec, dict) and 'spec' in spec:
+            spec['object'] = spec.pop('spec')
+        return super().from_spec(spec, source=source, filters=filters, pipeline=pipeline)
+
     def get_panel(self):
-        return self.object
+        # If there is a pipeline we keep track of the data id on initialization
+        # ensuring that we can track which hv.Datasets should be updated with
+        # the new data even though the pipeline.data has changed.
+        if self.streaming:
+            self._data_stream.send(self.pipeline.data)
+            return self._panel_type(self._rematerialize())
+        elif self.pipeline is not None:
+            self._object_data_id = id(self.pipeline.data)
+        return self._panel_type(self.object)
 
 
 class StringView(View):
@@ -740,7 +842,7 @@ class StringView(View):
     _panel_type = pn.pane.HTML
 
     def get_panel(self) -> pn.pane.HTML:
-        return pn.pane.HTML(**self._normalize_params(self._get_params()))
+        return self._panel_type(**self._normalize_params(self._get_params()))
 
     def _get_params(self) -> dict[str, Any]:
         value = self.get_value()

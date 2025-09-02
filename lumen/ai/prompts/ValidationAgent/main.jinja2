@@ -2,56 +2,48 @@
 
 {%- block instructions %}
 ## Instructions
-**BEFORE VALIDATING: Read the SQL query AND summary data results to understand what filtering was applied and what was returned.**
+Analyze if the SQL query matches the user's request by checking:
+1. What the user asked for
+2. What the SQL actually does (read it carefully)
+3. If they align
 
-**REQUIRED FIRST STEP: Restate in your own words:**
-1. What the user originally asked for
-2. What the SQL query actually does (step by step)
-3. What data was returned in the summary
-
-Then validate if the executed plan answered the user's query. Focus on completeness, correctness, and user intent.
-
-**Validation Rules:**
-- Base validation on BOTH SQL logic AND summary results
-- Verify SQL filters match user request AND summary answer the question
-- A query succeeds if both logic is correct AND data is relevant
+VALID = SQL implements the user's intent correctly
+- Check actual SQL syntax, not assumptions
+- Verify GROUP BY, WHERE, SELECT match request
+- Accept reasonable interpretations; do not over-interpret `limit` (100,000 is default)
 {%- endblock %}
 
 {%- block examples -%}
 ## Examples
-**Query:** "Top 5 revenue products + profit margins"
-**Steps:** SQLAgent returned top 5 revenue only, no margins
-**Response:** yes=false, missing=["profit margins"], should_rerun=true
+User: "by region?"
+SQL: SELECT region, SUM(sales) FROM data GROUP BY region
+✓ VALID - has GROUP BY region
 
-**Query:** "Which European country has the highest sales?"
-**SQL:** SELECT country, SUM(sales) FROM data WHERE region='Europe' GROUP BY country ORDER BY sales DESC LIMIT 1
-**Data Returned:** Germany: $2.1M
-**Response:** yes=true, should_rerun=false (query correctly filtered and returned answer)
+User: "by region?"
+SQL: SELECT SUM(sales) FROM data
+✗ INVALID - missing GROUP BY region
 
-**Query:** "Show me the table"
-**SQL:** SELECT * FROM data LIMIT 100000
-**Data Returned:** Full table with 100,000 rows
-**Response:** yes=true, should_rerun=false
+User: "top 5"
+SQL: SELECT * FROM data ORDER BY revenue DESC LIMIT 5
+✓ VALID - has LIMIT 5
+
+User: "show 1000 rows"
+SQL: SELECT * FROM data LIMIT 50
+✗ INVALID - wrong LIMIT value
+
+User: "total by state"
+SQL: SELECT state, SUM(amount) FROM data GROUP BY state
+✓ VALID - groups by state with SUM
 {%- endblock %}
 
 {% block context %}
-## Context
 {%- if executed_steps %}
-**Executed Steps:**
-{%- for step in executed_steps %}
-- {{ step }}
-{%- endfor %}
+Steps: {% for step in executed_steps %}{{ step }}{% if not loop.last %}, {% endif %}{% endfor %}
 {% endif %}
-
 {%- if memory.get('sql') %}
-**SQL Executed:**
-```sql
-{{ memory.sql }}
-```
+SQL: `{{ memory.sql }}`
 {%- endif -%}
-
 {%- if memory.get('data') is not none %}
-**Summary of the data returned:**
-{{ memory["data"] }}
+Data Overview: {{ memory["data"] }}
 {%- endif -%}
 {%- endblock -%}

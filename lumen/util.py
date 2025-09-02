@@ -14,9 +14,11 @@ from pathlib import Path
 from subprocess import check_output
 
 import bokeh
+import numpy as np
 import pandas as pd
 import panel as pn
 import param
+import yaml
 
 from jinja2 import DebugUndefined, Environment, Undefined
 from packaging.version import Version
@@ -31,6 +33,28 @@ param2 = Version(param.__version__) > Version("2.0rc1")
 disallow_refs = {'allow_refs': False} if param2 else {}
 
 VARIABLE_RE = re.compile(r'\$variables\.([a-zA-Z_]\w*)')
+
+
+class NumpyDumper(yaml.SafeDumper):
+    """A YAML Dumper that converts NumPy scalars to native Python types."""
+
+    def represent_data(self, data):
+        # Check for common NumPy scalar types and convert them to Python equivalents
+        if isinstance(data, (np.integer,)):
+            data = int(data)
+        elif isinstance(data, (np.floating,)):
+            data = float(data)
+        elif isinstance(data, (np.bool_,)):
+            data = bool(data)
+        elif isinstance(data, (np.complexfloating,)):
+            data = complex(data)
+        elif isinstance(data, (np.bytes_,)):
+            data = bytes(data)
+        elif isinstance(data, (np.str_,)):
+            data = str(data)
+        elif isinstance(data, np.datetime64):
+            data = str(data)
+        return super().represent_data(data)
 
 def get_dataframe_schema(df, columns=None):
     """
@@ -355,13 +379,13 @@ def slugify(value, allow_unicode=False) -> str:
     return re.sub(r"[-\s]+", "-", value).strip("-_")
 
 
-def detect_file_encoding(file_obj: Path | str | io.BytesIO | io.StringIO, sample_size: int = 8192) -> str:
+def detect_file_encoding(file_obj: Path | str | io.BytesIO | io.StringIO | bytes, sample_size: int = 8192) -> str:
     """
     Simple, fast file encoding detection.
 
     Parameters
     ----------
-    file_obj : Path | str | io.BytesIO | io.StringIO
+    file_obj : Path | str | io.BytesIO | io.StringIO | bytes
         File path or file-like object to detect encoding
     sample_size : int, default=8192
         Bytes to read for detection
@@ -372,7 +396,9 @@ def detect_file_encoding(file_obj: Path | str | io.BytesIO | io.StringIO, sample
         Detected encoding
     """
     # Get bytes data from different input types
-    if isinstance(file_obj, (str, Path)):
+    if isinstance(file_obj, bytes):
+        data = file_obj
+    elif isinstance(file_obj, (str, Path)):
         # File path
         file_path = Path(file_obj)
         if not file_path.exists():

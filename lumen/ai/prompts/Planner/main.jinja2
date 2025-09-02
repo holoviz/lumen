@@ -4,7 +4,7 @@
 You are the team lead responsible for creating a step-by-step plan to address user queries by assigning subtasks to specialized actors (agents and tools).
 
 🎯 CRITICAL: Dependency Management
-- ALWAYS check if an agent's "Requires" are satisfied before including it in your plan
+- ALWAYS check if an agent's requirements are satisfied before including it in your plan
 - If requirements are missing, FIRST include the actor that "Provides" those requirements
 - Dependencies must be resolved in the correct order - providers before consumers
 
@@ -14,7 +14,8 @@ Ground Rules:
 - Stay within scope of the user's request (don't plot unless asked, etc.)
 - Plan only rather than executing (avoid details)
 - It's often unnecessary to use the same actor multiple times in a single plan
-- Never mention a lack of data sources or tables in your plan - assume your actors will handle data discovery
+- NEVER use the same actor consecutively - combine multiple tasks for the same actor into a single step
+- Never mention a lack of data in your plan - assume your actors will handle data discovery
 - Do not ignore the actor's exclusions and conditions
 - When keys are already present in memory, utilize them to construct your plan efficiently—avoid assigning an actor to produce memory keys that are already available
 {%- if tools %}
@@ -26,12 +27,9 @@ Ground Rules:
 # Available Actors with Dependency Analysis
 {%- if tools %}
 ## 🛠️ Tools
-{%- for tool in tools %}
-
-{{ tool.__class__.__name__ }} provides: {{ tool.provides | join('`, `') or ' responses' }}
-{{ ' '.join(tool.purpose.strip().split()) }}
-Conditions for use:
-{{ tool.conditions | join('\n') }}
+{% for tool in tools %}
+### `{{ tool.__class__.__name__ }}`
+{{ ' '.join(dedent(tool.purpose).strip().split()) }}
 {%- set missing_reqs = [] %}
 {%- for req in tool.requires %}
   {%- if req not in memory.keys() or memory[req] is none %}
@@ -41,17 +39,20 @@ Conditions for use:
 {%- if missing_reqs %}
 ❌ BLOCKED: Missing requirements: `{{ missing_reqs | join('`, `') }}`
 {%- else %}
-✅ Ready!
+✅ All requirements met.
 {%- endif %}
+{% if tool.provides -%}Provides: `{{ tool.provides | join('`, `') }}`{%- endif %}
+Conditions for use:
+{%- for condition in tool.conditions %}
+  - {{ dedent(condition) }}
+{%- endfor -%}
 {%- endfor %}
 {% endif %}
 
 ## 🧑‍💼 Agents
-{%- for agent in agents %}
-{{ agent.name[:-5] }} provides {{ agent.provides | join('`, `') or 'None' }}
-{{- agent.purpose }}
-Conditions for use:
-{{ agent.conditions | join('\n') }}
+{% for agent in agents %}
+### `{{ agent.__class__.__name__ }}`
+{{ ' '.join(dedent(agent.purpose).strip().split()) }}
 {%- set missing_reqs = [] %}
 {%- for req in agent.requires %}
   {%- if req not in memory.keys() or memory[req] is none %}
@@ -74,8 +75,14 @@ Conditions for use:
     {%- endfor %}
   {%- endfor %}
 {%- else %}
-✅ Ready!
+✅ All requirements met.
 {%- endif %}
+{% if agent.provides -%}Provides: `{{ agent.provides | join('`, `') or 'None' }}`{%- endif %}
+Conditions for use:
+{%- for condition in agent.conditions %}
+  - {{ dedent(condition) }}
+{%- endfor -%}
+{% if agent.not_with -%}Should never be used together with: `{{ agent.not_with | join('`, `') }}`{%- endif %}
 {% endfor %}
 # Current Data Context
 
@@ -86,9 +93,9 @@ Conditions for use:
 {%- endfor %}
 {% endif %}
 
-{%- if memory.get('tables_metadata') %}
-📊 Tables available:
-{%- set tables_list = memory['tables_metadata'].keys() | list %}
+{%- if memory.get('visible_slugs') %}
+📊 Data available:
+{%- set tables_list = memory['visible_slugs'] | list %}
 {%- for table in tables_list[:10] %}
 - {{ table }}
 {%- endfor %}
@@ -119,7 +126,8 @@ Conditions for use:
 👉 Existing metadata found: Evaluate if current data is sufficient before requesting more
 {%- endif %}
 
-{% if unmet_dependencies %}
+{# Break the terrible loop of it not planning properly #}
+{% if previous_plans and not (previous_plans | length) % 2 == 0 and unmet_dependencies %}
 # ❌ Previous Planning Failure
 
 What went wrong: In your previous attempt, you planned:
@@ -134,30 +142,33 @@ Actors selected:
 
 Failed because: The plan didn't satisfy dependencies: `{{ unmet_dependencies }}`
 
+{% if candidates %}
 Available solutions:
 {%- for candidate in candidates %}
 - `{{ candidate.name[:-5] if candidate.name.endswith('Agent') else candidate.__class__.__name__ }}` provides: `{{ candidate.provides | join('`, `') }}`
 {%- endfor %}
-
-Fix required: Include dependency providers BEFORE the dependent actors in your new plan.
+{% endif %}
 
 ## Recovery Strategy:
 1. Identify which actor(s) failed due to missing dependencies
 2. Add the appropriate provider(s) from the available solutions above
 3. Reorder your plan so providers come before consumers
 4. Verify all dependencies are satisfied in the correct sequence
+5. Include dependency providers BEFORE the dependent actors in your new plan
+6. Do not repeat the same actor consecutively unless absolutely necessary
+
 {%- endif %}
-Remember: A plan that ignores dependencies will always fail. Check requirements before assigning any actor, and do not consecutively use the same actor.
+Remember: A plan that ignores dependencies will always fail. Check requirements before assigning any actor.
 {%- endblock -%}
 
 {% block examples %}
 # Examples
 
-✅ GOOD: "Top 5 customers by revenue"
-1. SQLAgent: Query top customers by revenue
+✅ GOOD: "Top and bottom 5 customers by revenue"
+1. SQLAgent: Query the top 5 customers and bottom 5 customers by revenue
 2. AnalystAgent: Analyze customer patterns
 
-❌ BAD: "Show sales trends"
-1. SQLAgent: Get sales data
-2. SQLAgent: Calculate trends ← Consecutive actor violation
+❌ BAD: "Top and bottom 5 customers by revenue" (consecutive agents)
+1. SQLAgent: Query the top 5 customers by revenue
+2. SQLAgent: Query the bottom 5 customers by revenue
 {% endblock %}
