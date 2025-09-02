@@ -54,7 +54,7 @@ jobs:
           git clean -fxd examples/gallery
       - name: Upload and deploy dev gallery
         if: |
-          github.event.workflow_run.event != 'schedule' &&
+          github.event_name != 'schedule' &&
           (
             (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'dev') ||
             (github.event_name == 'workflow_run' && (contains(steps.vars.outputs.tag, 'a') || contains(steps.vars.outputs.tag, 'b') || contains(steps.vars.outputs.tag, 'rc')))
@@ -68,7 +68,7 @@ jobs:
           ae5 deployment start lumen-gallery-dev --endpoint lumen-gallery-dev --command default --public --command default --resource-profile default --wait
       - name: Upload and deploy prod gallery
         if: |
-          github.event.workflow_run.event != 'schedule' &&
+          github.event_name != 'schedule' &&
           (
             (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'main') ||
             (github.event_name == 'workflow_run' && !(contains(steps.vars.outputs.tag, 'a') || contains(steps.vars.outputs.tag, 'b') || contains(steps.vars.outputs.tag, 'rc')) && contains(steps.vars.outputs.tag, 'v'))
