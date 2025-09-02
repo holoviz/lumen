@@ -48,10 +48,18 @@ jobs:
         run: |
           conda activate test
           conda install -c ae5-admin anaconda-project ae5-tools
+      - name: Prepare environment to check it solves
+        run: |
+          anaconda-project prepare --directory examples/gallery
+          git clean -fxd examples/gallery
+          git reset --hard "$GITHUB_SHA"
       - name: Upload and deploy dev gallery
         if: |
-          (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'dev') ||
-          (github.event_name == 'workflow_run' && (contains(steps.vars.outputs.tag, 'a') || contains(steps.vars.outputs.tag, 'b') || contains(steps.vars.outputs.tag, 'rc')))
+          github.event_name != 'schedule' &&
+          (
+            (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'dev') ||
+            (github.event_name == 'workflow_run' && (contains(steps.vars.outputs.tag, 'a') || contains(steps.vars.outputs.tag, 'b') || contains(steps.vars.outputs.tag, 'rc')))
+          )
         run: |
           conda activate test
           ae5 login --hostname holoviz-demo.anaconda.com --username ${{ secrets.AE5_USERNAME }} --password ${{ secrets.AE5_PASSWORD }}
@@ -61,8 +69,11 @@ jobs:
           ae5 deployment start lumen-gallery-dev --endpoint lumen-gallery-dev --command default --public --command default --resource-profile default --wait
       - name: Upload and deploy prod gallery
         if: |
-          (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'main') ||
-          (github.event_name == 'workflow_run' && !(contains(steps.vars.outputs.tag, 'a') || contains(steps.vars.outputs.tag, 'b') || contains(steps.vars.outputs.tag, 'rc')))
+          github.event_name != 'schedule' &&
+          (
+            (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'main') ||
+            (github.event_name == 'workflow_run' && !(contains(steps.vars.outputs.tag, 'a') || contains(steps.vars.outputs.tag, 'b') || contains(steps.vars.outputs.tag, 'rc')) && contains(steps.vars.outputs.tag, 'v'))
+          )
         run: |
           conda activate test
           ae5 login --hostname holoviz-demo.anaconda.com --username ${{ secrets.AE5_USERNAME }} --password ${{ secrets.AE5_PASSWORD }}
