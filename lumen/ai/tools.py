@@ -9,10 +9,11 @@ import param
 
 from panel.io import cache as pn_cache
 from panel.io.state import state
+from panel.pane import HoloViews as HoloViewsPanel, panel as as_panel
 from panel.viewable import Viewable
 
 from ..sources.duckdb import DuckDBSource
-from ..views.base import View
+from ..views.base import HoloViews, View
 from .actor import Actor, ContextProvider
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .embeddings import NumpyEmbeddings
@@ -166,7 +167,10 @@ class VectorLookupToolUser(ToolUser):
         kwargs = super()._get_tool_kwargs(tool, prompt_tools, **params)
 
         # If the tool is already instantiated and has a vector_store, use it
-        if (not issubclass(tool, VectorLookupTool) and not isinstance(tool, VectorLookupTool)) or (isinstance(tool, VectorLookupTool) and tool.vector_store is not None):
+        if (
+            ((isinstance(tool, type) and not issubclass(tool, VectorLookupTool)) and not isinstance(tool, VectorLookupTool)) or
+            (isinstance(tool, VectorLookupTool) and tool.vector_store is not None)
+        ):
             return kwargs
         elif isinstance(tool, VectorLookupTool) and tool._item_type_name == "document" and self.document_vector_store is not None:
             kwargs["vector_store"] = self.document_vector_store
@@ -1409,7 +1413,6 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
 
 
 class FunctionTool(Tool):
-
     """
     FunctionTool wraps arbitrary functions and makes them available as a tool
     for an LLM to call. It inspects the arguments of the function and generates
@@ -1436,6 +1439,9 @@ class FunctionTool(Tool):
     requires = param.List(default=[], readonly=False, constant=True, doc="""
         List of context values it requires to be in memory.""")
 
+    render_output = param.Boolean(default=False, doc="""
+        Whether to render the tool output directly, even if it is not already a Lumen View or Panel Viewable.""")
+
     prompts = param.Dict(
         default={
             "main": {
@@ -1446,10 +1452,11 @@ class FunctionTool(Tool):
 
     def __init__(self, function, **params):
         model = function_to_model(function, skipped=self.requires)
+        if "purpose" not in params:
+            params["purpose"] = f"{model.__name__}: {model.__doc__}" if model.__doc__ else model.__name__
         super().__init__(
             function=function,
             name=function.__name__,
-            purpose=params.pop("purpose", model.__doc__) or "",
             **params
         )
         self._model = model
@@ -1474,6 +1481,11 @@ class FunctionTool(Tool):
             result = self.function(**arguments)
         if isinstance(result, (View, Viewable)):
             return result
+        elif self.render_output:
+            p = as_panel(result)
+            if isinstance(p, HoloViewsPanel):
+                return HoloViews(object=p.object)
+            return p
         if self.provides:
             if len(self.provides) == 1 and not isinstance(result, dict):
                 self._memory[self.provides[0]] = result

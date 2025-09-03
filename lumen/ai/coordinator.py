@@ -39,7 +39,7 @@ from .tools import (
     IterativeTableLookup, TableLookup, Tool, VectorLookupToolUser,
 )
 from .utils import (
-    fuse_messages, log_debug, stream_details, wrap_logfire,
+    fuse_messages, log_debug, normalized_name, stream_details, wrap_logfire
 )
 from .views import AnalysisOutput
 
@@ -669,8 +669,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
             # the master dict of agents / tools to be used downstream
             # change this for filling models' literals
-            agents = {agent.name[:-5]: agent for agent in self.agents}
-            tools = {tool.name[:-5]: tool for tool in self._tools["main"]}
+            agents = {normalized_name(agent): agent for agent in self.agents}
+            tools = {normalized_name(tool): tool for tool in self._tools["main"]}
 
             agents, tools, pre_plan_output = await self._pre_plan(messages, agents, tools)
             plan = await self._compute_plan(messages, agents, tools, pre_plan_output)

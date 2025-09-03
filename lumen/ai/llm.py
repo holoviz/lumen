@@ -11,8 +11,8 @@ import instructor
 import panel as pn
 import param
 
+from instructor import Mode, patch
 from instructor.dsl.partial import Partial
-from instructor.patch import Mode, patch
 from pydantic import BaseModel
 
 from .interceptor import Interceptor
