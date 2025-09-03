@@ -19,7 +19,7 @@ from .actor import Actor
 from .llm import Llm
 from .memory import _Memory
 from .tools import FunctionTool, Tool
-from .utils import wrap_logfire
+from .utils import wrap_logfire_on_method
 from .views import LumenOutput
 
 
@@ -70,6 +70,13 @@ class Task(Viewer):
         self._init_view()
         self._populate_view()
 
+    def __init_subclass__(cls, **kwargs):
+        """
+        Apply wrap_logfire to all the subclasses' execute automatically
+        """
+        super().__init_subclass__(**kwargs)
+        wrap_logfire_on_method(cls, "execute")
+
     def _init_view(self):
         self._view = self._output = Column(sizing_mode='stretch_width')
 
@@ -105,7 +112,7 @@ class Task(Viewer):
             steps_layout=self.steps_layout
         ):
             if isinstance(task, Actor):
-                out = await wrap_logfire(task.respond, task.llm, span_name=task.__class__.name)(messages, **kwargs)
+                out = await task.respond(messages, **kwargs)
                 # Handle Tool specific behaviors
                 if isinstance(task, Tool):
                     # Handle View/Viewable results regardless of agent type

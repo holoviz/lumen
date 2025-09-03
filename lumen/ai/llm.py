@@ -16,7 +16,6 @@ from instructor.dsl.partial import Partial
 from pydantic import BaseModel
 
 from .interceptor import Interceptor
-from .models import YesNo
 from .services import AzureOpenAIMixin, LlamaCppMixin, OpenAIMixin
 from .utils import format_exception, log_debug, truncate_string
 
@@ -54,7 +53,7 @@ class Llm(param.Parameterized):
         'default', 'reasoning' and 'sql'. Agents may pick which model to
         invoke for different reasons.""")
 
-    use_logfire = param.Boolean(default=False, doc="""
+    use_logfire = param.Boolean(default=True, doc="""
         Whether to log LLM calls and responses to logfire.
         Suppresses streaming responses if enabled since
         logfire does not track token usage on stream.""")
@@ -179,9 +178,8 @@ class Llm(param.Parameterized):
         try:
             self._ready = False
             await self.invoke(
-                messages=[{'role': 'user', 'content': 'Init?'}],
+                messages=[{'role': 'user', 'content': 'Ready? "Y" or "N"'}],
                 model_spec="ui",
-                response_model=YesNo
             )
             self._ready = True
         except Exception as e:
@@ -927,9 +925,8 @@ class WebLLM(Llm):
         self._status.name = pn.rx('Loading LLM {:.1f}%').format(progress)
         try:
             await self.invoke(
-                messages=[{'role': 'user', 'content': 'Are you there? YES | NO'}],
+                messages=[{'role': 'user', 'content': 'Ready? "Y" or "N"'}],
                 model_spec="ui",
-                response_model=YesNo
             )
         except Exception as e:
             self._status.param.update(

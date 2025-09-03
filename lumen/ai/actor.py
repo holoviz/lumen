@@ -17,7 +17,7 @@ from .llm import Llm, Message
 from .memory import _Memory, memory
 from .utils import (
     class_name_to_llm_spec_key, log_debug, render_template,
-    warn_on_unused_variables,
+    warn_on_unused_variables, wrap_logfire_on_method,
 )
 
 
@@ -296,6 +296,13 @@ class Actor(LLMUser):
         super().__init__(**params)
         if self.interface is None:
             self._null_step = NullStep()
+
+    def __init_subclass__(cls, **kwargs):
+        """
+        Apply wrap_logfire to all the subclasses' respond automatically
+        """
+        super().__init_subclass__(**kwargs)
+        wrap_logfire_on_method(cls, "respond")
 
     def _add_step(self, title: str = "", **kwargs):
         """Private contextmanager for adding steps to the interface.
