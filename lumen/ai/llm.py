@@ -55,7 +55,9 @@ class Llm(param.Parameterized):
         invoke for different reasons.""")
 
     use_logfire = param.Boolean(default=False, doc="""
-        Whether to log LLM calls and responses to logfire.""")
+        Whether to log LLM calls and responses to logfire.
+        Suppresses streaming responses if enabled since
+        logfire does not track token usage on stream.""")
 
     _ready = param.Boolean(default=False, doc="""
         Whether the LLM has been initialized and is ready to use.""")
@@ -216,6 +218,21 @@ class Llm(param.Parameterized):
         ------
         The string or response_model field.
         """
+        if self.use_logfire:
+            output = await self.invoke(
+                messages,
+                system=system,
+                response_model=response_model,
+                model_spec=model_spec,
+                **kwargs,
+            )
+            if field is not None and hasattr(output, field):
+                output = getattr(output, field)
+            elif hasattr(output, "choices"):
+                output = output.choices[0].message.content
+            yield output
+            return
+
         if ((response_model and not self._supports_model_stream) or
             not self._supports_stream):
             yield await self.invoke(
