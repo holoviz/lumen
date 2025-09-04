@@ -629,7 +629,6 @@ class SQLAgent(LumenBaseAgent):
             "main",
             messages,
             dialect=dialect,
-            separator=SOURCE_TABLE_SEPARATOR,
             step_number=step_number,
             is_final_step=is_final,
             current_step=messages[0]["content"],

@@ -96,11 +96,11 @@ Conditions for use:
 {%- if memory.get('visible_slugs') %}
 📊 Data available:
 {%- set tables_list = memory['visible_slugs'] | list %}
-{%- for table in tables_list[:10] %}
-- {{ table }}
+{%- for table in tables_list[:5] %}
+- {{ table.split(source_table_sep)[-1] }}
 {%- endfor %}
-{%- if tables_list | length > 10 %}
-- (showing first 10 of {{ tables_list | length }} tables)
+{%- if tables_list | length > 5 %}
+- (showing first 5 of {{ tables_list | length }} tables)
 {%- endif %}
 {% endif %}
 

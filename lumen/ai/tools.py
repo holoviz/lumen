@@ -1092,7 +1092,6 @@ class IterativeTableLookup(TableLookup):
                             examined_slugs=examined_slugs,
                             selected_slugs=selected_slugs,
                             failed_slugs=failed_slugs,
-                            separator=SOURCE_TABLE_SEPARATOR,
                             sql_metadata_map=sql_metadata_map,
                             vector_metadata_map=vector_metadata_map,
                             iteration=iteration,

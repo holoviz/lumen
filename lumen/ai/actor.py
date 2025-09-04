@@ -12,7 +12,7 @@ from panel.chat import ChatFeed
 from panel.layout.base import ListLike, NamedListLike
 from pydantic import BaseModel
 
-from .config import PROMPTS_DIR
+from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .llm import Llm, Message
 from .memory import _Memory, memory
 from .utils import (
@@ -314,6 +314,7 @@ class Actor(LLMUser):
         context = await super()._gather_prompt_context(prompt_name, messages, **context)
         context["memory"] = self._memory
         context["actor_name"] = self.name
+        context["source_table_sep"] = SOURCE_TABLE_SEPARATOR
         return context
 
     @abstractmethod
