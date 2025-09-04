@@ -1054,8 +1054,7 @@ class Planner(Coordinator):
                     step.stream(reasoning.chain_of_thought, replace=True)
                     previous_plans.append(reasoning.chain_of_thought)
 
-        system_with_plan = system + f"\n\n# Plan to Follow\n{reasoning.chain_of_thought}"
-        return await self._fill_model(messages, system_with_plan, plan_model)
+        return await self._fill_model(messages, reasoning.chain_of_thought, plan_model)
 
     async def _resolve_plan(
         self,
