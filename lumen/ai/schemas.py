@@ -137,7 +137,7 @@ class SQLMetaset:
                 continue
 
             base_sql = truncate_string(vector_metadata.base_sql, max_length=200) if truncate else vector_metadata.base_sql
-            context += f"{table_slug!r} (access this table with: {base_sql})\n"
+            context += f"\n{table_slug!r} (access this table with: {base_sql})\n"
 
             if vector_metadata.description:
                 desc = truncate_string(vector_metadata.description, max_length=100) if truncate else vector_metadata.description
@@ -152,8 +152,8 @@ class SQLMetaset:
             # Only include columns if explicitly requested
             if include_columns and vector_metadata.columns:
                 cols_to_show = vector_metadata.columns
-                context += "Columns:\n"
-                for i, col in enumerate(cols_to_show):
+                context += "Columns:"
+                for col in cols_to_show:
                     schema_data = None
                     if sql_data and col.name in sql_data.schema:
                         schema_data = sql_data.schema[col.name]
@@ -161,7 +161,7 @@ class SQLMetaset:
                             continue
 
                     # Get column name
-                    context += f"\n{i}. {col.name}"
+                    context += f"\n- {col.name}"
 
                     # Get column description with optional truncation
                     if col.description:
