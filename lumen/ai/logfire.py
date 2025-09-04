@@ -12,6 +12,7 @@ from logfire.query_client import AsyncLogfireQueryClient
 TRACE_ID_QUERY = """
 SELECT trace_id
 FROM RECORDS
+WHERE tags @> {tag_array}
 ORDER BY created_at DESC
 LIMIT 1
 """
@@ -25,14 +26,33 @@ WHERE trace_id = '{trace_id}'
 PRICING = {"gpt-4.1-mini": {"input": 0.4, "output": 1.6}}
 
 
-async def read_trace(trace_id: str | None = None, read_token: str | None = None):
+def sanitize_tag(tag: str) -> str:
+    """
+    Sanitize tags to prevent SQL injection, but very basic
+    """
+    # Remove/escape single quotes and limit length
+    return str(tag).replace("'", "''")[:100]
+
+
+async def read_trace(trace_id: str | None = None, read_token: str | None = None, tags: list[str] | None = None):
     """
     Parse observability data to extract aggregated span information.
     """
     read_token = read_token or os.getenv("LOGFIRE_READ_TOKEN")
+
+    # Use empty array when tags is None - matches all records
+    if tags is None:
+        tags = []
+
+    sanitized_tags = [sanitize_tag(tag) for tag in tags if tag and str(tag).strip()]
+    tag_array = "ARRAY[" + ", ".join(f"'{tag}'" for tag in sanitized_tags) + "]"
+
     async with AsyncLogfireQueryClient(read_token=read_token) as client:
         if trace_id is None:
-            trace_id = (await client.query_json(sql=TRACE_ID_QUERY))["columns"][0]["values"][0]
+            trace_df = (await client.query_json(sql=TRACE_ID_QUERY.format(tag_array=tag_array)))
+            if len(trace_df) == 0:
+                return None
+            trace_id = trace_df["columns"][0]["values"][0]
         df = pd.read_csv(StringIO(await client.query_csv(sql=DATA_QUERY.format(trace_id=trace_id))))
 
     # Build parent-child relationships
@@ -56,9 +76,9 @@ async def read_trace(trace_id: str | None = None, read_token: str | None = None)
             input_cost = output_cost = total_cost = 0
 
         attributes = json.loads(row["attributes_reduced"])
-        messages = attributes.get("messages", attributes.get("contents", []))
-        request_data = attributes.get("request_data", [])
-        response_data = attributes.get("response_data", [])
+        request_data = attributes.get("request_data", {})
+        response_data = attributes.get("response_data", {})
+        messages = attributes.get("messages", attributes.get("contents", request_data.get("messages", [])))
 
         span_data[span_id] = {
             "trace_id": row["trace_id"],
@@ -122,8 +142,8 @@ async def read_trace(trace_id: str | None = None, read_token: str | None = None)
                 "name": data["name"],
                 "model": data["model"],
                 "duration": data["duration"],
-                "input": total_input if total_input > 0 else None,
-                "output": total_output if total_output > 0 else None,
+                "input_tokens": total_input if total_input > 0 else None,
+                "output_tokens": total_output if total_output > 0 else None,
                 "total_tokens": total_tokens,
                 "input_cost": total_input_cost,
                 "output_cost": total_output_cost,

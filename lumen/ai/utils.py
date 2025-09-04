@@ -858,14 +858,14 @@ def class_name_to_llm_spec_key(class_name: str) -> str:
 
 def wrap_logfire(span_name: str | None = None, extract_args: bool = True, **instrument_kwargs):
     """
-    Decorator to instrument a function with logfire if llm.use_logfire is True.
+    Decorator to instrument a function with logfire if llm.logfire_tags is True.
     Expects the decorated function to have an 'llm' attribute (on self) or be passed via instrument_kwargs.
     """
     def decorator(func: Callable):
         def should_instrument(self):
             """Check if the function should be instrumented with logfire."""
             llm = instrument_kwargs.get("llm", getattr(self, "llm", None))
-            return llm is not None and llm.use_logfire
+            return llm is not None and llm.logfire_tags
 
         def get_instrumented_func(self):
             """Create and return the logfire-instrumented function."""

@@ -53,8 +53,9 @@ class Llm(param.Parameterized):
         'default', 'reasoning' and 'sql'. Agents may pick which model to
         invoke for different reasons.""")
 
-    use_logfire = param.Boolean(default=False, doc="""
+    logfire_tags = param.List(default=None, doc="""
         Whether to log LLM calls and responses to logfire.
+        If a list of tags is provided, those tags will be used for logging.
         Suppresses streaming responses if enabled since
         logfire does not track token usage on stream.""")
 
@@ -77,7 +78,7 @@ class Llm(param.Parameterized):
             if isinstance(params["mode"], str):
                 params["mode"] = Mode[params["mode"].upper()]
         super().__init__(**params)
-        if self.use_logfire and not self._supports_logfire:
+        if self.logfire_tags is not None and not self._supports_logfire:
             raise ValueError(
                 f"LLM {self.__class__.__name__} does not support logfire."
             )
@@ -216,7 +217,7 @@ class Llm(param.Parameterized):
         ------
         The string or response_model field.
         """
-        if self.use_logfire:
+        if self.logfire_tags is not None:
             output = await self.invoke(
                 messages,
                 system=system,
@@ -422,11 +423,14 @@ class OpenAI(Llm, OpenAIMixin):
 
     _supports_logfire = True
 
-    def __init__(self, **params):
-        super().__init__(**params)
-        if self.use_logfire:
+    @param.depends("logfire_tags", watch=True, on_init=True)
+    def _update_logfire_tags(self):
+        if self.logfire_tags is not None:
             import logfire
-            logfire.configure()
+            logfire.configure(send_to_logfire=True)
+            self._logfire = logfire.Logfire(tags=self.logfire_tags)
+        else:
+            self._logfire = None
 
     @property
     def _client_kwargs(self):
@@ -451,9 +455,8 @@ class OpenAI(Llm, OpenAIMixin):
         # Use the mixin to create the OpenAI client
         llm = self._instantiate_client(async_client=True, **model_kwargs)
 
-        if self.use_logfire:
-            import logfire
-            logfire.instrument_openai(llm)
+        if self.logfire_tags:
+            self._logfire.instrument_openai(llm)
 
         if self.interceptor:
             self.interceptor.patch_client(llm, mode="store_inputs")
