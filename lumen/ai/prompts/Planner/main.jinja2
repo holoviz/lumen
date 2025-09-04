@@ -34,8 +34,8 @@ Ground Rules:
     {%- set _ = missing_reqs.append(req) %}
   {%- endif %}
 {%- endfor %}
-### `{{ tool.__class__.__name__ }}` {%- if missing_reqs %}❌ BLOCKED! Requires: `{{ missing_reqs | join('`, `') }}`
-{%- else %}✅ READY
+### `{{ tool.__class__.__name__ }}` {%- if missing_reqs %} ❌ BLOCKED! Requires: `{{ missing_reqs | join('`, `') }}`
+{%- else %} ✅ READY
 {%- endif %}
 {{ ' '.join(dedent(tool.purpose).strip().split()) }}
 {% if tool.provides -%}Provides: `{{ tool.provides | join('`, `') }}`{%- endif %}
@@ -54,7 +54,7 @@ Conditions for use:
     {%- set _ = missing_reqs.append(req) %}
   {%- endif %}
 {%- endfor %}
-### `{{ agent.__class__.__name__ }}` {%- if missing_reqs %}❌ BLOCKED! Requires: `{{ missing_reqs | join('`, `') }}`
+### `{{ agent.__class__.__name__ }}` {%- if missing_reqs %} ❌ BLOCKED! Requires: `{{ missing_reqs | join('`, `') }}`
   {%- set providers = [] %}
   {%- for req in missing_reqs %}
     {%- for tool in tools %}
@@ -68,7 +68,7 @@ Conditions for use:
       {%- endif %}
     {%- endfor %}
   {%- endfor %}
-{%- else %}✅ READY
+{%- else %} ✅ READY
 {%- endif %}
 {{ ' '.join(dedent(agent.purpose).strip().split()) }}
 {% if agent.provides -%}Provides: `{{ agent.provides | join('`, `') or 'None' }}`{%- endif %}
