@@ -72,11 +72,11 @@ Conditions for use:
 {%- endif %}
 {{ ' '.join(dedent(agent.purpose).strip().split()) }}
 {% if agent.provides -%}Provides: `{{ agent.provides | join('`, `') or 'None' }}`{%- endif %}
-Conditions for use:
+Guidelines:
 {%- for condition in agent.conditions %}
   - {{ dedent(condition) }}
 {%- endfor -%}
-{% if agent.not_with -%}Should never be used together with: `{{ agent.not_with | join('`, `') }}`{%- endif %}
+{% if agent.not_with %}Should never be used together with: `{{ agent.not_with | join('`, `') }}`{%- endif %}
 {% endfor %}
 # Current Data Context
 
