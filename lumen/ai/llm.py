@@ -423,7 +423,7 @@ class OpenAI(Llm, OpenAIMixin):
     _supports_logfire = True
 
     def __init__(self, **params):
-        super().__init__()
+        super().__init__(**params)
         if self.use_logfire:
             import logfire
             logfire.configure()

@@ -9,8 +9,6 @@ import pandas as pd
 
 from logfire.query_client import AsyncLogfireQueryClient
 
-READ_TOKEN = os.getenv("LOGFIRE_READ_TOKEN")
-
 TRACE_ID_QUERY = """
 SELECT trace_id
 FROM RECORDS
@@ -27,15 +25,14 @@ WHERE trace_id = '{trace_id}'
 PRICING = {"gpt-4.1-mini": {"input": 0.4, "output": 1.6}}
 
 
-async def parse_logfire_data(trace_id: str | None = None):
+async def read_trace(trace_id: str | None = None, read_token: str | None = None):
     """
     Parse observability data to extract aggregated span information.
     """
-    if trace_id is None:
-        async with AsyncLogfireQueryClient(read_token=READ_TOKEN) as client:
+    read_token = read_token or os.getenv("LOGFIRE_READ_TOKEN")
+    async with AsyncLogfireQueryClient(read_token=read_token) as client:
+        if trace_id is None:
             trace_id = (await client.query_json(sql=TRACE_ID_QUERY))["columns"][0]["values"][0]
-
-    async with AsyncLogfireQueryClient(read_token=READ_TOKEN) as client:
         df = pd.read_csv(StringIO(await client.query_csv(sql=DATA_QUERY.format(trace_id=trace_id))))
 
     # Build parent-child relationships
@@ -59,8 +56,9 @@ async def parse_logfire_data(trace_id: str | None = None):
             input_cost = output_cost = total_cost = 0
 
         attributes = json.loads(row["attributes_reduced"])
-        request_data = attributes.get("request_data", [])
         messages = attributes.get("messages", attributes.get("contents", []))
+        request_data = attributes.get("request_data", [])
+        response_data = attributes.get("response_data", [])
 
         span_data[span_id] = {
             "trace_id": row["trace_id"],
@@ -70,13 +68,14 @@ async def parse_logfire_data(trace_id: str | None = None):
             "start_timestamp": row["start_timestamp"],
             "parent_id": parent_id,
             "model": model,
-            "input_tokens": input_tokens,
+            "input_tokens": input_tokens,  # TODO: include cached tokens from response_data
             "output_tokens": output_tokens,
             "input_cost": input_cost,
             "output_cost": output_cost,
             "total_cost": total_cost,
-            "request_data": request_data,
             "messages": messages,
+            "request_data": request_data,
+            "response_data": response_data,
         }
 
         if pd.notna(parent_id):
@@ -131,8 +130,9 @@ async def parse_logfire_data(trace_id: str | None = None):
                 "total_cost": total_cost,
                 "num_spans": len(descendants),
                 "levels_deep": get_depth(span_id),
-                "request_data": data["request_data"],
                 "messages": data["messages"],
+                "request_data": data["request_data"],
+                "response_data": data["response_data"],
             }
         )
 
@@ -142,6 +142,5 @@ async def parse_logfire_data(trace_id: str | None = None):
 
 
 if __name__ == "__main__":
-    df = asyncio.run(parse_logfire_data("0199117540d7bb42d334dfb4e9ba4848"))
+    df = asyncio.run(read_trace("0199117540d7bb42d334dfb4e9ba4848"))
     df.to_csv("logfire_output.csv", index=False)
-    print(df)
