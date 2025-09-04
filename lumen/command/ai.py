@@ -95,6 +95,11 @@ class LumenAIServe(Serve):
             Example --llm-model-url 'https://huggingface.co/RE/PO/blob/main/FILE.gguf?chat_format=chat_format'
             """,
         )
+        group.add_argument(
+            "--logfire-tags",
+            nargs="*",
+            help="Tags for logfire logging. If provided, enables logfire logging with the specified tags.",
+        )
 
     def invoke(self, args: argparse.Namespace) -> bool:
         """Override invoke to handle both sets of arguments"""
@@ -105,6 +110,7 @@ class LumenAIServe(Serve):
         temperature = args.temperature
         agents = args.agents
         log_level = args.log_level
+        logfire_tags = getattr(args, 'logfire_tags', None)
 
         llm_model_url = args.llm_model_url
         if llm_model_url and provider and provider != "llama":
@@ -187,6 +193,7 @@ class LumenAIServe(Serve):
                 agents=agents,
                 log_level=log_level,
                 model_kwargs=model_kwargs,
+                logfire_tags=logfire_tags,
             )
             kwargs = {k: v for k, v in kwargs.items() if v is not None}
             handler = AIHandler(paths, **kwargs)
@@ -217,6 +224,7 @@ class AIHandler(CodeHandler):
         agents: list[str] | None = None,
         log_level: str = "INFO",
         model_kwargs: dict | None = None,
+        logfire_tags: list[str] | None = None,
         **kwargs,
     ) -> None:
         source = self._build_source_code(
@@ -229,6 +237,7 @@ class AIHandler(CodeHandler):
             agents=agents,
             log_level=log_level,
             model_kwargs=model_kwargs,
+            logfire_tags=logfire_tags,
         )
         super().__init__(filename="lumen_ai.py", source=source, **kwargs)
 
@@ -244,6 +253,7 @@ class AIHandler(CodeHandler):
             "log_level": config["log_level"],
             "temperature": config.get("temperature"),
             "model_kwargs": config.get('model_kwargs') or {},
+            "logfire_tags": config.get("logfire_tags"),
         }
         context = {k: v for k, v in context.items() if v is not None}
 
