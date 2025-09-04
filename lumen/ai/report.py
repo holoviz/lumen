@@ -159,7 +159,7 @@ class Section(Task):
     level = 2
 
     def _init_view(self):
-        self._view = self._output = pn.Column()
+        self._view = self._output = Column()
 
     def _populate_view(self):
         self._view[:] = [subtask for subtask in self.subtasks if isinstance(subtask, Task)]

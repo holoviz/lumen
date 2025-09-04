@@ -14,7 +14,7 @@ import yaml
 
 from panel.chat import ChatInterface
 from panel.viewable import Viewable, Viewer
-from panel_material_ui import Button
+from panel_material_ui import Button, Column, Tabs
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
@@ -118,7 +118,7 @@ class Agent(Viewer, ToolUser, ContextProvider):
         """
         Stream to a dummy column to be able to suppress the steps output.
         """
-        return pn.Column() if not self.steps_layout else self.steps_layout
+        return Column() if not self.steps_layout else self.steps_layout
 
     def __panel__(self):
         return self.interface
@@ -199,7 +199,7 @@ class SourceAgent(Agent):
     ) -> Any:
         source_controls = self.source_controls(memory=self._memory, cancellable=True, replace_controls=True)
 
-        output = pn.Column(source_controls)
+        output = Column(source_controls)
         if "source" not in self._memory:
             help_message = "No datasets or documents were found, **please upload at least one to continue**..."
         else:
@@ -366,10 +366,10 @@ class ListAgent(Agent):
             item_list.on_click(self._use_item)
             tabs.append(item_list)
 
-        self._tabs = pn.Tabs(*tabs, sizing_mode="stretch_width")
+        self._tabs = Tabs(*tabs, sizing_mode="stretch_width")
 
         self.interface.stream(
-            pn.Column(
+            Column(
                 f"The available {self._column_name.lower()}s are listed below. Click on the eye icon to show the {self._column_name.lower()} contents.",
                 self._tabs
             ), user="Assistant"

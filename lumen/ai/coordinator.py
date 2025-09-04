@@ -11,12 +11,11 @@ import param
 from panel import bind
 from panel.chat import ChatFeed
 from panel.io.document import hold
-from panel.layout import Column, FlexBox
 from panel.pane import HTML, Markdown
 from panel.viewable import Viewer
 from panel_material_ui import (
-    Accordion, Button, Card, ChatInterface, ChatStep, Column as MuiColumn,
-    Paper, Tabs, Typography,
+    Accordion, Button, Card, ChatInterface, ChatStep, Column, FlexBox, Paper,
+    Tabs, Typography,
 )
 from pydantic import BaseModel
 from typing_extensions import Self
@@ -287,7 +286,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
             sx={'p': '0 20px 20px 20px'}
         )
 
-        self._main = MuiColumn(
+        self._main = Column(
             welcome_screen,
             sx={'display': 'flex', 'align-items': 'center'},
             height_policy='max'
