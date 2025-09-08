@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 
 from typing import TYPE_CHECKING, Any
 
@@ -76,12 +77,13 @@ class DuckDBSource(BaseSQLSource):
     def __init__(self, **params):
         connection = params.pop('_connection', None)
         super().__init__(**params)
+
+        self._local = threading.local()
+        self._mirrors_initialized = False
+
+        # Store the initial connection if provided
         if connection:
-            self._connection = connection
-        else:
-            self._connection = duckdb.connect(self.uri)
-            for init in self.initializers:
-                self._connection.execute(init)
+            self._local.connection = connection
 
         # Process tables to handle automatic file detection
         if isinstance(self.tables, dict):
@@ -134,6 +136,39 @@ class DuckDBSource(BaseSQLSource):
 
             self.tables = processed_tables
 
+        # Setup mirrors on first connection access
+        if self.mirrors:
+            _ = self._connection  # This will trigger connection creation and mirror setup
+
+    @property
+    def _connection(self):
+        """Thread-safe connection property - each thread gets its own connection to shared DB."""
+        if not hasattr(self._local, 'connection') or self._local.connection is None:
+            # Use shared memory database if uri is :memory:
+            # This allows multiple connections to share the same database
+            uri = self.uri
+            if uri == ':memory:':
+                uri = f':memory:shared_db_{id(self)}'
+
+            self._local.connection = duckdb.connect(uri)
+
+            # Run initializers for this thread's connection
+            for init in self.initializers:
+                self._local.connection.execute(init)
+
+            # Setup mirrors once per instance (not per thread since DB is shared)
+            if not self._mirrors_initialized and self.mirrors:
+                self._setup_mirrors()
+                self._mirrors_initialized = True
+
+        return self._local.connection
+
+    @property
+    def connection(self):
+        return self._connection
+
+    def _setup_mirrors(self):
+        """Setup mirrors in the shared database (called once)."""
         for table, mirror in self.mirrors.items():
             if isinstance(mirror, pd.DataFrame):
                 df = mirror
@@ -143,17 +178,14 @@ class DuckDBSource(BaseSQLSource):
             else:
                 df = mirror.data
                 def update(e, table=table):
-                    self._connection.from_df(e.new).to_view(table)
+                    # Use the connection property to ensure thread safety
+                    self.connection.from_df(e.new).to_view(table)
                     self._set_cache(e.new, table)
                 mirror.param.watch(update, 'data')
             try:
-                self._connection.from_df(df).to_view(table)
+                self._local.connection.from_df(df).to_view(table)
             except (duckdb.CatalogException, duckdb.ParserException):
                 continue
-
-    @property
-    def connection(self):
-        return self._connection
 
     def _is_file_path(self, table_expr: str) -> bool:
         """
@@ -398,14 +430,10 @@ class DuckDBSource(BaseSQLSource):
             sql_transforms = [SQLFilter(conditions=conditions)] + sql_transforms
         for st in sql_transforms:
             sql_expr = st.apply(sql_expr)
+
         rel = self._connection.execute(sql_expr)
         has_geom = any(d[0] == 'geometry' and d[1] == 'BINARY' for d in rel.description)
         df = rel.fetch_df(date_as_object=True)
-
-        if df.empty:
-            rel = self._connection.execute(sql_expr)
-            has_geom = any(d[0] == 'geometry' and d[1] == 'BINARY' for d in rel.description)
-            df = rel.fetch_df(date_as_object=True)
 
         if has_geom:
             import geopandas as gpd
@@ -456,6 +484,6 @@ class DuckDBSource(BaseSQLSource):
         This method should be called when the source is no longer needed to prevent
         connection leaks and properly clean up server-side resources.
         """
-        if self._connection is not None:
-            self._connection.close()
-            self._connection = None
+        if hasattr(self._local, 'connection') and self._local.connection is not None:
+            self._local.connection.close()
+            self._local.connection = None
