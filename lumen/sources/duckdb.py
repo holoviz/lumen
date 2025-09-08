@@ -401,6 +401,12 @@ class DuckDBSource(BaseSQLSource):
         rel = self._connection.execute(sql_expr)
         has_geom = any(d[0] == 'geometry' and d[1] == 'BINARY' for d in rel.description)
         df = rel.fetch_df(date_as_object=True)
+
+        if df.empty:
+            rel = self._connection.execute(sql_expr)
+            has_geom = any(d[0] == 'geometry' and d[1] == 'BINARY' for d in rel.description)
+            df = rel.fetch_df(date_as_object=True)
+
         if has_geom:
             import geopandas as gpd
             geom = self._connection.execute(
