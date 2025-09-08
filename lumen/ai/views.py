@@ -300,7 +300,7 @@ class AnalysisOutput(LumenOutput):
                     icon='player-play', name='Run', on_click=self._rerun,
                     button_type='success', margin=(10, 0, 0 , 10)
                 )
-                self._main.insert(1, ('Config', pn.Column(controls, run_button)))
+                self._main.insert(1, ('Config', Column(controls, run_button)))
             with discard_events(self):
                 self._main.active = 1 if len(self._main) > 1 else 0
         self._rendered = True
