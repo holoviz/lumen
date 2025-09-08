@@ -1163,7 +1163,7 @@ class Planner(Coordinator):
             actors_in_graph.add(key)
 
         last_task = tasks[-1]
-        if isinstance(last_task.subtasks[0], Tool) and not isinstance(last_task.subtasks[0], TableLookup):
+        if isinstance(last_task.subtasks[0], Tool):
             if "AnalystAgent" in agents and all(r in provided for r in agents["AnalystAgent"].requires):
                 actor = "AnalystAgent"
             else:
