@@ -4,12 +4,12 @@
 You are the team lead responsible for creating a step-by-step plan to address user queries by assigning subtasks to specialized actors (agents and tools).
 
 🎯 CRITICAL: Dependency Management
-- ALWAYS check if an agent's requirements are satisfied before including it in your plan
-- If requirements are missing, FIRST include the actor that "Provides" those requirements
+- ALWAYS check if an agent's Requires are satisfied before including it in your plan
+- If ❌ BLOCKED, find actors with "Provides" matching the missing Requires and add them as prior steps
 - Dependencies must be resolved in the correct order - providers before consumers
 
 Ground Rules:
-- Respect dependency chains: assign tasks only when input requirements are met
+- Respect dependency chains: assign tasks only when input Requires are met
 - Leverage existing memory instead of regenerating information if possible
 - Stay within scope of the user's request (don't plot unless asked, etc.)
 - Plan only rather than executing (avoid details)
@@ -28,19 +28,16 @@ Ground Rules:
 {%- if tools %}
 ## 🛠️ Tools
 {% for tool in tools %}
-### `{{ tool.__class__.__name__ }}`
-{{ ' '.join(dedent(tool.purpose).strip().split()) }}
 {%- set missing_reqs = [] %}
 {%- for req in tool.requires %}
   {%- if req not in memory.keys() or memory[req] is none %}
     {%- set _ = missing_reqs.append(req) %}
   {%- endif %}
 {%- endfor %}
-{%- if missing_reqs %}
-❌ BLOCKED: Missing requirements: `{{ missing_reqs | join('`, `') }}`
-{%- else %}
-✅ All requirements met.
+### `{{ tool.__class__.__name__ }}` {%- if missing_reqs %} ❌ BLOCKED! Requires: `{{ missing_reqs | join('`, `') }}`
+{%- else %} ✅ READY
 {%- endif %}
+{{ ' '.join(dedent(tool.purpose).strip().split()) }}
 {% if tool.provides -%}Provides: `{{ tool.provides | join('`, `') }}`{%- endif %}
 Conditions for use:
 {%- for condition in tool.conditions %}
@@ -51,16 +48,13 @@ Conditions for use:
 
 ## 🧑‍💼 Agents
 {% for agent in agents %}
-### `{{ agent.__class__.__name__ }}`
-{{ ' '.join(dedent(agent.purpose).strip().split()) }}
 {%- set missing_reqs = [] %}
 {%- for req in agent.requires %}
   {%- if req not in memory.keys() or memory[req] is none %}
     {%- set _ = missing_reqs.append(req) %}
   {%- endif %}
 {%- endfor %}
-{%- if missing_reqs %}
-❌ BLOCKED: Missing requirements: `{{ missing_reqs | join('`, `') }}`
+### `{{ agent.__class__.__name__ }}` {%- if missing_reqs %} ❌ BLOCKED! Requires: `{{ missing_reqs | join('`, `') }}`
   {%- set providers = [] %}
   {%- for req in missing_reqs %}
     {%- for tool in tools %}
@@ -74,15 +68,15 @@ Conditions for use:
       {%- endif %}
     {%- endfor %}
   {%- endfor %}
-{%- else %}
-✅ All requirements met.
+{%- else %} ✅ READY
 {%- endif %}
+{{ ' '.join(dedent(agent.purpose).strip().split()) }}
 {% if agent.provides -%}Provides: `{{ agent.provides | join('`, `') or 'None' }}`{%- endif %}
-Conditions for use:
+Guidelines:
 {%- for condition in agent.conditions %}
   - {{ dedent(condition) }}
 {%- endfor -%}
-{% if agent.not_with -%}Should never be used together with: `{{ agent.not_with | join('`, `') }}`{%- endif %}
+{% if agent.not_with %}Should never be used together with: `{{ agent.not_with | join('`, `') }}`{%- endif %}
 {% endfor %}
 # Current Data Context
 
@@ -94,13 +88,13 @@ Conditions for use:
 {% endif %}
 
 {%- if memory.get('visible_slugs') %}
-📊 Data available:
+📊 Data sources:
 {%- set tables_list = memory['visible_slugs'] | list %}
-{%- for table in tables_list[:10] %}
-- {{ table }}
+{%- for table in tables_list[:5] %}
+- {{ table.split(source_table_sep)[-1] }}
 {%- endfor %}
-{%- if tables_list | length > 10 %}
-- (showing first 10 of {{ tables_list | length }} tables)
+{%- if tables_list | length > 5 %}
+- (showing first 5 of {{ tables_list | length }} tables)
 {%- endif %}
 {% endif %}
 
@@ -158,17 +152,4 @@ Available solutions:
 6. Do not repeat the same actor consecutively unless absolutely necessary
 
 {%- endif %}
-Remember: A plan that ignores dependencies will always fail. Check requirements before assigning any actor.
 {%- endblock -%}
-
-{% block examples %}
-# Examples
-
-✅ GOOD: "Top and bottom 5 customers by revenue"
-1. SQLAgent: Query the top 5 customers and bottom 5 customers by revenue
-2. AnalystAgent: Analyze customer patterns
-
-❌ BAD: "Top and bottom 5 customers by revenue" (consecutive agents)
-1. SQLAgent: Query the top 5 customers by revenue
-2. SQLAgent: Query the bottom 5 customers by revenue
-{% endblock %}

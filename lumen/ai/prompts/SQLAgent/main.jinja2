@@ -31,8 +31,8 @@ Write a SQL query for the user's data transformation request, focusing on intent
 
 {% block context -%}
 {%- if memory.get('visible_slugs') %}
-📊 Available: 
-{%- set tables_list = memory['visible_slugs'] | list %}
+📊 Available:
+{% set tables_list = memory['visible_slugs'] | list %}
 {{- tables_list[:5] | join(', ') }}
 {%- if tables_list | length > 5 %} (+{{tables_list | length - 5}} more){%- endif %}
 {% endif %}
@@ -53,7 +53,7 @@ Use `{{ dialect }}` SQL dialect.
 
 ## DuckDB Essentials:
 - Table references: Use exact names `read_csv('table.csv')`, alias if needed `as table_name`
-- Reference full slugs: `source {{ separator }} table`
+- Reference full slugs: `source {{ source_table_sep }} table`
 - Range predicates: `"date" >= '2023-06-01' AND "date" < '2023-09-01'`
 - Date selection: CAST(col as DATE) == '2023-06-01'
 - Window filtering: `QUALIFY ROW_NUMBER() OVER (...) <= 5`
@@ -65,7 +65,7 @@ Use `{{ dialect }}` SQL dialect.
 {%- endif %}
 Step {{ step_number }}: {{ current_step }}
 
-{%- if sql_plan_context %}
+{% if sql_plan_context %}
 ## Current Knowledge:
 {{ sql_plan_context }}
 
