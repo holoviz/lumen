@@ -28,7 +28,7 @@ class SqlQuery(PartialBaseModel):
     """A single SQL query with its associated metadata."""
 
     query: str = Field(description="""
-        One, correct, valid SQL query that answers the user's question;
+        One, correct, valid SQL query that answers the user's question without limits unless specified;
         should only be one query and do NOT add extraneous comments; no multiple semicolons""")
 
     expr_slug: str = Field(
