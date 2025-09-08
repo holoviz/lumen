@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import traceback
 
 from functools import partial
 from io import StringIO
@@ -48,6 +47,7 @@ from .llm import Llm, OpenAI
 from .llm_dialog import LLMConfigDialog
 from .memory import _Memory, memory
 from .report import Report
+from .utils import wrap_logfire
 from .vector_store import VectorStore
 
 if TYPE_CHECKING:
@@ -426,7 +426,7 @@ class UI(Viewer):
 
         if state.curdoc and state.curdoc.session_context:
             state.on_session_destroyed(self._destroy)
-        state.onload(self._setup_llm_and_watchers)
+        state.onload(self._initialize_new_llm)
 
     def _setup_actions(self):
         """Set up actions for the ChatAreaInput speed dial."""
@@ -462,9 +462,9 @@ class UI(Viewer):
             agent.llm = new_llm
 
         # Initialize the new LLM asynchronously
-        import param
         param.parameterized.async_executor(self._initialize_new_llm)
 
+    @wrap_logfire(span_name="Initialize LLM")
     async def _initialize_new_llm(self):
         """Initialize the new LLM after provider change."""
         try:
@@ -472,14 +472,6 @@ class UI(Viewer):
             self.interface.disabled = False
         except Exception:
             import traceback
-            traceback.print_exc()
-
-    async def _setup_llm_and_watchers(self):
-        """Initialize LLM and set up reactive watchers for TableLookup readiness."""
-        try:
-            await self.llm.initialize(log_level=self.log_level)
-            self.interface.disabled = False
-        except Exception:
             traceback.print_exc()
 
     def _open_sources_dialog(self, event=None):

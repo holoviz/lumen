@@ -39,7 +39,7 @@ from .tools import (
     IterativeTableLookup, TableLookup, Tool, VectorLookupToolUser,
 )
 from .utils import (
-    fuse_messages, log_debug, normalized_name, stream_details,
+    fuse_messages, log_debug, normalized_name, stream_details, wrap_logfire,
 )
 from .views import AnalysisOutput
 
@@ -588,6 +588,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
             memory=memory
         )
 
+    @wrap_logfire(span_name="Chat Invoke")
     async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface) -> Plan:
         log_debug(f"New Message: \033[91m{contents!r}\033[0m", show_sep="above")
         return await self.respond(contents)
@@ -989,6 +990,7 @@ class Planner(Coordinator):
         pre_plan_output["is_follow_up"] = is_follow_up
         return agents, tools, pre_plan_output
 
+    @wrap_logfire(span_name="Make Plan", extract_args=["messages", "previous_plans", "is_follow_up"])
     async def _make_plan(
         self,
         messages: list[Message],
@@ -1236,8 +1238,7 @@ class Planner(Coordinator):
                         log_debug(f"\033[91m!! Attempt {attempts}\033[0m")
                     plan = None
                     try:
-                        raw_plan = await self._make_plan(
-                            messages, agents, tools, unmet_dependencies, previous_actors, previous_plans,
+                        raw_plan = await self._make_plan(messages, agents, tools, unmet_dependencies, previous_actors, previous_plans,
                             plan_model, istep, is_follow_up=pre_plan_output["is_follow_up"]
                         )
                     except asyncio.CancelledError as e:

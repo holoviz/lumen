@@ -19,6 +19,7 @@ from .actor import Actor
 from .llm import Llm
 from .memory import _Memory
 from .tools import FunctionTool, Tool
+from .utils import wrap_logfire_on_method
 from .views import LumenOutput
 
 
@@ -68,6 +69,13 @@ class Task(Viewer):
         super().__init__(subtasks=[FunctionTool(task) if isinstance(task, FunctionType) else task for task in subtasks], **params)
         self._init_view()
         self._populate_view()
+
+    def __init_subclass__(cls, **kwargs):
+        """
+        Apply wrap_logfire to all the subclasses' execute automatically
+        """
+        super().__init_subclass__(**kwargs)
+        wrap_logfire_on_method(cls, "execute")
 
     def _init_view(self):
         self._view = self._output = Column(sizing_mode='stretch_width')

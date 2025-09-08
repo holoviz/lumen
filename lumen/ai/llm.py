@@ -16,7 +16,6 @@ from instructor.dsl.partial import Partial
 from pydantic import BaseModel
 
 from .interceptor import Interceptor
-from .models import YesNo
 from .services import AzureOpenAIMixin, LlamaCppMixin, OpenAIMixin
 from .utils import format_exception, log_debug, truncate_string
 
@@ -54,8 +53,17 @@ class Llm(param.Parameterized):
         'default', 'reasoning' and 'sql'. Agents may pick which model to
         invoke for different reasons.""")
 
+    logfire_tags = param.List(default=None, doc="""
+        Whether to log LLM calls and responses to logfire.
+        If a list of tags is provided, those tags will be used for logging.
+        Suppresses streaming responses if enabled since
+        logfire does not track token usage on stream.""")
+
     _ready = param.Boolean(default=False, doc="""
         Whether the LLM has been initialized and is ready to use.""")
+
+    # Whether the LLM supports logging to logfire
+    _supports_logfire = False
 
     # Whether the LLM supports streaming of any kind
     _supports_stream = True
@@ -70,6 +78,10 @@ class Llm(param.Parameterized):
             if isinstance(params["mode"], str):
                 params["mode"] = Mode[params["mode"].upper()]
         super().__init__(**params)
+        if self.logfire_tags is not None and not self._supports_logfire:
+            raise ValueError(
+                f"LLM {self.__class__.__name__} does not support logfire."
+            )
         if not self.model_kwargs.get("default"):
             raise ValueError(
                 f"Please specify a 'default' model in the model_kwargs "
@@ -167,9 +179,8 @@ class Llm(param.Parameterized):
         try:
             self._ready = False
             await self.invoke(
-                messages=[{'role': 'user', 'content': 'Are you there? YES | NO'}],
+                messages=[{'role': 'user', 'content': 'Ready? "Y" or "N"'}],
                 model_spec="ui",
-                response_model=YesNo
             )
             self._ready = True
         except Exception as e:
@@ -206,6 +217,21 @@ class Llm(param.Parameterized):
         ------
         The string or response_model field.
         """
+        if self.logfire_tags is not None:
+            output = await self.invoke(
+                messages,
+                system=system,
+                response_model=response_model,
+                model_spec=model_spec,
+                **kwargs,
+            )
+            if field is not None and hasattr(output, field):
+                output = getattr(output, field)
+            elif hasattr(output, "choices"):
+                output = output.choices[0].message.content
+            yield output
+            return
+
         if ((response_model and not self._supports_model_stream) or
             not self._supports_stream):
             yield await self.invoke(
@@ -381,11 +407,13 @@ class OpenAI(Llm, OpenAIMixin):
         "sql": {"model": "gpt-4.1-mini"},
         "vega_lite": {"model": "gpt-4.1-mini"},
         "edit": {"model": "gpt-4.1-mini"},
+        "ui": {"model": "gpt-4.1-nano"},
     })
 
     select_models = param.List(default=[
-        "gpt-3.5-turbo",
         "gpt-4.1-mini",
+        "gpt-4.1-nano",
+        "gpt-5-mini",
         "gpt-4-turbo",
         "gpt-4o",
         "gpt-4o-mini"
@@ -393,8 +421,16 @@ class OpenAI(Llm, OpenAIMixin):
 
     temperature = param.Number(default=0.25, bounds=(0, None), constant=True)
 
-    use_logfire = param.Boolean(default=False, doc="""
-        Whether to log LLM calls and responses to logfire.""")
+    _supports_logfire = True
+
+    @param.depends("logfire_tags", watch=True, on_init=True)
+    def _update_logfire_tags(self):
+        if self.logfire_tags is not None:
+            import logfire
+            logfire.configure(send_to_logfire=True)
+            self._logfire = logfire.Logfire(tags=self.logfire_tags)
+        else:
+            self._logfire = None
 
     @property
     def _client_kwargs(self):
@@ -419,6 +455,9 @@ class OpenAI(Llm, OpenAIMixin):
         # Use the mixin to create the OpenAI client
         llm = self._instantiate_client(async_client=True, **model_kwargs)
 
+        if self.logfire_tags:
+            self._logfire.instrument_openai(llm)
+
         if self.interceptor:
             self.interceptor.patch_client(llm, mode="store_inputs")
 
@@ -430,11 +469,6 @@ class OpenAI(Llm, OpenAIMixin):
             self.interceptor.patch_client_response(llm)
 
         client_callable = partial(llm.chat.completions.create, model=model, **self.create_kwargs)
-
-        if self.use_logfire:
-            import logfire
-            logfire.configure()
-            logfire.instrument_openai(llm)
         return client_callable
 
 
@@ -894,9 +928,8 @@ class WebLLM(Llm):
         self._status.name = pn.rx('Loading LLM {:.1f}%').format(progress)
         try:
             await self.invoke(
-                messages=[{'role': 'user', 'content': 'Are you there? YES | NO'}],
+                messages=[{'role': 'user', 'content': 'Ready? "Y" or "N"'}],
                 model_spec="ui",
-                response_model=YesNo
             )
         except Exception as e:
             self._status.param.update(

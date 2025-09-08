@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import html
 import inspect
 import json
@@ -10,6 +11,7 @@ import textwrap
 import time
 import traceback
 
+from collections.abc import Callable
 from functools import wraps
 from pathlib import Path
 from shutil import get_terminal_size
@@ -852,6 +854,54 @@ def class_name_to_llm_spec_key(class_name: str) -> str:
         i += 1
 
     return result
+
+
+def wrap_logfire(span_name: str | None = None, extract_args: bool = True, **instrument_kwargs):
+    """
+    Decorator to instrument a function with logfire if llm.logfire_tags is provided.
+    Expects the decorated function to have an 'llm' attribute (on self) or be passed via instrument_kwargs.
+    """
+    def decorator(func: Callable):
+        def should_instrument(self, llm):
+            """Check if the function should be instrumented with logfire."""
+            return llm is not None and llm.logfire_tags is not None
+
+        def get_instrumented_func(self, llm):
+            """Create and return the logfire-instrumented function."""
+            name = span_name or self.__class__.__name__
+            return llm._logfire.instrument(name, extract_args=extract_args, **instrument_kwargs)(func)
+
+        if inspect.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def async_wrapper(self, *args, **kwargs):
+                llm = instrument_kwargs.get("llm", getattr(self, "llm", None))
+                if not should_instrument(self, llm):
+                    return await func(self, *args, **kwargs)
+                instrumented_func = get_instrumented_func(self, llm)
+                return await instrumented_func(self, *args, **kwargs)
+            return async_wrapper
+        else:
+            @functools.wraps(func)
+            def sync_wrapper(self, *args, **kwargs):
+                llm = instrument_kwargs.get("llm", getattr(self, "llm", None))
+                if not should_instrument(self, llm):
+                    return func(self, *args, **kwargs)
+                instrumented_func = get_instrumented_func(self, llm)
+                return instrumented_func(self, *args, **kwargs)
+            return sync_wrapper
+
+    return decorator
+
+
+def wrap_logfire_on_method(cls, method_name: str):
+    """
+    Automatically adds logfire wrapping to a method.
+    """
+    original_method = getattr(cls, method_name)
+    if not hasattr(original_method, '_logfire_wrapped'):
+        wrapped_method = wrap_logfire()(original_method)
+        wrapped_method._logfire_wrapped = True
+        setattr(cls, method_name, wrapped_method)
 
 
 def normalized_name(inst: param.Parameterized):
