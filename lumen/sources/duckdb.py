@@ -163,10 +163,6 @@ class DuckDBSource(BaseSQLSource):
 
         return self._local.connection
 
-    @property
-    def connection(self):
-        return self._connection
-
     def _setup_mirrors(self):
         """Setup mirrors in the shared database (called once)."""
         for table, mirror in self.mirrors.items():
@@ -178,14 +174,17 @@ class DuckDBSource(BaseSQLSource):
             else:
                 df = mirror.data
                 def update(e, table=table):
-                    # Use the connection property to ensure thread safety
-                    self.connection.from_df(e.new).to_view(table)
+                    self._connection.from_df(e.new).to_view(table)
                     self._set_cache(e.new, table)
                 mirror.param.watch(update, 'data')
             try:
-                self._local.connection.from_df(df).to_view(table)
+                self._connection.from_df(df).to_view(table)
             except (duckdb.CatalogException, duckdb.ParserException):
                 continue
+
+    @property
+    def connection(self):
+        return self._connection
 
     def _is_file_path(self, table_expr: str) -> bool:
         """
