@@ -70,7 +70,7 @@ class Plan(Section):
         todos = '\n'.join(
             f"- [{'x' if idx < i else ' '}] {'<u>' + task.instruction + '</u>' if idx == i else task.instruction}" for idx, task in enumerate(self.subtasks)
         )
-        formatted_content = f"User Request: {user_query['content']!r}\n\nComplete the next unchecked todo:\n{todos}"
+        formatted_content = f"User Request: {user_query['content']!r}\n\nComplete the underlined todo:\n{todos}"
         return [
             {'content': formatted_content, 'role': 'user'} if msg is user_query else msg
             for msg in self.history
@@ -160,9 +160,11 @@ class Plan(Section):
         # Re-run from the provider onwards
         for idx in range(provider_index, len(self.subtasks)):
             task = self.subtasks[idx]
-            if idx != provider_index:
+            if idx < provider_index:
                 outputs += await self._run_task(idx, task)
                 continue
+            elif idx > failed_index:
+                break # Stop after re-running the failed task
 
             # For the provider task, mutate the user message to include feedback
             retry_history = mutate_user_message(feedback_suffix, self.history.copy())
