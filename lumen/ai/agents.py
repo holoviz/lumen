@@ -37,7 +37,7 @@ from .llm import Llm, Message
 from .memory import _Memory
 from .models import (
     DbtslQueryParams, NextStep, PartialBaseModel, QueryCompletionValidation,
-    RetrySpec, SQLRoadmap, VegaLiteSpec, make_sql_model,
+    RetrySpec, SqlQuery, SQLRoadmap, VegaLiteSpec, make_sql_model,
 )
 from .schemas import get_metaset
 from .services import DbtslMixin
@@ -648,17 +648,13 @@ class SQLAgent(LumenBaseAgent):
             model_spec=model_spec,
             response_model=sql_response_model,
         )
+        if not output:
+            raise ValueError("No output was generated.")
 
         sql_queries = {}
-        if hasattr(output, "queries"):
-            for query_obj in (output.queries if output else []):
-                if query_obj.query and query_obj.expr_slug:
-                    sql_queries[query_obj.expr_slug.strip()] = query_obj.query.strip()
-        else:
-            sql_queries[output.expr_slug.strip()] = output.query.strip()
-
-        if not sql_queries:
-            raise ValueError("No SQL queries were generated.")
+        for query_obj in ([output.query] if isinstance(output, SqlQuery) else output.queries):
+            if query_obj.query and query_obj.expr_slug:
+                sql_queries[query_obj.expr_slug.strip()] = query_obj.query.strip()
 
         return sql_queries
 
