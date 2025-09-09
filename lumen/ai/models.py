@@ -46,11 +46,7 @@ class SqlQueries(PartialBaseModel):
 
     queries: list[SqlQuery] = Field(
         default_factory=list,
-        description="""
-        List of SQL queries to execute. For discovery steps, include multiple queries
-        to explore different aspects (e.g., distinct values from different columns).
-        For final steps, only one query is allowed.
-        """
+        description="""List of SQL queries to execute."""
     )
 
 
