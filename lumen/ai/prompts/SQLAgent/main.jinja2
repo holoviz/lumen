@@ -63,7 +63,9 @@ Use `{{ dialect }}` SQL dialect.
 {%- if dialect == 'snowflake' %}
 - No quotes around database/schema/table names
 {%- endif %}
+{% if not is_final_step %}
 Step {{ step_number }}: {{ current_step }}
+{% endif %}
 
 {% if sql_plan_context %}
 ## Current Knowledge:
