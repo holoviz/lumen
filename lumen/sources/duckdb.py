@@ -81,7 +81,11 @@ class DuckDBSource(BaseSQLSource):
         else:
             self._connection = duckdb.connect(self.uri)
             for init in self.initializers:
-                self._connection.execute(init)
+                cursor = self._connection.cursor()
+                try:
+                    cursor.execute(init)
+                finally:
+                    cursor.close()
 
         # Process tables to handle automatic file detection
         if isinstance(self.tables, dict):
@@ -104,13 +108,16 @@ class DuckDBSource(BaseSQLSource):
                 # Quote table name to handle special characters
                 quoted_table = f'"{table_name}"' if not (table_name.startswith('"') and table_name.endswith('"')) else table_name
                 view_sql = f"CREATE OR REPLACE VIEW {quoted_table} AS {read_expr}"
+                cursor = self._connection.cursor()
                 try:
-                    self._connection.execute(view_sql)
+                    cursor.execute(view_sql)
                     # Store the SQL expression for later use
                     processed_tables[table_name] = f"SELECT * FROM {quoted_table}"
                 except Exception:
                     # If view creation fails, store the read expression directly
                     processed_tables[table_name] = read_expr
+                finally:
+                    cursor.close()
 
             # Third pass: process SQL-based tables (which may reference file-based tables)
             for table_name, sql_expr in sql_based_tables.items():
@@ -125,10 +132,13 @@ class DuckDBSource(BaseSQLSource):
                 if sql_expr.strip().upper().startswith('SELECT'):
                     quoted_table = f'"{table_name}"' if not (table_name.startswith('"') and table_name.endswith('"')) else table_name
                     view_sql = f"CREATE OR REPLACE VIEW {quoted_table} AS {sql_expr}"
+                    cursor = self._connection.cursor()
                     try:
-                        self._connection.execute(view_sql)
+                        cursor.execute(view_sql)
                     except Exception:
                         pass  # View creation failed, but we'll still use the original SQL
+                    finally:
+                        cursor.close()
 
                 processed_tables[table_name] = sql_expr
 
@@ -351,8 +361,9 @@ class DuckDBSource(BaseSQLSource):
             if sql_expr == self.sql_expr.format(table=f'"{table}"'):
                 continue
             table_expr = f'CREATE OR REPLACE TEMP TABLE "{table}" AS ({sql_expr})'
+            cursor = self._connection.cursor()
             try:
-                self._connection.execute(table_expr)
+                cursor.execute(table_expr)
             except duckdb.CatalogException as e:
                 original_e = e
                 pattern = r"Table with name\s(\S+)"
@@ -362,24 +373,35 @@ class DuckDBSource(BaseSQLSource):
                     real = self.tables[name] if name in self.tables else self.tables[name.strip('"')]
                     table_expr = SQLSelectFrom(sql_expr=self.sql_expr, tables={name: real}).apply(table_expr)
                     try:
-                        self._connection.execute(table_expr)
+                        cursor.execute(table_expr)
                     except Exception as e:
                         raise original_e from e
                 else:
                     raise e
+            finally:
+                cursor.close()
         return source
 
     def execute(self, sql_query: str, *args, **kwargs):
-        return self._connection.execute(sql_query, *args, **kwargs).fetch_df()
+        cursor = self._connection.cursor()
+        try:
+            return cursor.execute(sql_query, *args, **kwargs).fetch_df()
+        finally:
+            cursor.close()
 
     def get_tables(self):
         if isinstance(self.tables, dict | list):
             return [t for t in list(self.tables) if not self._is_table_excluded(t)]
 
-        return [
-            t[0] for t in self._connection.execute('SHOW TABLES').fetchall()
-            if not self._is_table_excluded(t[0])
-        ]
+        cursor = self._connection.cursor()
+        try:
+            cursor.execute('SHOW TABLES')
+            return [
+                t[0] for t in cursor.fetchall()
+                if not self._is_table_excluded(t[0])
+            ]
+        finally:
+            cursor.close()
 
     def normalize_table(self, table: str):
         tables = self.get_tables()
@@ -398,16 +420,21 @@ class DuckDBSource(BaseSQLSource):
             sql_transforms = [SQLFilter(conditions=conditions)] + sql_transforms
         for st in sql_transforms:
             sql_expr = st.apply(sql_expr)
-        rel = self._connection.execute(sql_expr)
-        has_geom = any(d[0] == 'geometry' and d[1] == 'BINARY' for d in rel.description)
-        df = rel.fetch_df(date_as_object=True)
-        if has_geom:
-            import geopandas as gpd
-            geom = self._connection.execute(
-                f'SELECT ST_AsWKB(geometry::GEOMETRY) as geometry FROM ({sql_expr})'
-            ).fetch_df()
-            df['geometry'] = gpd.GeoSeries.from_wkb(geom.geometry.apply(bytes))
-            df = gpd.GeoDataFrame(df)
+        cursor = self._connection.cursor()
+        try:
+            rel = cursor.execute(sql_expr)
+            has_geom = any(d[0] == 'geometry' and d[1] == 'BINARY' for d in rel.description)
+            df = rel.fetch_df(date_as_object=True)
+            if has_geom:
+                import geopandas as gpd
+                geom_rel = cursor.execute(
+                    f'SELECT ST_AsWKB(geometry::GEOMETRY) as geometry FROM ({sql_expr})'
+                )
+                geom_df = geom_rel.fetch_df()
+                df['geometry'] = gpd.GeoSeries.from_wkb(geom_df.geometry.apply(bytes))
+                df = gpd.GeoDataFrame(df)
+        finally:
+            cursor.close()
         if not self.filter_in_sql:
             df = Filter.apply_to(df, conditions=conditions)
         return df
