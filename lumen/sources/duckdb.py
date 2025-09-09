@@ -427,16 +427,12 @@ class DuckDBSource(BaseSQLSource):
             df = rel.fetch_df(date_as_object=True)
             if has_geom:
                 import geopandas as gpd
-                geom_cursor = self._connection.cursor()
-                try:
-                    geom_rel = geom_cursor.execute(
-                        f'SELECT ST_AsWKB(geometry::GEOMETRY) as geometry FROM ({sql_expr})'
-                    )
-                    geom_df = geom_rel.fetch_df()
-                    df['geometry'] = gpd.GeoSeries.from_wkb(geom_df.geometry.apply(bytes))
-                    df = gpd.GeoDataFrame(df)
-                finally:
-                    geom_cursor.close()
+                geom_rel = cursor.execute(
+                    f'SELECT ST_AsWKB(geometry::GEOMETRY) as geometry FROM ({sql_expr})'
+                )
+                geom_df = geom_rel.fetch_df()
+                df['geometry'] = gpd.GeoSeries.from_wkb(geom_df.geometry.apply(bytes))
+                df = gpd.GeoDataFrame(df)
         finally:
             cursor.close()
         if not self.filter_in_sql:
