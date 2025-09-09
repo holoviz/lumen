@@ -4,7 +4,7 @@ description: An environment to serve all Lumen gallery examples
 commands:
   default:
     description: Serve the Lumen gallery
-    unix: lumen serve */*.yaml --reuse-sessions --global-loading-spinner --liveness --num-procs 4 --port 5007
+    unix: lumen serve */*.yaml --reuse-sessions --global-loading-spinner --liveness --num-procs 4
     supports_http_options: true
 
 channels:
