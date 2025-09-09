@@ -160,7 +160,7 @@ class VegaLiteSpec(BaseModel):
         description="Explain how you will use the data to create a vegalite plot, and address any previous issues you encountered."
     )
 
-    json_spec: str = Field(description="A vega-lite JSON specification based on the user input and chain of thought. Do not include description")
+    yaml_spec: str = Field(description="A vega-lite YAML specification based on the user input and chain of thought. Do not include description")
 
 
 class LineChange(BaseModel):

@@ -1322,7 +1322,7 @@ class BaseViewAgent(LumenBaseAgent):
         if errors:
             errors = ("\n".join(f"{i + 1}. {error}" for i, error in enumerate(errors))).strip()
             try:
-                last_output = load_json(self._last_output["json_spec"])
+                last_output = yaml.safe_load(self._last_output["yaml_spec"])
             except Exception:
                 last_output = ""
 
@@ -1380,17 +1380,16 @@ class BaseViewAgent(LumenBaseAgent):
                 except Exception as e:
                     error = str(e)
                     traceback.print_exception(e)
-                    context = f"```\n{yaml.safe_dump(load_json(self._last_output['json_spec']))}\n```"
+                    context = f"```\n{yaml.safe_dump(yaml.safe_load(self._last_output['yaml_spec']))}\n```"
                     report_error(e, step, language="json", context=context, status="failed")
                     with self._add_step(
                         title="Re-attempted view generation",
                         steps_layout=self._steps_layout,
                     ) as retry_step:
                         view = await self._retry_output_by_line(e, messages, self._memory, yaml.safe_dump(spec), language="")
-                        if "json_spec: " in view:
-                            view = view.split("json_spec: ")[-1].rstrip('"').rstrip("'")
-                        spec = json.loads(view)
-                        retry_step.stream(f"\n\n```json\n{spec}\n```")
+                        if "yaml_spec: " in view:
+                            view = view.split("yaml_spec: ")[-1].rstrip('"').rstrip("'")
+                        retry_step.stream(f"\n\n```yaml\n{view}\n```")
                     if i == 2:
                         raise
 
