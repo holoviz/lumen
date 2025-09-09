@@ -631,7 +631,7 @@ class SQLAgent(LumenBaseAgent):
             dialect=dialect,
             step_number=step_number,
             is_final_step=is_final,
-            current_step=messages[0]["content"],
+            current_step=messages[0]["content"] if not is_final else "",
             sql_query_history=sql_query_history,
             current_iteration=getattr(self, '_current_iteration', 1),
             sql_plan_context=sql_plan_context,
