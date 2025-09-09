@@ -37,9 +37,10 @@ class Llm(param.Parameterized):
     models.
     """
 
-    create_kwargs = param.Dict(default={}, doc="""
+    create_kwargs = param.Dict(default={"max_retries": 1}, doc="""
         Additional keyword arguments to pass to the LLM provider
-        when calling chat.completions.create.""")
+        when calling chat.completions.create. Defaults to no instructor retries
+        since agents handle retries themselves.""")
 
     mode = param.Selector(default=Mode.JSON_SCHEMA, objects=BASE_MODES, doc="""
         The calling mode used by instructor to guide the LLM towards generating
@@ -99,6 +100,13 @@ class Llm(param.Parameterized):
         model_kwargs = self.model_kwargs.get(model_spec) or self.model_kwargs["default"]
         log_debug(f"LLM Model: \033[96m{model_kwargs.get('model')!r}\033[0m")
         return dict(model_kwargs)
+
+    def _get_create_kwargs(self, response_model: type[BaseModel] | None) -> dict[str, Any]:
+        kwargs = dict(self.create_kwargs)
+        if not response_model:
+            # Only available if instructor patched
+            kwargs.pop("max_retries", None)
+        return kwargs
 
     @property
     def _client_kwargs(self) -> dict[str, Any]:
@@ -468,7 +476,7 @@ class OpenAI(Llm, OpenAIMixin):
             # must be called after instructor
             self.interceptor.patch_client_response(llm)
 
-        client_callable = partial(llm.chat.completions.create, model=model, **self.create_kwargs)
+        client_callable = partial(llm.chat.completions.create, model=model, **self._get_create_kwargs(response_model))
         return client_callable
 
 
@@ -530,7 +538,7 @@ class AzureOpenAI(Llm, AzureOpenAIMixin):
             # must be called after instructor
             self.interceptor.patch_client_response(llm)
 
-        client_callable = partial(llm.chat.completions.create, model=model, **self.create_kwargs)
+        client_callable = partial(llm.chat.completions.create, model=model, **self._get_create_kwargs(response_model))
         return client_callable
 
 
@@ -588,7 +596,7 @@ class MistralAI(Llm):
         if self.interceptor:
             self.interceptor.patch_client_response(llm)
 
-        client_callable = partial(llm.chat.completions.create, model=model, **self.create_kwargs)
+        client_callable = partial(llm.chat.completions.create, model=model, **self._get_create_kwargs(response_model))
         return client_callable
 
     @classmethod
@@ -646,7 +654,7 @@ class AzureMistralAI(MistralAI):
         if self.interceptor:
             self.interceptor.patch_client_response(llm)
 
-        client_callable = partial(llm.chat.completions.create, model=model, **self.create_kwargs)
+        client_callable = partial(llm.chat.completions.create, model=model, **self._get_create_kwargs(response_model))
         return client_callable
 
 
@@ -696,9 +704,9 @@ class AnthropicAI(Llm):
 
         if response_model:
             client = instructor.from_anthropic(llm, mode=mode)
-            return partial(client.messages.create, model=model, **self.create_kwargs)
+            return partial(client.messages.create, model=model, **self._get_create_kwargs(response_model))
         else:
-            return partial(llm.messages.create, model=model, **self.create_kwargs)
+            return partial(llm.messages.create, model=model, **self._get_create_kwargs(response_model))
 
     @classmethod
     def _get_delta(cls, chunk: Any) -> str:
@@ -763,13 +771,13 @@ class GoogleAI(Llm):
 
         if response_model:
             client = instructor.from_genai(llm, mode=mode, use_async=True)
-            return partial(client.chat.completions.create, model=model, **self.create_kwargs)
+            return partial(client.chat.completions.create, model=model, **self._get_create_kwargs(response_model))
         else:
             chat = llm.aio.models
             if kwargs.pop("stream"):
-                return partial(chat.generate_content_stream, model=model, **self.create_kwargs)
+                return partial(chat.generate_content_stream, model=model, **self._get_create_kwargs(response_model))
             else:
-                return partial(chat.generate_content, model=model, **self.create_kwargs)
+                return partial(chat.generate_content, model=model, **self._get_create_kwargs(response_model))
 
     async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
         """Override to handle Gemini-specific message format conversion."""
@@ -1041,7 +1049,7 @@ class LiteLLM(Llm):
         llm = litellm.acompletion
         if response_model:
             llm = instructor.from_litellm(llm, mode=mode)
-            return partial(llm.chat.completions.create, model=model, **self.create_kwargs)
+            return partial(llm.chat.completions.create, model=model, **self._get_create_kwargs(response_model))
         else:
             return partial(llm, model=model, **self._client_kwargs, **model_kwargs)
 

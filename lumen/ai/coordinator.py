@@ -324,6 +324,14 @@ class Coordinator(Viewer, VectorLookupToolUser):
             agent.interface = interface
             instantiated.append(agent)
 
+        for agent in instantiated:
+            if "fallback_agent" in agent.param:
+                if fallback_agent := next(
+                    (a for a in instantiated if isinstance(a, agent.param["fallback_agent"].class_)),
+                    None
+                ):
+                    agent.fallback_agent = fallback_agent
+
         # If none of the tools provide vector_metaset, add tablelookup
         provides_vector_metaset = any(
             "vector_metaset" in tool.provides

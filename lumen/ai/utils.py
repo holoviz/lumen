@@ -182,6 +182,32 @@ def warn_on_unused_variables(string, kwargs, prompt_label):
         )
 
 
+def get_root_exception(e: Exception, depth: int = 5, exceptions: tuple[Exception] | None = None) -> Exception | None:
+    """
+    Recursively get the root cause of an exception up to a specified depth.
+
+    Parameters
+    ----------
+    e : Exception
+        The exception to analyze
+    depth : int
+        Maximum recursion depth to avoid infinite loops
+    exceptions : list[Exception]
+        List of exception types to consider as root causes. If None, all exceptions are considered.
+
+    Returns
+    -------
+    Exception | None
+        The root cause exception if found, otherwise None
+    """
+    for _ in range(depth):
+        if exceptions and isinstance(e, tuple(exceptions)):
+            return e
+        if e.__cause__ is not None:
+            e = e.__cause__
+    return e
+
+
 def retry_llm_output(retries=3, sleep=1):
     """
     Retry a function that returns a response from the LLM API.
@@ -208,10 +234,11 @@ def retry_llm_output(retries=3, sleep=1):
                             raise Exception("No valid output from LLM.")
                         return output
                     except Exception as e:
+                        e = get_root_exception(e, exceptions=UNRECOVERABLE_ERRORS)
                         if isinstance(e, UNRECOVERABLE_ERRORS):
                             log_debug(f"LLM encountered unrecoverable error: {e}")
                             raise e
-                        elif i == retries - 1:
+                        if i == retries - 1:
                             raise RetriesExceededError("Maximum number of retries exceeded.") from e
                         errors.append(str(e))
                         traceback.print_exc()
@@ -235,10 +262,11 @@ def retry_llm_output(retries=3, sleep=1):
                             raise Exception("No valid output from LLM.")
                         return output
                     except Exception as e:
+                        e = get_root_exception(e, exceptions=UNRECOVERABLE_ERRORS)
                         if isinstance(e, UNRECOVERABLE_ERRORS):
                             log_debug(f"LLM encountered unrecoverable error: {e}")
                             raise e
-                        elif i == retries - 1:
+                        if i == retries - 1:
                             raise RetriesExceededError("Maximum number of retries exceeded.") from e
                         errors.append(str(e))
                         traceback.print_exc()

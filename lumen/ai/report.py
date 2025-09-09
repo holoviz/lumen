@@ -107,6 +107,9 @@ class Task(Viewer):
         memory = task.memory or self.memory
         messages = self.history
 
+        if getattr(task, "fallback_agent", None):
+            task.fallback_agent.memory = memory
+
         with task.param.update(
             interface=self.interface, llm=task.llm or self.llm, memory=memory,
             steps_layout=self.steps_layout
