@@ -4,7 +4,6 @@ import asyncio
 import json
 import traceback
 
-from copy import deepcopy
 from functools import partial
 from typing import Any, ClassVar, Literal
 
@@ -13,7 +12,6 @@ import panel as pn
 import param
 import yaml
 
-from instructor.exceptions import InstructorRetryException
 from panel.chat import ChatInterface
 from panel.viewable import Viewable, Viewer
 from panel_material_ui import Button, Column, Tabs
@@ -36,7 +34,7 @@ from .config import (
 )
 from .controls import RetryControls, SourceControls
 from .llm import Llm, Message
-from .memory import _Memory, memory
+from .memory import _Memory
 from .models import (
     DbtslQueryParams, NextStep, PartialBaseModel, QueryCompletionValidation,
     RetrySpec, SqlQuery, SQLRoadmap, VegaLiteSpec, make_sql_model,
@@ -549,44 +547,7 @@ class LumenBaseAgent(Agent):
         self.interface.stream(replace=True, max_width=self._max_width, **message_kwargs)
 
 
-class FallbackMixin(param.Parameterized):
-
-    fallback_agent = param.ClassSelector(default=None, class_=ChatAgent, doc="""
-        The agent to fall back to if the main agent fails.""")
-
-    retry_on_fallback = param.Boolean(default=False, doc="""
-        Whether to retry the main agent after the fallback agent.""")
-
-    def __init__(self, **params):
-        super().__init__(**params)
-        self._fallback_in_progress = False
-
-    async def _fallback(self, messages: list[Message], e: InstructorRetryException) -> Any:
-        """
-        Use the fallback agent to either handle the user query, or collect more information.
-        """
-        if self._fallback_in_progress:
-            raise RuntimeError("Fallback is already in progress")
-        elif not self.fallback_agent:
-            raise RuntimeError("No fallback agent is configured")
-
-        e = get_root_exception(e, exceptions=(MissingContextError,))
-        is_missing_context = isinstance(e, MissingContextError)
-        if is_missing_context:
-            self._fallback_in_progress = True
-            try:
-                mutated_messages = deepcopy(messages)
-                mutate_user_message(f"\nPlease note: {str(e)!r}", mutated_messages)
-                self.fallback_agent.memory = memory
-                await self.fallback_agent.respond(mutated_messages)
-                if self.retry_on_fallback:
-                    return await self.respond(messages)
-            finally:
-                self._fallback_in_progress = False
-        raise e
-
-
-class SQLAgent(LumenBaseAgent, FallbackMixin):
+class SQLAgent(LumenBaseAgent):
     conditions = param.List(
         default=[
             "Use for displaying, examining, or querying data resulting in a data pipeline",
@@ -1146,21 +1107,18 @@ class SQLAgent(LumenBaseAgent, FallbackMixin):
     ) -> Any:
         """Execute SQL generation with one-shot attempt first, then iterative refinement if needed."""
         # Setup sources
+        source = self._memory["source"]
         try:
-            source = self._memory["source"]
-            try:
-                # Try one-shot approach first
-                pipeline = await self._attempt_oneshot_sql(messages, source, step_title)
-            except Exception as e:
-                if not self.planning_enabled:
-                    # If planning is disabled, re-raise the error instead of falling back
-                    raise e
-                # Fall back to planning mode if enabled
-                messages = mutate_user_message(str(e), messages)
-                pipeline = await self._execute_planning_mode(messages, source, step_title)
-            return pipeline
+            # Try one-shot approach first
+            pipeline = await self._attempt_oneshot_sql(messages, source, step_title)
         except Exception as e:
-            return await self._fallback(messages, e)
+            if not self.planning_enabled:
+                # If planning is disabled, re-raise the error instead of falling back
+                raise e
+            # Fall back to planning mode if enabled
+            messages = mutate_user_message(str(e), messages)
+            pipeline = await self._execute_planning_mode(messages, source, step_title)
+        return pipeline
 
 
 class DbtslAgent(LumenBaseAgent, DbtslMixin):
@@ -1337,13 +1295,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
         return pipeline
 
 
-class BaseViewAgent(LumenBaseAgent, FallbackMixin):
-
-    fallback_agent = param.ClassSelector(class_=SQLAgent, doc="""
-        The agent to fall back to if the main agent fails.""")
-
-    retry_on_fallback = param.Boolean(default=True, doc="""
-        Whether to retry the main agent after the fallback agent.""")
+class BaseViewAgent(LumenBaseAgent):
 
     requires = param.List(default=["pipeline", "table", "data"], readonly=True)
 
@@ -1469,22 +1421,19 @@ class BaseViewAgent(LumenBaseAgent, FallbackMixin):
         """
         Generates a visualization based on user messages and the current data pipeline.
         """
-        try:
-            pipeline = self._memory.get("pipeline")
-            if not pipeline:
-                raise ValueError("No current pipeline found in memory.")
+        pipeline = self._memory.get("pipeline")
+        if not pipeline:
+            raise ValueError("No current pipeline found in memory.")
 
-            schema = await get_schema(pipeline)
-            if not schema:
-                raise ValueError("Failed to retrieve schema for the current pipeline.")
+        schema = await get_schema(pipeline)
+        if not schema:
+            raise ValueError("Failed to retrieve schema for the current pipeline.")
 
-            spec = await self._create_valid_spec(messages, pipeline, schema, step_title)
-            self._memory["view"] = dict(spec, type=self.view_type)
-            view = self.view_type(pipeline=pipeline, **spec)
-            self._render_lumen(view, messages=messages, title=step_title)
-            return view
-        except Exception as e:
-            return await self._fallback(messages, e)
+        spec = await self._create_valid_spec(messages, pipeline, schema, step_title)
+        self._memory["view"] = dict(spec, type=self.view_type)
+        view = self.view_type(pipeline=pipeline, **spec)
+        self._render_lumen(view, messages=messages, title=step_title)
+        return view
 
 
 class hvPlotAgent(BaseViewAgent):

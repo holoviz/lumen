@@ -34,7 +34,7 @@ from ..util import log
 from .components import Details
 from .config import (
     PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, UNRECOVERABLE_ERRORS,
-    RetriesExceededError,
+    MissingContextError, RetriesExceededError,
 )
 
 if TYPE_CHECKING:
@@ -236,7 +236,8 @@ def retry_llm_output(retries=3, sleep=1):
                     except Exception as e:
                         e = get_root_exception(e, exceptions=UNRECOVERABLE_ERRORS)
                         if isinstance(e, UNRECOVERABLE_ERRORS):
-                            log_debug(f"LLM encountered unrecoverable error: {e}")
+                            if not isinstance(e, MissingContextError):
+                                log_debug(f"LLM encountered unrecoverable error: {e}")
                             raise e
                         if i == retries - 1:
                             raise RetriesExceededError("Maximum number of retries exceeded.") from e
@@ -264,7 +265,8 @@ def retry_llm_output(retries=3, sleep=1):
                     except Exception as e:
                         e = get_root_exception(e, exceptions=UNRECOVERABLE_ERRORS)
                         if isinstance(e, UNRECOVERABLE_ERRORS):
-                            log_debug(f"LLM encountered unrecoverable error: {e}")
+                            if not isinstance(e, MissingContextError):
+                                log_debug(f"LLM encountered unrecoverable error: {e}")
                             raise e
                         if i == retries - 1:
                             raise RetriesExceededError("Maximum number of retries exceeded.") from e

@@ -16,6 +16,7 @@ from typing_extensions import Self
 
 from ..views.base import Panel, View
 from .actor import Actor
+from .config import MissingContextError
 from .llm import Llm
 from .memory import _Memory
 from .tools import FunctionTool, Tool
@@ -107,15 +108,16 @@ class Task(Viewer):
         memory = task.memory or self.memory
         messages = self.history
 
-        if getattr(task, "fallback_agent", None):
-            task.fallback_agent.memory = memory
-
         with task.param.update(
             interface=self.interface, llm=task.llm or self.llm, memory=memory,
             steps_layout=self.steps_layout
         ):
             if isinstance(task, Actor):
-                out = await task.respond(messages, **kwargs)
+                try:
+                    out = await task.respond(messages, **kwargs)
+                except MissingContextError:
+                    # Re-raise MissingContextError to allow retry logic at Plan level
+                    raise
                 # Handle Tool specific behaviors
                 if isinstance(task, Tool):
                     # Handle View/Viewable results regardless of agent type
@@ -147,6 +149,9 @@ class Task(Viewer):
         for i, task in enumerate(self.subtasks):
             try:
                 outputs += await self._run_task(i, task, **kwargs)
+            except MissingContextError:
+                # Re-raise MissingContextError to allow retry logic at Plan level
+                raise
             except Exception as e:
                 tb.print_exception(e)
                 self.status = "error"

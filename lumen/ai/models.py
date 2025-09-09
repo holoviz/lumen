@@ -14,7 +14,7 @@ class PartialBaseModel(BaseModel, PartialLiteralMixin):
 class EscapeBaseModel(PartialBaseModel):
 
     insufficient_context_reason: str = Field(
-        description="If lacking sufficient context or data is unvisualizable (single row, no dimensions, single aggregated value), explain why; else use ''.",
+        description="If lacking sufficient context, explain why; else use ''. Do not base off the user query; only from the data context provided.",
         examples=[
             "A timeseries is requested but SQL only provides customer and order data; please include a time dimension",
             "The previous result is one aggregated value; try a different aggregation or more dimensions",
@@ -23,7 +23,7 @@ class EscapeBaseModel(PartialBaseModel):
     )
 
     insufficient_context: bool = Field(
-        description="True if lacking context or data is insufficient for visualization, else False"
+        description="True if lacking context, else False. If True, leave other fields empty.",
     )
 
     def model_post_init(self, __context):
