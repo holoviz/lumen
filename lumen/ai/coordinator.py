@@ -92,34 +92,10 @@ class Plan(Section):
                 ):
                     outputs += await task.execute(**kwargs)
             except Exception as e:
-                # Check if this is a MissingContextError (possibly wrapped)
-                root_exception = get_root_exception(e, exceptions=(MissingContextError,))
-
-                if isinstance(root_exception, MissingContextError):
-                    # Handle missing context by finding and re-running the provider
-                    step.failed_title = f"{task.title} - Missing context, retrying..."
-                    log_debug(f"\033[93mMissing context detected: {root_exception!s}\033[0m")
-
-                    # Find which agent provided the pipeline or relevant context
-                    provider_index = self._find_context_provider(i)
-                    if provider_index is not None:
-                        # Re-run from the provider with the error as feedback
-                        outputs = await self._retry_from_provider(provider_index, i, str(root_exception))
-                        step.success_title = f"{task.title} successfully completed after retry"
-                        return outputs  # Return after successful retry
-                    else:
-                        # If we can't find a provider, raise the original error
-                        step.failed_title = f"{task.title} - Cannot resolve missing context"
-                        traceback.print_exception(e)
-                        self.memory['__error__'] = str(e)
-                        raise e
-                elif isinstance(e, asyncio.CancelledError):
-                    step.failed_title = f"{task.title} agent was cancelled"
-                    raise e
-                else:
-                    traceback.print_exception(e)
-                    self.memory['__error__'] = str(e)
-                    raise e
+                # Handle the exception using the dedicated error handler
+                error_outputs = await self._handle_task_execution_error(e, task, step, i)
+                if error_outputs is not None:
+                    return error_outputs
             unprovided = [p for actor in task.subtasks for p in actor.provides if p not in self.memory]
             if unprovided:
                 step.failed_title = f"{task.title} did not provide {', '.join(unprovided)}. Aborting the plan."
@@ -128,6 +104,40 @@ class Plan(Section):
             step.stream(f"\n\nSuccessfully completed task {task.title}:\n\n> {task.instruction}", replace=True)
             step.success_title = f"{task.title} successfully completed"
         return outputs
+
+    async def _handle_task_execution_error(self, e: Exception, task: Self | Actor, step: ChatStep, i: int) -> list | None:
+        """
+        Handle exceptions that occur during task execution.
+        Returns outputs if the error was handled successfully, None if the error should be re-raised.
+        """
+        # Check if this is a MissingContextError (possibly wrapped)
+        root_exception = get_root_exception(e, exceptions=(MissingContextError,))
+
+        if isinstance(root_exception, MissingContextError):
+            # Handle missing context by finding and re-running the provider
+            step.failed_title = f"{task.title} - Missing context, retrying..."
+            log_debug(f"\033[93mMissing context detected: {root_exception!s}\033[0m")
+
+            # Find which agent provided the pipeline or relevant context
+            provider_index = self._find_context_provider(i)
+            if provider_index is not None:
+                # Re-run from the provider with the error as feedback
+                outputs = await self._retry_from_provider(provider_index, i, str(root_exception))
+                step.success_title = f"{task.title} successfully completed after retry"
+                return outputs  # Return after successful retry
+            else:
+                # If we can't find a provider, raise the original error
+                step.failed_title = f"{task.title} - Cannot resolve missing context"
+                traceback.print_exception(e)
+                self.memory['__error__'] = str(e)
+                raise e
+        elif isinstance(e, asyncio.CancelledError):
+            step.failed_title = f"{task.title} agent was cancelled"
+            raise e
+        else:
+            traceback.print_exception(e)
+            self.memory['__error__'] = str(e)
+            raise e
 
     def _find_context_provider(self, failed_index: int) -> int | None:
         """
@@ -138,7 +148,7 @@ class Plan(Section):
         if not pipeline_exists:
             return
 
-        for idx in range(failed_index - 1, -1, -1):
+        for idx in reversed(range(failed_index)):
             task = self.subtasks[idx]
             # Check if this task provides pipeline or other relevant context
             for actor in task.subtasks:
