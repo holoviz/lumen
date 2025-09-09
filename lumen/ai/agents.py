@@ -37,7 +37,7 @@ from .llm import Llm, Message
 from .memory import _Memory
 from .models import (
     DbtslQueryParams, NextStep, PartialBaseModel, QueryCompletionValidation,
-    RetrySpec, Sql, SQLRoadmap, VegaLiteSpec,
+    RetrySpec, SQLRoadmap, VegaLiteSpec, make_sql_model,
 )
 from .schemas import get_metaset
 from .services import DbtslMixin
@@ -580,7 +580,7 @@ class SQLAgent(LumenBaseAgent):
     prompts = param.Dict(
         default={
             "main": {
-                "response_model": Sql,
+                "response_model": make_sql_model,
                 "template": PROMPTS_DIR / "SQLAgent" / "main.jinja2",
             },
             "plan_next_step": {
@@ -640,17 +640,22 @@ class SQLAgent(LumenBaseAgent):
 
         # Generate SQL
         model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
+
+        sql_response_model = self._get_model("main", is_final=is_final)
         output = await self.llm.invoke(
             messages,
             system=system_prompt,
             model_spec=model_spec,
-            response_model=self._get_model("main"),
+            response_model=sql_response_model,
         )
 
         sql_queries = {}
-        for query_obj in (output.queries if output else []):
-            if query_obj.query and query_obj.expr_slug:
-                sql_queries[query_obj.expr_slug.strip()] = query_obj.query.strip()
+        if hasattr(output, "queries"):
+            for query_obj in (output.queries if output else []):
+                if query_obj.query and query_obj.expr_slug:
+                    sql_queries[query_obj.expr_slug.strip()] = query_obj.query.strip()
+        else:
+            sql_queries[output.expr_slug.strip()] = output.query.strip()
 
         if not sql_queries:
             raise ValueError("No SQL queries were generated.")

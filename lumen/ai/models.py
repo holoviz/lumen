@@ -41,7 +41,7 @@ class SqlQuery(PartialBaseModel):
     )
 
 
-class Sql(PartialBaseModel):
+class SqlQueries(PartialBaseModel):
     """Multiple SQL queries to execute in sequence."""
 
     queries: list[SqlQuery] = Field(
@@ -53,6 +53,12 @@ class Sql(PartialBaseModel):
         """
     )
 
+
+def make_sql_model(is_final: bool = False):
+    if is_final:
+        return SqlQuery
+    else:
+        return SqlQueries
 
 
 class SQLRoadmap(PartialBaseModel):
