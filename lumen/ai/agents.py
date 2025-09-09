@@ -1389,8 +1389,7 @@ class BaseViewAgent(LumenBaseAgent):
                         view = await self._retry_output_by_line(e, messages, self._memory, yaml.safe_dump(spec), language="")
                         if "yaml_spec: " in view:
                             view = view.split("yaml_spec: ")[-1].rstrip('"').rstrip("'")
-                        spec = yaml.safe_load(view)
-                        retry_step.stream(f"\n\n```json\n{spec}\n```")
+                        retry_step.stream(f"\n\n```yaml\n{view}\n```")
                     if i == 2:
                         raise
 
