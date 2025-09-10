@@ -81,11 +81,8 @@ class DuckDBSource(BaseSQLSource):
         else:
             self._connection = duckdb.connect(self.uri)
             for init in self.initializers:
-                cursor = self._connection.cursor()
-                try:
+                with self._connection.cursor() as cursor:
                     cursor.execute(init)
-                finally:
-                    cursor.close()
 
         # Process tables to handle automatic file detection
         if isinstance(self.tables, dict):
@@ -383,25 +380,19 @@ class DuckDBSource(BaseSQLSource):
         return source
 
     def execute(self, sql_query: str, *args, **kwargs):
-        cursor = self._connection.cursor()
-        try:
+        with self._connection.cursor() as cursor:
             return cursor.execute(sql_query, *args, **kwargs).fetch_df()
-        finally:
-            cursor.close()
 
     def get_tables(self):
         if isinstance(self.tables, dict | list):
             return [t for t in list(self.tables) if not self._is_table_excluded(t)]
 
-        cursor = self._connection.cursor()
-        try:
+        with self._connection.cursor() as cursor:
             cursor.execute('SHOW TABLES')
             return [
                 t[0] for t in cursor.fetchall()
                 if not self._is_table_excluded(t[0])
             ]
-        finally:
-            cursor.close()
 
     def normalize_table(self, table: str):
         tables = self.get_tables()
@@ -420,8 +411,7 @@ class DuckDBSource(BaseSQLSource):
             sql_transforms = [SQLFilter(conditions=conditions)] + sql_transforms
         for st in sql_transforms:
             sql_expr = st.apply(sql_expr)
-        cursor = self._connection.cursor()
-        try:
+        with self._connection.cursor() as cursor:
             rel = cursor.execute(sql_expr)
             has_geom = any(d[0] == 'geometry' and d[1] == 'BINARY' for d in rel.description)
             df = rel.fetch_df(date_as_object=True)
@@ -433,8 +423,6 @@ class DuckDBSource(BaseSQLSource):
                 geom_df = geom_rel.fetch_df()
                 df['geometry'] = gpd.GeoSeries.from_wkb(geom_df.geometry.apply(bytes))
                 df = gpd.GeoDataFrame(df)
-        finally:
-            cursor.close()
         if not self.filter_in_sql:
             df = Filter.apply_to(df, conditions=conditions)
         return df
