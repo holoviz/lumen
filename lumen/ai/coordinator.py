@@ -25,7 +25,7 @@ from .agents import Agent, AnalysisAgent, ChatAgent
 from .components import TableSourceCard
 from .config import (
     DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR,
-    SOURCE_TABLE_SEPARATOR,
+    SOURCE_TABLE_SEPARATOR, MissingContextError,
 )
 from .controls import SourceControls
 from .llm import LlamaCpp, Llm, Message
@@ -38,7 +38,8 @@ from .tools import (
     IterativeTableLookup, TableLookup, Tool, VectorLookupToolUser,
 )
 from .utils import (
-    fuse_messages, log_debug, normalized_name, stream_details, wrap_logfire,
+    fuse_messages, get_root_exception, log_debug, mutate_user_message,
+    normalized_name, stream_details, wrap_logfire,
 )
 from .views import AnalysisOutput
 
@@ -67,9 +68,9 @@ class Plan(Section):
                 user_query = msg
                 break
         todos = '\n'.join(
-            f"- [{'x' if idx < i else ' '}] {task.instruction}" for idx, task in enumerate(self.subtasks)
+            f"- [{'x' if idx < i else ' '}] {'<u>' + task.instruction + '</u>' if idx == i else task.instruction}" for idx, task in enumerate(self.subtasks)
         )
-        formatted_content = f"User Request: {user_query['content']!r}\n\nComplete the next unchecked todo:\n{todos}"
+        formatted_content = f"User Request: {user_query['content']!r}\n\nComplete the underlined todo:\n{todos}"
         return [
             {'content': formatted_content, 'role': 'user'} if msg is user_query else msg
             for msg in self.history
@@ -90,13 +91,11 @@ class Plan(Section):
                     history=history, **kwargs
                 ):
                     outputs += await task.execute(**kwargs)
-            except asyncio.CancelledError as e:
-                step.failed_title = f"{task.title} agent was cancelled"
-                raise e
             except Exception as e:
-                traceback.print_exception(e)
-                self.memory['__error__'] = str(e)
-                raise e
+                # Handle the exception using the dedicated error handler
+                error_outputs = await self._handle_task_execution_error(e, task, step, i)
+                if error_outputs is not None:
+                    return error_outputs
             unprovided = [p for actor in task.subtasks for p in actor.provides if p not in self.memory]
             if unprovided:
                 step.failed_title = f"{task.title} did not provide {', '.join(unprovided)}. Aborting the plan."
@@ -104,6 +103,104 @@ class Plan(Section):
             log_debug(f"\033[96mCompleted: {task.title}\033[0m", show_length=False)
             step.stream(f"\n\nSuccessfully completed task {task.title}:\n\n> {task.instruction}", replace=True)
             step.success_title = f"{task.title} successfully completed"
+        return outputs
+
+    async def _handle_task_execution_error(self, e: Exception, task: Self | Actor, step: ChatStep, i: int) -> list | None:
+        """
+        Handle exceptions that occur during task execution.
+        Returns outputs if the error was handled successfully, None if the error should be re-raised.
+        """
+        # Check if this is a MissingContextError (possibly wrapped)
+        root_exception = get_root_exception(e, exceptions=(MissingContextError,))
+
+        if isinstance(root_exception, MissingContextError):
+            # Handle missing context by finding and re-running the provider
+            step.failed_title = f"{task.title} - Missing context, retrying..."
+            log_debug(f"\033[93mMissing context detected: {root_exception!s}\033[0m")
+
+            # Find which agent provided the pipeline or relevant context
+            provider_index = self._find_context_provider(i)
+            if provider_index is not None:
+                # Re-run from the provider with the error as feedback
+                outputs = await self._retry_from_provider(provider_index, i, str(root_exception))
+                step.success_title = f"{task.title} successfully completed after retry"
+                return outputs  # Return after successful retry
+            else:
+                # If we can't find a provider, raise the original error
+                step.failed_title = f"{task.title} - Cannot resolve missing context"
+                traceback.print_exception(e)
+                self.memory['__error__'] = str(e)
+                raise e
+        elif isinstance(e, asyncio.CancelledError):
+            step.failed_title = f"{task.title} agent was cancelled"
+            raise e
+        else:
+            traceback.print_exception(e)
+            self.memory['__error__'] = str(e)
+            raise e
+
+    def _find_context_provider(self, failed_index: int) -> int | None:
+        """
+        Find the task that provided the pipeline or other relevant context.
+        Search backwards from the failed task.
+        """
+        pipeline_exists = 'pipeline' in self.memory
+        if not pipeline_exists:
+            return
+
+        for idx in reversed(range(failed_index)):
+            task = self.subtasks[idx]
+            # Check if this task provides pipeline or other relevant context
+            for actor in task.subtasks:
+                if hasattr(actor, 'provides'):
+                    if 'pipeline' in actor.provides:
+                        return idx
+
+    async def _retry_from_provider(self, provider_index: int, failed_index: int, error_message: str) -> list:
+        """
+        Re-run the plan from the provider task with additional feedback about the error.
+        """
+        outputs = []
+        # Create feedback suffix to add to user message
+        feedback_suffix = (
+            f"Be mindful of: {self.subtasks[failed_index].title!r}"
+            f"Previously, it was reported that: {error_message!r}. "
+            "Try a different approach."
+        )
+        # Re-run from the provider onwards
+        for idx in range(provider_index, len(self.subtasks)):
+            task = self.subtasks[idx]
+            if idx < provider_index:
+                outputs += await self._run_task(idx, task)
+                continue
+            elif idx > failed_index:
+                break # Stop after re-running the failed task
+
+            # For the provider task, mutate the user message to include feedback
+            retry_history = mutate_user_message(feedback_suffix, self.history.copy())
+            # Show retry in UI
+            with self.interface.add_step(
+                title=f"🔄 Retrying {task.title} with feedback...",
+                user="Runner",
+                steps_layout=self.steps_layout
+            ) as retry_step:
+                retry_step.stream(f"Retrying with feedback about: {error_message}")
+
+                # Update todos to show retry
+                todos = '\n'.join(
+                    f"- [{'x' if tidx < idx else '🔄' if tidx == idx else ' '}] {'<u>' + t.instruction + '</u>' if tidx == idx else t.instruction}"
+                    for tidx, t in enumerate(self.subtasks)
+                )
+                self._coordinator._todos.object = todos
+
+                # Run with mutated history
+                kwargs = {"agents": self.agents} if 'agents' in task.param else {}
+                with task.param.update(
+                    memory=self.memory, interface=self.interface, steps_layout=self.steps_layout,
+                    history=retry_history, **kwargs
+                ):
+                    outputs += await task.execute(**kwargs)
+                retry_step.success_title = f"✅ {task.title} successfully completed on retry"
         return outputs
 
     async def execute(self, **kwargs):

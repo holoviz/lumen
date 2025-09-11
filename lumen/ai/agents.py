@@ -30,7 +30,7 @@ from ..views import (
 from .actor import ContextProvider
 from .config import (
     PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, VEGA_MAP_LAYER,
-    VEGA_ZOOMABLE_MAP_ITEMS, RetriesExceededError,
+    VEGA_ZOOMABLE_MAP_ITEMS, MissingContextError, RetriesExceededError,
 )
 from .controls import RetryControls, SourceControls
 from .llm import Llm, Message
@@ -45,8 +45,8 @@ from .tools import ToolUser
 from .translate import param_to_pydantic
 from .utils import (
     apply_changes, clean_sql, describe_data, get_data, get_pipeline,
-    get_schema, load_json, log_debug, mutate_user_message, report_error,
-    retry_llm_output, stream_details,
+    get_root_exception, get_schema, load_json, log_debug, mutate_user_message,
+    report_error, retry_llm_output, stream_details,
 )
 from .views import (
     AnalysisOutput, LumenOutput, SQLOutput, VegaLiteOutput,
@@ -1296,6 +1296,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
 
 
 class BaseViewAgent(LumenBaseAgent):
+
     requires = param.List(default=["pipeline", "table", "data"], readonly=True)
 
     provides = param.List(default=["view"], readonly=True)
@@ -1379,6 +1380,10 @@ class BaseViewAgent(LumenBaseAgent):
                     spec = await self._extract_spec(spec)
                     break
                 except Exception as e:
+                    e = get_root_exception(e, exceptions=(MissingContextError,))
+                    if isinstance(e, MissingContextError):
+                        raise e
+
                     error = str(e)
                     traceback.print_exception(e)
                     context = f"```\n{yaml.safe_dump(yaml.safe_load(self._last_output['yaml_spec']))}\n```"
@@ -1493,6 +1498,7 @@ class hvPlotAgent(BaseViewAgent):
 
 
 class VegaLiteAgent(BaseViewAgent):
+
     conditions = param.List(
         default=[
             "Use for publication-ready visualizations or when user specifically requests Vega-Lite charts",

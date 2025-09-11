@@ -4,11 +4,35 @@ from instructor.dsl.partial import PartialLiteralMixin
 from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 
-from .config import SOURCE_TABLE_SEPARATOR
+from .config import SOURCE_TABLE_SEPARATOR, MissingContextError
 
 
 class PartialBaseModel(BaseModel, PartialLiteralMixin):
     ...
+
+
+class EscapeBaseModel(PartialBaseModel):
+
+    insufficient_context_reason: str = Field(
+        description="If lacking sufficient context, explain why; else use ''. Do not base off the user query; only from the data context provided.",
+        examples=[
+            "A timeseries is requested but SQL only provides customer and order data; please include a time dimension",
+            "The previous result is one aggregated value; try a different aggregation or more dimensions",
+            ""
+        ]
+    )
+
+    insufficient_context: bool = Field(
+        description="True if lacking context, else False. If True, leave other fields empty.",
+    )
+
+    def model_post_init(self, __context):
+        """
+        After model initialization, check if insufficient_context. If it is,
+        raise a MissingContextError with the provided explanation to stop further processing.
+        """
+        if self.insufficient_context:
+            raise MissingContextError(self.insufficient_context_reason)
 
 
 class YesNo(BaseModel):
@@ -156,7 +180,7 @@ class ReadinessCheck(PartialBaseModel):
     )
 
 
-class VegaLiteSpec(BaseModel):
+class VegaLiteSpec(EscapeBaseModel):
 
     chain_of_thought: str = Field(
         description="Explain how you will use the data to create a vegalite plot, and address any previous issues you encountered."

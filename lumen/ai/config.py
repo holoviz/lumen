@@ -31,6 +31,10 @@ class RetriesExceededError(Exception):
     """
 
 
+class MissingContextError(Exception):
+    """Raise to indicate missing context for a query."""
+
+
 THIS_DIR = Path(__file__).parent
 PROMPTS_DIR = THIS_DIR / "prompts"
 
@@ -54,6 +58,7 @@ UNRECOVERABLE_ERRORS = (
     ImportError,
     LlmSetupError,
     RecursionError,
+    MissingContextError,
     asyncio.CancelledError,
 )
 
