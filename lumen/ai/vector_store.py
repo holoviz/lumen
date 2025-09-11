@@ -82,11 +82,16 @@ class VectorStore(LLMUser):
         doc="List of metadata keys to exclude when creating the embeddings.",
     )
 
-    situate = param.Boolean(
+    situate = param.ClassSelector(
+        class_=(int, bool),
         default=False,
         doc="""
-        Whether to insert a `llm_context` key in the metadata containing
-        contextual about the chunks.""",
+        Controls whether to add a `llm_context` key to the metadata
+        with contextual information about the chunks.
+        If set to True, all chunks will be situated.
+        If set to an integer, only chunks with a character
+        count less than or equal to this value will be situated.
+        If set to False, no chunks will be situated.""",
     )
 
     def __init__(self, **params):
@@ -204,7 +209,7 @@ class VectorStore(LLMUser):
 
         return chunks
 
-    async def should_situate_chunk(self, chunk: str) -> bool:
+    async def should_situate_chunk(self, chunk: str, max_characters: int | None = None) -> bool:
         """
         Determine whether a chunk should be situated based on its content.
 
@@ -212,6 +217,8 @@ class VectorStore(LLMUser):
         ----------
         chunk: str
             The chunk text to evaluate
+        max_characters: int | None
+            The maximum character count for situating chunks
 
         Returns
         -------
@@ -220,6 +227,8 @@ class VectorStore(LLMUser):
         """
         if not self.llm:
             return self.situate
+        elif max_characters is not None and len(chunk) > max_characters:
+            return False
 
         try:
             # Use a user message to avoid conflicts with system instructions
@@ -235,7 +244,7 @@ class VectorStore(LLMUser):
         self,
         items: list[dict],
         force_ids: list[int] | None = None,
-        situate: bool | None = None,
+        situate: int | bool | None = None,
     ) -> list[int]:
         """
         Add items to the vector store.
@@ -260,6 +269,10 @@ class VectorStore(LLMUser):
 
         # Use the provided situate parameter or fall back to the class default
         use_situate = self.situate if situate is None else situate
+        if isinstance(use_situate, int) and use_situate > 0:
+            max_characters = use_situate
+        else:
+            max_characters = None
 
         for item in items:
             text = item["text"]
@@ -281,7 +294,7 @@ class VectorStore(LLMUser):
             if should_situate and self.llm:
                 previous_context = None  # Start with no previous context
                 for chunk in content_chunks:
-                    needs_context = await self.should_situate_chunk(chunk)
+                    needs_context = await self.should_situate_chunk(chunk, max_characters)
                     if not needs_context:
                         continue
 
