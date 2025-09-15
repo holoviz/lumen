@@ -543,3 +543,21 @@ def test_mirrors_not_in_tables_from_spec():
     source = DuckDBSource.from_spec(spec)
     assert "mirrors" not in source.tables
     assert source.mirrors == {}
+
+
+def test_detour_roundtrip(sample_csv_files):
+    source = DuckDBSource(tables=sample_csv_files)
+    df = source.get("customers")
+    new_source = source.create_sql_expr_source(
+        tables={"limited_customers": 'SELECT * FROM customers LIMIT 1'}
+    )
+    limited_df = new_source.get("limited_customers")
+    assert len(limited_df) == 1
+    assert limited_df.iloc[[0]].equals(df.iloc[[0]])
+
+    read_source = source.from_spec(new_source.to_spec())
+    read_df = read_source.get("limited_customers")
+    assert len(read_df) == 1
+    assert read_df.iloc[[0]].equals(df.iloc[[0]])
+    assert read_source.tables["limited_customers"] == 'SELECT * FROM customers LIMIT 1'
+    assert "customers" in read_source.tables
