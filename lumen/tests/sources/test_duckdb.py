@@ -546,6 +546,11 @@ def test_mirrors_not_in_tables_from_spec():
 
 
 def test_detour_roundtrip(sample_csv_files):
+    """
+    Test that creating a SQL expression source from an existing source
+    preserves the original SQL file-based tables so that it can
+    be re-serialized without error.
+    """
     source = DuckDBSource(tables=sample_csv_files)
     df = source.get("customers")
     new_source = source.create_sql_expr_source(
