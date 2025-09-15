@@ -357,7 +357,7 @@ class DuckDBSource(BaseSQLSource):
         for table, sql_expr in tables.copy().items():
             if sql_expr == self.sql_expr.format(table=f'"{table}"'):
                 continue
-            table_expr = f'CREATE OR REPLACE TEMP TABLE "{table}" AS ({sql_expr})'
+            table_expr = f'CREATE OR REPLACE TEMP VIEW "{table}" AS ({sql_expr})'
             cursor = self._connection.cursor()
             try:
                 cursor.execute(table_expr)
