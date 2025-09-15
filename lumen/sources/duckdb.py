@@ -101,7 +101,8 @@ class DuckDBSource(BaseSQLSource):
             for table_name in self.tables:
                 table_alias = self.normalize_table(table_name)
                 if table_alias not in self._file_based_tables:
-                    # Doing it this way to preserve table name, instead of .items()
+                    # Doing it this way instead of .items() to preserve table name
+                    # which can contain `.csv`, etc
                     continue
                 # Auto-detect file type and create appropriate view
                 read_expr = self._create_file_read_expr(self._file_based_tables[table_alias])
