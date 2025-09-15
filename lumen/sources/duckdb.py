@@ -101,7 +101,7 @@ class DuckDBSource(BaseSQLSource):
             for table_name in self.tables:
                 table_alias = self.normalize_table(table_name)
                 if table_alias not in self._file_based_tables:
-                    # Doing it this way to preserve table name
+                    # Doing it this way to preserve table name, instead of .items()
                     continue
                 # Auto-detect file type and create appropriate view
                 read_expr = self._create_file_read_expr(self._file_based_tables[table_alias])
@@ -381,6 +381,7 @@ class DuckDBSource(BaseSQLSource):
             finally:
                 cursor.close()
 
+        # keep references of the original file-based tables so views can be recreated
         source.tables.update(**{table: self._file_based_tables[table] for table in self._file_based_tables if table not in tables})
         return source
 
