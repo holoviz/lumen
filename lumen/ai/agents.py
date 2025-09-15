@@ -19,7 +19,7 @@ from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
 from ..base import Component
-from ..dashboard import Config
+from ..dashboard import Config, load_yaml
 from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource, Source
 from ..state import state
@@ -48,9 +48,7 @@ from .utils import (
     get_root_exception, get_schema, load_json, log_debug, mutate_user_message,
     report_error, retry_llm_output, stream_details,
 )
-from .views import (
-    AnalysisOutput, LumenOutput, SQLOutput, VegaLiteOutput,
-)
+from .views import AnalysisOutput, LumenOutput, VegaLiteOutput
 
 
 class Agent(Viewer, ToolUser, ContextProvider):
@@ -606,10 +604,17 @@ class SQLAgent(LumenBaseAgent):
 
     _extensions = ("codeeditor", "tabulator")
 
-    _output_type = SQLOutput
+    _output_type = LumenOutput
 
     def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
-        memory["sql"] = event.new
+        spec = load_yaml(event.new)
+        table = spec["table"]
+        source = spec["source"]
+        if isinstance(source["tables"], dict):
+            sql = source["tables"][table]
+        else:
+            sql = next((t["sql"] for t in source["tables"] if t["name"] == table), None)
+        memory["sql"] = sql
 
     async def _generate_sql_queries(
         self, messages: list[Message], dialect: str, step_number: int,
@@ -752,7 +757,6 @@ class SQLAgent(LumenBaseAgent):
         # Render output
         self._render_lumen(
             pipeline,
-            spec=result["sql"],
             messages=messages,
             title=step_title
         )
@@ -1164,7 +1168,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
 
     _extensions = ("codeeditor", "tabulator")
 
-    _output_type = SQLOutput
+    _output_type = LumenOutput
 
     def __init__(self, source: Source, **params):
         super().__init__(source=source, **params)
@@ -1291,7 +1295,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
             self._memory["__error__"] = str(e)
             return None
 
-        self._render_lumen(pipeline, spec=sql_query, messages=messages, title=step_title)
+        self._render_lumen(pipeline, messages=messages, title=step_title)
         return pipeline
 
 
