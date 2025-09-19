@@ -21,18 +21,18 @@ Choose 2-4 discovery queries to understand and fix the SQL error using the Essen
    - Purpose: See the unique values within a potential key or categorical column
    - Solves: Validating join key overlap, understanding GROUP BY columns, date ranges
    - Usage: `{"table": "table_name", "column": "column_name"}` for all values
-   - Pattern Usage: `{"table": "table_name", "column": "column_name", "pattern": "chin"}` to find China/Chinese/etc
+   - Pattern Usage: `{"table": "table_name", "column": "column_name", "pattern": "search_term"}` to find matching values
    - Examples:
-     * Find country variations: `{"pattern": "chin"}` finds China, Chinese Taipei, etc
+     * Find country variations: `{"pattern": "united"}` finds United States, United Kingdom, etc
      * Find name variations: `{"pattern": "john"}` finds John, Johnson, etc  
      * Find all values: `{}` (no pattern) shows first 10 distinct values
 
 ## Selection Strategy:
 - For "column not found": Use DescribeQuery + SampleQuery to see actual schema
 - For "no data returned" with specific filter values: Use pattern matching!
-  * Error mentions "China" → DistinctQuery with `{"pattern": "chin"}` to find China/Chinese variations
-  * Error mentions "USA" → DistinctQuery with `{"pattern": "us"}` to find US/USA/United States variations
-  * Error mentions "Germany" → DistinctQuery with `{"pattern": "ger"}` to find Germany/German variations
+  * Error mentions specific country → DistinctQuery with relevant pattern to find country name variations
+  * Error mentions specific organization → DistinctQuery with pattern to find name variations
+  * Error mentions specific category → DistinctQuery with pattern to find category variations
 - For join issues: Use SampleQuery + DistinctQuery on potential join keys
 - For format issues: Use SampleQuery to see actual data format
 
