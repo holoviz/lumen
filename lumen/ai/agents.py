@@ -493,6 +493,7 @@ class LumenBaseAgent(Agent):
         memory: _Memory,
         original_output: str,
         language: str | None = None,
+        **context
     ) -> str:
         """
         Retry the output by line, allowing the user to provide feedback on why the output was not satisfactory, or an error.
@@ -507,6 +508,7 @@ class LumenBaseAgent(Agent):
                 numbered_text=numbered_text,
                 language=language,
                 feedback=feedback,
+                **context
             )
         retry_model = self._lookup_prompt_key("retry_output", "response_model")
         invoke_kwargs = dict(
@@ -665,7 +667,8 @@ class SQLAgent(LumenBaseAgent):
 
     async def _validate_sql(
         self, sql_query: str, expr_slug: str, dialect: str,
-        source, messages: list[Message], step, max_retries: int = 2
+        source, messages: list[Message], step, max_retries: int = 2,
+        discovery_context: str | None = None,
     ) -> str:
         """Validate and potentially fix SQL query."""
         # Clean SQL
@@ -693,7 +696,7 @@ class SQLAgent(LumenBaseAgent):
                     feedback += " The data does not exist; select from available data sources."
 
                 retry_result = await self._retry_output_by_line(
-                    feedback, messages, self._memory, sql_query, language=f"sql.{dialect}"
+                    feedback, messages, self._memory, sql_query, language=f"sql.{dialect}", discovery_context=discovery_context
                 )
                 sql_query = clean_sql(retry_result, dialect)
         return sql_query
@@ -819,7 +822,7 @@ class SQLAgent(LumenBaseAgent):
 
             # Validate SQL
             validated_sql = await self._validate_sql(
-                sql_query, expr_slug, source.dialect, source, messages, step
+                sql_query, expr_slug, source.dialect, source, messages, step, discovery_context=discovery_context
             )
 
             # Execute and get results
