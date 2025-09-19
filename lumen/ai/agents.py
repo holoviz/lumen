@@ -761,26 +761,63 @@ class SQLAgent(LumenBaseAgent):
             title=step_title
         )
 
-    async def _attempt_oneshot_sql(
+    async def _render_execute_query(
         self,
         messages: list[Message],
         source: Source,
-        step_title: str | None = None,
-    ) -> Pipeline | None:
-        """Attempt one-shot SQL generation without exploration context."""
-        with self._add_step(
-            title="Attempting one-shot SQL generation...",
-            steps_layout=self._steps_layout,
-            status="running"
-        ) as step:
-            # Generate SQL without exploration context
-            sql_queries = await self._generate_sql_queries(
-                messages, source.dialect, step_number=1,
-                is_final=True, context_entries=None
+        step_title: str,
+        success_message: str,
+        discovery_context: str | None = None,
+        raise_if_empty: bool = False,
+    ) -> Pipeline:
+        """
+        Helper method that generates, validates, and executes final SQL queries.
+
+        Args:
+            messages: List of user messages
+            source: Data source to execute against
+            step_title: Title for the execution step
+            success_message: Message to show on successful completion
+            discovery_context: Optional discovery context to include in prompt
+            raise_if_empty: Whether to raise error if query returns empty results
+
+        Returns:
+            Pipeline object from successful execution
+        """
+        with self._add_step(title=step_title, steps_layout=self._steps_layout) as step:
+            # Generate SQL using common prompt pattern
+            system_prompt = await self._render_prompt(
+                "main",
+                messages,
+                dialect=source.dialect,
+                step_number=1,
+                is_final_step=True,
+                current_step="",
+                sql_query_history={},
+                current_iteration=1,
+                sql_plan_context=None,
+                errors=None,
+                discovery_context=discovery_context,
             )
 
-            # Validate and execute the first query
-            expr_slug, sql_query = next(iter(sql_queries.items()))
+            # Generate SQL using existing model
+            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
+            sql_response_model = self._get_model("main", is_final=True)
+            output = await self.llm.invoke(
+                messages,
+                system=system_prompt,
+                model_spec=model_spec,
+                response_model=sql_response_model,
+            )
+
+            if not output:
+                raise ValueError("No output was generated.")
+
+            # Extract SQL query
+            sql_query = output.query.strip()
+            expr_slug = output.expr_slug.strip()
+
+            # Validate SQL
             validated_sql = await self._validate_sql(
                 sql_query, expr_slug, source.dialect, source, messages, step
             )
@@ -791,7 +828,7 @@ class SQLAgent(LumenBaseAgent):
                 should_materialize=True, step=step
             )
 
-            # Use existing finalization logic
+            # Finalize execution
             results = {expr_slug: {
                 "sql": validated_sql,
                 "summary": summary,
@@ -800,11 +837,12 @@ class SQLAgent(LumenBaseAgent):
             }}
 
             await self._finalize_execution(
-                results, [], messages, step_title, raise_if_empty=True
+                results, [], messages, step_title, raise_if_empty=raise_if_empty
             )
 
             step.status = "success"
-            step.success_title = "One-shot SQL generation successful"
+            step.success_title = success_message
+
         return pipeline
 
     async def _select_discoveries(
@@ -903,80 +941,7 @@ class SQLAgent(LumenBaseAgent):
                 step.stream(result)
         return results
 
-    async def _final_answer_with_discoveries(
-        self,
-        messages: list[Message],
-        source: Source,
-        discovery_results: list[tuple[str, str]],
-        step_title: str | None = None,
-    ) -> Any:
-        """Generate final answer using discovery context in system prompt."""
-        # Format discovery results for system context
-        discovery_context = "\n".join([
-            f"- **{query_type}:** {result}" for query_type, result in discovery_results
-        ])
 
-        # Generate final SQL with discovery context passed to system prompt
-        with self._add_step(title="Generating final answer with discoveries", steps_layout=self._steps_layout) as step:
-            # Render prompt with discovery context
-            system_prompt = await self._render_prompt(
-                "main",
-                messages,
-                dialect=source.dialect,
-                step_number=1,
-                is_final_step=True,
-                current_step="",
-                sql_query_history={},
-                current_iteration=1,
-                sql_plan_context=None,
-                errors=None,
-                discovery_context=discovery_context,  # Pass discovery context to system prompt
-            )
-
-            # Generate SQL using existing model
-            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
-            sql_response_model = self._get_model("main", is_final=True)
-            output = await self.llm.invoke(
-                messages,
-                system=system_prompt,
-                model_spec=model_spec,
-                response_model=sql_response_model,
-            )
-
-            if not output:
-                raise ValueError("No output was generated.")
-
-            # Extract SQL query
-            sql_query = output.query.strip()
-            expr_slug = output.expr_slug.strip()
-
-            # Validate and execute
-            validated_sql = await self._validate_sql(
-                sql_query, expr_slug, source.dialect, source, messages, step
-            )
-
-            # Execute and get results
-            pipeline, sql_expr_source, summary = await self._execute_query(
-                source, expr_slug, validated_sql, is_final=True,
-                should_materialize=True, step=step
-            )
-
-            # Use existing finalization logic
-            results = {expr_slug: {
-                "sql": validated_sql,
-                "summary": summary,
-                "pipeline": pipeline,
-                "source": sql_expr_source
-            }}
-
-            await self._finalize_execution(
-                results, [], messages, step_title, raise_if_empty=False
-            )
-
-            step.status = "success"
-            step.success_title = "Final answer generated with discovery context"
-
-            return pipeline
 
     async def _explore_tables(
         self,
@@ -1013,8 +978,17 @@ class SQLAgent(LumenBaseAgent):
             final_results = initial_results
 
         # Step 5: Generate final answer with all discovery context
-        return await self._final_answer_with_discoveries(
-            messages, source, final_results, step_title
+        discovery_context = "\n".join([
+            f"- **{query_type}:** {result}" for query_type, result in final_results
+        ])
+
+        return await self._render_execute_query(
+            messages=messages,
+            source=source,
+            step_title="Generating final answer with discoveries",
+            success_message="Final answer generated with discovery context",
+            discovery_context=discovery_context,
+            raise_if_empty=False,
         )
 
     async def respond(
@@ -1027,7 +1001,14 @@ class SQLAgent(LumenBaseAgent):
         source = self._memory["source"]
         try:
             # Try one-shot approach first
-            pipeline = await self._attempt_oneshot_sql(messages, source, step_title)
+            pipeline = await self._render_execute_query(
+                messages=messages,
+                source=source,
+                step_title="Attempting one-shot SQL generation...",
+                success_message="One-shot SQL generation successful",
+                discovery_context=None,
+                raise_if_empty=True,
+            )
         except Exception as e:
             if not self.exploration_enabled:
                 # If exploration is disabled, re-raise the error instead of falling back

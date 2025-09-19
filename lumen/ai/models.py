@@ -88,7 +88,6 @@ class DiscoveryQueries(PartialBaseModel):
 
     reasoning: str = Field(description="Brief discovery strategy")
     queries: list[DescribeQuery | SampleQuery | DistinctQuery] = Field(
-        max_items=4,
         description="Choose 2-4 discovery queries from the Essential Three toolkit"
     )
 
