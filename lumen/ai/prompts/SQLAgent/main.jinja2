@@ -75,6 +75,13 @@ Step {{ step_number }}: {{ current_step }}
 {%- else %}
 ## Starting fresh
 {%- endif %}
+
+{% if discovery_context %}
+## Discovery Results:
+{{ discovery_context }}
+
+💡 Use the ACTUAL values from discoveries above - don't assume or guess!
+{%- endif %}
 {% endblock %}
 
 {%- block errors %}

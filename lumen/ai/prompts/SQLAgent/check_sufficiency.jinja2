@@ -1,0 +1,46 @@
+{% extends 'Agent/main.jinja2' %}
+
+{%- block instructions %}
+# Evaluate Discovery Sufficiency
+
+Review the discovery results and determine if they provide enough context to fix the original SQL error.
+
+## Evaluation Criteria:
+
+**✅ SUFFICIENT if discoveries reveal:**
+- **Column names** that fix "column not found" errors
+- **Data formats** that explain type conversion issues  
+- **Join key values** that show overlap/compatibility between tables
+- **Date ranges** that explain "no data returned" issues
+- **Value variations** that show actual data format (e.g., "Chinese Taipei" not "China")
+- **Clear path forward** to generate working SQL
+
+**❌ INSUFFICIENT if discoveries show:**
+- **No matching values** between potential join keys
+- **Limited data range** that doesn't cover the query period
+- **Ambiguous column names** that need more investigation
+- **Format inconsistencies** requiring deeper exploration
+- **Pattern too narrow** - need broader search or different pattern
+
+## Follow-up Strategy:
+If insufficient, specify targeted follow-ups:
+- **More distinct values:** Use OFFSET to see different value ranges
+- **Pattern refinement:** Try different patterns ("chin" → "china" → "people")
+- **Broader search:** Remove pattern to see all values if pattern was too narrow
+- **Different columns:** Sample other potential join/date columns
+- **Different tables:** Check related tables for missing context
+
+**Goal:** Minimal follow-ups that directly address the gap in understanding.
+{%- endblock %}
+
+{% block context %}
+**Original Error:** {{ error_context }}
+
+**Discovery Results:**
+{% for query_type, result in discovery_results %}
+**{{ query_type }}:** {{ result }}
+
+{% endfor %}
+
+**Your task:** Determine if these discoveries provide enough context to fix the original error, or if specific follow-ups are needed.
+{% endblock %}

@@ -1,0 +1,59 @@
+{% extends 'Agent/main.jinja2' %}
+
+{%- block instructions %}
+# Select Essential Discoveries
+
+Choose 2-4 discovery queries to understand and fix the SQL error using the Essential toolkit.
+
+## Essential Three Toolkit:
+
+1. **DescribeQuery** - Get column names and data types
+   - **Purpose:** See column names and data types  
+   - **Solves:** "Column not found" errors, data type mismatches
+   - **Usage:** `{"table": "table_name"}`
+
+2. **SampleQuery** - See actual data content
+   - **Purpose:** See what the actual data rows look like
+   - **Solves:** Data formatting issues, provides examples of key values
+   - **Usage:** `{"table": "table_name"}`
+
+3. **DistinctQuery** - Universal column analysis with pattern matching
+   - **Purpose:** See the unique values within a potential key or categorical column
+   - **Solves:** Validating join key overlap, understanding GROUP BY columns, date ranges
+   - **Usage:** `{"table": "table_name", "column": "column_name"}` for all values
+   - **Pattern Usage:** `{"table": "table_name", "column": "column_name", "pattern": "chin"}` to find China/Chinese/etc
+   - **Examples:**
+     * Find country variations: `{"pattern": "chin"}` finds China, Chinese Taipei, etc
+     * Find name variations: `{"pattern": "john"}` finds John, Johnson, etc  
+     * Find all values: `{}` (no pattern) shows first 10 distinct values
+
+## Selection Strategy:
+- **For "column not found"**: Use DescribeQuery + SampleQuery to see actual schema
+- **For "no data returned" with specific filter values**: Use pattern matching!
+  * Error mentions "China" → DistinctQuery with `{"pattern": "chin"}` to find China/Chinese variations
+  * Error mentions "USA" → DistinctQuery with `{"pattern": "us"}` to find US/USA/United States variations
+  * Error mentions "Germany" → DistinctQuery with `{"pattern": "ger"}` to find Germany/German variations
+- **For join issues**: Use SampleQuery + DistinctQuery on potential join keys
+- **For format issues**: Use SampleQuery to see actual data format
+
+**CRITICAL:** When query fails because a filter value doesn't exist, use pattern matching to find variations!
+
+Choose discoveries that directly address the error - be focused and efficient!
+{%- endblock %}
+
+{% block context %}
+**Original Error:** {{ error_context }}
+
+**Available Tables:**
+{% set tables_list = memory.get('visible_slugs', []) | list %}
+{% for table in tables_list[:10] %}
+- {{ table }}
+{% endfor %}
+{% if tables_list | length > 10 %}
+- ... and {{ tables_list | length - 10 }} more tables
+{% endif %}
+
+{{ memory["sql_metaset"].compact_context }}
+
+**Your task:** Select 2-4 discoveries that will help understand and fix this specific error.
+{% endblock %}
