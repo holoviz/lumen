@@ -38,6 +38,7 @@ dependencies = [
     "panel >=1.7.5",
     "param >=2.2.1",
     "sqlglot",
+    "diskcache",
 ]
 
 [project.urls]
