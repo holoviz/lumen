@@ -5,19 +5,14 @@
 
 Choose 2-4 discovery queries to understand and fix the SQL error using the Essential toolkit.
 
-## Essential Three Toolkit:
+## Essential Toolkit:
 
-1. DescribeQuery - Get column names and data types
-   - Purpose: See column names and data types  
-   - Solves: "Column not found" errors, data type mismatches
-   - Usage: `{"table": "table_name"}`
-
-2. SampleQuery - See actual data content
+1. SampleQuery - See actual data content
    - Purpose: See what the actual data rows look like
    - Solves: Data formatting issues, provides examples of key values
    - Usage: `{"table": "table_name"}`
 
-3. DistinctQuery - Universal column analysis with pattern matching
+2. DistinctQuery - Universal column analysis with pattern matching
    - Purpose: See the unique values within a potential key or categorical column
    - Solves: Validating join key overlap, understanding GROUP BY columns, date ranges
    - Usage: `{"table": "table_name", "column": "column_name"}` for all values
@@ -28,7 +23,6 @@ Choose 2-4 discovery queries to understand and fix the SQL error using the Essen
      * Find all values: `{}` (no pattern) shows first 10 distinct values
 
 ## Selection Strategy:
-- For "column not found": Use DescribeQuery + SampleQuery to see actual schema
 - For "no data returned" with specific filter values: Use pattern matching!
   * Error mentions specific country → DistinctQuery with relevant pattern to find country name variations
   * Error mentions specific organization → DistinctQuery with pattern to find name variations

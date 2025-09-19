@@ -49,13 +49,7 @@ class ThinkingYesNo(BaseModel):
     yes: bool = Field(description="True if yes, otherwise False.")
 
 
-# Essential Three Discovery Toolkit
-class DescribeQuery(PartialBaseModel):
-    """Get column names and types using universal LIMIT 0 approach - works across all SQL dialects."""
-
-    query: SkipJsonSchema[str] = Field(default="SELECT * FROM {table} LIMIT 0")
-    table: str = Field(description="Table to describe")
-
+# Essential Discovery Toolkit
 
 class SampleQuery(PartialBaseModel):
     """See actual data content - reveals format issues and patterns."""
@@ -87,7 +81,7 @@ class DiscoveryQueries(PartialBaseModel):
     """LLM selects 2-4 essential discoveries using the core toolkit."""
 
     reasoning: str = Field(description="Brief discovery strategy")
-    queries: list[DescribeQuery | SampleQuery | DistinctQuery] = Field(
+    queries: list[SampleQuery | DistinctQuery] = Field(
         description="Choose 2-4 discovery queries from the Essential Three toolkit"
     )
 
@@ -99,7 +93,7 @@ class DiscoverySufficiency(PartialBaseModel):
 
     sufficient: bool = Field(description="True if discoveries provide enough context to fix the error")
 
-    follow_up_needed: list[DescribeQuery | SampleQuery | DistinctQuery] = Field(
+    follow_up_needed: list[SampleQuery | DistinctQuery] = Field(
         default_factory=list,
         max_items=3,
         description="If insufficient, specify 1-3 follow-up discoveries (e.g., OFFSET for more values)"

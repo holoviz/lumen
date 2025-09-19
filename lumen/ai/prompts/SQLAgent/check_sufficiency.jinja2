@@ -33,6 +33,8 @@ If insufficient, specify targeted follow-ups:
 - Different columns: Sample other potential join/date columns
 - Different tables: Check related tables for missing context
 - Filter value discovery: When WHERE clause failed, sample DISTINCT values for each filter column to understand actual data format
+  - Use pattern matching first when the original query contains specific search terms (e.g., if query failed with a country name, use a pattern to find country variations)
+  - Use full distinct query for generic columns like medal_type, participant_type where you need to see all possible values
 
 Goal: Minimal follow-ups that directly address the gap in understanding.
 {%- endblock %}

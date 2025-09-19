@@ -36,9 +36,9 @@ from .controls import RetryControls, SourceControls
 from .llm import Llm, Message
 from .memory import _Memory
 from .models import (
-    DbtslQueryParams, DescribeQuery, DiscoveryQueries, DiscoverySufficiency,
-    DistinctQuery, PartialBaseModel, QueryCompletionValidation, RetrySpec,
-    SampleQuery, SqlQuery, VegaLiteSpec, make_sql_model,
+    DbtslQueryParams, DiscoveryQueries, DiscoverySufficiency, DistinctQuery,
+    PartialBaseModel, QueryCompletionValidation, RetrySpec, SampleQuery,
+    SqlQuery, VegaLiteSpec, make_sql_model,
 )
 from .schemas import get_metaset
 from .services import DbtslMixin
@@ -891,7 +891,7 @@ class SQLAgent(LumenBaseAgent):
 
     async def _execute_discovery_query(
         self,
-        query_model: DescribeQuery | SampleQuery | DistinctQuery,
+        query_model: SampleQuery | DistinctQuery,
         source: Source,
     ) -> tuple[str, str]:
         """Execute a single discovery query and return formatted result."""
@@ -903,14 +903,6 @@ class SQLAgent(LumenBaseAgent):
             if isinstance(query_model, SampleQuery):
                 # Limit to first 5 rows, truncate long values
                 result_summary = f"Sample from {query_model.table}:\n```\n{df.head().to_string(max_cols=10)}\n```"
-            elif isinstance(query_model, DescribeQuery):
-                # LIMIT 0 returns empty df but preserves column schema
-                column_info = f"Columns: {', '.join(df.columns.tolist())}"
-                if len(df.dtypes) <= 10:
-                    type_info = f"\nTypes: {dict(df.dtypes)}"
-                else:
-                    type_info = f"\nTypes: {dict(list(df.dtypes.items())[:10])}... ({len(df.dtypes)} total)"
-                result_summary = f"Schema for {query_model.table}:\n`{column_info}{type_info}`"
             elif isinstance(query_model, DistinctQuery):
                 # Show distinct values
                 values = df.iloc[:, 0].tolist()[:10]  # First column, max 10 values
@@ -921,7 +913,7 @@ class SQLAgent(LumenBaseAgent):
 
     async def _run_discoveries_parallel(
         self,
-        discovery_queries: list[DescribeQuery | SampleQuery | DistinctQuery],
+        discovery_queries: list[SampleQuery | DistinctQuery],
         source: Source,
     ) -> list[tuple[str, str]]:
         """Execute all discoveries concurrently and stream results as they complete."""
