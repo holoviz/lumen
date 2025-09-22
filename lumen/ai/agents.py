@@ -48,9 +48,7 @@ from .utils import (
     get_root_exception, get_schema, load_json, log_debug, mutate_user_message,
     report_error, retry_llm_output, stream_details,
 )
-from .views import (
-    AnalysisOutput, LumenOutput, SQLOutput, VegaLiteOutput,
-)
+from .views import AnalysisOutput, LumenOutput, SQLOutput
 
 
 class Agent(Viewer, ToolUser, ContextProvider):
@@ -1519,7 +1517,7 @@ class VegaLiteAgent(BaseViewAgent):
 
     _extensions = ("vega",)
 
-    _output_type = VegaLiteOutput
+    _output_type = LumenOutput
 
     async def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
         try:
