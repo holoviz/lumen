@@ -1,0 +1,49 @@
+{% extends 'VegaLiteAgent/improvement_step.jinja2' %}
+
+{% block instructions %}
+Add helpful tooltips, axis titles, and ensure responsive, accessible user experience.
+
+# TASK: Interactive Experience Polish
+Focus on these user experience enhancements:
+- Rich, informative tooltips that provide precise values
+- Clear, human-readable axis titles (not raw field names)
+- Proper formatting for different data types
+- Responsive sizing for different screen sizes
+- Accessibility considerations
+
+Output ONLY the interaction and UX-related changes as YAML. Examples:
+- Tooltip with formatted values
+- Axis titles that are human-readable (not raw field names)
+- Responsive sizing if missing
+- Proper field titles in tooltips
+
+Focus on user experience, not visual styling.
+{% endblock %}
+
+{% block examples %}
+Here's how professional charts handle interactivity:
+```yaml
+encoding:
+  tooltip:
+  - field: state
+    title: State
+    type: ordinal
+  - field: avg_pcap
+    format: .2f
+    title: Avg Power Capacity
+    type: quantitative
+  x:
+    title: "Average Power Capacity (MW)"  # Human-readable title
+  y:
+    title: "State"  # Clear axis title
+```
+
+This approach:
+- Rich tooltips: Multiple fields with clear titles
+- Smart formatting: `.2f` for precise decimal values
+- Clear labels: "Avg Power Capacity" instead of raw field name "avg_pcap"
+- Proper types: Explicit ordinal/quantitative for correct formatting
+- Human-readable axis titles: Convert field names to readable titles
+{% endblock %}
+
+{# context and errors are inherited from improvement_step.jinja2 #}

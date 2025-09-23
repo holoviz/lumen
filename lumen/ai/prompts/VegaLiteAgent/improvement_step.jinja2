@@ -1,0 +1,20 @@
+{% extends 'Actor/main.jinja2' %}
+
+{% block context %}
+Current spec:
+```yaml
+{{ current_spec }}
+```
+
+Data context:
+{{ memory.data }}
+{% endblock %}
+
+{% block errors %}
+{{ super() }}
+
+{% if errors is defined and errors %}
+For extra context, here are the data and columns available:
+{{ columns_context }}
+{% endif %}
+{% endblock %}

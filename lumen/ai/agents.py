@@ -1508,9 +1508,9 @@ class VegaLiteAgent(BaseViewAgent):
     prompts = param.Dict(
         default={
             "main": {"response_model": VegaLiteBasicSpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"},
-            "axes": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "axes.jinja2"},
-            "labels": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "labels.jinja2"},
-            "polish": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "polish.jinja2"},
+            "color_strategy": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "color_strategy.jinja2"},
+            "narrative_titles": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "narrative_titles.jinja2"},
+            "interaction_polish": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "interaction_polish.jinja2"},
             "retry_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "retry_output.jinja2"},
         }
     )
@@ -1533,6 +1533,90 @@ class VegaLiteAgent(BaseViewAgent):
                 result[key] = value
         return result
 
+    def _apply_hardcoded_polish(self, vega_spec: dict) -> dict:
+        """Apply non-negotiable best practices and professional polish"""
+
+        # Professional styling config
+        if "config" not in vega_spec:
+            vega_spec["config"] = {}
+
+        professional_config = {
+            "axis": {
+                "domainColor": "#ddd",
+                "labelColor": "#666666",
+                "tickColor": "#ddd",
+                "gridOpacity": 0.3,
+                "labelFontSize": 16,  # Increased from 14
+                "titleFontSize": 18   # Added for consistent title sizing
+            },
+            "background": "#ffffff",
+            "view": {"stroke": "#ddd"}
+        }
+        vega_spec["config"] = self._deep_merge_dicts(vega_spec.get("config", {}), professional_config)
+
+        # Smart mark defaults based on type
+        if "mark" in vega_spec:
+            mark_defaults = self._get_mark_polish(vega_spec["mark"])
+            if isinstance(vega_spec["mark"], str):
+                vega_spec["mark"] = {"type": vega_spec["mark"], **mark_defaults}
+            elif isinstance(vega_spec["mark"], dict):
+                vega_spec["mark"] = self._deep_merge_dicts(mark_defaults, vega_spec["mark"])
+
+        # Smart axis formatting
+        if "encoding" in vega_spec:
+            self._apply_axis_defaults(vega_spec["encoding"])
+
+        return vega_spec
+
+    def _get_mark_polish(self, mark_type: str | dict) -> dict:
+        """Get professional polish for different mark types"""
+        mark_name = mark_type if isinstance(mark_type, str) else mark_type.get("type", "")
+
+        defaults = {
+            "bar": {"opacity": 0.75},
+            "line": {"strokeWidth": 2},
+            "point": {"size": 60, "opacity": 0.8},
+            "area": {"opacity": 0.7},
+            "circle": {"opacity": 0.8}
+        }
+        return defaults.get(mark_name, {"opacity": 0.8})
+
+    def _apply_axis_defaults(self, encoding: dict) -> None:
+        """Apply smart axis formatting defaults"""
+        for axis_name in ["x", "y"]:
+            if axis_name in encoding and isinstance(encoding[axis_name], dict):
+                enc = encoding[axis_name]
+
+                # Initialize axis if it doesn't exist
+                if "axis" not in enc:
+                    enc["axis"] = {}
+
+                # Apply type-specific formatting
+                if enc.get("type") == "quantitative":
+                    # Only apply numeric formatting to quantitative axes
+                    quantitative_defaults = {
+                        "grid": True,
+                        "labelFontSize": 16,
+                        "titleFontSize": 18
+                    }
+                    # Only add properties that don't already exist
+                    for key, value in quantitative_defaults.items():
+                        if key not in enc["axis"]:
+                            enc["axis"][key] = value
+
+                elif enc.get("type") == "ordinal":
+                    # Only apply string/categorical formatting to ordinal axes
+                    ordinal_defaults = {
+                        "labelLimit": 100,
+                        "labelFontSize": 16,
+                        "titleFontSize": 18
+                        # NO format or grid for ordinal axes
+                    }
+                    # Only add properties that don't already exist
+                    for key, value in ordinal_defaults.items():
+                        if key not in enc["axis"]:
+                            enc["axis"][key] = value
+
     async def _update_spec_step(
         self,
         step_name: str,
@@ -1549,7 +1633,7 @@ class VegaLiteAgent(BaseViewAgent):
                 messages,
                 current_spec=yaml.dump(current_spec["spec"], default_flow_style=False),
                 doc=doc,
-                table=self._memory["pipeline"].table
+                table=self._memory["pipeline"].table,
             )
 
             model_spec = self.prompts.get(prompt_name, {}).get("llm_spec", self.llm_spec_key)
@@ -1748,21 +1832,21 @@ class VegaLiteAgent(BaseViewAgent):
             async for output in response:
                 step.stream(output.chain_of_thought, replace=True)
 
-            # Validate basic spec
+            # Apply hardcoded polish immediately
             current_spec = await self._extract_spec({"yaml_spec": output.yaml_spec})
+            current_spec["spec"] = self._apply_hardcoded_polish(current_spec["spec"])
             step.success_title = "Basic plot structure created"
 
-        # Step 2: Show basic plot immediately - users see it right away!
+        # Step 2: Show basic plot immediately
         self._memory["view"] = dict(current_spec, type=self.view_type)
         view = self.view_type(pipeline=pipeline, **current_spec)
-        # Render the basic plot - this creates the 'out' object we can update
         out = self._render_lumen(view, messages=messages, title=step_title)
 
-        # Steps 3-5: Run enhancements in parallel and update visualization in real-time
+        # Step 3: Parallel enhancements (LLM-driven creative decisions)
         parallel_steps = {
-            "axes": "Adding axis formatting and titles",
-            # "labels": "Adding colors and tooltips",
-            # "polish": "Adding titles and styling",
+            "color_strategy": "Analyze the data to determine strategic highlighting and color scheme that tells the story",
+            "narrative_titles": "Create compelling titles and subtitles that communicate the key insight from this visualization",
+            "interaction_polish": "Add helpful tooltips and ensure responsive, accessible user experience"
         }
 
         # Create tasks for parallel execution
@@ -1783,7 +1867,6 @@ class VegaLiteAgent(BaseViewAgent):
         # Update final memory state
         final_vega_spec = await self._extract_spec({"yaml_spec": yaml.dump(current_spec)})
         self._memory["view"] = dict(final_vega_spec, type=self.view_type)
-        self._memory["pipeline"] = pipeline
         return view
 
 

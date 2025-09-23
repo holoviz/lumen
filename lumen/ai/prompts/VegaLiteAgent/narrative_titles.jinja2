@@ -1,0 +1,37 @@
+{% extends 'VegaLiteAgent/improvement_step.jinja2' %}
+
+{% block instructions %}
+Create compelling titles and narrative elements that immediately communicate the key insight from this visualization.
+
+# TASK: Storytelling Enhancement
+Based on the data and current visualization, create:
+- A clear, informative title that states the key finding
+- A subtitle that provides context or explains the significance
+- Ensure titles guide viewer attention to the main insight
+
+Create titles that answer: "What is the key takeaway a viewer should understand from this chart?"
+
+Output ONLY the title-related changes as YAML in the format shown in the example.
+{% endblock %}
+
+{% block examples %}
+Here's how professional visualizations handle titles:
+```yaml
+title:
+  anchor: start
+  fontSize: 20
+  subtitle: New Mexico leads with the highest average power capacity per turbine
+  subtitleColor: '#666666'
+  subtitleFontSize: 16
+  text: Average State Power Capacity from Wind Turbines
+```
+
+This approach:
+- Main title: Descriptive and informative about what data is shown
+- Subtitle: States the key insight immediately ("New Mexico leads with...")
+- Typography: Uses clear hierarchy (20px main, 16px subtitle)
+- Color: Subtle gray for subtitle to create hierarchy
+- Positioning: Left-aligned (`anchor: start`) for clean, professional look
+{% endblock %}
+
+{# context and errors are inherited from improvement_step.jinja2 #}
