@@ -19,7 +19,7 @@ from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
 from ..base import Component
-from ..dashboard import Config
+from ..dashboard import Config, load_yaml
 from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource, Source
 from ..state import state
@@ -37,7 +37,8 @@ from .llm import Llm, Message
 from .memory import _Memory
 from .models import (
     DbtslQueryParams, NextStep, PartialBaseModel, QueryCompletionValidation,
-    RetrySpec, SqlQuery, SQLRoadmap, VegaLiteSpec, make_sql_model,
+    RetrySpec, SqlQuery, SQLRoadmap, VegaLiteBasicSpec, VegaLiteSpecUpdate,
+    make_sql_model,
 )
 from .schemas import get_metaset
 from .services import DbtslMixin
@@ -48,9 +49,7 @@ from .utils import (
     get_root_exception, get_schema, load_json, log_debug, mutate_user_message,
     report_error, retry_llm_output, stream_details,
 )
-from .views import (
-    AnalysisOutput, LumenOutput, SQLOutput, VegaLiteOutput,
-)
+from .views import AnalysisOutput, LumenOutput, VegaLiteOutput
 
 
 class Agent(Viewer, ToolUser, ContextProvider):
@@ -545,6 +544,7 @@ class LumenBaseAgent(Agent):
             self._memory["outputs"] = self._memory["outputs"] + [out]
         message_kwargs = dict(value=out, user=self.user)
         self.interface.stream(replace=True, max_width=self._max_width, **message_kwargs)
+        return out
 
 
 class SQLAgent(LumenBaseAgent):
@@ -606,10 +606,17 @@ class SQLAgent(LumenBaseAgent):
 
     _extensions = ("codeeditor", "tabulator")
 
-    _output_type = SQLOutput
+    _output_type = LumenOutput
 
     def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
-        memory["sql"] = event.new
+        spec = load_yaml(event.new)
+        table = spec["table"]
+        source = spec["source"]
+        if isinstance(source["tables"], dict):
+            sql = source["tables"][table]
+        else:
+            sql = next((t["sql"] for t in source["tables"] if t["name"] == table), None)
+        memory["sql"] = sql
 
     async def _generate_sql_queries(
         self, messages: list[Message], dialect: str, step_number: int,
@@ -752,7 +759,6 @@ class SQLAgent(LumenBaseAgent):
         # Render output
         self._render_lumen(
             pipeline,
-            spec=result["sql"],
             messages=messages,
             title=step_title
         )
@@ -1164,7 +1170,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
 
     _extensions = ("codeeditor", "tabulator")
 
-    _output_type = SQLOutput
+    _output_type = LumenOutput
 
     def __init__(self, source: Source, **params):
         super().__init__(source=source, **params)
@@ -1291,7 +1297,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
             self._memory["__error__"] = str(e)
             return None
 
-        self._render_lumen(pipeline, spec=sql_query, messages=messages, title=step_title)
+        self._render_lumen(pipeline, messages=messages, title=step_title)
         return pipeline
 
 
@@ -1510,7 +1516,10 @@ class VegaLiteAgent(BaseViewAgent):
 
     prompts = param.Dict(
         default={
-            "main": {"response_model": VegaLiteSpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"},
+            "main": {"response_model": VegaLiteBasicSpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"},
+            "color_strategy": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "color_strategy.jinja2"},
+            "narrative_titles": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "narrative_titles.jinja2"},
+            "interaction_polish": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "interaction_polish.jinja2"},
             "retry_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "retry_output.jinja2"},
         }
     )
@@ -1520,6 +1529,138 @@ class VegaLiteAgent(BaseViewAgent):
     _extensions = ("vega",)
 
     _output_type = VegaLiteOutput
+
+    def _deep_merge_dicts(self, base_dict: dict[str, Any], update_dict: dict[str, Any]) -> dict[str, Any]:
+        """Deep merge two dictionaries, with update_dict taking precedence."""
+        result = base_dict.copy()
+        for key, value in update_dict.items():
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                result[key] = self._deep_merge_dicts(result[key], value)
+            else:
+                result[key] = value
+        return result
+
+    def _apply_hardcoded_polish(self, vega_spec: dict) -> dict:
+        """Apply non-negotiable best practices and professional polish"""
+
+        # Professional styling config
+        if "config" not in vega_spec:
+            vega_spec["config"] = {}
+
+        professional_config = {
+            "axis": {
+                "domainColor": "#ddd",
+                "labelColor": "#666666",
+                "tickColor": "#ddd",
+                "gridOpacity": 0.3,
+                "labelFontSize": 16,  # Increased from 14
+                "titleFontSize": 18   # Added for consistent title sizing
+            },
+            "background": "#ffffff",
+            "view": {"stroke": "#ddd"}
+        }
+        vega_spec["config"] = self._deep_merge_dicts(vega_spec.get("config", {}), professional_config)
+
+        # Smart mark defaults based on type
+        if "mark" in vega_spec:
+            mark_defaults = self._get_mark_polish(vega_spec["mark"])
+            if isinstance(vega_spec["mark"], str):
+                vega_spec["mark"] = {"type": vega_spec["mark"], **mark_defaults}
+            elif isinstance(vega_spec["mark"], dict):
+                vega_spec["mark"] = self._deep_merge_dicts(mark_defaults, vega_spec["mark"])
+
+        # Smart axis formatting
+        if "encoding" in vega_spec:
+            self._apply_axis_defaults(vega_spec["encoding"])
+
+        return vega_spec
+
+    def _get_mark_polish(self, mark_type: str | dict) -> dict:
+        """Get professional polish for different mark types"""
+        mark_name = mark_type if isinstance(mark_type, str) else mark_type.get("type", "")
+
+        defaults = {
+            "bar": {"opacity": 0.75},
+            "line": {"strokeWidth": 2},
+            "point": {"size": 60, "opacity": 0.8},
+            "area": {"opacity": 0.7},
+            "circle": {"opacity": 0.8}
+        }
+        return defaults.get(mark_name, {"opacity": 0.8})
+
+    def _apply_axis_defaults(self, encoding: dict) -> None:
+        """Apply smart axis formatting defaults"""
+        for axis_name in ["x", "y"]:
+            if axis_name in encoding and isinstance(encoding[axis_name], dict):
+                enc = encoding[axis_name]
+
+                # Initialize axis if it doesn't exist
+                if "axis" not in enc:
+                    enc["axis"] = {}
+
+                # Apply type-specific formatting
+                if enc.get("type") == "quantitative":
+                    # Only apply numeric formatting to quantitative axes
+                    quantitative_defaults = {
+                        "grid": True,
+                        "labelFontSize": 16,
+                        "titleFontSize": 18
+                    }
+                    # Only add properties that don't already exist
+                    for key, value in quantitative_defaults.items():
+                        if key not in enc["axis"]:
+                            enc["axis"][key] = value
+
+                elif enc.get("type") == "ordinal":
+                    # Only apply string/categorical formatting to ordinal axes
+                    ordinal_defaults = {
+                        "labelLimit": 100,
+                        "labelFontSize": 16,
+                        "titleFontSize": 18
+                        # NO format or grid for ordinal axes
+                    }
+                    # Only add properties that don't already exist
+                    for key, value in ordinal_defaults.items():
+                        if key not in enc["axis"]:
+                            enc["axis"][key] = value
+
+    async def _update_spec_step(
+        self,
+        step_name: str,
+        step_desc: str,
+        current_spec: dict[str, Any],
+        prompt_name: str,
+        messages: list[Message],
+        doc: str | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Update a Vega-Lite spec with incremental changes for a specific step."""
+        with self.interface.param.update(callback_exception="raise"), self._add_step(title=step_desc, steps_layout=self._steps_layout) as step:
+            system_prompt = await self._render_prompt(
+                prompt_name,
+                messages,
+                current_spec=yaml.dump(current_spec["spec"], default_flow_style=False),
+                doc=doc,
+                table=self._memory["pipeline"].table,
+            )
+
+            model_spec = self.prompts.get(prompt_name, {}).get("llm_spec", self.llm_spec_key)
+            result = await self.llm.invoke(
+                messages=messages,
+                system=system_prompt,
+                response_model=VegaLiteSpecUpdate,
+                model_spec=model_spec,
+            )
+
+            step.stream(f"Reasoning: {result.chain_of_thought}")
+            step.stream(f"Update:\n```yaml\n{result.yaml_update}\n```", replace=False)
+
+            update_dict = yaml.safe_load(result.yaml_update)
+
+            # Validate the update by attempting to merge and extract
+            test_spec = self._deep_merge_dicts(current_spec, update_dict)
+            await self._extract_spec({"yaml_spec": yaml.dump(test_spec)})  # Validation
+            step.success_title = f"{step_name} completed"
+            return step_name, update_dict
 
     async def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
         try:
@@ -1609,7 +1750,10 @@ class VegaLiteAgent(BaseViewAgent):
         return list(dict.fromkeys(as_fields))
 
     async def _ensure_columns_exists(self, vega_spec: dict):
-        schema = await get_schema(self._memory["pipeline"])
+        pipeline = self._memory.get("pipeline")
+        if not pipeline:
+            return
+        schema = await get_schema(pipeline)
 
         fields = self._extract_as_keys(vega_spec.get('transform', [])) + list(schema)
         for layer in vega_spec.get("layer", []):
@@ -1656,6 +1800,81 @@ class VegaLiteAgent(BaseViewAgent):
             # because those result in an blank plot without error
             vega_spec["params"] = [{"bind": "scales", "name": "grid", "select": "interval"}]
         return {"spec": vega_spec, "sizing_mode": "stretch_both", "min_height": 300, "max_width": 1200}
+
+    async def respond(
+        self,
+        messages: list[Message],
+        step_title: str | None = None,
+    ) -> Any:
+        """
+        Generates a VegaLite visualization using progressive building approach with real-time updates.
+        """
+        pipeline = self._memory.get("pipeline")
+        if not pipeline:
+            raise ValueError("No current pipeline found in memory.")
+
+        schema = await get_schema(pipeline)
+        if not schema:
+            raise ValueError("Failed to retrieve schema for the current pipeline.")
+
+        # Step 1: Generate basic spec
+        with self._add_step(title="Creating basic plot structure", steps_layout=self._steps_layout) as step:
+            doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
+
+            system_prompt = await self._render_prompt(
+                "main",
+                messages,
+                table=pipeline.table,
+                doc=doc,
+            )
+            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
+
+            response = self.llm.stream(
+                messages,
+                system=system_prompt,
+                model_spec=model_spec,
+                response_model=VegaLiteBasicSpec,
+            )
+
+            async for output in response:
+                step.stream(output.chain_of_thought, replace=True)
+
+            # Apply hardcoded polish immediately
+            current_spec = await self._extract_spec({"yaml_spec": output.yaml_spec})
+            current_spec["spec"] = self._apply_hardcoded_polish(current_spec["spec"])
+            step.success_title = "Basic plot structure created"
+
+        # Step 2: Show basic plot immediately
+        self._memory["view"] = dict(current_spec, type=self.view_type)
+        view = self.view_type(pipeline=pipeline, **current_spec)
+        out = self._render_lumen(view, messages=messages, title=step_title)
+
+        # Step 3: Parallel enhancements (LLM-driven creative decisions)
+        parallel_steps = {
+            "color_strategy": "Analyze the data to determine strategic highlighting and color scheme that tells the story",
+            "narrative_titles": "Create compelling titles and subtitles that communicate the key insight from this visualization",
+            "interaction_polish": "Add helpful tooltips and ensure responsive, accessible user experience"
+        }
+
+        # Create tasks for parallel execution
+        tasks = []
+        for step_name, step_desc in parallel_steps.items():
+            task = asyncio.create_task(
+                self._update_spec_step(step_name, step_desc, current_spec, step_name, messages, doc=doc)
+            )
+            tasks.append(task)
+
+        for completed_task in asyncio.as_completed(tasks):
+            step_name, update_dict = await completed_task
+            full_spec = yaml.safe_load(out.spec)
+            full_spec["spec"] = self._deep_merge_dicts(full_spec["spec"], update_dict)
+            out.spec = yaml.dump(full_spec)
+            log_debug(f"📊 Applied {step_name} updates and refreshed visualization")
+
+        # Update final memory state
+        final_vega_spec = await self._extract_spec({"yaml_spec": yaml.dump(current_spec)})
+        self._memory["view"] = dict(final_vega_spec, type=self.view_type)
+        return view
 
 
 class AnalysisAgent(LumenBaseAgent):

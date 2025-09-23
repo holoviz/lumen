@@ -1,0 +1,40 @@
+{% extends 'VegaLiteAgent/improvement_step.jinja2' %}
+
+{% block instructions %}
+Analyze the current Vega-Lite specification and data to determine the optimal color strategy that serves the data story.
+
+# TASK: Strategic Color Enhancement
+Focus on these decisions:
+- Should any data points be highlighted to emphasize key insights?
+- What conditional coloring would help users understand patterns?
+- How can color direct attention to the most important findings?
+
+Output ONLY the color-related changes needed as YAML. Focus on storytelling through color, not decoration.
+Refer to the examples for gold standard conditional logic and color hierarchy.
+{% endblock %}
+
+{% block examples %}
+Strategic color highlighting examples:
+
+Highlight a key category:
+```yaml
+encoding:
+  color:
+    condition:
+      test: datum.state === 'NM'
+      value: '#8b0000'        # Dark red for emphasis
+    value: '#d3d3d3'          # Light gray for context
+```
+
+Highlight values above a threshold:
+```yaml
+encoding:
+  color:
+    condition:
+      test: datum.value > 100
+      value: '#e74c3c'        # Red for high values
+    value: '#bdc3c7'          # Muted gray for others
+```
+{% endblock %}
+
+{# context and errors are inherited from improvement_step.jinja2 #}
