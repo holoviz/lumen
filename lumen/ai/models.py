@@ -95,7 +95,6 @@ class DiscoverySufficiency(PartialBaseModel):
 
     follow_up_needed: list[SampleQuery | DistinctQuery] = Field(
         default_factory=list,
-        max_items=3,
         description="If insufficient, specify 1-3 follow-up discoveries (e.g., OFFSET for more values)"
     )
 
@@ -131,12 +130,6 @@ def make_sql_model(is_final: bool = False):
         return SqlQuery
     else:
         return SqlQueries
-
-
-
-
-
-
 
 
 class VegaLiteSpec(EscapeBaseModel):
