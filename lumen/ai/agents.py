@@ -1547,7 +1547,7 @@ class VegaLiteAgent(BaseViewAgent):
             system_prompt = await self._render_prompt(
                 prompt_name,
                 messages,
-                current_spec=yaml.dump(current_spec, default_flow_style=False),
+                current_spec=yaml.dump(current_spec["spec"], default_flow_style=False),
                 doc=doc,
                 table=self._memory["pipeline"].table
             )
@@ -1568,7 +1568,6 @@ class VegaLiteAgent(BaseViewAgent):
             # Validate the update by attempting to merge and extract
             test_spec = self._deep_merge_dicts(current_spec, update_dict)
             await self._extract_spec({"yaml_spec": yaml.dump(test_spec)})  # Validation
-
             step.success_title = f"{step_name} completed"
             return step_name, update_dict
 
@@ -1660,7 +1659,10 @@ class VegaLiteAgent(BaseViewAgent):
         return list(dict.fromkeys(as_fields))
 
     async def _ensure_columns_exists(self, vega_spec: dict):
-        schema = await get_schema(self._memory["pipeline"])
+        pipeline = self._memory.get("pipeline")
+        if not pipeline:
+            return
+        schema = await get_schema(pipeline)
 
         fields = self._extract_as_keys(vega_spec.get('transform', [])) + list(schema)
         for layer in vega_spec.get("layer", []):
@@ -1781,7 +1783,7 @@ class VegaLiteAgent(BaseViewAgent):
         # Update final memory state
         final_vega_spec = await self._extract_spec({"yaml_spec": yaml.dump(current_spec)})
         self._memory["view"] = dict(final_vega_spec, type=self.view_type)
-
+        self._memory["pipeline"] = pipeline
         return view
 
 
