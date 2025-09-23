@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import logging
-import traceback
 
 from functools import partial
 from io import StringIO
@@ -24,9 +23,9 @@ from panel.util import edit_readonly
 from panel.viewable import Child, Children, Viewer
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
-    Button, ChatFeed, ChatInterface, ChatMessage, Chip, Column, Dialog,
-    Divider, FileDownload, MenuList, MenuToggle, MultiChoice, Page, Paper, Row,
-    Switch, Tabs, ToggleIcon,
+    Accordion, Button, ChatFeed, ChatInterface, ChatMessage, Column, Dialog,
+    Divider, FileDownload, IconButton, MenuList, MenuToggle, MultiChoice, Page,
+    Paper, Row, Switch, Tabs, ToggleIcon,
 )
 
 from ..pipeline import Pipeline
@@ -49,7 +48,7 @@ from .llm import Llm, OpenAI
 from .llm_dialog import LLMConfigDialog
 from .memory import _Memory, memory
 from .report import Report
-from .tools import TableLookup
+from .utils import wrap_logfire
 from .vector_store import VectorStore
 
 if TYPE_CHECKING:
@@ -80,7 +79,7 @@ If unsatisfied with the results hover over the <span class="material-icons-outli
 Click the toggle, or drag the right edge, to expand the results area and...
 
 🌐 Explore data with [Graphic Walker](https://docs.kanaries.net/graphic-walker) - filter, sort, download  
-💾 Navigate, reorder and delete explorations in the sidebar  
+💾 Navigate, reorder and delete explorations in the contextbar  
 📤 Export your session as a reproducible notebook  
 """  # noqa: W291
 
@@ -95,6 +94,11 @@ EXPLORATIONS_INTRO = """
 
 
 class TableExplorer(Viewer):
+    """
+    TableExplorer provides a high-level entrypoint to explore tables in a split UI.
+    It allows users to load tables, explore them using Graphic Walker, and then
+    interrogate the data via a chat interface.
+    """
 
     interface = param.ClassSelector(class_=ChatFeed, doc="""
         The interface for the Coordinator to interact with.""")
@@ -112,7 +116,7 @@ class TableExplorer(Viewer):
         )
         self._input_row = Row(self._table_select, self._explore_button)
         self._source_map = {}
-        memory.on_change('sources', self._update_source_map)
+        memory.on_change("sources", self._update_source_map)
         self._update_source_map(init=True)
 
         self._tabs = Tabs(dynamic=True, sizing_mode='stretch_both')
@@ -122,31 +126,22 @@ class TableExplorer(Viewer):
 
     def _update_source_map(self, key=None, old=None, sources=None, init=False):
         if sources is None:
-            sources = memory['sources']
+            sources = memory["sources"]
         selected = list(self._table_select.value)
         deduplicate = len(sources) > 1
         new = {}
 
-        all_slugs = set()
+        # Build the source map for UI display
         for source in sources:
             tables = source.get_tables()
-            for t in tables:
-                original_table = t
+            for table in tables:
                 if deduplicate:
-                    t = f'{source.name}{SOURCE_TABLE_SEPARATOR}{t}'
+                    table = f'{source.name}{SOURCE_TABLE_SEPARATOR}{table}'
 
-                # Always use the full slug for checking visibility
-                table_slug = f'{source.name}{SOURCE_TABLE_SEPARATOR}{original_table}'
-                all_slugs.add(table_slug)
-
-                if (t.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)[-1] not in self._source_map and
+                if (table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)[-1] not in self._source_map and
                     not init and not len(selected) > self._table_select.max_items and state.loaded):
-                    selected.append(t)
-                new[t] = source
-
-        # Ensure visible_slugs doesn't contain removed tables
-        if 'visible_slugs' in memory:
-            memory['visible_slugs'] = memory['visible_slugs'].intersection(all_slugs)
+                    selected.append(table)
+                new[table] = source
 
         self._source_map.clear()
         self._source_map.update(new)
@@ -279,7 +274,7 @@ class UI(Viewer):
 
     def __init__(
         self,
-        data: DataT | list[DataT] | None = None,
+        data: DataT | list[DataT] | dict[str, DataT] | None = None,
         **params
     ):
         params["log_level"] = params.get("log_level", self.param["log_level"].default).upper()
@@ -300,42 +295,25 @@ class UI(Viewer):
             agents.append(AnalysisAgent(analyses=self.analyses))
 
         self._resolve_data(data)
-        if self.interface is None:
-            self.interface = ChatInterface(
-                callback_exception='verbose',
-                load_buffer=5,
-                margin=(0, 5, 10, 10),
-                sizing_mode="stretch_both",
-                show_button_tooltips=True,
-                show_button_name=False,
-                input_params={
-                    "enable_upload": False
-                },
-            )
-            self.interface._widget.color = "primary"
-            welcome_message = UI_INTRO_MESSAGE
-            self.interface.send(
-                Markdown(welcome_message, sizing_mode="stretch_width"),
-                user="Help", respond=False, show_reaction_icons=False, show_copy_icon=False
-            )
-
-        levels = logging.getLevelNamesMapping()
-        if levels.get(self.log_level) < 20:
-            self.interface.callback_exception = "verbose"
-        self.interface.disabled = True
         # Create consolidated settings menu toggle
         self._settings_menu = MenuToggle(
             items=[
                 {
                     'label': 'Chain of Thought',
-                    'icon': 'visibility_off',
-                    'active_icon': 'visibility',
+                    'icon': 'toggle_off',
+                    'active_icon': 'toggle_on',
                     'toggled': False
                 },
                 {
                     'label': 'SQL Planning',
-                    'icon': 'close',
-                    'active_icon': 'check',
+                    'icon': 'toggle_off',
+                    'active_icon': 'toggle_on',
+                    'toggled': True
+                },
+                {
+                    'label': 'Validation Step',
+                    'icon': 'toggle_off',
+                    'active_icon': 'toggle_on',
                     'toggled': True
                 }
             ],
@@ -350,6 +328,7 @@ class UI(Viewer):
             variant='text'
         )
         self._settings_menu.param.watch(self._toggle_sql_planning, 'toggled')
+        self._settings_menu.param.watch(self._toggle_validation_agent, 'toggled')
         self._coordinator = self.coordinator(
             agents=agents,
             interface=self.interface,
@@ -362,6 +341,13 @@ class UI(Viewer):
             verbose=self._settings_menu.param.toggled.rx().rx.pipe(lambda toggled: 0 in toggled),
             **self.coordinator_params
         )
+
+        self.interface = self._coordinator.interface
+        levels = logging.getLevelNamesMapping()
+        if levels.get(self.log_level) < 20:
+            self.interface.callback_exception = "verbose"
+        self.interface.disabled = True
+
         self._notebook_export = FileDownload(
             callback=self._export_notebook,
             color="light",
@@ -374,6 +360,28 @@ class UI(Viewer):
             styles={'z-index': '1000'},
             variant="text"
         )
+
+        # Create help icon button for intro message
+        self._info_button = IconButton(
+            icon="help",
+            description="Help & Getting Started",
+            margin=(5, 10, 10, -8),
+            on_click=self._open_info_dialog,
+            variant="text",
+            sx={"p": "6px 0", "minWidth": "32px"},
+        )
+        self._coordinator._main[0][0] = Row(self._coordinator._main[0][0], self._info_button)
+
+        # Create info dialog with intro message
+        self._info_dialog = Dialog(
+            Markdown(UI_INTRO_MESSAGE, sizing_mode="stretch_width"),
+            close_on_click=True,
+            show_close_button=True,
+            sizing_mode='stretch_width',
+            width_option='md',
+            title="Welcome to Lumen AI"
+        )
+
         self._exports = Row(
             self._notebook_export, *(
                 Button(
@@ -386,33 +394,18 @@ class UI(Viewer):
         )
         self._main = Column(self._coordinator, sizing_mode='stretch_both', align="center")
         self._source_agent = next((agent for agent in self._coordinator.agents if isinstance(agent, SourceAgent)), None)
-        # Create LLM status chip
-        self._llm_chip = Chip(
-            object="Manage LLM:",
-            icon="auto_awesome",
-            align="center",
-            color="light",
-            margin=(0, 5, 0, 10),
-            on_click=self._open_llm_dialog,
-            loading=True,
-            variant="outlined"
-        )
 
-        self._data_sources_chip = Chip(
-            object="Loading Data Sources",
-            icon="cloud_upload",
-            align="center",
-            color="light",
-            on_click=self._open_sources_dialog,
-            margin=(0, 5, 0, 5),
-            loading=True,
-            variant="outlined"
-        )
+        # Set up actions for the ChatAreaInput speed dial
+        self._setup_actions()
         self._table_lookup_tool = None  # Will be set after coordinator is initialized
         self._source_catalog = SourceCatalog()
+        self._source_accordion = Accordion(
+            ("Add Sources", self._source_controls), ("View Sources", self._source_catalog),
+            margin=(-30, 10, 0, 10), sizing_mode="stretch_both", toggle=True, active=[0]
+        )
         self._sources_dialog_content = Dialog(
-            Tabs(("Input", self._source_controls), ("Catalog", self._source_catalog), margin=(-30, 0, 0, 0), sizing_mode="stretch_both"),
-            close_on_click=True, show_close_button=True, sizing_mode='stretch_width', width_option='lg'
+            self._source_accordion, close_on_click=True, show_close_button=True,
+            sizing_mode='stretch_width', width_option='lg',
         )
 
         # Create LLM configuration dialog
@@ -426,51 +419,32 @@ class UI(Viewer):
 
         # Initialize _report_toggle for compatibility with header
         self._report_toggle = None
-        self._sidebar = None
+        self._contextbar = None
 
         memory.on_change("sources", self._update_source_catalog)
 
-        # Set up LLM status watching
-        self.llm.param.watch(self._update_llm_chip, '_ready')
-        self._update_llm_chip()  # Set initial state
+        # LLM status is now managed through actions
 
         if state.curdoc and state.curdoc.session_context:
             state.on_session_destroyed(self._destroy)
-        state.onload(self._setup_llm_and_watchers)
+        state.onload(self._initialize_new_llm)
 
-        tables = set()
-        suggestions = self._coordinator.suggestions.copy()
-        for source in memory.get("sources", []):
-            tables |= set(source.get_tables())
-        if len(tables) == 1:
-            suggestions = [f"Show {next(iter(tables))}"] + self._coordinator.suggestions
-        elif len(tables) > 1:
-            table_list_agent = next(
-                (agent for agent in self._coordinator.agents if isinstance(agent, TableListAgent)),
-                None
-            )
-            if table_list_agent:
-                param.parameterized.async_executor(partial(table_list_agent.respond, []))
-        elif self._source_agent and len(memory.get("document_sources", [])) == 0:
-            param.parameterized.async_executor(partial(self._source_agent.respond, []))
-        self._coordinator._add_suggestions_to_footer(
-            suggestions=suggestions
-        )
-
-    def _update_llm_chip(self, event=None):
-        """Update the LLM chip based on readiness state."""
-        if self.llm._ready:
-            model_name = self.llm.model_kwargs.get('default', {}).get('model', 'unknown')
-            self._llm_chip.param.update(
-                object=f"Manage LLM: {model_name}",
-                icon="auto_awesome",
-                loading=False
-            )
-        else:
-            self._llm_chip.param.update(
-                object="Loading LLM",
-                loading=True
-            )
+    def _setup_actions(self):
+        """Set up actions for the ChatAreaInput speed dial."""
+        existing_actions = self.interface.active_widget.actions
+        self.interface.active_widget.actions = {
+            'manage_data': {
+                'icon': 'cloud_upload',
+                'callback': self._open_sources_dialog,
+                'label': 'Manage Data'
+            },
+            'manage_llm': {
+                'icon': 'auto_awesome',
+                'callback': self._open_llm_dialog,
+                'label': 'Select LLM'
+            },
+            **existing_actions,
+        }
 
     def _open_llm_dialog(self, event=None):
         """Open the LLM configuration dialog when the LLM chip is clicked."""
@@ -488,16 +462,10 @@ class UI(Viewer):
         for agent in self._coordinator.agents:
             agent.llm = new_llm
 
-        # Initialize the new LLM and set up watchers
-        self.llm.param.watch(self._update_llm_chip, '_ready')
-
-        # Update the chip display immediately
-        self._update_llm_chip()
-
         # Initialize the new LLM asynchronously
-        import param
         param.parameterized.async_executor(self._initialize_new_llm)
 
+    @wrap_logfire(span_name="Initialize LLM")
     async def _initialize_new_llm(self):
         """Initialize the new LLM after provider change."""
         try:
@@ -507,80 +475,30 @@ class UI(Viewer):
             import traceback
             traceback.print_exc()
 
-    async def _setup_llm_and_watchers(self):
-        """Initialize LLM and set up reactive watchers for TableLookup readiness."""
-        try:
-            await self.llm.initialize(log_level=self.log_level)
-            self.interface.disabled = False
-        except Exception:
-            traceback.print_exc()
-
-        # Find the TableLookup tool and set up reactive watching
-        for tool in self._coordinator._tools["main"]:
-            if isinstance(tool, TableLookup):
-                self._table_lookup_tool = tool
-                break
-
-        if not self._table_lookup_tool:
-            self._data_sources_chip.param.update(
-                object='Manage Data Sources',
-                icon="storage",
-                color="primary",
-            )
-            return
-
-        # Set up reactive watching of the _ready parameter
-        self._table_lookup_tool.param.watch(self._update_data_sources_chip, '_ready')
-
-        # Set initial chip state
-        self._update_data_sources_chip()
-
-    def _update_data_sources_chip(self, event=None):
-        """Update the data sources chip based on TableLookup readiness state."""
-        if not self._table_lookup_tool:
-            return
-
-        ready_state = self._table_lookup_tool._ready
-
-        if ready_state is False:
-            # Not ready yet - show as running/pending
-            self._data_sources_chip.param.update(
-                object="Loading Tables",
-                loading=True,
-            )
-        elif ready_state is True:
-            # Ready - show as success
-            self._data_sources_chip.param.update(
-                object="Manage Data Sources",
-                loading=False,
-            )
-        elif ready_state is None:
-            # Error state
-            self._data_sources_chip.param.update(
-                object="Data Sources Error",
-                loading=False,
-                color="error"
-            )
-
     def _open_sources_dialog(self, event=None):
         """Open the sources dialog when the vector store badge is clicked."""
         self._sources_dialog_content.open = True
+
+    def _open_info_dialog(self, event=None):
+        """Open the info dialog when the info button is clicked."""
+        self._info_dialog.open = True
 
     def _destroy(self, session_context):
         """
         Cleanup on session destroy
         """
         if self._table_lookup_tool:
-            self._table_lookup_tool.param.unwatch(self._update_data_sources_chip, '_ready')
-        self.llm.param.unwatch(self._update_llm_chip, '_ready')
+            self._table_lookup_tool.param.unwatch(self._update_data_sources_action, '_ready')
 
     def _export_notebook(self):
         nb = export_notebook(self.interface.objects, preamble=self.notebook_preamble)
         return StringIO(nb)
 
-    def _resolve_data(self, data: DataT | list[DataT] | None):
+    def _resolve_data(self, data: DataT | list[DataT] | dict[DataT] | None):
         if data is None:
             return
+        elif isinstance(data, dict):
+            data = data.items()
         elif not isinstance(data, list):
             data = [data]
         sources = []
@@ -591,8 +509,12 @@ class UI(Viewer):
                 sources.append(src)
             elif isinstance(src, Pipeline):
                 mirrors[src.name] = src
-            elif isinstance(src, (str, Path)):
-                src = str(src)
+            elif isinstance(src, (str, Path, tuple)):
+                if isinstance(src, tuple):
+                    name, src = src
+                    src = str(src)
+                else:
+                    name = src = str(src)
                 if src.startswith('http'):
                     remote = True
                 if src.endswith(('.parq', '.parquet', '.csv', '.json', '.tsv', '.jsonl', '.ndjson')):
@@ -601,7 +523,7 @@ class UI(Viewer):
                     raise ValueError(
                         f"Could not determine how to load {src} file."
                     )
-                tables[src] = table
+                tables[name] = table
         if tables or mirrors:
             initializers = ["INSTALL httpfs;", "LOAD httpfs;"] if remote else []
             source = DuckDBSource(
@@ -612,9 +534,7 @@ class UI(Viewer):
                 uri=':memory:'
             )
             sources.append(source)
-        memory['sources'] = sources
-        if sources:
-            memory['source'] = sources[0]
+        memory["sources"] = sources
 
     def show(self, **kwargs):
         return self._create_view(server=True).show(**kwargs)
@@ -626,24 +546,20 @@ class UI(Viewer):
                 *{ext for agent in self._coordinator.agents for ext in agent._extensions}
             )
             self._page = Page(
-                css_files=['https://fonts.googleapis.com/css2?family=Nunito:wght@700'],
                 title=self.title,
                 header=[
-                    self._llm_chip,
-                    self._data_sources_chip,
                     HSpacer(),
                     self._exports,
                     *([self._report_toggle] if self._report_toggle else []),
                     self._settings_menu,
                     Divider(
-                        orientation="vertical", height=30, margin=(17, 0, 17, 5),
+                        orientation="vertical", height=30, margin=(17, 5, 17, 5),
                         sx={'border-color': 'white', 'border-width': '1px'}
                     )
                 ],
-                main=[self._main, self._sources_dialog_content, self._llm_dialog],
-                sidebar=[] if self._sidebar is None else [self._sidebar],
-                sidebar_open=False,
-                sidebar_variant="temporary",
+                main=[self._main, self._sources_dialog_content, self._llm_dialog, self._info_dialog],
+                contextbar=[] if self._contextbar is None else [self._contextbar],
+                contextbar_open=False,
             )
             self._page.servable()
             return self._page
@@ -658,7 +574,8 @@ class UI(Viewer):
         """
         Update the sources dialog content when memory sources change.
         """
-        self._source_catalog.sources = memory['sources']
+        self._source_catalog.sources = memory["sources"]
+        self._source_accordion.active = [1]
 
     def servable(self, title: str | None = None, **kwargs):
         if (state.curdoc and state.curdoc.session_context):
@@ -777,7 +694,8 @@ class ExplorerUI(UI):
             color="light",
             description="Toggle Report Mode",
             value=False,
-            margin=(13, 0, 10, 0)
+            margin=(13, 0, 10, 0),
+            visible=self.interface.param["objects"].rx().rx.len() > 0
         )
         self._report_toggle.param.watch(self._toggle_report_mode, ['value'])
 
@@ -798,14 +716,14 @@ class ExplorerUI(UI):
             icon_size="1.8em",
             filename=f"{self.title.replace(' ', '_')}.ipynb",
             label=" ",
-            margin=(12, 0, 10, 5),
+            margin=(14, 0, 10, 5),
             styles={'z-index': '1000'},
             sx={"p": "6px 0", "minWidth": "32px"},
             variant="text"
         )
         self._exports.visible = False
         self._output = Paper(
-            self._home.view, elevation=2, margin=(0, 10, 10, 5), sx={'p': 4},
+            self._home.view, elevation=2, margin=(5, 10, 5, 5), sx={'p': 3, 'pb': 2},
             height_policy='max', sizing_mode="stretch_both"
         )
         self._split = SplitJS(
@@ -816,7 +734,7 @@ class ExplorerUI(UI):
         )
         self._report = Column()
         self._main = Column(self._split)
-        self._sidebar = Column(self._reorder_switch, self._explorations)
+        self._contextbar = Column(self._reorder_switch, self._explorations)
         self._idle = asyncio.Event()
         self._idle.set()
 
@@ -877,6 +795,13 @@ class ExplorerUI(UI):
         )
         if sql_agent:
             sql_agent.planning_enabled = planning_enabled
+
+    def _toggle_validation_agent(self, event: param.Event):
+        """Toggle ValidationAgent usage."""
+        validation_enabled = 2 in event.new
+
+        # Update the coordinator's validation agent setting
+        self._coordinator.validation_enabled = validation_enabled
 
     def _delete_exploration(self, item):
         self._explorations.items = [it for it in self._explorations.items if it is not item]
@@ -966,11 +891,10 @@ class ExplorerUI(UI):
         last_exploration = self._explorations.value['view']
         is_home = last_exploration is self._home
         if is_home:
-            last_exploration.conversation = [self.interface.objects[0]]
-            conversation = self.interface.objects[1:]
+            last_exploration.conversation = []
         else:
             last_exploration.conversation = self._snapshot_messages(new=True)
-            conversation = list(self.interface.objects)
+        conversation = list(self.interface.objects)
 
         # Create new exploration
         output = Column(sizing_mode='stretch_both', loading=True)
@@ -1054,7 +978,7 @@ class ExplorerUI(UI):
                 nonlocal new_exploration
                 plan = local_memory["plan"]
                 if any(step.actor in ('SQLAgent', 'DbtslAgent') for step in plan.steps):
-                    # Expand the sidebar when the first exploration is created
+                    # Expand the contextbar when the first exploration is created
                     await self._add_exploration(plan.title, local_memory)
                     new_exploration = True
 

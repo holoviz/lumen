@@ -8,7 +8,7 @@ from panel.layout import Column, HSpacer, Row
 from panel.pane import Markdown
 from panel.viewable import Viewer
 from panel_material_ui import (
-    Card, CheckBoxGroup, IconButton, Switch,
+    Card, CheckBoxGroup, IconButton, Switch, Typography,
 )
 
 from .config import SOURCE_TABLE_SEPARATOR
@@ -22,7 +22,7 @@ CSS = """
     height: 100%;
     width: 100%;
     background-color: var(--panel-surface-color);
-    overflow-y: clip; /* Clip overflow to prevent scrollbars; inner content will have their own */
+    overflow: clip; /* Clip overflow to prevent scrollbars; inner content will have their own */
 }
 
 /* Style for initial load to prevent FOUC */
@@ -65,8 +65,8 @@ CSS = """
     height: 100%;
 }
 
-/* Toggle icon basic styles */
-.toggle-icon, .toggle-icon-inverted {
+/* Toggle button basic styles */
+.toggle-button-left, .toggle-button-right {
     position: absolute;
     width: 24px;
     height: 24px;
@@ -74,40 +74,44 @@ CSS = """
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    z-index: 10;
-    opacity: 0.75;
+    z-index: 100; /* High z-index to ensure always on top */
+    opacity: 0.5;
     top: 50%;
     transform: translateY(-50%);
+    transition: opacity 0.2s;
+    border-radius: 4px;
+    padding: 2px;
 }
 
-/* Regular toggle icon */
-.toggle-icon {
-    transition: opacity 0.2s, left 0.3s ease;
-    left: 5px; /* Default expanded position */
+/* Left button (<) - positioned on left side of divider */
+.toggle-button-left {
+    left: -34px; /* 24px width + 10px spacing from divider */
 }
 
-.toggle-icon.collapsed {
-    left: -30px; /* Position when collapsed */
+/* Right button (>) - positioned on right side of divider */
+.toggle-button-right {
+    left: 2px;
 }
 
-/* Inverted toggle icon */
-.toggle-icon-inverted {
-    transition: opacity 0.2s, right 0.3s ease;
-    right: 5px; /* Default expanded position */
+/* Ensure buttons stay visible even when panels are collapsed */
+.split > div:first-child {
+    min-width: 0 !important; /* Override any minimum width */
 }
 
-.toggle-icon-inverted.collapsed {
-    right: -30px; /* Position when collapsed */
+.split > div:nth-child(2) {
+    overflow: visible !important; /* Ensure buttons remain visible */
+    position: relative !important;
 }
 
-.toggle-icon:hover, .toggle-icon-inverted:hover {
+.toggle-button-left:hover, .toggle-button-right:hover {
     opacity: 1;
+    background-color: var(--panel-border-color);
 }
 
 /* SVG icon styling */
-.toggle-icon svg, .toggle-icon-inverted svg {
-    width: 50px;
-    height: 50px;
+.toggle-button-left svg, .toggle-button-right svg {
+    width: 20px;
+    height: 20px;
     fill: none;
     stroke: currentColor;
     stroke-width: 2px;
@@ -139,11 +143,11 @@ CSS = """
     width: 8px;
 }
 
-.split > div:nth-child(2) > div:not(.toggle-icon) {
+.split > div:nth-child(2) > div:not(.toggle-button-left):not(.toggle-button-right) {
     width: 100%;
     height: 100%;
     overflow: auto;
-    padding-top: 36px; /* Space for the toggle icon */
+    padding-top: 36px; /* Space for the toggle buttons */
 }
 
 /* Animation for toggle icon */
@@ -154,7 +158,7 @@ CSS = """
     75% { transform: translate(4px, -50%); }
 }
 
-.toggle-icon.animated, .toggle-icon-inverted.animated {
+.toggle-button-left.animated, .toggle-button-right.animated {
     animation-name: jumpLeftRight;
     animation-duration: 0.5s;
     animation-timing-function: ease;
@@ -204,10 +208,10 @@ class SplitJS(JSComponent):
         and the right panel takes up 65% when expanded.
         When invert=True, these percentages are automatically swapped.""")
 
-    min_sizes = param.NumericTuple(default=(300, 0), length=2, doc="""
+    min_sizes = param.NumericTuple(default=(0, 0), length=2, doc="""
         The minimum sizes of the two panels (in pixels).
-        Default is (300, 0) which means the left panel has a minimum width of 300px
-        and the right panel has no minimum width.
+        Default is (0, 0) which allows both panels to fully collapse.
+        Set to (300, 0) or similar values if you want to enforce minimum widths during dragging.
         When invert=True, these values are automatically swapped.""")
 
     collapsed = param.Boolean(default=True, doc="""
@@ -293,6 +297,7 @@ class TableSourceCard(Viewer):
     - A header with the source name and a checkbox to toggle all tables
     - A delete button (if multiple sources exist)
     - Individual checkboxes for each table in the source
+    - Metadata display showing source information like filenames and other key-value pairs
     """
 
     all_selected = param.Boolean(default=True, doc="""
@@ -343,13 +348,97 @@ class TableSourceCard(Viewer):
             visible=self.param.deletable
         )
 
-        self.table_checkbox = CheckBoxGroup.from_param(
-            self.param.selected,
-            options=self.all_tables,
-            sizing_mode='stretch_width',
-            margin=(0, 10),
-            name="",
-        )
+        # Create table checkboxes with metadata
+        self.table_controls = self._create_table_controls()
+
+        # Create source-level metadata display (if any non-table metadata exists)
+        self.metadata_display = self._create_source_metadata_display()
+
+    def _create_table_controls(self):
+        """Create table checkboxes with per-table metadata displayed next to each checkbox."""
+        table_controls = []
+
+        for table in self.all_tables:
+            # Create checkbox for this table
+            checkbox = CheckBoxGroup(
+                value=[table] if table in self.selected else [],
+                options=[table],
+                sizing_mode='stretch_width',
+                margin=(2, 10),
+                name="",
+            )
+
+            # Get metadata for this table
+            table_metadata = self.source.metadata.get(table, {}) if self.source.metadata else {}
+            metadata_parts = []
+
+            for key, value in table_metadata.items():
+                if isinstance(value, list):
+                    value_str = ', '.join(str(v) for v in value)
+                else:
+                    value_str = str(value)
+                metadata_parts.append(f"{key}: {value_str}")
+
+            if metadata_parts:
+                metadata_text = '; '.join(metadata_parts)
+                metadata_display = Typography(
+                    metadata_text,
+                    variant="caption",
+                    color="text.secondary",
+                    margin=(-10, 10, 0, 42),
+                    sizing_mode='stretch_width',
+                    styles={"min-height": "unset"} # Override ChatMessage CSS
+                )
+                table_controls.extend([checkbox, metadata_display])
+            else:
+                table_controls.append(checkbox)
+
+            # Watch checkbox changes
+            checkbox.param.watch(self._on_table_checkbox_change, 'value')
+
+        return Column(*table_controls, margin=0, sizing_mode='stretch_width')
+
+    def _on_table_checkbox_change(self, event):
+        """Handle individual table checkbox changes."""
+        # Collect all selected tables from all checkboxes
+        selected_tables = []
+        for obj in self.table_controls.objects:
+            if obj.value:
+                selected_tables.extend(obj.value)
+
+        # Update selected parameter
+        self.selected = selected_tables
+
+    def _create_source_metadata_display(self):
+        """Create a metadata display widget for source-level metadata (non-table metadata)."""
+        metadata_parts = []
+
+        if self.source.metadata:
+            # Only show metadata that's not table-specific
+            for key, value in self.source.metadata.items():
+                if key not in self.all_tables:  # Skip table-specific metadata
+                    if isinstance(value, list):
+                        value_str = ', '.join(str(v) for v in value)
+                    else:
+                        value_str = str(value)
+                    metadata_parts.append(f"{key}: {value_str}")
+
+        if metadata_parts:
+            metadata_text = '; '.join(metadata_parts)
+            return Typography(
+                metadata_text,
+                variant="caption",
+                color="text.secondary",
+                margin=(0, 10, 5, 10),
+                sizing_mode='stretch_width',
+            )
+        else:
+            return Typography(
+                "",
+                margin=0,
+                sizing_mode='stretch_width',
+                visible=False
+            )
 
     @param.depends('all_selected', watch=True)
     def _on_source_toggle(self):
@@ -385,8 +474,6 @@ class TableSourceCard(Viewer):
                 source for source in memory.get("sources", [])
                 if source is not self.source
             ]
-            if self.source is memory.get("source"):
-                memory["source"] = next(iter(memory.get("sources", [])), None)
 
     def __panel__(self):
         card_header = Row(
@@ -399,14 +486,23 @@ class TableSourceCard(Viewer):
             margin=0
         )
 
+        # Create the card content with metadata display
+        card_content = Column(
+            self.metadata_display,
+            self.table_controls,
+            margin=0,
+            sizing_mode='stretch_width'
+        )
+
         # Create the card
         return Card(
-            self.table_checkbox,
+            card_content,
             header=card_header,
             collapsible=True,
             collapsed=self.param.collapsed,
             sizing_mode='stretch_width',
             margin=0,
+            name="TableSourceCard"
         )
 
 
@@ -427,10 +523,7 @@ class SourceCatalog(Viewer):
         List of data sources to display in the catalog.""")
 
     def __init__(self, **params):
-        self._title = Markdown(
-            "## Source Catalog\n\nSelect the table and document sources you want visible to the LLM.",
-            margin=0,
-        )
+        self._title = Markdown(margin=0)
         self._cards_column = Column(
             margin=0,
         )
@@ -478,10 +571,10 @@ class SourceCatalog(Viewer):
 
         self._cards_column.objects = source_cards
 
-        if len(source_cards) == 0:
-            self._cards_column.objects = [
-                Markdown("No sources available. Please input a source to continue.")
-            ]
+        if len(self.sources) == 0:
+            self._title.object = "No sources available. Add a source to get started."
+        else:
+            self._title.object = "Select the table and document sources you want visible to the LLM."
 
     def __panel__(self):
         """

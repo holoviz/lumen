@@ -31,13 +31,17 @@ class RetriesExceededError(Exception):
     """
 
 
+class MissingContextError(Exception):
+    """Raise to indicate missing context for a query."""
+
+
 THIS_DIR = Path(__file__).parent
 PROMPTS_DIR = THIS_DIR / "prompts"
 
 GETTING_STARTED_SUGGESTIONS = [
-    "What datasets are available?",
-    "What's interesting to analyze?",
-    "Can you visualize the data?",
+    ("search", "What data is available?"),
+    ("description", "Describe the dataset"),
+    ("bar_chart", "Can you visualize the data?"),
 ]
 
 DEMO_MESSAGES = [
@@ -54,6 +58,7 @@ UNRECOVERABLE_ERRORS = (
     ImportError,
     LlmSetupError,
     RecursionError,
+    MissingContextError,
     asyncio.CancelledError,
 )
 

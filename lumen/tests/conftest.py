@@ -1,3 +1,4 @@
+import asyncio
 import contextlib
 import os
 import tempfile
@@ -184,3 +185,12 @@ def penguins_file(tmp_path):
     """
     fn.write_text(penguins)
     return fn
+
+
+@pytest.fixture
+def asyncio_loop():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(asyncio.new_event_loop())
+    yield
+    loop.stop()
+    loop.close()

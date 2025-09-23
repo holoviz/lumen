@@ -4,11 +4,35 @@ from instructor.dsl.partial import PartialLiteralMixin
 from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 
-from .config import SOURCE_TABLE_SEPARATOR
+from .config import SOURCE_TABLE_SEPARATOR, MissingContextError
 
 
 class PartialBaseModel(BaseModel, PartialLiteralMixin):
     ...
+
+
+class EscapeBaseModel(PartialBaseModel):
+
+    insufficient_context_reason: str = Field(
+        description="If lacking sufficient context, explain why; else use ''. Do not base off the user query; only from the data context provided.",
+        examples=[
+            "A timeseries is requested but SQL only provides customer and order data; please include a time dimension",
+            "The previous result is one aggregated value; try a different aggregation or more dimensions",
+            ""
+        ]
+    )
+
+    insufficient_context: bool = Field(
+        description="True if lacking context, else False. If True, leave other fields empty.",
+    )
+
+    def model_post_init(self, __context):
+        """
+        After model initialization, check if insufficient_context. If it is,
+        raise a MissingContextError with the provided explanation to stop further processing.
+        """
+        if self.insufficient_context:
+            raise MissingContextError(self.insufficient_context_reason)
 
 
 class YesNo(BaseModel):
@@ -41,18 +65,20 @@ class SqlQuery(PartialBaseModel):
     )
 
 
-class Sql(PartialBaseModel):
+class SqlQueries(PartialBaseModel):
     """Multiple SQL queries to execute in sequence."""
 
     queries: list[SqlQuery] = Field(
         default_factory=list,
-        description="""
-        List of SQL queries to execute. For discovery steps, include multiple queries
-        to explore different aspects (e.g., distinct values from different columns).
-        For final steps, only one query is allowed.
-        """
+        description="""List of SQL queries to execute."""
     )
 
+
+def make_sql_model(is_final: bool = False):
+    if is_final:
+        return SqlQuery
+    else:
+        return SqlQueries
 
 
 class SQLRoadmap(PartialBaseModel):
@@ -154,13 +180,13 @@ class ReadinessCheck(PartialBaseModel):
     )
 
 
-class VegaLiteSpec(BaseModel):
+class VegaLiteSpec(EscapeBaseModel):
 
     chain_of_thought: str = Field(
         description="Explain how you will use the data to create a vegalite plot, and address any previous issues you encountered."
     )
 
-    json_spec: str = Field(description="A vega-lite JSON specification based on the user input and chain of thought. Do not include description")
+    yaml_spec: str = Field(description="A vega-lite YAML specification based on the user input and chain of thought. Do not include description")
 
 
 class LineChange(BaseModel):

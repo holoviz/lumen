@@ -137,7 +137,7 @@ class SQLMetaset:
                 continue
 
             base_sql = truncate_string(vector_metadata.base_sql, max_length=200) if truncate else vector_metadata.base_sql
-            context += f"{table_slug!r} (access this table with: {base_sql})\n"
+            context += f"\n{table_slug!r} (access this table with: {base_sql})\n"
 
             if vector_metadata.description:
                 desc = truncate_string(vector_metadata.description, max_length=100) if truncate else vector_metadata.description
@@ -152,8 +152,8 @@ class SQLMetaset:
             # Only include columns if explicitly requested
             if include_columns and vector_metadata.columns:
                 cols_to_show = vector_metadata.columns
-                context += "Columns:\n"
-                for i, col in enumerate(cols_to_show):
+                context += "Columns:"
+                for col in cols_to_show:
                     schema_data = None
                     if sql_data and col.name in sql_data.schema:
                         schema_data = sql_data.schema[col.name]
@@ -161,7 +161,7 @@ class SQLMetaset:
                             continue
 
                     # Get column name
-                    context += f"\n{i}. {col.name}"
+                    context += f"\n- {col.name}"
 
                     # Get column description with optional truncation
                     if col.description:
@@ -203,13 +203,13 @@ class SQLMetaset:
         return self.table_context
 
 
-async def get_metaset(sources: dict[str, Source], tables: list[str]) -> SQLMetaset:
+async def get_metaset(sources: list[Source], tables: list[str]) -> SQLMetaset:
     """
     Get the metaset for the given sources and tables.
 
     Parameters
     ----------
-    sources: dict[str, Source]
+    sources: list[Source]
         The sources to get the metaset for.
     tables: list[str]
         The tables to get the metaset for.
@@ -233,9 +233,9 @@ async def get_metaset(sources: dict[str, Source], tables: list[str]) -> SQLMetas
         else:
             source_name = next(iter(sources))
             table_name = table_slug
-        source = sources[source_name]
+        source = next((s for s in sources if s.name == source_name), None)
         schema = await get_schema(source, table_name, include_count=True)
-        tables_info[table_name] = SQLMetadata(
+        tables_info[table_slug] = SQLMetadata(
             table_slug=table_slug,
             schema=schema,
         )
@@ -244,13 +244,13 @@ async def get_metaset(sources: dict[str, Source], tables: list[str]) -> SQLMetas
         except Exception as e:
             log_debug(f"Failed to get metadata for table {table_name} in source {source_name}: {e}")
             metadata = {}
-        tables_metadata[table_name] = VectorMetadata(
+        tables_metadata[table_slug] = VectorMetadata(
             table_slug=table_slug,
             similarity=1,
             base_sql=source.get_sql_expr(source.normalize_table(table_name)),
             description=metadata.get("description"),
             columns=[
-                Column(name=col_name, description=col_values.pop("description"), metadata=col_values)
+                Column(name=col_name, description=col_values.pop("description", None), metadata=col_values)
                 for col_name, col_values in metadata.get("columns").items()
             ],
         )

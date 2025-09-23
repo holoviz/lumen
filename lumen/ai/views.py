@@ -70,7 +70,7 @@ class LumenOutput(Viewer):
         )
         copy_icon = IconButton(
             icon="content_copy", active_icon="check", margin=(5, 0), toggle_duration=1000,
-            description="Copy YAML to clipboard", size="0.7em", color="default"
+            description="Copy YAML to clipboard", size="small", color="default", icon_size="0.8em"
         )
         copy_icon.js_on_click(
             args={"code_editor": code_editor},
@@ -78,7 +78,7 @@ class LumenOutput(Viewer):
         )
         download_icon = IconButton(
             icon="download", active_icon="check", margin=(5, 0), toggle_duration=1000,
-            description="Download YAML to file", size="0.8em", color="default"
+            description="Download YAML to file", size="small", color="default", icon_size="0.9em"
         )
         download_icon.js_on_click(
             args={"code_editor": code_editor},
@@ -96,7 +96,7 @@ class LumenOutput(Viewer):
         )
         icons = Row(
             copy_icon, download_icon, *self.footer,
-            height=50, margin=(0, 0, 5, 5)
+            margin=(0, 0, 5, 5)
         )
         code_col = Column(
             code_editor,
@@ -304,7 +304,7 @@ class AnalysisOutput(LumenOutput):
                     icon='player-play', name='Run', on_click=self._rerun,
                     button_type='success', margin=(10, 0, 0 , 10)
                 )
-                self._main.insert(1, ('Config', pn.Column(controls, run_button)))
+                self._main.insert(1, ('Config', Column(controls, run_button)))
             with discard_events(self):
                 self._main.active = 1 if len(self._main) > 1 else 0
         self._rendered = True

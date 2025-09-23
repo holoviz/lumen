@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import html
 import inspect
 import json
 import math
 import re
+import textwrap
 import time
 import traceback
 
+from collections.abc import Callable
 from functools import wraps
 from pathlib import Path
 from shutil import get_terminal_size
@@ -17,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import parse_qs
 
 import pandas as pd
+import param
 
 from jinja2 import (
     ChoiceLoader, DictLoader, Environment, FileSystemLoader, StrictUndefined,
@@ -30,7 +34,7 @@ from ..util import log
 from .components import Details
 from .config import (
     PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, UNRECOVERABLE_ERRORS,
-    RetriesExceededError,
+    MissingContextError, RetriesExceededError,
 )
 
 if TYPE_CHECKING:
@@ -154,6 +158,7 @@ def render_template(template_path: Path | str, overrides: dict | None = None, re
     else:
         env = Environment(loader=fs_loader, undefined=StrictUndefined)
 
+    env.globals["dedent"] = lambda text: textwrap.dedent(text).strip()
     template = env.get_template(template_name)
     return template.render(**context)
 
@@ -175,6 +180,32 @@ def warn_on_unused_variables(string, kwargs, prompt_label):
             f"from these variables: {unused_keys}. If this is unintended, "
             f"please create a template that contains those keys."
         )
+
+
+def get_root_exception(e: Exception, depth: int = 5, exceptions: tuple[Exception] | None = None) -> Exception | None:
+    """
+    Recursively get the root cause of an exception up to a specified depth.
+
+    Parameters
+    ----------
+    e : Exception
+        The exception to analyze
+    depth : int
+        Maximum recursion depth to avoid infinite loops
+    exceptions : list[Exception]
+        List of exception types to consider as root causes. If None, all exceptions are considered.
+
+    Returns
+    -------
+    Exception | None
+        The root cause exception if found, otherwise None
+    """
+    for _ in range(depth):
+        if exceptions and isinstance(e, tuple(exceptions)):
+            return e
+        if e.__cause__ is not None:
+            e = e.__cause__
+    return e
 
 
 def retry_llm_output(retries=3, sleep=1):
@@ -203,10 +234,12 @@ def retry_llm_output(retries=3, sleep=1):
                             raise Exception("No valid output from LLM.")
                         return output
                     except Exception as e:
+                        e = get_root_exception(e, exceptions=UNRECOVERABLE_ERRORS)
                         if isinstance(e, UNRECOVERABLE_ERRORS):
-                            log_debug(f"LLM encountered unrecoverable error: {e}")
+                            if not isinstance(e, MissingContextError):
+                                log_debug(f"LLM encountered unrecoverable error: {e}")
                             raise e
-                        elif i == retries - 1:
+                        if i == retries - 1:
                             raise RetriesExceededError("Maximum number of retries exceeded.") from e
                         errors.append(str(e))
                         traceback.print_exc()
@@ -230,10 +263,12 @@ def retry_llm_output(retries=3, sleep=1):
                             raise Exception("No valid output from LLM.")
                         return output
                     except Exception as e:
+                        e = get_root_exception(e, exceptions=UNRECOVERABLE_ERRORS)
                         if isinstance(e, UNRECOVERABLE_ERRORS):
-                            log_debug(f"LLM encountered unrecoverable error: {e}")
+                            if not isinstance(e, MissingContextError):
+                                log_debug(f"LLM encountered unrecoverable error: {e}")
                             raise e
-                        elif i == retries - 1:
+                        if i == retries - 1:
                             raise RetriesExceededError("Maximum number of retries exceeded.") from e
                         errors.append(str(e))
                         traceback.print_exc()
@@ -743,12 +778,12 @@ def load_json(json_spec: str) -> dict:
     return json.loads(json_spec.encode().decode('unicode_escape'))
 
 
-def parse_table_slug(table: str, sources: dict[str, Source], normalize: bool = True) -> tuple[Source | None, str]:
+def parse_table_slug(table: str, sources: list[Source], normalize: bool = True) -> tuple[Source | None, str]:
     if SOURCE_TABLE_SEPARATOR in table:
         a_source_name, a_table = table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
-        a_source_obj = sources.get(a_source_name)
+        a_source_obj = next((s for s in sources if s.name == a_source_name), None)
     else:
-        a_source_obj = next(iter(sources.values()))
+        a_source_obj = sources[0] if sources else None
         a_table = table
     if normalize:
         a_table = a_source_obj.normalize_table(a_table)
@@ -849,3 +884,62 @@ def class_name_to_llm_spec_key(class_name: str) -> str:
         i += 1
 
     return result
+
+
+def wrap_logfire(span_name: str | None = None, extract_args: bool = True, **instrument_kwargs):
+    """
+    Decorator to instrument a function with logfire if llm.logfire_tags is provided.
+    Expects the decorated function to have an 'llm' attribute (on self) or be passed via instrument_kwargs.
+    """
+    def decorator(func: Callable):
+        def should_instrument(self, llm):
+            """Check if the function should be instrumented with logfire."""
+            return llm is not None and llm.logfire_tags is not None
+
+        def get_instrumented_func(self, llm):
+            """Create and return the logfire-instrumented function."""
+            name = span_name or self.__class__.__name__
+            return llm._logfire.instrument(name, extract_args=extract_args, **instrument_kwargs)(func)
+
+        if inspect.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def async_wrapper(self, *args, **kwargs):
+                llm = instrument_kwargs.get("llm", getattr(self, "llm", None))
+                if not should_instrument(self, llm):
+                    return await func(self, *args, **kwargs)
+                instrumented_func = get_instrumented_func(self, llm)
+                return await instrumented_func(self, *args, **kwargs)
+            return async_wrapper
+        else:
+            @functools.wraps(func)
+            def sync_wrapper(self, *args, **kwargs):
+                llm = instrument_kwargs.get("llm", getattr(self, "llm", None))
+                if not should_instrument(self, llm):
+                    return func(self, *args, **kwargs)
+                instrumented_func = get_instrumented_func(self, llm)
+                return instrumented_func(self, *args, **kwargs)
+            return sync_wrapper
+
+    return decorator
+
+
+def wrap_logfire_on_method(cls, method_name: str):
+    """
+    Automatically adds logfire wrapping to a method.
+    """
+    original_method = getattr(cls, method_name)
+    if not hasattr(original_method, '_logfire_wrapped'):
+        wrapped_method = wrap_logfire()(original_method)
+        wrapped_method._logfire_wrapped = True
+        setattr(cls, method_name, wrapped_method)
+
+
+def normalized_name(inst: param.Parameterized):
+    """
+    Returns the name of a Parameterized instance, stripping
+    the auto-generated object count.
+    """
+    class_name = inst.__class__.__name__
+    if re.match('^'+class_name+'[0-9]{5}$', inst.name):
+        return class_name
+    return inst.name

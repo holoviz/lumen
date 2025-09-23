@@ -10,7 +10,7 @@ import aiohttp
 import pandas as pd
 import param
 
-from panel.pane.markup import HTML, Markdown
+from panel.pane.markup import HTML
 from panel.viewable import Viewer
 from panel.widgets import FileDropper, Tabulator, Tqdm
 from panel_material_ui import (
@@ -127,19 +127,23 @@ class SourceControls(Viewer):
 
     disabled = param.Boolean(default=False, doc="Disable controls")
 
+    downloaded_files = param.Dict(default={}, doc="Downloaded files to add as tabs")
+
     download_url = param.String(default="", doc="URL input for downloading files")
 
     input_placeholder = param.String(default="Enter URLs, one per line, and press <Enter> to download")
 
-    trigger_add = param.Event(doc="Use uploaded file(s)")
+    add = param.Event(doc="Use uploaded file(s)")
 
-    trigger_cancel = param.Event(doc="Cancel")
+    cancel = param.Event(doc="Cancel")
 
     memory = param.ClassSelector(class_=_Memory, default=None, doc="""
         Local memory which will be used to provide the agent context.
         If None the global memory will be used.""")
 
     multiple = param.Boolean(default=True, doc="Allow multiple files")
+
+    show_input = param.Boolean(default=True, doc="Whether to show the input controls")
 
     replace_controls = param.Boolean(default=False, doc="Replace controls on add")
 
@@ -149,10 +153,9 @@ class SourceControls(Viewer):
 
     _count = param.Integer(default=0, doc="Count of sources added")
 
-    downloaded_files = param.Dict(default={}, doc="Downloaded files to add as tabs")
-
     def __init__(self, **params):
         super().__init__(**params)
+
         self.tables_tabs = Tabs(sizing_mode="stretch_width")
         self._markitdown = None
         self._file_input = FileDropper(
@@ -179,15 +182,15 @@ class SourceControls(Viewer):
         self._url_input.param.watch(self._handle_urls, "enter_pressed")
 
         self._input_tabs = Tabs(
-            ("File Input", self._file_input),
-            ("Text Input", self._url_input),
+            ("Upload Files", self._file_input),
+            ("Download from URL", self._url_input),
             sizing_mode="stretch_both",
             dynamic=True,
             active=self.param.active,
         )
 
         self._add_button = Button.from_param(
-            self.param.trigger_add,
+            self.param.add,
             name="Use file(s)",
             icon="table-plus",
             visible=self._upload_tabs.param["objects"].rx().rx.len() > 0,
@@ -195,7 +198,7 @@ class SourceControls(Viewer):
         )
 
         self._cancel_button = Button.from_param(
-            self.param.trigger_cancel,
+            self.param.cancel,
             name="Cancel",
             icon="circle-x",
             visible=self.param.cancellable.rx().rx.bool() or self._add_button.param.clicks.rx() == 0,
@@ -213,8 +216,7 @@ class SourceControls(Viewer):
         )
 
         self.menu = Column(
-            Markdown("## Source Input", margin=0),
-            self._input_tabs,
+            *((self._input_tabs,) if self.show_input else ()),
             self._upload_tabs,
             Row(self._add_button, self._cancel_button),
             self.tables_tabs,
@@ -227,6 +229,7 @@ class SourceControls(Viewer):
         self._media_controls = []
         self._downloaded_media_controls = []  # Track downloaded file controls separately
         self._active_download_task = None  # Track active download task for cancellation
+        self._add_downloaded_files_as_tabs()
 
     @property
     def _memory(self):
@@ -354,11 +357,10 @@ class SourceControls(Viewer):
         if isinstance(file_data, (io.BytesIO, io.StringIO)):
             return file_data
 
-        if suffix == "csv":
-            encoding = detect_file_encoding(file_obj=file_data)
-            return io.BytesIO(file_data.decode(encoding).encode("utf-8")) if isinstance(file_data, bytes) else io.StringIO(file_data)
-        else:
-            return io.BytesIO(file_data) if isinstance(file_data, bytes) else io.StringIO(file_data)
+        if suffix == "csv" and isinstance(file_data, bytes):
+            encoding = detect_file_encoding(file_data)
+            file_data = file_data.decode(encoding).encode("utf-8")
+        return io.BytesIO(file_data) if isinstance(file_data, bytes) else io.StringIO(file_data)
 
     def _create_media_controls(self, file_obj: io.BytesIO, filename: str):
         """Factory method to create appropriate media controls"""
@@ -567,7 +569,7 @@ class SourceControls(Viewer):
         params = {}
         conversion = None
         if extension.endswith("csv"):
-            df = pd.read_csv(file, parse_dates=True)
+            df = pd.read_csv(file, parse_dates=True, sep=None, engine='python')
         elif extension.endswith(("parq", "parquet")):
             df = pd.read_parquet(file)
         elif extension.endswith("json"):
@@ -608,10 +610,6 @@ class SourceControls(Viewer):
         duckdb_source.tables[table] = sql_expr
         self._memory["source"] = duckdb_source
         self._memory["table"] = table
-        if "sources" in self._memory:
-            self._memory["sources"] = self._memory["sources"] + [duckdb_source]
-        else:
-            self._memory["sources"] = [duckdb_source]
         self._last_table = table
         return 1
 
@@ -650,7 +648,7 @@ class SourceControls(Viewer):
             self._memory["document_sources"] = [document]
         return 1
 
-    @param.depends("trigger_add", watch=True)
+    @param.depends("add", watch=True)
     def add_medias(self):
         # Combine both uploaded files and downloaded files for processing
         all_media_controls = self._media_controls + self._downloaded_media_controls
@@ -679,6 +677,11 @@ class SourceControls(Viewer):
                     if source is None:
                         source_id = f"UploadedSource{self._count:06d}"
                         source = DuckDBSource(uri=":memory:", ephemeral=True, name=source_id, tables={})
+                    table_name = media_controls.alias
+                    filename = f"{media_controls.filename}.{media_controls.extension}"
+                    if table_name not in source.metadata:
+                        source.metadata[table_name] = {}
+                    source.metadata[table_name]["filename"] = filename
                     n_tables += self._add_table(source, media_controls.file_obj, media_controls)
                 else:
                     n_docs += self._add_document(media_controls.file_obj, media_controls)
@@ -697,6 +700,7 @@ class SourceControls(Viewer):
                     self.tables_tabs.visible = False
                     self.menu.height = 70
 
+            total_files = len(self._upload_tabs) + len(self._downloaded_media_controls)
             if self.clear_uploads:
                 # Clear uploaded files from view
                 self._upload_tabs.clear()
@@ -715,7 +719,6 @@ class SourceControls(Viewer):
 
             # Clear uploaded files and URLs from memory
             if (n_tables + n_docs) > 0:
-                total_files = len(self._upload_tabs) + len(self._downloaded_media_controls)
                 self._message_placeholder.param.update(
                     object=f"Successfully processed {total_files} files ({n_tables} table(s), {n_docs} document(s)).",
                     visible=True,
@@ -738,12 +741,15 @@ class RetryControls(Viewer):
         super().__init__(**params)
         icon = ToggleIcon.from_param(
             self.param.active,
-            label=" ",
+            active_icon="cancel",
+            color="default",
             description="Prompt LLM to retry",
             icon="edit",
-            active_icon="cancel",
+            icon_size="1em",
+            label="",
             margin=(5, 0),
-            size="1em"
+            size="small",
+            sx={".MuiIcon-root": {"color": "var(--mui-palette-default-dark)"}}
         )
         self._text_input = TextInput(
             placeholder="Enter feedback and press the <Enter> to retry.",

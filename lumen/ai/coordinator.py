@@ -10,18 +10,24 @@ import param
 
 from panel import bind
 from panel.chat import ChatFeed
-from panel.layout import FlexBox
-from panel.pane import HTML
+from panel.io.document import hold
+from panel.pane import HTML, Markdown
 from panel.viewable import Viewer
 from panel_material_ui import (
-    Button, Card, ChatInterface, ChatStep, Column, Tabs, Typography,
+    Accordion, Button, Card, ChatInterface, ChatStep, Column, FlexBox, Paper,
+    Tabs, Typography,
 )
 from pydantic import BaseModel
 from typing_extensions import Self
 
 from .actor import Actor
 from .agents import Agent, AnalysisAgent, ChatAgent
-from .config import DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR
+from .components import TableSourceCard
+from .config import (
+    DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR,
+    SOURCE_TABLE_SEPARATOR, MissingContextError,
+)
+from .controls import SourceControls
 from .llm import LlamaCpp, Llm, Message
 from .logs import ChatLogs
 from .models import (
@@ -31,7 +37,10 @@ from .report import Section, Task
 from .tools import (
     IterativeTableLookup, TableLookup, Tool, VectorLookupToolUser,
 )
-from .utils import fuse_messages, log_debug, stream_details
+from .utils import (
+    fuse_messages, get_root_exception, log_debug, mutate_user_message,
+    normalized_name, stream_details, wrap_logfire,
+)
 from .views import AnalysisOutput
 
 if TYPE_CHECKING:
@@ -59,9 +68,9 @@ class Plan(Section):
                 user_query = msg
                 break
         todos = '\n'.join(
-            f"- [{'x' if idx < i else ' '}] {task.instruction}\n" for idx, task in enumerate(self.subtasks)
+            f"- [{'x' if idx < i else ' '}] {'<u>' + task.instruction + '</u>' if idx == i else task.instruction}" for idx, task in enumerate(self.subtasks)
         )
-        formatted_content = f"User Request: {user_query['content']}\n\nTodos:\n\n{todos}"
+        formatted_content = f"User Request: {user_query['content']!r}\n\nComplete the underlined todo:\n{todos}"
         return [
             {'content': formatted_content, 'role': 'user'} if msg is user_query else msg
             for msg in self.history
@@ -82,13 +91,11 @@ class Plan(Section):
                     history=history, **kwargs
                 ):
                     outputs += await task.execute(**kwargs)
-            except asyncio.CancelledError as e:
-                step.failed_title = f"{task.title} agent was cancelled"
-                raise e
             except Exception as e:
-                traceback.print_exception(e)
-                self.memory['__error__'] = str(e)
-                raise e
+                # Handle the exception using the dedicated error handler
+                error_outputs = await self._handle_task_execution_error(e, task, step, i)
+                if error_outputs is not None:
+                    return error_outputs
             unprovided = [p for actor in task.subtasks for p in actor.provides if p not in self.memory]
             if unprovided:
                 step.failed_title = f"{task.title} did not provide {', '.join(unprovided)}. Aborting the plan."
@@ -96,6 +103,104 @@ class Plan(Section):
             log_debug(f"\033[96mCompleted: {task.title}\033[0m", show_length=False)
             step.stream(f"\n\nSuccessfully completed task {task.title}:\n\n> {task.instruction}", replace=True)
             step.success_title = f"{task.title} successfully completed"
+        return outputs
+
+    async def _handle_task_execution_error(self, e: Exception, task: Self | Actor, step: ChatStep, i: int) -> list | None:
+        """
+        Handle exceptions that occur during task execution.
+        Returns outputs if the error was handled successfully, None if the error should be re-raised.
+        """
+        # Check if this is a MissingContextError (possibly wrapped)
+        root_exception = get_root_exception(e, exceptions=(MissingContextError,))
+
+        if isinstance(root_exception, MissingContextError):
+            # Handle missing context by finding and re-running the provider
+            step.failed_title = f"{task.title} - Missing context, retrying..."
+            log_debug(f"\033[93mMissing context detected: {root_exception!s}\033[0m")
+
+            # Find which agent provided the pipeline or relevant context
+            provider_index = self._find_context_provider(i)
+            if provider_index is not None:
+                # Re-run from the provider with the error as feedback
+                outputs = await self._retry_from_provider(provider_index, i, str(root_exception))
+                step.success_title = f"{task.title} successfully completed after retry"
+                return outputs  # Return after successful retry
+            else:
+                # If we can't find a provider, raise the original error
+                step.failed_title = f"{task.title} - Cannot resolve missing context"
+                traceback.print_exception(e)
+                self.memory['__error__'] = str(e)
+                raise e
+        elif isinstance(e, asyncio.CancelledError):
+            step.failed_title = f"{task.title} agent was cancelled"
+            raise e
+        else:
+            traceback.print_exception(e)
+            self.memory['__error__'] = str(e)
+            raise e
+
+    def _find_context_provider(self, failed_index: int) -> int | None:
+        """
+        Find the task that provided the pipeline or other relevant context.
+        Search backwards from the failed task.
+        """
+        pipeline_exists = 'pipeline' in self.memory
+        if not pipeline_exists:
+            return
+
+        for idx in reversed(range(failed_index)):
+            task = self.subtasks[idx]
+            # Check if this task provides pipeline or other relevant context
+            for actor in task.subtasks:
+                if hasattr(actor, 'provides'):
+                    if 'pipeline' in actor.provides:
+                        return idx
+
+    async def _retry_from_provider(self, provider_index: int, failed_index: int, error_message: str) -> list:
+        """
+        Re-run the plan from the provider task with additional feedback about the error.
+        """
+        outputs = []
+        # Create feedback suffix to add to user message
+        feedback_suffix = (
+            f"Be mindful of: {self.subtasks[failed_index].title!r}"
+            f"Previously, it was reported that: {error_message!r}. "
+            "Try a different approach."
+        )
+        # Re-run from the provider onwards
+        for idx in range(provider_index, len(self.subtasks)):
+            task = self.subtasks[idx]
+            if idx < provider_index:
+                outputs += await self._run_task(idx, task)
+                continue
+            elif idx > failed_index:
+                break # Stop after re-running the failed task
+
+            # For the provider task, mutate the user message to include feedback
+            retry_history = mutate_user_message(feedback_suffix, self.history.copy())
+            # Show retry in UI
+            with self.interface.add_step(
+                title=f"🔄 Retrying {task.title} with feedback...",
+                user="Runner",
+                steps_layout=self.steps_layout
+            ) as retry_step:
+                retry_step.stream(f"Retrying with feedback about: {error_message}")
+
+                # Update todos to show retry
+                todos = '\n'.join(
+                    f"- [{'x' if tidx < idx else '🔄' if tidx == idx else ' '}] {'<u>' + t.instruction + '</u>' if tidx == idx else t.instruction}"
+                    for tidx, t in enumerate(self.subtasks)
+                )
+                self._coordinator._todos.object = todos
+
+                # Run with mutated history
+                kwargs = {"agents": self.agents} if 'agents' in task.param else {}
+                with task.param.update(
+                    memory=self.memory, interface=self.interface, steps_layout=self.steps_layout,
+                    history=retry_history, **kwargs
+                ):
+                    outputs += await task.execute(**kwargs)
+                retry_step.success_title = f"✅ {task.title} successfully completed on retry"
         return outputs
 
     async def execute(self, **kwargs):
@@ -146,6 +251,9 @@ class Coordinator(Viewer, VectorLookupToolUser):
     within_ui = param.Boolean(default=False, constant=True, doc="""
         Whether this coordinator is being used within the UI.""")
 
+    validation_enabled = param.Boolean(default=True, doc="""
+        Whether to enable the ValidationAgent in the planning process.""")
+
     __abstract = True
 
     def __init__(
@@ -159,8 +267,6 @@ class Coordinator(Viewer, VectorLookupToolUser):
         logs_db_path: str = "",
         **params,
     ):
-        log_debug("New Session: \033[92mStarted\033[0m", show_sep="above")
-
         def on_message(message, instance):
             def update_on_reaction(reactions):
                 if not self._logs:
@@ -201,17 +307,87 @@ class Coordinator(Viewer, VectorLookupToolUser):
         def on_clear(instance, _):
             self._memory.cleanup()
 
+        def on_submit(event=None, instance=None):
+            chat_input = self.interface.active_widget
+            uploaded = chat_input.value_uploaded
+            user_prompt = chat_input.value_input
+            if not user_prompt and not uploaded:
+                return
+
+            with self.interface.param.update(disabled=True, loading=True):
+                if self._main[0] is not self.interface:
+                    # Reset value input because reset has no time to propagate
+                    self._main[:] = [self.interface]
+
+                old_sources = self._memory.get("sources", [])
+                if uploaded:
+                    # Process uploaded files through SourceControls if any exist
+                    source_controls = SourceControls(
+                        downloaded_files={key: value["value"] for key, value in uploaded.items()},
+                        memory=self._memory,
+                        replace_controls=False,
+                        show_input=False,
+                        clear_uploads=True  # Clear the uploads after processing
+                    )
+                    source_controls.param.trigger("add")
+                    chat_input.value_uploaded = {}
+                    source_cards = [
+                        TableSourceCard(source=source, name=source.name)
+                        for source in self._memory.get("sources", []) if source not in old_sources
+                    ]
+                    if len(source_cards) > 1:
+                        source_view = Accordion(*source_cards, sizing_mode="stretch_width", name="TableSourceCard")
+                    else:
+                        source_view = source_cards[0]
+                    msg = Column(chat_input.value, source_view) if user_prompt else source_view
+                else:
+                    msg = Markdown(user_prompt)
+
+                with hold():
+                    self.interface.send(msg, respond=bool(user_prompt))
+                    chat_input.value_input = ""
+
+        log_debug("New Session: \033[92mStarted\033[0m", show_sep="above")
 
         if interface is None:
             interface = ChatInterface(
-                callback=self._chat_invoke, load_buffer=5,
-                show_button_tooltips=True, show_button_name=False,
-                input_params={
-                    "enable_upload": False
-                },
+                callback=self._chat_invoke,
+                load_buffer=5,
+                on_submit=on_submit,
+                show_button_tooltips=True,
+                show_button_name=False,
+                sizing_mode="stretch_both"
             )
         else:
             interface.callback = self._chat_invoke
+            interface.on_submit = on_submit
+
+        welcome_title = Typography(
+            "Illuminate your data",
+            disable_anchors=True,
+            variant="h1"
+        )
+
+        num_sources = len(self._memory.get("sources", []))
+        prefix_text = "Add your dataset to begin, then" if num_sources == 0 else f"{num_sources} source{'s' if num_sources > 1 else ''} connected;"
+        welcome_text = Typography(
+            f"{prefix_text} ask any question, or select a quick action below."
+        )
+
+        welcome_screen = Paper(
+            welcome_title,
+            welcome_text,
+            interface._widget,
+            max_width=850,
+            styles={'margin': 'auto'},
+            sx={'p': '0 20px 20px 20px'}
+        )
+
+        self._main = Column(
+            welcome_screen,
+            sx={'display': 'flex', 'align-items': 'center'},
+            height_policy='max'
+        )
 
         self._session_id = id(self)
 
@@ -283,18 +459,96 @@ class Coordinator(Viewer, VectorLookupToolUser):
             "clear": {"callback": on_clear},
         }
 
-        if "source" in self._memory and "sources" not in self._memory:
-            self._memory["sources"] = [self._memory["source"]]
-        elif "source" not in self._memory and self._memory.get("sources"):
-            self._memory["source"] = self._memory["sources"][0]
-        elif "sources" not in self._memory:
-            self._memory["sources"] = []
+        # Set up automatic synchronization between source and sources FIRST
+        # so the initial setup below triggers automatic sync
+        self._memory.on_change("source", self._sync_source_to_sources)
+        self._memory.on_change("sources", self._sync_sources_to_source)
+        self._memory.on_change("sources", self._update_visible_slugs)
 
-        if "visible_slugs" not in self._memory:
-            self._memory["visible_slugs"] = set()
+        # Initialize memory
+        self._memory["sources"] = self._memory.get("sources", [])
+        self._sync_source_to_sources(None, None, self._memory.get("source", None))
+        self._sync_sources_to_source(None, None, self._memory["sources"])
+        self._update_visible_slugs(None, None, self._memory["sources"])
+
+        # Use existing method to create suggestions
+        self._add_suggestions_to_footer(
+            self.suggestions,
+            num_objects=1,
+            inplace=True,
+            analysis=False,
+            append_demo=True,
+            hide_after_use=False
+        )
+
+    def _update_visible_slugs(self, key=None, old_sources=None, new_sources=None):
+        """
+        Update visible_slugs when sources change.
+        This is the central place where table visibility is managed.
+        """
+        if not new_sources:
+            self._memory['visible_slugs'] = set()
+            return
+
+        # Calculate all available table slugs from sources
+        all_slugs = set()
+        for source in new_sources:
+            tables = source.get_tables()
+            for table in tables:
+                table_slug = f'{source.name}{SOURCE_TABLE_SEPARATOR}{table}'
+                all_slugs.add(table_slug)
+
+        # Update visible_slugs, preserving existing visibility where possible
+        # This ensures removed tables are filtered out, new tables are added
+        current_visible = self._memory.get('visible_slugs', set())
+        if current_visible:
+            # Keep intersection of current visible and available slugs
+            # Plus add any new slugs that weren't previously available
+            self._memory['visible_slugs'] = current_visible.intersection(all_slugs) | (all_slugs - current_visible)
+        else:
+            # If no visible_slugs set, make all tables visible
+            self._memory['visible_slugs'] = all_slugs
+
+    def _sync_source_to_sources(self, key, old_source, new_source):
+        """
+        When source is set/changed, automatically add it to sources if it doesn't exist.
+        This eliminates the need for manual dual updates.
+        """
+        if new_source is None:
+            return
+
+        current_sources = self._memory.get("sources", [])
+        # Check if the new source already exists in sources (by name)
+        existing_source = next(
+            (source for source in current_sources if source.name == new_source.name),
+            None
+        )
+
+        if existing_source is None:
+            # Add new source to sources list
+            self._memory["sources"] = current_sources + [new_source]
+        elif existing_source is not new_source:
+            # Replace existing source with new one (in case it's updated)
+            updated_sources = [
+                new_source if source.name == new_source.name else source
+                for source in current_sources
+            ]
+            self._memory["sources"] = updated_sources
+
+    def _sync_sources_to_source(self, key, old_sources, new_sources):
+        """
+        When sources changes, ensure source is set to the first source.
+        """
+        if not new_sources:
+            return
+
+        current_source = self._memory.get('source')
+        # If current source is not in the new sources list, update it
+        if current_source is None or current_source not in new_sources:
+            self._memory['source'] = new_sources[0]
 
     def __panel__(self):
-        return self.interface
+        return self._main
 
     def _add_suggestions_to_footer(
         self,
@@ -317,9 +571,18 @@ class Coordinator(Viewer, VectorLookupToolUser):
             memory = self._memory
 
         async def use_suggestion(event):
+            if self._main[0] is not self.interface:
+                self._main[:] = [self.interface]
+
             button = event.obj
             with button.param.update(loading=True), self.interface.active_widget.param.update(loading=True):
-                contents = button.name
+                # Find the original suggestion tuple to get the text
+                button_index = suggestion_buttons.objects.index(button)
+                if button_index < len(suggestions):
+                    suggestion = suggestions[button_index]
+                    contents = suggestion[1] if isinstance(suggestion, tuple) else suggestion
+                else:
+                    contents = button.name
                 if hide_after_use:
                     suggestion_buttons.visible = False
                     if event.new > 1:  # prevent double clicks
@@ -359,7 +622,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
         suggestion_buttons = FlexBox(
             *[
                 Button(
-                    name=suggestion,
+                    name=suggestion[1] if isinstance(suggestion, tuple) else suggestion,
+                    icon=suggestion[0] if isinstance(suggestion, tuple) else None,
                     button_style="outlined",
                     on_click=use_suggestion,
                     margin=5,
@@ -373,7 +637,9 @@ class Coordinator(Viewer, VectorLookupToolUser):
         if append_demo and self.demo_inputs:
             suggestion_buttons.append(Button(
                 name="Show a demo",
+                icon="play_arrow",
                 button_type="primary",
+                variant="outlined",
                 on_click=run_demo,
                 margin=5,
                 disabled=self.interface.param.loading
@@ -382,13 +648,15 @@ class Coordinator(Viewer, VectorLookupToolUser):
         for b in suggestion_buttons:
             b.js_on_click(code=disable_js)
 
-        message = self.interface.objects[-1]
-        if inplace:
-            footer_objects = message.footer_objects or []
-            message.footer_objects = footer_objects + [suggestion_buttons]
+        if len(self.interface) != 0:
+            message = self.interface.objects[-1]
+            if inplace:
+                footer_objects = message.footer_objects or []
+                message.footer_objects = footer_objects + [suggestion_buttons]
+        else:
+            self._main[0].append(suggestion_buttons)
 
         self.interface.param.watch(hide_suggestions, "objects")
-        return message
 
     async def _add_analysis_suggestions(self, memory=None):
         if memory is None:
@@ -416,6 +684,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
             memory=memory
         )
 
+    @wrap_logfire(span_name="Chat Invoke")
     async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface) -> Plan:
         log_debug(f"New Message: \033[91m{contents!r}\033[0m", show_sep="above")
         return await self.respond(contents)
@@ -430,13 +699,23 @@ class Coordinator(Viewer, VectorLookupToolUser):
         )
         return out
 
-    async def _pre_plan(self, messages: list[Message], agents: dict[str, Agent], tools: dict[str, Tool]) -> tuple[dict[str, Agent], dict[str, Tool], dict[str, Any]]:
+    async def _pre_plan(
+        self, messages: list[Message], agents: dict[str, Agent], tools: dict[str, Tool]
+    ) -> tuple[dict[str, Agent], dict[str, Tool], dict[str, Any]]:
         """
         Pre-plan step to prepare the agents and tools for the execution graph.
         This is where we can modify the agents and tools based on the messages.
         """
+        # Filter agents by exclusions and applies
         agents = {agent_name: agent for agent_name, agent in agents.items() if not any(excluded_key in self._memory for excluded_key in agent.exclusions)}
-        tools = {tool_name: tool for tool_name, tool in tools.items()  if not any(excluded_key in self._memory for excluded_key in tool.exclusions)}
+        applies = await asyncio.gather(*[agent.applies(self._memory) for agent in agents.values()])
+        agents = {agent_name: agent for (agent_name, agent), aapply in zip(agents.items(), applies, strict=False) if aapply}
+
+        # Filter tools by exclusions and applies
+        tools = {tool_name: tool for tool_name, tool in tools.items() if not any(excluded_key in self._memory for excluded_key in tool.exclusions)}
+        applies = await asyncio.gather(*[tool.applies(self._memory) for tool in tools.values()])
+        tools = {tool_name: tool for (tool_name, tool), tapply in zip(tools.items(), applies, strict=False) if tapply}
+
         return agents, tools, {}
 
     async def _compute_plan(self, messages: list[Message], agents: dict[str, Agent], tools: dict[str, Tool], pre_plan_output: dict) -> Plan:
@@ -450,7 +729,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
         if isinstance(obj, (Column, Card, Tabs)):
             string = ""
             for o in obj:
-                if isinstance(o, ChatStep):
+                if isinstance(o, ChatStep) or o.name == "TableSourceCard":
                     # Drop context from steps; should be irrelevant now
                     continue
                 string += self._serialize(o)
@@ -481,14 +760,14 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
             # TODO INVESTIGATE
             messages = fuse_messages(
-                self.interface.serialize(custom_serializer=self._serialize, limit=10),
+                self.interface.serialize(custom_serializer=self._serialize, limit=10) or messages,
                 max_user_messages=self.history
             )
 
             # the master dict of agents / tools to be used downstream
             # change this for filling models' literals
-            agents = {agent.name[:-5]: agent for agent in self.agents}
-            tools = {tool.name[:-5]: tool for tool in self._tools["main"]}
+            agents = {normalized_name(agent): agent for agent in self.agents}
+            tools = {normalized_name(tool): tool for tool in self._tools["main"]}
 
             agents, tools, pre_plan_output = await self._pre_plan(messages, agents, tools)
             plan = await self._compute_plan(messages, agents, tools, pre_plan_output)
@@ -626,8 +905,11 @@ class DependencyResolver(Coordinator):
     ):
         if agents is None:
             agents = self.agents
-        agents = [agent for agent in agents if await agent.applies(self._memory)]
-        tools = self._tools["main"]
+        applies = await asyncio.gather(*[agent.applies(self._memory) for agent in agents])
+        agents = [agent for agent, aapply in zip(agents, applies, strict=False) if aapply]
+        applies = await asyncio.gather(*[tool.applies(self._memory) for tool in self._tools['main']])
+        tools = [tool for tool, tapply in zip(self._tools['main'], applies, strict=False) if tapply]
+
         agent_names = tuple(sagent.name[:-5] for sagent in agents) + tuple(tool.name for tool in tools)
         agent_model = self._get_model("main", agent_names=agent_names, primary=primary)
         if len(agent_names) == 0:
@@ -804,6 +1086,7 @@ class Planner(Coordinator):
         pre_plan_output["is_follow_up"] = is_follow_up
         return agents, tools, pre_plan_output
 
+    @wrap_logfire(span_name="Make Plan", extract_args=["messages", "previous_plans", "is_follow_up"])
     async def _make_plan(
         self,
         messages: list[Message],
@@ -869,8 +1152,7 @@ class Planner(Coordinator):
                     step.stream(reasoning.chain_of_thought, replace=True)
                     previous_plans.append(reasoning.chain_of_thought)
 
-        system_with_plan = system + f"\n\n# Plan to Follow\n{reasoning.chain_of_thought}"
-        return await self._fill_model(messages, system_with_plan, plan_model)
+        return await self._fill_model(messages, reasoning.chain_of_thought, plan_model)
 
     async def _resolve_plan(
         self,
@@ -903,7 +1185,7 @@ class Planner(Coordinator):
 
             if len(consecutive_steps) > 1:
                 # Join the consecutive steps into one
-                combined_instruction = f"{current_step.instruction}. Additionally: " + ". ".join(
+                combined_instruction = f"{current_step.instruction} Additionally: " + ". ".join(
                     step.instruction for step in consecutive_steps[1:]
                 )
                 combined_title = f"{current_step.title} (combined {len(consecutive_steps)} steps)"
@@ -978,7 +1260,7 @@ class Planner(Coordinator):
             actors_in_graph.add(key)
 
         last_task = tasks[-1]
-        if isinstance(last_task.subtasks[0], Tool) and not isinstance(last_task.subtasks[0], TableLookup):
+        if isinstance(last_task.subtasks[0], Tool):
             if "AnalystAgent" in agents and all(r in provided for r in agents["AnalystAgent"].requires):
                 actor = "AnalystAgent"
             else:
@@ -1009,7 +1291,7 @@ class Planner(Coordinator):
             )
             actors_in_graph.add(actor)
 
-        if "ValidationAgent" in agents and len(actors_in_graph) > 1:
+        if "ValidationAgent" in agents and len(actors_in_graph) > 1 and self.validation_enabled:
             validation_step = type(step)(
                 actor="ValidationAgent",
                 instruction='Validate whether the executed plan fully answered the user\'s original query.',
@@ -1052,8 +1334,7 @@ class Planner(Coordinator):
                         log_debug(f"\033[91m!! Attempt {attempts}\033[0m")
                     plan = None
                     try:
-                        raw_plan = await self._make_plan(
-                            messages, agents, tools, unmet_dependencies, previous_actors, previous_plans,
+                        raw_plan = await self._make_plan(messages, agents, tools, unmet_dependencies, previous_actors, previous_plans,
                             plan_model, istep, is_follow_up=pre_plan_output["is_follow_up"]
                         )
                     except asyncio.CancelledError as e:

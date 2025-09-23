@@ -25,13 +25,14 @@ from ..sources.base import BaseSQLSource
 from ..views.base import Panel, View
 from .actor import Actor
 from .agents import AnalystAgent
+from .config import MissingContextError
 from .export import (
     format_output, make_md_cell, make_preamble, write_notebook,
 )
 from .llm import Llm
 from .memory import _Memory
 from .tools import FunctionTool, Tool
-from .utils import describe_data
+from .utils import describe_data, wrap_logfire_on_method
 from .views import LumenOutput, SQLOutput
 
 
@@ -84,6 +85,13 @@ class Task(Viewer):
         self._init_view()
         self._populate_view()
 
+    def __init_subclass__(cls, **kwargs):
+        """
+        Apply wrap_logfire to all the subclasses' execute automatically
+        """
+        super().__init_subclass__(**kwargs)
+        wrap_logfire_on_method(cls, "execute")
+
     def __repr__(self):
         params = []
         if self.instruction:
@@ -134,7 +142,7 @@ class Task(Viewer):
         pre = len(self.memory['outputs'])
         outputs = []
         memory = task.memory or self.memory
-        messages = self.history + [{'content': self.instruction, 'role': 'user'}]
+        messages = self.history
 
         with task.param.update(
             interface=self.interface, llm=task.llm or self.llm, memory=memory,
@@ -143,6 +151,9 @@ class Task(Viewer):
             if isinstance(task, Actor):
                 try:
                     out = await task.respond(messages, **kwargs)
+                except MissingContextError:
+                    # Re-raise MissingContextError to allow retry logic at Plan level
+                    raise
                 except Exception as e:
                     tb.print_exception(e)
                     alert = Alert(
@@ -177,6 +188,9 @@ class Task(Viewer):
         for i, task in enumerate(self.subtasks):
             try:
                 outputs += await self._run_task(i, task, **kwargs)
+            except MissingContextError:
+                # Re-raise MissingContextError to allow retry logic at Plan level
+                raise
             except Exception as e:
                 tb.print_exception(e)
                 self.status = "error"
