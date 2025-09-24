@@ -1,9 +1,13 @@
+from __future__ import annotations
+
 import asyncio
 import io
 import traceback as tb
 
+from abc import abstractmethod
 from functools import partial
 from types import FunctionType
+from typing import Any, final
 
 import panel as pn
 import param
@@ -14,9 +18,9 @@ from panel.layout.base import (
 from panel.pane import Markdown
 from panel.viewable import Viewable, Viewer
 from panel_material_ui import (
-    Accordion, Alert, ChatFeed, ChatMessage, Container, Dialog, Divider,
-    FileDownload, IconButton, Progress, Tabs, TextAreaInput, TextInput,
-    Typography,
+    Accordion, Alert, Button, ChatFeed, ChatMessage, Container, Dialog,
+    Divider, FileDownload, IconButton, Progress, Select, Tabs, TextAreaInput,
+    TextInput, Typography,
 )
 from typing_extensions import Self
 
@@ -31,14 +35,18 @@ from .export import (
 )
 from .llm import Llm
 from .memory import _Memory
+from .schemas import get_metaset
 from .tools import FunctionTool, Tool
-from .utils import describe_data, wrap_logfire_on_method
+from .utils import (
+    describe_data, extract_block_source, get_block_names,
+    wrap_logfire_on_method,
+)
 from .views import LumenOutput, SQLOutput
 
 
 class Task(Viewer):
     """
-    A Task is a single unit of work that can be executed and rendered.
+    A `Task` defines a single unit of work that can be executed and rendered.
     """
 
     abort_on_error = param.Boolean(default=False, doc="""
@@ -47,17 +55,20 @@ class Task(Viewer):
     history = param.List(doc="""
         Conversation history to include as context for the task.""")
 
-    interface = param.ClassSelector(class_=ChatFeed)
-
     instruction = param.String(default="", doc="""
         The instruction to give to the task.""")
+
+    interface = param.ClassSelector(class_=ChatFeed, doc="""
+        The chat interface to use for the task.""")
 
     llm = param.ClassSelector(class_=Llm, doc="""
         The LLM to use for the task.""")
 
-    memory = param.ClassSelector(class_=_Memory)
+    memory = param.ClassSelector(class_=_Memory, doc="""
+        The memory to use for the task.""")
 
-    outputs = param.List()
+    outputs = param.List(doc="""
+        The outputs of the task.""")
 
     title = param.String(doc="""
         The title of the task.""")
@@ -71,20 +82,6 @@ class Task(Viewer):
     steps_layout = param.ClassSelector(default=None, class_=(ListLike, NamedListLike), allow_None=True, doc="""
         The layout progress updates will be streamed to.""")
 
-    subtasks = param.List(doc="""
-        The subtasks of the task.""")
-
-    level = 3
-
-    def __init__(self, *subtasks, **params):
-        if not subtasks:
-            subtasks = params.pop('subtasks', [])
-        else:
-            subtasks = list(subtasks)
-        super().__init__(subtasks=[FunctionTool(task) if isinstance(task, FunctionType) else task for task in subtasks], **params)
-        self._init_view()
-        self._populate_view()
-
     def __init_subclass__(cls, **kwargs):
         """
         Apply wrap_logfire to all the subclasses' execute automatically
@@ -92,26 +89,28 @@ class Task(Viewer):
         super().__init_subclass__(**kwargs)
         wrap_logfire_on_method(cls, "execute")
 
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._init_view()
+
     def __repr__(self):
         params = []
         if self.instruction:
             params.append(f"instruction='{self.instruction}'")
         if self.title:
             params.append(f"title='{self.title}'")
-        subtasks = [f"\n    {task!r}" for task in self.subtasks]
-        return f"{self.__class__.__name__}({', '.join(params)}{''.join(subtasks)})"
+        tasks = [f"\n    {task!r}" for task in self._tasks]
+        return f"{self.__class__.__name__}({', '.join(params)}{''.join(tasks)})"
 
     def _init_view(self):
-        self._view = self._output = Column(sizing_mode='stretch_width', styles={'min-height': 'unset'}, height_policy='fit')
+        self._view = self._container = Column(sizing_mode='stretch_width', styles={'min-height': 'unset'}, height_policy='fit')
 
     def _populate_view(self):
         self._view[:] = []
 
-    def clear(self):
-        for subtask in self.subtasks:
-            if isinstance(subtask, Task):
-                subtask.clear()
-        self._populate_view()
+    def reset(self):
+        """Resets the view, removing generated outputs."""
+        self._view[:] = []
         self.outputs.clear()
 
     def _render_output(self, out):
@@ -126,26 +125,138 @@ class Task(Viewer):
                 active=1, sizing_mode='stretch_width', min_height=0, height_policy='fit'
             )
 
+    def _add_child_outputs(self, previous, event):
+        self.outputs = previous + event.new
+
+    def editor(self, show_title: bool = True) -> Viewable:
+        """
+        Returns the editor for the task.
+
+        Arguments
+        ----------
+        show_title: bool
+            Whether to show the title of the task.
+
+        Returns
+        -------
+        The editor for the task.
+        """
+        return Column(*self._render_controls())
+
+    def __panel__(self):
+        return self._container
+
+    @abstractmethod
+    async def _execute(self, **kwargs):
+        raise NotImplementedError(f"{self.__class__.__name__} does not implement the execute.")
+
+    async def execute(self, **kwargs) -> list[Any]:
+        """
+        Executes the task.
+
+        Arguments
+        ----------
+        **kwargs: dict
+            Additional keyword arguments to pass to the task.
+
+        Returns
+        -------
+        The outputs of the task.
+        """
+        return await self._execute(**kwargs)
+
+
+class TaskGroup(Task):
+    """
+    A `TaskGroup` defines a collection of `Task` objects which are executed and rendered in sequence.
+    """
+
+    _tasks = param.List(item_type=(Task, Actor))
+
+    level = 3
+
+    __abstract = True
+
+    def __init__(self, *tasks, **params):
+        if not tasks:
+            tasks = params.pop('tasks', [])
+        else:
+            tasks = list(tasks)
+        tasks = [FunctionTool(task) if isinstance(task, FunctionType) else task for task in tasks]
+        super().__init__(_tasks=tasks, **params)
+        self._current = 0
+        self._init_view()
+        self._populate_view()
+
+    def _populate_view(self):
+        """Populates the view on initialization or reset.
+
+        Should either pre-populate the view with all tasks
+        or act as a no-op since outputs are added progressively
+        using _add_outputs.
+        """
+
     def _add_outputs(self, i: int, outputs: list, **kwargs):
         views = []
         for out in outputs:
-            view = self._render_output(out)
+            if isinstance(out, Task):
+                view = out
+            else:
+                view = self._render_output(out)
             if view is not None:
                 views.append(view)
         self._view.extend(views)
         self.outputs += outputs
 
-    def _add_child_outputs(self, previous, event):
-        self.outputs = previous + event.new
+    def append(self, task: Task | Actor):
+        """
+        Appends a task to the collection.
 
-    async def _run_task(self, i: int, task: Self | Actor, **kwargs):
+        Arguments
+        ----------
+        task: Task | Actor
+            The task to append.
+        """
+        self._tasks.append(task)
+        self._populate_view()
+
+    def insert(self, index, task: Task | Actor):
+        """
+        Inserts a task at the given index.
+
+        Arguments
+        ----------
+        index: int
+            The index to insert the task at.
+        task: Task | Actor
+            The task to insert.
+        """
+        self._tasks.insert(index, task)
+        self._populate_view()
+
+    def reset(self):
+        """
+        Resets the view, removing generated outputs.
+        """
+        self._current = 0
+        self.outputs.clear()
+        self._populate_view()
+        for task in self._tasks:
+            if isinstance(task, Task):
+                task.reset()
+
+    async def _run_task(self, i: int, task: Self | Actor, **kwargs) -> list[Any]:
         pre = len(self.memory['outputs'])
         outputs = []
         memory = task.memory or self.memory
-        messages = self.history
+        messages = list(self.history)
+        if self.instruction:
+            messages.append({"role": "user", "content": self.instruction})
 
         with task.param.update(
-            interface=self.interface, llm=task.llm or self.llm, memory=memory,
+            interface=self.interface,
+            llm=task.llm or self.llm,
+            memory=memory,
             steps_layout=self.steps_layout
         ):
             if isinstance(task, Actor):
@@ -157,35 +268,122 @@ class Task(Viewer):
                 except Exception as e:
                     tb.print_exception(e)
                     alert = Alert(
-                        f'Executing task {type(task).__name__} failed.', alert_type='error', sizing_mode="stretch_width"
+                        f'Executing task {type(task).__name__} failed.', alert_type='error',
+                        sizing_mode="stretch_width"
                     )
                     self._add_outputs(i, [alert])
                     return outputs
                 # Handle Tool specific behaviors
-                if isinstance(task, Tool) and isinstance(out, (View, Viewable)):
+                if isinstance(task, Tool):
                     # Handle View/Viewable results regardless of agent type
-                    if isinstance(out, Viewable):
-                        out = Panel(object=out, pipeline=self.memory.get('pipeline'))
-                    out = LumenOutput(component=out, title=self.title)
-                    message_kwargs = dict(value=out, user=task.name)
-                    if self.interface:
-                        self.interface.stream(**message_kwargs)
-                        self.memory['outputs'] = self.memory['outputs'] + [out]
+                    if isinstance(out, (View, Viewable)):
+                        if isinstance(out, Viewable):
+                            out = Panel(object=out, pipeline=self.memory.get('pipeline'))
+                        out = LumenOutput(
+                            component=out, title=self.title
+                        )
+                        message_kwargs = dict(value=out, user=task.name)
+                        if self.interface:
+                            self.interface.stream(**message_kwargs)
+                            self.memory['outputs'] = self.memory['outputs'] + [out]
                 new = self.memory['outputs'][pre:]
                 if not new and isinstance(out, (Viewable, View, LumenOutput)):
                     new = [out]
                 outputs += new
                 self._add_outputs(i, new, **kwargs)
             else:
+                self._add_outputs(i, [task], **kwargs)
                 with task.param.update(running=True, history=messages):
                     outputs += await task.execute(**kwargs)
         return outputs
 
-    async def execute(self, **kwargs):
+    def _render_controls(self):
+        return [
+            TextInput.from_param(
+                self.param.title, sizing_mode="stretch_width", margin=(10, 0)
+            ),
+            TextAreaInput.from_param(
+                self.param.instruction, sizing_mode="stretch_width", margin=(10, 0)
+            ),
+        ]
+
+    def _render_tasks(self) -> Viewable:
+        tasks = []
+        for task in self._tasks:
+            task_type = type(task).__name__
+            if isinstance(task, Task):
+                tasks.append((
+                    f'{task_type}: {task.title}',
+                    task.editor(show_title=False)
+                ))
+            elif isinstance(task, FunctionTool):
+                tasks.append((f"{task_type}: {task.function.__name__}", ''))
+            elif isinstance(task, Actor):
+                tasks.append((task_type, self._actor_prompt(task)))
+        return tasks
+
+    def _actor_prompt(self, actor: Actor):
+        prompt = Select(
+            options=list(actor.prompts), label="Select prompt to modify",
+            margin=(10, 0), width=200
+        )
+        template = pn.rx(actor.prompts)[prompt]['template']
+        block = Select(
+            options=template.rx.pipe(get_block_names), label='Select block to modify',
+            margin=(10, 0, 10, 10), width=200
+        )
+
+        def edit_prompt(event):
+            layout.append(
+                TextAreaInput(
+                    label=f"Edit {prompt.value} prompt's {block.value} block",
+                    value=extract_block_source(template.rx.value, block.value),
+                    sizing_mode='stretch_width', margin=(10, 0)
+                )
+            )
+        edit = Button(icon="edit_note", size="large", on_click=edit_prompt)
+        layout = Column(Row(prompt, block, edit))
+        return layout
+
+    def editor(self, show_title=True):
+        """
+        Returns the editor for the tasks.
+
+        Arguments
+        ----------
+        show_title: bool
+            Whether to show the title of the tasks.
+
+        Returns
+        -------
+        The editor for the tasks.
+        """
+        return Column(
+            *self._render_controls(),
+            *((
+                Divider(sizing_mode="stretch_width", margin=(10, 0)),
+                Accordion(
+                    *self._render_tasks(), margin=(10, 0, 5, 0), sizing_mode="stretch_width"
+                ),
+              ) if self._tasks else ()
+            )
+        )
+
+    async def _execute(self, **kwargs):
+        """
+        Executes the tasks.
+
+        Arguments
+        ---------
+        **kwargs: dict
+            Additional keyword arguments to pass to the tasks.
+        """
         if 'outputs' not in self.memory:
             self.memory['outputs'] = []
         outputs = [f"{'#'*self.level} {self.title}"] if self.title else []
-        for i, task in enumerate(self.subtasks):
+        for i, task in enumerate(self._tasks):
+            if i < self._current:
+                continue
             try:
                 outputs += await self._run_task(i, task, **kwargs)
             except MissingContextError:
@@ -198,46 +396,13 @@ class Task(Viewer):
                     break
             else:
                 self.status = "success"
+            self._current = i
         return outputs
 
-    def editor(self, level=0, show_title=True):
-        return Column(
-            *self._render_controls(),
-            *((
-                Divider(sizing_mode="stretch_width", margin=10),
-                Accordion(
-                    *self._render_subtasks(level=level), margin=(10, 10, 5, 10), sizing_mode="stretch_width"
-                ),
-              ) if self.subtasks else ()
-            )
-        )
-
-    def _render_controls(self):
-        return [
-            TextInput.from_param(
-                self.param.title, sizing_mode="stretch_width"
-            ),
-            TextAreaInput.from_param(
-                self.param.instruction, sizing_mode="stretch_width"
-            ),
-        ]
-
-    def _render_subtasks(self, level: int = 0) -> Viewable:
-        subtasks = []
-        for task in self.subtasks:
-            task_type = type(task).__name__
-            if isinstance(task, Task):
-                subtasks.append((
-                    f'{task.title} {task_type}',
-                    task.editor(level=level+1, show_title=False)
-                ))
-            elif isinstance(task, FunctionTool):
-                subtasks.append((f"{task_type}: {task.function.__name__}", ''))
-            elif isinstance(task, Actor):
-                subtasks.append((task_type, ''))
-        return subtasks
-
     def to_notebook(self):
+        """
+        Returns the notebook representation of the tasks.
+        """
         cells = make_preamble("", extensions=['tabulator'], title=self.title)
         for out in self.outputs:
             if isinstance(out, Typography):
@@ -252,103 +417,32 @@ class Task(Viewer):
                 cells += format_output(Panel(out))
         return write_notebook(cells)
 
-    def __panel__(self):
-        return self._output
 
-
-class Action(Task):
+class Section(TaskGroup):
     """
-    An Action is a Task that does not involve the usage of an LLM to
-    perform the task, e.g. executing a specified SQL query instead of
-    asking an LLM to generate the query.
+    A `Section` is a `TaskGroup` representing a sequence of related tasks.
     """
-
-
-class SQLQuery(Action):
-
-    add_output = param.Boolean(default=True)
-
-    generate_caption = param.Boolean(default=True)
-
-    source = param.ClassSelector(class_=BaseSQLSource)
-
-    sql_expr = param.String(default="")
-
-    table = param.String()
-
-    async def _rerun(self, i: int, old: list, event: param.Event, **kwargs):
-        pass
-
-    def _render_controls(self):
-        return [
-            TextInput.from_param(
-                self.param.table, sizing_mode="stretch_width"
-            ),
-            TextAreaInput.from_param(
-                self.param.sql_expr, sizing_mode="stretch_width"
-            ),
-        ]
-
-    def __repr__(self):
-        params = []
-        if self.sql_expr:
-            params.append(f"sql_expr='{self.sql_expr}'")
-        if self.table:
-            params.append(f"table='{self.table}'")
-        if self.title:
-            params.append(f"title='{self.title}'")
-        return f"{self.__class__.__name__}({', '.join(params)})"
-
-    async def execute(self, **kwargs):
-        source = self.source
-        if source is None:
-            if 'source' not in self.memory:
-                raise ValueError(
-                    "SQLAction could not resolve a source. Either provide "
-                    "an explicit source or ensure another action or actor "
-                    "provides a source."
-                )
-            source = self.memory['source']
-        source = source.create_sql_expr_source({self.table: self.sql_expr})
-        self.memory["source"] = source
-        self.memory["sources"].append(source)
-        self.memory["pipeline"] = pipeline = Pipeline(source=source, table=self.table)
-        self.memory["data"] = await describe_data(pipeline.data)
-        self.memory["table"] = self.table
-        out = SQLOutput(component=pipeline, spec=self.sql_expr)
-        outputs = [Typography(f"### {self.title}", variant='h4'), out] if self.title else [out]
-        if self.generate_caption:
-            caption = await AnalystAgent(llm=self.llm).respond([{"role": "user", "content": "Generate a short caption for the data"}])
-            outputs.append(Typography(caption.object, margin=(20, 10)))
-        if self.add_output:
-            self._add_outputs(0, outputs, **kwargs)
-        return [outputs]
-
-
-class Section(Task):
-    """
-    A Section consists of multiple Tasks which are executed and rendered in sequence.
-    """
-
-    subtasks = param.List(item_type=Task)
 
     level = 2
 
-    def __init__(self, *subtasks, **params):
+    def __init__(self, *tasks, **params):
         self._watchers = {}
-        super().__init__(*subtasks, **params)
+        super().__init__(*tasks, **params)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         params = []
         if self.title:
             params.append(f"title='{self.title}'")
-        subtasks = [f"\n    {task!r}" for task in self.subtasks]
-        return f"{self.__class__.__name__}({', '.join(params)}{''.join(subtasks)})"
+        tasks = [f"\n    {task!r}" for task in self._tasks]
+        return f"{self.__class__.__name__}({', '.join(params)}{''.join(tasks)})"
+
+    def _add_outputs(self, i: int, outputs: list, **kwargs):
+        self.outputs += outputs
 
     def _render_controls(self):
         return [
             TextInput.from_param(
-                self.param.title, sizing_mode="stretch_width"
+                self.param.title, sizing_mode="stretch_width", margin=(10, 0)
             )
         ]
 
@@ -357,13 +451,20 @@ class Section(Task):
             self.editor(),
             show_close_button=True,
             close_on_click=True,
-            title=f'{self.title} Section Configuration',
+            title=f'Section Configuration: {self.title}',
         )
-        self._settings = IconButton(icon='settings', on_click=self._open_settings, size="small", color="default")
-        self._view = Column(sizing_mode='stretch_width', styles={'min-height': 'unset'}, height_policy='fit')
-        self._view[:] = ["```python\n{repr(self)}\n```"]
-        self._output = Column(
-            Row(self._settings, self._dialog, styles={'position': 'absolute', 'top': '-70px', 'right': '20px'}),
+        self._settings = IconButton(
+            icon='settings', on_click=self._open_settings, size="small", color="default"
+        )
+        self._view = Column(
+            sizing_mode='stretch_width', styles={'min-height': 'unset'}, height_policy='fit'
+        )
+        self._container = Column(
+            Row(
+                self._settings,
+                self._dialog,
+                styles={'position': 'absolute', 'top': '-70px', 'right': '20px'}
+            ),
             self._view,
             sizing_mode='stretch_width',
             styles={'min-height': 'unset'},
@@ -371,7 +472,7 @@ class Section(Task):
         )
 
     def _populate_view(self):
-        self._view[:] = [subtask for subtask in self.subtasks if isinstance(subtask, Task)]
+        self._view[:] = self._tasks
 
     def _open_settings(self, event):
         self._dialog.open = True
@@ -390,10 +491,10 @@ class Section(Task):
         self.outputs = previous + event.new
 
     async def _rerun(self, i: int, context: dict, _: param.Event, **kwargs):
-        for task in self.subtasks[i:]:
-            task.clear()
+        for task in self._tasks[i:]:
+            task.reset()
         with self.param.update(running=True):
-            for j, task in enumerate(self.subtasks[i:]):
+            for j, task in enumerate(self._tasks[i:]):
                 try:
                     with self.param.update(context):
                         await self._run_task(i+j, task, **kwargs)
@@ -407,12 +508,12 @@ class Section(Task):
 
     async def _run_task(self, i: int, task: Task | Actor, **kwargs):
         self.memory['outputs'] = []
-        instructions = "\n".join(f"{i+1}. task.instruction" for i, task in enumerate(self.subtasks))
+        instructions = "\n".join(f"{i+1}. {task.instruction}" for i, task in enumerate(self._tasks))
         self.memory['reasoning'] = f"{self.title}\n\n{instructions}"
         if isinstance(task, Task):
             watcher = task.param.watch(partial(self._add_child_outputs, i, list(self.outputs), **kwargs), 'outputs')
         try:
-            outputs = await super()._run_task(i, task)
+            outputs = await super()._run_task(i, task, **kwargs)
         finally:
             if isinstance(task, Task):
                 task.param.unwatch(watcher)
@@ -430,34 +531,53 @@ class Section(Task):
         self._view.remove(loader)
 
 
-class Report(Task):
+class Report(TaskGroup):
     """
-    A Report consists of multiple Sections which are executed and rendered in sequence.
+    A `Report` is a `TaskGroup` consisting of a sequence of `Section` objects.
+
+    The `Report` UI renders buttons to execute, clear, export and configure the
+    Report.
     """
 
-    subtasks = param.List(item_type=Section)
+    _tasks = param.List(item_type=Section)
 
     level = 1
 
     def _init_view(self):
-        self._title = Typography(self.param.title, variant="h1", margin=(0, 0, 0, 10))
-        self._view = Accordion(sizing_mode="stretch_width", min_height=0, margin=(0, 5, 5, 5))
-        self._run = IconButton(icon="play_arrow", on_click=self._execute, margin=0, size="large")
-        self._clear = IconButton(icon="clear", on_click=lambda _: self.clear(), margin=0, size="large")
+        self._title = Typography(
+            self.param.title, variant="h1", margin=(0, 10, 0, 10)
+        )
+        self._view = Accordion(
+            sizing_mode="stretch_width", min_height=0, margin=(0, 5, 5, 5),
+            sx={"& .MuiAccordionDetails-root": {"p": "0 calc(2 * var(--mui-spacing)) 1em !important"}}
+        )
+        self._run = IconButton(
+            icon="play_arrow", on_click=self._execute, margin=0, size="large",
+            description="Execute Report"
+        )
+        self._clear = IconButton(
+            icon="clear", on_click=lambda _: self.reset(), margin=0, size="large",
+            description="Clear outputs"
+        )
         self._collapse = IconButton(
-            styles={"margin-left": "auto"}, on_click=self._expand_all, icon="unfold_less", size="large", color="default", margin=(0, 0, 10, 0)
+            styles={"margin-left": "auto"}, on_click=self._expand_all, icon="unfold_less",
+            size="large", color="default", margin=(0, 0, 10, 0), description="Collapse/Expand Sections"
         )
         self._settings = IconButton(
-            icon="settings", on_click=self._open_settings, size="large", color="default", margin=0
+            icon="settings", on_click=self._open_settings, size="large", color="default",
+            margin=0, description="Configure Report"
         )
         self._export = FileDownload(
-            callback=self._notebook_export, label="\u200b", variant='text', icon='get_app', icon_size="2.4em",
-            color="default", sx={".MuiButton-startIcon": {"mr": 0}}, margin=(8, 0, 10, 0)
+            callback=self._notebook_export, label="\u200b", variant='text', icon='get_app',
+            icon_size="2.4em", color="default", margin=(8, 0, 10, 0),
+            sx={".MuiButton-startIcon": {"mr": 0, "color": "var(--mui-palette-default-dark)"}},
+            description="Export Report to .ipynb"
         )
         self._dialog = Dialog(
-            TextInput.from_param(self.param.title, margin=0),
-            show_close_button=True, close_on_click=True,
-            title=f"{self.title} Report Settings",
+            TextInput.from_param(self.param.title, margin=(10, 0, 0, 0), sizing_mode="stretch_width"),
+            show_close_button=True,
+            close_on_click=True,
+            title=f"Report Settings: {self.title}",
         )
         self._menu = Row(
             self._title,
@@ -466,21 +586,24 @@ class Report(Task):
             self._collapse,
             self._export,
             self._settings,
-            self._dialog,
             sizing_mode="stretch_width"
         )
-        self._output = Column(
+        self._container = Column(
             self._view,
+            self._dialog,
             margin=(0, 0, 0, 5),
             sizing_mode="stretch_both"
         )
+
+    def _add_outputs(self, i: int, outputs: list, **kwargs):
+        self.outputs += outputs
 
     def _notebook_export(self):
         return io.StringIO(self.to_notebook())
 
     async def _execute(self, *args):
         with self._run.param.update(loading=True):
-            await self.execute()
+            return await super()._execute()
 
     def _expand_all(self, event):
         if self._collapse.icon == "unfold_less":
@@ -494,14 +617,14 @@ class Report(Task):
         self._dialog.open = True
 
     def _populate_view(self):
-        self._view[:] = objects = [(subtask.title, subtask) for subtask in self.subtasks if isinstance(subtask, Task)]
+        self._view[:] = objects = [(task.title, task) for task in self._tasks]
         self._view.active = list(range(len(objects)))
 
-    async def _run_task(self, i: int, task: Section):
+    async def _run_task(self, i: int, task: Section, **kwargs):
         self._view.active = self._view.active + [i]
         watcher = task.param.watch(partial(self._add_child_outputs, self.outputs), "outputs")
         try:
-            outputs = await super()._run_task(i, task)
+            outputs = await super()._run_task(i, task, **kwargs)
         finally:
             task.param.unwatch(watcher)
         return outputs
@@ -510,7 +633,102 @@ class Report(Task):
         return Column(
             self._menu,
             Container(
-                self._output, sizing_mode="stretch_both", height_policy="max",
-                stylesheets=[":host > div { overflow-y: auto; }"]
+                self._container, sizing_mode="stretch_both", height_policy="max",
+                stylesheets=[":host > div { overflow-y: auto; }"], min_height=600
             )
         )
+
+
+class Action(Task):
+    """
+    An `Action` implements an execute method that performs some unit of work
+    and optionally generates outputs to be rendered.
+    """
+
+    render_outputs = param.Boolean(default=True, doc="""
+         Whether the outputs should be rendered.""")
+
+    @final
+    async def execute(self, **kwargs):
+        outputs = await super().execute(**kwargs)
+        if self.render_outputs:
+            self._view[:] = [self._render_output(out) for out in outputs]
+        self.outputs += outputs
+        return outputs
+
+
+class SQLQuery(Action):
+    """
+    An `SQLQuery` is an `Action` that executes a SQL expression on a Source
+    and generates an SQLOutput to be rendered.
+    """
+
+    generate_caption = param.Boolean(default=True, doc="""
+        Whether to generate a caption for the data.""")
+
+    source = param.ClassSelector(class_=BaseSQLSource, doc="""
+        The Source to execute the SQL expression on.""")
+
+    sql_expr = param.String(default="", doc="""
+        The SQL expression to use for the action.""")
+
+    table = param.String(doc="""
+        The name of the table generated from the SQL expression.""")
+
+    def _render_controls(self):
+        return [
+            TextInput.from_param(
+                self.param.table, sizing_mode="stretch_width", margin=(10, 0)
+            ),
+            TextAreaInput.from_param(
+                self.param.sql_expr, sizing_mode="stretch_width", margin=(10, 0)
+            ),
+        ]
+
+    def __repr__(self):
+        params = []
+        if self.sql_expr:
+            params.append(f"sql_expr='{self.sql_expr}'")
+        if self.table:
+            params.append(f"table='{self.table}'")
+        if self.title:
+            params.append(f"title='{self.title}'")
+        return f"{self.__class__.__name__}({', '.join(params)})"
+
+    async def _execute(self, **kwargs):
+        """
+        Executes the action.
+
+        Arguments
+        ----------
+        **kwargs: dict
+            Additional keyword arguments to pass to the action.
+
+        Returns
+        -------
+        The outputs of the action.
+        """
+        source = self.source
+        if source is None:
+            if 'source' not in self.memory:
+                raise ValueError(
+                    "SQLAction could not resolve a source. Either provide "
+                    "an explicit source or ensure another action or actor "
+                    "provides a source."
+                )
+            source = self.memory['source']
+        source = source.create_sql_expr_source({self.table: self.sql_expr})
+        self.memory["source"] = source
+        self.memory["sources"].append(source)
+        self.memory["pipeline"] = pipeline = Pipeline(source=source, table=self.table)
+        self.memory["data"] = await describe_data(pipeline.data)
+        self.memory["sql_metaset"] = await get_metaset([source], [self.table])
+        self.memory["table"] = self.table
+        out = SQLOutput(component=pipeline, spec=self.sql_expr)
+        outputs = [Typography(f"### {self.title}", variant='h4'), out] if self.title else [out]
+        if self.generate_caption:
+            caption = await AnalystAgent(llm=self.llm).respond(
+                [{"role": "user", "content": "Generate a short caption for the data"}]
+            )
+            outputs.append(Typography(caption.object, margin=(20, 10)))
+        return outputs

@@ -14,7 +14,7 @@ import yaml
 
 from panel.chat import ChatInterface
 from panel.viewable import Viewable, Viewer
-from panel_material_ui import Button, Column, Tabs
+from panel_material_ui import Button, Tabs
 from panel_material_ui.chat import ChatMessage
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
@@ -119,7 +119,7 @@ class Agent(Viewer, ToolUser, ContextProvider):
         """
         Stream to a dummy column to be able to suppress the steps output.
         """
-        return Column() if not self.steps_layout else self.steps_layout
+        return pn.Column() if not self.steps_layout else self.steps_layout
 
     def __panel__(self):
         return self.interface
@@ -206,7 +206,7 @@ class SourceAgent(Agent):
     ) -> Any:
         source_controls = self.source_controls(memory=self._memory, cancellable=True, replace_controls=True)
 
-        output = Column(source_controls)
+        output = pn.Column(source_controls)
         if "source" not in self._memory:
             help_message = "No datasets or documents were found, **please upload at least one to continue**..."
         else:
@@ -302,6 +302,7 @@ class AnalystAgent(ChatAgent):
             self._memory["sql"] = f"{self._memory['sql']}\n-- No data was returned from the query."
         return messages
 
+
 class ListAgent(Agent):
     """
     Abstract base class for agents that display a list of items to the user.
@@ -376,7 +377,7 @@ class ListAgent(Agent):
         self._tabs = Tabs(*tabs, sizing_mode="stretch_width")
 
         self.interface.stream(
-            Column(
+            pn.Column(
                 f"The available {self._column_name.lower()}s are listed below. Click on the eye icon to show the {self._column_name.lower()} contents.",
                 self._tabs
             ), user="Assistant"
@@ -475,13 +476,14 @@ class DocumentListAgent(ListAgent):
 
 
 class LumenBaseAgent(Agent):
-    user = param.String(default="Lumen")
 
     prompts = param.Dict(
         default={
             "retry_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "LumenBaseAgent" / "retry_output.jinja2"},
         }
     )
+
+    user = param.String(default="Lumen")
 
     _output_type = LumenOutput
 
@@ -556,6 +558,7 @@ class LumenBaseAgent(Agent):
 
 
 class SQLAgent(LumenBaseAgent):
+
     conditions = param.List(
         default=[
             "Use for displaying, examining, or querying data resulting in a data pipeline",
