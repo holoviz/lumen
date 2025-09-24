@@ -99,8 +99,7 @@ class Task(Viewer):
             params.append(f"instruction='{self.instruction}'")
         if self.title:
             params.append(f"title='{self.title}'")
-        tasks = [f"\n    {task!r}" for task in self._tasks]
-        return f"{self.__class__.__name__}({', '.join(params)}{''.join(tasks)})"
+        return f"{self.__class__.__name__}({', '.join(params)})"
 
     def _init_view(self):
         self._view = self._container = Column(sizing_mode='stretch_width', styles={'min-height': 'unset'}, height_policy='fit')
@@ -114,7 +113,9 @@ class Task(Viewer):
         self.outputs.clear()
 
     def _render_output(self, out):
-        if isinstance(out, ChatMessage):
+        if isinstance(out, str):
+            return Typography(out, margin=(20, 10))
+        elif isinstance(out, ChatMessage):
             return Typography(out.object, margin=(20, 10))
         elif isinstance(out, (Viewable, View)):
             return out
@@ -188,6 +189,15 @@ class TaskGroup(Task):
         self._init_view()
         self._populate_view()
 
+    def __repr__(self):
+        params = []
+        if self.instruction:
+            params.append(f"instruction='{self.instruction}'")
+        if self.title:
+            params.append(f"title='{self.title}'")
+        tasks = [f"\n    {task!r}" for task in self._tasks]
+        return f"{self.__class__.__name__}({', '.join(params)}{''.join(tasks)})"
+
     def _populate_view(self):
         """Populates the view on initialization or reset.
 
@@ -196,17 +206,18 @@ class TaskGroup(Task):
         using _add_outputs.
         """
 
-    def _add_outputs(self, i: int, outputs: list, **kwargs):
-        views = []
-        for out in outputs:
-            if isinstance(out, Task):
-                view = out
-            else:
+    def _add_outputs(self, i: int, task: Task | Actor, outputs: list, **kwargs):
+        if isinstance(task, Task):
+            self._view.append(task)
+            self.outputs += task.outputs
+        else:
+            views = []
+            for out in outputs:
                 view = self._render_output(out)
-            if view is not None:
-                views.append(view)
-        self._view.extend(views)
-        self.outputs += outputs
+                if view is not None:
+                    views.append(view)
+            self._view.extend(views)
+            self.outputs += outputs
 
     def append(self, task: Task | Actor):
         """
@@ -246,7 +257,7 @@ class TaskGroup(Task):
                 task.reset()
 
     async def _run_task(self, i: int, task: Self | Actor, **kwargs) -> list[Any]:
-        pre = len(self.memory['outputs'])
+        pre = 0 if self.memory is None else len(self.memory['outputs'])
         outputs = []
         memory = task.memory or self.memory
         messages = list(self.history)
@@ -271,14 +282,14 @@ class TaskGroup(Task):
                         f'Executing task {type(task).__name__} failed.', alert_type='error',
                         sizing_mode="stretch_width"
                     )
-                    self._add_outputs(i, [alert])
-                    return outputs
+                    return [alert]
                 # Handle Tool specific behaviors
                 if isinstance(task, Tool):
                     # Handle View/Viewable results regardless of agent type
                     if isinstance(out, (View, Viewable)):
                         if isinstance(out, Viewable):
-                            out = Panel(object=out, pipeline=self.memory.get('pipeline'))
+                            pipeline = None if self.memory is None else self.memory.get('pipeline')
+                            out = Panel(object=out, pipeline=pipeline)
                         out = LumenOutput(
                             component=out, title=self.title
                         )
@@ -290,9 +301,7 @@ class TaskGroup(Task):
                 if not new and isinstance(out, (Viewable, View, LumenOutput)):
                     new = [out]
                 outputs += new
-                self._add_outputs(i, new, **kwargs)
             else:
-                self._add_outputs(i, [task], **kwargs)
                 with task.param.update(running=True, history=messages):
                     outputs += await task.execute(**kwargs)
         return outputs
@@ -378,14 +387,17 @@ class TaskGroup(Task):
         **kwargs: dict
             Additional keyword arguments to pass to the tasks.
         """
-        if 'outputs' not in self.memory:
+        if self.memory is not None and 'outputs' not in self.memory:
             self.memory['outputs'] = []
         outputs = [f"{'#'*self.level} {self.title}"] if self.title else []
+        if outputs:
+            self._add_outputs(-1, None, outputs, **kwargs)
         for i, task in enumerate(self._tasks):
             if i < self._current:
                 continue
+            new = []
             try:
-                outputs += await self._run_task(i, task, **kwargs)
+                new = await self._run_task(i, task, **kwargs)
             except MissingContextError:
                 # Re-raise MissingContextError to allow retry logic at Plan level
                 raise
@@ -396,6 +408,8 @@ class TaskGroup(Task):
                     break
             else:
                 self.status = "success"
+                outputs += new
+            self._add_outputs(i, task, new, **kwargs)
             self._current = i
         return outputs
 
@@ -436,7 +450,7 @@ class Section(TaskGroup):
         tasks = [f"\n    {task!r}" for task in self._tasks]
         return f"{self.__class__.__name__}({', '.join(params)}{''.join(tasks)})"
 
-    def _add_outputs(self, i: int, outputs: list, **kwargs):
+    def _add_outputs(self, i: int, task: Task | Actor, outputs: list, **kwargs):
         self.outputs += outputs
 
     def _render_controls(self):
@@ -710,20 +724,24 @@ class SQLQuery(Action):
         """
         source = self.source
         if source is None:
-            if 'source' not in self.memory:
+            if self.memory is None or 'source' not in self.memory:
                 raise ValueError(
-                    "SQLAction could not resolve a source. Either provide "
+                    "SQLQuery could not resolve a source. Either provide "
                     "an explicit source or ensure another action or actor "
                     "provides a source."
                 )
             source = self.memory['source']
+        if not self.table:
+            raise ValueError("SQLQuery must declare a table name.")
         source = source.create_sql_expr_source({self.table: self.sql_expr})
-        self.memory["source"] = source
-        self.memory["sources"].append(source)
-        self.memory["pipeline"] = pipeline = Pipeline(source=source, table=self.table)
-        self.memory["data"] = await describe_data(pipeline.data)
-        self.memory["sql_metaset"] = await get_metaset([source], [self.table])
-        self.memory["table"] = self.table
+        pipeline = Pipeline(source=source, table=self.table)
+        if self.memory is not None:
+            self.memory["source"] = source
+            self.memory["sources"].append(source)
+            self.memory["pipeline"] = pipeline
+            self.memory["data"] = await describe_data(pipeline.data)
+            self.memory["sql_metaset"] = await get_metaset([source], [self.table])
+            self.memory["table"] = self.table
         out = SQLOutput(component=pipeline, spec=self.sql_expr)
         outputs = [Typography(f"### {self.title}", variant='h4'), out] if self.title else [out]
         if self.generate_caption:
