@@ -401,7 +401,7 @@ class TaskGroup(Task):
         """
         if self.memory is not None and 'outputs' not in self.memory:
             self.memory['outputs'] = []
-        outputs = [f"{'#'*self.level} {self.title}"] if self.title else []
+        outputs = [Typography(f"{'#'*self.level} {self.title}", margin=(10, 10, 0, 10))] if self.title else []
         if outputs:
             self._add_outputs(-1, None, outputs, **kwargs)
         for i, task in enumerate(self._tasks):
@@ -755,10 +755,10 @@ class SQLQuery(Action):
             self.memory["sql_metaset"] = await get_metaset([source], [self.table])
             self.memory["table"] = self.table
         out = SQLOutput(component=pipeline, spec=self.sql_expr)
-        outputs = [Typography(f"### {self.title}", variant='h4'), out] if self.title else [out]
+        outputs = [Typography(f"### {self.title}", variant='h4', margin=(10, 10, 0, 10)), out] if self.title else [out]
         if self.generate_caption:
             caption = await AnalystAgent(llm=self.llm).respond(
                 [{"role": "user", "content": "Generate a short caption for the data"}]
             )
-            outputs.append(Typography(caption.object, margin=(20, 10)))
+            outputs.append(Typography(caption.object))
         return outputs
