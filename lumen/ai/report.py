@@ -334,23 +334,35 @@ class TaskGroup(Task):
     def _actor_prompt(self, actor: Actor):
         prompt = Select(
             options=list(actor.prompts), label="Select prompt to modify",
-            margin=(10, 0), width=200
+            margin=(10, 0), sizing_mode="stretch_width"
         )
         template = pn.rx(actor.prompts)[prompt]['template']
         block = Select(
             options=template.rx.pipe(get_block_names), label='Select block to modify',
-            margin=(10, 0, 10, 10), width=200
+            margin=(10, 0, 10, 10), sizing_mode="stretch_width"
         )
 
+        def update_prompt(prompt, block, event):
+            if prompt not in actor.template_overrides:
+                actor.template_overrides[prompt] = {}
+            actor.template_overrides[prompt][block] = event.new
+
         def edit_prompt(event):
-            layout.append(
-                TextAreaInput(
-                    label=f"Edit {prompt.value} prompt's {block.value} block",
-                    value=extract_block_source(template.rx.value, block.value),
-                    sizing_mode='stretch_width', margin=(10, 0)
-                )
+            source = extract_block_source(template.rx.value, block.value)
+            editor = TextAreaInput(
+                label=f"Edit {prompt.value} prompt's {block.value} block",
+                value=source, sizing_mode='stretch_width', margin=(10, 0), height=300
             )
-        edit = Button(icon="edit_note", size="large", on_click=edit_prompt)
+            cancel = IconButton(
+                icon="cancel",
+                on_click=lambda _: (layout.remove(edit_layout), actor.template_overrides.pop(prompt.value, {}).pop(block.value, None)),
+                styles={'position': 'absolute', 'right': '0px', 'zIndex': "9999"}
+            )
+            edit_layout = Column(cancel, editor)
+            editor.param.watch(partial(update_prompt, prompt.value, block.value), 'value')
+            layout.append(edit_layout)
+
+        edit = Button(icon="edit_note", size="large", on_click=edit_prompt, height=54, margin=(10, 0, 10, 10))
         layout = Column(Row(prompt, block, edit))
         return layout
 
@@ -372,7 +384,7 @@ class TaskGroup(Task):
             *((
                 Divider(sizing_mode="stretch_width", margin=(10, 0)),
                 Accordion(
-                    *self._render_tasks(), margin=(10, 0, 5, 0), sizing_mode="stretch_width"
+                    *self._render_tasks(), margin=(10, 0, 5, 0), title_variant="h4", sizing_mode="stretch_width"
                 ),
               ) if self._tasks else ()
             )
@@ -609,7 +621,7 @@ class Report(TaskGroup):
             sizing_mode="stretch_both"
         )
 
-    def _add_outputs(self, i: int, outputs: list, **kwargs):
+    def _add_outputs(self, i: int, task: Task | Actor, outputs: list, **kwargs):
         self.outputs += outputs
 
     def _notebook_export(self):

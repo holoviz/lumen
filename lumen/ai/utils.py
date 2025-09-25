@@ -178,20 +178,10 @@ class BlockNameCollector(NodeVisitor):
         self.generic_visit(node)
 
 
-class BlockExtractor(NodeVisitor):
-    def __init__(self, block_name):
-        self.block_name = block_name
-        self.content = None
-
-    def visit_Block(self, node: nodes.Block):
-        if node.name == self.block_name:
-            # Collect the raw source of the block body
-            # node.body is a list of nodes, we render them to source
-            self.content = ''.join([n.as_const() if isinstance(n, nodes.Const) else ''
-                                    for n in node.body])
-        # Keep traversing
-        self.generic_visit(node)
-
+_BLOCK_RE = re.compile(
+    r"{%-?\s*block\s+(?P<name>\w+)\s*-?%}(?P<body>.*?){%-?\s*endblock(?:\s+(?P=name))?\s*-?%}",
+    re.DOTALL,
+)
 
 def get_block_names(template_path: Path | str, relative_to: Path = PROMPTS_DIR):
     env = Environment()
@@ -202,11 +192,11 @@ def get_block_names(template_path: Path | str, relative_to: Path = PROMPTS_DIR):
 
 
 def extract_block_source(template_path: Path | str, block_name: str, relative_to: Path = PROMPTS_DIR):
-    env = Environment()
-    parsed = env.parse(Path(template_path).read_text())
-    extractor = BlockExtractor(block_name)
-    extractor.visit(parsed)
-    return extractor.content
+    src = Path(template_path).read_text(encoding='utf-8')
+    for m in _BLOCK_RE.finditer(src):
+        if m.group("name") == block_name:
+            return m.group("body").strip()
+    raise KeyError(f"Block '{block_name}' not found in {template_path!r}.")
 
 
 def warn_on_unused_variables(string, kwargs, prompt_label):
