@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import logging
 
 from functools import partial
@@ -775,9 +776,7 @@ class ExplorerUI(UI):
         if event.new:
             self._exports[0] = self._global_notebook_export
             self._main[:] = [Report(
-                subtasks=[
-                    exploration['view'].plan for exploration in self._explorations.items[1:]
-                ]
+                *(exploration['view'].plan for exploration in self._explorations.items[1:])
             )]
         else:
             self._exports[0] = self._notebook_export
@@ -824,7 +823,9 @@ class ExplorerUI(UI):
             for ext in msg_exts:
                 if ext not in extensions:
                     extensions.append(ext)
-        preamble = make_preamble(self.notebook_preamble, extensions=extensions)
+        now = dt.datetime.now()
+        title = f'# Lumen.ai - Chat Logs {now}'
+        preamble = make_preamble(self.notebook_preamble, extensions=extensions, title=title)
         return StringIO(write_notebook(preamble+cells))
 
     async def _update_conversation(self, event=None):

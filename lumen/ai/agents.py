@@ -14,7 +14,8 @@ import yaml
 
 from panel.chat import ChatInterface
 from panel.viewable import Viewable, Viewer
-from panel_material_ui import Button, Column, Tabs
+from panel_material_ui import Button, Tabs
+from panel_material_ui.chat import ChatMessage
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
@@ -89,17 +90,17 @@ class Agent(Viewer, ToolUser, ContextProvider):
 
     def __init__(self, **params):
         def _exception_handler(exception):
+            traceback.print_exception(exception)
+            if self.interface is None:
+                return
             messages = self.interface.serialize()
             if messages and str(exception) in messages[-1]["content"]:
                 return
 
-            import traceback
+            self.interface.send(
+                f"Error cannot be resolved:\n\n{exception}", user="System", respond=False
+            )
 
-            traceback.print_exception(exception)
-            self.interface.send(f"Error cannot be resolved:\n\n{exception}", user="System", respond=False)
-
-        if "interface" not in params:
-            params["interface"] = ChatInterface(callback=self._interface_callback, callback_exception="raise" if self.debug else "summary")
         super().__init__(**params)
         if not self.debug:
             pn.config.exception_handler = _exception_handler
@@ -118,7 +119,7 @@ class Agent(Viewer, ToolUser, ContextProvider):
         """
         Stream to a dummy column to be able to suppress the steps output.
         """
-        return Column() if not self.steps_layout else self.steps_layout
+        return pn.Column() if not self.steps_layout else self.steps_layout
 
     def __panel__(self):
         return self.interface
@@ -127,7 +128,13 @@ class Agent(Viewer, ToolUser, ContextProvider):
         message = None
         model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
         async for output_chunk in self.llm.stream(messages, system=system_prompt, model_spec=model_spec, field="output"):
-            message = self.interface.stream(output_chunk, replace=True, message=message, user=self.user, max_width=self._max_width)
+            if self.interface is None:
+                if message is None:
+                    message = ChatMessage(output_chunk, user=self.user)
+                else:
+                    message.object = output_chunk
+            else:
+                message = self.interface.stream(output_chunk, replace=True, message=message, user=self.user, max_width=self._max_width)
         return message
 
     async def _gather_prompt_context(self, prompt_name: str, messages: list, **context):
@@ -199,7 +206,7 @@ class SourceAgent(Agent):
     ) -> Any:
         source_controls = self.source_controls(memory=self._memory, cancellable=True, replace_controls=True)
 
-        output = Column(source_controls)
+        output = pn.Column(source_controls)
         if "source" not in self._memory:
             help_message = "No datasets or documents were found, **please upload at least one to continue**..."
         else:
@@ -295,6 +302,7 @@ class AnalystAgent(ChatAgent):
             self._memory["sql"] = f"{self._memory['sql']}\n-- No data was returned from the query."
         return messages
 
+
 class ListAgent(Agent):
     """
     Abstract base class for agents that display a list of items to the user.
@@ -369,7 +377,7 @@ class ListAgent(Agent):
         self._tabs = Tabs(*tabs, sizing_mode="stretch_width")
 
         self.interface.stream(
-            Column(
+            pn.Column(
                 f"The available {self._column_name.lower()}s are listed below. Click on the eye icon to show the {self._column_name.lower()} contents.",
                 self._tabs
             ), user="Assistant"
@@ -468,13 +476,14 @@ class DocumentListAgent(ListAgent):
 
 
 class LumenBaseAgent(Agent):
-    user = param.String(default="Lumen")
 
     prompts = param.Dict(
         default={
             "retry_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "LumenBaseAgent" / "retry_output.jinja2"},
         }
     )
+
+    user = param.String(default="Lumen")
 
     _output_type = LumenOutput
 
@@ -543,11 +552,13 @@ class LumenBaseAgent(Agent):
             # since inplace updates will not trigger updates
             # and won't allow diffing between old and new values
             self._memory["outputs"] = self._memory["outputs"] + [out]
-        message_kwargs = dict(value=out, user=self.user)
-        self.interface.stream(replace=True, max_width=self._max_width, **message_kwargs)
+        if self.interface is not None:
+            message_kwargs = dict(value=out, user=self.user)
+            self.interface.stream(replace=True, max_width=self._max_width, **message_kwargs)
 
 
 class SQLAgent(LumenBaseAgent):
+
     conditions = param.List(
         default=[
             "Use for displaying, examining, or querying data resulting in a data pipeline",
