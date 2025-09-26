@@ -500,15 +500,24 @@ class LumenBaseAgent(Agent):
         """
         Prepare lines for retry by optionally extracting targeted sections from YAML.
 
-        Args:
-            original_output: The original output string to process
-            retry_target_keys: Optional list of keys to target specific sections in YAML
+        Parameters
+        ----------
+        original_output : str
+            The original output string to process
+        retry_target_keys : list[str], optional
+            List of keys to target specific sections in YAML
 
-        Returns:
-            Tuple of (lines, targeted, original_spec)
-            - lines: List of lines to be processed
-            - targeted: Whether targeting was applied
-            - original_spec: Original parsed spec if targeting was used, None otherwise
+        Returns
+        -------
+        tuple
+            A tuple containing:
+
+            - lines : list[str]
+                List of lines to be processed
+            - targeted : bool
+                Whether targeting was applied
+            - original_spec : dict or None
+                Original parsed spec if targeting was used, None otherwise
         """
         lines = original_output.splitlines()
         targeted = False
@@ -535,14 +544,22 @@ class LumenBaseAgent(Agent):
         """
         Apply line changes to output, handling both targeted and non-targeted cases.
 
-        Args:
-            lines: The lines that were modified
-            line_changes: Changes to apply to the lines
-            targeted: Whether this was a targeted retry
-            original_spec: Original parsed spec for targeted retries
-            retry_target_keys: Keys used for targeting
+        Parameters
+        ----------
+        lines : list[str]
+            The lines that were modified
+        line_changes : list
+            Changes to apply to the lines
+        targeted : bool
+            Whether this was a targeted retry
+        original_spec : dict or None
+            Original parsed spec for targeted retries
+        retry_target_keys : list[str] or None
+            Keys used for targeting
 
-        Returns:
+        Returns
+        -------
+        str
             Final output string with changes applied
         """
         if targeted:
@@ -808,8 +825,11 @@ class SQLAgent(LumenBaseAgent):
         return pipeline, sql_expr_source, summary
 
     async def _finalize_execution(
-        self, results: dict, context_entries: list[dict],
-        messages: list[Message], step_title: str | None,
+        self,
+        results: dict,
+        context_entries: list[dict],
+        messages: list[Message],
+        step_title: str | None,
         raise_if_empty: bool = False
     ) -> None:
         """Finalize execution for final step."""
@@ -846,19 +866,31 @@ class SQLAgent(LumenBaseAgent):
         success_message: str,
         discovery_context: str | None = None,
         raise_if_empty: bool = False,
+        output_title: str | None = None
     ) -> Pipeline:
         """
         Helper method that generates, validates, and executes final SQL queries.
 
-        Args:
-            messages: List of user messages
-            source: Data source to execute against
-            step_title: Title for the execution step
-            success_message: Message to show on successful completion
-            discovery_context: Optional discovery context to include in prompt
-            raise_if_empty: Whether to raise error if query returns empty results
+        Parameters
+        ----------
+        messages : list[Message]
+            List of user messages
+        source : Source
+            Data source to execute against
+        step_title : str
+            Title for the execution step
+        success_message : str
+            Message to show on successful completion
+        discovery_context : str, optional
+            Optional discovery context to include in prompt
+        raise_if_empty : bool, optional
+            Whether to raise error if query returns empty results
+        output_title : str, optional
+            Title to use for the output
 
-        Returns:
+        Returns
+        -------
+        Pipeline
             Pipeline object from successful execution
         """
         with self._add_step(title=step_title, steps_layout=self._steps_layout) as step:
@@ -906,15 +938,17 @@ class SQLAgent(LumenBaseAgent):
             )
 
             # Finalize execution
-            results = {expr_slug: {
-                "sql": validated_sql,
-                "summary": summary,
-                "pipeline": pipeline,
-                "source": sql_expr_source
-            }}
+            results = {
+                expr_slug: {
+                    "sql": validated_sql,
+                    "summary": summary,
+                    "pipeline": pipeline,
+                    "source": sql_expr_source
+                }
+            }
 
             await self._finalize_execution(
-                results, [], messages, step_title, raise_if_empty=raise_if_empty
+                results, [], messages, output_title, raise_if_empty=raise_if_empty
             )
 
             step.status = "success"
@@ -1010,8 +1044,6 @@ class SQLAgent(LumenBaseAgent):
                 step.stream(result)
         return results
 
-
-
     async def _explore_tables(
         self,
         messages: list[Message],
@@ -1058,6 +1090,7 @@ class SQLAgent(LumenBaseAgent):
             success_message="Final answer generated with discovery context",
             discovery_context=discovery_context,
             raise_if_empty=False,
+            output_title=step_title
         )
 
     async def respond(
@@ -1077,6 +1110,7 @@ class SQLAgent(LumenBaseAgent):
                 success_message="One-shot SQL generation successful",
                 discovery_context=None,
                 raise_if_empty=True,
+                output_title=step_title
             )
         except Exception as e:
             if not self.exploration_enabled:
