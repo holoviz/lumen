@@ -167,7 +167,7 @@ class Plan(Section):
         outputs = []
         # Create feedback suffix to add to user message
         feedback_suffix = (
-            f"Be mindful of: {self.subtasks[failed_index].title!r}"
+            f"Be mindful of: {self._tasks[failed_index].title!r}"
             f"Previously, it was reported that: {error_message!r}. "
             "Try a different approach."
         )
@@ -1232,7 +1232,7 @@ class Planner(Coordinator):
             provided |= set(subagent.provides)
             unmet_dependencies = (unmet_dependencies | requires) - provided
             has_table_lookup = any(
-                any(isinstance(st, TableLookup) for st in task.subtasks)
+                any(isinstance(st, TableLookup) for st in task)
                 for task in tasks
             )
             if "table" in unmet_dependencies and not table_provided and "SQLAgent" in agents and has_table_lookup:
