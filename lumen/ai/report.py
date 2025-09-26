@@ -362,7 +362,10 @@ class TaskGroup(Task):
             editor.param.watch(partial(update_prompt, prompt.value, block.value), 'value')
             layout.append(edit_layout)
 
-        edit = Button(icon="edit_note", size="large", on_click=edit_prompt, height=54, margin=(10, 0, 10, 10))
+        edit = Button(
+            icon="edit_note", icon_size='2em', on_click=edit_prompt, height=54,
+            margin=(10, 0, 10, 10)
+        )
         layout = Column(Row(prompt, block, edit))
         return layout
 
@@ -384,7 +387,8 @@ class TaskGroup(Task):
             *((
                 Divider(sizing_mode="stretch_width", margin=(10, 0)),
                 Accordion(
-                    *self._render_tasks(), margin=(10, 0, 5, 0), title_variant="h4", sizing_mode="stretch_width"
+                    *self._render_tasks(), margin=(10, 0, 10, 0), title_variant="h4",
+                    sizing_mode="stretch_width"
                 ),
               ) if self._tasks else ()
             )
@@ -401,9 +405,12 @@ class TaskGroup(Task):
         """
         if self.memory is not None and 'outputs' not in self.memory:
             self.memory['outputs'] = []
-        outputs = [Typography(f"{'#'*self.level} {self.title}", margin=(10, 10, 0, 10))] if self.title else []
-        if outputs:
-            self._add_outputs(-1, None, outputs, **kwargs)
+        if self._current != 0:
+            outputs = list(self.outputs)
+        else:
+            outputs = [Typography(f"{'#'*self.level} {self.title}", margin=(10, 10, 0, 10))] if self.title else []
+            if outputs:
+                self._add_outputs(-1, None, outputs, **kwargs)
         for i, task in enumerate(self._tasks):
             if i < self._current:
                 continue
@@ -422,7 +429,7 @@ class TaskGroup(Task):
                 self.status = "success"
                 outputs += new
             self._add_outputs(i, task, new, **kwargs)
-            self._current = i
+            self._current = i + 1
         return outputs
 
     def to_notebook(self):
@@ -489,7 +496,7 @@ class Section(TaskGroup):
             Row(
                 self._settings,
                 self._dialog,
-                styles={'position': 'absolute', 'top': '-70px', 'right': '20px'}
+                styles={'position': 'absolute', 'top': '-57.5px', 'right': '20px'}
             ),
             self._view,
             sizing_mode='stretch_width',
