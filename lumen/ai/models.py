@@ -3,6 +3,7 @@ from typing import Literal
 from instructor.dsl.partial import PartialLiteralMixin
 from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
+from pydantic.json_schema import SkipJsonSchema
 
 from .config import SOURCE_TABLE_SEPARATOR, MissingContextError
 
@@ -48,6 +49,56 @@ class ThinkingYesNo(BaseModel):
     yes: bool = Field(description="True if yes, otherwise False.")
 
 
+# Essential Discovery Toolkit
+
+class SampleQuery(PartialBaseModel):
+    """See actual data content - reveals format issues and patterns."""
+
+    query: SkipJsonSchema[str] = Field(default="SELECT * FROM {table} LIMIT 5")
+    table: str = Field(description="Table to sample")
+
+
+class DistinctQuery(PartialBaseModel):
+    """Universal column analysis with optional pattern matching - handles join keys, categories, date ranges."""
+
+    query: SkipJsonSchema[str] = Field(default="SELECT DISTINCT {column} FROM {table} WHERE {column} ILIKE '%{pattern}%' LIMIT 10 OFFSET {offset}")
+    table: str = Field(description="Table to query")
+    column: str = Field(description="Column to analyze unique values")
+    pattern: str = Field(default="", description="Optional pattern to search for (e.g., 'chin' for China/Chinese variations). Leave empty for all distinct values.")
+    offset: int = Field(default=0, description="Number of distinct values to skip (0 for initial, 10 for follow-up)")
+
+    def model_post_init(self, __context):
+        """Adjust query template based on whether pattern is provided."""
+        if not self.pattern.strip():
+            # No pattern - get all distinct values
+            self.query = "SELECT DISTINCT {column} FROM {table} LIMIT 10 OFFSET {offset}"
+        else:
+            # Pattern provided - use ILIKE for case-insensitive partial matching
+            self.query = "SELECT DISTINCT {column} FROM {table} WHERE {column} ILIKE '%{pattern}%' LIMIT 10 OFFSET {offset}"
+
+
+class DiscoveryQueries(PartialBaseModel):
+    """LLM selects 2-4 essential discoveries using the core toolkit."""
+
+    reasoning: str = Field(description="Brief discovery strategy")
+    queries: list[SampleQuery | DistinctQuery] = Field(
+        description="Choose 2-4 discovery queries from the Essential Three toolkit"
+    )
+
+
+class DiscoverySufficiency(PartialBaseModel):
+    """Evaluate if discovery results provide enough context to fix the original error."""
+
+    reasoning: str = Field(description="Analyze discovery results - do they reveal the cause of the error?")
+
+    sufficient: bool = Field(description="True if discoveries provide enough context to fix the error")
+
+    follow_up_needed: list[SampleQuery | DistinctQuery] = Field(
+        default_factory=list,
+        description="If insufficient, specify 1-3 follow-up discoveries (e.g., OFFSET for more values)"
+    )
+
+
 class SqlQuery(PartialBaseModel):
     """A single SQL query with its associated metadata."""
 
@@ -79,105 +130,6 @@ def make_sql_model(is_final: bool = False):
         return SqlQuery
     else:
         return SqlQueries
-
-
-class SQLRoadmap(PartialBaseModel):
-    """High-level execution roadmap for SQL query planning."""
-
-    discovery_steps: list[str] = Field(
-        description="""List of discovery steps needed (e.g., 'Check date ranges in both datasets',
-        'Find distinct categories', 'Validate join keys'). Each step should be specific and actionable."""
-    )
-
-    validation_checks: list[str] = Field(
-        default_factory=list,
-        description="""Critical validation checks before proceeding (e.g., 'Verify temporal overlap',
-        'Confirm key format compatibility'). Focus on compatibility between datasets."""
-    )
-
-    join_strategy: str = Field(
-        default="",
-        description="""If joins are needed, describe the strategy and key relationships.
-        Include how to handle temporal or categorical mismatches."""
-    )
-
-    potential_issues: list[str] = Field(
-        default_factory=list,
-        description="""Potential issues to watch for (e.g., 'Limited temporal overlap',
-        'Different granularities', 'Format mismatches'). Be specific to the datasets."""
-    )
-
-    estimated_steps: int = Field(
-        description="Number of steps estimated to complete the query (typically 2-5)."
-    )
-
-
-class NextStep(PartialBaseModel):
-    """Represents the next single step to take in SQL exploration."""
-
-    pre_step_validation: str = Field(
-        description="""
-        If no previous steps, leave empty. Check: 1) Info already available?
-        2) Combinable with other discoveries? 3) Directly contributes to answer?
-        Brief 1-2 sentence assessment.
-        """
-    )
-
-    reasoning: str = Field(
-        description="""
-        Strategic rationale: What gap does this fill? How does it progress toward answer?
-        Approach and why? Materialization decision? Which existing materialized tables used?
-        Focus on "why" and "how", not validation.
-        """
-    )
-
-    step_type: Literal["discover", "filter", "join", "final"] = Field(
-        description="""
-        - "discover": Batch multiple discoveries (LIMIT 10 each) + min/max ranges
-        - "filter": Filter rows (LIMIT 100000)
-        - "join": Combine tables (LIMIT 100000); explore join keys first
-        - "final": Final query (LIMIT 100000)
-        """
-    )
-
-    action_description: str = Field(
-        description="""
-        Executable SQL operation: Which tables/materialized views? Which columns?
-        What filters/joins/aggregations? Expected output and limit?
-        Specific enough for SQL generation, building on previous steps.
-        """
-    )
-
-    should_materialize: bool = Field(
-        description="""
-        True if result used in subsequent steps (joins/filtering, limit 100k).
-        False for one-off exploratory steps. Materialize only when necessary.
-        """
-    )
-
-    is_final_answer: bool = Field(
-        description="""
-        True if this step provides the final answer to user's request.
-        E.g., simple "show table" requests or when all info is available.
-        """
-    )
-
-
-class ReadinessCheck(PartialBaseModel):
-    """Check if we're ready to answer the user's question."""
-
-    reasoning: str = Field(
-        description="Explain what information we have and what might still be missing"
-    )
-
-    is_ready: bool = Field(
-        description="True if we have enough information to write the final query"
-    )
-
-    missing_info: list[str] = Field(
-        default_factory=list,
-        description="List of specific information still needed (if not ready)"
-    )
 
 
 class VegaLiteSpec(EscapeBaseModel):
