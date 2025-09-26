@@ -3,6 +3,11 @@ import asyncio
 import panel as pn
 import pytest
 
+try:
+    import lumen.ai  # noqa
+except ModuleNotFoundError:
+    pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
+
 from panel.layout import Column
 from panel.pane import Markdown
 
