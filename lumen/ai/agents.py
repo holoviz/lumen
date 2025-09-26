@@ -696,7 +696,7 @@ class SQLAgent(LumenBaseAgent):
 
     _extensions = ("codeeditor", "tabulator")
 
-    _output_type = LumenOutput
+    _output_type = SQLOutput
 
     def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
         from ..dashboard import load_yaml
