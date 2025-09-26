@@ -14,7 +14,8 @@ import yaml
 
 from panel.chat import ChatInterface
 from panel.viewable import Viewable, Viewer
-from panel_material_ui import Button, Column, Tabs
+from panel_material_ui import Button, Tabs
+from panel_material_ui.chat import ChatMessage
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
@@ -47,7 +48,7 @@ from .translate import param_to_pydantic
 from .utils import (
     apply_changes, clean_sql, describe_data, get_data, get_pipeline,
     get_root_exception, get_schema, load_json, log_debug, report_error,
-    retry_llm_output, stream_details,
+    retry_llm_output, set_nested, stream_details,
 )
 from .views import (
     AnalysisOutput, LumenOutput, SQLOutput, VegaLiteOutput,
@@ -90,17 +91,17 @@ class Agent(Viewer, ToolUser, ContextProvider):
 
     def __init__(self, **params):
         def _exception_handler(exception):
+            traceback.print_exception(exception)
+            if self.interface is None:
+                return
             messages = self.interface.serialize()
             if messages and str(exception) in messages[-1]["content"]:
                 return
 
-            import traceback
+            self.interface.send(
+                f"Error cannot be resolved:\n\n{exception}", user="System", respond=False
+            )
 
-            traceback.print_exception(exception)
-            self.interface.send(f"Error cannot be resolved:\n\n{exception}", user="System", respond=False)
-
-        if "interface" not in params:
-            params["interface"] = ChatInterface(callback=self._interface_callback, callback_exception="raise" if self.debug else "summary")
         super().__init__(**params)
         if not self.debug:
             pn.config.exception_handler = _exception_handler
@@ -119,7 +120,7 @@ class Agent(Viewer, ToolUser, ContextProvider):
         """
         Stream to a dummy column to be able to suppress the steps output.
         """
-        return Column() if not self.steps_layout else self.steps_layout
+        return pn.Column() if not self.steps_layout else self.steps_layout
 
     def __panel__(self):
         return self.interface
@@ -128,7 +129,13 @@ class Agent(Viewer, ToolUser, ContextProvider):
         message = None
         model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
         async for output_chunk in self.llm.stream(messages, system=system_prompt, model_spec=model_spec, field="output"):
-            message = self.interface.stream(output_chunk, replace=True, message=message, user=self.user, max_width=self._max_width)
+            if self.interface is None:
+                if message is None:
+                    message = ChatMessage(output_chunk, user=self.user)
+                else:
+                    message.object = output_chunk
+            else:
+                message = self.interface.stream(output_chunk, replace=True, message=message, user=self.user, max_width=self._max_width)
         return message
 
     async def _gather_prompt_context(self, prompt_name: str, messages: list, **context):
@@ -200,7 +207,7 @@ class SourceAgent(Agent):
     ) -> Any:
         source_controls = self.source_controls(memory=self._memory, cancellable=True, replace_controls=True)
 
-        output = Column(source_controls)
+        output = pn.Column(source_controls)
         if "source" not in self._memory:
             help_message = "No datasets or documents were found, **please upload at least one to continue**..."
         else:
@@ -296,6 +303,7 @@ class AnalystAgent(ChatAgent):
             self._memory["sql"] = f"{self._memory['sql']}\n-- No data was returned from the query."
         return messages
 
+
 class ListAgent(Agent):
     """
     Abstract base class for agents that display a list of items to the user.
@@ -370,7 +378,7 @@ class ListAgent(Agent):
         self._tabs = Tabs(*tabs, sizing_mode="stretch_width")
 
         self.interface.stream(
-            Column(
+            pn.Column(
                 f"The available {self._column_name.lower()}s are listed below. Click on the eye icon to show the {self._column_name.lower()} contents.",
                 self._tabs
             ), user="Assistant"
@@ -469,7 +477,6 @@ class DocumentListAgent(ListAgent):
 
 
 class LumenBaseAgent(Agent):
-    user = param.String(default="Lumen")
 
     prompts = param.Dict(
         default={
@@ -477,14 +484,74 @@ class LumenBaseAgent(Agent):
         }
     )
 
-    _output_type = LumenOutput
+    user = param.String(default="Lumen")
 
     _max_width = None
+    _output_type = LumenOutput
+    _retry_target_keys = []
 
     def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
         """
         Update the specification in memory.
         """
+
+    @staticmethod
+    def _prepare_lines_for_retry(original_output: str, retry_target_keys: list[str] | None = None) -> tuple[list[str], bool, dict | None]:
+        """
+        Prepare lines for retry by optionally extracting targeted sections from YAML.
+
+        Args:
+            original_output: The original output string to process
+            retry_target_keys: Optional list of keys to target specific sections in YAML
+
+        Returns:
+            Tuple of (lines, targeted, original_spec)
+            - lines: List of lines to be processed
+            - targeted: Whether targeting was applied
+            - original_spec: Original parsed spec if targeting was used, None otherwise
+        """
+        lines = original_output.splitlines()
+        targeted = False
+        original_spec = None
+
+        if retry_target_keys:
+            original_spec = yaml.safe_load(original_output)
+            targeted_output = original_spec.copy()
+            for key in retry_target_keys:
+                targeted_output = targeted_output[key]
+            lines = yaml.dump(targeted_output, default_flow_style=False).splitlines()
+            targeted = True
+
+        return lines, targeted, original_spec
+
+    @staticmethod
+    def _apply_line_changes_to_output(
+        lines: list[str],
+        line_changes: list,
+        targeted: bool,
+        original_spec: dict | None = None,
+        retry_target_keys: list[str] | None = None
+    ) -> str:
+        """
+        Apply line changes to output, handling both targeted and non-targeted cases.
+
+        Args:
+            lines: The lines that were modified
+            line_changes: Changes to apply to the lines
+            targeted: Whether this was a targeted retry
+            original_spec: Original parsed spec for targeted retries
+            retry_target_keys: Keys used for targeting
+
+        Returns:
+            Final output string with changes applied
+        """
+        if targeted:
+            targeted_spec = yaml.safe_load(apply_changes(lines, line_changes))
+            updated_spec = original_spec.copy()
+            set_nested(updated_spec, retry_target_keys, targeted_spec)
+            return yaml.dump(updated_spec)
+        else:
+            return apply_changes(lines, line_changes)
 
     async def _retry_output_by_line(
         self,
@@ -498,10 +565,13 @@ class LumenBaseAgent(Agent):
         """
         Retry the output by line, allowing the user to provide feedback on why the output was not satisfactory, or an error.
         """
-        original_lines = original_output.splitlines()
+        # Prepare lines for retry processing
+        lines, targeted, original_spec = self._prepare_lines_for_retry(
+            original_output, self._retry_target_keys
+        )
+
         with self.param.update(memory=memory):
-            # TODO: only input the inner spec to retry
-            numbered_text = "\n".join(f"{i:2d}: {line}" for i, line in enumerate(original_lines, 1))
+            numbered_text = "\n".join(f"{i:2d}: {line}" for i, line in enumerate(lines, 1))
             system = await self._render_prompt(
                 "retry_output",
                 messages=messages,
@@ -518,7 +588,11 @@ class LumenBaseAgent(Agent):
             model_spec="edit",
         )
         result = await self.llm.invoke(**invoke_kwargs)
-        return apply_changes(original_lines, result.lines_changes)
+
+        # Apply line changes and return result
+        return self._apply_line_changes_to_output(
+            lines, result.lines_changes, targeted, original_spec, self._retry_target_keys
+        )
 
     def _render_lumen(
         self,
@@ -546,12 +620,12 @@ class LumenBaseAgent(Agent):
             # since inplace updates will not trigger updates
             # and won't allow diffing between old and new values
             self._memory["outputs"] = self._memory["outputs"] + [out]
-        message_kwargs = dict(value=out, user=self.user)
-        self.interface.stream(replace=True, max_width=self._max_width, **message_kwargs)
+        if self.interface is not None:
+            message_kwargs = dict(value=out, user=self.user)
+            self.interface.stream(replace=True, max_width=self._max_width, **message_kwargs)
 
 
 class SQLAgent(LumenBaseAgent):
-    """Simplified SQLAgent using Oneshot → Exploration → Final Answer approach."""
 
     conditions = param.List(
         default=[
@@ -1412,6 +1486,8 @@ class VegaLiteAgent(BaseViewAgent):
     _extensions = ("vega",)
 
     _output_type = VegaLiteOutput
+
+    _retry_target_keys = ["spec"]
 
     async def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
         try:
