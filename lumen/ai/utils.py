@@ -12,7 +12,8 @@ import time
 import traceback
 
 from collections.abc import Callable
-from functools import wraps
+from functools import reduce, wraps
+from operator import getitem
 from pathlib import Path
 from shutil import get_terminal_size
 from textwrap import dedent
@@ -979,3 +980,8 @@ def normalized_name(inst: param.Parameterized):
     if re.match('^'+class_name+'[0-9]{5}$', inst.name):
         return class_name
     return inst.name
+
+
+def set_nested(data, keys, value):
+    """Set nested dictionary value"""
+    reduce(getitem, keys[:-1], data)[keys[-1]] = value

@@ -47,7 +47,7 @@ from .translate import param_to_pydantic
 from .utils import (
     apply_changes, clean_sql, describe_data, get_data, get_pipeline,
     get_root_exception, get_schema, load_json, log_debug, mutate_user_message,
-    report_error, retry_llm_output, stream_details,
+    report_error, retry_llm_output, set_nested, stream_details,
 )
 from .views import (
     AnalysisOutput, LumenOutput, SQLOutput, VegaLiteOutput,
@@ -485,14 +485,72 @@ class LumenBaseAgent(Agent):
 
     user = param.String(default="Lumen")
 
-    _output_type = LumenOutput
-
     _max_width = None
+    _output_type = LumenOutput
+    _retry_target_keys = []
 
     def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
         """
         Update the specification in memory.
         """
+
+    @staticmethod
+    def _prepare_lines_for_retry(original_output: str, retry_target_keys: list[str] | None = None) -> tuple[list[str], bool, dict | None]:
+        """
+        Prepare lines for retry by optionally extracting targeted sections from YAML.
+
+        Args:
+            original_output: The original output string to process
+            retry_target_keys: Optional list of keys to target specific sections in YAML
+
+        Returns:
+            Tuple of (lines, targeted, original_spec)
+            - lines: List of lines to be processed
+            - targeted: Whether targeting was applied
+            - original_spec: Original parsed spec if targeting was used, None otherwise
+        """
+        lines = original_output.splitlines()
+        targeted = False
+        original_spec = None
+
+        if retry_target_keys:
+            original_spec = yaml.safe_load(original_output)
+            targeted_output = original_spec.copy()
+            for key in retry_target_keys:
+                targeted_output = targeted_output[key]
+            lines = yaml.dump(targeted_output, default_flow_style=False).splitlines()
+            targeted = True
+
+        return lines, targeted, original_spec
+
+    @staticmethod
+    def _apply_line_changes_to_output(
+        lines: list[str],
+        line_changes: list,
+        targeted: bool,
+        original_spec: dict | None = None,
+        retry_target_keys: list[str] | None = None
+    ) -> str:
+        """
+        Apply line changes to output, handling both targeted and non-targeted cases.
+
+        Args:
+            lines: The lines that were modified
+            line_changes: Changes to apply to the lines
+            targeted: Whether this was a targeted retry
+            original_spec: Original parsed spec for targeted retries
+            retry_target_keys: Keys used for targeting
+
+        Returns:
+            Final output string with changes applied
+        """
+        if targeted:
+            targeted_spec = yaml.safe_load(apply_changes(lines, line_changes))
+            updated_spec = original_spec.copy()
+            set_nested(updated_spec, retry_target_keys, targeted_spec)
+            return yaml.dump(updated_spec)
+        else:
+            return apply_changes(lines, line_changes)
 
     async def _retry_output_by_line(
         self,
@@ -505,10 +563,13 @@ class LumenBaseAgent(Agent):
         """
         Retry the output by line, allowing the user to provide feedback on why the output was not satisfactory, or an error.
         """
-        original_lines = original_output.splitlines()
+        # Prepare lines for retry processing
+        lines, targeted, original_spec = self._prepare_lines_for_retry(
+            original_output, self._retry_target_keys
+        )
+
         with self.param.update(memory=memory):
-            # TODO: only input the inner spec to retry
-            numbered_text = "\n".join(f"{i:2d}: {line}" for i, line in enumerate(original_lines, 1))
+            numbered_text = "\n".join(f"{i:2d}: {line}" for i, line in enumerate(lines, 1))
             system = await self._render_prompt(
                 "retry_output",
                 messages=messages,
@@ -524,7 +585,11 @@ class LumenBaseAgent(Agent):
             model_spec="edit",
         )
         result = await self.llm.invoke(**invoke_kwargs)
-        return apply_changes(original_lines, result.lines_changes)
+
+        # Apply line changes and return result
+        return self._apply_line_changes_to_output(
+            lines, result.lines_changes, targeted, original_spec, self._retry_target_keys
+        )
 
     def _render_lumen(
         self,
@@ -1531,6 +1596,8 @@ class VegaLiteAgent(BaseViewAgent):
     _extensions = ("vega",)
 
     _output_type = VegaLiteOutput
+
+    _retry_target_keys = ["spec"]
 
     async def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
         try:
