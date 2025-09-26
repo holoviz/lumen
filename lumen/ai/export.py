@@ -103,7 +103,7 @@ def format_output(output: LumenOutput):
             'view = lm.View.from_spec(spec)',
             'view'
         ])
-    return [nbformat.v4.new_code_cell(source='\n'.join(code))], ext
+    return nbformat.v4.new_code_cell(source='\n'.join(code)), ext
 
 def render_cells(messages: list[ChatMessage]) -> tuple[Any, list[str]]:
     cells, extensions = [], []
@@ -113,15 +113,18 @@ def render_cells(messages: list[ChatMessage]) -> tuple[Any, list[str]]:
         elif isinstance(msg.object, str):
             cells += format_markdown(msg)
         elif isinstance(msg.object, LumenOutput):
-            out, ext = format_output(msg.object)
-            cells += out
+            cell, ext = format_output(msg.object)
+            cells.append(cell)
             if ext and ext not in extensions:
                 extensions.append(ext)
         elif isinstance(msg.object, Column):
             for obj in msg.object:
                 if isinstance(obj, ChatStep):
                     continue
-                cells += format_output(obj.object)
+                cell, ext = format_output(obj.object)
+                cells.append(cell)
+                if ext and ext not in extensions:
+                    extensions.append(ext)
     return cells, extensions
 
 def write_notebook(cells):

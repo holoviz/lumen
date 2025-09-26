@@ -456,18 +456,23 @@ class TaskGroup(Task):
             raise RuntimeError(
                 "Report has not been executed, run report before exporting to_notebook."
             )
-        cells = make_preamble("", extensions=['tabulator'])
+        cells, extensions = [], ['tabulator']
         for out in self.outputs:
+            ext = None
             if isinstance(out, Typography):
                 level = int(out.variant[1:]) if out.variant and out.variant.startswith('h') else 0
                 prefix = f"{'#'*level} " if level else ''
-                cells.append(make_md_cell(f"{prefix}{out.object}"))
+                cell = make_md_cell(f"{prefix}{out.object}")
             elif isinstance(out, Markdown):
-                cells.append(make_md_cell(out.object))
+                cell = make_md_cell(out.object)
             elif isinstance(out, LumenOutput):
-                cells += format_output(out)
+                cell, ext = format_output(out)
             elif isinstance(out, Viewable):
-                cells += format_output(Panel(out))
+                cell, ext = format_output(Panel(out))
+            cells.append(cell)
+            if ext and ext not in extensions:
+                extensions.append(ext)
+        cells = make_preamble("", extensions=extensions) + cells
         return write_notebook(cells)
 
 
