@@ -5,6 +5,7 @@ import io
 import traceback as tb
 
 from abc import abstractmethod
+from collections.abc import Iterator
 from functools import partial
 from types import FunctionType
 from typing import Any, final
@@ -112,6 +113,16 @@ class Task(Viewer):
         self._view[:] = []
         self.outputs.clear()
 
+    def _render_controls(self):
+        return [
+            TextInput.from_param(
+                self.param.title, sizing_mode="stretch_width", margin=(10, 0)
+            ),
+            TextAreaInput.from_param(
+                self.param.instruction, sizing_mode="stretch_width", margin=(10, 0)
+            ),
+        ]
+
     def _render_output(self, out):
         if isinstance(out, str):
             return Typography(out, margin=(20, 10))
@@ -125,9 +136,6 @@ class Task(Viewer):
                 ('Output', pn.param.ParamMethod(out.render, inplace=True, sizing_mode='stretch_width')),
                 active=1, sizing_mode='stretch_width', min_height=0, height_policy='fit'
             )
-
-    def _add_child_outputs(self, previous, event):
-        self.outputs = previous + event.new
 
     def editor(self, show_title: bool = True) -> Viewable:
         """
@@ -183,8 +191,14 @@ class TaskGroup(Task):
             tasks = params.pop('tasks', [])
         else:
             tasks = list(tasks)
-        tasks = [FunctionTool(task) if isinstance(task, FunctionType) else task for task in tasks]
-        super().__init__(_tasks=tasks, **params)
+        outputs, _tasks = [], []
+        for task in tasks:
+            if isinstance(task, FunctionType):
+                task = FunctionTool(task)
+            elif isinstance(task, Task):
+                outputs += task.outputs
+            _tasks.append(task)
+        super().__init__(_tasks=_tasks, outputs=outputs, **params)
         self._current = 0
         self._init_view()
         self._populate_view()
@@ -197,6 +211,15 @@ class TaskGroup(Task):
             params.append(f"title='{self.title}'")
         tasks = [f"\n    {task!r}" for task in self._tasks]
         return f"{self.__class__.__name__}({', '.join(params)}{''.join(tasks)})"
+
+    def __iter__(self) -> Iterator[Task | Actor]:
+        return iter(self._tasks)
+
+    def __len__(self) -> int:
+        return len(self._tasks)
+
+    def __getitem__(self, index) -> Task | Actor:
+        return self._tasks[index]
 
     def _populate_view(self):
         """Populates the view on initialization or reset.
@@ -218,6 +241,9 @@ class TaskGroup(Task):
                     views.append(view)
             self._view.extend(views)
             self.outputs += outputs
+
+    def _watch_child_outputs(self, previous, event):
+        pass
 
     def append(self, task: Task | Actor):
         """
@@ -305,16 +331,6 @@ class TaskGroup(Task):
                 with task.param.update(running=True, history=messages):
                     outputs += await task.execute(**kwargs)
         return outputs
-
-    def _render_controls(self):
-        return [
-            TextInput.from_param(
-                self.param.title, sizing_mode="stretch_width", margin=(10, 0)
-            ),
-            TextAreaInput.from_param(
-                self.param.instruction, sizing_mode="stretch_width", margin=(10, 0)
-            ),
-        ]
 
     def _render_tasks(self) -> Viewable:
         tasks = []
@@ -436,14 +452,18 @@ class TaskGroup(Task):
         """
         Returns the notebook representation of the tasks.
         """
-        cells = make_preamble("", extensions=['tabulator'], title=self.title)
+        if len(self) and not len(self.outputs):
+            raise RuntimeError(
+                "Report has not been executed, run report before exporting to_notebook."
+            )
+        cells = make_preamble("", extensions=['tabulator'])
         for out in self.outputs:
             if isinstance(out, Typography):
                 level = int(out.variant[1:]) if out.variant and out.variant.startswith('h') else 0
                 prefix = f"{'#'*level} " if level else ''
                 cells.append(make_md_cell(f"{prefix}{out.object}"))
             elif isinstance(out, Markdown):
-                cells.append(make_md_cell(out))
+                cells.append(make_md_cell(out.object))
             elif isinstance(out, LumenOutput):
                 cells += format_output(out)
             elif isinstance(out, Viewable):
@@ -510,7 +530,7 @@ class Section(TaskGroup):
     def _open_settings(self, event):
         self._dialog.open = True
 
-    def _add_child_outputs(self, i: int, previous: list, event: param.Event, **kwargs):
+    def _watch_child_outputs(self, i: int, previous: list, event: param.Event, **kwargs):
         for out in (event.old or []):
             if out not in event.new:
                 out.param.unwatch(self._watchers[out])
@@ -521,7 +541,6 @@ class Section(TaskGroup):
                     steps_layout=self.steps_layout
                 )
                 self._watchers[out] = out.param.watch(partial(self._rerun, i+1, context), 'spec')
-        self.outputs = previous + event.new
 
     async def _rerun(self, i: int, context: dict, _: param.Event, **kwargs):
         for task in self._tasks[i:]:
@@ -539,12 +558,13 @@ class Section(TaskGroup):
                 else:
                     self.status = "success"
 
-    async def _run_task(self, i: int, task: Task | Actor, **kwargs):
-        self.memory['outputs'] = []
-        instructions = "\n".join(f"{i+1}. {task.instruction}" for i, task in enumerate(self._tasks))
-        self.memory['reasoning'] = f"{self.title}\n\n{instructions}"
+    async def _run_task(self, i: int, task: Task | Actor, **kwargs) -> list[Any]:
+        if self.memory:
+            self.memory['outputs'] = []
+            instructions = "\n".join(f"{i+1}. {task.instruction}" for i, task in enumerate(self._tasks))
+            self.memory['reasoning'] = f"{self.title}\n\n{instructions}"
         if isinstance(task, Task):
-            watcher = task.param.watch(partial(self._add_child_outputs, i, list(self.outputs), **kwargs), 'outputs')
+            watcher = task.param.watch(partial(self._watch_child_outputs, i, list(self.outputs), **kwargs), 'outputs')
         try:
             outputs = await super()._run_task(i, task, **kwargs)
         finally:
@@ -604,7 +624,7 @@ class Report(TaskGroup):
             callback=self._notebook_export, label="\u200b", variant='text', icon='get_app',
             icon_size="2.4em", color="default", margin=(8, 0, 10, 0),
             sx={".MuiButton-startIcon": {"mr": 0, "color": "var(--mui-palette-default-dark)"}},
-            description="Export Report to .ipynb"
+            description="Export Report to .ipynb", filename=f"{self.title or 'Report'}.ipynb"
         )
         self._dialog = Dialog(
             TextInput.from_param(self.param.title, margin=(10, 0, 0, 0), sizing_mode="stretch_width"),
@@ -627,6 +647,10 @@ class Report(TaskGroup):
             margin=(0, 0, 0, 5),
             sizing_mode="stretch_both"
         )
+
+    @param.depends('title', watch=True)
+    def _update_filename(self):
+        self._export.filename = f"{self.title or 'Report'}.ipynb"
 
     def _add_outputs(self, i: int, task: Task | Actor, outputs: list, **kwargs):
         self.outputs += outputs
@@ -655,7 +679,7 @@ class Report(TaskGroup):
 
     async def _run_task(self, i: int, task: Section, **kwargs):
         self._view.active = self._view.active + [i]
-        watcher = task.param.watch(partial(self._add_child_outputs, self.outputs), "outputs")
+        watcher = task.param.watch(partial(self._watch_child_outputs, self.outputs), "outputs")
         try:
             outputs = await super()._run_task(i, task, **kwargs)
         finally:

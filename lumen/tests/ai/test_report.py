@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import panel as pn
 import pytest
@@ -216,3 +217,41 @@ async def test_sql_query_action():
     assert out.spec == action.sql_expr
     assert out.component.data.columns == ['category']
     assert list(out.component.data.category) == ['A', 'B', 'A']
+
+
+async def test_report_to_notebook():
+    report = Report(
+        Section(
+            HelloAction()
+        ),
+        title='Hello Report'
+    )
+
+    with pytest.raises(RuntimeError):
+        report.to_notebook()
+
+    await report.execute()
+
+    assert len(report.outputs) == 2
+
+    nb_string = report.to_notebook()
+
+    nb = json.loads(nb_string)
+    assert len(nb["cells"]) == 3
+    cell1, cell2, cell3 = nb["cells"]
+
+    assert cell1['cell_type'] == 'code'
+    assert cell1['source'] == [
+        'import yaml\n',
+        '\n',
+        'import lumen as lm\n',
+        'import panel as pn\n',
+        '\n',
+        "pn.extension('tabulator')"
+    ]
+
+    assert cell2['cell_type'] == 'markdown'
+    assert cell2['source'] == ["# Hello Report"]
+
+    assert cell3['cell_type'] == 'markdown'
+    assert cell3['source'] == ["**Hello**"]

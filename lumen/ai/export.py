@@ -26,7 +26,7 @@ def make_preamble(preamble: str, extensions: list[str] | None = None, title: str
     if extensions is None:
         extensions = []
     if title:
-        header = make_md_cell(title)
+        header = make_md_cell(f'# {title}')
     if 'tabulator' not in extensions:
         extensions = ['tabulator'] + extensions
     exts = ', '.join([repr(ext) for ext in extensions])
@@ -41,7 +41,7 @@ def make_preamble(preamble: str, extensions: list[str] | None = None, title: str
         """
     )).strip()
     imports = nbformat.v4.new_code_cell(source=source)
-    return [header, imports] if title else []
+    return [header, imports] if title else [imports]
 
 def serialize_avatar(avatar: str | BytesIO, size: int = 45) -> str:
     """

@@ -776,9 +776,7 @@ class ExplorerUI(UI):
         if event.new:
             self._exports[0] = self._global_notebook_export
             self._main[:] = [Report(
-                subtasks=[
-                    exploration['view'].plan for exploration in self._explorations.items[1:]
-                ]
+                *(exploration['view'].plan for exploration in self._explorations.items[1:])
             )]
         else:
             self._exports[0] = self._notebook_export
