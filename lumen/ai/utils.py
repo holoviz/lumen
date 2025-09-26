@@ -25,7 +25,9 @@ import param
 
 from jinja2 import (
     ChoiceLoader, DictLoader, Environment, FileSystemLoader, StrictUndefined,
+    nodes,
 )
+from jinja2.visitor import NodeVisitor
 from markupsafe import escape
 
 from lumen.pipeline import Pipeline
@@ -109,7 +111,9 @@ def fuse_messages(messages: list[dict], max_user_messages: int = 2) -> list[dict
     return [system_prompt] if last_user_index == -1 else [system_prompt, last_user_message]
 
 
-def render_template(template_path: Path | str, overrides: dict | None = None, relative_to: Path = PROMPTS_DIR, **context):
+def get_template_loader(
+    template_path: Path | str, relative_to: Path = PROMPTS_DIR
+) -> tuple[FileSystemLoader, str]:
     if isinstance(template_path, str):
         template_path = Path(template_path)
 
@@ -135,10 +139,11 @@ def render_template(template_path: Path | str, overrides: dict | None = None, re
             else:
                 # Final fallback - assume it's a relative path but not to PROMPTS_DIR
                 template_name = str(template_path)
+    return FileSystemLoader(search_paths), template_name
 
-    # Create a loader that can search in multiple directories
-    fs_loader = FileSystemLoader(search_paths)
 
+def render_template(template_path: Path | str, overrides: dict | None = None, relative_to: Path = PROMPTS_DIR, **context):
+    fs_loader, template_name = get_template_loader(template_path, relative_to)
     if overrides:
         # Dynamically create block definitions based on dictionary keys with proper escaping
         block_definitions = "\n".join(
@@ -162,6 +167,37 @@ def render_template(template_path: Path | str, overrides: dict | None = None, re
     env.globals["dedent"] = lambda text: textwrap.dedent(text).strip()
     template = env.get_template(template_name)
     return template.render(**context)
+
+
+class BlockNameCollector(NodeVisitor):
+    def __init__(self):
+        self.blocks = []
+
+    def visit_Block(self, node: nodes.Block):
+        self.blocks.append(node.name)
+        # keep traversing in case of nested blocks
+        self.generic_visit(node)
+
+
+_BLOCK_RE = re.compile(
+    r"{%-?\s*block\s+(?P<name>\w+)\s*-?%}(?P<body>.*?){%-?\s*endblock(?:\s+(?P=name))?\s*-?%}",
+    re.DOTALL,
+)
+
+def get_block_names(template_path: Path | str, relative_to: Path = PROMPTS_DIR):
+    env = Environment()
+    parsed = env.parse(Path(template_path).read_text())
+    collector = BlockNameCollector()
+    collector.visit(parsed)
+    return list(collector.blocks)
+
+
+def extract_block_source(template_path: Path | str, block_name: str, relative_to: Path = PROMPTS_DIR):
+    src = Path(template_path).read_text(encoding='utf-8')
+    for m in _BLOCK_RE.finditer(src):
+        if m.group("name") == block_name:
+            return m.group("body").strip()
+    raise KeyError(f"Block '{block_name}' not found in {template_path!r}.")
 
 
 def warn_on_unused_variables(string, kwargs, prompt_label):
