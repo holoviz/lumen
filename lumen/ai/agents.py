@@ -20,7 +20,7 @@ from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
 from ..base import Component
-from ..dashboard import Config
+from ..dashboard import Config, load_yaml
 from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource, Source
 from ..state import state
@@ -50,9 +50,7 @@ from .utils import (
     get_root_exception, get_schema, load_json, log_debug, report_error,
     retry_llm_output, set_nested, stream_details,
 )
-from .views import (
-    AnalysisOutput, LumenOutput, SQLOutput, VegaLiteOutput,
-)
+from .views import AnalysisOutput, LumenOutput, VegaLiteOutput
 
 
 class Agent(Viewer, ToolUser, ContextProvider):
@@ -696,10 +694,9 @@ class SQLAgent(LumenBaseAgent):
 
     _extensions = ("codeeditor", "tabulator")
 
-    _output_type = SQLOutput
+    _output_type = LumenOutput
 
     def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
-        from ..dashboard import load_yaml
         spec = load_yaml(event.new)
         table = spec["table"]
         source = spec["source"]
@@ -1164,7 +1161,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
 
     _extensions = ("codeeditor", "tabulator")
 
-    _output_type = SQLOutput
+    _output_type = LumenOutput
 
     def __init__(self, source: Source, **params):
         super().__init__(source=source, **params)
@@ -1291,7 +1288,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
             self._memory["__error__"] = str(e)
             return None
 
-        self._render_lumen(pipeline, spec=sql_query, messages=messages, title=step_title)
+        self._render_lumen(pipeline, messages=messages, title=step_title)
         return pipeline
 
 
