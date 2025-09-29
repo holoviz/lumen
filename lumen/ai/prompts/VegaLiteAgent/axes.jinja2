@@ -1,0 +1,55 @@
+{% extends 'BaseViewAgent/main.jinja2' %}
+
+{% block instructions %}
+Add proper axis titles and formatting to this Vega-Lite spec.
+
+Current spec:
+```yaml
+{{ current_spec }}
+```
+
+Add ONLY axis-related improvements:
+- Proper axis titles and labels
+- Number formatting (format: .Nf for N decimal places, '~s' for SI units)
+- Sorting for categorical variables (use `sort: -y` or `sort: y` on the value field)
+- Axis styling for maximum readability:
+  - labelFontSize: 16
+  - grid: true with gridDash: [3, 3], gridOpacity: 0.5
+  - domain: false, ticks: false for categorical axes
+  - tickCount: 6 for quantitative axes
+- Hide axis titles when direct labels will be used (title: null)
+- NO colors, tooltips, or chart titles yet
+
+Return only the changes needed in YAML format.
+
+# FORMATTING EXAMPLES
+Quantitative axis with SI formatting:
+```yaml
+encoding:
+  x:
+    field: value
+    type: quantitative
+    title: null
+    axis: 
+      labelFontSize: 16
+      grid: true
+      gridDash: [3, 3]
+      gridOpacity: 0.5
+      format: '~s'
+      tickCount: 6
+```
+
+Categorical axis with sorting:
+```yaml
+encoding:
+  y:
+    field: category
+    type: ordinal
+    title: null
+    sort: -x  # Sort by the x value field
+    axis:
+      labelFontSize: 16
+      domain: false
+      ticks: false
+```
+{% endblock %}

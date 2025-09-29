@@ -1,0 +1,59 @@
+{% extends 'BaseViewAgent/main.jinja2' %}
+
+{% block instructions %}
+Add color conditions and interactive tooltips to this Vega-Lite spec.
+
+Current spec:
+```yaml
+{{ current_spec }}
+```
+
+Add ONLY interactivity and emphasis:
+- Conditional coloring to highlight insights (use emphasis color #8b0000)
+- Include tooltips by default for all relevant fields
+- Value labels if appropriate (via layered text marks)
+- Use muted color palette (grays, neutrals) with selective emphasis colors
+- At least one color condition to highlight interesting data points
+- Handle dense data: use opacity, bin, jitter, or aggregate as needed
+- NO chart titles or global styling yet
+
+Return only the changes needed in YAML format.
+
+# COLOR AND TOOLTIP EXAMPLES
+Conditional coloring with tooltips:
+```yaml
+encoding:
+  color:
+    condition: 
+      test: "datum.category === 'HIGHLIGHT'"
+      value: "#8b0000"  # Emphasis color for outliers/important data
+    value: "#d3d3d3"     # Muted default color
+  tooltip:
+    - {field: category, type: ordinal, title: "Category"}
+    - {field: value, type: quantitative, title: "Value", format: ".0f"}
+```
+
+Layered text labels:
+```yaml
+layer:
+  - mark: bar
+    encoding: # ... bar encoding
+  - mark: 
+      type: text
+      align: left
+      dx: 5
+      fontSize: 16
+    encoding:
+      text: {field: value, type: quantitative, format: ".0f"}
+      x: {field: value, type: quantitative}
+      y: {field: category, type: ordinal}
+      color: {value: "#666666"}
+```
+
+# DENSITY HANDLING
+For dense data, consider:
+- opacity: 0.7 for overlapping points
+- bin: true for continuous variables
+- aggregate for summarization
+- jitter for categorical spread
+{% endblock %}

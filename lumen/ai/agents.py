@@ -39,7 +39,7 @@ from .memory import _Memory
 from .models import (
     DbtslQueryParams, DiscoveryQueries, DiscoverySufficiency, DistinctQuery,
     PartialBaseModel, QueryCompletionValidation, RetrySpec, SampleQuery,
-    SqlQuery, VegaLiteSpec, make_sql_model,
+    SqlQuery, VegaLiteBasicSpec, VegaLiteSpecUpdate, make_sql_model,
 )
 from .schemas import get_metaset
 from .services import DbtslMixin
@@ -1510,7 +1510,10 @@ class VegaLiteAgent(BaseViewAgent):
 
     prompts = param.Dict(
         default={
-            "main": {"response_model": VegaLiteSpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"},
+            "main": {"response_model": VegaLiteBasicSpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"},
+            "axes": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "axes.jinja2"},
+            "labels": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "labels.jinja2"},
+            "polish": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "polish.jinja2"},
             "retry_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "retry_output.jinja2"},
         }
     )
@@ -1522,6 +1525,55 @@ class VegaLiteAgent(BaseViewAgent):
     _output_type = VegaLiteOutput
 
     _retry_target_keys = ["spec"]
+
+    def _deep_merge_dicts(self, base_dict: dict[str, Any], update_dict: dict[str, Any]) -> dict[str, Any]:
+        """Deep merge two dictionaries, with update_dict taking precedence."""
+        result = base_dict.copy()
+        for key, value in update_dict.items():
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                result[key] = self._deep_merge_dicts(result[key], value)
+            else:
+                result[key] = value
+        return result
+
+    async def _update_spec_step(
+        self,
+        step_name: str,
+        step_desc: str,
+        current_spec: dict[str, Any],
+        prompt_name: str,
+        messages: list[Message],
+        doc: str | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Update a Vega-Lite spec with incremental changes for a specific step."""
+        with self.interface.param.update(callback_exception="raise"), self._add_step(title=step_desc, steps_layout=self._steps_layout) as step:
+            system_prompt = await self._render_prompt(
+                prompt_name,
+                messages,
+                current_spec=yaml.dump(current_spec, default_flow_style=False),
+                doc=doc,
+                table=self._memory["pipeline"].table
+            )
+
+            model_spec = self.prompts.get(prompt_name, {}).get("llm_spec", self.llm_spec_key)
+            result = await self.llm.invoke(
+                messages=messages,
+                system=system_prompt,
+                response_model=VegaLiteSpecUpdate,
+                model_spec=model_spec,
+            )
+
+            step.stream(f"Reasoning: {result.chain_of_thought}")
+            step.stream(f"Update:\n```yaml\n{result.yaml_update}\n```", replace=False)
+
+            update_dict = yaml.safe_load(result.yaml_update)
+
+            # Validate the update by attempting to merge and extract
+            test_spec = self._deep_merge_dicts(current_spec, update_dict)
+            await self._extract_spec({"yaml_spec": yaml.dump(test_spec)})  # Validation
+
+            step.success_title = f"{step_name} completed"
+            return step_name, update_dict
 
     async def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
         try:
@@ -1658,6 +1710,82 @@ class VegaLiteAgent(BaseViewAgent):
             # because those result in an blank plot without error
             vega_spec["params"] = [{"bind": "scales", "name": "grid", "select": "interval"}]
         return {"spec": vega_spec, "sizing_mode": "stretch_both", "min_height": 300, "max_width": 1200}
+
+    async def respond(
+        self,
+        messages: list[Message],
+        step_title: str | None = None,
+    ) -> Any:
+        """
+        Generates a VegaLite visualization using progressive building approach with real-time updates.
+        """
+        pipeline = self._memory.get("pipeline")
+        if not pipeline:
+            raise ValueError("No current pipeline found in memory.")
+
+        schema = await get_schema(pipeline)
+        if not schema:
+            raise ValueError("Failed to retrieve schema for the current pipeline.")
+
+        # Step 1: Generate basic spec
+        with self._add_step(title="Creating basic plot structure", steps_layout=self._steps_layout) as step:
+            doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
+
+            system_prompt = await self._render_prompt(
+                "main",
+                messages,
+                table=pipeline.table,
+                doc=doc,
+            )
+            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
+
+            response = self.llm.stream(
+                messages,
+                system=system_prompt,
+                model_spec=model_spec,
+                response_model=VegaLiteBasicSpec,
+            )
+
+            async for output in response:
+                step.stream(output.chain_of_thought, replace=True)
+
+            # Validate basic spec
+            current_spec = await self._extract_spec({"yaml_spec": output.yaml_spec})
+            step.success_title = "Basic plot structure created"
+
+        # Step 2: Show basic plot immediately - users see it right away!
+        self._memory["view"] = dict(current_spec, type=self.view_type)
+        view = self.view_type(pipeline=pipeline, **current_spec)
+        # Render the basic plot - this creates the 'out' object we can update
+        out = self._render_lumen(view, messages=messages, title=step_title)
+
+        # Steps 3-5: Run enhancements in parallel and update visualization in real-time
+        parallel_steps = {
+            "axes": "Adding axis formatting and titles",
+            # "labels": "Adding colors and tooltips",
+            # "polish": "Adding titles and styling",
+        }
+
+        # Create tasks for parallel execution
+        tasks = []
+        for step_name, step_desc in parallel_steps.items():
+            task = asyncio.create_task(
+                self._update_spec_step(step_name, step_desc, current_spec, step_name, messages, doc=doc)
+            )
+            tasks.append(task)
+
+        for completed_task in asyncio.as_completed(tasks):
+            step_name, update_dict = await completed_task
+            full_spec = yaml.safe_load(out.spec)
+            full_spec["spec"] = self._deep_merge_dicts(full_spec["spec"], update_dict)
+            out.spec = yaml.dump(full_spec)
+            log_debug(f"📊 Applied {step_name} updates and refreshed visualization")
+
+        # Update final memory state
+        final_vega_spec = await self._extract_spec({"yaml_spec": yaml.dump(current_spec)})
+        self._memory["view"] = dict(final_vega_spec, type=self.view_type)
+
+        return view
 
 
 class AnalysisAgent(LumenBaseAgent):

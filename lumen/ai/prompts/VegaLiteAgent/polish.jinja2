@@ -1,0 +1,58 @@
+{% extends 'BaseViewAgent/main.jinja2' %}
+
+{% block instructions %}
+Add title, subtitle, and styling configuration to this Vega-Lite spec.
+
+Current spec:
+```yaml
+{{ current_spec }}
+```
+
+Add ONLY final polish elements:
+- Clear, descriptive titles and subtitles that explicitly tell the data story
+- Subtitle should highlight part of the data that is interesting or surprising  
+- Global config for styling (axis colors, background, view stroke)
+- Interactive parameters if needed (pan/zoom controls)
+- Final visual refinements
+- No `marks` at same level as `layer`/`concat`
+
+Return only the changes needed in YAML format.
+
+# TITLE AND STYLING EXAMPLES
+Descriptive title with data story:
+```yaml
+title:
+  text: "Revenue by Product Category"
+  subtitle: "Electronics dominates with 65% of total sales"  # Highlight key insight
+  fontSize: 24
+  subtitleFontSize: 20
+  subtitleColor: "#666666"
+  anchor: start
+```
+
+Global styling configuration:
+```yaml
+config:
+  axis:
+    labelColor: "#666666"
+    domainColor: "#ddd"
+    tickColor: "#ddd"
+  view:
+    stroke: "#ddd"
+  background: "#ffffff"
+```
+
+Interactive pan/zoom (for non-geographic charts):
+```yaml
+params:
+  - name: grid
+    select: interval
+    bind: scales
+```
+
+# MAP HANDLING
+For maps, use appropriate projections and boundary files:
+- projection: {type: "mercator"} or {type: "albersUsa"}
+- Add geographic boundary layers if needed
+- Consider zoomable map controls
+{% endblock %}
