@@ -39,7 +39,7 @@ from .memory import _Memory
 from .models import (
     DbtslQueryParams, DiscoveryQueries, DiscoverySufficiency, DistinctQuery,
     PartialBaseModel, QueryCompletionValidation, RetrySpec, SampleQuery,
-    SqlQuery, VegaLiteBasicSpec, VegaLiteSpecUpdate, make_sql_model,
+    SqlQuery, VegaLiteSpec, VegaLiteSpecUpdate, make_sql_model,
 )
 from .schemas import get_metaset
 from .services import DbtslMixin
@@ -1507,7 +1507,7 @@ class VegaLiteAgent(BaseViewAgent):
 
     prompts = param.Dict(
         default={
-            "main": {"response_model": VegaLiteBasicSpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"},
+            "main": {"response_model": VegaLiteSpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"},
             "color_strategy": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "color_strategy.jinja2"},
             "narrative_titles": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "narrative_titles.jinja2"},
             "interaction_polish": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "interaction_polish.jinja2"},
@@ -1826,7 +1826,7 @@ class VegaLiteAgent(BaseViewAgent):
                 messages,
                 system=system_prompt,
                 model_spec=model_spec,
-                response_model=VegaLiteBasicSpec,
+                response_model=VegaLiteSpec,
             )
 
             async for output in response:
