@@ -19,6 +19,13 @@ How to explore your data with Lumen AI
 Configure Lumen AI to use custom Coordinators, Agents, and LLM providers
 :::
 
+:::{grid-item-card} {octicon}`zap;2em;sd-mr-1` Generating AI-powered Reports
+:link: generating_reports
+:link-type: doc
+
+Declaratively define AI-powered reports with custom actions, data queries and more
+:::
+
 ::::
 
 ```{toctree}

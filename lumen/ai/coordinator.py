@@ -33,7 +33,7 @@ from .logs import ChatLogs
 from .models import (
     RawPlan, Reasoning, ThinkingYesNo, make_agent_model, make_plan_model,
 )
-from .report import Section, Task
+from .report import Section, TaskGroup
 from .tools import (
     IterativeTableLookup, TableLookup, Tool, VectorLookupToolUser,
 )
@@ -68,7 +68,7 @@ class Plan(Section):
                 user_query = msg
                 break
         todos = '\n'.join(
-            f"- [{'x' if idx < i else ' '}] {'<u>' + task.instruction + '</u>' if idx == i else task.instruction}" for idx, task in enumerate(self.subtasks)
+            f"- [{'x' if idx < i else ' '}] {'<u>' + task.instruction + '</u>' if idx == i else task.instruction}" for idx, task in enumerate(self)
         )
         formatted_content = f"User Request: {user_query['content']!r}\n\nComplete the underlined todo:\n{todos}"
         return [
@@ -96,7 +96,10 @@ class Plan(Section):
                 error_outputs = await self._handle_task_execution_error(e, task, step, i)
                 if error_outputs is not None:
                     return error_outputs
-            unprovided = [p for actor in task.subtasks for p in actor.provides if p not in self.memory]
+            if isinstance(task, TaskGroup):
+                unprovided = [p for actor in task for p in actor.provides if p not in self.memory]
+            else:
+                unprovided = []
             if unprovided:
                 step.failed_title = f"{task.title} did not provide {', '.join(unprovided)}. Aborting the plan."
                 raise RuntimeError(f"{task.title} failed to provide declared context.")
@@ -149,12 +152,13 @@ class Plan(Section):
             return
 
         for idx in reversed(range(failed_index)):
-            task = self.subtasks[idx]
+            task = self._tasks[idx]
             # Check if this task provides pipeline or other relevant context
-            for actor in task.subtasks:
-                if hasattr(actor, 'provides'):
-                    if 'pipeline' in actor.provides:
-                        return idx
+            if isinstance(task, TaskGroup):
+                for actor in task:
+                    if hasattr(actor, 'provides'):
+                        if 'pipeline' in actor.provides:
+                            return idx
 
     async def _retry_from_provider(self, provider_index: int, failed_index: int, error_message: str) -> list:
         """
@@ -163,13 +167,13 @@ class Plan(Section):
         outputs = []
         # Create feedback suffix to add to user message
         feedback_suffix = (
-            f"Be mindful of: {self.subtasks[failed_index].title!r}"
+            f"Be mindful of: {self._tasks[failed_index].title!r}"
             f"Previously, it was reported that: {error_message!r}. "
             "Try a different approach."
         )
         # Re-run from the provider onwards
-        for idx in range(provider_index, len(self.subtasks)):
-            task = self.subtasks[idx]
+        for idx in range(provider_index, len(self)):
+            task = self[idx]
             if idx < provider_index:
                 outputs += await self._run_task(idx, task)
                 continue
@@ -189,7 +193,7 @@ class Plan(Section):
                 # Update todos to show retry
                 todos = '\n'.join(
                     f"- [{'x' if tidx < idx else '🔄' if tidx == idx else ' '}] {'<u>' + t.instruction + '</u>' if tidx == idx else t.instruction}"
-                    for tidx, t in enumerate(self.subtasks)
+                    for tidx, t in enumerate(self)
                 )
                 self._coordinator._todos.object = todos
 
@@ -205,7 +209,7 @@ class Plan(Section):
 
     async def execute(self, **kwargs):
         ret = await super().execute(**kwargs)
-        _, todos = self._render_task_history(len(self.subtasks))
+        _, todos = self._render_task_history(len(self))
         self._coordinator._todos.object = todos
         return ret
 
@@ -968,15 +972,15 @@ class DependencyResolver(Coordinator):
                 else:
                     subagent = agents[output.agent_or_tool]
                 tasks.append(
-                    Task(
-                        subtasks=[subagent],
+                    TaskGroup(
+                        subagent,
                         provides=unmet_dependencies,
                         instruction=output.chain_of_thought,
                         title=output.agent_or_tool
                     )
                 )
                 step.success_title = f"Solved a dependency with {output.agent_or_tool}"
-        return Plan(subtasks=tasks[::-1] + [Task(subtasks=[agent], instruction=cot)])
+        return Plan(*(tasks[::-1] + [TaskGroup(agent, instruction=cot)]), history=messages)
 
 
 class Planner(Coordinator):
@@ -1057,10 +1061,10 @@ class Planner(Coordinator):
 
                 tool_name = getattr(tool, "name", type(tool).__name__)
                 step.stream(f"Using {tool_name} to gather planning context...")
-                task = Task(
+                task = TaskGroup(
+                    tool,
                     interface=self.interface,
                     memory=self._memory,
-                    subtasks=[tool],
                     instruction=user_query,
                     title=f"Gathering context with {tool_name}",
                     steps_layout=steps_layout,
@@ -1228,7 +1232,7 @@ class Planner(Coordinator):
             provided |= set(subagent.provides)
             unmet_dependencies = (unmet_dependencies | requires) - provided
             has_table_lookup = any(
-                any(isinstance(st, TableLookup) for st in task.subtasks)
+                any(isinstance(st, TableLookup) for st in task)
                 for task in tasks
             )
             if "table" in unmet_dependencies and not table_provided and "SQLAgent" in agents and has_table_lookup:
@@ -1239,8 +1243,8 @@ class Planner(Coordinator):
                     title='Loading table',
                 )
                 tasks.append(
-                    Task(
-                        subtasks=[agents['SQLAgent']],
+                    TaskGroup(
+                        agents['SQLAgent'],
                         instruction=sql_step.instruction,
                         title=sql_step.title
                     )
@@ -1250,8 +1254,8 @@ class Planner(Coordinator):
                 unmet_dependencies -= provided
                 actors_in_graph.add('SQLAgent')
             tasks.append(
-                Task(
-                    subtasks=[subagent],
+                TaskGroup(
+                    subagent,
                     instruction=step.instruction,
                     title=step.title
                 )
@@ -1260,7 +1264,7 @@ class Planner(Coordinator):
             actors_in_graph.add(key)
 
         last_task = tasks[-1]
-        if isinstance(last_task.subtasks[0], Tool):
+        if isinstance(last_task[0], Tool):
             if "AnalystAgent" in agents and all(r in provided for r in agents["AnalystAgent"].requires):
                 actor = "AnalystAgent"
             else:
@@ -1274,7 +1278,7 @@ class Planner(Coordinator):
                 log_debug(f"Skipping summarization with {actor} due to conflicts: {conflicts}")
                 raw_plan.steps = steps
                 previous_actors = actors
-                return Plan(subtasks=tasks, title=raw_plan.title), unmet_dependencies, previous_actors
+                return Plan(*tasks, title=raw_plan.title, history=messages), unmet_dependencies, previous_actors
 
             summarize_step = type(step)(
                 actor=actor,
@@ -1283,8 +1287,8 @@ class Planner(Coordinator):
             )
             steps.append(summarize_step)
             tasks.append(
-                Task(
-                    subtasks=[agents[actor]],
+                TaskGroup(
+                    agents[actor],
                     instruction=summarize_step.instruction,
                     title=summarize_step.title,
                 )
@@ -1299,8 +1303,8 @@ class Planner(Coordinator):
             )
             steps.append(validation_step)
             tasks.append(
-                Task(
-                    subtasks=[agents["ValidationAgent"]],
+                TaskGroup(
+                    agents["ValidationAgent"],
                     instruction=validation_step.instruction,
                     title=validation_step.title
                 )
@@ -1308,7 +1312,7 @@ class Planner(Coordinator):
             actors_in_graph.add("ValidationAgent")
 
         raw_plan.steps = steps
-        return Plan(subtasks=tasks, title=raw_plan.title), unmet_dependencies, actors
+        return Plan(*tasks, title=raw_plan.title, history=messages), unmet_dependencies, actors
 
     async def _compute_plan(self, messages: list[Message], agents: dict[str, Agent], tools: dict[str, Tool], pre_plan_output: dict[str, Any]) -> Plan:
         tool_names = list(tools)
