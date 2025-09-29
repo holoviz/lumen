@@ -15,7 +15,7 @@ from panel.pane import Markdown
 from lumen.ai.report import (
     Action, Report, Section, SQLQuery, TaskGroup, Typography,
 )
-from lumen.ai.views import SQLOutput
+from lumen.ai.views import LumenOutput
 
 try:
     from lumen.sources.duckdb import DuckDBSource
@@ -213,7 +213,7 @@ async def test_sql_query_action():
 
     assert len(outs) == 1
     out = outs[0]
-    assert isinstance(out, SQLOutput)
+    assert isinstance(out, LumenOutput)
     assert out.spec == action.sql_expr
     assert out.component.data.columns == ['category']
     assert list(out.component.data.category) == ['A', 'B', 'A']
