@@ -42,7 +42,7 @@ from .utils import (
     describe_data, extract_block_source, get_block_names,
     wrap_logfire_on_method,
 )
-from .views import LumenOutput, SQLOutput
+from .views import LumenOutput
 
 
 class Task(Viewer):
@@ -722,7 +722,7 @@ class Action(Task):
 class SQLQuery(Action):
     """
     An `SQLQuery` is an `Action` that executes a SQL expression on a Source
-    and generates an SQLOutput to be rendered.
+    and generates an LumenOutput to be rendered.
     """
 
     generate_caption = param.Boolean(default=True, doc="""
@@ -790,7 +790,7 @@ class SQLQuery(Action):
             self.memory["data"] = await describe_data(pipeline.data)
             self.memory["sql_metaset"] = await get_metaset([source], [self.table])
             self.memory["table"] = self.table
-        out = SQLOutput(component=pipeline, spec=self.sql_expr)
+        out = LumenOutput(component=pipeline)
         outputs = [Typography(f"### {self.title}", variant='h4', margin=(10, 10, 0, 10)), out] if self.title else [out]
         if self.generate_caption:
             caption = await AnalystAgent(llm=self.llm).respond(
