@@ -287,9 +287,6 @@ class TaskGroup(Task):
         outputs = []
         memory = task.memory or self.memory
         messages = list(self.history)
-        if self.instruction:
-            messages.append({"role": "user", "content": self.instruction})
-
         with task.param.update(
             interface=self.interface,
             llm=task.llm or self.llm,
