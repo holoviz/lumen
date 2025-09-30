@@ -5,12 +5,13 @@ import param
 import yaml
 
 from panel.config import config
+from panel.layout import Column, Row
 from panel.pane import Markdown
 from panel.param import ParamRef
 from panel.viewable import Viewer
-from panel.widgets import CodeEditor, LoadingSpinner
+from panel.widgets import CodeEditor
 from panel_material_ui import (
-    Alert, Button, Checkbox, Column, IconButton, Row, Tabs,
+    Alert, Button, Checkbox, CircularProgress, IconButton, Tabs,
 )
 from param.parameterized import discard_events
 
@@ -145,8 +146,8 @@ class LumenOutput(Viewer):
 
     @param.depends('spec', 'active')
     async def render(self):
-        yield LoadingSpinner(
-            value=True, name="Rendering component...", height=50, width=50
+        yield CircularProgress(
+            value=True, label="Rendering component...", height=50, width=50
         )
 
         if self.spec in self._last_output:
@@ -252,8 +253,8 @@ class SQLOutput(LumenOutput):
 
     @param.depends('spec', 'active')
     async def render(self):
-        yield LoadingSpinner(
-            value=True, name="Executing SQL query...", height=50, width=50
+        yield CircularProgress(
+            value=True, label="Executing SQL query...", height=50, width=50
         )
         if self.active != 1:
             return

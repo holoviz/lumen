@@ -231,7 +231,7 @@ async def get_metaset(sources: list[Source], tables: list[str]) -> SQLMetaset:
                 "    <source>{SOURCE_TABLE_SEPARATOR}<table>"
             )
         else:
-            source_name = next(iter(sources))
+            source_name = next(iter(sources)).name
             table_name = table_slug
         source = next((s for s in sources if s.name == source_name), None)
         schema = await get_schema(source, table_name, include_count=True)
