@@ -147,7 +147,8 @@ class VegaLiteSpecUpdate(BaseModel):
         description="Explain what changes you're making to the Vega-Lite spec and why."
     )
     yaml_update: str = Field(
-        description="YAML containing ONLY the changes needed, not the full spec."
+        description="""Partial YAML with ONLY modified properties (unchanged values omitted).
+        Respect your step's scope; don't override previous steps."""
     )
 
 class LineChange(BaseModel):

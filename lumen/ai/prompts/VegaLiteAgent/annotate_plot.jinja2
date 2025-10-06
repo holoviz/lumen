@@ -1,0 +1,97 @@
+{% extends 'VegaLiteAgent/improvement_step.jinja2' %}
+
+{% block instructions %}
+Add meaningful annotations to highlight key insights in the data.
+
+# SCOPE: Data Annotations Only
+Focus on:
+- Text annotations at significant data points (max, min, inflection points)
+- Reference lines (rules) to mark thresholds or averages
+- Callouts for notable patterns or outliers
+
+DO NOT modify:
+- Chart title/subtitle
+- Axis titles or tooltips
+- Color encodings
+- Base mark type
+
+# ANNOTATION STRATEGIES
+Consider adding:
+- Max/min value labels with context
+- Trend change indicators
+- Average or median reference lines
+- Callouts for outliers or interesting patterns
+- Period-based annotations (e.g., "Before 2010" vs "After 2010")
+
+Only add annotations that provide genuine insight, not decoration.
+{% endblock %}
+
+{% block examples %}
+Max value annotation:
+```yaml
+layer:
+- # Original chart layer here
+  mark: line
+  encoding:
+    x: {field: year, type: quantitative}
+    y: {field: value, type: quantitative}
+
+- # Max value annotation
+  mark:
+    type: text
+    fontSize: 16
+    fontWeight: bold
+    align: left
+    dx: 5
+    dy: -10
+  transform:
+  - window:
+    - op: max
+      field: value
+      as: overall_max
+    frame: [null, null]
+  - filter: datum.value == datum.overall_max
+  encoding:
+    text:
+      field: value
+      type: quantitative
+      format: .1f
+    x: {field: year, type: quantitative}
+    y: {field: value, type: quantitative}
+    color: {value: '#2E5090'}
+```
+
+Average reference line:
+```
+- # Average line
+  mark:
+    type: rule
+    strokeDash: [4, 4]
+    strokeWidth: 1.5
+  transform:
+  - aggregate:
+    - op: mean
+      field: value
+      as: avg_value
+  encoding:
+    y: {field: avg_value, type: quantitative}
+    color: {value: '#999'}
+
+- # Average label
+  mark:
+    type: text
+    align: right
+    dx: -5
+    fontSize: 12
+  transform:
+  - aggregate:
+    - op: mean
+      field: value
+      as: avg_value
+  encoding:
+    text: {value: "Average"}
+    x: {value: 0}
+    y: {field: avg_value, type: quantitative}
+    color: {value: '#999'}
+```
+{% endblock %}

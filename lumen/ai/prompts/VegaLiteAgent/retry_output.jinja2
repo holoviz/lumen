@@ -4,37 +4,35 @@
 {{ super() }}
 
 {% if step_name is defined %}
-You are fixing the {{ step_name }} step of progressive Vega-Lite generation.
-
-Current complete spec before your step:
+Fixing {{ step_name }} step. Current spec:
 ```yaml
 {{ current_spec }}
 ```
 
-Focus your fixes specifically on the {{ step_name }} enhancement:
-- axes: Focus on axis formatting, titles, labels, sorting
-- labels: Focus on colors, tooltips, conditional formatting
-- polish: Focus on chart titles, styling, global config
+Step focus:
+- axes: axis formatting, titles, labels, sorting
+- labels: colors, tooltips, conditional formatting
+- polish: chart titles, styling, config
 {% endif %}
 {% endblock %}
 
 {% block instructions %}
 {{ super() }}
 
-- For overlays, keep the data reference at the top level and use encoding inside the layer
-- When fixing partial updates, ensure the YAML structure is valid and mergeable
-- Only return the corrected update portion, not the full spec
+- For overlays: data at top level, encoding in layer
+- Ensure YAML is valid and mergeable
+- Return only the corrected update portion
 {% endblock %}
 
 {%- block examples -%}
-For overlays:
+Overlays:
 ```{{ language }}
 spec:
   data:
     name: <TABLE_NAME>
   layer:
     - encoding:
-      # main data referencing table
+      # main data
     - data:
       # other data
 ```

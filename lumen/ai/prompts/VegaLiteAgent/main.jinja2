@@ -1,7 +1,7 @@
 {% extends 'BaseViewAgent/main.jinja2' %}
 
 {% block instructions %}
-Generate ONLY the basic plot structure for a Vega-Lite specification. Focus on the core elements:
+Generate the basic plot structure with core elements only.
 
 # CORE REQUIREMENTS
 - Use `data: {name: {{ memory['table'] }}}` - never invent data
@@ -9,36 +9,31 @@ Generate ONLY the basic plot structure for a Vega-Lite specification. Focus on t
 - Core mark type (bar, line, point, etc.)
 - Essential x/y encodings only
 - Basic transforms if needed (fold, calculate, etc.)
-- NO titles, colors, tooltips, or styling yet
+- NO titles, colors, tooltips, or styling
 
-# SORTING FOR MEANINGFUL RANKINGS
-For bar charts, ALWAYS sort ordinal categories by their quantitative values to show rankings:
-- Horizontal bars: `y: {field: category_field, type: ordinal, sort: "-x"}`
-- Vertical bars: `x: {field: category_field, type: ordinal, sort: "-y"}`
-This creates clear rankings with highest values at top/left.
+# SORTING FOR RANKINGS
+For bar charts, sort by quantitative values to show rankings:
+- Horizontal: `y: {field: category, type: ordinal, sort: "-x"}`
+- Vertical: `x: {field: category, type: ordinal, sort: "-y"}`
 
-# DATA HANDLING
-- Year ints/floats: (e.g. 2020 or 1984.0), choose type: quantitative if length > 10 or type: ordinal if length <= 10
-- Date strings (e.g. 2020-01-01 or 19840308 14:00): type=temporal with appropriate timeUnit
+# DATA TYPES
+- Year ints/floats: type=quantitative if length>10, else ordinal
+- Date strings: type=temporal with timeUnit
 - Combine date fields: `calculate: datetime(datum.Year, datum.Month-1)`
-
-Focus only on getting the basic data representation correct. This is step 1 of many iterative steps; other steps will add styling, labels, etc.
 {% endblock %}
 
 {% block examples %}
-Basic bar structures with proper sorting:
-
-**Horizontal bars (most common):**
+Basic horizontal bars:
 ```yaml
 data:
   name: <TABLE_NAME>
 mark: bar
 encoding:
   x: {field: value_field, type: quantitative}
-  y: {field: category_field, type: ordinal, sort: "-x"}  # Sort by x-axis descending
+  y: {field: category_field, type: ordinal, sort: "-x"}
 ```
 
-**For large datasets (>20 categories), limit to top performers:**
+Limit large datasets:
 ```yaml
 data:
   name: <TABLE_NAME>
@@ -50,16 +45,6 @@ mark: bar
 encoding:
   x: {field: value_field, type: quantitative}
   y: {field: category_field, type: ordinal, sort: "-x"}
-```
-
-**Vertical bars:**
-```yaml
-data:
-  name: <TABLE_NAME>
-mark: bar
-encoding:
-  x: {field: category_field, type: ordinal, sort: "-y"}  # Sort by y-axis descending
-  y: {field: value_field, type: quantitative}
 ```
 {% endblock %}
 

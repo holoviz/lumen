@@ -1,27 +1,23 @@
 {% extends 'VegaLiteAgent/improvement_step.jinja2' %}
 
 {% block instructions %}
-Add helpful tooltips, axis titles, and ensure responsive, accessible user experience.
+Add helpful tooltips and axis titles for better user experience.
 
-# TASK: Interactive Experience Polish
-Focus on these user experience enhancements:
-- Rich, informative tooltips that provide precise values
-- Clear, human-readable axis titles (not raw field names)
-- Proper formatting for different data types
-- Responsive sizing for different screen sizes
-- Accessibility considerations
+# SCOPE: Interactivity & Axis Labels
+Focus on:
+- encoding.tooltip (array of fields with titles and formatting)
+- encoding.x.title (axis label, not chart title)
+- encoding.y.title (axis label, not chart title)
+- mark.point or mark.tooltip (only if needed for tooltip interactivity)
 
-Output ONLY the interaction and UX-related changes as YAML. Examples:
-- Tooltip with formatted values
-- Axis titles that are human-readable (not raw field names)
-- Responsive sizing if missing
-- Proper field titles in tooltips
-
-Focus on user experience, not visual styling.
+DO NOT modify:
+- Top-level title object (chart title/subtitle)
+- encoding.color
+- mark.type (keep the chart type the same)
 {% endblock %}
 
 {% block examples %}
-Here's how professional charts handle interactivity:
+Bar chart with tooltips:
 ```yaml
 encoding:
   tooltip:
@@ -33,17 +29,39 @@ encoding:
     title: Avg Power Capacity
     type: quantitative
   x:
-    title: "Average Power Capacity (MW)"  # Human-readable title
+    field: avg_pcap
+    type: quantitative
+    title: "Average Power Capacity (MW)"
   y:
-    title: "State"  # Clear axis title
+    field: state
+    type: ordinal
+    title: "State"
 ```
 
-This approach:
-- Rich tooltips: Multiple fields with clear titles
-- Smart formatting: `.2f` for precise decimal values
-- Clear labels: "Avg Power Capacity" instead of raw field name "avg_pcap"
-- Proper types: Explicit ordinal/quantitative for correct formatting
-- Human-readable axis titles: Convert field names to readable titles
+Line chart with tooltips (needs point overlay):
+```yaml
+mark:
+  type: line
+  point: true
+  tooltip: true
+encoding:
+  tooltip:
+  - field: year
+    title: Year
+    type: quantitative
+  - field: value
+    format: .2f
+    title: Value
+    type: quantitative
+  x:
+    field: year
+    type: quantitative
+    title: "Year"
+  y:
+    field: value
+    type: quantitative
+    title: "Value"
+```
 {% endblock %}
 
 {# context and errors are inherited from improvement_step.jinja2 #}

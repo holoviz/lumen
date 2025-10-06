@@ -638,6 +638,7 @@ class LumenBaseAgent(Agent):
         if self.interface is not None:
             message_kwargs = dict(value=out, user=self.user)
             self.interface.stream(replace=True, max_width=self._max_width, **message_kwargs)
+        return out
 
 
 class SQLAgent(LumenBaseAgent):
@@ -1511,6 +1512,7 @@ class VegaLiteAgent(BaseViewAgent):
             "color_strategy": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "color_strategy.jinja2"},
             "narrative_titles": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "narrative_titles.jinja2"},
             "interaction_polish": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "interaction_polish.jinja2"},
+            "annotate_plot": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "annotate_plot.jinja2"},
             "retry_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "retry_output.jinja2"},
         }
     )
@@ -1846,7 +1848,8 @@ class VegaLiteAgent(BaseViewAgent):
         parallel_steps = {
             "color_strategy": "Analyze the data to determine strategic highlighting and color scheme that tells the story",
             "narrative_titles": "Create compelling titles and subtitles that communicate the key insight from this visualization",
-            "interaction_polish": "Add helpful tooltips and ensure responsive, accessible user experience"
+            "interaction_polish": "Add helpful tooltips and ensure responsive, accessible user experience",
+            "annotate_plot": "Add annotations to highlight key data points or trends that support the narrative",
         }
 
         # Create tasks for parallel execution
