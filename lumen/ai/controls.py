@@ -1,7 +1,9 @@
 import asyncio
 import io
+import os
 import pathlib
 import re
+import tempfile
 import zipfile
 
 from urllib.parse import urlparse
@@ -606,10 +608,6 @@ class SourceControls(Viewer):
                 self._error_placeholder.object += f"\nCannot process {table_controls.filename}.{extension}: xarray-sql is not installed."
                 self._error_placeholder.visible = True
                 return 0
-
-            # Save file temporarily and create XArraySource
-            import os
-            import tempfile
 
             # Create temporary file with appropriate extension
             with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{extension}') as tmp:
