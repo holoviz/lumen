@@ -1582,7 +1582,9 @@ class VegaLiteAgent(BaseViewAgent):
 
             if is_append_operation:
                 # Append all update layers as new annotation layers
-                result["layer"] = base_layers + update_layers
+                # Normalize each layer to ensure proper mark structure
+                normalized_updates = [self._normalize_layer_mark(layer.copy()) for layer in update_layers]
+                result["layer"] = base_layers + normalized_updates
             else:
                 # Original merge behavior for updating existing layers
                 merged_layers = []
@@ -1599,7 +1601,7 @@ class VegaLiteAgent(BaseViewAgent):
                         merged_layers.append(merged_layer)
                     else:
                         # New layer added by update
-                        merged_layers.append(update_layer)
+                        merged_layers.append(self._normalize_layer_mark(update_layer.copy()))
 
                 # Keep any remaining base layers not updated
                 merged_layers.extend(base_layers[len(update_layers):])
@@ -1628,89 +1630,29 @@ class VegaLiteAgent(BaseViewAgent):
             return mark
         return None
 
-    def _apply_hardcoded_polish(self, vega_spec: dict) -> dict:
-        """Apply non-negotiable best practices and professional polish"""
+    def _normalize_layer_mark(self, layer: dict) -> dict:
+        """Ensure layer has a properly formatted single mark property.
 
-        # Professional styling config
-        if "config" not in vega_spec:
-            vega_spec["config"] = {}
+        Handles cases where:
+        - Mark appears multiple times (duplicate keys in parsed YAML/dict)
+        - Mark is a string but needs to be an object with 'type'
+        - Layer might have conflicting mark definitions
+        """
+        if "mark" not in layer:
+            return layer
 
-        professional_config = {
-            "axis": {
-                "domainColor": "#ddd",
-                "labelColor": "#666666",
-                "tickColor": "#ddd",
-                "gridOpacity": 0.3,
-                "labelFontSize": 16,
-                "titleFontSize": 18
-            },
-            "background": "#ffffff",
-            "view": {"stroke": "#ddd"}
-        }
-        vega_spec["config"] = self._deep_merge_dicts(vega_spec.get("config", {}), professional_config)
+        mark = layer["mark"]
 
-        # Smart mark defaults based on type
-        if "mark" in vega_spec:
-            mark_defaults = self._get_mark_polish(vega_spec["mark"])
-            if isinstance(vega_spec["mark"], str):
-                vega_spec["mark"] = {"type": vega_spec["mark"], **mark_defaults}
-            elif isinstance(vega_spec["mark"], dict):
-                vega_spec["mark"] = self._deep_merge_dicts(mark_defaults, vega_spec["mark"])
+        # If mark is a string, convert to object with type
+        if isinstance(mark, str):
+            layer["mark"] = {"type": mark}
+        # If mark is a dict, ensure it has 'type'
+        elif isinstance(mark, dict) and "type" not in mark:
+            # Malformed mark without type - try to infer or leave as-is
+            # This shouldn't happen in valid Vega-Lite specs
+            pass
 
-        # Smart axis formatting
-        if "encoding" in vega_spec:
-            self._apply_axis_defaults(vega_spec["encoding"])
-
-        return vega_spec
-
-    def _get_mark_polish(self, mark_type: str | dict) -> dict:
-        """Get professional polish for different mark types"""
-        mark_name = mark_type if isinstance(mark_type, str) else mark_type.get("type", "")
-
-        defaults = {
-            "bar": {"opacity": 0.75},
-            "line": {"strokeWidth": 2},
-            "point": {"size": 60, "opacity": 0.8},
-            "area": {"opacity": 0.7},
-            "circle": {"opacity": 0.8}
-        }
-        return defaults.get(mark_name, {"opacity": 0.8})
-
-    def _apply_axis_defaults(self, encoding: dict) -> None:
-        """Apply smart axis formatting defaults"""
-        for axis_name in ["x", "y"]:
-            if axis_name in encoding and isinstance(encoding[axis_name], dict):
-                enc = encoding[axis_name]
-
-                # Initialize axis if it doesn't exist
-                if "axis" not in enc:
-                    enc["axis"] = {}
-
-                # Apply type-specific formatting
-                if enc.get("type") == "quantitative":
-                    # Only apply numeric formatting to quantitative axes
-                    quantitative_defaults = {
-                        "grid": True,
-                        "labelFontSize": 16,
-                        "titleFontSize": 18
-                    }
-                    # Only add properties that don't already exist
-                    for key, value in quantitative_defaults.items():
-                        if key not in enc["axis"]:
-                            enc["axis"][key] = value
-
-                elif enc.get("type") == "ordinal":
-                    # Only apply string/categorical formatting to ordinal axes
-                    ordinal_defaults = {
-                        "labelLimit": 100,
-                        "labelFontSize": 16,
-                        "titleFontSize": 18
-                        # NO format or grid for ordinal axes
-                    }
-                    # Only add properties that don't already exist
-                    for key, value in ordinal_defaults.items():
-                        if key not in enc["axis"]:
-                            enc["axis"][key] = value
+        return layer
 
     async def _update_spec_step(
         self,
@@ -1848,7 +1790,6 @@ class VegaLiteAgent(BaseViewAgent):
                 step.stream(output.chain_of_thought, replace=True)
 
             current_spec = await self._extract_spec({"yaml_spec": output.yaml_spec})
-            current_spec["spec"] = self._apply_hardcoded_polish(current_spec["spec"])
             step.success_title = "Complete visualization with titles and colors created"
         return current_spec
 

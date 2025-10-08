@@ -1,27 +1,9 @@
 {% extends 'LumenBaseAgent/retry_output.jinja2' %}
 
-{% block context %}
-{{ super() }}
-
-{% if step_name is defined %}
-Fixing {{ step_name }} step. Current spec:
-```yaml
-{{ current_spec }}
-```
-
-Step focus:
-- axes: axis formatting, titles, labels, sorting
-- labels: colors, tooltips, conditional formatting
-- polish: chart titles, styling, config
-{% endif %}
-{% endblock %}
-
 {% block instructions %}
 {{ super() }}
 
 - For overlays: data at top level, encoding in layer
-- Ensure YAML is valid and mergeable
-- Return only the corrected update portion
 {% endblock %}
 
 {%- block examples -%}
@@ -31,7 +13,6 @@ Step focus:
 {{ example }}
 {% endfor %}
 {% endif %}
-
 Overlays:
 ```{{ language }}
 spec:
