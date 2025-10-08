@@ -87,19 +87,19 @@ class DuckDBSource(BaseSQLSource):
         # Process tables to handle automatic file detection
         if isinstance(self.tables, dict):
             processed_tables = {}
-            file_based_tables = {}
+            self._file_based_tables = {}
             sql_based_tables = {}
 
             # First pass: separate file paths from SQL expressions
             for table_name, table_expr in self.tables.items():
                 if isinstance(table_expr, str) and self._is_file_path(table_expr):
                     table_name = re.sub(r'\W+', '_', table_name)
-                    file_based_tables[table_name] = table_expr
+                    self._file_based_tables[table_name] = table_expr
                 else:
                     sql_based_tables[table_name] = table_expr
 
             # Second pass: create views for file-based tables
-            for table_name, file_path in file_based_tables.items():
+            for table_name, file_path in self._file_based_tables.items():
                 # Auto-detect file type and create appropriate view
                 read_expr = self._create_file_read_expr(file_path)
                 # Quote table name to handle special characters
@@ -377,6 +377,10 @@ class DuckDBSource(BaseSQLSource):
                     raise e
             finally:
                 cursor.close()
+
+        # keep references of the original file-based tables so views can be recreated
+        source.tables.update(**{table: self._file_based_tables[table] for table in self._file_based_tables if table not in tables})
+        source._file_based_tables.update(self._file_based_tables)
         return source
 
     def execute(self, sql_query: str, *args, **kwargs):
