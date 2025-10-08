@@ -8,6 +8,7 @@ Add helpful tooltips and axis titles for better user experience.
 Focus on:
 - encoding.tooltip (array of fields with titles and formatting)
 - mark.point or mark.tooltip (only if needed for tooltip interactivity)
+- mark.fontSize for larger, more readable tooltips
 
 CRITICAL: The spec uses layers. When updating a layer, you MUST include both `mark` and `encoding`.
 Even if only adding tooltips, copy the existing mark. Each layer requires both properties.
@@ -29,6 +30,9 @@ layer:
         format: .2f
         title: Avg Power Capacity
         type: quantitative
+config:
+  mark:
+    fontSize: 14  # Larger tooltip font size
 ```
 
 Line chart with tooltips (in layered spec):
@@ -49,5 +53,8 @@ layer:
         format: .2f
         title: Value
         type: quantitative
+config:
+  mark:
+    fontSize: 14  # Larger tooltip font size
 ```
 {% endblock %}

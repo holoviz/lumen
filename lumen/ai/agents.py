@@ -30,8 +30,9 @@ from ..views import (
 )
 from .actor import ContextProvider
 from .config import (
-    PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, VEGA_MAP_LAYER,
-    VEGA_ZOOMABLE_MAP_ITEMS, MissingContextError, RetriesExceededError,
+    PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, VEGA_LITE_EXAMPLES_OPENAI_DB_PATH,
+    VEGA_MAP_LAYER, VEGA_ZOOMABLE_MAP_ITEMS, MissingContextError,
+    RetriesExceededError,
 )
 from .controls import RetryControls, SourceControls
 from .llm import Llm, Message
@@ -50,6 +51,7 @@ from .utils import (
     get_root_exception, get_schema, load_json, log_debug, report_error,
     retry_llm_output, set_nested, stream_details,
 )
+from .vector_store import DuckDBVectorStore
 from .views import AnalysisOutput, LumenOutput, VegaLiteOutput
 
 
@@ -1515,6 +1517,10 @@ class VegaLiteAgent(BaseViewAgent):
         }
     )
 
+    vector_store_path = param.Path(
+        default=VEGA_LITE_EXAMPLES_OPENAI_DB_PATH,
+        doc="Path to the vector store database for retrieving Vega-Lite examples.",)
+
     view_type = VegaLiteView
 
     _extensions = ("vega",)
@@ -1523,6 +1529,16 @@ class VegaLiteAgent(BaseViewAgent):
 
     _retry_target_keys = ["spec"]
 
+    def __init__(self, **params):
+        self._vector_store: DuckDBVectorStore | None = None
+        super().__init__(**params)
+
+    def _get_vector_store(self):
+        """Get or initialize the vector store (lazy initialization)."""
+        if self._vector_store is None and self.vector_store_path.exists():
+            self._vector_store = DuckDBVectorStore(uri=str(self.vector_store_path))
+        return self._vector_store
+
     def _deep_merge_dicts(self, base_dict: dict[str, Any], update_dict: dict[str, Any]) -> dict[str, Any]:
         """Deep merge two dictionaries, with update_dict taking precedence.
 
@@ -1530,6 +1546,9 @@ class VegaLiteAgent(BaseViewAgent):
         - If update_dict contains 'layer', remove top-level 'mark' and 'encoding'
         - When merging layers, ensure each layer has both 'mark' and 'encoding'
         """
+        if not update_dict:
+            return base_dict
+
         result = base_dict.copy()
 
         # Special handling for layer arrays
@@ -1703,12 +1722,37 @@ class VegaLiteAgent(BaseViewAgent):
         memory["view"] = dict(spec, type=self.view_type)
 
     def _standardize_to_layers(self, vega_spec: dict) -> None:
-        """Standardize vega spec by migrating to layer format."""
-        if "layer" not in vega_spec:
+        """Standardize vega spec by migrating to layer format if not already layered."""
+        # Skip if already has layers or is a special type (repeat, facet, concat)
+        if "layer" in vega_spec or any(k in vega_spec for k in ["repeat", "facet", "hconcat", "vconcat", "concat"]):
+            return
+
+        # Only convert simple specs with mark + encoding
+        if "mark" in vega_spec and "encoding" in vega_spec:
             vega_spec["layer"] = [{
-                "encoding": vega_spec.pop("encoding", None),
-                "mark": vega_spec.pop("mark", None)
+                "mark": vega_spec.pop("mark"),
+                "encoding": vega_spec.pop("encoding")
             }]
+
+    def _standardize_doc_example(self, example_text: str) -> str:
+        """Convert a documentation example to use layer format.
+
+        Takes a text string containing YAML spec and returns the standardized version.
+        Handles both inline specs and full example text with descriptions.
+        """
+        try:
+            # Try to parse as YAML
+            spec = yaml.safe_load(example_text)
+            if isinstance(spec, dict) and "$schema" in spec:
+                # This is a vega-lite spec, standardize it
+                self._standardize_to_layers(spec)
+                return yaml.dump(spec, default_flow_style=False)
+            else:
+                # Not a spec, return as-is
+                return example_text
+        except Exception:
+            # If parsing fails, return original
+            return example_text
 
     def _add_zoom_params(self, vega_spec: dict) -> None:
         """Add zoom parameters to vega spec."""
@@ -1851,6 +1895,21 @@ class VegaLiteAgent(BaseViewAgent):
         if not schema:
             raise ValueError("Failed to retrieve schema for the current pipeline.")
 
+        # Query vector store for relevant examples
+        doc_examples = []
+        vector_store = self._get_vector_store()
+        if vector_store and messages:
+            user_query = messages[-1].get("content", "") if messages[-1].get("role") == "user" else ""
+            if user_query:
+                doc_results = await vector_store.query(user_query, top_k=2)
+                # Extract text and specs from results
+                for result in doc_results:
+                    if "metadata" in result and "spec" in result["metadata"]:
+                        # Include the text description/title before the spec
+                        text_description = result.get("text", "")
+                        spec = self._standardize_doc_example(result["metadata"]["spec"])
+                        doc_examples.append(f"{text_description}\n{spec}")
+
         # Step 1: Generate basic spec
         with self._add_step(title="Creating basic plot structure", steps_layout=self._steps_layout) as step:
             doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
@@ -1860,6 +1919,7 @@ class VegaLiteAgent(BaseViewAgent):
                 messages,
                 table=pipeline.table,
                 doc=doc,
+                doc_examples=doc_examples,
             )
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
 
@@ -1886,7 +1946,7 @@ class VegaLiteAgent(BaseViewAgent):
         # Step 3: Parallel enhancements (LLM-driven creative decisions)
         parallel_steps = {
             "interaction_polish": "Add helpful tooltips and ensure responsive, accessible user experience",
-            "annotate_plot": "Add annotations to highlight key data points or trends that support the narrative",
+            # "annotate_plot": "Add annotations to highlight key data points or trends that support the narrative",
         }
 
         # Create tasks for parallel execution

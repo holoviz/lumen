@@ -54,6 +54,9 @@ DEMO_MESSAGES = [
 
 DEFAULT_EMBEDDINGS_PATH = Path("embeddings")
 
+VEGA_LITE_EXAMPLES_OPENAI_DB_PATH = THIS_DIR / "data" / "vega_lite_examples_openai.db"
+VEGA_LITE_EXAMPLES_NUMPY_DB_PATH = THIS_DIR / "data" / "vega_lite_examples_numpy.db"
+
 UNRECOVERABLE_ERRORS = (
     ImportError,
     LlmSetupError,

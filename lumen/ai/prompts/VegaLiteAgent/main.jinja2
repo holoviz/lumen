@@ -29,13 +29,6 @@ Use conditional color to highlight:
 - Meaningful thresholds (goals, benchmarks, policy changes)
 - Time periods that match your subtitle ("after 2020" → highlight post-2020)
 
-DO NOT use conditional color:
-- For simple trends (single-color line is clearer)
-- With arbitrary thresholds (no random cutoffs like > 200)
-- When position/size already shows the pattern
-
-Color must align with your subtitle - highlight what you mention.
-
 Color palette:
 - Highlight color: '#c0392b' (dark red) for emphasis
 - Neutral/de-emphasized: '#bdc3c7' (light gray)
@@ -48,11 +41,6 @@ Create compelling chart titles that communicate key insights:
 - Include a subtitle that highlights the key finding or insight from the data
 - Use proper title formatting with fontSize, anchor, and subtitle styling
 - Titles should be specific to the data, not generic descriptions
-
-Examples of purposeful color conditions:
-- `condition: {test: "datum.category === 'Top Category'", value: "#c0392b"}` - highlights the leader
-- `condition: {test: "datum.year >= 2020", value: "#c0392b"}` - highlights post-policy period
-- `condition: {test: "datum.value >= datum.target", value: "#27ae60"}` - highlights meeting goals
 
 Examples of narrative titles:
 ```yaml
@@ -67,80 +55,16 @@ title:
 {% endblock %}
 
 {% block examples %}
-Complete horizontal bar chart with titles and strategic color:
+{% if doc_examples is defined and doc_examples %}
+## Below are examples from documentation
+{% for example in doc_examples %}
 ```yaml
-title:
-  anchor: start
-  fontSize: 20
-  subtitle: "New Mexico leads with highest average capacity"
-  subtitleColor: '#666666'
-  subtitleFontSize: 16
-  text: "Average Wind Turbine Capacity by State"
-data:
-  name: <TABLE_NAME>
-layer:
-  - mark: bar
-    encoding:
-      x: {field: avg_capacity, type: quantitative}
-      y: {field: state, type: ordinal, sort: "-x"}
-      color:
-        condition:
-          test: datum.state === 'NM'  # Highlights leader mentioned in subtitle
-          value: '#c0392b'
-        value: '#bdc3c7'
+{{ example }}
 ```
+{% endfor %}
+{% endif %}
 
-Large dataset with ranking and color scale:
-```yaml
-title:
-  anchor: start
-  fontSize: 24
-  subtitle: "Top 15 countries show significant variation in GDP"
-  subtitleColor: '#666666'
-  subtitleFontSize: 20
-  text: "GDP by Country (Top 15)"
-data:
-  name: <TABLE_NAME>
-transform:
-- window: [{op: "rank", as: "rank"}]
-  sort: [{field: "gdp", order: "descending"}]
-- filter: "datum.rank <= 15"
-layer:
-  - mark: bar
-    encoding:
-      x: {field: gdp, type: quantitative}
-      y: {field: country, type: ordinal, sort: "-x"}
-      color:
-        field: gdp
-        type: quantitative
-        scale:
-          scheme: blues
-```
-
-Time series with highlighting:
-```yaml
-title:
-  anchor: start
-  fontSize: 20
-  subtitle: "Sharp increase observed after 2020"
-  subtitleColor: '#666666'
-  subtitleFontSize: 16
-  text: "Sales Trend Over Time"
-data:
-  name: <TABLE_NAME>
-layer:
-  - mark: line
-    encoding:
-      x: {field: year, type: temporal}
-      y: {field: sales, type: quantitative}
-      color:
-        condition:
-          test: datum.year >= 2020  # Highlights period mentioned in subtitle
-          value: '#c0392b'
-        value: '#3498db'
-```
-
-Simple time series without conditional color:
+Simple time series:
 ```yaml
 title:
   anchor: start
