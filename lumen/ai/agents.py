@@ -1512,8 +1512,10 @@ class VegaLiteAgent(BaseViewAgent):
     )
 
     vector_store_path = param.Path(
+        check_exists=False,
         default=VEGA_LITE_EXAMPLES_OPENAI_DB_PATH,
-        doc="Path to the vector store database for retrieving Vega-Lite examples.",)
+        doc="Path to the vector store database for retrieving Vega-Lite examples."
+    )
 
     view_type = VegaLiteView
 
