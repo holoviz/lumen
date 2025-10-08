@@ -31,6 +31,12 @@ from panel_material_ui import (
 from ..pipeline import Pipeline
 from ..sources import Source
 from ..sources.duckdb import DuckDBSource
+
+try:
+    from ..sources.xarray_sql import XArraySource
+    XARRAY_AVAILABLE = True
+except ImportError:
+    XARRAY_AVAILABLE = False
 from ..transforms.sql import SQLLimit
 from ..util import log
 from .agents import (
@@ -502,7 +508,7 @@ class UI(Viewer):
         elif not isinstance(data, list):
             data = [data]
         sources = []
-        mirrors, tables = {}, {}
+        mirrors, tables, xarray_tables = {}, {}, {}
         remote = False
         for src in data:
             if isinstance(src, Source):
@@ -518,12 +524,18 @@ class UI(Viewer):
                 if src.startswith('http'):
                     remote = True
                 if src.endswith(('.parq', '.parquet', '.csv', '.json', '.tsv', '.jsonl', '.ndjson')):
-                    table = src
+                    tables[name] = src
+                elif src.endswith(('.nc', '.zarr')):
+                    if not XARRAY_AVAILABLE:
+                        raise ValueError(
+                            f"Cannot load {src}: xarray-sql is not installed. "
+                            "Install it with: pip install xarray-sql"
+                        )
+                    xarray_tables[name.split(".")[0]] = src
                 else:
                     raise ValueError(
                         f"Could not determine how to load {src} file."
                     )
-                tables[name] = table
         if tables or mirrors:
             initializers = ["INSTALL httpfs;", "LOAD httpfs;"] if remote else []
             source = DuckDBSource(
@@ -534,6 +546,16 @@ class UI(Viewer):
                 uri=':memory:'
             )
             sources.append(source)
+
+        if xarray_tables:
+            # Create XArraySource for NetCDF and Zarr files
+            xarray_source = XArraySource(
+                tables=xarray_tables,
+                chunks={'time': 24},  # Default chunking, can be customized
+                name=f'{PROVIDED_SOURCE_NAME}_xarray'
+            )
+            sources.append(xarray_source)
+
         memory["sources"] = sources
 
     def show(self, **kwargs):

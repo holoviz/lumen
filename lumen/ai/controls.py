@@ -1,7 +1,9 @@
 import asyncio
 import io
+import os
 import pathlib
 import re
+import tempfile
 import zipfile
 
 from urllib.parse import urlparse
@@ -22,7 +24,13 @@ from ..sources.duckdb import DuckDBSource
 from ..util import detect_file_encoding
 from .memory import _Memory, memory
 
-TABLE_EXTENSIONS = ("csv", "parquet", "parq", "json", "xlsx", "geojson", "wkt", "zip")
+try:
+    from ..sources.xarray_sql import XArraySource
+    XARRAY_AVAILABLE = True
+except ImportError:
+    XARRAY_AVAILABLE = False
+
+TABLE_EXTENSIONS = ("csv", "parquet", "parq", "json", "xlsx", "geojson", "wkt", "zip", "nc", "zarr")
 
 # Download configuration constants
 class DownloadConfig:
@@ -594,6 +602,51 @@ class SourceControls(Viewer):
             conn.execute(init[0])
             cols = ', '.join(f'"{c}"' for c in df.columns if c != 'geometry')
             conversion = f'CREATE TEMP TABLE {table} AS SELECT {cols}, ST_GeomFromWKB(geometry) as geometry FROM {table}_temp'
+        elif extension.endswith(('nc', 'zarr')):
+            # Handle NetCDF and Zarr files with XArraySource
+            if not XARRAY_AVAILABLE:
+                self._error_placeholder.object += f"\nCannot process {table_controls.filename}.{extension}: xarray-sql is not installed."
+                self._error_placeholder.visible = True
+                return 0
+
+            # Create temporary file with appropriate extension
+            with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{extension}') as tmp:
+                file.seek(0)
+                tmp.write(file.read())
+                tmp_path = tmp.name
+
+            try:
+                # Create XArraySource for this file
+                xarray_source = XArraySource(
+                    tables={table: tmp_path},
+                    chunks={'time': 24},  # Default chunking
+                    name=f'XArraySource_{table}'
+                )
+
+                # Add to memory sources
+                if 'sources' in self._memory:
+                    # Check if source already exists
+                    existing_sources = self._memory['sources']
+                    # Remove any existing source with the same table name
+                    self._memory['sources'] = [
+                        s for s in existing_sources
+                        if not (isinstance(s, XArraySource) and table in s.get_tables())
+                    ]
+                    self._memory['sources'].append(xarray_source)
+                else:
+                    self._memory['sources'] = [xarray_source]
+
+                self._memory['source'] = xarray_source
+                self._memory['table'] = table
+                self._last_table = table
+                return 1
+            except Exception as e:
+                self._error_placeholder.object += f"\nCould not load {table_controls.filename}.{extension}: {e}"
+                self._error_placeholder.visible = True
+                # Clean up temp file on error
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                return 0
         else:
             self._error_placeholder.object += f"\nCould not convert {table_controls.filename}.{extension}."
             self._error_placeholder.visible = True
