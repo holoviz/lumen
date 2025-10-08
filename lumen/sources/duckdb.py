@@ -380,6 +380,7 @@ class DuckDBSource(BaseSQLSource):
 
         # keep references of the original file-based tables so views can be recreated
         source.tables.update(**{table: self._file_based_tables[table] for table in self._file_based_tables if table not in tables})
+        source._file_based_tables.update(self._file_based_tables)
         return source
 
     def execute(self, sql_query: str, *args, **kwargs):
