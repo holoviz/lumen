@@ -25,6 +25,13 @@ Step focus:
 {% endblock %}
 
 {%- block examples -%}
+# EXAMPLES
+{% if doc_examples is defined and doc_examples %}
+{% for example in doc_examples %}
+{{ example }}
+{% endfor %}
+{% endif %}
+
 Overlays:
 ```{{ language }}
 spec:

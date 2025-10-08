@@ -1,66 +1,56 @@
 {% extends 'BaseViewAgent/main.jinja2' %}
 
 {% block instructions %}
-Generate a complete, polished Vega-Lite visualization with strategic color and compelling narrative titles.
+Generate complete, effective Vega-Lite visualizations that clearly communicate data insights.
 
-# CORE REQUIREMENTS
-- Use `data: {name: {{ memory['table'] }}}` - never invent data
-- Use exact column names from source
-- ALWAYS use layer structure - wrap your visualization in a layer array
-- Each layer has its own `mark` and `encoding`
-- Properties like `opacity` go inside mark: `mark: {type: bar, opacity: 0.75}`
-- Basic transforms if needed (fold, calculate, etc.)
+# ESSENTIAL STRUCTURE
 
-# SORTING FOR RANKINGS
-For bar charts, sort by quantitative values to show rankings:
-- Horizontal: `y: {field: category, type: ordinal, sort: "-x"}`
-- Vertical: `x: {field: category, type: ordinal, sort: "-y"}`
+Every visualization must:
+- Use `data: {name: {{ memory['table'] }}}` with exact column names from source
+- Wrap all marks in a `layer` array, each with its own `mark` and `encoding`
+- Focus on ONE primary metric or relationship per chart
+- Include narrative titles that highlight key insights from the data
+- Do not overcrowd the plot with too many data points, especially for bars
 
-# DATA TYPES
-- Year ints/floats: type=quantitative if length>10, else ordinal
-- Date strings: type=temporal with timeUnit
-- Combine date fields: `calculate: datetime(datum.Year, datum.Month-1)`
+# MARK vs ENCODING
 
-# COLOR STRATEGY
-Color is pre-attentive - use it intentionally to guide attention, not arbitrarily.
+This is the most common source of errors. Properties belong in different places:
 
-Use conditional color to highlight:
-- Leaders/outliers in comparisons (top state, best product)
-- Meaningful thresholds (goals, benchmarks, policy changes)
-- Time periods that match your subtitle ("after 2020" → highlight post-2020)
-
-Color palette:
-- Highlight color: '#c0392b' (dark red) for emphasis
-- Neutral/de-emphasized: '#bdc3c7' (light gray)
-- Success/positive: '#27ae60' (green)
-- Primary: '#3498db' (blue)
-
-# NARRATIVE TITLES
-Create compelling chart titles that communicate key insights:
-- Add a descriptive main title that summarizes what the chart shows
-- Include a subtitle that highlights the key finding or insight from the data
-- Use proper title formatting with fontSize, anchor, and subtitle styling
-- Titles should be specific to the data, not generic descriptions
-
-Examples of narrative titles:
+**Mark** (static styling): Position (`dx`, `dy`, `align`, `baseline`) and style (`color`, `opacity`, `fontSize`) go here
 ```yaml
-title:
-  anchor: start
-  fontSize: 20
-  subtitle: "Key insight about the data trend or pattern"
-  subtitleColor: '#666666'
-  subtitleFontSize: 16
-  text: "Descriptive title about what the chart shows"
+mark: {type: text, align: left, dx: 3, color: black}
 ```
+
+**Encoding** (data mappings): Fields and channels (`x`, `y`, `color`, `size`, `text`) go here
+```yaml
+encoding:
+  x: {field: year, type: quantitative}
+  color: {value: 'blue'}  # Static values need {value: ...}
+```
+
+# LEGENDS
+
+Legends appear when you map data to `color`, `size`, or `shape` in encoding.
+
+**Single field**: Map directly
+**Multiple series**: Use `transform` to create a constant field, then map it (never use `datum` in color encoding)
+
+# KEY PATTERNS
+
+**Sort rankings**: `sort: "-x"` (horizontal) or `sort: "-y"` (vertical) on the categorical axis
+
+**Color purposefully**: Encode dimensions, highlight outliers/leaders, or show thresholds. Keep color in `mark` for text labels that shouldn't appear in legends.
+
+**Informative titles**: Main title states what's shown, subtitle reveals the key insight or pattern
+
+**Data types**: Match type to your data - quantitative for continuous, ordinal for ordered categories, nominal for unordered, temporal for dates
 {% endblock %}
 
 {% block examples %}
+# EXAMPLES
 {% if doc_examples is defined and doc_examples %}
-## Below are examples from documentation
 {% for example in doc_examples %}
-```yaml
 {{ example }}
-```
 {% endfor %}
 {% endif %}
 
@@ -79,10 +69,145 @@ layer:
   - mark:
       type: line
       point: true
-      color: <color>
     encoding:
       x: {field: year, type: quantitative}
       y: {field: avg_capacity, type: quantitative}
+```
+
+Ranked bar chart with highlighting:
+```yaml
+title:
+  anchor: start
+  fontSize: 20
+  subtitle: "Texas leads with over 15,000 turbines deployed"
+  subtitleColor: '#666666'
+  subtitleFontSize: 16
+  text: "Wind Turbine Deployment by State"
+data:
+  name: <TABLE_NAME>
+layer:
+  - mark: bar
+    encoding:
+      y:
+        field: state
+        type: nominal
+        sort: "-x"
+        axis:
+          title: "State"
+      x:
+        field: turbine_count
+        type: quantitative
+        axis:
+          title: "Number of Turbines"
+      color:
+        condition:
+          test: "datum.state === 'TX'"
+          value: '#1f77b4'
+        value: '#aec7e8'
+```
+
+Bar chart with legend (single data field):
+```yaml
+title:
+  text: "Sales by Category"
+data:
+  name: <TABLE_NAME>
+layer:
+  - mark: bar
+    encoding:
+      x:
+        field: category
+        type: nominal
+      y:
+        field: sales
+        type: quantitative
+      color:
+        field: category
+        type: nominal
+        legend:
+          title: "Category"
+          orient: "right"
+```
+
+Dual-axis chart with legend (multiple series):
+```yaml
+title:
+  text: "Growth Metrics Over Time"
+data:
+  name: <TABLE_NAME>
+layer:
+  - transform:
+    - calculate: "'Revenue'"
+      as: metric_name
+    mark:
+      type: line
+      point: true
+    encoding:
+      x:
+        field: year
+        type: quantitative
+      y:
+        field: revenue
+        type: quantitative
+        axis:
+          title: "Revenue ($M)"
+      color:
+        field: metric_name
+        type: nominal
+        scale:
+          domain: ["Revenue", "Profit"]
+          range: ['#1f77b4', '#ff7f0e']
+        legend:
+          title: "Metric"
+          orient: "top-right"
+  - transform:
+    - calculate: "'Profit'"
+      as: metric_name
+    mark:
+      type: line
+      point: true
+    encoding:
+      x:
+        field: year
+        type: quantitative
+      y:
+        field: profit
+        type: quantitative
+        axis:
+          title: "Profit ($M)"
+      color:
+        field: metric_name
+        type: nominal
+        scale:
+          domain: ["Revenue", "Profit"]
+          range: ['#1f77b4', '#ff7f0e']
+        legend:
+          title: "Metric"
+          orient: "top-right"
+```
+
+Top 10 bar chart with transform:
+```yaml
+title:
+  text: "Top 10 Cities by Average Fare"
+  subtitle: "Showing highest-cost destinations"
+data:
+  name: <TABLE_NAME>
+transform:
+  - window:
+      - op: row_number
+        as: row_number
+  - filter: datum.row_number <= 10
+layer:
+  - mark: bar
+    encoding:
+      y:
+        field: city
+        type: nominal
+        sort: "-x"
+      x:
+        field: avg_fare
+        type: quantitative
 ```
 {% endblock %}
 

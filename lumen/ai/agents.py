@@ -10,6 +10,7 @@ from typing import Any, ClassVar, Literal
 import pandas as pd
 import panel as pn
 import param
+import requests
 import yaml
 
 from panel.chat import ChatInterface
@@ -30,12 +31,13 @@ from ..views import (
 )
 from .actor import ContextProvider
 from .config import (
-    PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, VEGA_LITE_EXAMPLES_OPENAI_DB_PATH,
-    VEGA_MAP_LAYER, VEGA_ZOOMABLE_MAP_ITEMS, MissingContextError,
-    RetriesExceededError,
+    LUMEN_CACHE_DIR, PROMPTS_DIR, SOURCE_TABLE_SEPARATOR,
+    VECTOR_STORE_ASSETS_URL, VEGA_LITE_EXAMPLES_NUMPY_DB_FILE,
+    VEGA_LITE_EXAMPLES_OPENAI_DB_FILE, VEGA_MAP_LAYER, VEGA_ZOOMABLE_MAP_ITEMS,
+    MissingContextError, RetriesExceededError,
 )
 from .controls import RetryControls, SourceControls
-from .llm import Llm, Message
+from .llm import Llm, Message, OpenAI
 from .memory import _Memory
 from .models import (
     DbtslQueryParams, DiscoveryQueries, DiscoverySufficiency, DistinctQuery,
@@ -702,6 +704,7 @@ class SQLAgent(LumenBaseAgent):
     def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
         memory["sql"] = event.new
 
+    @retry_llm_output()
     async def _generate_sql_queries(
         self, messages: list[Message], dialect: str, step_number: int,
         is_final: bool, context_entries: list[dict] | None,
@@ -1305,15 +1308,7 @@ class BaseViewAgent(LumenBaseAgent):
         self._last_output = None
         super().__init__(**params)
 
-    @retry_llm_output()
-    async def _create_valid_spec(
-        self,
-        messages: list[Message],
-        pipeline: Pipeline,
-        schema: dict[str, Any],
-        step_title: str | None = None,
-        errors: list[str] | None = None,
-    ) -> dict[str, Any]:
+    def _build_errors_context(self, pipeline: Pipeline, errors: list[str] | None) -> dict:
         errors_context = {}
         if errors:
             errors = ("\n".join(f"{i + 1}. {error}" for i, error in enumerate(errors))).strip()
@@ -1338,10 +1333,20 @@ class BaseViewAgent(LumenBaseAgent):
             errors_context = {
                 "errors": errors,
                 "last_output": last_output,
-                "num_errors": len(errors),
                 "columns_context": columns_context,
             }
+        return errors_context
 
+    @retry_llm_output()
+    async def _create_valid_spec(
+        self,
+        messages: list[Message],
+        pipeline: Pipeline,
+        schema: dict[str, Any],
+        step_title: str | None = None,
+        errors: list[str] | None = None,
+    ) -> dict[str, Any]:
+        errors_context = self._build_errors_context(pipeline, errors)
         doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
         system = await self._render_prompt(
             "main",
@@ -1511,11 +1516,10 @@ class VegaLiteAgent(BaseViewAgent):
         }
     )
 
-    vector_store_path = param.Path(
-        check_exists=False,
-        default=VEGA_LITE_EXAMPLES_OPENAI_DB_PATH,
-        doc="Path to the vector store database for retrieving Vega-Lite examples."
-    )
+    vector_store_path = param.Path(default=None, check_exists=False, doc="""
+        Path to a custom vector store for storing and retrieving Vega-Lite examples;
+        if not provided a default store will be used depending on the LLM--
+        OpenAIEmbeddings for OpenAI LLM or NumpyEmbeddings for all others.""")
 
     view_type = VegaLiteView
 
@@ -1531,15 +1535,26 @@ class VegaLiteAgent(BaseViewAgent):
 
     def _get_vector_store(self):
         """Get or initialize the vector store (lazy initialization)."""
-        if self._vector_store is None and self.vector_store_path.exists():
-            self._vector_store = DuckDBVectorStore(uri=str(self.vector_store_path))
+        if self._vector_store is not None:
+            return self._vector_store
+
+        if self.vector_store_path:
+            uri = self.vector_store_path
+        else:
+            db_file = VEGA_LITE_EXAMPLES_OPENAI_DB_FILE if isinstance(self.llm, OpenAI) else VEGA_LITE_EXAMPLES_NUMPY_DB_FILE
+            uri = LUMEN_CACHE_DIR / db_file
+            if not uri.exists():
+                response = requests.get(f"{VECTOR_STORE_ASSETS_URL}{db_file}", timeout=5)
+                response.raise_for_status()
+                uri.write_bytes(response.content)
+        self._vector_store = DuckDBVectorStore(uri=str(uri))
         return self._vector_store
 
     def _deep_merge_dicts(self, base_dict: dict[str, Any], update_dict: dict[str, Any]) -> dict[str, Any]:
         """Deep merge two dictionaries, with update_dict taking precedence.
 
         Special handling:
-        - If update_dict contains 'layer', remove top-level 'mark' and 'encoding'
+        - If update_dict contains 'layer', append new annotation layers rather than merging
         - When merging layers, ensure each layer has both 'mark' and 'encoding'
         """
         if not update_dict:
@@ -1549,29 +1564,46 @@ class VegaLiteAgent(BaseViewAgent):
 
         # Special handling for layer arrays
         if "layer" in update_dict and "layer" in result:
-            # Merge layer by layer, preserving mark if not provided in update
             base_layers = result["layer"]
             update_layers = update_dict["layer"]
-            merged_layers = []
 
-            for i, update_layer in enumerate(update_layers):
-                if i < len(base_layers):
-                    # Merge with corresponding base layer
-                    base_layer = base_layers[i]
-                    merged_layer = self._deep_merge_dicts(base_layer, update_layer)
+            # Check if update layers are new annotations (have different mark types from base)
+            # If first update layer has a different mark type, treat as append operation
+            is_append_operation = False
+            if update_layers and base_layers:
+                first_update_mark = self._get_layer_mark_type(update_layers[0])
+                first_base_mark = self._get_layer_mark_type(base_layers[0])
 
-                    # Ensure layer has mark (carry over from base if not in update)
-                    if "mark" not in merged_layer and "mark" in base_layer:
-                        merged_layer["mark"] = base_layer["mark"]
+                # If marks are different, or if update has marks like 'rule', 'rect', 'text'
+                # which are typically annotations, treat as append
+                annotation_marks = {'rule', 'rect', 'text'}
+                if first_update_mark != first_base_mark or first_update_mark in annotation_marks:
+                    is_append_operation = True
 
-                    merged_layers.append(merged_layer)
-                else:
-                    # New layer added by update
-                    merged_layers.append(update_layer)
+            if is_append_operation:
+                # Append all update layers as new annotation layers
+                result["layer"] = base_layers + update_layers
+            else:
+                # Original merge behavior for updating existing layers
+                merged_layers = []
+                for i, update_layer in enumerate(update_layers):
+                    if i < len(base_layers):
+                        # Merge with corresponding base layer
+                        base_layer = base_layers[i]
+                        merged_layer = self._deep_merge_dicts(base_layer, update_layer)
 
-            # Keep any remaining base layers not updated
-            merged_layers.extend(base_layers[len(update_layers):])
-            result["layer"] = merged_layers
+                        # Ensure layer has mark (carry over from base if not in update)
+                        if "mark" not in merged_layer and "mark" in base_layer:
+                            merged_layer["mark"] = base_layer["mark"]
+
+                        merged_layers.append(merged_layer)
+                    else:
+                        # New layer added by update
+                        merged_layers.append(update_layer)
+
+                # Keep any remaining base layers not updated
+                merged_layers.extend(base_layers[len(update_layers):])
+                result["layer"] = merged_layers
         else:
             # Standard recursive merge for non-layer properties
             for key, value in update_dict.items():
@@ -1587,6 +1619,15 @@ class VegaLiteAgent(BaseViewAgent):
 
         return result
 
+    def _get_layer_mark_type(self, layer: dict) -> str | None:
+        """Extract mark type from a layer, handling both dict and string formats."""
+        if "mark" in layer:
+            mark = layer["mark"]
+            if isinstance(mark, dict):
+                return mark.get("type")
+            return mark
+        return None
+
     def _apply_hardcoded_polish(self, vega_spec: dict) -> dict:
         """Apply non-negotiable best practices and professional polish"""
 
@@ -1600,8 +1641,8 @@ class VegaLiteAgent(BaseViewAgent):
                 "labelColor": "#666666",
                 "tickColor": "#ddd",
                 "gridOpacity": 0.3,
-                "labelFontSize": 16,  # Increased from 14
-                "titleFontSize": 18   # Added for consistent title sizing
+                "labelFontSize": 16,
+                "titleFontSize": 18
             },
             "background": "#ffffff",
             "view": {"stroke": "#ddd"}
@@ -1675,7 +1716,7 @@ class VegaLiteAgent(BaseViewAgent):
         self,
         step_name: str,
         step_desc: str,
-        current_spec: dict[str, Any],
+        vega_spec: dict[str, Any],
         prompt_name: str,
         messages: list[Message],
         doc: str | None = None,
@@ -1685,7 +1726,7 @@ class VegaLiteAgent(BaseViewAgent):
             system_prompt = await self._render_prompt(
                 prompt_name,
                 messages,
-                current_spec=yaml.dump(current_spec["spec"], default_flow_style=False),
+                vega_spec=yaml.dump(vega_spec, default_flow_style=False),
                 doc=doc,
                 table=self._memory["pipeline"].table,
             )
@@ -1700,13 +1741,7 @@ class VegaLiteAgent(BaseViewAgent):
 
             step.stream(f"Reasoning: {result.chain_of_thought}")
             step.stream(f"Update:\n```yaml\n{result.yaml_update}\n```", replace=False)
-
             update_dict = yaml.safe_load(result.yaml_update)
-
-            # Validate the update by attempting to merge and extract
-            test_spec = self._deep_merge_dicts(current_spec, update_dict)
-            await self._extract_spec({"yaml_spec": yaml.dump(test_spec)})  # Validation
-            step.success_title = f"{step_name} completed"
             return step_name, update_dict
 
     async def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
@@ -1716,39 +1751,6 @@ class VegaLiteAgent(BaseViewAgent):
             traceback.print_exception(e)
             return
         memory["view"] = dict(spec, type=self.view_type)
-
-    def _standardize_to_layers(self, vega_spec: dict) -> None:
-        """Standardize vega spec by migrating to layer format if not already layered."""
-        # Skip if already has layers or is a special type (repeat, facet, concat)
-        if "layer" in vega_spec or any(k in vega_spec for k in ["repeat", "facet", "hconcat", "vconcat", "concat"]):
-            return
-
-        # Only convert simple specs with mark + encoding
-        if "mark" in vega_spec and "encoding" in vega_spec:
-            vega_spec["layer"] = [{
-                "mark": vega_spec.pop("mark"),
-                "encoding": vega_spec.pop("encoding")
-            }]
-
-    def _standardize_doc_example(self, example_text: str) -> str:
-        """Convert a documentation example to use layer format.
-
-        Takes a text string containing YAML spec and returns the standardized version.
-        Handles both inline specs and full example text with descriptions.
-        """
-        try:
-            # Try to parse as YAML
-            spec = yaml.safe_load(example_text)
-            if isinstance(spec, dict) and "$schema" in spec:
-                # This is a vega-lite spec, standardize it
-                self._standardize_to_layers(spec)
-                return yaml.dump(spec, default_flow_style=False)
-            else:
-                # Not a spec, return as-is
-                return example_text
-        except Exception:
-            # If parsing fails, return original
-            return example_text
 
     def _add_zoom_params(self, vega_spec: dict) -> None:
         """Add zoom parameters to vega spec."""
@@ -1784,7 +1786,6 @@ class VegaLiteAgent(BaseViewAgent):
 
     def _add_geographic_items(self, vega_spec: dict, vega_spec_str: str) -> dict:
         """Add geographic visualization items to vega spec."""
-        self._standardize_to_layers(vega_spec)
         self._add_zoom_params(vega_spec)
         self._setup_projection(vega_spec)
         self._handle_map_compatibility(vega_spec, vega_spec_str)
@@ -1821,31 +1822,35 @@ class VegaLiteAgent(BaseViewAgent):
 
         return list(dict.fromkeys(as_fields))
 
-    async def _ensure_columns_exists(self, vega_spec: dict):
-        pipeline = self._memory.get("pipeline")
-        if not pipeline:
-            return
-        schema = await get_schema(pipeline)
+    @retry_llm_output()
+    async def _generate_basic_spec(self, messages: list[Message], pipeline: Pipeline, doc_examples: list, doc: str, errors: list | None = None) -> dict[str, Any]:
+        """Generate the basic VegaLite spec structure."""
+        errors_context = self._build_errors_context(pipeline, errors)
+        with self._add_step(title="Creating basic plot structure", steps_layout=self._steps_layout) as step:
+            system_prompt = await self._render_prompt(
+                "main",
+                messages,
+                table=pipeline.table,
+                doc=doc,
+                doc_examples=doc_examples,
+                **errors_context,
+            )
+            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
 
-        fields = self._extract_as_keys(vega_spec.get('transform', [])) + list(schema)
-        for layer in vega_spec.get("layer", []):
-            if layer is None:
-                continue
-            encoding = layer.get("encoding", {})
-            if not encoding:
-                continue
+            response = self.llm.stream(
+                messages,
+                system=system_prompt,
+                model_spec=model_spec,
+                response_model=VegaLiteSpec,
+            )
 
-            for enc_def in encoding.values():
-                fields_to_check = []
+            async for output in response:
+                step.stream(output.chain_of_thought, replace=True)
 
-                if isinstance(enc_def, dict) and "field" in enc_def:
-                    fields_to_check.append(enc_def["field"])
-                elif isinstance(enc_def, list):
-                    fields_to_check.extend(item["field"] for item in enc_def if isinstance(item, dict) and "field" in item)
-
-                for field in fields_to_check:
-                    if field not in fields and field.lower() not in fields and field.upper() not in fields:
-                        raise ValueError(f"Field '{field}' not found in schema.")
+            current_spec = await self._extract_spec({"yaml_spec": output.yaml_spec})
+            current_spec["spec"] = self._apply_hardcoded_polish(current_spec["spec"])
+            step.success_title = "Complete visualization with titles and colors created"
+        return current_spec
 
     async def _extract_spec(self, spec: dict[str, Any]):
         # .encode().decode('unicode_escape') fixes a JSONDecodeError in Python
@@ -1862,7 +1867,6 @@ class VegaLiteAgent(BaseViewAgent):
         if "height" not in vega_spec:
             vega_spec["height"] = "container"
         self._output_type._validate_spec(vega_spec)
-        # await self._ensure_columns_exists(vega_spec)
 
         # using string comparison because these keys could be in different nested levels
         vega_spec_str = yaml.dump(vega_spec)
@@ -1874,6 +1878,41 @@ class VegaLiteAgent(BaseViewAgent):
         #     # because those result in an blank plot without error
         #     vega_spec["params"] = [{"bind": "scales", "name": "grid", "select": "interval"}]
         return {"spec": vega_spec, "sizing_mode": "stretch_both", "min_height": 300, "max_width": 1200}
+
+    async def _get_doc_examples(self, user_query: str) -> list:
+        # Query vector store for relevant examples
+        doc_examples = []
+        vector_store = self._get_vector_store()
+        if vector_store:
+            if user_query:
+                doc_results = await vector_store.query(user_query, top_k=5)
+                # Extract text and specs from results
+                k = 0
+                for result in doc_results:
+                    if "metadata" in result and "spec" in result["metadata"]:
+                        # Include the text description/title before the spec
+                        text_description = result.get("text", "")
+                        spec = result["metadata"]["spec"]
+                        if "hconcat" in spec or "vconcat" in spec or "repeat" in spec or "params" in spec:
+                            # Skip complex multi-view specs for simplicity
+                            continue
+                        doc_examples.append(f"{text_description}\n```yaml\n{spec}\n```")
+                        k += 1
+                    if k >= 3:  # Limit to top 3 examples
+                        break
+
+    async def _retry_output_by_line(
+        self,
+        feedback: str,
+        messages: list[Message],
+        memory: _Memory,
+        original_output: str,
+        language: str | None = None,
+        **context
+    ) -> str:
+        doc_examples = await self._get_doc_examples(feedback)
+        context["doc_examples"] = doc_examples
+        return super()._retry_output_by_line(feedback, messages, memory, original_output, language, **context)
 
     async def respond(
         self,
@@ -1891,78 +1930,44 @@ class VegaLiteAgent(BaseViewAgent):
         if not schema:
             raise ValueError("Failed to retrieve schema for the current pipeline.")
 
-        # Query vector store for relevant examples
-        doc_examples = []
-        vector_store = self._get_vector_store()
-        if vector_store and messages:
-            user_query = messages[-1].get("content", "") if messages[-1].get("role") == "user" else ""
-            if user_query:
-                doc_results = await vector_store.query(user_query, top_k=2)
-                # Extract text and specs from results
-                for result in doc_results:
-                    if "metadata" in result and "spec" in result["metadata"]:
-                        # Include the text description/title before the spec
-                        text_description = result.get("text", "")
-                        spec = self._standardize_doc_example(result["metadata"]["spec"])
-                        doc_examples.append(f"{text_description}\n{spec}")
+        user_query = messages[-1].get("content", "") if messages[-1].get("role") == "user" else ""
+        doc_examples = await self._get_doc_examples(user_query)
 
         # Step 1: Generate basic spec
-        with self._add_step(title="Creating basic plot structure", steps_layout=self._steps_layout) as step:
-            doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
-
-            system_prompt = await self._render_prompt(
-                "main",
-                messages,
-                table=pipeline.table,
-                doc=doc,
-                doc_examples=doc_examples,
-            )
-            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
-
-            response = self.llm.stream(
-                messages,
-                system=system_prompt,
-                model_spec=model_spec,
-                response_model=VegaLiteSpec,
-            )
-
-            async for output in response:
-                step.stream(output.chain_of_thought, replace=True)
-
-            # Apply hardcoded polish immediately
-            current_spec = await self._extract_spec({"yaml_spec": output.yaml_spec})
-            current_spec["spec"] = self._apply_hardcoded_polish(current_spec["spec"])
-            step.success_title = "Complete visualization with titles and colors created"
+        doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
+        # Produces {"spec": {$schema: ..., ...}, "sizing_mode": ..., ...}
+        full_dict = await self._generate_basic_spec(messages, pipeline, doc_examples, doc)
 
         # Step 2: Show complete plot immediately
-        self._memory["view"] = dict(current_spec, type=self.view_type)
-        view = self.view_type(pipeline=pipeline, **current_spec)
+        self._memory["view"] = dict(full_dict, type=self.view_type)
+        view = self.view_type(pipeline=pipeline, **full_dict)
         out = self._render_lumen(view, messages=messages, title=step_title)
+        # Get the latest spec from the rendered view, which includes type: vega-lite
+        full_dict = yaml.safe_load(out.spec)
 
-        # Step 3: Parallel enhancements (LLM-driven creative decisions)
-        parallel_steps = {
+        # Step 3: enhancements (LLM-driven creative decisions)
+        steps = {
             "interaction_polish": "Add helpful tooltips and ensure responsive, accessible user experience",
-            # "annotate_plot": "Add annotations to highlight key data points or trends that support the narrative",
+            "annotate_plot": "Add annotations to highlight key data points or trends that support the narrative",
         }
 
-        # Create tasks for parallel execution
-        tasks = []
-        for step_name, step_desc in parallel_steps.items():
-            task = asyncio.create_task(
-                self._update_spec_step(step_name, step_desc, current_spec, step_name, messages, doc=doc)
+        # Execute steps sequentially
+        for step_name, step_desc in steps.items():
+            # Only pass the vega lite 'spec' portion to prevent ballooning context
+            step_name, update_dict = await self._update_spec_step(
+                step_name, step_desc, full_dict["spec"], step_name, messages, doc=doc
             )
-            tasks.append(task)
-
-        for completed_task in asyncio.as_completed(tasks):
-            step_name, update_dict = await completed_task
-            full_spec = yaml.safe_load(out.spec)
-            full_spec["spec"] = self._deep_merge_dicts(full_spec["spec"], update_dict)
-            out.spec = yaml.dump(full_spec)
+            try:
+                test_spec = self._deep_merge_dicts(full_dict["spec"], update_dict)
+                await self._extract_spec({"yaml_spec": yaml.dump(test_spec)})  # Validation
+            except Exception as e:
+                log_debug(f"Skipping invalid {step_name} update due to error: {e}")
+                continue
+            full_dict["spec"] = self._deep_merge_dicts(full_dict["spec"], update_dict)
+            out.spec = yaml.dump(full_dict)
             log_debug(f"📊 Applied {step_name} updates and refreshed visualization")
 
-        # Update final memory state
-        final_vega_spec = await self._extract_spec({"yaml_spec": yaml.dump(current_spec)})
-        self._memory["view"] = dict(final_vega_spec, type=self.view_type)
+        self._memory["view"] = full_dict
         return view
 
 
