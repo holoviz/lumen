@@ -135,11 +135,26 @@ def make_sql_model(is_final: bool = False):
 class VegaLiteSpec(EscapeBaseModel):
 
     chain_of_thought: str = Field(
-        description="Explain how you will use the data to create a vegalite plot, and address any previous issues you encountered."
+        description="""Explain your design choices based on visualization theory:
+        - What story does this data tell?
+        - Which visual encodings (position, color, size) best reveal patterns?
+        - Should color highlight specific insights or remain neutral?
+        - What makes this plot engaging and useful for the user?
+        Then describe the basic plot structure."""
+    )
+    yaml_spec: str = Field(
+        description="A basic vega-lite YAML specification with core plot elements only (data, mark, basic x/y encoding)."
     )
 
-    yaml_spec: str = Field(description="A vega-lite YAML specification based on the user input and chain of thought. Do not include description")
 
+class VegaLiteSpecUpdate(BaseModel):
+    chain_of_thought: str = Field(
+        description="Explain what changes you're making to the Vega-Lite spec and why."
+    )
+    yaml_update: str = Field(
+        description="""Partial YAML with ONLY modified properties (unchanged values omitted).
+        Respect your step's scope; don't override previous steps."""
+    )
 
 class LineChange(BaseModel):
     line_no: int = Field(description="The line number in the original text that needs to be changed.")

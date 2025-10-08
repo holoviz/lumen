@@ -3,19 +3,24 @@
 {% block instructions %}
 {{ super() }}
 
-- For overlays, keep the data reference at the top level and use encoding inside the layer
+- For overlays: data at top level, encoding in layer
 {% endblock %}
 
-
 {%- block examples -%}
-For overlays:
+# EXAMPLES
+{% if doc_examples is defined and doc_examples %}
+{% for example in doc_examples %}
+{{ example }}
+{% endfor %}
+{% endif %}
+Overlays:
 ```{{ language }}
 spec:
   data:
     name: <TABLE_NAME>
   layer:
     - encoding:
-      # main data referencing table
+      # main data
     - data:
       # other data
 ```

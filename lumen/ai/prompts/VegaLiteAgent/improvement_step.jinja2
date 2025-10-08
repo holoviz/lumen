@@ -1,0 +1,20 @@
+{% extends 'Actor/main.jinja2' %}
+
+{% block context %}
+Build off the following Vega-Lite yaml:
+```yaml
+{{ vega_spec }}
+```
+
+Data context:
+{{ memory.data }}
+{% endblock %}
+
+{% block errors %}
+{{ super() }}
+
+{% if errors is defined and errors %}
+For extra context, here are the data and columns available:
+{{ columns_context }}
+{% endif %}
+{% endblock %}
