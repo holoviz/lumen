@@ -93,16 +93,13 @@ class DuckDBSource(BaseSQLSource):
             # First pass: separate file paths from SQL expressions
             for table_name, table_expr in self.tables.items():
                 if isinstance(table_expr, str) and self._is_file_path(table_expr):
-                    self._file_based_tables[self.normalize_table(table_name)] = table_expr
+                    table_name = re.sub(r'\W+', '_', table_name)
+                    self._file_based_tables[table_name] = table_expr
                 else:
                     sql_based_tables[table_name] = table_expr
 
             # Second pass: create views for file-based tables
-            for table_name in self.tables:
-                table_alias = self.normalize_table(table_name)
-                if table_alias not in self._file_based_tables:
-                    # Doing it this way to preserve table name
-                    continue
+            for table_name, file_path in self._file_based_tables.items():
                 # Auto-detect file type and create appropriate view
                 read_expr = self._create_file_read_expr(self._file_based_tables[table_alias])
                 # Quote table name to handle special characters
@@ -383,6 +380,7 @@ class DuckDBSource(BaseSQLSource):
 
         # keep references of the original file-based tables so views can be recreated
         source.tables.update(**{table: self._file_based_tables[table] for table in self._file_based_tables if table not in tables})
+        source._file_based_tables.update(self._file_based_tables)
         return source
 
     def execute(self, sql_query: str, *args, **kwargs):

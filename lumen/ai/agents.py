@@ -700,14 +700,7 @@ class SQLAgent(LumenBaseAgent):
     _output_type = LumenOutput
 
     def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
-        spec = load_yaml(event.new)
-        table = spec["table"]
-        source = spec["source"]
-        if isinstance(source["tables"], dict):
-            sql = source["tables"][table]
-        else:
-            sql = next((t["sql"] for t in source["tables"] if t["name"] == table), None)
-        memory["sql"] = sql
+        memory["sql"] = event.new
 
     async def _generate_sql_queries(
         self, messages: list[Message], dialect: str, step_number: int,
@@ -855,7 +848,8 @@ class SQLAgent(LumenBaseAgent):
         self._render_lumen(
             pipeline,
             messages=messages,
-            title=step_title
+            title=step_title,
+            spec=result["sql"]
         )
 
     async def _render_execute_query(
@@ -1291,7 +1285,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
             self._memory["__error__"] = str(e)
             return None
 
-        self._render_lumen(pipeline, messages=messages, title=step_title)
+        self._render_lumen(pipeline, messages=messages, title=step_title, spec=sql_query)
         return pipeline
 
 
