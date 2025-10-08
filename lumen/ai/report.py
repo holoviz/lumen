@@ -288,7 +288,15 @@ class TaskGroup(Task):
         memory = task.memory or self.memory
         messages = list(self.history)
         if self.instruction:
-            messages.append({"role": "user", "content": self.instruction})
+            user_msg = None
+            for msg in messages[::-1]:
+                if msg.get("role") == "user":
+                    user_msg = msg
+                    break
+            if not user_msg:
+                messages.append({"role": "user", "content": self.instruction})
+            elif self.instruction not in user_msg.get("content"):
+                user_msg["content"] = f'{user_msg["content"]}\n\nInstruction: {self.instruction}'
 
         with task.param.update(
             interface=self.interface,
