@@ -722,7 +722,7 @@ class Action(Task):
 class SQLQuery(Action):
     """
     An `SQLQuery` is an `Action` that executes a SQL expression on a Source
-    and generates an SQLOutput to be rendered.
+    and generates an LumenOutput to be rendered.
     """
 
     generate_caption = param.Boolean(default=True, doc="""
