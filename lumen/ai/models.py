@@ -135,7 +135,12 @@ def make_sql_model(is_final: bool = False):
 class VegaLiteSpec(EscapeBaseModel):
 
     chain_of_thought: str = Field(
-        description="Explain how you will create the basic plot structure with core encodings."
+        description="""Explain your design choices based on visualization theory:
+        - What story does this data tell?
+        - Which visual encodings (position, color, size) best reveal patterns?
+        - Should color highlight specific insights or remain neutral?
+        - What makes this plot engaging and useful for the user?
+        Then describe the basic plot structure."""
     )
     yaml_spec: str = Field(
         description="A basic vega-lite YAML specification with core plot elements only (data, mark, basic x/y encoding)."

@@ -1,15 +1,15 @@
 {% extends 'BaseViewAgent/main.jinja2' %}
 
 {% block instructions %}
-Generate the basic plot structure with core elements only.
+Generate a complete, polished Vega-Lite visualization with strategic color and compelling narrative titles.
 
 # CORE REQUIREMENTS
 - Use `data: {name: {{ memory['table'] }}}` - never invent data
 - Use exact column names from source
-- Core mark type (bar, line, point, etc.)
-- Essential x/y encodings only
+- ALWAYS use layer structure - wrap your visualization in a layer array
+- Each layer has its own `mark` and `encoding`
+- Properties like `opacity` go inside mark: `mark: {type: bar, opacity: 0.75}`
 - Basic transforms if needed (fold, calculate, etc.)
-- NO titles, colors, tooltips, or styling
 
 # SORTING FOR RANKINGS
 For bar charts, sort by quantitative values to show rankings:
@@ -20,31 +20,145 @@ For bar charts, sort by quantitative values to show rankings:
 - Year ints/floats: type=quantitative if length>10, else ordinal
 - Date strings: type=temporal with timeUnit
 - Combine date fields: `calculate: datetime(datum.Year, datum.Month-1)`
+
+# COLOR STRATEGY
+Color is pre-attentive - use it intentionally to guide attention, not arbitrarily.
+
+Use conditional color to highlight:
+- Leaders/outliers in comparisons (top state, best product)
+- Meaningful thresholds (goals, benchmarks, policy changes)
+- Time periods that match your subtitle ("after 2020" → highlight post-2020)
+
+DO NOT use conditional color:
+- For simple trends (single-color line is clearer)
+- With arbitrary thresholds (no random cutoffs like > 200)
+- When position/size already shows the pattern
+
+Color must align with your subtitle - highlight what you mention.
+
+Color palette:
+- Highlight color: '#c0392b' (dark red) for emphasis
+- Neutral/de-emphasized: '#bdc3c7' (light gray)
+- Success/positive: '#27ae60' (green)
+- Primary: '#3498db' (blue)
+
+# NARRATIVE TITLES
+Create compelling chart titles that communicate key insights:
+- Add a descriptive main title that summarizes what the chart shows
+- Include a subtitle that highlights the key finding or insight from the data
+- Use proper title formatting with fontSize, anchor, and subtitle styling
+- Titles should be specific to the data, not generic descriptions
+
+Examples of purposeful color conditions:
+- `condition: {test: "datum.category === 'Top Category'", value: "#c0392b"}` - highlights the leader
+- `condition: {test: "datum.year >= 2020", value: "#c0392b"}` - highlights post-policy period
+- `condition: {test: "datum.value >= datum.target", value: "#27ae60"}` - highlights meeting goals
+
+Examples of narrative titles:
+```yaml
+title:
+  anchor: start
+  fontSize: 20
+  subtitle: "Key insight about the data trend or pattern"
+  subtitleColor: '#666666'
+  subtitleFontSize: 16
+  text: "Descriptive title about what the chart shows"
+```
 {% endblock %}
 
 {% block examples %}
-Basic horizontal bars:
+Complete horizontal bar chart with titles and strategic color:
 ```yaml
+title:
+  anchor: start
+  fontSize: 20
+  subtitle: "New Mexico leads with highest average capacity"
+  subtitleColor: '#666666'
+  subtitleFontSize: 16
+  text: "Average Wind Turbine Capacity by State"
 data:
   name: <TABLE_NAME>
-mark: bar
-encoding:
-  x: {field: value_field, type: quantitative}
-  y: {field: category_field, type: ordinal, sort: "-x"}
+layer:
+  - mark: bar
+    encoding:
+      x: {field: avg_capacity, type: quantitative}
+      y: {field: state, type: ordinal, sort: "-x"}
+      color:
+        condition:
+          test: datum.state === 'NM'  # Highlights leader mentioned in subtitle
+          value: '#c0392b'
+        value: '#bdc3c7'
 ```
 
-Limit large datasets:
+Large dataset with ranking and color scale:
 ```yaml
+title:
+  anchor: start
+  fontSize: 24
+  subtitle: "Top 15 countries show significant variation in GDP"
+  subtitleColor: '#666666'
+  subtitleFontSize: 20
+  text: "GDP by Country (Top 15)"
 data:
   name: <TABLE_NAME>
 transform:
 - window: [{op: "rank", as: "rank"}]
-  sort: [{field: "value_field", order: "descending"}]
+  sort: [{field: "gdp", order: "descending"}]
 - filter: "datum.rank <= 15"
-mark: bar
-encoding:
-  x: {field: value_field, type: quantitative}
-  y: {field: category_field, type: ordinal, sort: "-x"}
+layer:
+  - mark: bar
+    encoding:
+      x: {field: gdp, type: quantitative}
+      y: {field: country, type: ordinal, sort: "-x"}
+      color:
+        field: gdp
+        type: quantitative
+        scale:
+          scheme: blues
+```
+
+Time series with highlighting:
+```yaml
+title:
+  anchor: start
+  fontSize: 20
+  subtitle: "Sharp increase observed after 2020"
+  subtitleColor: '#666666'
+  subtitleFontSize: 16
+  text: "Sales Trend Over Time"
+data:
+  name: <TABLE_NAME>
+layer:
+  - mark: line
+    encoding:
+      x: {field: year, type: temporal}
+      y: {field: sales, type: quantitative}
+      color:
+        condition:
+          test: datum.year >= 2020  # Highlights period mentioned in subtitle
+          value: '#c0392b'
+        value: '#3498db'
+```
+
+Simple time series without conditional color:
+```yaml
+title:
+  anchor: start
+  fontSize: 20
+  subtitle: "Steady growth trend from 2010 to 2024"
+  subtitleColor: '#666666'
+  subtitleFontSize: 16
+  text: "Wind Turbine Capacity Over Time"
+data:
+  name: <TABLE_NAME>
+layer:
+  - mark:
+      type: line
+      point: true
+      color: <color>
+    encoding:
+      x: {field: year, type: quantitative}
+      y: {field: avg_capacity, type: quantitative}
 ```
 {% endblock %}
 

@@ -4,64 +4,50 @@
 Add helpful tooltips and axis titles for better user experience.
 
 # SCOPE: Interactivity & Axis Labels
+
 Focus on:
 - encoding.tooltip (array of fields with titles and formatting)
-- encoding.x.title (axis label, not chart title)
-- encoding.y.title (axis label, not chart title)
 - mark.point or mark.tooltip (only if needed for tooltip interactivity)
 
-DO NOT modify:
-- Top-level title object (chart title/subtitle)
-- encoding.color
-- mark.type (keep the chart type the same)
+CRITICAL: The spec uses layers. When updating a layer, you MUST include both `mark` and `encoding`.
+Even if only adding tooltips, copy the existing mark. Each layer requires both properties.
 {% endblock %}
 
 {% block examples %}
-Bar chart with tooltips:
+Bar chart with tooltips (in layered spec):
 ```yaml
-encoding:
-  tooltip:
-  - field: state
-    title: State
-    type: ordinal
-  - field: avg_pcap
-    format: .2f
-    title: Avg Power Capacity
-    type: quantitative
-  x:
-    field: avg_pcap
-    type: quantitative
-    title: "Average Power Capacity (MW)"
-  y:
-    field: state
-    type: ordinal
-    title: "State"
+layer:
+  - mark: bar  # MUST include mark even when only adding tooltips
+    encoding:
+      x: {field: state, type: ordinal}
+      y: {field: avg_pcap, type: quantitative}
+      tooltip:  # Add tooltips to existing encoding
+      - field: state
+        title: State
+        type: ordinal
+      - field: avg_pcap
+        format: .2f
+        title: Avg Power Capacity
+        type: quantitative
 ```
 
-Line chart with tooltips (needs point overlay):
+Line chart with tooltips (in layered spec):
 ```yaml
-mark:
-  type: line
-  point: true
-  tooltip: true
-encoding:
-  tooltip:
-  - field: year
-    title: Year
-    type: quantitative
-  - field: value
-    format: .2f
-    title: Value
-    type: quantitative
-  x:
-    field: year
-    type: quantitative
-    title: "Year"
-  y:
-    field: value
-    type: quantitative
-    title: "Value"
+layer:
+  - mark:  # MUST include mark even when only adding tooltips
+      type: line
+      point: true
+      tooltip: true
+    encoding:
+      x: {field: year, type: quantitative}
+      y: {field: value, type: quantitative}
+      tooltip:  # Add tooltips to existing encoding
+      - field: year
+        title: Year
+        type: quantitative
+      - field: value
+        format: .2f
+        title: Value
+        type: quantitative
 ```
 {% endblock %}
-
-{# context and errors are inherited from improvement_step.jinja2 #}

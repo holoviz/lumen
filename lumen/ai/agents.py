@@ -1509,8 +1509,6 @@ class VegaLiteAgent(BaseViewAgent):
     prompts = param.Dict(
         default={
             "main": {"response_model": VegaLiteSpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"},
-            "color_strategy": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "color_strategy.jinja2"},
-            "narrative_titles": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "narrative_titles.jinja2"},
             "interaction_polish": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "interaction_polish.jinja2"},
             "annotate_plot": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "annotate_plot.jinja2"},
             "retry_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "retry_output.jinja2"},
@@ -1526,13 +1524,52 @@ class VegaLiteAgent(BaseViewAgent):
     _retry_target_keys = ["spec"]
 
     def _deep_merge_dicts(self, base_dict: dict[str, Any], update_dict: dict[str, Any]) -> dict[str, Any]:
-        """Deep merge two dictionaries, with update_dict taking precedence."""
+        """Deep merge two dictionaries, with update_dict taking precedence.
+
+        Special handling:
+        - If update_dict contains 'layer', remove top-level 'mark' and 'encoding'
+        - When merging layers, ensure each layer has both 'mark' and 'encoding'
+        """
         result = base_dict.copy()
-        for key, value in update_dict.items():
-            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-                result[key] = self._deep_merge_dicts(result[key], value)
-            else:
-                result[key] = value
+
+        # Special handling for layer arrays
+        if "layer" in update_dict and "layer" in result:
+            # Merge layer by layer, preserving mark if not provided in update
+            base_layers = result["layer"]
+            update_layers = update_dict["layer"]
+            merged_layers = []
+
+            for i, update_layer in enumerate(update_layers):
+                if i < len(base_layers):
+                    # Merge with corresponding base layer
+                    base_layer = base_layers[i]
+                    merged_layer = self._deep_merge_dicts(base_layer, update_layer)
+
+                    # Ensure layer has mark (carry over from base if not in update)
+                    if "mark" not in merged_layer and "mark" in base_layer:
+                        merged_layer["mark"] = base_layer["mark"]
+
+                    merged_layers.append(merged_layer)
+                else:
+                    # New layer added by update
+                    merged_layers.append(update_layer)
+
+            # Keep any remaining base layers not updated
+            merged_layers.extend(base_layers[len(update_layers):])
+            result["layer"] = merged_layers
+        else:
+            # Standard recursive merge for non-layer properties
+            for key, value in update_dict.items():
+                if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                    result[key] = self._deep_merge_dicts(result[key], value)
+                else:
+                    result[key] = value
+
+        # If we're merging in a 'layer', remove conflicting top-level properties
+        if "layer" in update_dict:
+            result.pop("mark", None)
+            result.pop("encoding", None)
+
         return result
 
     def _apply_hardcoded_polish(self, vega_spec: dict) -> dict:
@@ -1752,6 +1789,8 @@ class VegaLiteAgent(BaseViewAgent):
 
         fields = self._extract_as_keys(vega_spec.get('transform', [])) + list(schema)
         for layer in vega_spec.get("layer", []):
+            if layer is None:
+                continue
             encoding = layer.get("encoding", {})
             if not encoding:
                 continue
@@ -1783,17 +1822,17 @@ class VegaLiteAgent(BaseViewAgent):
         if "height" not in vega_spec:
             vega_spec["height"] = "container"
         self._output_type._validate_spec(vega_spec)
-        await self._ensure_columns_exists(vega_spec)
+        # await self._ensure_columns_exists(vega_spec)
 
         # using string comparison because these keys could be in different nested levels
         vega_spec_str = yaml.dump(vega_spec)
         # Handle different types of interactive controls based on chart type
         if "latitude:" in vega_spec_str or "longitude:" in vega_spec_str:
             vega_spec = self._add_geographic_items(vega_spec, vega_spec_str)
-        elif ("point: true" not in vega_spec_str or "params" not in vega_spec) and vega_spec_str.count("encoding:") == 1:
-            # add pan/zoom controls to all plots except geographic ones and points overlaid on line plots
-            # because those result in an blank plot without error
-            vega_spec["params"] = [{"bind": "scales", "name": "grid", "select": "interval"}]
+        # elif ("point: true" not in vega_spec_str or "params" not in vega_spec) and vega_spec_str.count("encoding:") == 1:
+        #     # add pan/zoom controls to all plots except geographic ones and points overlaid on line plots
+        #     # because those result in an blank plot without error
+        #     vega_spec["params"] = [{"bind": "scales", "name": "grid", "select": "interval"}]
         return {"spec": vega_spec, "sizing_mode": "stretch_both", "min_height": 300, "max_width": 1200}
 
     async def respond(
@@ -1837,17 +1876,15 @@ class VegaLiteAgent(BaseViewAgent):
             # Apply hardcoded polish immediately
             current_spec = await self._extract_spec({"yaml_spec": output.yaml_spec})
             current_spec["spec"] = self._apply_hardcoded_polish(current_spec["spec"])
-            step.success_title = "Basic plot structure created"
+            step.success_title = "Complete visualization with titles and colors created"
 
-        # Step 2: Show basic plot immediately
+        # Step 2: Show complete plot immediately
         self._memory["view"] = dict(current_spec, type=self.view_type)
         view = self.view_type(pipeline=pipeline, **current_spec)
         out = self._render_lumen(view, messages=messages, title=step_title)
 
         # Step 3: Parallel enhancements (LLM-driven creative decisions)
         parallel_steps = {
-            "color_strategy": "Analyze the data to determine strategic highlighting and color scheme that tells the story",
-            "narrative_titles": "Create compelling titles and subtitles that communicate the key insight from this visualization",
             "interaction_polish": "Add helpful tooltips and ensure responsive, accessible user experience",
             "annotate_plot": "Add annotations to highlight key data points or trends that support the narrative",
         }
