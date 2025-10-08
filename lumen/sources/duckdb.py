@@ -101,7 +101,7 @@ class DuckDBSource(BaseSQLSource):
             # Second pass: create views for file-based tables
             for table_name, file_path in self._file_based_tables.items():
                 # Auto-detect file type and create appropriate view
-                read_expr = self._create_file_read_expr(self._file_based_tables[table_alias])
+                read_expr = self._create_file_read_expr(file_path)
                 # Quote table name to handle special characters
                 quoted_table = f'"{table_name}"' if not (table_name.startswith('"') and table_name.endswith('"')) else table_name
                 view_sql = f"CREATE OR REPLACE VIEW {quoted_table} AS {read_expr}"
@@ -109,10 +109,10 @@ class DuckDBSource(BaseSQLSource):
                 try:
                     cursor.execute(view_sql)
                     # Store the SQL expression for later use
-                    processed_tables[table_alias] = f"SELECT * FROM {quoted_table}"
+                    processed_tables[table_name] = f"SELECT * FROM {quoted_table}"
                 except Exception:
                     # If view creation fails, store the read expression directly
-                    processed_tables[table_alias] = read_expr
+                    processed_tables[table_name] = read_expr
                 finally:
                     cursor.close()
 
