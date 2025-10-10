@@ -83,7 +83,7 @@ report = Report(
             table="by_cat",
             sql_expr="SELECT category, COUNT(*) AS n, AVG(value) AS avg_value FROM tiny GROUP BY category"
         ),
-        FunctionTool(decribe, requires=['pipeline']),
+        FunctionTool(describe, requires=['pipeline']),
         title="Explore tiny table"
     ),
     llm=llm,

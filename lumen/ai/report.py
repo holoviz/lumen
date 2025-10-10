@@ -574,7 +574,7 @@ class Section(TaskGroup):
     async def _run_task(self, i: int, task: Task | Actor, **kwargs) -> list[Any]:
         if self.memory:
             self.memory['outputs'] = []
-            instructions = "\n".join(f"{i+1}. {task.instruction}" for i, task in enumerate(self._tasks))
+            instructions = "\n".join(f"{i+1}. {task.instruction}" if hasattr(task, 'instruction') else f"{i+1}. <no instruction>" for i, task in enumerate(self._tasks))
             self.memory['reasoning'] = f"{self.title}\n\n{instructions}"
         if isinstance(task, Task):
             watcher = task.param.watch(partial(self._watch_child_outputs, i, list(self.outputs), **kwargs), 'outputs')
@@ -745,6 +745,9 @@ class SQLQuery(Action):
     table = param.String(doc="""
         The name of the table generated from the SQL expression.""")
 
+    user_content = param.String(default="Generate a short caption for the data", doc="""
+        Additional instructions to provide to the analyst agent, i.e. what to focus on.""")
+
     def _render_controls(self):
         return [
             TextInput.from_param(
@@ -793,6 +796,8 @@ class SQLQuery(Action):
         pipeline = Pipeline(source=source, table=self.table)
         if self.memory is not None:
             self.memory["source"] = source
+            if "sources" not in self.memory:
+                self.memory["sources"] = []
             self.memory["sources"].append(source)
             self.memory["pipeline"] = pipeline
             self.memory["data"] = await describe_data(pipeline.data)
@@ -802,7 +807,7 @@ class SQLQuery(Action):
         outputs = [Typography(f"### {self.title}", variant='h4', margin=(10, 10, 0, 10)), out] if self.title else [out]
         if self.generate_caption:
             caption = await AnalystAgent(llm=self.llm).respond(
-                [{"role": "user", "content": "Generate a short caption for the data"}]
+                [{"role": "user", "content": self.user_content}]
             )
             outputs.append(Typography(caption.object))
         return outputs

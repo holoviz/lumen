@@ -251,7 +251,7 @@ async def get_metaset(sources: list[Source], tables: list[str]) -> SQLMetaset:
             description=metadata.get("description"),
             columns=[
                 Column(name=col_name, description=col_values.pop("description", None), metadata=col_values)
-                for col_name, col_values in metadata.get("columns").items()
+                for col_name, col_values in metadata.get("columns", {}).items()
             ],
         )
     vector_metaset = VectorMetaset(vector_metadata_map=tables_metadata, query=None)
