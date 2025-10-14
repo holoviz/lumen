@@ -127,7 +127,7 @@ class DuckDBSource(BaseSQLSource):
                 # For SQL expressions that define complete queries, create them as views
                 # This includes both READ_* functions and other SELECT statements
                 if sql_expr.strip().upper().startswith('SELECT'):
-                    quoted_table = f'"{table_name}"' if not (table_name.startswith('"') and table_name.endswith('"')) else table_name
+                    quoted_table = f'"{table_alias}"' if not (table_alias.startswith('"') and table_alias.endswith('"')) else table_alias
                     view_sql = f"CREATE OR REPLACE VIEW {quoted_table} AS {sql_expr}"
                     cursor = self._connection.cursor()
                     try:
