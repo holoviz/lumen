@@ -244,6 +244,8 @@ class SQLFormat(SQLTransform):
                 else:
                     parameters[k] = v
             replaced_expression = replace_placeholders(expression, **parameters)
+        else:
+            replaced_expression = expression
         return self.to_sql(replaced_expression,)
 
 
@@ -252,7 +254,7 @@ class SQLSelectFrom(SQLFormat):
     sql_expr = param.String(
         default="SELECT * FROM {table}",
         doc="""
-        The SQL expression to useif the sql_in does NOT
+        The SQL expression to use if the sql_in does NOT
         already contain a SELECT statement.""",
     )
 
@@ -267,6 +269,9 @@ class SQLSelectFrom(SQLFormat):
     transform_type: ClassVar[str] = "sql_select_from"
 
     def apply(self, sql_in: str) -> str:
+        if "SELECT" in sql_in.upper():
+            return super().apply(sql_in)
+
         try:
             expression = self.parse_sql(sql_in)
         except sqlglot.ParseError:

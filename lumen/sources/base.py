@@ -950,11 +950,14 @@ class BaseSQLSource(Source):
         - Table name only: 'TABLE'
         - Wildcards: 'SCHEMA.*'""")
 
-    load_schema = param.Boolean(default=True, doc="Whether to load the schema")
-
-    table_params = param.Dict(default={}, doc="""
+    table_params = param.Dict(
+        default={},
+        doc="""
         Dictionary mapping table names to lists of SQL parameters.
-        Parameters are used with placeholders (?) in SQL expressions.""")
+        Parameters are used with placeholders (?) in SQL expressions.""",
+    )
+
+    load_schema = param.Boolean(default=True, doc="Whether to load the schema")
 
     # Declare this source supports SQL transforms
     _supports_sql = True
@@ -1019,7 +1022,7 @@ class BaseSQLSource(Source):
         else:
             table = self.normalize_table(table)
 
-        sql_expr = SQLSelectFrom(sql_expr=self.sql_expr).apply(table)
+        sql_expr = SQLSelectFrom(sql_expr=self.sql_expr, read=self.dialect).apply(table)
         return sql_expr
 
     def create_sql_expr_source(self, tables: dict[str, str], params: dict[str, list] | None = None, **kwargs):
@@ -1131,12 +1134,12 @@ class BaseSQLSource(Source):
             data_sql_expr = sql_expr
             for sql_transform in sql_transforms:
                 data_sql_expr = sql_transform.apply(data_sql_expr)
-            data = self.execute(data_sql_expr)
+            data = self.execute(data_sql_expr, self.table_params.get(entry, []))
             schemas[entry] = schema = get_dataframe_schema(data)['items']['properties']
 
             count_expr = SQLCount(read=self.dialect).apply(sql_expr)
             count_expr = ' '.join(count_expr.splitlines())
-            count_data = self.execute(count_expr)
+            count_data = self.execute(count_expr, self.table_params.get(entry, []))
             count_col = 'count' if 'count' in count_data else 'COUNT'
             count = int(count_data[count_col].iloc[0])
             if limit:
@@ -1154,7 +1157,7 @@ class BaseSQLSource(Source):
             for col in enums:
                 distinct_expr = SQLDistinct(columns=[col], read=self.dialect).apply(sql_expr)
                 distinct_expr = ' '.join(distinct_expr.splitlines())
-                distinct = self.execute(distinct_expr)
+                distinct = self.execute(distinct_expr, self.table_params.get(entry, []))
                 schema[col]['enum'] = distinct[col].tolist()
 
             schema['__len__'] = count
@@ -1163,7 +1166,7 @@ class BaseSQLSource(Source):
 
             minmax_expr = SQLMinMax(columns=min_maxes, read=self.dialect).apply(sql_expr)
             minmax_expr = ' '.join(minmax_expr.splitlines())
-            minmax_data = self.execute(minmax_expr)
+            minmax_data = self.execute(minmax_expr, self.table_params.get(entry, []))
             for col in min_maxes:
                 kind = data[col].dtype.kind
                 if kind in 'iu':

@@ -276,7 +276,8 @@ class SnowflakeSource(BaseSQLSource):
 
     def execute(self, sql_query: str, *args, **kwargs):
         # TODO: remove cast in future, but keep until bokeh has a solution
-        df = self._cursor.execute(sql_query, *args, **kwargs).fetch_pandas_all()
+        # TODO: figure out how to bridge ? which is supported by sqlglot, but not Snowflake, and %s which is supported by Snowflake
+        df = self._cursor.execute(sql_query.replace("?", "%s"), *args, **kwargs).fetch_pandas_all()
         return self._cast_to_supported_dtypes(df)
 
     async def execute_async(self, sql_query: str, *args, **kwargs):
@@ -337,7 +338,7 @@ class SnowflakeSource(BaseSQLSource):
             sql_transforms = [SQLFilter(conditions=conditions)] + sql_transforms
         for st in sql_transforms:
             sql_expr = st.apply(sql_expr)
-        return self.execute(sql_expr)
+        return self.execute(sql_expr, self.table_params.get(table, []))
 
     async def get_async(self, table, **query):
         """
