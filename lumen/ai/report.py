@@ -792,6 +792,7 @@ class SQLQuery(Action):
             source = self.memory['source']
         if not self.table:
             raise ValueError("SQLQuery must declare a table name.")
+
         source = source.create_sql_expr_source({self.table: self.sql_expr})
         pipeline = Pipeline(source=source, table=self.table)
         if self.memory is not None:

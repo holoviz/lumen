@@ -952,6 +952,10 @@ class BaseSQLSource(Source):
 
     load_schema = param.Boolean(default=True, doc="Whether to load the schema")
 
+    table_params = param.Dict(default={}, doc="""
+        Dictionary mapping table names to lists of SQL parameters.
+        Parameters are used with placeholders (?) in SQL expressions.""")
+
     # Declare this source supports SQL transforms
     _supports_sql = True
 
@@ -1018,10 +1022,24 @@ class BaseSQLSource(Source):
         sql_expr = SQLSelectFrom(sql_expr=self.sql_expr).apply(table)
         return sql_expr
 
-    def create_sql_expr_source(self, tables: dict[str, str], **kwargs):
+    def create_sql_expr_source(self, tables: dict[str, str], params: dict[str, list] | None = None, **kwargs):
         """
         Creates a new SQL Source given a set of table names and
         corresponding SQL expressions.
+
+        Arguments
+        ---------
+        tables: dict[str, str]
+            Mapping from table name to SQL expression.
+        params: dict[str, list]
+            Optional mapping from table name to list of parameters to pass to the SQL query.
+            Parameters are used with placeholders (?) in the SQL expressions.
+        kwargs: any
+            Additional keyword arguments.
+
+        Returns
+        -------
+        source: BaseSQLSource subclass
         """
         raise NotImplementedError
 

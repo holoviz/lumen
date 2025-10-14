@@ -545,6 +545,170 @@ def test_mirrors_not_in_tables_from_spec():
     assert source.mirrors == {}
 
 
+def test_create_sql_expr_source_with_params(sample_csv_files):
+    """Test that create_sql_expr_source accepts and uses params correctly."""
+    files = sample_csv_files
+    original_cwd = os.getcwd()
+
+    try:
+        os.chdir(files['dir'])
+
+        # Create initial source with CSV files
+        source = DuckDBSource(
+            uri=':memory:',
+            tables={
+                'customers': 'customers.csv',
+                'orders': 'orders.csv'
+            }
+        )
+
+        # Create a new source with parameterized SQL expressions
+        new_tables = {
+            'filtered_customers': 'SELECT * FROM customers WHERE id > ?',
+            'high_value_orders': 'SELECT * FROM orders WHERE total > ? AND customer_id = ?'
+        }
+
+        # Define parameters for each table
+        params = {
+            'filtered_customers': [1],  # id > 1
+            'high_value_orders': [200, 1]  # total > 200 AND customer_id = 1
+        }
+
+        new_source = source.create_sql_expr_source(new_tables, params=params)
+
+        # Check that the new source has the tables
+        tables = new_source.get_tables()
+        assert 'filtered_customers' in tables
+        assert 'high_value_orders' in tables
+
+        # Verify the parameterized queries work correctly
+        filtered_result = new_source.get('filtered_customers')
+        assert len(filtered_result) == 2  # Only customers with id > 1 (Bob and Charlie)
+        assert all(filtered_result['id'] > 1)
+        assert set(filtered_result['name']) == {'Bob', 'Charlie'}
+
+        high_value_result = new_source.get('high_value_orders')
+        assert len(high_value_result) == 2  # Two orders match: customer_id=1 and total > 200
+        assert all(high_value_result['customer_id'] == 1)
+        assert all(high_value_result['total'] > 200)
+        # Check specific values
+        assert set(high_value_result['total']) == {250.5, 300.0}
+
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_table_params_parameter(sample_csv_files):
+    """Test using table_params as a public parameter directly in constructor."""
+    files = sample_csv_files
+    original_cwd = os.getcwd()
+
+    try:
+        os.chdir(files['dir'])
+
+        # Create source with table_params directly
+        source = DuckDBSource(
+            uri=':memory:',
+            tables={
+                'customers': 'customers.csv',
+                'filtered_customers': 'SELECT * FROM customers WHERE city = ?'
+            },
+            table_params={
+                'filtered_customers': ['NYC']
+            }
+        )
+
+        # Query the parameterized table
+        result = source.get('filtered_customers')
+        assert len(result) == 1
+        assert result.iloc[0]['name'] == 'Alice'
+        assert result.iloc[0]['city'] == 'NYC'
+
+        # Regular table should still work
+        all_customers = source.get('customers')
+        assert len(all_customers) == 3
+
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_create_sql_expr_source_without_params(sample_csv_files):
+    """Test that create_sql_expr_source works without params (backward compatibility)."""
+    files = sample_csv_files
+    original_cwd = os.getcwd()
+
+    try:
+        os.chdir(files['dir'])
+
+        source = DuckDBSource(
+            uri=':memory:',
+            tables={
+                'customers': 'customers.csv',
+                'orders': 'orders.csv'
+            }
+        )
+
+        # Create a new source WITHOUT params - should work as before
+        new_tables = {
+            'all_customers': 'SELECT * FROM customers',
+            'all_orders': 'SELECT * FROM orders'
+        }
+
+        new_source = source.create_sql_expr_source(new_tables)
+
+        # Verify tables work without params
+        customers_result = new_source.get('all_customers')
+        assert len(customers_result) == 3
+
+        orders_result = new_source.get('all_orders')
+        assert len(orders_result) == 3
+
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_create_sql_expr_source_mixed_params(sample_csv_files):
+    """Test create_sql_expr_source with some tables having params and others not."""
+    files = sample_csv_files
+    original_cwd = os.getcwd()
+
+    try:
+        os.chdir(files['dir'])
+
+        source = DuckDBSource(
+            uri=':memory:',
+            tables={
+                'customers': 'customers.csv',
+                'orders': 'orders.csv'
+            }
+        )
+
+        # Mix of parameterized and non-parameterized queries
+        new_tables = {
+            'filtered_customers': 'SELECT * FROM customers WHERE id = ?',  # Has params
+            'all_orders': 'SELECT * FROM orders'  # No params
+        }
+
+        params = {
+            'filtered_customers': [2]  # Only customer with id=2 (Bob)
+        }
+
+        new_source = source.create_sql_expr_source(new_tables, params=params)
+
+        # Verify parameterized query
+        filtered_result = new_source.get('filtered_customers')
+        assert len(filtered_result) == 1
+        assert filtered_result.iloc[0]['id'] == 2
+        assert filtered_result.iloc[0]['name'] == 'Bob'
+
+        # Verify non-parameterized query
+        orders_result = new_source.get('all_orders')
+        assert len(orders_result) == 3
+
+    finally:
+        os.chdir(original_cwd)
+
+
 def test_detour_roundtrip(sample_csv_files):
     """
     Test that creating a SQL expression source from an existing source

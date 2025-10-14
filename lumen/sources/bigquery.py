@@ -181,12 +181,33 @@ class BigQuerySource(BaseSQLSource):
             return self.tables[table]
         return f"SELECT * FROM {table}"
 
-    def create_sql_expr_source(self, tables: dict[str, str], **kwargs):
-        params = dict(self.param.values(), **kwargs)
-        params.pop("name", None)
-        params["tables"] = tables
-        source = type(self)(**params)
-        return source
+    def create_sql_expr_source(self, tables: dict[str, str], params: dict[str, list] | None = None, **kwargs):
+        """
+        Creates a new SQL Source given a set of table names and
+        corresponding SQL expressions.
+
+        Arguments
+        ---------
+        tables: dict[str, str]
+            Mapping from table name to SQL expression.
+        params: dict[str, list]
+            Optional mapping from table name to list of parameters to pass to the SQL query.
+            Parameters are used with placeholders (?) in the SQL expressions.
+        kwargs: any
+            Additional keyword arguments.
+
+        Returns
+        -------
+        source: BigQuerySource
+        """
+        if params is None:
+            params = {}
+        source_params = dict(self.param.values(), **kwargs)
+        source_params.pop("name", None)
+        source_params["tables"] = tables
+        if params:
+            source_params["table_params"] = params
+        return type(self)(**source_params)
 
     def _get_dataset_metadata(self, datasets: list[str] | None = None) -> dict:
         """Get metadata for all available datasets in the project.

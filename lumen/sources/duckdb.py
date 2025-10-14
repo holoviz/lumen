@@ -67,6 +67,10 @@ class DuckDBSource(BaseSQLSource):
     tables = param.ClassSelector(class_=(list, dict), doc="""
         List or dictionary of tables.""")
 
+    table_params = param.Dict(default={}, doc="""
+        Dictionary mapping table names to lists of SQL parameters.
+        Parameters are used with placeholders (?) in SQL expressions.""")
+
     uri = param.String(doc="The URI of the DuckDB database")
 
     source_type = 'duckdb'
@@ -325,7 +329,7 @@ class DuckDBSource(BaseSQLSource):
         return source
 
     def create_sql_expr_source(
-        self, tables: dict[str, str], materialize: bool = True, **kwargs
+        self, tables: dict[str, str], materialize: bool = True, params: dict[str, list] | None = None, **kwargs
     ):
         """
         Creates a new SQL Source given a set of table names and
@@ -337,6 +341,9 @@ class DuckDBSource(BaseSQLSource):
             Mapping from table name to SQL expression.
         materialize: bool
             Whether to materialize new tables
+        params: dict[str, list]
+            Optional mapping from table name to list of parameters to pass to the SQL query.
+            Parameters are used with placeholders (?) in the SQL expressions when executing queries.
         kwargs: any
             Additional keyword arguments.
 
@@ -344,13 +351,19 @@ class DuckDBSource(BaseSQLSource):
         -------
         source: DuckDBSource
         """
-        params = dict(self.param.values(), **kwargs)
-        params['tables'] = tables
+        if params is None:
+            params = {}
+
+        source_params = dict(self.param.values(), **kwargs)
+        source_params['tables'] = tables
+        if params:
+            source_params['table_params'] = params
         # Reuse connection unless it has changed
         if 'uri' not in kwargs and 'initializers' not in kwargs:
-            params['_connection'] = self._connection
-        params.pop('name', None)
-        source = type(self)(**params)
+            source_params['_connection'] = self._connection
+        source_params.pop('name', None)
+        source = type(self)(**source_params)
+
         if not materialize:
             return source
 
@@ -360,7 +373,11 @@ class DuckDBSource(BaseSQLSource):
             table_expr = f'CREATE OR REPLACE TEMP TABLE "{table}" AS ({sql_expr})'
             cursor = self._connection.cursor()
             try:
-                cursor.execute(table_expr)
+                # Execute with parameters if provided for this table
+                if table in params:
+                    cursor.execute(table_expr, params[table])
+                else:
+                    cursor.execute(table_expr)
             except duckdb.CatalogException as e:
                 original_e = e
                 pattern = r"Table with name\s(\S+)"
@@ -415,8 +432,13 @@ class DuckDBSource(BaseSQLSource):
             sql_transforms = [SQLFilter(conditions=conditions)] + sql_transforms
         for st in sql_transforms:
             sql_expr = st.apply(sql_expr)
+
+        # Apply stored SQL parameters if available for this table
         with self._connection.cursor() as cursor:
-            rel = cursor.execute(sql_expr)
+            if table in self.table_params:
+                rel = cursor.execute(sql_expr, self.table_params[table])
+            else:
+                rel = cursor.execute(sql_expr)
             has_geom = any(d[0] == 'geometry' and d[1] == 'BINARY' for d in rel.description)
             df = rel.fetch_df(date_as_object=True)
             if has_geom:

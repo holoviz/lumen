@@ -219,16 +219,34 @@ class SnowflakeSource(BaseSQLSource):
             encryption_algorithm=NoEncryption(),
         )
 
-    def create_sql_expr_source(self, tables: dict[str, str], **kwargs):
+    def create_sql_expr_source(self, tables: dict[str, str], params: dict[str, list] | None = None, **kwargs):
         """
         Creates a new SQL Source given a set of table names and
         corresponding SQL expressions.
+
+        Arguments
+        ---------
+        tables: dict[str, str]
+            Mapping from table name to SQL expression.
+        params: dict[str, list]
+            Optional mapping from table name to list of parameters to pass to the SQL query.
+            Parameters are used with placeholders (?) in the SQL expressions.
+        kwargs: any
+            Additional keyword arguments.
+
+        Returns
+        -------
+        source: SnowflakeSource
         """
-        params = dict(self.param.values(), **kwargs)
-        params.pop("name", None)
-        params['tables'] = tables
-        params['conn'] = self._conn
-        return SnowflakeSource(**params)
+        if params is None:
+            params = {}
+        source_params = dict(self.param.values(), **kwargs)
+        source_params.pop("name", None)
+        source_params['tables'] = tables
+        if params:
+            source_params['table_params'] = params
+        source_params['conn'] = self._conn
+        return SnowflakeSource(**source_params)
 
     def _cast_to_supported_dtypes(self, df: pd.DataFrame, sample: int = 100) -> pd.DataFrame:
         """
