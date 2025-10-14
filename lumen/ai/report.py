@@ -742,6 +742,10 @@ class SQLQuery(Action):
     sql_expr = param.String(default="", doc="""
         The SQL expression to use for the action.""")
 
+    sql_params = param.List(default=[], doc="""
+        List of parameters to pass to the SQL expression.
+        Parameters are used with placeholders (?) in the SQL expression.""")
+
     table = param.String(doc="""
         The name of the table generated from the SQL expression.""")
 
@@ -793,7 +797,9 @@ class SQLQuery(Action):
         if not self.table:
             raise ValueError("SQLQuery must declare a table name.")
 
-        source = source.create_sql_expr_source({self.table: self.sql_expr})
+        # Pass sql_params if provided
+        params = {self.table: self.sql_params} if self.sql_params else None
+        source = source.create_sql_expr_source({self.table: self.sql_expr}, params=params)
         pipeline = Pipeline(source=source, table=self.table)
         if self.memory is not None:
             self.memory["source"] = source
