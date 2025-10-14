@@ -22,6 +22,7 @@ from urllib.parse import parse_qs
 
 import pandas as pd
 import param
+import yaml
 
 from jinja2 import (
     ChoiceLoader, DictLoader, Environment, FileSystemLoader, StrictUndefined,
@@ -520,9 +521,9 @@ async def describe_data(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: boo
             # Use the first column as index to save tokens
             if len(df.columns) > 1:
                 df = df.set_index(df.columns[0])
+                return yaml.dump(df.to_dict('index'), default_flow_style=False, allow_unicode=True, sort_keys=False)
             else:
-                df = df.to_dict("records")
-            return df
+                return yaml.dump(df.to_dict("records"), default_flow_style=False, allow_unicode=True, sort_keys=False)
 
         is_sampled = False
         if shape[0] > 5000:
@@ -598,7 +599,7 @@ async def describe_data(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: boo
         head_sample = df.head(2).to_dict('records')
         tail_sample = df.tail(2).to_dict('records')
 
-        return {
+        result = {
             "summary": {
                 "n_cells": size,
                 "shape": shape,
@@ -610,7 +611,40 @@ async def describe_data(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: boo
             "tail": tail_sample[0] if tail_sample else {},
         }
 
+        return yaml.dump(result, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
     return await asyncio.to_thread(describe_data_sync, df)
+
+
+def format_data_as_yaml(data: pd.DataFrame | dict, title: str = "Data Overview") -> str:
+    """
+    Format a DataFrame or data dictionary as YAML.
+
+    Parameters
+    ----------
+    data : pd.DataFrame | dict
+        The data to format. Can be a DataFrame or dictionary.
+    title : str
+        The title to use in the YAML output.
+
+    Returns
+    -------
+    str
+        YAML formatted string representation of the data.
+    """
+    if isinstance(data, pd.DataFrame):
+        # Convert DataFrame to dictionary, using index as keys
+        if data.index.name:
+            data_dict = data.to_dict('index')
+        else:
+            data_dict = data.to_dict('records')
+    else:
+        data_dict = data
+
+    # Wrap in title
+    output = {title: data_dict}
+
+    return yaml.dump(output, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
 
 def clean_sql(sql_expr: str, dialect: str | None = None) -> str:
@@ -838,20 +872,15 @@ def truncate_iterable(iterable, max_length=150) -> tuple[list, list, bool]:
     iterable_list = list(iterable)
     if len(iterable_list) > max_length:
         half = max_length // 2
-        first_half_indices = list(range(half))
-        second_half_indices = list(range(len(iterable_list) - half, len(iterable_list)))
-
         first_half_items = iterable_list[:half]
         second_half_items = iterable_list[-half:]
 
         cols_to_show = first_half_items + second_half_items
-        original_indices = first_half_indices + second_half_indices
         show_ellipsis = True
     else:
         cols_to_show = iterable_list
-        original_indices = list(range(len(iterable_list)))
         show_ellipsis = False
-    return cols_to_show, original_indices, show_ellipsis
+    return cols_to_show, show_ellipsis
 
 
 async def with_timeout(coro, timeout_seconds=10, default_value=None, error_message=None):
