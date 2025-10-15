@@ -771,3 +771,49 @@ class RetryControls(Viewer):
 
     def __panel__(self):
         return self._row
+
+
+class AnnotationControls(Viewer):
+    """Controls for adding annotations to visualizations."""
+
+    active = param.Boolean(False, doc="Click to add annotations")
+
+    annotation_request = param.String(doc="User's annotation request")
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        icon = ToggleIcon.from_param(
+            self.param.active,
+            active_icon="cancel",
+            color="default",
+            description="Add annotations to highlight key insights",
+            icon="chat-bubble",
+            icon_size="1em",
+            label="",
+            margin=(5, 0),
+            size="small",
+            sx={".MuiIcon-root": {"color": "var(--mui-palette-default-dark)"}}
+        )
+        self._text_input = TextInput(
+            placeholder="Describe what to annotate (e.g., 'highlight peak values', 'mark outliers')...",
+            visible=icon.param.value,
+            max_length=200,
+            margin=(5, 0),
+            size="small"
+        )
+        row = Row(icon, self._text_input)
+        self._row = row
+
+        self._text_input.param.watch(self._enter_request, "enter_pressed")
+
+    def _enter_request(self, _):
+        """Handle Enter key press in text input."""
+        self.param.update(
+            annotation_request=self._text_input.value_input,
+            active=False,
+        )
+        # Clear the input after submission
+        self._text_input.value = ""
+
+    def __panel__(self):
+        return self._row

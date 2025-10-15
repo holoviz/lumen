@@ -36,7 +36,7 @@ from .config import (
     VEGA_LITE_EXAMPLES_OPENAI_DB_FILE, VEGA_MAP_LAYER, VEGA_ZOOMABLE_MAP_ITEMS,
     MissingContextError, RetriesExceededError,
 )
-from .controls import RetryControls, SourceControls
+from .controls import AnnotationControls, RetryControls, SourceControls
 from .llm import Llm, Message, OpenAI
 from .memory import _Memory
 from .models import (
@@ -1853,7 +1853,7 @@ class VegaLiteAgent(BaseViewAgent):
     ) -> str:
         doc_examples = await self._get_doc_examples(feedback)
         context["doc_examples"] = doc_examples
-        return super()._retry_output_by_line(feedback, messages, memory, original_output, language, **context)
+        return await super()._retry_output_by_line(feedback, messages, memory, original_output, language, **context)
 
     async def respond(
         self,
@@ -1889,7 +1889,6 @@ class VegaLiteAgent(BaseViewAgent):
         # Step 3: enhancements (LLM-driven creative decisions)
         steps = {
             "interaction_polish": "Add helpful tooltips and ensure responsive, accessible user experience",
-            "annotate_plot": "Add annotations to highlight key data points or trends that support the narrative",
         }
 
         # Execute steps sequentially
@@ -1910,6 +1909,110 @@ class VegaLiteAgent(BaseViewAgent):
 
         self._memory["view"] = full_dict
         return view
+
+    def _render_lumen(
+        self,
+        component: Component,
+        messages: list | None = None,
+        title: str | None = None,
+        **kwargs,
+    ):
+        """Override to add annotation controls alongside retry controls."""
+        async def _retry_invoke(event: param.parameterized.Event):
+            with out.param.update(loading=True):
+                out.spec = await self._retry_output_by_line(event.new, messages, self._memory, out.spec, language=out.language)
+
+        async def _annotation_invoke(event: param.parameterized.Event):
+            """Handle annotation request."""
+            with out.param.update(loading=True):
+                current_dict = yaml.safe_load(out.spec)
+                updated_dict = await self._apply_annotation(
+                    annotation_request=event.new,
+                    current_dict=current_dict,
+                    messages=messages,
+                )
+                # Already converted to full spec
+                out.spec = yaml.dump(updated_dict)
+
+        retry_controls = RetryControls()
+        retry_controls.param.watch(_retry_invoke, "reason")
+
+        annotation_controls = AnnotationControls()
+        annotation_controls.param.watch(_annotation_invoke, "annotation_request")
+
+        out = self._output_type(
+            component=component,
+            footer=[retry_controls, annotation_controls],
+            title=title,
+            **kwargs
+        )
+        out.param.watch(partial(self._update_spec, self._memory), "spec")
+        if "outputs" in self._memory:
+            # We have to create a new list to trigger an event
+            # since inplace updates will not trigger updates
+            # and won't allow diffing between old and new values
+            self._memory["outputs"] = self._memory["outputs"] + [out]
+        if self.interface is not None:
+            message_kwargs = dict(value=out, user=self.user)
+            self.interface.stream(replace=True, max_width=self._max_width, **message_kwargs)
+        return out
+
+    async def _apply_annotation(
+        self,
+        annotation_request: str,
+        current_dict: dict,
+        messages: list[Message],
+    ) -> dict:
+        """
+        Apply annotations based on user request.
+
+        Parameters
+        ----------
+        annotation_request : str
+            User's description of what to annotate
+        current_spec : dict
+            The current VegaLite specification (full dict with 'spec' key)
+        messages : list[Message]
+            Chat history for context
+
+        Returns
+        -------
+        dict
+            Updated specification with annotations
+        """
+        # Add user's annotation request to messages context
+        annotation_messages = messages + [{
+            "role": "user",
+            "content": f"Add annotations: {annotation_request}"
+        }]
+
+        with self.interface.param.update(callback_exception="raise"):
+            system_prompt = await self._render_prompt(
+                "annotate_plot",
+                annotation_messages,
+                vega_spec=yaml.dump(current_dict["spec"], default_flow_style=False),
+            )
+
+            model_spec = self.prompts.get("annotate_plot", {}).get("llm_spec", self.llm_spec_key)
+            result = await self.llm.invoke(
+                messages=annotation_messages,
+                system=system_prompt,
+                response_model=VegaLiteSpecUpdate,
+                model_spec=model_spec,
+            )
+            update_dict = yaml.safe_load(result.yaml_update)
+
+        # Merge and validate
+        final_dict = current_dict.copy()
+        try:
+            final_dict["spec"] = self._deep_merge_dicts(final_dict["spec"], update_dict)
+            await self._extract_spec({"yaml_spec": yaml.dump(final_dict["spec"])})
+        except Exception as e:
+            log_debug(f"Skipping invalid annotation update due to error: {e}")
+            # Return original spec if annotation fails
+            return final_dict
+
+        return final_dict
 
 
 class AnalysisAgent(LumenBaseAgent):

@@ -1,24 +1,7 @@
-{% extends 'VegaLiteAgent/improvement_step.jinja2' %}
+{% extends 'Actor/main.jinja2' %}
 
 {% block instructions %}
 Add strategic visual annotations to highlight key insights in your data.
-
-# SCOPE: Telling a Clear Story
-
-# Annotation Strategy
-
-Aim for 2-4 annotations that support your narrative. Best annotations:
-- Mark meaningful thresholds (not arbitrary averages unless they tell a story)
-- Highlight exceptional ranges or critical time periods
-- Clarify events that explain patterns
-
-Avoid:
-- Obvious patterns already clear from the visual
-- Statistical measures (mean, median) unless they're meaningful thresholds
-- Annotations that compete with or obscure the data
-- Floating annotations disconnected from the data (e.g., text at y=0 for a bar chart)
-
-**Key principle**: If the visualization already tells the story clearly through color, sorting, or visual encoding, you may not need annotations at all.
 
 # Annotation Patterns
 
@@ -37,6 +20,13 @@ Avoid:
 - Layer filtered data with distinct color
 - Use `transform: [{filter: "datum.field > threshold"}]`
 - Make sure the threshold is meaningful, not arbitrary
+{% endblock %}
+
+{% block context %}
+Build off the following Vega-Lite yaml:
+```yaml
+{{ vega_spec }}
+```
 {% endblock %}
 
 {% block examples %}
