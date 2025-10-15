@@ -225,7 +225,7 @@ class SnowflakeSource(BaseSQLSource):
             encryption_algorithm=NoEncryption(),
         )
 
-    def create_sql_expr_source(self, tables: dict[str, str], params: dict[str, list] | None = None, **kwargs):
+    def create_sql_expr_source(self, tables: dict[str, str], params: dict[str, list | dict] | None = None, **kwargs):
         """
         Creates a new SQL Source given a set of table names and
         corresponding SQL expressions.
@@ -234,9 +234,10 @@ class SnowflakeSource(BaseSQLSource):
         ---------
         tables: dict[str, str]
             Mapping from table name to SQL expression.
-        params: dict[str, list]
-            Optional mapping from table name to list of parameters to pass to the SQL query.
-            Parameters are used with placeholders (?) in the SQL expressions.
+        params: dict[str, list | dict] | None
+            Optional mapping from table name to parameters:
+            - list: Positional parameters for placeholder (?) syntax
+            - dict: Named parameters (for pyformat/format paramstyle)
         kwargs: any
             Additional keyword arguments.
 
@@ -280,12 +281,15 @@ class SnowflakeSource(BaseSQLSource):
                 df[col] = df[col].astype(str)
         return df
 
-    def execute(self, sql_query: str, *args, **kwargs):
+    def execute(self, sql_query: str, params: list | dict | None = None, *args, **kwargs):
         # TODO: remove cast in future, but keep until bokeh has a solution
-        df = self._cursor.execute(sql_query, *args, **kwargs).fetch_pandas_all()
+        if params:
+            df = self._cursor.execute(sql_query, params, *args, **kwargs).fetch_pandas_all()
+        else:
+            df = self._cursor.execute(sql_query, *args, **kwargs).fetch_pandas_all()
         return self._cast_to_supported_dtypes(df)
 
-    async def execute_async(self, sql_query: str, *args, **kwargs):
+    async def execute_async(self, sql_query: str, params: list | dict | None = None, *args, **kwargs):
         """
         Execute a Snowflake SQL query asynchronously and return the result as a DataFrame.
 
@@ -293,8 +297,13 @@ class SnowflakeSource(BaseSQLSource):
         ----------
         sql_query : str
             The SQL query to execute
+        params : list | dict | None
+            Parameters to use in the SQL query:
+            - list: Positional parameters for placeholder (?) syntax (qmark paramstyle)
+            - dict: Named parameters (for pyformat/format paramstyle)
+            - None: No parameters
         *args : tuple
-            Positional arguments to pass to the query
+            Additional positional arguments to pass to the query
         **kwargs : dict
             Keyword arguments to pass to the query
 
@@ -303,7 +312,10 @@ class SnowflakeSource(BaseSQLSource):
         pd.DataFrame
             The query result as a pandas DataFrame with supported dtypes
         """
-        self._cursor.execute_async(sql_query, *args, **kwargs)
+        if params:
+            self._cursor.execute_async(sql_query, params, *args, **kwargs)
+        else:
+            self._cursor.execute_async(sql_query, *args, **kwargs)
         query_id = self._cursor.sfqid
 
         while True:
@@ -369,7 +381,7 @@ class SnowflakeSource(BaseSQLSource):
             sql_transforms = [SQLFilter(conditions=conditions)] + sql_transforms
         for st in sql_transforms:
             sql_expr = st.apply(sql_expr)
-        return await self.execute_async(sql_expr)
+        return await self.execute_async(sql_expr, self.table_params.get(table, []))
 
     @contextlib.contextmanager
     def _timeout_context(self, seconds=None):

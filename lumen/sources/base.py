@@ -953,8 +953,12 @@ class BaseSQLSource(Source):
     table_params = param.Dict(
         default={},
         doc="""
-        Dictionary mapping table names to lists of SQL parameters.
-        Parameters are used with placeholders (?) in SQL expressions.""",
+        Dictionary mapping table names to SQL parameters.
+        Parameters can be:
+        - list: Positional parameters for placeholder (?) syntax
+        - dict: Named parameters for :name, %(name)s, etc. syntax
+        Each table maps to either a list or dict of parameters.
+        Example: {'my_table': [2024, 'active'], 'other_table': {'year': 2024}}""",
     )
 
     load_schema = param.Boolean(default=True, doc="Whether to load the schema")
@@ -1025,7 +1029,7 @@ class BaseSQLSource(Source):
         sql_expr = SQLSelectFrom(sql_expr=self.sql_expr, read=self.dialect).apply(table)
         return sql_expr
 
-    def create_sql_expr_source(self, tables: dict[str, str], params: dict[str, list] | None = None, **kwargs):
+    def create_sql_expr_source(self, tables: dict[str, str], params: dict[str, list | dict] | None = None, **kwargs):
         """
         Creates a new SQL Source given a set of table names and
         corresponding SQL expressions.
@@ -1034,9 +1038,10 @@ class BaseSQLSource(Source):
         ---------
         tables: dict[str, str]
             Mapping from table name to SQL expression.
-        params: dict[str, list]
-            Optional mapping from table name to list of parameters to pass to the SQL query.
-            Parameters are used with placeholders (?) in the SQL expressions.
+        params: dict[str, list | dict] | None
+            Optional mapping from table name to parameters:
+            - list: Positional parameters for placeholder (?) syntax
+            - dict: Named parameters for :name, %(name)s, etc. syntax
         kwargs: any
             Additional keyword arguments.
 
@@ -1046,7 +1051,7 @@ class BaseSQLSource(Source):
         """
         raise NotImplementedError
 
-    def execute(self, sql_query: str, *args, **kwargs) -> pd.DataFrame:
+    def execute(self, sql_query: str, params: list | dict | None = None, *args, **kwargs) -> pd.DataFrame:
         """
         Executes a SQL query and returns the result as a DataFrame.
 
@@ -1054,8 +1059,13 @@ class BaseSQLSource(Source):
         ---------
         sql_query : str
             The SQL Query to execute
+        params : list | dict | None
+            Parameters to use in the SQL query:
+            - list: Positional parameters for placeholder (?) syntax
+            - dict: Named parameters for :name, %(name)s, etc. syntax
+            - None: No parameters
         *args : list
-            Positional arguments to pass to the SQL query
+            Additional positional arguments to pass to the SQL query
         **kwargs : dict
             Keyword arguments to pass to the SQL query
 
@@ -1066,7 +1076,7 @@ class BaseSQLSource(Source):
         """
         raise NotImplementedError
 
-    async def execute_async(self, sql_query: str, *args, **kwargs) -> pd.DataFrame:
+    async def execute_async(self, sql_query: str, params: list | dict | None = None, *args, **kwargs) -> pd.DataFrame:
         """
         Executes a SQL query asynchronously and returns the result as a DataFrame.
 
@@ -1078,8 +1088,13 @@ class BaseSQLSource(Source):
         ---------
         sql_query : str
             The SQL Query to execute
+        params : list | dict | None
+            Parameters to use in the SQL query:
+            - list: Positional parameters for placeholder (?) syntax
+            - dict: Named parameters for :name, %(name)s, etc. syntax
+            - None: No parameters
         *args : list
-            Positional arguments to pass to the SQL query
+            Additional positional arguments to pass to the SQL query
         **kwargs : dict
             Keyword arguments to pass to the SQL query
 
@@ -1088,7 +1103,7 @@ class BaseSQLSource(Source):
         pd.DataFrame
             The result as a pandas DataFrame
         """
-        return await asyncio.to_thread(self.execute, sql_query, *args, **kwargs)
+        return await asyncio.to_thread(self.execute, sql_query, params, *args, **kwargs)
 
     async def get_async(self, table: str, **query) -> DataFrame:
         """

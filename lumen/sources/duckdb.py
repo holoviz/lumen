@@ -329,7 +329,7 @@ class DuckDBSource(BaseSQLSource):
         return source
 
     def create_sql_expr_source(
-        self, tables: dict[str, str], materialize: bool = True, params: dict[str, list] | None = None, **kwargs
+        self, tables: dict[str, str], materialize: bool = True, params: dict[str, list | dict] | None = None, **kwargs
     ):
         """
         Creates a new SQL Source given a set of table names and
@@ -341,9 +341,10 @@ class DuckDBSource(BaseSQLSource):
             Mapping from table name to SQL expression.
         materialize: bool
             Whether to materialize new tables
-        params: dict[str, list]
-            Optional mapping from table name to list of parameters to pass to the SQL query.
-            Parameters are used with placeholders (?) in the SQL expressions when executing queries.
+        params: dict[str, list | dict] | None
+            Optional mapping from table name to parameters:
+            - list: Positional parameters for ? placeholders
+            - dict: Named parameters for $param_name placeholders
         kwargs: any
             Additional keyword arguments.
 
@@ -400,8 +401,10 @@ class DuckDBSource(BaseSQLSource):
         source._file_based_tables.update(self._file_based_tables)
         return source
 
-    def execute(self, sql_query: str, *args, **kwargs):
+    def execute(self, sql_query: str, params: list | dict | None = None, *args, **kwargs):
         with self._connection.cursor() as cursor:
+            if params:
+                return cursor.execute(sql_query, params, *args, **kwargs).fetch_df()
             return cursor.execute(sql_query, *args, **kwargs).fetch_df()
 
     def get_tables(self):
