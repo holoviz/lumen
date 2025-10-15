@@ -269,9 +269,6 @@ class SQLSelectFrom(SQLFormat):
     transform_type: ClassVar[str] = "sql_select_from"
 
     def apply(self, sql_in: str) -> str:
-        if "SELECT" in sql_in.upper():
-            return super().apply(sql_in)
-
         try:
             expression = self.parse_sql(sql_in)
         except sqlglot.ParseError:
