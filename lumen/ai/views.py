@@ -1,14 +1,9 @@
 import asyncio
 import traceback
 
-from copy import deepcopy
-
-import panel as pn
 import param
-import requests
 import yaml
 
-from jsonschema import Draft7Validator, ValidationError
 from panel.config import config
 from panel.layout import Column, Row
 from panel.pane import Markdown
@@ -27,7 +22,6 @@ from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
 from ..util import NumpyDumper
 from ..views.base import Table
-from .config import VEGA_ZOOMABLE_MAP_ITEMS
 from .utils import get_data
 
 
@@ -197,77 +191,6 @@ class LumenOutput(Viewer):
         return self.spec
 
     def __str__(self):
-        return f"{self.__class__.__name__}:\n```yaml\n{self.spec}\n```"
-
-
-class VegaLiteOutput(LumenOutput):
-
-    @pn.cache
-    @staticmethod
-    def _load_vega_lite_schema(schema_url: str | None = None):
-        return requests.get(schema_url, timeout=0.5).json()
-
-    @staticmethod
-    def _format_validation_error(error: ValidationError) -> str:
-        """Format JSONSchema validation errors into a readable message."""
-        errors = {}
-        last_path = ""
-        rejected_paths = set()
-
-        def process_error(err):
-            nonlocal last_path
-            path = err.json_path
-            if errors and path == "$":
-                return  # these $ downstream errors are due to upstream errors
-            if err.validator != "anyOf":
-                # other downstream errors that are due to upstream errors
-                # $.encoding.x.sort: '-host_count' is not one of ..
-                #$.encoding.x: 'value' is a required property
-                if (
-                    (last_path != path
-                    and last_path.split(path)[-1].count(".") <= 1)
-                    or path in rejected_paths
-                ):
-                    rejected_paths.add(path)
-                # if we have a more specific error message, e.g. enum, don't overwrite it
-                elif path in errors and err.validator in ("const", "type"):
-                    pass
-                else:
-                    errors[path] = f"{path}: {err.message}"
-            last_path = path
-            if err.context:
-                for e in err.context:
-                    process_error(e)
-
-        process_error(error)
-        return "\n".join(errors.values())
-
-    @classmethod
-    def _validate_spec(cls, spec):
-        if "spec" in spec:
-            spec = spec["spec"]
-        try:
-            vega_lite_schema = cls._load_vega_lite_schema(
-                spec.get("$schema", "https://vega.github.io/schema/vega-lite/v5.json")
-            )
-        except Exception:
-            return super()._validate_spec(spec)
-        vega_lite_validator = Draft7Validator(vega_lite_schema)
-        try:
-            # the zoomable params work, but aren't officially valid
-            # so we need to remove them for validation
-            # https://stackoverflow.com/a/78342773/9324652
-            spec_copy = deepcopy(spec)
-            for key in VEGA_ZOOMABLE_MAP_ITEMS.get("projection", {}):
-                spec_copy.get("projection", {}).pop(key, None)
-            spec_copy.pop("params", None)
-            vega_lite_validator.validate(spec_copy)
-        except ValidationError as e:
-            raise ValidationError(cls._format_validation_error(e)) from e
-        return super()._validate_spec(spec)
-
-    def __str__(self):
-        # Only keep the spec part
         return f"{self.__class__.__name__}:\n```yaml\n{self.spec}\n```"
 
 

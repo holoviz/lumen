@@ -50,9 +50,7 @@ from .utils import (
     get_root_exception, get_schema, load_json, log_debug, report_error,
     retry_llm_output, set_nested, stream_details,
 )
-from .views import (
-    AnalysisOutput, LumenOutput, SQLOutput, VegaLiteOutput,
-)
+from .views import AnalysisOutput, LumenOutput, SQLOutput
 
 
 class Agent(Viewer, ToolUser, ContextProvider):
@@ -1512,7 +1510,7 @@ class VegaLiteAgent(BaseViewAgent):
 
     _extensions = ("vega",)
 
-    _output_type = VegaLiteOutput
+    _output_type = LumenOutput
 
     _retry_target_keys = ["spec"]
 
