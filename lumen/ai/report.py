@@ -742,7 +742,7 @@ class SQLQuery(Action):
     sql_expr = param.String(default="", doc="""
         The SQL expression to use for the action.""")
 
-    sql_params = param.List(default=[], doc="""
+    table_params = param.List(default=[], doc="""
         List of parameters to pass to the SQL expression.
         Parameters are used with placeholders (?) in the SQL expression.""")
 
@@ -784,19 +784,20 @@ class SQLQuery(Action):
         Returns
         -------
         The outputs of the action.
-    table_params = param.List(default=[], doc="""
-        List of parameters to pass to the SQL expression.
-        Parameters are used with placeholders (?) in the SQL expression.""")
+        """
+        source = self.source
+        if source is None:
+            if self.memory is None or 'source' not in self.memory:
+                raise ValueError(
+                    "SQLQuery could not resolve a source. Either provide "
+                    "an explicit source or ensure another action or actor "
+                    "provides a source."
+                )
+            source = self.memory['source']
+        if not self.table:
+            raise ValueError("SQLQuery must declare a table name.")
 
-table = param.String(doc="""
-       The name of the table generated from the SQL expression.""")
-
-@@ -792,7 +796,10 @@ async def _execute(self, **kwargs):
-source = self.memory['source']
-if not self.table:
-raise ValueError("SQLQuery must declare a table name.")
-
-        # Pass sql_params if provided
+        # Pass table_params if provided
         params = {self.table: self.table_params} if self.table_params else None
         source = source.create_sql_expr_source({self.table: self.sql_expr}, params=params)
         pipeline = Pipeline(source=source, table=self.table)
