@@ -63,6 +63,10 @@ class SnowflakeSource(BaseSQLSource):
     user = param.String(default=None, doc="""
         The user to authenticate as.""")
 
+    paramstyle = param.Selector(default='qmark', objects=[
+        'qmark', 'numeric', 'format', 'pyformat'], doc="""
+        The paramstyle to use for SQL queries.""")
+
     password = param.String(default=None, doc="""
         The password to authenticate with (if authenticator is set to "snowflake").""")
 
@@ -113,6 +117,8 @@ class SnowflakeSource(BaseSQLSource):
             conn_kwargs['host'] = self.host
         if self.token is not None:
             conn_kwargs['token'] = self.token
+        if self.paramstyle is not None:
+            conn_kwargs['paramstyle'] = self.paramstyle
         if self.password is not None:
             conn_kwargs['password'] = self.password
         if self.private_key is not None:
@@ -276,8 +282,7 @@ class SnowflakeSource(BaseSQLSource):
 
     def execute(self, sql_query: str, *args, **kwargs):
         # TODO: remove cast in future, but keep until bokeh has a solution
-        # TODO: figure out how to bridge ? which is supported by sqlglot, but not Snowflake, and %s which is supported by Snowflake
-        df = self._cursor.execute(sql_query.replace("?", "%s"), *args, **kwargs).fetch_pandas_all()
+        df = self._cursor.execute(sql_query, *args, **kwargs).fetch_pandas_all()
         return self._cast_to_supported_dtypes(df)
 
     async def execute_async(self, sql_query: str, *args, **kwargs):
