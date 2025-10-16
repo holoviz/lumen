@@ -668,15 +668,15 @@ def test_sqlalchemy_create_sql_expr_no_nested_transaction():
     """Test that create_sql_expr_source doesn't cause nested transaction errors."""
     source = SQLAlchemySource(url='sqlite:///:memory:')
     
-    # Create test data
+    # Create test data (use 'data_table' instead of 'table' which is a reserved keyword)
     df = pd.DataFrame({'id': [1, 2, 3, 4, 5], 'value': [10, 20, 30, 40, 50]})
     with source._engine.begin() as conn:
-        df.to_sql('table', conn, if_exists='replace', index=False)
+        df.to_sql('data_table', conn, if_exists='replace', index=False)
     
-    source.tables = {'table': 'SELECT * FROM table'}
+    source.tables = {'data_table': 'SELECT * FROM data_table'}
     
     # This should not raise a nested transaction error
-    new_source = source.create_sql_expr_source({"limited": "SELECT * FROM table LIMIT 2"})
+    new_source = source.create_sql_expr_source({"limited": "SELECT * FROM data_table LIMIT 2"})
     result = new_source.get("limited")
     
     assert len(result) == 2
