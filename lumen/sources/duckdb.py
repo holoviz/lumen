@@ -118,16 +118,16 @@ class DuckDBSource(BaseSQLSource):
 
             # Third pass: process SQL-based tables (which may reference file-based tables)
             for table_name, sql_expr in sql_based_tables.items():
-                table_name = re.sub(r'\W+', '_', table_name)
+                table_alias = self.normalize_table(table_name)
                 # Skip non-string expressions (e.g., dicts)
                 if not isinstance(sql_expr, str):
-                    processed_tables[table_name] = sql_expr
+                    processed_tables[table_alias] = sql_expr
                     continue
 
                 # For SQL expressions that define complete queries, create them as views
                 # This includes both READ_* functions and other SELECT statements
                 if sql_expr.strip().upper().startswith('SELECT'):
-                    quoted_table = f'"{table_name}"' if not (table_name.startswith('"') and table_name.endswith('"')) else table_name
+                    quoted_table = f'"{table_alias}"' if not (table_alias.startswith('"') and table_alias.endswith('"')) else table_alias
                     view_sql = f"CREATE OR REPLACE VIEW {quoted_table} AS {sql_expr}"
                     cursor = self._connection.cursor()
                     try:
@@ -137,7 +137,7 @@ class DuckDBSource(BaseSQLSource):
                     finally:
                         cursor.close()
 
-                processed_tables[table_name] = sql_expr
+                processed_tables[table_alias] = sql_expr
 
             self.tables = processed_tables
 
@@ -403,6 +403,7 @@ class DuckDBSource(BaseSQLSource):
         if table not in tables and 'read_' in table:
             # Extract table name from read_* function
             table = re.search(r"read_(\w+)\('(.+?)'", table).group(2)
+        table = re.sub(r'\W+', '_', table)
         return table
 
     @cached
