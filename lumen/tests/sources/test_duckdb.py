@@ -730,3 +730,229 @@ def test_detour_roundtrip(sample_csv_files):
     assert read_df.iloc[[0]].equals(df.iloc[[0]])
     assert read_source.tables["limited_customers"] == 'SELECT * FROM customers LIMIT 1'
     assert "customers" in read_source.tables
+
+
+def test_table_params_basic(sample_csv_files):
+    """Test table_params with single and multiple parameters."""
+    files = sample_csv_files
+    original_cwd = os.getcwd()
+
+    try:
+        os.chdir(files['dir'])
+        source = DuckDBSource(
+            uri=':memory:',
+            tables={
+                'customers': 'customers.csv',
+                'orders': 'orders.csv',
+                'by_name': 'SELECT * FROM customers WHERE name = ?',
+                'by_customer_total': 'SELECT * FROM orders WHERE customer_id = ? AND total > ?'
+            },
+            table_params={
+                'by_name': ['Alice'],
+                'by_customer_total': [1, 200]
+            }
+        )
+
+        # Single parameter
+        result = source.get('by_name')
+        assert len(result) == 1
+        assert result.iloc[0]['name'] == 'Alice'
+
+        # Multiple parameters
+        result = source.get('by_customer_total')
+        assert len(result) == 2
+        assert all(result['customer_id'] == 1)
+        assert all(result['total'] > 200)
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_table_params_data_types(sample_csv_files):
+    """Test table_params with various data types and SQL patterns."""
+    files = sample_csv_files
+    original_cwd = os.getcwd()
+
+    try:
+        os.chdir(files['dir'])
+        source = DuckDBSource(
+            uri=':memory:',
+            tables={
+                'customers': 'customers.csv',
+                'orders': 'orders.csv',
+                'by_int': 'SELECT * FROM orders WHERE customer_id = ?',
+                'by_float': 'SELECT * FROM orders WHERE total > ?',
+                'by_like': 'SELECT * FROM customers WHERE name LIKE ?',
+                'by_in': 'SELECT * FROM customers WHERE city IN (?, ?)'
+            },
+            table_params={
+                'by_int': [2],
+                'by_float': [200.5],
+                'by_like': ['%li%'],
+                'by_in': ['NYC', 'LA']
+            }
+        )
+
+        assert source.get('by_int').iloc[0]['customer_id'] == 2
+        assert len(source.get('by_float')) == 2
+        assert set(source.get('by_like')['name']) == {'Alice', 'Charlie'}
+        assert len(source.get('by_in')) == 2
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_table_params_complex_queries(sample_csv_files):
+    """Test table_params with JOINs, aggregations, CTEs, and subqueries."""
+    files = sample_csv_files
+    original_cwd = os.getcwd()
+
+    try:
+        os.chdir(files['dir'])
+        source = DuckDBSource(
+            uri=':memory:',
+            tables={
+                'customers': 'customers.csv',
+                'orders': 'orders.csv',
+                'join_query': 'SELECT c.name, o.total FROM customers c JOIN orders o ON c.id = o.customer_id WHERE c.name = ?',
+                'agg_query': 'SELECT customer_id, COUNT(*) as cnt, SUM(total) as sum FROM orders WHERE customer_id = ? GROUP BY customer_id',
+                'cte_query': 'WITH totals AS (SELECT customer_id, SUM(total) as spent FROM orders GROUP BY customer_id) SELECT c.name, t.spent FROM customers c JOIN totals t ON c.id = t.customer_id WHERE t.spent > ?',
+                'subquery': 'SELECT * FROM customers WHERE id IN (SELECT customer_id FROM orders WHERE total > ?)'
+            },
+            table_params={
+                'join_query': ['Alice'],
+                'agg_query': [1],
+                'cte_query': [200],
+                'subquery': [200]
+            }
+        )
+
+        # JOIN
+        join_result = source.get('join_query')
+        assert len(join_result) == 2
+        assert all(join_result['name'] == 'Alice')
+
+        # Aggregation
+        agg_result = source.get('agg_query')
+        assert agg_result.iloc[0]['cnt'] == 2
+        assert agg_result.iloc[0]['sum'] == 550.5
+
+        # CTE
+        cte_result = source.get('cte_query')
+        assert cte_result.iloc[0]['name'] == 'Alice'
+
+        # Subquery
+        subquery_result = source.get('subquery')
+        assert subquery_result.iloc[0]['name'] == 'Alice'
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_table_params_in_create_sql_expr_source(sample_csv_files):
+    """Test params in create_sql_expr_source and propagation."""
+    files = sample_csv_files
+    original_cwd = os.getcwd()
+
+    try:
+        os.chdir(files['dir'])
+        base_source = DuckDBSource(
+            uri=':memory:',
+            tables={'customers': 'customers.csv'},
+            table_params={'base_filter': [1]}
+        )
+
+        # Create new source with params
+        new_source = base_source.create_sql_expr_source(
+            tables={'new_filter': 'SELECT * FROM customers WHERE city = ?'},
+            params={'new_filter': ['LA']}
+        )
+
+        result = new_source.get('new_filter')
+        assert len(result) == 1
+        assert result.iloc[0]['city'] == 'LA'
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_table_params_edge_cases(sample_csv_files):
+    """Test edge cases: empty params, mismatched counts, multiple tables."""
+    df = pd.DataFrame({'col1': [1, 2, 3], 'col2': ['a', 'b', 'c']})
+
+    # Empty params should work fine
+    source1 = DuckDBSource.from_df({'test': df}, table_params={})
+    pd.testing.assert_frame_equal(source1.get('test'), df)
+
+    # Mismatched parameter count - need to create source directly, not from_df
+    source2 = DuckDBSource(
+        uri=':memory:',
+        ephemeral=True,
+        tables={
+            'test': 'SELECT * FROM test',
+            'bad': 'SELECT * FROM test WHERE col1 > ? AND col1 < ?'
+        },
+        table_params={'bad': [1]}  # Missing second parameter
+    )
+    # First load the test table
+    source2._connection.from_df(df).to_view('test')
+    
+    # Now try to query with mismatched params
+    with pytest.raises(Exception):  # DuckDB will raise an error about bind parameter count
+        source2.get('bad')
+
+    # Multiple tables with different params
+    files = sample_csv_files
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(files['dir'])
+        source3 = DuckDBSource(
+            uri=':memory:',
+            tables={
+                'customers': 'customers.csv',
+                'by_city': 'SELECT * FROM customers WHERE city = ?',
+                'by_id': 'SELECT * FROM customers WHERE id = ?'
+            },
+            table_params={'by_city': ['NYC'], 'by_id': [2]}
+        )
+        assert source3.get('by_city').iloc[0]['city'] == 'NYC'
+        assert source3.get('by_id').iloc[0]['id'] == 2
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_table_params_serialization(sample_csv_files):
+    """Test that params survive to_spec/from_spec roundtrip."""
+    files = sample_csv_files
+    original_cwd = os.getcwd()
+
+    try:
+        os.chdir(files['dir'])
+        original = DuckDBSource(
+            uri=':memory:',
+            tables={
+                'customers': 'customers.csv',
+                'filtered': 'SELECT * FROM customers WHERE id = ?'
+            },
+            table_params={'filtered': [2]}
+        )
+
+        # Get the original result before serialization
+        original_result = original.get('filtered')
+        assert len(original_result) == 1
+        assert original_result.iloc[0]['id'] == 2
+
+        # Serialize to spec
+        spec = original.to_spec()
+        
+        # For ephemeral in-memory sources with CSV files, we need to stay in the same directory
+        # or use absolute paths for the restored source to find the files
+        spec['tables'] = {
+            'customers': files['customers'],
+            'filtered': 'SELECT * FROM customers WHERE id = ?'
+        }
+        
+        restored = DuckDBSource.from_spec(spec)
+        restored_result = restored.get('filtered')
+        
+        pd.testing.assert_frame_equal(original_result, restored_result)
+        assert len(restored_result) == 1
+        assert restored_result.iloc[0]['id'] == 2
+    finally:
+        os.chdir(original_cwd)
