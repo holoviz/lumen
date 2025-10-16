@@ -1,88 +1,213 @@
 {% extends 'BaseViewAgent/main.jinja2' %}
 
 {% block instructions %}
-As the expert of vega-lite and data narrator, generate the plot the user requested as a vega-lite specification
-to tell the data story. The plot should be intuitive and easy to understand at first glance.
+Generate complete, effective Vega-Lite visualizations that clearly communicate data insights.
 
-# CORE REQUIREMENTS
-- Use `data: {name: TABLE_NAME}` - never invent data
-- Use exact column names from source
-- Include tooltips by default
-- Add clear, descriptive titles and subtitles that explicitly tell the data story
-- No `marks` at same level as `layer`/`concat`
-- Subtitle should highlight part of the data that is interesting or surprising
+# ESSENTIAL STRUCTURE
 
-# ENCODING BEST PRACTICES
-- Dense data: use opacity, bin, jitter, or aggregate
-- Format numbers with `format: .Nf` for N decimal places
-- Sort categorical variables (use `sort: y` (on the value field) and if text is available, place in both encodings)
-- Use muted color palette (grays, neutrals) with selective emphasis colors (#8b0000), with at least one condition
+Every visualization must:
+- Use `data: {name: {{ memory['table'] }}}` with exact column names from source
+- Wrap all marks in a `layer` array, each with its own `mark` and `encoding`
+- Focus on ONE primary metric or relationship per chart
+- Include narrative titles that highlight key insights from the data
+- Do not overcrowd the plot with too many data points, especially for bars
 
-# DATA HANDLING
-- Year ints/floats: (e.g. 2020 or 1984.0), choose type: quantitative if length > 10 or type: ordinal if length <= 10
-- Date strings (e.g. 2020-01-01 or 19840308 14:00): type=temporal with appropriate timeUnit
-- Combine date fields: `calculate: datetime(datum.Year, datum.Month-1)`
+# MARK vs ENCODING
 
-# ENHANCEMENTS
-- Add value labels via layered text marks; format to declutter
-- Use tooltips to show context variables
-- For maps: use appropriate projections and boundary files
-- Color: sequential (continuous), diverging (midpoint), categorical
-- Format axes for maximum readability, hiding when direct labels are used
-{%- endblock %}
+This is the most common source of errors. Properties belong in different places:
 
-{%- block examples %}
-Example templates, where v=value field and c=category field
-
-Bar:
+**Mark** (static styling): Position (`dx`, `dy`, `align`, `baseline`) and style (`color`, `opacity`, `fontSize`) go here
 ```yaml
-transform:
-  - calculate: datum.v / 1000
-    as: v
-data:
-  name: {table}
-layer:
-  - encoding:
-      x: {field: v, type: quantitative, title: null, axis: {labelFontSize: 16, grid: true, gridDash: [3, 3], gridOpacity: 0.5, format: '~s', tickCount: 6}}
-      y: {field: c, type: ordinal, title: null, sort: -x, axis: {labelFontSize: 16, domain: false, ticks: false}}
-      tooltip:
-        - {field: c, type: ordinal, title: t.c}
-        - {field: v, type: quantitative, title: t.v, format: .0f}
-      color:
-        condition: {test: "datum.c === 'CATEGORY'", value: "#8b0000"}  # !IMPORTANT highlighting an outlier
-        value: "#d3d3d3"
-    mark: {type: bar, cornerRadius: 1, opacity: 0.75}
-  - encoding:
-      text: {field: v, type: quantitative, format: .0f}
-      x: {field: v, type: quantitative}
-      y: {field: c, type: ordinal, sort: -x}
-      color: {value: "#666666"}
-    mark: {type: text, align: left, dx: 5, fontSize: 16}
-title:
-  text: t.chart
-  subtitle: t.highlight  # e.g. 'CATEGORY' dominates with x
-  fontSize: 24
-  subtitleFontSize: 20
-  subtitleColor: "#666666"
-  anchor: start
-config:
-  axis: {labelColor: "#666666", domainColor: "#ddd", tickColor: "#ddd"}
-  view: {stroke: "#ddd"}
-  background: "#ffffff"
+mark: {type: text, align: left, dx: 3, color: black}
 ```
 
-Line (inherit from bar's template)
+**Encoding** (data mappings): Fields and channels (`x`, `y`, `color`, `size`, `text`) go here
 ```yaml
-...
-  - encoding:
+encoding:
+  x: {field: year, type: quantitative}
+  color: {value: 'blue'}  # Static values need {value: ...}
+```
+
+# LEGENDS
+
+Legends appear when you map data to `color`, `size`, or `shape` in encoding.
+
+**Single field**: Map directly
+**Multiple series**: Use `transform` to create a constant field, then map it (never use `datum` in color encoding)
+
+# KEY PATTERNS
+
+**Sort rankings**: `sort: "-x"` (horizontal) or `sort: "-y"` (vertical) on the categorical axis
+
+**Color purposefully**: Encode dimensions, highlight outliers/leaders, or show thresholds. Keep color in `mark` for text labels that shouldn't appear in legends.
+
+**Informative titles**: Main title states what's shown, subtitle reveals the key insight or pattern
+
+**Data types**: Match type to your data - quantitative for continuous, ordinal for ordered categories, nominal for unordered, temporal for dates
+{% endblock %}
+
+{% block examples %}
+# EXAMPLES
+{% if doc_examples is defined and doc_examples %}
+{% for example in doc_examples %}
+{{ example }}
+{% endfor %}
+{% endif %}
+
+Simple time series:
+```yaml
+title:
+  anchor: start
+  fontSize: 20
+  subtitle: "Steady growth trend from 2010 to 2024"
+  subtitleColor: '#666666'
+  subtitleFontSize: 16
+  text: "Wind Turbine Capacity Over Time"
+data:
+  name: <TABLE_NAME>
+layer:
+  - mark:
+      type: line
+      point: true
+    encoding:
+      x: {field: year, type: quantitative}
+      y: {field: avg_capacity, type: quantitative}
+```
+
+Ranked bar chart with highlighting:
+```yaml
+title:
+  anchor: start
+  fontSize: 20
+  subtitle: "Texas leads with over 15,000 turbines deployed"
+  subtitleColor: '#666666'
+  subtitleFontSize: 16
+  text: "Wind Turbine Deployment by State"
+data:
+  name: <TABLE_NAME>
+layer:
+  - mark: bar
+    encoding:
+      y:
+        field: state
+        type: nominal
+        sort: "-x"
+        axis:
+          title: "State"
+      x:
+        field: turbine_count
+        type: quantitative
+        axis:
+          title: "Number of Turbines"
+      color:
+        condition:
+          test: "datum.state === 'TX'"
+          value: '#1f77b4'
+        value: '#aec7e8'
+```
+
+Bar chart with legend (single data field):
+```yaml
+title:
+  text: "Sales by Category"
+data:
+  name: <TABLE_NAME>
+layer:
+  - mark: bar
+    encoding:
+      x:
+        field: category
+        type: nominal
+      y:
+        field: sales
+        type: quantitative
+      color:
+        field: category
+        type: nominal
+        legend:
+          title: "Category"
+          orient: "right"
+```
+
+Dual-axis chart with legend (multiple series):
+```yaml
+title:
+  text: "Growth Metrics Over Time"
+data:
+  name: <TABLE_NAME>
+layer:
+  - transform:
+    - calculate: "'Revenue'"
+      as: metric_name
+    mark:
+      type: line
+      point: true
+    encoding:
       x:
         field: year
         type: quantitative
-        axis: {"format": "0000"}
       y:
-        field: v
+        field: revenue
         type: quantitative
-...
+        axis:
+          title: "Revenue ($M)"
+      color:
+        field: metric_name
+        type: nominal
+        scale:
+          domain: ["Revenue", "Profit"]
+          range: ['#1f77b4', '#ff7f0e']
+        legend:
+          title: "Metric"
+          orient: "top-right"
+  - transform:
+    - calculate: "'Profit'"
+      as: metric_name
+    mark:
+      type: line
+      point: true
+    encoding:
+      x:
+        field: year
+        type: quantitative
+      y:
+        field: profit
+        type: quantitative
+        axis:
+          title: "Profit ($M)"
+      color:
+        field: metric_name
+        type: nominal
+        scale:
+          domain: ["Revenue", "Profit"]
+          range: ['#1f77b4', '#ff7f0e']
+        legend:
+          title: "Metric"
+          orient: "top-right"
+```
+
+Top 10 bar chart with transform:
+```yaml
+title:
+  text: "Top 10 Cities by Average Fare"
+  subtitle: "Showing highest-cost destinations"
+data:
+  name: <TABLE_NAME>
+transform:
+  - window:
+      - op: row_number
+        as: row_number
+  - filter: datum.row_number <= 10
+layer:
+  - mark: bar
+    encoding:
+      y:
+        field: city
+        type: nominal
+        sort: "-x"
+      x:
+        field: avg_fare
+        type: quantitative
 ```
 {% endblock %}
 
