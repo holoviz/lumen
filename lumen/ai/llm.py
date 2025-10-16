@@ -326,9 +326,12 @@ class LlamaCpp(Llm, LlamaCppMixin):
 
     select_models = param.List(default=[
         "unsloth/Qwen3-8B-GGUF",
-        "microsoft/Phi-3-mini-4k-instruct-gguf",
-        "meta-llama/Llama-2-7b-chat-hf",
-        "TheBloke/CodeLlama-7B-Instruct-GGUF"
+        "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF",
+        "unsloth/DeepSeek-V3.1-GGUF",
+        "unsloth/gpt-oss-20b-GGUF",
+        "unsloth/GLM-4.6-GGUF",
+        "microsoft/Phi-4-GGUF",
+        "meta-llama/Llama-3.3-70B-Instruct-GGUF"
     ], constant=True, doc="Available models for selection dropdowns")
 
     temperature = param.Number(default=0.4, bounds=(0, None), constant=True)
@@ -555,15 +558,19 @@ class MistralAI(Llm):
 
     model_kwargs = param.Dict(default={
         "default": {"model": "mistral-small-latest"},
-        "edit": {"model": "mistral-large-latest"},
+        "edit": {"model": "mistral-medium-latest"},
     })
 
     select_models = param.List(default=[
-        "codestral-latest",
-        "mistral-7b-instruct",
+        "mistral-medium-latest",
+        "magistral-medium-latest",
         "mistral-large-latest",
+        "magistral-small-latest",
         "mistral-small-latest",
-        "mixtral-8x7b-instruct"
+        "codestral-latest",
+        "ministral-8b-latest",
+        "ministral-3b-latest",
+        "devstral-small-latest"
     ], constant=True, doc="Available models for selection dropdowns")
 
     temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
@@ -670,16 +677,19 @@ class AnthropicAI(Llm):
     mode = param.Selector(default=Mode.ANTHROPIC_TOOLS, objects=[Mode.ANTHROPIC_JSON, Mode.ANTHROPIC_TOOLS])
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "claude-3-5-haiku-latest"},
-        "edit": {"model": "claude-3-5-sonnet-latest"},
+        "default": {"model": "claude-haiku-4-5"},
+        "edit": {"model": "claude-sonnet-4-5"},
     })
 
     select_models = param.List(default=[
+        "claude-sonnet-4-5",
+        "claude-sonnet-4-0",
+        "claude-3-7-sonnet-latest",
+        "claude-opus-4-1",
+        "claude-opus-4-0",
+        "claude-haiku-4-5",
         "claude-3-5-haiku-latest",
-        "claude-3-5-sonnet-latest",
-        "claude-3-haiku-20240307",
-        "claude-3-sonnet-20240229",
-        "claude-4-sonnet-latest"
+        "claude-3-haiku-20240307"
     ], constant=True, doc="Available models for selection dropdowns")
 
     temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
@@ -732,16 +742,18 @@ class GoogleAI(Llm):
     mode = param.Selector(default=Mode.GENAI_TOOLS, objects=[Mode.GENAI_TOOLS, Mode.GENAI_STRUCTURED_OUTPUTS])
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "gemini-2.0-flash"},  # Cost-optimized, low latency
-        "edit": {"model": "gemini-2.5-flash-preview-05-20"},  # Thinking model, balanced price/performance
+        "default": {"model": "gemini-2.5-flash"},  # Best price-performance with thinking
+        "edit": {"model": "gemini-2.5-pro"},  # State-of-the-art thinking model
     })
 
     select_models = param.List(default=[
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
-        "gemini-2.0-flash",
+        "gemini-2.5-pro",
         "gemini-2.5-flash",
-        "gemini-2.5-flash-lite"
+        "gemini-2.5-flash-lite",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro"
     ], constant=True, doc="Available models for selection dropdowns")
 
     temperature = param.Number(default=1, bounds=(0, 1), constant=True)
@@ -774,7 +786,7 @@ class GoogleAI(Llm):
             return partial(client.chat.completions.create, model=model, **self._get_create_kwargs(response_model))
         else:
             chat = llm.aio.models
-            if kwargs.pop("stream"):
+            if kwargs.pop("stream", None):
                 return partial(chat.generate_content_stream, model=model, **self._get_create_kwargs(response_model))
             else:
                 return partial(chat.generate_content, model=model, **self._get_create_kwargs(response_model))
@@ -795,10 +807,8 @@ class GoogleAI(Llm):
             config = GenerateContentConfig(temperature=self.temperature)
             return await client(messages=messages, config=config, **kwargs)
         else:
-            kwargs.pop("stream")
-            system_instruction = next(
-                message["content"] for message in messages if message["role"] == "system"
-            )
+            kwargs.pop("stream", None)
+            system_instruction = next((message["content"] for message in messages if message["role"] == "system"), "Be helpful.")
             config = GenerateContentConfig(temperature=self.temperature, system_instruction=system_instruction)
             prompt = messages.pop(-1)["content"]
             return await client(contents=[prompt], **kwargs)
@@ -838,15 +848,19 @@ class Ollama(OpenAI):
     mode = param.Selector(default=Mode.JSON)
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "qwen2.5-coder:7b"},
+        "default": {"model": "qwen3:8b"},
     })
 
     select_models = param.List(default=[
-        "codellama:7b",
-        "llama2:13b",
-        "llama3.2:latest",
-        "mistral:latest",
-        "qwen2.5-coder:7b"
+        "qwen3:8b",
+        "qwen3-coder:30b",
+        "deepseek-r1:7b",
+        "llama3.3:70b",
+        "llama4:latest",
+        "gemma3:12b",
+        "mistral-small3.2:24b",
+        "qwen2.5-coder:7b",
+        "phi4:14b"
     ], constant=True, doc="Available models for selection dropdowns")
 
     temperature = param.Number(default=0.25, bounds=(0, None), constant=True)
@@ -976,14 +990,15 @@ class LiteLLM(Llm):
     mode = param.Selector(default=Mode.TOOLS, objects=BASE_MODES)
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "gpt-4o-mini"},
-        "edit": {"model": "claude-3-5-sonnet-latest"},
-        "sql": {"model": "gpt-4o-mini"},
+        "default": {"model": "gpt-4.1-mini"},
+        "edit": {"model": "anthropic/claude-sonnet-4-5"},
+        "sql": {"model": "gpt-4.1-mini"},
     }, doc="""
         Model configurations by type. LiteLLM supports model strings like:
-        - OpenAI: "gpt-4", "gpt-4o-mini"
-        - Anthropic: "claude-3-5-sonnet-latest", "claude-3-haiku"
-        - Google: "gemini/gemini-pro", "gemini/gemini-1.5-flash"
+        - OpenAI: "gpt-4.1-mini", "gpt-4.1-nano", "gpt-5-mini"
+        - Anthropic: "anthropic/claude-sonnet-4-5", "anthropic/claude-haiku-4-5"
+        - Google: "gemini/gemini-2.0-flash", "gemini/gemini-2.5-flash"
+        - Mistral: "mistral/mistral-medium-latest", "mistral/mistral-small-latest"
         - And many more with format: "provider/model" or just "model" for defaults
     """)
 
@@ -992,12 +1007,17 @@ class LiteLLM(Llm):
         Example: {"routing_strategy": "least-busy", "num_retries": 3}""")
 
     select_models = param.List(default=[
-        "anthropic/claude-3-haiku",
-        "azure/gpt-4",
-        "claude-3-5-sonnet-latest",
-        "gemini/gemini-pro",
-        "gpt-4o-mini",
-        "openai/gpt-4"
+        "gpt-4.1-mini",
+        "gpt-4.1-nano",
+        "gpt-5-mini",
+        "anthropic/claude-sonnet-4-5",
+        "anthropic/claude-haiku-4-5",
+        "anthropic/claude-opus-4-1",
+        "gemini/gemini-2.0-flash",
+        "gemini/gemini-2.5-flash",
+        "mistral/mistral-medium-latest",
+        "mistral/mistral-small-latest",
+        "mistral/codestral-latest"
     ], constant=True, doc="Available models for selection dropdowns")
 
     temperature = param.Number(default=0.7, bounds=(0, 2), constant=True)
