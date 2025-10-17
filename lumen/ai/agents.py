@@ -42,7 +42,8 @@ from .memory import _Memory
 from .models import (
     DbtslQueryParams, DiscoveryQueries, DiscoverySufficiency, DistinctQuery,
     PartialBaseModel, QueryCompletionValidation, RetrySpec, SampleQuery,
-    SqlQuery, VegaLiteSpec, VegaLiteSpecUpdate, make_sql_model,
+    SqlQuery, VegaLiteLayoutPlan, VegaLitePlotSpec, VegaLiteSpec,
+    VegaLiteSpecUpdate, YesNo, make_sql_model,
 )
 from .schemas import get_metaset
 from .services import DbtslMixin
@@ -1496,6 +1497,77 @@ class hvPlotAgent(BaseViewAgent):
         return spec
 
 
+def assemble_layout(
+    plot_specs: dict[str, dict],
+    plan: VegaLiteLayoutPlan,
+    table_name: str
+) -> dict:
+    """
+    Assemble individual plot specs into a complete Vega-Lite layout.
+
+    Parameters
+    ----------
+    plot_specs : dict
+        Mapping of plot slugs to their minimal Vega-Lite specs
+    plan : VegaLiteLayoutPlan
+        The layout plan containing rows structure
+    table_name : str
+        Data table name to inject into data source
+
+    Returns
+    -------
+    dict
+        Complete Vega-Lite specification with hconcat/vconcat
+    """
+
+    # Handle single plot case (no concat needed)
+    if len(plan.rows) == 1 and len(plan.rows[0].plot_slugs) == 1:
+        slug = plan.rows[0].plot_slugs[0]
+        spec = plot_specs[slug].copy()
+        result = {
+            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+            "data": {"name": table_name},
+            **spec
+        }
+        if plan.overall_title:
+            result["title"] = plan.overall_title
+        return result
+
+    # Build row structures
+    assembled_rows = []
+    for row in plan.rows:
+        if len(row.plot_slugs) == 1:
+            # Single plot in this row - just add the spec
+            slug = row.plot_slugs[0]
+            assembled_rows.append(plot_specs[slug])
+        else:
+            # Multiple plots in this row - wrap in hconcat
+            row_plots = [plot_specs[slug] for slug in row.plot_slugs]
+            assembled_rows.append({"hconcat": row_plots})
+
+    # Determine top-level structure
+    if len(assembled_rows) == 1:
+        # Single row with multiple plots = just hconcat
+        if "hconcat" in assembled_rows[0]:
+            final_spec = assembled_rows[0]
+        else:
+            final_spec = assembled_rows[0]
+    else:
+        # Multiple rows = vconcat
+        final_spec = {"vconcat": assembled_rows}
+
+    # Wrap with schema, data, and optional title
+    # Note: Do NOT add width/height at top level for layouts
+    result = {
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "data": {"name": table_name},
+        **final_spec
+    }
+    if plan.overall_title:
+        result["title"] = plan.overall_title
+    return result
+
+
 class VegaLiteAgent(BaseViewAgent):
 
     conditions = param.List(
@@ -1510,6 +1582,9 @@ class VegaLiteAgent(BaseViewAgent):
     prompts = param.Dict(
         default={
             "main": {"response_model": VegaLiteSpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"},
+            "detect_layout": {"response_model": YesNo, "template": PROMPTS_DIR / "VegaLiteAgent" / "detect_layout.jinja2"},
+            "layout_plan": {"response_model": VegaLiteLayoutPlan, "template": PROMPTS_DIR / "VegaLiteAgent" / "layout_plan.jinja2"},
+            "single_plot": {"response_model": VegaLiteSpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "single_plot.jinja2"},
             "interaction_polish": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "interaction_polish.jinja2"},
             "annotate_plot": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "annotate_plot.jinja2"},
             "retry_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "retry_output.jinja2"},
@@ -1803,10 +1878,15 @@ class VegaLiteAgent(BaseViewAgent):
             vega_spec = load_json(json_spec)
         if "$schema" not in vega_spec:
             vega_spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
-        if "width" not in vega_spec:
-            vega_spec["width"] = "container"
-        if "height" not in vega_spec:
-            vega_spec["height"] = "container"
+
+        # Only add width/height for single plots, not for layouts (hconcat/vconcat)
+        is_layout = "hconcat" in vega_spec or "vconcat" in vega_spec
+        if not is_layout:
+            if "width" not in vega_spec:
+                vega_spec["width"] = "container"
+            if "height" not in vega_spec:
+                vega_spec["height"] = "container"
+
         self._output_type._validate_spec(vega_spec)
 
         # using string comparison because these keys could be in different nested levels
@@ -1861,54 +1941,16 @@ class VegaLiteAgent(BaseViewAgent):
         step_title: str | None = None,
     ) -> Any:
         """
-        Generates a VegaLite visualization using progressive building approach with real-time updates.
+        Main entry point - route to layout or single-plot generation.
         """
-        pipeline = self._memory.get("pipeline")
-        if not pipeline:
-            raise ValueError("No current pipeline found in memory.")
+        # Check if layout is needed
+        needs_layout = await self._detect_needs_layout(messages)
 
-        schema = await get_schema(pipeline)
-        if not schema:
-            raise ValueError("Failed to retrieve schema for the current pipeline.")
-
-        user_query = messages[-1].get("content", "") if messages[-1].get("role") == "user" else ""
-        doc_examples = await self._get_doc_examples(user_query)
-
-        # Step 1: Generate basic spec
-        doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
-        # Produces {"spec": {$schema: ..., ...}, "sizing_mode": ..., ...}
-        full_dict = await self._generate_basic_spec(messages, pipeline, doc_examples, doc)
-
-        # Step 2: Show complete plot immediately
-        self._memory["view"] = dict(full_dict, type=self.view_type)
-        view = self.view_type(pipeline=pipeline, **full_dict)
-        out = self._render_lumen(view, messages=messages, title=step_title)
-        # Get the latest spec from the rendered view, which includes type: vega-lite
-        full_dict = yaml.safe_load(out.spec)
-
-        # Step 3: enhancements (LLM-driven creative decisions)
-        steps = {
-            "interaction_polish": "Add helpful tooltips and ensure responsive, accessible user experience",
-        }
-
-        # Execute steps sequentially
-        for step_name, step_desc in steps.items():
-            # Only pass the vega lite 'spec' portion to prevent ballooning context
-            step_name, update_dict = await self._update_spec_step(
-                step_name, step_desc, full_dict["spec"], step_name, messages, doc=doc
-            )
-            try:
-                test_spec = self._deep_merge_dicts(full_dict["spec"], update_dict)
-                await self._extract_spec({"yaml_spec": yaml.dump(test_spec)})  # Validation
-            except Exception as e:
-                log_debug(f"Skipping invalid {step_name} update due to error: {e}")
-                continue
-            full_dict["spec"] = self._deep_merge_dicts(full_dict["spec"], update_dict)
-            out.spec = yaml.dump(full_dict)
-            log_debug(f"📊 Applied {step_name} updates and refreshed visualization")
-
-        self._memory["view"] = full_dict
-        return view
+        if needs_layout:
+            return await self._respond_with_layout(messages, step_title)
+        else:
+            # Use existing single-plot generation logic
+            return await self._existing_single_plot_respond(messages, step_title)
 
     def _render_lumen(
         self,
@@ -2013,6 +2055,162 @@ class VegaLiteAgent(BaseViewAgent):
             return final_dict
 
         return final_dict
+
+    async def _detect_needs_layout(self, messages: list[Message]) -> bool:
+        """
+        Use LLM to determine if user query needs multi-plot layout.
+
+        More accurate than keyword matching as it understands:
+        - Intent (compare vs show multiple series)
+        - Context (dashboard vs single visualization)
+        - Data structure (separate metrics vs grouped data)
+        """
+        result = await self._invoke_prompt(
+            "detect_layout",
+            messages,
+        )
+        return result.yes
+
+    async def _respond_with_layout(
+        self,
+        messages: list[Message],
+        step_title: str | None = None,
+    ) -> Any:
+        """
+        Generate multi-plot layout using three-step approach.
+        """
+        pipeline = self._memory.get("pipeline")
+        if not pipeline:
+            raise ValueError("No current pipeline found in memory.")
+
+        # Step 1: Plan the layout
+        with self._add_step(title="Planning visualization layout", steps_layout=self._steps_layout) as step:
+            system_prompt = await self._render_prompt("layout_plan", messages)
+            model_spec = self.prompts.get("layout_plan", {}).get("llm_spec", self.llm_spec_key)
+
+            plan = await self.llm.invoke(
+                messages,
+                system=system_prompt,
+                model_spec=model_spec,
+                response_model=VegaLiteLayoutPlan,
+            )
+
+            step.stream(f"Planning {len(plan.plots)} plots in {len(plan.rows)} row(s)")
+            step.stream(f"\nLayout strategy: {plan.chain_of_thought}")
+            step.success_title = f"Planned {len(plan.plots)} plots"
+
+        # Step 2: Generate plots in parallel
+        doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
+
+        async def generate_single_plot(plot_spec: VegaLitePlotSpec) -> tuple[str, dict]:
+            """Generate one plot based on its instruction."""
+            instruction_message = {"role": "user", "content": plot_spec.instruction}
+
+            with self._add_step(
+                title=f"Generating {plot_spec.slug}",
+                steps_layout=self._steps_layout
+            ) as step:
+                system_prompt = await self._render_prompt(
+                    "single_plot",
+                    [instruction_message],
+                    table=pipeline.table,
+                    doc=doc
+                )
+                model_spec = self.prompts.get("single_plot", {}).get("llm_spec", self.llm_spec_key)
+
+                result = await self.llm.invoke(
+                    [instruction_message],
+                    system=system_prompt,
+                    model_spec=model_spec,
+                    response_model=VegaLiteSpec,
+                )
+
+                # Parse the minimal spec
+                spec = yaml.safe_load(result.yaml_spec)
+                step.stream(f"Generated {plot_spec.slug}")
+                step.success_title = f"Generated {plot_spec.slug}"
+
+                return plot_spec.slug, spec
+
+        # Generate all plots concurrently
+        with self._add_step(
+            title=f"Generating {len(plan.plots)} plots in parallel",
+            steps_layout=self._steps_layout
+        ) as step:
+            results = await asyncio.gather(*[
+                generate_single_plot(plot) for plot in plan.plots
+            ])
+            plot_specs = dict(results)
+            step.success_title = f"Generated {len(plot_specs)} plots"
+
+        # Step 3: Assemble into final layout
+        with self._add_step(title="Assembling final layout", steps_layout=self._steps_layout) as step:
+            final_spec = assemble_layout(plot_specs, plan, pipeline.table)
+            step.success_title = "Layout assembled"
+
+        # Validate and render
+        full_dict = await self._extract_spec({"yaml_spec": yaml.dump(final_spec)})
+        self._memory["view"] = dict(full_dict, type=self.view_type)
+        view = self.view_type(pipeline=pipeline, **full_dict)
+        self._render_lumen(view, messages=messages, title=step_title)
+
+        return view
+
+    async def _existing_single_plot_respond(
+        self,
+        messages: list[Message],
+        step_title: str | None = None,
+    ) -> Any:
+        """
+        Generates a VegaLite visualization using progressive building approach with real-time updates.
+        This is the original respond method renamed for routing.
+        """
+        pipeline = self._memory.get("pipeline")
+        if not pipeline:
+            raise ValueError("No current pipeline found in memory.")
+
+        schema = await get_schema(pipeline)
+        if not schema:
+            raise ValueError("Failed to retrieve schema for the current pipeline.")
+
+        user_query = messages[-1].get("content", "") if messages[-1].get("role") == "user" else ""
+        doc_examples = await self._get_doc_examples(user_query)
+
+        # Step 1: Generate basic spec
+        doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
+        # Produces {"spec": {$schema: ..., ...}, "sizing_mode": ..., ...}
+        full_dict = await self._generate_basic_spec(messages, pipeline, doc_examples, doc)
+
+        # Step 2: Show complete plot immediately
+        self._memory["view"] = dict(full_dict, type=self.view_type)
+        view = self.view_type(pipeline=pipeline, **full_dict)
+        out = self._render_lumen(view, messages=messages, title=step_title)
+        # Get the latest spec from the rendered view, which includes type: vega-lite
+        full_dict = yaml.safe_load(out.spec)
+
+        # Step 3: enhancements (LLM-driven creative decisions)
+        steps = {
+            "interaction_polish": "Add helpful tooltips and ensure responsive, accessible user experience",
+        }
+
+        # Execute steps sequentially
+        for step_name, step_desc in steps.items():
+            # Only pass the vega lite 'spec' portion to prevent ballooning context
+            step_name, update_dict = await self._update_spec_step(
+                step_name, step_desc, full_dict["spec"], step_name, messages, doc=doc
+            )
+            try:
+                test_spec = self._deep_merge_dicts(full_dict["spec"], update_dict)
+                await self._extract_spec({"yaml_spec": yaml.dump(test_spec)})  # Validation
+            except Exception as e:
+                log_debug(f"Skipping invalid {step_name} update due to error: {e}")
+                continue
+            full_dict["spec"] = self._deep_merge_dicts(full_dict["spec"], update_dict)
+            out.spec = yaml.dump(full_dict)
+            log_debug(f"📊 Applied {step_name} updates and refreshed visualization")
+
+        self._memory["view"] = full_dict
+        return view
 
 
 class AnalysisAgent(LumenBaseAgent):

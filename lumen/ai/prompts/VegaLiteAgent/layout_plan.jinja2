@@ -1,0 +1,181 @@
+{% extends 'Actor/main.jinja2' %}
+
+{% block context %}
+The current SQL table name: {{ memory['table'] }}.
+
+Here is the current dataset to use:
+{{ memory.data }}
+{% endblock %}
+
+{% block instructions %}
+Create a visualization layout plan that breaks down complex multi-plot requests into independent, parallelizable chart specifications.
+
+# WHEN TO USE LAYOUTS
+
+Use layouts when the user requests:
+- Multiple metrics or dimensions that require separate plots ("show me X and Y")
+- Comparisons across different visualizations ("compare A with B")  
+- Dashboard-style arrangements ("create a dashboard with...")
+- Before/after or side-by-side views
+- Overview + detail patterns (e.g., trend over time + current breakdown)
+
+DO NOT use layouts for:
+- Single plots with multiple series (use layering instead)
+- Simple overlays (use mark layers)
+- Plots that share identical axes (use color/faceting)
+
+# LAYOUT STRUCTURE GUIDANCE
+
+**Side-by-side (hconcat)**: Use when comparing metrics at the same level
+- Example: Revenue vs Profit, Regional performance comparison
+- Default choice for 2-3 related plots
+
+**Stacked (vconcat)**: Use for hierarchical or sequential relationships
+- Example: Overview metric on top, detailed breakdown below
+- Good for maintaining context while showing detail
+
+**Grid (vconcat of hconcats)**: Use for dashboard-style layouts
+- Example: Two KPIs side-by-side, then detailed table below
+- Balance information density with readability
+
+# WRITING PLOT INSTRUCTIONS
+
+Each plot instruction MUST be completely self-contained and include:
+1. **Mark type**: bar, line, point, area, etc.
+2. **X-axis**: field name, data type (quantitative/temporal/ordinal/nominal), any aggregation
+3. **Y-axis**: field name, data type, any aggregation  
+4. **Encoding details**: color, size, tooltip specifications
+5. **Aggregations/transforms**: sorting, filtering, grouping, top-N
+6. **Styling preferences**: colors, highlighting, specific visual treatments
+
+Instructions should read like a complete specification that another person (or LLM) could execute independently without seeing other plots or the original query.
+
+# SLUG NAMING
+
+Create descriptive, unique slugs that capture:
+- What is being visualized (metric/dimension)
+- Key transformation (top_5, by_category, over_time)
+- Examples: `monthly_revenue_trend`, `top_10_products_bar`, `category_distribution_pie`
+
+Avoid generic slugs like `plot1`, `chart_a`, `visualization`.
+{% endblock %}
+
+{% block examples %}
+# EXAMPLES
+
+## Example 1: Side-by-side comparison
+User query: "Show me revenue and profit trends over the last year"
+
+```yaml
+chain_of_thought: |
+  The user wants to compare two metrics (revenue and profit) over time.
+  Since both are time-series trends of equal importance, a side-by-side
+  layout (hconcat) allows easy comparison. Both use the same time scale
+  on x-axis, making patterns easier to spot across charts.
+
+overall_title: "Revenue and Profit Trends - Last 12 Months"
+
+plots:
+  - slug: monthly_revenue_trend
+    instruction: |
+      Create a line chart showing revenue over time. X-axis: 'month' field 
+      (temporal type). Y-axis: 'revenue' field (quantitative type, sum aggregation). 
+      Use blue color (#1f77b4) for the line. Add circular points at each data point. 
+      Include tooltips showing month and revenue formatted as currency.
+      Filter to last 12 months only. Title: "Monthly Revenue"
+    
+  - slug: monthly_profit_trend  
+    instruction: |
+      Create a line chart showing profit over time. X-axis: 'month' field
+      (temporal type). Y-axis: 'profit' field (quantitative type, sum aggregation).
+      Use orange color (#ff7f0e) for the line. Add circular points at each data point.
+      Include tooltips showing month and profit formatted as currency.
+      Filter to last 12 months only. Title: "Monthly Profit"
+
+rows:
+  - plot_slugs: [monthly_revenue_trend, monthly_profit_trend]
+```
+
+## Example 2: Grid layout (2 side-by-side + 1 below)
+User query: "Show distributions of input tokens, output tokens, and response times"
+
+```yaml
+chain_of_thought: |
+  User wants to see three distributions. Input and output tokens are related
+  (both are token metrics), so placing them side-by-side makes sense for comparison.
+  Response time is a different type of metric (time-based), so giving it a full-width
+  row below allows more detailed examination without crowding the token histograms.
+
+overall_title: "GPT-4o Mini Token Usage Analysis"
+
+plots:
+  - slug: input_tokens_distribution
+    instruction: |
+      Create a histogram showing the distribution of input token counts. 
+      X-axis: 'input_tokens' field (quantitative type, binned). 
+      Y-axis: count of requests (quantitative type, count aggregation).
+      Use blue color for bars. Include tooltips showing the bin range and count.
+      Title: "Input Tokens Distribution". Axis label: "Input Tokens (binned)"
+    
+  - slug: output_tokens_distribution
+    instruction: |
+      Create a histogram showing the distribution of output token counts.
+      X-axis: 'output_tokens' field (quantitative type, binned).
+      Y-axis: count of requests (quantitative type, count aggregation).
+      Use blue color for bars. Include tooltips showing the bin range and count.
+      Title: "Output Tokens Distribution". Axis label: "Output Tokens (binned)"
+    
+  - slug: response_time_distribution
+    instruction: |
+      Create a histogram showing the distribution of response times.
+      X-axis: 'response_time' field (quantitative type, binned).
+      Y-axis: count of requests (quantitative type, count aggregation).
+      Use blue color for bars. Include tooltips showing the bin range and count.
+      Title: "Response Time Distribution". Axis label: "Response Time (binned)"
+
+rows:
+  - plot_slugs: [input_tokens_distribution, output_tokens_distribution]
+  - plot_slugs: [response_time_distribution]
+```
+
+## Example 3: Dashboard with KPIs and detail
+User query: "Show me total sales, number of orders, and a breakdown by category"
+
+```yaml
+chain_of_thought: |
+  This is a classic dashboard pattern: summary metrics (KPIs) at the top,
+  followed by detailed breakdown. The two KPIs (total sales and order count)
+  are equally important and compact, so they sit side-by-side. The category
+  breakdown needs more space to display multiple categories, so it gets
+  a full-width row below.
+
+overall_title: "Sales Overview Dashboard"
+
+plots:
+  - slug: total_sales_kpi
+    instruction: |
+      Create a single-value text display showing total sales. Display the sum of 
+      'sales_amount' field (quantitative type) as a large number formatted as 
+      currency. Use a text mark with large font size (32px). Title: "Total Sales".
+      Center the value prominently.
+    
+  - slug: order_count_kpi
+    instruction: |
+      Create a single-value text display showing total order count. Display the count 
+      of 'order_id' field as a large number. Use a text mark with large font size 
+      (32px). Title: "Total Orders". Center the value prominently.
+    
+  - slug: sales_by_category
+    instruction: |
+      Create a horizontal bar chart showing sales by product category. 
+      Y-axis: 'category' field (nominal type, sorted by x value descending).
+      X-axis: 'sales_amount' field (quantitative type, sum aggregation).
+      Use a color gradient or conditional formatting to highlight the top category.
+      Include tooltips showing category name and sales amount formatted as currency.
+      Title: "Sales by Product Category"
+
+rows:
+  - plot_slugs: [total_sales_kpi, order_count_kpi]
+  - plot_slugs: [sales_by_category]
+```
+{% endblock %}

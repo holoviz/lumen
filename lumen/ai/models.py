@@ -363,6 +363,94 @@ class DbtslQueryParams(BaseModel):
     )
 
 
+class VegaLitePlotSpec(BaseModel):
+    """Specification for a single plot to be generated independently."""
+
+    slug: str = Field(
+        description="""
+        Unique identifier for this plot (e.g., 'revenue_trend', 'top_5_categories').
+        Must be unique within the layout and descriptive of what's shown.
+        """
+    )
+
+    instruction: str = Field(
+        description="""
+        Detailed natural language instructions for generating this plot.
+        Include: mark type (bar/line/point/etc), x-axis field and type,
+        y-axis field and type, any color encoding, aggregations, filters,
+        and styling preferences. Be specific enough that each plot can be
+        generated independently without additional context.
+
+        Example: "Create a line chart showing revenue over time. X-axis:
+        'month' (temporal), Y-axis: 'revenue' (quantitative, aggregated as sum).
+        Use blue color for the line. Add points to mark each data point."
+        """
+    )
+
+    title: str | None = Field(
+        default=None,
+        description="Optional title for this subplot. If omitted, will be generated during plot creation."
+    )
+
+
+class VegaLiteRow(BaseModel):
+    """A row in the layout, containing one or more plots arranged horizontally."""
+
+    plot_slugs: list[str] = Field(
+        description="""
+        List of plot slugs for this row, in left-to-right order.
+        All plots in a row are arranged side-by-side (hconcat).
+        """
+    )
+
+
+class VegaLiteLayoutPlan(BaseModel):
+    """
+    Plan for creating a multi-plot visualization.
+
+    Layout structure:
+    - Single row with 1 plot → Simple plot (no concat)
+    - Single row with N plots → hconcat (side-by-side)
+    - Multiple rows with 1 plot each → vconcat (stacked)
+    - Multiple rows with varying plots → vconcat of hconcats (grid)
+    """
+
+    chain_of_thought: str = Field(
+        description="""
+        Explain your visualization strategy:
+        - What story are you telling with this layout?
+        - Why did you choose these specific plots?
+        - Why this arrangement (side-by-side vs stacked)?
+        - How do the plots complement each other?
+        """
+    )
+
+    overall_title: str | None = Field(
+        default=None,
+        description="Optional overall title for the entire visualization dashboard."
+    )
+
+    plots: list[VegaLitePlotSpec] = Field(
+        description="""
+        All plots to generate, listed in the order they should appear.
+        Each plot will be generated independently in parallel.
+        """
+    )
+
+    rows: list[VegaLiteRow] = Field(
+        description="""
+        Layout structure defining how plots are arranged.
+        Each row contains plot slugs that will be arranged horizontally.
+        Multiple rows are stacked vertically.
+
+        Examples:
+        - Side-by-side: [{"plot_slugs": ["plot1", "plot2", "plot3"]}]
+        - Stacked: [{"plot_slugs": ["plot1"]}, {"plot_slugs": ["plot2"]}]
+        - Grid: [{"plot_slugs": ["plot1", "plot2"]}, {"plot_slugs": ["plot3"]}]
+        """
+    )
+
+
 class QueryCompletionValidation(PartialBaseModel):
     """Validation of whether the executed plan answered the user's query"""
 
