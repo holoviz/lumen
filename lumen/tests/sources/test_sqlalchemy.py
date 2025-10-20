@@ -477,6 +477,7 @@ async def test_sqlalchemy_async_with_sync_driver():
     temp_db = tempfile.NamedTemporaryFile(suffix='.db', delete=False)
     temp_db.close()
     
+    source = None
     try:
         source = SQLAlchemySource(url=f'sqlite:///{temp_db.name}')
         
@@ -496,6 +497,10 @@ async def test_sqlalchemy_async_with_sync_driver():
         result = await source.get_async('data')
         assert len(result) == 3
     finally:
+        # Close the engine before cleaning up the file
+        if source is not None:
+            source.close()
+        
         # Clean up
         import os
         os.unlink(temp_db.name)
