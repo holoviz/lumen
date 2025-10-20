@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import json
 import threading
 
@@ -35,6 +36,18 @@ class BigQuerySource(BaseSQLSource):
        A list of tables or a dictionary mapping from table name to a SQL query.""")
 
     dialect = "bigquery"
+
+    # Mapping from Python types to BigQuery parameter types
+    _BQ_TYPE_MAPPING = {
+        bool: "BOOL",
+        int: "INT64",
+        float: "FLOAT64",
+        str: "STRING",
+        bytes: "BYTES",
+        datetime.date: "DATE",
+        datetime.datetime: "TIMESTAMP",
+        pd.Timestamp: "TIMESTAMP",
+    }
 
     def __init__(self, **params) -> None:
         self._metadata__client: Client | None = None
@@ -117,24 +130,118 @@ class BigQuerySource(BaseSQLSource):
         if self.project_id == "":
             self.project_id = project_id
 
-    def execute(self, sql_query: str) -> pd.DataFrame:
-        return self._sql_client.query_and_wait(sql_query).to_dataframe()
-
-    async def execute_async(self, sql_query: str) -> pd.DataFrame:
+    def _get_bq_param_type(self, value: Any) -> str:
         """
-        Execute a BigQuery SQL query asynchronously and return the result as a DataFrame.
+        Determine the BigQuery parameter type from a Python value.
 
         Parameters
         ----------
+        value : Any
+            The parameter value
+
+        Returns
+        -------
+        str
+            The BigQuery type string (e.g., 'STRING', 'INT64', 'FLOAT64', etc.)
+        """
+        # Direct type lookup (handles most cases)
+        value_type = type(value)
+        if value_type in self._BQ_TYPE_MAPPING:
+            return self._BQ_TYPE_MAPPING[value_type]
+
+        # Check MRO (Method Resolution Order) for subclasses
+        # This handles subclasses of datetime, custom date types, etc.
+        for base_type in value_type.__mro__[1:]:
+            if base_type in self._BQ_TYPE_MAPPING:
+                return self._BQ_TYPE_MAPPING[base_type]
+
+        # Default to STRING for unknown types
+        return "STRING"
+
+    def _build_query_config(self, params: list | dict) -> bigquery.QueryJobConfig:
+        """
+        Build a BigQuery QueryJobConfig with the appropriate query parameters.
+
+        Parameters
+        ----------
+        params : list | dict
+            Either a list of positional parameters or dict of named parameters
+
+        Returns
+        -------
+        bigquery.QueryJobConfig
+            Configuration object with query parameters set
+        """
+        if isinstance(params, list):
+            # Positional parameters (? placeholders)
+            query_parameters = [
+                bigquery.ScalarQueryParameter(None, self._get_bq_param_type(param), param)
+                for param in params
+            ]
+        else:
+            # Named parameters (@name placeholders)
+            query_parameters = [
+                bigquery.ScalarQueryParameter(name, self._get_bq_param_type(value), value)
+                for name, value in params.items()
+            ]
+
+        return bigquery.QueryJobConfig(query_parameters=query_parameters)
+
+    def execute(self, sql_query: str, params: list | dict | None = None, *args, **kwargs) -> pd.DataFrame:
+        """
+        Executes a SQL query and returns the result as a DataFrame.
+
+        Arguments
+        ---------
         sql_query : str
-            The SQL query to execute
+            The SQL Query to execute
+        params : list | dict | None
+            Parameters to use in the SQL query:
+            - list: Positional parameters for placeholder (?) syntax
+            - dict: Named parameters for :name, %(name)s, etc. syntax
+            - None: No parameters
+        *args : list
+            Additional positional arguments to pass to the SQL query
+        **kwargs : dict
+            Keyword arguments to pass to the SQL query
 
         Returns
         -------
         pd.DataFrame
-            The query result as a pandas DataFrame
+            The result as a pandas DataFrame
         """
-        job = self._sql_client.query(sql_query)
+        if params:
+            kwargs['job_config'] = self._build_query_config(params)
+        return self._sql_client.query_and_wait(sql_query, *args, **kwargs).to_dataframe()
+
+    async def execute_async(self, sql_query: str, params: list | dict | None = None, *args, **kwargs) -> pd.DataFrame:
+        """
+        Executes a SQL query asynchronously and returns the result as a DataFrame.
+
+        This implementation runs queries asynchronously using BigQuery's job API.
+
+        Arguments
+        ---------
+        sql_query : str
+            The SQL Query to execute
+        params : list | dict | None
+            Parameters to use in the SQL query:
+            - list: Positional parameters for placeholder (?) syntax
+            - dict: Named parameters for :name, %(name)s, etc. syntax
+            - None: No parameters
+        *args : list
+            Additional positional arguments to pass to the SQL query
+        **kwargs : dict
+            Keyword arguments to pass to the SQL query
+
+        Returns
+        -------
+        pd.DataFrame
+            The result as a pandas DataFrame
+        """
+        if params:
+            kwargs['job_config'] = self._build_query_config(params)
+        job = self._sql_client.query(sql_query, *args, **kwargs)
 
         while not job.done():
             await asyncio.sleep(0.1)
@@ -181,12 +288,34 @@ class BigQuerySource(BaseSQLSource):
             return self.tables[table]
         return f"SELECT * FROM {table}"
 
-    def create_sql_expr_source(self, tables: dict[str, str], **kwargs):
-        params = dict(self.param.values(), **kwargs)
-        params.pop("name", None)
-        params["tables"] = tables
-        source = type(self)(**params)
-        return source
+    def create_sql_expr_source(self, tables: dict[str, str], params: dict[str, list | dict] | None = None, **kwargs):
+        """
+        Creates a new SQL Source given a set of table names and
+        corresponding SQL expressions.
+
+        Arguments
+        ---------
+        tables: dict[str, str]
+            Mapping from table name to SQL expression.
+        params: dict[str, list | dict] | None
+            Optional mapping from table name to parameters:
+            - list: Positional parameters for placeholder (?) syntax
+            - dict: Named parameters for :name, %(name)s, etc. syntax
+        kwargs: any
+            Additional keyword arguments.
+
+        Returns
+        -------
+        source: BigQuerySource
+        """
+        if params is None:
+            params = {}
+        source_params = dict(self.param.values(), **kwargs)
+        source_params.pop("name", None)
+        source_params["tables"] = tables
+        if params:
+            source_params["table_params"] = params
+        return type(self)(**source_params)
 
     def _get_dataset_metadata(self, datasets: list[str] | None = None) -> dict:
         """Get metadata for all available datasets in the project.
@@ -398,7 +527,7 @@ class BigQuerySource(BaseSQLSource):
             sql_transforms = [SQLFilter(conditions=conditions)] + sql_transforms
         for st in sql_transforms:
             sql_expr = st.apply(sql_expr)
-        return self.execute(sql_expr)
+        return self.execute(sql_expr, self.table_params.get(table, []))
 
     async def get_async(self, table, **query):
         """
@@ -425,7 +554,7 @@ class BigQuerySource(BaseSQLSource):
             sql_transforms = [SQLFilter(conditions=conditions)] + sql_transforms
         for st in sql_transforms:
             sql_expr = st.apply(sql_expr)
-        return await self.execute_async(sql_expr)
+        return await self.execute_async(sql_expr, self.table_params.get(table, []))
 
     def close(self):
         """
