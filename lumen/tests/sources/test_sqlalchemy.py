@@ -1,16 +1,14 @@
 import datetime as dt
 import os
-import sqlite3
-import tempfile
 
 import pandas as pd
 import pytest
 
-from sqlalchemy import text
-
 from lumen.transforms.sql import SQLGroupBy
 
 try:
+    from sqlalchemy import text
+
     from lumen.sources.sqlalchemy import SQLAlchemySource
     pytestmark = pytest.mark.xdist_group("sqlalchemy")
 except ImportError:
