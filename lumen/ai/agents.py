@@ -1497,77 +1497,6 @@ class hvPlotAgent(BaseViewAgent):
         return spec
 
 
-def assemble_layout(
-    plot_specs: dict[str, dict],
-    plan: VegaLiteLayoutPlan,
-    table_name: str
-) -> dict:
-    """
-    Assemble individual plot specs into a complete Vega-Lite layout.
-
-    Parameters
-    ----------
-    plot_specs : dict
-        Mapping of plot slugs to their minimal Vega-Lite specs
-    plan : VegaLiteLayoutPlan
-        The layout plan containing rows structure
-    table_name : str
-        Data table name to inject into data source
-
-    Returns
-    -------
-    dict
-        Complete Vega-Lite specification with hconcat/vconcat
-    """
-
-    # Handle single plot case (no concat needed)
-    if len(plan.rows) == 1 and len(plan.rows[0].plot_slugs) == 1:
-        slug = plan.rows[0].plot_slugs[0]
-        spec = plot_specs[slug].copy()
-        result = {
-            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-            "data": {"name": table_name},
-            **spec
-        }
-        if plan.overall_title:
-            result["title"] = plan.overall_title
-        return result
-
-    # Build row structures
-    assembled_rows = []
-    for row in plan.rows:
-        if len(row.plot_slugs) == 1:
-            # Single plot in this row - just add the spec
-            slug = row.plot_slugs[0]
-            assembled_rows.append(plot_specs[slug])
-        else:
-            # Multiple plots in this row - wrap in hconcat
-            row_plots = [plot_specs[slug] for slug in row.plot_slugs]
-            assembled_rows.append({"hconcat": row_plots})
-
-    # Determine top-level structure
-    if len(assembled_rows) == 1:
-        # Single row with multiple plots = just hconcat
-        if "hconcat" in assembled_rows[0]:
-            final_spec = assembled_rows[0]
-        else:
-            final_spec = assembled_rows[0]
-    else:
-        # Multiple rows = vconcat
-        final_spec = {"vconcat": assembled_rows}
-
-    # Wrap with schema, data, and optional title
-    # Note: Do NOT add width/height at top level for layouts
-    result = {
-        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-        "data": {"name": table_name},
-        **final_spec
-    }
-    if plan.overall_title:
-        result["title"] = plan.overall_title
-    return result
-
-
 class VegaLiteAgent(BaseViewAgent):
 
     conditions = param.List(
@@ -1838,6 +1767,77 @@ class VegaLiteAgent(BaseViewAgent):
                             as_fields.append(entry["as"])
 
         return list(dict.fromkeys(as_fields))
+
+    def assemble_layout(
+        self,
+        plot_specs: dict[str, dict],
+        plan: VegaLiteLayoutPlan,
+        table_name: str
+    ) -> dict:
+        """
+        Assemble individual plot specs into a complete Vega-Lite layout.
+
+        Parameters
+        ----------
+        plot_specs : dict
+            Mapping of plot slugs to their minimal Vega-Lite specs
+        plan : VegaLiteLayoutPlan
+            The layout plan containing rows structure
+        table_name : str
+            Data table name to inject into data source
+
+        Returns
+        -------
+        dict
+            Complete Vega-Lite specification with hconcat/vconcat
+        """
+
+        # Handle single plot case (no concat needed)
+        if len(plan.rows) == 1 and len(plan.rows[0].plot_slugs) == 1:
+            slug = plan.rows[0].plot_slugs[0]
+            spec = plot_specs[slug].copy()
+            result = {
+                "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+                "data": {"name": table_name},
+                **spec
+            }
+            if plan.overall_title:
+                result["title"] = plan.overall_title
+            return result
+
+        # Build row structures
+        assembled_rows = []
+        for row in plan.rows:
+            if len(row.plot_slugs) == 1:
+                # Single plot in this row - just add the spec
+                slug = row.plot_slugs[0]
+                assembled_rows.append(plot_specs[slug])
+            else:
+                # Multiple plots in this row - wrap in hconcat
+                row_plots = [plot_specs[slug] for slug in row.plot_slugs]
+                assembled_rows.append({"hconcat": row_plots})
+
+        # Determine top-level structure
+        if len(assembled_rows) == 1:
+            # Single row with multiple plots = just hconcat
+            if "hconcat" in assembled_rows[0]:
+                final_spec = assembled_rows[0]
+            else:
+                final_spec = assembled_rows[0]
+        else:
+            # Multiple rows = vconcat
+            final_spec = {"vconcat": assembled_rows}
+
+        # Wrap with schema, data, and optional title
+        # Note: Do NOT add width/height at top level for layouts
+        result = {
+            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+            "data": {"name": table_name},
+            **final_spec
+        }
+        if plan.overall_title:
+            result["title"] = plan.overall_title
+        return result
 
     @retry_llm_output()
     async def _generate_basic_spec(self, messages: list[Message], pipeline: Pipeline, doc_examples: list, doc: str, errors: list | None = None) -> dict[str, Any]:
@@ -2145,7 +2145,7 @@ class VegaLiteAgent(BaseViewAgent):
 
         # Step 3: Assemble into final layout
         with self._add_step(title="Assembling final layout", steps_layout=self._steps_layout) as step:
-            final_spec = assemble_layout(plot_specs, plan, pipeline.table)
+            final_spec = self.assemble_layout(plot_specs, plan, pipeline.table)
             step.success_title = "Layout assembled"
 
         # Validate and render
