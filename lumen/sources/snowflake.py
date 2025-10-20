@@ -63,6 +63,10 @@ class SnowflakeSource(BaseSQLSource):
     user = param.String(default=None, doc="""
         The user to authenticate as.""")
 
+    paramstyle = param.Selector(default='qmark', objects=[
+        'qmark', 'numeric', 'format', 'pyformat'], doc="""
+        The paramstyle to use for SQL queries.""")
+
     password = param.String(default=None, doc="""
         The password to authenticate with (if authenticator is set to "snowflake").""")
 
@@ -113,6 +117,8 @@ class SnowflakeSource(BaseSQLSource):
             conn_kwargs['host'] = self.host
         if self.token is not None:
             conn_kwargs['token'] = self.token
+        if self.paramstyle is not None:
+            conn_kwargs['paramstyle'] = self.paramstyle
         if self.password is not None:
             conn_kwargs['password'] = self.password
         if self.private_key is not None:
@@ -219,16 +225,35 @@ class SnowflakeSource(BaseSQLSource):
             encryption_algorithm=NoEncryption(),
         )
 
-    def create_sql_expr_source(self, tables: dict[str, str], **kwargs):
+    def create_sql_expr_source(self, tables: dict[str, str], params: dict[str, list | dict] | None = None, **kwargs):
         """
         Creates a new SQL Source given a set of table names and
         corresponding SQL expressions.
+
+        Arguments
+        ---------
+        tables: dict[str, str]
+            Mapping from table name to SQL expression.
+        params: dict[str, list | dict] | None
+            Optional mapping from table name to parameters:
+            - list: Positional parameters for placeholder (?) syntax
+            - dict: Named parameters (for pyformat/format paramstyle)
+        kwargs: any
+            Additional keyword arguments.
+
+        Returns
+        -------
+        source: SnowflakeSource
         """
-        params = dict(self.param.values(), **kwargs)
-        params.pop("name", None)
-        params['tables'] = tables
-        params['conn'] = self._conn
-        return SnowflakeSource(**params)
+        if params is None:
+            params = {}
+        source_params = dict(self.param.values(), **kwargs)
+        source_params.pop("name", None)
+        source_params['tables'] = tables
+        if params:
+            source_params['table_params'] = params
+        source_params['conn'] = self._conn
+        return SnowflakeSource(**source_params)
 
     def _cast_to_supported_dtypes(self, df: pd.DataFrame, sample: int = 100) -> pd.DataFrame:
         """
@@ -256,12 +281,15 @@ class SnowflakeSource(BaseSQLSource):
                 df[col] = df[col].astype(str)
         return df
 
-    def execute(self, sql_query: str, *args, **kwargs):
+    def execute(self, sql_query: str, params: list | dict | None = None, *args, **kwargs):
         # TODO: remove cast in future, but keep until bokeh has a solution
-        df = self._cursor.execute(sql_query, *args, **kwargs).fetch_pandas_all()
+        if params:
+            df = self._cursor.execute(sql_query, params, *args, **kwargs).fetch_pandas_all()
+        else:
+            df = self._cursor.execute(sql_query, *args, **kwargs).fetch_pandas_all()
         return self._cast_to_supported_dtypes(df)
 
-    async def execute_async(self, sql_query: str, *args, **kwargs):
+    async def execute_async(self, sql_query: str, params: list | dict | None = None, *args, **kwargs):
         """
         Execute a Snowflake SQL query asynchronously and return the result as a DataFrame.
 
@@ -269,8 +297,13 @@ class SnowflakeSource(BaseSQLSource):
         ----------
         sql_query : str
             The SQL query to execute
+        params : list | dict | None
+            Parameters to use in the SQL query:
+            - list: Positional parameters for placeholder (?) syntax (qmark paramstyle)
+            - dict: Named parameters (for pyformat/format paramstyle)
+            - None: No parameters
         *args : tuple
-            Positional arguments to pass to the query
+            Additional positional arguments to pass to the query
         **kwargs : dict
             Keyword arguments to pass to the query
 
@@ -279,7 +312,10 @@ class SnowflakeSource(BaseSQLSource):
         pd.DataFrame
             The query result as a pandas DataFrame with supported dtypes
         """
-        self._cursor.execute_async(sql_query, *args, **kwargs)
+        if params:
+            self._cursor.execute_async(sql_query, params, *args, **kwargs)
+        else:
+            self._cursor.execute_async(sql_query, *args, **kwargs)
         query_id = self._cursor.sfqid
 
         while True:
@@ -319,7 +355,7 @@ class SnowflakeSource(BaseSQLSource):
             sql_transforms = [SQLFilter(conditions=conditions)] + sql_transforms
         for st in sql_transforms:
             sql_expr = st.apply(sql_expr)
-        return self.execute(sql_expr)
+        return self.execute(sql_expr, self.table_params.get(table, []))
 
     async def get_async(self, table, **query):
         """
@@ -345,7 +381,7 @@ class SnowflakeSource(BaseSQLSource):
             sql_transforms = [SQLFilter(conditions=conditions)] + sql_transforms
         for st in sql_transforms:
             sql_expr = st.apply(sql_expr)
-        return await self.execute_async(sql_expr)
+        return await self.execute_async(sql_expr, self.table_params.get(table, []))
 
     @contextlib.contextmanager
     def _timeout_context(self, seconds=None):
