@@ -144,7 +144,7 @@ class SQLMetaset:
 
             base_sql = truncate_string(vector_metadata.base_sql, max_length=200) if truncate else vector_metadata.base_sql
 
-            table_data = {'access': base_sql}
+            table_data = {'read_with': base_sql}
 
             if vector_metadata.description:
                 desc = truncate_string(vector_metadata.description, max_length=100) if truncate else vector_metadata.description
