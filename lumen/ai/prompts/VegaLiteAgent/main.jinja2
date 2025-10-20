@@ -7,10 +7,23 @@ Generate complete, effective Vega-Lite visualizations that clearly communicate d
 
 Every visualization must:
 - Use `data: {name: {{ memory['table'] }}}` with exact column names from source
-- Wrap all marks in a `layer` array, each with its own `mark` and `encoding`
+- Use the simplest structure that works:
+  - **Simple single-mark charts**: Use flat `mark` + `encoding` (no layer needed)
+  - **Multiple marks/overlays**: Wrap in `layer` array, each with its own `mark` and `encoding`
 - Focus on ONE primary metric or relationship per chart
 - Include narrative titles that highlight key insights from the data
 - Do not overcrowd the plot with too many data points, especially for bars
+
+# WHEN TO USE LAYERS
+
+**Use flat structure (NO layer)** for:
+- Single mark type (bar, line, point, area, etc.)
+- Simple charts with one visualization layer
+
+**Use layer array** when you need:
+- Multiple mark types overlaid (line + points, bar + line, etc.)
+- Annotations or reference lines on top of data
+- Multiple data series with different encodings
 
 # MARK vs ENCODING
 
@@ -54,27 +67,7 @@ Legends appear when you map data to `color`, `size`, or `shape` in encoding.
 {% endfor %}
 {% endif %}
 
-Simple time series:
-```yaml
-title:
-  anchor: start
-  fontSize: 20
-  subtitle: "Steady growth trend from 2010 to 2024"
-  subtitleColor: '#666666'
-  subtitleFontSize: 16
-  text: "Wind Turbine Capacity Over Time"
-data:
-  name: <TABLE_NAME>
-layer:
-  - mark:
-      type: line
-      point: true
-    encoding:
-      x: {field: year, type: quantitative}
-      y: {field: avg_capacity, type: quantitative}
-```
-
-Ranked bar chart with highlighting:
+Simple bar chart (flat structure):
 ```yaml
 title:
   anchor: start
@@ -85,129 +78,32 @@ title:
   text: "Wind Turbine Deployment by State"
 data:
   name: <TABLE_NAME>
-layer:
-  - mark: bar
-    encoding:
-      y:
-        field: state
-        type: nominal
-        sort: "-x"
-        axis:
-          title: "State"
-      x:
-        field: turbine_count
-        type: quantitative
-        axis:
-          title: "Number of Turbines"
-      color:
-        condition:
-          test: "datum.state === 'TX'"
-          value: '#1f77b4'
-        value: '#aec7e8'
-```
-
-Bar chart with legend (single data field):
-```yaml
-title:
-  text: "Sales by Category"
-data:
-  name: <TABLE_NAME>
-layer:
-  - mark: bar
-    encoding:
-      x:
-        field: category
-        type: nominal
-      y:
-        field: sales
-        type: quantitative
-      color:
-        field: category
-        type: nominal
-        legend:
-          title: "Category"
-          orient: "right"
-```
-
-Dual-axis chart with legend (multiple series):
-```yaml
-title:
-  text: "Growth Metrics Over Time"
-data:
-  name: <TABLE_NAME>
-layer:
-  - transform:
-    - calculate: "'Revenue'"
-      as: metric_name
-    mark:
-      type: line
-      point: true
-    encoding:
-      x:
-        field: year
-        type: quantitative
-      y:
-        field: revenue
-        type: quantitative
-        axis:
-          title: "Revenue ($M)"
-      color:
-        field: metric_name
-        type: nominal
-        scale:
-          domain: ["Revenue", "Profit"]
-          range: ['#1f77b4', '#ff7f0e']
-        legend:
-          title: "Metric"
-          orient: "top-right"
-  - transform:
-    - calculate: "'Profit'"
-      as: metric_name
-    mark:
-      type: line
-      point: true
-    encoding:
-      x:
-        field: year
-        type: quantitative
-      y:
-        field: profit
-        type: quantitative
-        axis:
-          title: "Profit ($M)"
-      color:
-        field: metric_name
-        type: nominal
-        scale:
-          domain: ["Revenue", "Profit"]
-          range: ['#1f77b4', '#ff7f0e']
-        legend:
-          title: "Metric"
-          orient: "top-right"
-```
-
-Top 10 bar chart with transform:
-```yaml
-title:
-  text: "Top 10 Cities by Average Fare"
-  subtitle: "Showing highest-cost destinations"
-data:
-  name: <TABLE_NAME>
-transform:
-  - window:
-      - op: row_number
-        as: row_number
-  - filter: datum.row_number <= 10
-layer:
-  - mark: bar
-    encoding:
-      y:
-        field: city
-        type: nominal
-        sort: "-x"
-      x:
-        field: avg_fare
-        type: quantitative
+mark: bar
+encoding:
+  y:
+    field: state
+    type: nominal
+    sort: "-x"
+    axis:
+      title: "State"
+  x:
+    field: turbine_count
+    type: quantitative
+    axis:
+      title: "Number of Turbines"
+  color:
+    condition:
+      test: "datum.state === 'TX'"
+      value: '#1f77b4'
+    value: '#aec7e8'
+  tooltip:
+    - field: state
+      type: nominal
+      title: State
+    - field: turbine_count
+      type: quantitative
+      title: Turbines
+      format: ",d"
 ```
 {% endblock %}
 
