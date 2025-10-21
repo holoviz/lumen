@@ -1,55 +1,58 @@
-{% extends 'Actor/main.jinja2' %}
+{% extends 'LumenBaseAgent/retry_output.jinja2' %}
 
 {% block instructions %}
-Add strategic visual annotations to highlight key insights in your data.
+Add strategic visual annotations to highlight key insights.
 
-# Annotation Patterns
+# LAYERS
 
-**Reference lines**: Horizontal/vertical rules for meaningful thresholds
-- Use for goals, benchmarks, or natural breakpoints (e.g., "5,000+ turbines = major wind state")
-- Position with `y: {datum: value}` or `x: {datum: value}`
-- Use subtle styling: `opacity: 0.5`, muted colors, thin lines
-- Anchor labels to the line, not floating positions
+Wrap chart in `layer` array, then add annotation marks (rules, text, highlights). All layers share data/scales unless overridden.
 
-**Value labels**: Text on specific data points
-- Use only for outliers or endpoints that need emphasis
-- Apply `transform` with `filter` to select points
-- Don't label every bar - let the axis provide that information
+# PATTERNS
+
+**Reference lines**: Horizontal/vertical rules for thresholds (goals, benchmarks)
+- Position: `y: {datum: value}` or `x: {datum: value}`
+- Style: subtle colors, `opacity: 0.5`, `strokeDash: [4,4]`
+- Anchor labels to line
+
+**Value labels**: Text on outliers/endpoints only
+- Filter: `transform: [{filter: "datum.field > threshold"}]`
+- Don't label every point—let axes handle that
 
 **Conditional highlights**: Emphasize data meeting criteria
 - Layer filtered data with distinct color
-- Use `transform: [{filter: "datum.field > threshold"}]`
-- Make sure the threshold is meaningful, not arbitrary
-{% endblock %}
-
-{% block context %}
-Build off the following Vega-Lite yaml:
-```yaml
-{{ vega_spec }}
-```
+- Use meaningful thresholds
 {% endblock %}
 
 {% block examples %}
 # EXAMPLES
 
-Reference line with subtle styling:
+## Converting to layers (reference line):
+
+Before:
+```yaml
+mark: bar
+encoding:
+  x: {field: category, type: ordinal}
+  y: {field: value, type: quantitative}
+```
+
+After:
 ```yaml
 layer:
   - mark: bar
     encoding:
       x: {field: category, type: ordinal}
       y: {field: value, type: quantitative}
-  - mark: {type: rule, color: '#666666', size: 1, strokeDash: [4,4], opacity: 0.5}
-    encoding:
-      y: {datum: 5000}
-  - mark: {type: text, align: left, dx: 5, dy: -5, fontSize: 10, color: '#666666'}
+  - mark: {type: rule, color: '#666', size: 1, strokeDash: [4,4], opacity: 0.5}
+    encoding: {y: {datum: 5000}}
+  - mark: {type: text, align: left, dx: 5, dy: -5, fontSize: 10, color: '#666'}
     encoding:
       text: {value: "5,000"}
       y: {datum: 5000}
       x: {datum: 0}
 ```
 
-Value labels with filter:
+## Value labels with filter:
 ```yaml
 layer:
   - mark: line
@@ -57,15 +60,14 @@ layer:
       x: {field: year, type: ordinal}
       y: {field: value, type: quantitative}
   - mark: {type: text, align: left, dx: 5, fontSize: 11}
-    transform:
-      - filter: "datum.year == 2022"  # Only label final point
+    transform: [{filter: "datum.year == 2022"}]
     encoding:
       x: {field: year, type: ordinal}
       y: {field: value, type: quantitative}
       text: {field: value, type: quantitative, format: ".0f"}
 ```
 
-Conditional highlighting:
+## Conditional highlighting:
 ```yaml
 layer:
   - mark: bar
@@ -73,8 +75,7 @@ layer:
       x: {field: category, type: nominal}
       y: {field: value, type: quantitative}
   - mark: {type: bar, color: "#e74c3c"}
-    transform:
-      - filter: "datum.value > 500"
+    transform: [{filter: "datum.value > 500"}]
     encoding:
       x: {field: category, type: nominal}
       y: {field: value, type: quantitative}

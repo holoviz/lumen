@@ -156,6 +156,7 @@ class VegaLiteSpecUpdate(BaseModel):
         Respect your step's scope; don't override previous steps."""
     )
 
+
 class LineChange(BaseModel):
     line_no: int = Field(description="The line number in the original text that needs to be changed.")
     replacement: str = Field(description="""

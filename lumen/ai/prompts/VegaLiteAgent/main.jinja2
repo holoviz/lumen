@@ -6,29 +6,14 @@ Generate complete, effective Vega-Lite visualizations that clearly communicate d
 # ESSENTIAL STRUCTURE
 
 Every visualization must:
-- Use `data: {name: {{ memory['table'] }}}` with exact column names from source
-- Use the simplest structure that works:
-  - **Simple single-mark charts**: Use flat `mark` + `encoding` (no layer needed)
-  - **Multiple marks/overlays**: Wrap in `layer` array, each with its own `mark` and `encoding`
+- Alwys use layer array
 - Focus on ONE primary metric or relationship per chart
 - Include narrative titles that highlight key insights from the data
 - Do not overcrowd the plot with too many data points, especially for bars
 
-# WHEN TO USE LAYERS
-
-**Use flat structure (NO layer)** for:
-- Single mark type (bar, line, point, area, etc.)
-- Simple charts with one visualization layer
-
-**Use layer array** when you need:
-- Multiple mark types overlaid (line + points, bar + line, etc.)
-- Annotations or reference lines on top of data
-- Multiple data series with different encodings
-
 # MARK vs ENCODING
 
 This is the most common source of errors. Properties belong in different places:
-
 **Mark** (static styling): Position (`dx`, `dy`, `align`, `baseline`) and style (`color`, `opacity`, `fontSize`) go here
 ```yaml
 mark: {type: text, align: left, dx: 3, color: black}
@@ -44,18 +29,30 @@ encoding:
 # LEGENDS
 
 Legends appear when you map data to `color`, `size`, or `shape` in encoding.
-
 **Single field**: Map directly
 **Multiple series**: Use `transform` to create a constant field, then map it (never use `datum` in color encoding)
+
+# FONT SIZES AND READABILITY
+
+Ensure text is readable by setting appropriate font sizes. Use the `config` section for global defaults:
+```yaml
+config:
+  axis:
+    labelFontSize: 14      # Axis tick labels
+    titleFontSize: 16      # Axis titles
+  title:
+    fontSize: 20           # Main title
+    subtitleFontSize: 16   # Subtitle
+  text:
+    fontSize: 14           # Default for text marks
+```
+**Recommended sizes**: Titles 18-24, axis titles 14-16, labels 12-14, annotations 12-14
 
 # KEY PATTERNS
 
 **Sort rankings**: `sort: "-x"` (horizontal) or `sort: "-y"` (vertical) on the categorical axis
-
 **Color purposefully**: Encode dimensions, highlight outliers/leaders, or show thresholds. Keep color in `mark` for text labels that shouldn't appear in legends.
-
 **Informative titles**: Main title states what's shown, subtitle reveals the key insight or pattern
-
 **Data types**: Match type to your data - quantitative for continuous, ordinal for ordered categories, nominal for unordered, temporal for dates
 {% endblock %}
 
@@ -66,6 +63,28 @@ Legends appear when you map data to `color`, `size`, or `shape` in encoding.
 {{ example }}
 {% endfor %}
 {% endif %}
+## Bar chart with conditional color:
+```yaml
+config:
+  axis: {labelFontSize: 14, titleFontSize: 16}
+  title: {fontSize: 20, subtitleFontSize: 16}
+layer:
+  - mark: bar
+    encoding:
+      y: {field: state, type: nominal, sort: "-x", axis: {title: State}}
+      x: {field: turbine_count, type: quantitative, axis: {title: Number of Turbines}}
+      color:
+        condition: {test: "datum.state === 'TX'", value: '#1f77b4'}
+        value: '#aec7e8'
+      tooltip:
+        - {field: state, type: nominal, title: State}
+        - {field: turbine_count, type: quantitative, title: Turbines, format: ",d"}
+title:
+  anchor: start
+  text: Wind Turbine Deployment by State
+  subtitle: Texas leads with over 15,000 turbines deployed
+  subtitleColor: '#666666'
+```
 
 Simple bar chart (flat structure):
 ```yaml
@@ -76,8 +95,6 @@ title:
   subtitleColor: '#666666'
   subtitleFontSize: 16
   text: "Wind Turbine Deployment by State"
-data:
-  name: <TABLE_NAME>
 mark: bar
 encoding:
   y:

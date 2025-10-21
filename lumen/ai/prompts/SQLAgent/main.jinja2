@@ -5,12 +5,19 @@
 Write a SQL query for the user's data transformation request, focusing on intent over literal interpretation.
 
 ## 🎯 PRIMARY RULES:
-1. Reuse materialized data - Check "Current Knowledge" first before writing CTEs
-2. Column quotes - Use double quotes: `"column_name"`
-3. String quotes - Single quotes: `'string_value'`
-4. No CREATE statements - System handles materialization
-5. No LIMIT clauses unless explicitly requested by the user - Pagination is automatically handled
-6. Progressive approach - Each step builds on previous
+1. **Reuse and extend** - When asked to "add" or "include" additional metrics:
+   - Check "Previous" query in Current Knowledge
+   - MODIFY the existing query to include ALL metrics in a SINGLE result set
+   - Example: If previous query counts gold medals, and user asks for silver too, return BOTH gold_count AND silver_count columns
+   - Use CASE statements, multiple aggregations, or pivoting to include all requested metrics
+2. Reuse materialized data - Check "Current Knowledge" first before writing CTEs
+3. Column quotes - Use double quotes: `"column_name"`
+4. String quotes - Single quotes: `'string_value'`
+5. No CREATE statements - System handles materialization
+6. No LIMIT clauses unless explicitly requested by the user - Pagination is automatically handled
+7. Progressive approach - Each step builds on previous
+
+Then EXTEND the previous query to return multiple columns, not create a separate query.
 
 ## Query Patterns:
 - NULL handling: Exclude unless specified

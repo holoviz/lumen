@@ -4,6 +4,7 @@
 {{ super() }}
 
 - For overlays: data at top level, encoding in layer
+- When updating layer properties: provide the complete layer structure with all encoding properties that should remain, not just the properties being changed
 {% endblock %}
 
 {%- block examples -%}
@@ -13,15 +14,58 @@
 {{ example }}
 {% endfor %}
 {% endif %}
-Overlays:
+
+Updating layer colors in hconcat:
 ```{{ language }}
-spec:
-  data:
-    name: <TABLE_NAME>
-  layer:
-    - encoding:
-      # main data
-    - data:
-      # other data
+# To change bar colors from blue to gray, provide complete layer structure:
+hconcat:
+- layer:
+  - mark: bar
+    encoding:
+      color:
+        value: 'gray'
+      tooltip:
+      - bin: true
+        field: input_tokens
+        title: Input Tokens Range
+        type: quantitative
+      - aggregate: count
+        title: Count
+        type: quantitative
+      x:
+        axis:
+          title: Input Tokens (binned)
+        bin: true
+        field: input_tokens
+        type: quantitative
+      y:
+        aggregate: count
+        axis:
+          title: Count of Records
+        type: quantitative
+- layer:
+  - mark: bar
+    encoding:
+      color:
+        value: 'gray'
+      tooltip:
+      - bin: true
+        field: output_tokens
+        title: Output Tokens Range
+        type: quantitative
+      - aggregate: count
+        title: Count
+        type: quantitative
+      x:
+        axis:
+          title: Output Tokens (binned)
+        bin: true
+        field: output_tokens
+        type: quantitative
+      y:
+        aggregate: count
+        axis:
+          title: Count of Records
+        type: quantitative
 ```
 {%- endblock -%}
