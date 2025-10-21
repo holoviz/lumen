@@ -8,7 +8,7 @@ from abc import abstractmethod
 from collections.abc import Iterator
 from functools import partial
 from types import FunctionType
-from typing import Any, final
+from typing import Any, TypedDict, final
 
 import panel as pn
 import param
@@ -28,15 +28,15 @@ from typing_extensions import Self
 from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource
 from ..views.base import Panel, View
-from .actor import Actor
+from .actor import Actor, ContextProvider, TContext
 from .agents import AnalystAgent
 from .config import MissingContextError
+from .context import LWW, merge_contexts
 from .export import (
     format_output, make_md_cell, make_preamble, write_notebook,
 )
 from .llm import Llm
-from .memory import _Memory
-from .schemas import get_metaset
+from .schemas import SQLMetaset, get_metaset
 from .tools import FunctionTool, Tool
 from .utils import (
     describe_data, extract_block_source, get_block_names,
@@ -53,6 +53,8 @@ class Task(Viewer):
     abort_on_error = param.Boolean(default=False, doc="""
         If True, the report will abort if an error occurs.""")
 
+    context = param.Dict()
+
     history = param.List(doc="""
         Conversation history to include as context for the task.""")
 
@@ -64,12 +66,6 @@ class Task(Viewer):
 
     llm = param.ClassSelector(class_=Llm, doc="""
         The LLM to use for the task.""")
-
-    memory = param.ClassSelector(class_=_Memory, doc="""
-        The memory to use for the task.""")
-
-    outputs = param.List(doc="""
-        The outputs of the task.""")
 
     title = param.String(doc="""
         The title of the task.""")
@@ -83,6 +79,9 @@ class Task(Viewer):
     steps_layout = param.ClassSelector(default=None, class_=(ListLike, NamedListLike), allow_None=True, doc="""
         The layout progress updates will be streamed to.""")
 
+    views = param.List(doc="""
+        The generated viewable outputs of the task.""")
+
     def __init_subclass__(cls, **kwargs):
         """
         Apply wrap_logfire to all the subclasses' execute automatically
@@ -92,6 +91,7 @@ class Task(Viewer):
 
     def __init__(self, **params):
         super().__init__(**params)
+        self._prepared = False
         self._init_view()
 
     def __repr__(self):
@@ -103,7 +103,9 @@ class Task(Viewer):
         return f"{self.__class__.__name__}({', '.join(params)})"
 
     def _init_view(self):
-        self._view = self._container = Column(sizing_mode='stretch_width', styles={'min-height': 'unset'}, height_policy='fit')
+        self._view = self._container = Column(
+            sizing_mode='stretch_width', styles={'min-height': 'unset'}, height_policy='fit'
+        )
 
     def _populate_view(self):
         self._view[:] = []
@@ -111,7 +113,7 @@ class Task(Viewer):
     def reset(self):
         """Resets the view, removing generated outputs."""
         self._view[:] = []
-        self.outputs.clear()
+        self.views.clear()
 
     def _render_controls(self):
         return [
@@ -156,10 +158,13 @@ class Task(Viewer):
         return self._container
 
     @abstractmethod
-    async def _execute(self, **kwargs):
+    async def _execute(self, context: TContext, **kwargs) -> tuple[list[Any], TContext]:
         raise NotImplementedError(f"{self.__class__.__name__} does not implement the execute.")
 
-    async def execute(self, **kwargs) -> list[Any]:
+    async def prepare(self, context: TContext | None = None):
+        self._prepared = True
+
+    async def execute(self, context: TContext | None = None, **kwargs) -> tuple[list[Any], TContext]:
         """
         Executes the task.
 
@@ -172,7 +177,10 @@ class Task(Viewer):
         -------
         The outputs of the task.
         """
-        return await self._execute(**kwargs)
+        context = dict(self.context or {}, **(context or {}))
+        if not self._prepared:
+            await self.prepare(context)
+        return await self._execute(context, **kwargs)
 
 
 class TaskGroup(Task):
@@ -191,14 +199,16 @@ class TaskGroup(Task):
             tasks = params.pop('tasks', [])
         else:
             tasks = list(tasks)
-        outputs, _tasks = [], []
+        views, _tasks, _contexts = [], [], []
         for task in tasks:
             if isinstance(task, FunctionType):
                 task = FunctionTool(task)
             elif isinstance(task, Task):
-                outputs += task.outputs
+                views += task.views
             _tasks.append(task)
-        super().__init__(_tasks=_tasks, outputs=outputs, **params)
+            _contexts.append({})
+        super().__init__(_tasks=_tasks, views=views, **params)
+        self._contexts = []
         self._current = 0
         self._init_view()
         self._populate_view()
@@ -229,20 +239,22 @@ class TaskGroup(Task):
         using _add_outputs.
         """
 
-    def _add_outputs(self, i: int, task: Task | Actor, outputs: list, **kwargs):
+    def _add_outputs(self, i: int, task: Task | Actor, views: list, out_context: dict | None, **kwargs):
+        if i >= 0:
+            self._contexts.append(out_context)
         if isinstance(task, Task):
             self._view.append(task)
-            self.outputs += task.outputs
+            self.views += task.views
         else:
-            views = []
-            for out in outputs:
+            rendered = []
+            for out in views:
                 view = self._render_output(out)
                 if view is not None:
-                    views.append(view)
-            self._view.extend(views)
-            self.outputs += outputs
+                    rendered.append(view)
+            self._view.extend(rendered)
+            self.views += rendered
 
-    def _watch_child_outputs(self, previous, event):
+    def _watch_child_outputs(self, i: int, previous: list, context: TContext, event: param.Event, **kwargs):
         pass
 
     def append(self, task: Task | Actor):
@@ -271,21 +283,25 @@ class TaskGroup(Task):
         self._tasks.insert(index, task)
         self._populate_view()
 
+    async def prepare(self, context: TContext | None = None):
+        context = context or (self.context or {})
+        for task in self._tasks:
+            await task.prepare(context)
+        self._prepared = True
+
     def reset(self):
         """
         Resets the view, removing generated outputs.
         """
         self._current = 0
-        self.outputs.clear()
+        self.views.clear()
         self._populate_view()
         for task in self._tasks:
             if isinstance(task, Task):
                 task.reset()
 
-    async def _run_task(self, i: int, task: Self | Actor, **kwargs) -> list[Any]:
-        pre = 0 if self.memory is None else len(self.memory['outputs'])
+    async def _run_task(self, i: int, task: Self | Actor, context: TContext, **kwargs) -> tuple[list[Any], TContext]:
         outputs = []
-        memory = task.memory or self.memory
         messages = list(self.history)
         if self.instruction:
             user_msg = None
@@ -301,12 +317,11 @@ class TaskGroup(Task):
         with task.param.update(
             interface=self.interface,
             llm=task.llm or self.llm,
-            memory=memory,
             steps_layout=self.steps_layout
         ):
             if isinstance(task, Actor):
                 try:
-                    out = await task.respond(messages, **kwargs)
+                    out, out_context = await task.respond(messages, context, **kwargs)
                 except MissingContextError:
                     # Re-raise MissingContextError to allow retry logic at Plan level
                     raise
@@ -316,29 +331,30 @@ class TaskGroup(Task):
                         f'Executing task {type(task).__name__} failed.', alert_type='error',
                         sizing_mode="stretch_width"
                     )
-                    return [alert]
+                    return [alert], {}
                 # Handle Tool specific behaviors
                 if isinstance(task, Tool):
                     # Handle View/Viewable results regardless of agent type
-                    if isinstance(out, (View, Viewable)):
-                        if isinstance(out, Viewable):
-                            pipeline = None if self.memory is None else self.memory.get('pipeline')
-                            out = Panel(object=out, pipeline=pipeline)
-                        out = LumenOutput(
-                            component=out, title=self.title
+                    rendered = []
+                    for o in out:
+                        if not isinstance(o, (View, Viewable)):
+                            continue
+                        if isinstance(o, Viewable):
+                            pipeline = None if context is None else context.get('pipeline')
+                            o = Panel(object=o, pipeline=pipeline)
+                        o = LumenOutput(
+                            component=o, title=self.title
                         )
-                        message_kwargs = dict(value=out, user=task.name)
+                        message_kwargs = dict(value=o, user=task.name)
                         if self.interface:
                             self.interface.stream(**message_kwargs)
-                            self.memory['outputs'] = self.memory['outputs'] + [out]
-                new = self.memory['outputs'][pre:]
-                if not new and isinstance(out, (Viewable, View, LumenOutput)):
-                    new = [out]
-                outputs += new
+                        rendered.append(o)
+                    out = rendered
             else:
                 with task.param.update(running=True, history=messages):
-                    outputs += await task.execute(**kwargs)
-        return outputs
+                    out, out_context = await task.execute(context, **kwargs)
+            outputs += out
+        return outputs, out_context
 
     def _render_tasks(self) -> Viewable:
         tasks = []
@@ -418,29 +434,47 @@ class TaskGroup(Task):
             )
         )
 
-    async def _execute(self, **kwargs):
+    def _get_context(self, i: int, context: TContext | None, task: Task | Actor) -> TContext | None:
+        contexts = ([self.context] if self.context else []) + ([context] if context else []) + self._contexts[:i]
+        if isinstance(task, Actor):
+            return merge_contexts(task.inputs, contexts)
+        elif isinstance(task, TaskGroup):
+            subcontexts = []
+            for subtask in task:
+                subtask_context = self._get_context(i, context, subtask)
+                if subtask_context is not None:
+                    subcontexts.append(subtask_context)
+            return merge_contexts(LWW, subcontexts)
+        elif isinstance(task, Action):
+            return merge_contexts(task.inputs, contexts)
+        else:
+            raise TypeError("Abstract Task does not implement _get_context.")
+
+    async def _execute(self, context: TContext, **kwargs):
         """
         Executes the tasks.
 
         Arguments
         ---------
+        context: TContext
+            The context given to the task
         **kwargs: dict
             Additional keyword arguments to pass to the tasks.
         """
-        if self.memory is not None and 'outputs' not in self.memory:
-            self.memory['outputs'] = []
         if self._current != 0:
-            outputs = list(self.outputs)
+            views = list(self.views)
         else:
-            outputs = [Typography(f"{'#'*self.level} {self.title}", margin=(10, 10, 0, 10))] if self.title else []
-            if outputs:
-                self._add_outputs(-1, None, outputs, **kwargs)
+            title = Typography(f"{'#'*self.level} {self.title}", margin=(10, 10, 0, 10))
+            views = [title] if self.title else []
+            if views:
+                self._add_outputs(-1, None, views, None, **kwargs)
         for i, task in enumerate(self._tasks):
             if i < self._current:
                 continue
+            subcontext = self._get_context(i, context, task)
             new = []
             try:
-                new = await self._run_task(i, task, **kwargs)
+                new, new_context = await self._run_task(i, task, subcontext, **kwargs)
             except MissingContextError:
                 # Re-raise MissingContextError to allow retry logic at Plan level
                 raise
@@ -451,10 +485,13 @@ class TaskGroup(Task):
                     break
             else:
                 self.status = "success"
-                outputs += new
-            self._add_outputs(i, task, new, **kwargs)
+                views += new
+            self._add_outputs(
+                i, task, new, new_context, **kwargs
+            )
             self._current = i + 1
-        return outputs
+        contexts = ([self.context] if self.context else []) + self._contexts
+        return views, merge_contexts(LWW, contexts)
 
     def to_notebook(self):
         """
@@ -502,8 +539,10 @@ class Section(TaskGroup):
         tasks = [f"\n    {task!r}" for task in self._tasks]
         return f"{self.__class__.__name__}({', '.join(params)}{''.join(tasks)})"
 
-    def _add_outputs(self, i: int, task: Task | Actor, outputs: list, **kwargs):
-        self.outputs += outputs
+    def _add_outputs(self, i: int, task: Task | Actor, views: list, out_context: dict | None, **kwargs):
+        if out_context is not None:
+            self._contexts.append(out_context)
+        self.views += views
 
     def _render_controls(self):
         return [
@@ -543,26 +582,23 @@ class Section(TaskGroup):
     def _open_settings(self, event):
         self._dialog.open = True
 
-    def _watch_child_outputs(self, i: int, previous: list, event: param.Event, **kwargs):
+    def _watch_child_outputs(self, i: int, previous: list, context: TContext, event: param.Event, **kwargs):
         for out in (event.old or []):
             if out not in event.new:
                 out.param.unwatch(self._watchers[out])
+        state = dict(interface=self.interface, llm=self.llm, steps_layout=self.steps_layout)
         for out in event.new:
-            if out not in self._watchers and isinstance(out, LumenOutput):
-                context = dict(
-                    interface=self.interface, llm=self.llm, memory=self.memory.clone(),
-                    steps_layout=self.steps_layout
-                )
-                self._watchers[out] = out.param.watch(partial(self._rerun, i+1, context), 'spec')
+            if isinstance(out, LumenOutput) and out not in self._watchers:
+                self._watchers[out] = out.param.watch(partial(self._rerun, i+1, dict(context), state), 'spec')
 
-    async def _rerun(self, i: int, context: dict, _: param.Event, **kwargs):
+    async def _rerun(self, i: int, context: TContext, state: dict, _: param.Event, **kwargs):
         for task in self._tasks[i:]:
             task.reset()
         with self.param.update(running=True):
             for j, task in enumerate(self._tasks[i:]):
                 try:
-                    with self.param.update(context):
-                        await self._run_task(i+j, task, **kwargs)
+                    with self.param.update(state):
+                        await self._run_task(i+j, task, context, **kwargs)
                 except Exception as e:
                     tb.print_exception(e)
                     self.status = "error"
@@ -571,19 +607,24 @@ class Section(TaskGroup):
                 else:
                     self.status = "success"
 
-    async def _run_task(self, i: int, task: Task | Actor, **kwargs) -> list[Any]:
-        if self.memory:
-            self.memory['outputs'] = []
-            instructions = "\n".join(f"{i+1}. {task.instruction}" if hasattr(task, 'instruction') else f"{i+1}. <no instruction>" for i, task in enumerate(self._tasks))
-            self.memory['reasoning'] = f"{self.title}\n\n{instructions}"
+    async def _run_task(self, i: int, task: Task | Actor, context: TContext | None, **kwargs) -> list[Any]:
+        if context is not None:
+            instructions = "\n".join(
+                f"{i+1}. {task.instruction}" if hasattr(task, 'instruction') else f"{i+1}. <no instruction>"
+                for i, task in enumerate(self._tasks)
+            )
+            context['reasoning'] = f"{self.title}\n\n{instructions}"
         if isinstance(task, Task):
-            watcher = task.param.watch(partial(self._watch_child_outputs, i, list(self.outputs), **kwargs), 'outputs')
+            watcher = task.param.watch(
+                partial(self._watch_child_outputs, i, list(self.views), context, **kwargs),
+                'views'
+            )
         try:
-            outputs = await super()._run_task(i, task, **kwargs)
+            outputs, out = await super()._run_task(i, task, context, **kwargs)
         finally:
             if isinstance(task, Task):
                 task.param.unwatch(watcher)
-        return outputs
+        return outputs, out
 
     @param.depends('running', watch=True)
     async def _running(self):
@@ -608,6 +649,14 @@ class Report(TaskGroup):
     _tasks = param.List(item_type=Section)
 
     level = 1
+
+    def __init__(self, *tasks, **params):
+        if not tasks:
+            tasks = params.pop('tasks', [])
+        else:
+            tasks = list(tasks)
+        super().__init__(*tasks, **params)
+        pn.state.execute(self.prepare)
 
     def _init_view(self):
         self._title = Typography(
@@ -665,15 +714,17 @@ class Report(TaskGroup):
     def _update_filename(self):
         self._export.filename = f"{self.title or 'Report'}.ipynb"
 
-    def _add_outputs(self, i: int, task: Task | Actor, outputs: list, **kwargs):
-        self.outputs += outputs
+    def _add_outputs(self, i: int, task: Task | Actor, views: list, out_context: dict | None, **kwargs):
+        if out_context is not None:
+            self._contexts.append(out_context)
+        self.views += views
 
     def _notebook_export(self):
         return io.StringIO(self.to_notebook())
 
-    async def _execute(self, *args):
+    async def _execute(self, context: TContext, *args):
         with self._run.param.update(loading=True):
-            return await super()._execute()
+            return await super()._execute(context)
 
     def _expand_all(self, event):
         if self._collapse.icon == "unfold_less":
@@ -690,11 +741,11 @@ class Report(TaskGroup):
         self._view[:] = objects = [(task.title, task) for task in self._tasks]
         self._view.active = list(range(len(objects)))
 
-    async def _run_task(self, i: int, task: Section, **kwargs):
+    async def _run_task(self, i: int, task: Section, context: TContext, **kwargs):
         self._view.active = self._view.active + [i]
-        watcher = task.param.watch(partial(self._watch_child_outputs, self.outputs), "outputs")
+        watcher = task.param.watch(partial(self._watch_child_outputs, i, self.views, dict(context)), "views")
         try:
-            outputs = await super()._run_task(i, task, **kwargs)
+            outputs = await super()._run_task(i, task, context, **kwargs)
         finally:
             task.param.unwatch(watcher)
         return outputs
@@ -709,7 +760,7 @@ class Report(TaskGroup):
         )
 
 
-class Action(Task):
+class Action(Task, ContextProvider):
     """
     An `Action` implements an execute method that performs some unit of work
     and optionally generates outputs to be rendered.
@@ -719,12 +770,26 @@ class Action(Task):
          Whether the outputs should be rendered.""")
 
     @final
-    async def execute(self, **kwargs):
-        outputs = await super().execute(**kwargs)
+    async def execute(self, context: TContext | None = None, **kwargs):
+        views, out_context = await super().execute(context, **kwargs)
         if self.render_outputs:
-            self._view[:] = [self._render_output(out) for out in outputs]
-        self.outputs += outputs
-        return outputs
+            self._view[:] = [self._render_output(out) for out in views]
+        self.views += views
+        return views, out_context
+
+
+
+class SQLQueryInputs(TypedDict):
+
+    source: BaseSQLSource
+
+
+class SQLQueryOutputs(TypedDict):
+    source: BaseSQLSource
+    pipeline: Pipeline
+    data: dict
+    sql_metaset: SQLMetaset
+    table: str
 
 
 class SQLQuery(Action):
@@ -748,6 +813,9 @@ class SQLQuery(Action):
     user_content = param.String(default="Generate a short caption for the data", doc="""
         Additional instructions to provide to the analyst agent, i.e. what to focus on.""")
 
+    inputs = SQLQueryInputs
+    outputs = SQLQueryOutputs
+
     def _render_controls(self):
         return [
             TextInput.from_param(
@@ -768,7 +836,7 @@ class SQLQuery(Action):
             params.append(f"title='{self.title}'")
         return f"{self.__class__.__name__}({', '.join(params)})"
 
-    async def _execute(self, **kwargs):
+    async def _execute(self, context: TContext, **kwargs) -> tuple[list[Any], SQLQueryOutputs]:
         """
         Executes the action.
 
@@ -783,31 +851,31 @@ class SQLQuery(Action):
         """
         source = self.source
         if source is None:
-            if self.memory is None or 'source' not in self.memory:
+            if context is None or 'source' not in context:
                 raise ValueError(
                     "SQLQuery could not resolve a source. Either provide "
                     "an explicit source or ensure another action or actor "
                     "provides a source."
                 )
-            source = self.memory['source']
+            source = context['source']
         if not self.table:
             raise ValueError("SQLQuery must declare a table name.")
         source = source.create_sql_expr_source({self.table: self.sql_expr})
         pipeline = Pipeline(source=source, table=self.table)
-        if self.memory is not None:
-            self.memory["source"] = source
-            if "sources" not in self.memory:
-                self.memory["sources"] = []
-            self.memory["sources"].append(source)
-            self.memory["pipeline"] = pipeline
-            self.memory["data"] = await describe_data(pipeline.data)
-            self.memory["sql_metaset"] = await get_metaset([source], [self.table])
-            self.memory["table"] = self.table
+        out_context = {
+            "source": source,
+            "pipeline": pipeline,
+            "data": await describe_data(pipeline.data),
+            "sql_metaset": await get_metaset([source], [self.table]),
+            "table": self.table,
+        }
         out = LumenOutput(component=pipeline)
-        outputs = [Typography(f"### {self.title}", variant='h4', margin=(10, 10, 0, 10)), out] if self.title else [out]
+        title = Typography(f"### {self.title}", variant='h4', margin=(10, 10, 0, 10))
+        outputs = [title, out] if self.title else [out]
         if self.generate_caption:
-            caption = await AnalystAgent(llm=self.llm).respond(
-                [{"role": "user", "content": self.user_content}]
+            caption_out, _ = await AnalystAgent(llm=self.llm).respond(
+                [{"role": "user", "content": self.user_content}], context
             )
+            caption = caption_out[0]
             outputs.append(Typography(caption.object))
-        return outputs
+        return outputs, out_context
