@@ -1140,8 +1140,11 @@ class Table(View):
         return self._panel_type(**self._normalize_params(self._get_params()))
 
     def _get_params(self):
-        return dict(value=self.get_data(), disabled=True, page_size=self.page_size,
-                    **self.kwargs)
+        df = self.get_data()
+        kwargs = self.kwargs.copy()
+        if "layout" not in self.kwargs and "widths" not in self.kwargs:
+            kwargs["widths"] = {col: f"{100 // len(df.columns)}%" for col in df.columns}
+        return dict(value=df, disabled=True, page_size=self.page_size, **kwargs)
 
 
 class DownloadView(View):
