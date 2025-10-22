@@ -13,10 +13,9 @@ from panel.viewable import Viewable
 from ..sources.base import Source
 from ..sources.duckdb import DuckDBSource
 from ..views.base import HoloViews, View
-from .actor import (
-    Actor, ContextModel, ContextProvider, TContext,
-)
+from .actor import Actor, ContextProvider
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
+from .context import ContextModel, TContext
 from .embeddings import NumpyEmbeddings
 from .llm import Message
 from .models import (

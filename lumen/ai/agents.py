@@ -32,13 +32,14 @@ from ..transforms.sql import SQLLimit
 from ..views import (
     Panel, VegaLiteView, View, hvPlotUIView,
 )
-from .actor import ContextModel, ContextProvider, TContext
+from .actor import ContextProvider
 from .config import (
     LUMEN_CACHE_DIR, PROMPTS_DIR, SOURCE_TABLE_SEPARATOR,
     VECTOR_STORE_ASSETS_URL, VEGA_LITE_EXAMPLES_NUMPY_DB_FILE,
     VEGA_LITE_EXAMPLES_OPENAI_DB_FILE, VEGA_MAP_LAYER, VEGA_ZOOMABLE_MAP_ITEMS,
     MissingContextError, RetriesExceededError,
 )
+from .context import ContextModel, TContext
 from .controls import AnnotationControls, RetryControls, SourceControls
 from .llm import Llm, Message, OpenAI
 from .models import (
@@ -813,7 +814,7 @@ class SQLAgent(LumenBaseAgent):
         context: TContext,
         step_title: str | None,
         raise_if_empty: bool = False
-    ) -> None:
+    ) -> tuple[LumenOutput, SQLOutputs]:
         """Finalize execution for final step."""
         # Get first result (typically only one for final step)
         expr_slug, result = next(iter(results.items()))
@@ -827,7 +828,7 @@ class SQLAgent(LumenBaseAgent):
             raise ValueError(f"\nQuery `{result['sql']}` returned empty results; ensure all the WHERE filter values exist in the dataset.")
 
         # Render output
-        self._render_lumen(
+        view = self._render_lumen(
             pipeline,
             context,
             messages=messages,
@@ -835,7 +836,7 @@ class SQLAgent(LumenBaseAgent):
             spec=result["sql"]
         )
 
-        return {
+        return view, {
             "data": await describe_data(df),
             "sql": result["sql"],
             "pipeline": pipeline,
@@ -854,7 +855,7 @@ class SQLAgent(LumenBaseAgent):
         discovery_context: str | None = None,
         raise_if_empty: bool = False,
         output_title: str | None = None
-    ) -> SQLOutputs:
+    ) -> tuple[LumenOutput, SQLOutputs]:
         """
         Helper method that generates, validates, and executes final SQL queries.
 
@@ -936,14 +937,14 @@ class SQLAgent(LumenBaseAgent):
                 }
             }
 
-            out_model = await self._finalize_execution(
+            view, out_model = await self._finalize_execution(
                 results, [], messages, context, output_title, raise_if_empty=raise_if_empty
             )
 
             step.status = "success"
             step.success_title = success_message
 
-        return out_model
+        return view, out_model
 
     async def _select_discoveries(
         self,
@@ -1044,7 +1045,7 @@ class SQLAgent(LumenBaseAgent):
         source: Source,
         error_context: str,
         step_title: str | None = None,
-    ) -> SQLOutputs:
+    ) -> tuple[LumenOutput, SQLOutputs]:
         """Run adaptive exploration: initial discoveries → sufficiency check → optional follow-ups → final answer."""
         # Step 1: LLM selects initial discoveries
         with self._add_step(title="Selecting initial discoveries", steps_layout=self._steps_layout) as step:
@@ -1099,7 +1100,7 @@ class SQLAgent(LumenBaseAgent):
         source = context["source"]
         try:
             # Try one-shot approach first
-            out_model = await self._render_execute_query(
+            out, out_context = await self._render_execute_query(
                 messages,
                 context,
                 source=source,
@@ -1114,8 +1115,8 @@ class SQLAgent(LumenBaseAgent):
                 # If exploration is disabled, re-raise the error instead of falling back
                 raise e
             # Fall back to exploration mode if enabled
-            out_model = await self._explore_tables(messages, context, source, str(e), step_title)
-        return [out_model["pipeline"]], out_model
+            out_context = await self._explore_tables(messages, context, source, str(e), step_title)
+        return [out], out_context
 
 
 
@@ -2146,7 +2147,7 @@ class AnalysisAgent(LumenBaseAgent):
         with self.interface.param.update(callback_exception="raise"):
             with self._add_step(title=step_title or "Creating view...", steps_layout=self._steps_layout) as step:
                 await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
-                analysis_callable = analyses[analysis_name].instance(agents=self.agents, interface=self.interface)
+                analysis_callable = analyses[analysis_name].instance(agents=self.agents, context=context, interface=self.interface)
 
                 data = await get_data(pipeline)
                 for field in analysis_callable._field_params:

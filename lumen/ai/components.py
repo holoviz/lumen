@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import param
 
@@ -12,7 +14,9 @@ from panel_material_ui import (
 )
 
 from .config import SOURCE_TABLE_SEPARATOR
-from .memory import memory
+
+if TYPE_CHECKING:
+    from .actor import TContext
 
 CSS = """
 /* Base styles for the split container */
@@ -306,6 +310,8 @@ class TableSourceCard(Viewer):
     collapsed = param.Boolean(default=False, doc="""
         Whether the card should start collapsed.""")
 
+    context = param.Dict()
+
     deletable = param.Boolean(default=True, doc="""
         Whether to show the delete button.""")
 
@@ -456,22 +462,21 @@ class TableSourceCard(Viewer):
         for table in self.all_tables:
             table_slug = f"{self.source.name}{SOURCE_TABLE_SEPARATOR}{table}"
             if table in self.selected:
-                memory['visible_slugs'].add(table_slug)
+                self.context['visible_slugs'].add(table_slug)
             else:
-                memory['visible_slugs'].discard(table_slug)
-        memory.trigger('visible_slugs')
+                self.context['visible_slugs'].discard(table_slug)
 
     @param.depends('delete', watch=True)
     def _delete_source(self):
         """Handle source deletion via param.Action."""
-        if self.source in memory.get("sources", []):
+        if self.source in self.context.get("sources", []):
             # Remove all tables from this source from visible_slugs
             for table in self.all_tables:
                 table_slug = f"{self.source.name}{SOURCE_TABLE_SEPARATOR}{table}"
-                memory['visible_slugs'].discard(table_slug)
+                self.context['visible_slugs'].discard(table_slug)
 
-            memory["sources"] = [
-                source for source in memory.get("sources", [])
+            self.context["sources"] = [
+                source for source in self.context.get("sources", [])
                 if source is not self.source
             ]
 
@@ -519,10 +524,12 @@ class SourceCatalog(Viewer):
     the 'visible_slugs' set in memory.
     """
 
+    context = param.Dict()
+
     sources = param.List(default=[], doc="""
         List of data sources to display in the catalog.""")
 
-    def __init__(self, **params):
+    def __init__(self, /, context: TContext | None = None, **params):
         self._title = Markdown(margin=0)
         self._cards_column = Column(
             margin=0,
@@ -533,7 +540,13 @@ class SourceCatalog(Viewer):
             margin=0,
             sizing_mode='stretch_width'
         )
-        super().__init__(**params)
+        if context is None:
+            raise ValueError("SourceCatalog must be given a context dictionary.")
+        if "source" in context and "sources" not in context:
+            context["sources"] = [context["source"]]
+        if "visible_slugs" not in context:
+            context["visible_slugs"] = set()
+        super().__init__(context=context, **params)
 
     @param.depends("sources", watch=True, on_init=True)
     def _refresh(self, sources=None):
@@ -543,7 +556,7 @@ class SourceCatalog(Viewer):
         Args:
             sources: Optional list of sources. If None, uses sources from memory.
         """
-        sources = self.sources or memory.get('sources', [])
+        sources = self.sources or self.context.get('sources', [])
 
         # Create a lookup of existing cards by source
         existing_cards = {
@@ -563,6 +576,7 @@ class SourceCatalog(Viewer):
             else:
                 # Create new card for new source
                 source_card = TableSourceCard(
+                    context=self.context,
                     source=source,
                     deletable=multiple_sources,
                     collapsed=multiple_sources,
