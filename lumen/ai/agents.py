@@ -316,10 +316,10 @@ class AnalystAgent(ChatAgent):
         context: TContext,
         step_title: str | None = None,
     ) -> tuple[list[Any], TContext]:
-        messages, out_model = await super().respond(messages, context, step_title=step_title)
+        messages, out_context = await super().respond(messages, context, step_title=step_title)
         if len(context.get("data", [])) == 0 and context.get("sql"):
             context["sql"] = f"{context['sql']}\n-- No data was returned from the query."
-        return messages, out_model
+        return messages, out_context
 
 
 class ListAgent(Agent):
@@ -937,14 +937,14 @@ class SQLAgent(LumenBaseAgent):
                 }
             }
 
-            view, out_model = await self._finalize_execution(
+            view, out_context = await self._finalize_execution(
                 results, [], messages, context, output_title, raise_if_empty=raise_if_empty
             )
 
             step.status = "success"
             step.success_title = success_message
 
-        return view, out_model
+        return view, out_context
 
     async def _select_discoveries(
         self,
@@ -1194,7 +1194,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
             errors=errors,
         )
 
-        out_model = {}
+        out_context = {}
         with self._add_step(title=title or "dbt Semantic Layer query", steps_layout=self._steps_layout) as step:
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
             response = self.llm.stream(
@@ -1230,7 +1230,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
                 formatted_params = json.dumps(query_params, indent=2)
                 step.stream(f"\n\n`{expr_slug}`\n```json\n{formatted_params}\n```")
 
-                out_model["dbtsl_query_params"] = query_params
+                out_context["dbtsl_query_params"] = query_params
             except asyncio.CancelledError as e:
                 step.failed_title = "Cancelled dbt Semantic Layer query generation"
                 raise e
@@ -1256,7 +1256,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
                 step.stream(f"\nCompiled SQL:\n```sql\n{sql_query}\n```", replace=False)
 
             sql_expr_source = self.source.create_sql_expr_source({expr_slug: sql_query})
-            out_model["sql"] = sql_query
+            out_context["sql"] = sql_query
 
             # Apply transforms
             sql_transforms = [SQLLimit(limit=1_000_000, write=self.source.dialect, pretty=True, identify=False)]
@@ -1274,16 +1274,16 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
             vector_metaset = sql_metaset.vector_metaset
 
             # Update context
-            out_model["data"] = await describe_data(df)
-            out_model["source"] = sql_expr_source
-            out_model["pipeline"] = pipeline
-            out_model["table"] = pipeline.table
-            out_model["dbtsl_vector_metaset"] = vector_metaset
-            out_model["dbtsl_sql_metaset"] = sql_metaset
+            out_context["data"] = await describe_data(df)
+            out_context["source"] = sql_expr_source
+            out_context["pipeline"] = pipeline
+            out_context["table"] = pipeline.table
+            out_context["dbtsl_vector_metaset"] = vector_metaset
+            out_context["dbtsl_sql_metaset"] = sql_metaset
         except Exception as e:
             report_error(e, step)
             raise e
-        return out_model
+        return out_context
 
     async def respond(
         self,
@@ -1295,17 +1295,17 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
         Responds to user messages by generating and executing a dbt Semantic Layer query.
         """
         try:
-            out_model = await self._create_valid_query(messages, step_title)
+            out_context = await self._create_valid_query(messages, step_title)
         except RetriesExceededError as e:
             traceback.print_exception(e)
             context["__error__"] = str(e)
             return None
 
-        pipeline = out_model["pipeline"]
-        self._render_lumen(
-            pipeline, context, messages=messages, title=step_title, spec=out_model["sql"]
+        pipeline = out_context["pipeline"]
+        out = self._render_lumen(
+            pipeline, context, messages=messages, title=step_title, spec=out_context["sql"]
         )
-        return [pipeline], out_model
+        return [out], out_context
 
 
 
@@ -1451,7 +1451,7 @@ class BaseViewAgent(LumenBaseAgent):
         messages: list[Message],
         context: TContext,
         step_title: str | None = None,
-    ) -> tuple[list[Any], ContextModel]:
+    ) -> tuple[list[Any], ViewOutputs]:
         """
         Generates a visualization based on user messages and the current data pipeline.
         """
@@ -1466,8 +1466,8 @@ class BaseViewAgent(LumenBaseAgent):
         spec = await self._create_valid_spec(messages, context, pipeline, schema, step_title)
         context["view"] = dict(spec, type=self.view_type)
         view = self.view_type(pipeline=pipeline, **spec)
-        self._render_lumen(view, context, messages=messages, title=step_title)
-        return [view], {"view": view}
+        out = self._render_lumen(view, context, messages=messages, title=step_title)
+        return [out], {"view": view}
 
 
 class hvPlotAgent(BaseViewAgent):
@@ -1956,8 +1956,8 @@ class VegaLiteAgent(BaseViewAgent):
             log_debug(f"📊 Applied {step_name} updates and refreshed visualization")
 
         # Update final context state
-        context["view"] = full_dict
-        return [view], context
+        out_context = {"view": full_dict}
+        return [view], out_context
 
     def _render_lumen(
         self,
@@ -1966,7 +1966,7 @@ class VegaLiteAgent(BaseViewAgent):
         messages: list | None = None,
         title: str | None = None,
         **kwargs,
-    ):
+    ) -> LumenOutput:
         """Override to add annotation controls alongside retry controls."""
         async def _retry_invoke(event: param.parameterized.Event):
             with out.param.update(loading=True):
@@ -2143,7 +2143,7 @@ class AnalysisAgent(LumenBaseAgent):
             analysis_name = next(iter(analyses))
 
         view = None
-        out_model = {}
+        out_context = {}
         with self.interface.param.update(callback_exception="raise"):
             with self._add_step(title=step_title or "Creating view...", steps_layout=self._steps_layout) as step:
                 await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
@@ -2164,31 +2164,31 @@ class AnalysisAgent(LumenBaseAgent):
                     spec = view.to_spec()
                     if isinstance(view, View):
                         view_type = view.view_type
-                        out_model["view"] = dict(spec, type=view_type)
+                        out_context["view"] = dict(spec, type=view_type)
                     elif isinstance(view, Pipeline):
-                        out_model["pipeline"] = view
+                        out_context["pipeline"] = view
                     # Ensure data reflects processed pipeline
-                    if pipeline is not out_model["pipeline"]:
-                        pipeline = out_model["pipeline"]
+                    if pipeline is not out_context["pipeline"]:
+                        pipeline = out_context["pipeline"]
                         data = await get_data(pipeline)
                         if len(data) > 0:
-                            out_model["data"] = await describe_data(data)
+                            out_context["data"] = await describe_data(data)
                     yaml_spec = yaml.dump(spec)
                     step.stream(f"Generated view\n```yaml\n{yaml_spec}\n```")
                     step.success_title = "Generated view"
                 else:
                     step.success_title = "Configure the analysis"
 
-        analysis = out_model["analysis"]
-        pipeline = out_model["pipeline"]
+        analysis = out_context["analysis"]
+        pipeline = out_context["pipeline"]
         if view is None and analysis.autorun:
             self.interface.stream("Failed to find an analysis that applies to this data")
         else:
-            self._render_lumen(view, context, messages=messages, analysis=analysis, pipeline=pipeline, title=step_title)
+            out = self._render_lumen(view, context, messages=messages, analysis=analysis, pipeline=pipeline, title=step_title)
             self.interface.stream(
                 analysis.message or f"Successfully created view with {analysis_name} analysis.", user="Assistant"
             )
-        return [view], out_model
+        return [out] if view is None else [out], out_context
 
 
 class ValidationOutputs(ContextModel):
@@ -2232,7 +2232,7 @@ class ValidationAgent(Agent):
         context: TContext,
         render_output: bool = False,
         step_title: str | None = None,
-    ) -> tuple[list[Any], ContextModel]:
+    ) -> tuple[list[Any], ValidationOutputs]:
         def on_click(event):
             if messages:
                 user_messages = [msg for msg in reversed(messages) if msg.get("role") == "user"]
