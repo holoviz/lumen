@@ -977,7 +977,7 @@ class ExplorerUI(UI):
             prev = self._explorations.value
             self._idle.clear()
             try:
-                plan = await callback(messages, self.context, user, instance)
+                plan = await callback(messages, prev["view"].context, user, instance)
                 if any('pipeline' in step[0].outputs.__annotations__ for step in plan):
                     await self._add_exploration(plan)
                     new_exploration = True
@@ -986,6 +986,8 @@ class ExplorerUI(UI):
                 with plan.param.update(interface=self.interface):
                     new, out_context = await plan.execute()
                 if "__error__" in out_context:
+                    exploration = self._explorations.value['view']
+                    prev['view'].conversation = exploration.conversation
                     del out_context['__error__']
                     if new_exploration:
                         with hold():
@@ -997,6 +999,7 @@ class ExplorerUI(UI):
                 else:
                     exploration = self._explorations.value['view']
                     self._add_outputs(exploration, new, out_context)
+                    exploration.context = out_context
                     exploration.view.loading = False
                     if self._split.collapsed and prev['label'] == 'Home':
                         self._split.param.update(
