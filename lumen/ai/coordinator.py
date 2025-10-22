@@ -218,13 +218,21 @@ class Plan(Section):
         if '__error__' in context:
             del context['__error__']
         with self.interface.param.update(callback_exception="raise"):
-            ret = await super().execute(context, **kwargs)
+            outputs, out_context = await super().execute(context, **kwargs)
         _, todos = self._render_task_history(len(self))
+        self.coordinator._todos.object = todos
+        if self.status == 'success':
+            self.coordinator._todos_title.object = f"✅ Sucessfully completed {self.title!r}"
+        else:
+            self.coordinator._todos_title.object = f"❌ Failed to execute {self.title!r}"
+        if "pipeline" in out_context:
+            await self.coordinator._add_analysis_suggestions(out_context)
+            log_debug("\033[92mCompleted: Plan\033[0m", show_sep="below")
         if self.interface is not None:
             for message_obj in self.interface.objects[::-1]:
                 if isinstance(message_obj.object, Card):
                     message_obj.object.collapsed = True
-        return ret
+        return outputs, out_context
 
 
 class Coordinator(Viewer, VectorLookupToolUser):
@@ -724,10 +732,13 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
         return plan
 
-    async def _check_tool_relevance(self, tool: Tool, tool_output: str, actor: Actor, actor_task: str, messages: list[Message]) -> bool:
+    async def _check_tool_relevance(
+        self, tool: Tool, tool_output: str, actor: Actor, actor_task: str, messages: list[Message], context: TContext
+    ) -> bool:
         result = await self._invoke_prompt(
             "tool_relevance",
             messages,
+            context,
             tool_name=tool.name,
             tool_purpose=getattr(tool, "purpose", ""),
             tool_output=tool_output,
@@ -889,6 +900,7 @@ class Planner(Coordinator):
         result = await self._invoke_prompt(
             "follow_up",
             messages,
+            context
         )
 
         is_follow_up = result.yes
@@ -918,7 +930,7 @@ class Planner(Coordinator):
         with self.interface.add_step(title="Gathering context for planning...", user="Assistant", steps_layout=steps_layout) as step:
             for tool in self.planner_tools:
                 is_relevant = await self._check_tool_relevance(
-                    tool, "", self, f"Gather context for planning to answer {user_query}", messages
+                    tool, "", self, f"Gather context for planning to answer {user_query}", messages, context
                 )
 
                 if not is_relevant:
