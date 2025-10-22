@@ -1867,7 +1867,7 @@ class VegaLiteAgent(BaseViewAgent):
         #     vega_spec["params"] = [{"bind": "scales", "name": "grid", "select": "interval"}]
         return {"spec": vega_spec, "sizing_mode": "stretch_both", "min_height": 300, "max_width": 1200}
 
-    async def _get_doc_examples(self, user_query: str) -> list:
+    async def _get_doc_examples(self, user_query: str) -> list[str]:
         # Query vector store for relevant examples
         doc_examples = []
         vector_store = self._get_vector_store()
@@ -1888,6 +1888,7 @@ class VegaLiteAgent(BaseViewAgent):
                         k += 1
                     if k >= 3:  # Limit to top 3 examples
                         break
+        return doc_examples
 
     async def _retry_output_by_line(
         self,
@@ -1920,7 +1921,10 @@ class VegaLiteAgent(BaseViewAgent):
             raise ValueError("Failed to retrieve schema for the current pipeline.")
 
         user_query = messages[-1].get("content", "") if messages[-1].get("role") == "user" else ""
-        doc_examples = await self._get_doc_examples(user_query)
+        try:
+            doc_examples = await self._get_doc_examples(user_query)
+        except Exception:
+            doc_examples = []
 
         # Step 1: Generate basic spec
         doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
@@ -1957,7 +1961,7 @@ class VegaLiteAgent(BaseViewAgent):
 
         # Update final context state
         out_context = {"view": full_dict}
-        return [view], out_context
+        return [out], out_context
 
     def _render_lumen(
         self,
