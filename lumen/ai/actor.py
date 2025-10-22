@@ -1,11 +1,10 @@
 import datetime
 
 from abc import abstractmethod
-from collections.abc import Mapping
 from contextlib import nullcontext
 from pathlib import Path
 from types import FunctionType
-from typing import Any, TypedDict
+from typing import Any
 
 import param
 
@@ -14,13 +13,13 @@ from panel.layout.base import ListLike, NamedListLike
 from pydantic import BaseModel
 
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
+from .context import ContextModel, TContext
 from .llm import Llm, Message
 from .utils import (
     class_name_to_llm_spec_key, log_debug, render_template,
     warn_on_unused_variables, wrap_logfire_on_method,
 )
 
-TContext = Mapping[str, Any]
 
 class NullStep:
 
@@ -293,13 +292,6 @@ class LLMUser(param.Parameterized):
 
 
 
-class ContextModel(TypedDict):
-    """
-    Baseclass for context models, responsible for defining the inputs and outputs
-    of an Actor.
-    """
-
-
 class Actor(LLMUser):
 
     interface = param.ClassSelector(class_=ChatFeed, doc="""
@@ -382,8 +374,8 @@ class ContextProvider(param.Parameterized):
     def __str__(self):
         string = (
             f"- {self.name[:-5]}: {' '.join(self.purpose.strip().split())}\n"
-            f"  Requires: `{'`, `'.join(self.inputs.model_fields)}`\n"
-            f"  Provides: `{'`, `'.join(self.inputs.outputs_fields)}`\n"
+            f"  Requires: `{'`, `'.join(self.inputs.__annotations__)}`\n"
+            f"  Provides: `{'`, `'.join(self.outputs.__annotations__)}`\n"
         )
         if self.conditions:
             string += "  Conditions:\n" + "\n".join(f"  - {condition}" for condition in self.conditions) + "\n"

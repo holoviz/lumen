@@ -7,12 +7,20 @@ from typing import (
 )
 
 
+class ContextModel(TypedDict):
+    """
+    Baseclass for context models, responsible for defining the inputs and outputs
+    of an Actor.
+    """
+
+TContext = Mapping[str, Any]
+
 @dataclass(frozen=True)
 class AccumulateSpec:
     from_key: str
     # how to extend: either "accumulate" a list or a callable that takes a list of all from_key
     # values and may process them in some way.
-    func: str = Callable[[list[Any]], Any] | "extend"
+    func: str = Callable[[list[Any]], Any] | Literal["extend"]
     # provide to remove duplicates; can be "value" or a callable(item)->hashable
     dedupe_by: str | Callable[[Any], Any] | None = None
     # if contexts also supply the accumulator field directly, do we include those too?

@@ -39,6 +39,7 @@ from .agents import (
 )
 from .components import SourceCatalog, SplitJS
 from .config import PROVIDED_SOURCE_NAME, SOURCE_TABLE_SEPARATOR
+from .context import TContext
 from .controls import SourceControls
 from .coordinator import Coordinator, Plan, Planner
 from .export import (
@@ -404,7 +405,7 @@ class UI(Viewer):
         # Set up actions for the ChatAreaInput speed dial
         self._setup_actions()
         self._table_lookup_tool = None  # Will be set after coordinator is initialized
-        self._source_catalog = SourceCatalog()
+        self._source_catalog = SourceCatalog(context=self.context)
         self._source_accordion = Accordion(
             ("Add Sources", self._source_controls), ("View Sources", self._source_catalog),
             margin=(-30, 10, 0, 10), sizing_mode="stretch_both", toggle=True, active=[0]
@@ -904,6 +905,7 @@ class ExplorerUI(UI):
         exploration = Exploration(
             context=plan.context,
             conversation=conversation,
+            plan=plan,
             title=plan.title,
             view=output
         )
@@ -926,13 +928,12 @@ class ExplorerUI(UI):
             await self._update_conversation()
         self._last_synced = exploration
 
-    def _add_outputs(self, exploration: Exploration, outputs: list[LumenOutput] | str):
-        memory = exploration.context
+    def _add_outputs(self, exploration: Exploration, outputs: list[LumenOutput] | str, context: TContext):
         view = exploration.view
-        if "sql" in memory:
-            sql = memory.rx("sql")
+        if "sql" in context:
+            sql = context["sql"]
             sql_pane = Markdown(
-                param.rx('```sql\n{sql}\n```').format(sql=sql),
+                f'```sql\n{sql}\n```',
                 margin=(-15, 0, 0, 0), sizing_mode='stretch_width', name='SQL'
             )
             if sql.count('\n') > 10:
@@ -945,9 +946,9 @@ class ExplorerUI(UI):
                 view.insert(0, sql_pane)
 
         content = []
-        if view.loading and 'pipeline' in memory:
+        if view.loading and 'pipeline' in context:
             from panel_gwalker import GraphicWalker
-            pipeline = memory['pipeline']
+            pipeline = context['pipeline']
             content.append(
                 ('Overview', GraphicWalker(
                     pipeline.param.data,
@@ -969,7 +970,7 @@ class ExplorerUI(UI):
         else:
             tabs = view[-1]
             tabs.extend(content)
-        #tabs.active = len(tabs)-1
+        tabs.active = len(tabs)-1
 
     def _wrap_callback(self, callback):
         async def wrapper(messages: list[Message], user: str, instance: ChatInterface):
@@ -995,14 +996,13 @@ class ExplorerUI(UI):
                             await self._update_conversation()
                 else:
                     exploration = self._explorations.value['view']
-                    self._add_outputs(exploration, new)
+                    self._add_outputs(exploration, new, out_context)
                     exploration.view.loading = False
                     if self._split.collapsed and prev['label'] == 'Home':
                         self._split.param.update(
                             collapsed=False,
                             sizes=self._split.expanded_sizes,
                         )
-                self._explorations.value['view'].plan = plan
             finally:
                 self._explorations.value['view'].conversation = self.interface.objects
                 self._idle.set()

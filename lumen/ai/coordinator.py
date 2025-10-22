@@ -20,13 +20,14 @@ from panel_material_ui import (
 from pydantic import BaseModel
 from typing_extensions import Self
 
-from .actor import Actor, TContext
+from .actor import Actor
 from .agents import Agent, AnalysisAgent, ChatAgent
 from .components import TableSourceCard
 from .config import (
     DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR,
     MissingContextError,
 )
+from .context import TContext
 from .controls import SourceControls
 from .llm import LlamaCpp, Llm, Message
 from .logs import ChatLogs
@@ -59,6 +60,8 @@ class Plan(Section):
 
     agents = param.List(item_type=Actor, default=[])
 
+    coordinator = param.ClassSelector(class_=param.Parameterized)
+
     interface = param.ClassSelector(class_=ChatFeed)
 
     def _render_task_history(self, i: int) -> tuple[list[Message], str]:
@@ -78,35 +81,39 @@ class Plan(Section):
 
     async def _run_task(self, i: int, task: Self | Actor, context: TContext, **kwargs):
         outputs = []
-        with self.interface.add_step(title=f"{task.title}...", user="Runner", layout_params={"title": "🏗️ Plan Execution Steps"}, steps_layout=self.steps_layout) as step:
-            #self._coordinator._todos_title.object = f"⚙️ Working on task {task.title!r}..."
+        with self.interface.add_step(
+            title=f"{task.title}...", user="Runner", layout_params={"title": "🏗️ Plan Execution Steps"},
+            steps_layout=self.coordinator.steps_layout
+        ) as step:
+            self.coordinator._todos_title.object = f"⚙️ Working on task {task.title!r}..."
             step.stream(f"`Working on task {task.title}`:\n\n{task.instruction}")
             history, todos = self._render_task_history(i)
-            #todos_obj = self._coordinator._todos
-            #todos_obj.object = todos
+            self.coordinator._todos.object = todos
             try:
                 kwargs = {"agents": self.agents} if 'agents' in task.param else {}
                 with task.param.update(
-                    interface=self.interface, steps_layout=self.steps_layout,
+                    interface=self.interface, steps_layout=self.coordinator.steps_layout,
                     history=history, **kwargs
                 ):
-                    outputs += await task.execute(context, **kwargs)
+                    new, task_context = await task.execute(context, **kwargs)
+                    outputs += new
             except Exception as e:
                 # Handle the exception using the dedicated error handler
-                error_outputs = await self._handle_task_execution_error(e, task, context, step, i)
+                task_context = {}
+                error_outputs = await self._handle_task_execution_error(e, task, task_context, step, i)
                 if error_outputs is not None:
-                    return error_outputs
+                    return error_outputs, task_context
             if isinstance(task, TaskGroup):
-                unprovided = [p for actor in task for p in actor.outputs.__annotations__ if p not in context]
+                unprovided = [p for actor in task for p in actor.outputs.__annotations__ if p not in task_context]
             else:
                 unprovided = []
             if unprovided:
                 step.failed_title = f"{task.title} did not provide {', '.join(unprovided)}. Aborting the plan."
-                raise RuntimeError(f"{task.title} failed to provide declared context.")
+                raise RuntimeError(f"{task.title!r} task failed to provide declared context.")
             log_debug(f"\033[96mCompleted: {task.title}\033[0m", show_length=False)
             step.stream(f"\n\nSuccessfully completed task {task.title}:\n\n> {task.instruction}", replace=True)
             step.success_title = f"{task.title} successfully completed"
-        return outputs
+        return outputs, task_context
 
     async def _handle_task_execution_error(self, e: Exception, task: Self | Actor, context: TContext, step: ChatStep, i: int) -> list | None:
         """
@@ -194,7 +201,7 @@ class Plan(Section):
                     f"- [{'x' if tidx < idx else '🔄' if tidx == idx else ' '}] {'<u>' + t.instruction + '</u>' if tidx == idx else t.instruction}"
                     for tidx, t in enumerate(self)
                 )
-                self._coordinator._todos.object = todos
+                self.coordinator._todos.object = todos
 
                 # Run with mutated history
                 kwargs = {"agents": self.agents} if 'agents' in task.param else {}
@@ -841,7 +848,7 @@ class DependencyResolver(Coordinator):
                     )
                 )
                 step.success_title = f"Solved a dependency with {output.agent_or_tool}"
-        return Plan(*(tasks[::-1] + [TaskGroup(agent, instruction=cot)]), history=messages, context=context)
+        return Plan(*(tasks[::-1] + [TaskGroup(agent, instruction=cot)]), history=messages, context=context, coordinator=self)
 
 
 class Planner(Coordinator):
@@ -1144,7 +1151,7 @@ class Planner(Coordinator):
                 log_debug(f"Skipping summarization with {actor} due to conflicts: {conflicts}")
                 raw_plan.steps = steps
                 previous_actors = actors
-                return Plan(*tasks, title=raw_plan.title, history=messages, context=context), unmet_dependencies, previous_actors
+                return Plan(*tasks, title=raw_plan.title, history=messages, context=context, coordinator=self), unmet_dependencies, previous_actors
 
             summarize_step = type(step)(
                 actor=actor,
@@ -1178,7 +1185,7 @@ class Planner(Coordinator):
             actors_in_graph.add("ValidationAgent")
 
         raw_plan.steps = steps
-        return Plan(*tasks, title=raw_plan.title, history=messages, context=context), unmet_dependencies, actors
+        return Plan(*tasks, title=raw_plan.title, history=messages, context=context, coordinator=self), unmet_dependencies, actors
 
     async def _compute_plan(
         self,
