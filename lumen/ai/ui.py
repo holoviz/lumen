@@ -24,23 +24,22 @@ from panel.viewable import Child, Children, Viewer
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
     Accordion, Button, ChatFeed, ChatInterface, ChatMessage, Column, Dialog,
-    Divider, FileDownload, IconButton, MenuList, MenuToggle, MultiChoice, Page,
-    Paper, Row, Switch, Tabs, ToggleIcon,
+    Divider, FileDownload, IconButton, MenuList, MenuToggle, Page, Paper, Row,
+    Switch, Tabs, ToggleIcon,
 )
 
 from ..pipeline import Pipeline
 from ..sources import Source
 from ..sources.duckdb import DuckDBSource
-from ..transforms.sql import SQLLimit
 from ..util import log
 from .agents import (
     AnalysisAgent, AnalystAgent, ChatAgent, DocumentListAgent, SourceAgent,
     SQLAgent, TableListAgent, ValidationAgent, VegaLiteAgent,
 )
-from .components import SourceCatalog, SplitJS
-from .config import PROVIDED_SOURCE_NAME, SOURCE_TABLE_SEPARATOR
+from .components import SplitJS
+from .config import PROVIDED_SOURCE_NAME
 from .context import TContext
-from .controls import SourceControls
+from .controls import SourceCatalog, SourceControls, TableExplorer
 from .coordinator import Coordinator, Plan, Planner
 from .export import (
     export_notebook, make_md_cell, make_preamble, render_cells, write_notebook,
@@ -89,105 +88,6 @@ EXPLORATIONS_INTRO = """
 - New explorations are launched in a new tab for each SQL query result.
 - Each exploration maintains its own context, so you can branch off an existing result by navigating to that tab.
 """
-
-
-class TableExplorer(Viewer):
-    """
-    TableExplorer provides a high-level entrypoint to explore tables in a split UI.
-    It allows users to load tables, explore them using Graphic Walker, and then
-    interrogate the data via a chat interface.
-    """
-
-    context = param.Dict()
-
-    interface = param.ClassSelector(class_=ChatFeed, doc="""
-        The interface for the Coordinator to interact with.""")
-
-    def __init__(self, **params):
-        super().__init__(**params)
-        self._table_select = MultiChoice(
-            label="Select table(s) to preview", sizing_mode='stretch_width',
-            max_height=200, max_items=5, margin=0
-        )
-        self._explore_button = Button(
-            name='Explore table(s)', icon='add_chart', button_type='primary', icon_size="2em",
-            disabled=self._table_select.param.value.rx().rx.not_(), on_click=self._update_explorers,
-            margin=(0, 0, 0, 10), width=200, align='end'
-        )
-        self._input_row = Row(self._table_select, self._explore_button)
-        self._source_map = {}
-        self._update_source_map(init=True)
-
-        self._tabs = Tabs(dynamic=True, sizing_mode='stretch_both')
-        self._layout = Column(
-            self._input_row, self._tabs, sizing_mode='stretch_both',
-        )
-
-    def _update_source_map(self, key=None, old=None, sources=None, init=False):
-        if sources is None:
-            if "sources" in self.context:
-                sources = self.context["sources"]
-            elif "source" in self.context:
-                sources = [self.context["source"]]
-            else:
-                return
-        selected = list(self._table_select.value)
-        deduplicate = len(sources) > 1
-        new = {}
-
-        # Build the source map for UI display
-        for source in sources:
-            tables = source.get_tables()
-            for table in tables:
-                if deduplicate:
-                    table = f'{source.name}{SOURCE_TABLE_SEPARATOR}{table}'
-
-                if (table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)[-1] not in self._source_map and
-                    not init and not len(selected) > self._table_select.max_items and state.loaded):
-                    selected.append(table)
-                new[table] = source
-
-        self._source_map.clear()
-        self._source_map.update(new)
-        selected = selected if len(selected) == 1 else []
-        self._table_select.param.update(options=list(self._source_map), value=selected)
-        self._input_row.visible = bool(self._source_map)
-
-    def _explore_table_if_single(self, event):
-        """
-        If only one table is uploaded, help the user load it
-        without requiring them to click twice. This step
-        only triggers when the Upload in the Overview tab is used,
-        i.e. does not trigger with uploads through the SourceAgent
-        """
-        if len(self._table_select.options) == 1:
-            self._explore_button.param.trigger("value")
-
-    def _update_explorers(self, event):
-        if not event.new:
-            return
-
-        with self._explore_button.param.update(loading=True), self.interface.param.update(loading=True):
-            explorers = []
-            for table in self._table_select.value:
-                source = self._source_map[table]
-                if SOURCE_TABLE_SEPARATOR in table:
-                    _, table = table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
-                pipeline = Pipeline(
-                    source=source, table=table, sql_transforms=[SQLLimit(limit=100_000, read=source.dialect)]
-                )
-                table_label = f"{table[:25]}..." if len(table) > 25 else table
-                walker = GraphicWalker(
-                    pipeline.param.data, sizing_mode='stretch_both', min_height=800,
-                    kernel_computation=True, name=table_label, tab='data'
-                )
-                explorers.append(walker)
-
-            self._tabs.objects = explorers
-            self._table_select.value = []
-
-    def __panel__(self):
-        return self._layout
 
 
 class UI(Viewer):
@@ -288,6 +188,7 @@ class UI(Viewer):
         SourceAgent.source_controls = self.source_controls
         SourceControls.table_upload_callbacks = self.table_upload_callbacks
         self._source_controls = self.source_controls(context=self.context)
+        self._source_controls.param.watch(self._sync_sources, 'outputs')
         log.setLevel(self.log_level)
 
         agents = self.agents
@@ -408,7 +309,7 @@ class UI(Viewer):
         self._source_catalog = SourceCatalog(context=self.context)
         self._source_accordion = Accordion(
             ("Add Sources", self._source_controls), ("View Sources", self._source_catalog),
-            margin=(-30, 10, 0, 10), sizing_mode="stretch_both", toggle=True, active=[0]
+            margin=(-30, 10, 0, 10), sizing_mode="stretch_width", toggle=True, active=[0]
         )
         self._sources_dialog_content = Dialog(
             self._source_accordion, close_on_click=True, show_close_button=True,
@@ -432,6 +333,30 @@ class UI(Viewer):
         if state.curdoc and state.curdoc.session_context:
             state.on_session_destroyed(self._destroy)
         state.onload(self._initialize_new_llm)
+
+    def _sync_sources(self, event):
+        if 'sources' in event.new:
+            old_sources = self.context.get("sources", [self.context["source"]] if "source" in self.context else [])
+            new_sources = [src for src in event.new["sources"] if src not in old_sources]
+            self.context["sources"] = old_sources + new_sources
+        if "source" in event.new:
+            if "source" in self.context:
+                old_source = self.context["source"]
+                if "sources" not in self.context:
+                    self.context["sources"] = [old_source]
+                elif old_source not in self.context["sources"]:
+                    self.context["sources"].append(old_source)
+            self.context["source"] = event.new["source"]
+        if "table" in event.new:
+            self.context["table"] = event.new["table"]
+        if "document_sources" in event.new:
+            new_docs = event.new["document_sources"]
+            if "document_sources" not in self.context:
+                self.context["document_sources"] = new_docs
+            else:
+                self.context["document_sources"].extend(new_docs)
+        self._explorer.sync()
+        self._source_catalog.sync()
 
     def _setup_actions(self):
         """Set up actions for the ChatAreaInput speed dial."""
@@ -686,7 +611,7 @@ class ExplorerUI(UI):
         self._explorations.on_action('up', self._move_up)
         self._explorations.on_action('down', self._move_down)
         self._explorations.on_action('remove', self._delete_exploration)
-        self._explorer = TableExplorer(context=self.context, interface=self.interface)
+        self._explorer = TableExplorer(context=self.context)
         self._explorations_intro = Markdown(
             EXPLORATIONS_INTRO,
             margin=(0, 0, 10, 10),
@@ -947,7 +872,6 @@ class ExplorerUI(UI):
 
         content = []
         if view.loading and 'pipeline' in context:
-            from panel_gwalker import GraphicWalker
             pipeline = context['pipeline']
             content.append(
                 ('Overview', GraphicWalker(
