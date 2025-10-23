@@ -48,6 +48,100 @@ if TYPE_CHECKING:
     from lumen.sources.base import Source
 
 
+def merge_dicts(
+    base_dict: dict[str, Any],
+    update_dict: dict[str, Any],
+    mode: Literal["update", "replace", "append_layers"] = "update"
+) -> dict[str, Any]:
+    """Merge two dictionaries with explicit merge strategy.
+
+    Parameters
+    ----------
+    base_dict : dict
+        Base dictionary to merge into
+    update_dict : dict
+        Dictionary with updates
+    mode : Literal["update", "replace", "append_layers"]
+        Merge strategy:
+        - "update": Deep merge, recursively updating nested values
+        - "replace": Replace entire values at top level
+        - "append_layers": Append update_dict layers to base_dict layers (for Vega-Lite annotations)
+
+    Returns
+    -------
+    dict
+        Merged dictionary
+
+    Examples
+    --------
+    >>> base = {"a": 1, "b": {"c": 2}}
+    >>> update = {"b": {"d": 3}}
+    >>> merge_dicts(base, update, mode="update")
+    {'a': 1, 'b': {'c': 2, 'd': 3}}
+
+    >>> merge_dicts(base, update, mode="replace")
+    {'a': 1, 'b': {'d': 3}}
+    """
+    if not update_dict:
+        return base_dict
+
+    if mode == "replace":
+        # Simple case: replace top-level keys
+        result = base_dict.copy()
+        result.update(update_dict)
+        return result
+
+    if mode == "append_layers":
+        # Special case: append layers for annotations
+        result = base_dict.copy()
+        if "layer" in update_dict and "layer" in result:
+            # Append all update layers to existing layers
+            result["layer"] = result["layer"] + update_dict["layer"]
+            # Remove conflicting top-level properties
+            result.pop("mark", None)
+            result.pop("encoding", None)
+        # Update other keys normally
+        for key, value in update_dict.items():
+            if key != "layer":
+                result[key] = value
+        return result
+
+    # mode == "update": Deep merge
+    result = base_dict.copy()
+
+    for key, value in update_dict.items():
+        if key not in result:
+            # New key, just add it
+            result[key] = value
+        elif isinstance(result[key], dict) and isinstance(value, dict):
+            # Both are dicts, recursively merge
+            result[key] = merge_dicts(result[key], value, mode="update")
+        elif isinstance(result[key], list) and isinstance(value, list):
+            # Handle array merging
+            if key in ('hconcat', 'vconcat', 'layer'):
+                # For concat layouts and layers, merge element-by-element
+                merged_items = []
+                for i, update_item in enumerate(value):
+                    if i < len(result[key]):
+                        # Merge with corresponding base item
+                        merged_item = merge_dicts(result[key][i], update_item, mode="update")
+                        merged_items.append(merged_item)
+                    else:
+                        # New item added by update
+                        merged_items.append(update_item)
+                # Keep any remaining base items not updated
+                merged_items.extend(result[key][len(value):])
+                result[key] = merged_items
+            else:
+                # Default: replace the list
+                result[key] = value
+        else:
+            # Scalar values or type mismatch: replace
+            result[key] = value
+
+    return result
+
+
 def format_float(num):
     """
     Process a float value, returning numeric types instead of strings.
@@ -181,7 +275,7 @@ class BlockNameCollector(NodeVisitor):
 
 
 _BLOCK_RE = re.compile(
-    r"{%-?\s*block\s+(?P<name>\w+)\s*-?%}(?P<body>.*?){%-?\s*endblock(?:\s+(?P=name))?\s*-?%}",
+    r"{%-?\s*block\s+(?P<n>\w+)\s*-?%}(?P<body>.*?){%-?\s*endblock(?:\s+(?P=n))?\s*-?%}",
     re.DOTALL,
 )
 
@@ -196,7 +290,7 @@ def get_block_names(template_path: Path | str, relative_to: Path = PROMPTS_DIR):
 def extract_block_source(template_path: Path | str, block_name: str, relative_to: Path = PROMPTS_DIR):
     src = Path(template_path).read_text(encoding='utf-8')
     for m in _BLOCK_RE.finditer(src):
-        if m.group("name") == block_name:
+        if m.group("n") == block_name:
             return m.group("body").strip()
     raise KeyError(f"Block '{block_name}' not found in {template_path!r}.")
 

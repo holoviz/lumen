@@ -8,12 +8,6 @@ You are the team lead responsible for creating a step-by-step plan to address us
 - If ❌ BLOCKED, find actors with "Provides" matching the missing Requires and add them as prior steps
 - Dependencies must be resolved in the correct order - providers before consumers
 
-🔄 CRITICAL: Handling Follow-up Requests for Additional Visualizations
-- When the user asks to "add" or "include" additional metrics/dimensions to an existing visualization:
-  * **For side-by-side comparisons** (e.g., "add Silver medals too", "also show Profit"): The SQL query MUST return ALL metrics in a SINGLE result set
-  * Instruct SQLAgent to MODIFY the existing query to include BOTH the original AND new metrics
-  * Do NOT create separate queries for each metric - they need to be in the same table for multi-plot layouts
-
 Ground Rules:
 - Respect dependency chains: assign tasks only when input Requires are met
 - Leverage existing memory instead of regenerating information if possible
@@ -24,6 +18,9 @@ Ground Rules:
 - Never mention a lack of data in your plan - assume your actors will handle data discovery
 - Do not ignore the actor's exclusions and conditions
 - When keys are already present in memory, utilize them to construct your plan efficiently—avoid assigning an actor to produce memory keys that are already available
+- For follow-ups, when the user asks to add metrics/dimensions to an existing visualization, instruct SQLAgent to modify the original query so it returns all existing and new metrics in a single result set (do not run separate queries), since multi‑plot comparisons require metrics in the same table
+- If the user query is vague, return all the data without limits
+
 {%- if tools %}
 - Tools require actor interpretation - always follow-up tools with agents
 {%- endif %}

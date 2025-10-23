@@ -15,12 +15,17 @@ class PartialBaseModel(BaseModel, PartialLiteralMixin):
 class EscapeBaseModel(PartialBaseModel):
 
     insufficient_context_reason: str = Field(
-        description="If lacking sufficient context, explain why; else use ''. Do not base off the user query; only from the data context provided.",
+        description=(
+            "If the model lacks sufficient context from the provided data, explain why. "
+            "Do not infer from the user query. For example, if values such as '899 ms' or '1.06s' "
+            "are not correctly converted to numeric seconds (0.899, 1.06), describe the missing conversion logic. "
+            "Leave empty ('') if context is sufficient."
+        ),
         examples=[
-            "A timeseries is requested but SQL only provides customer and order data; please include a time dimension",
-            "The previous result is one aggregated value; try a different aggregation or more dimensions",
-            ""
-        ]
+            "Time values include units (e.g. '899 ms', '1.06s') but are not normalized to numeric seconds; conversion logic is required.",
+            "A timeseries is requested but SQL only provides customer and order data; please include a time dimension.",
+            "The previous result is one aggregated value; try a different aggregation or more dimensions.",
+        ],
     )
 
     insufficient_context: bool = Field(
@@ -132,7 +137,95 @@ def make_sql_model(is_final: bool = False):
         return SqlQueries
 
 
-class VegaLiteSpec(EscapeBaseModel):
+class VegaLiteRow(BaseModel):
+    """A row in the layout, containing one or more plots arranged horizontally."""
+
+    plot_slugs: list[str] = Field(
+        description="""
+        List of plot slugs for this row, in left-to-right order.
+        All plots in a row are arranged side-by-side (hconcat).
+        """
+    )
+
+
+class VegaLitePlotSpec(BaseModel):
+    """Specification for a single plot to be generated independently."""
+
+    slug: str = Field(
+        description="""
+        Unique identifier for this plot (e.g., 'revenue_trend', 'top_5_categories').
+        Must be unique within the layout and descriptive of what's shown.
+        """
+    )
+
+    instruction: str = Field(
+        description="""
+        Detailed natural language instructions for generating this plot.
+        Include: mark type (bar/line/point/etc), x-axis field and type,
+        y-axis field and type, any color encoding, aggregations, filters,
+        and styling preferences. Be specific enough that each plot can be
+        generated independently without additional context.
+
+        Example: "Create a line chart showing revenue over time. X-axis:
+        'month' (temporal), Y-axis: 'revenue' (quantitative, aggregated as sum).
+        Use blue color for the line. Add points to mark each data point."
+        """
+    )
+
+    title: str | None = Field(
+        default=None,
+        description="Optional title for this subplot. If omitted, will be generated during plot creation."
+    )
+
+
+class VegaLiteLayoutPlan(EscapeBaseModel):
+    """
+    Plan for creating a multi-plot visualization.
+
+    Layout structure:
+    - Single row with 1 plot → Simple plot (no concat)
+    - Single row with N plots → hconcat (side-by-side)
+    - Multiple rows with 1 plot each → vconcat (stacked)
+    - Multiple rows with varying plots → vconcat of hconcats (grid)
+    """
+
+    chain_of_thought: str = Field(
+        description="""
+        Explain your visualization strategy:
+        - What story are you telling with this layout?
+        - Why did you choose these specific plots?
+        - Why this arrangement (side-by-side vs stacked)?
+        - How do the plots complement each other?
+        """
+    )
+
+    overall_title: str | None = Field(
+        default=None,
+        description="Optional overall title for the entire visualization dashboard."
+    )
+
+    plots: list[VegaLitePlotSpec] | None = Field(
+        description="""
+        All plots to generate, listed in the order they should appear.
+        Each plot will be generated independently in parallel.
+        """
+    )
+
+    rows: list[VegaLiteRow] | None = Field(
+        description="""
+        Layout structure defining how plots are arranged.
+        Each row contains plot slugs that will be arranged horizontally.
+        Multiple rows are stacked vertically.
+
+        Examples:
+        - Side-by-side: [{"plot_slugs": ["plot1", "plot2", "plot3"]}]
+        - Stacked: [{"plot_slugs": ["plot1"]}, {"plot_slugs": ["plot2"]}]
+        - Grid: [{"plot_slugs": ["plot1", "plot2"]}, {"plot_slugs": ["plot3"]}]
+        """
+    )
+
+
+class VegaLiteSubplotSpec(BaseModel):
 
     chain_of_thought: str = Field(
         description="""Explain your design choices based on visualization theory:
@@ -143,17 +236,30 @@ class VegaLiteSpec(EscapeBaseModel):
         Then describe the basic plot structure."""
     )
     yaml_spec: str = Field(
-        description="A basic vega-lite YAML specification with core plot elements only (data, mark, basic x/y encoding)."
+        description="""A vega-lite YAML specification using layer array structure.
+        CRITICAL: ALWAYS use layer array, even for single marks.
+        Example: layer: [{mark: bar, encoding: {...}}]"""
+    )
+    mode: Literal["update", "replace", "append_layers"] = Field(
+        default="update",
+        description="Merge mode (always 'update' for initial plot creation)."
     )
 
 
-class VegaLiteSpecUpdate(BaseModel):
+class VegaLiteUpdateSpec(BaseModel):
     chain_of_thought: str = Field(
         description="Explain what changes you're making to the Vega-Lite spec and why."
     )
     yaml_update: str = Field(
-        description="""Partial YAML with ONLY modified properties (unchanged values omitted).
-        Respect your step's scope; don't override previous steps."""
+        description="""Partial YAML with ONLY modified properties, BUT always include full hierarchy.
+        For layered specs: MUST wrap in 'layer' array even if only updating one property.
+        Example - to change color in layered spec: layer: [{encoding: {color: {value: red}}}]"""
+    )
+    mode: Literal["update", "replace", "append_layers"] = Field(
+        description="""Merge strategy:
+        - 'update': Deep merge (fixes/refinements that preserve structure)
+        - 'replace': Full replacement (changing mark type or complete restructure)
+        - 'append_layers': Add new layers (annotations like reference lines/labels)"""
     )
 
 
@@ -361,94 +467,6 @@ class DbtslQueryParams(BaseModel):
     order_by: list[str] = Field(
         default_factory=list,
         description="A list of columns or expressions to order the results by, e.g. ['metric_time__month']"
-    )
-
-
-class VegaLitePlotSpec(BaseModel):
-    """Specification for a single plot to be generated independently."""
-
-    slug: str = Field(
-        description="""
-        Unique identifier for this plot (e.g., 'revenue_trend', 'top_5_categories').
-        Must be unique within the layout and descriptive of what's shown.
-        """
-    )
-
-    instruction: str = Field(
-        description="""
-        Detailed natural language instructions for generating this plot.
-        Include: mark type (bar/line/point/etc), x-axis field and type,
-        y-axis field and type, any color encoding, aggregations, filters,
-        and styling preferences. Be specific enough that each plot can be
-        generated independently without additional context.
-
-        Example: "Create a line chart showing revenue over time. X-axis:
-        'month' (temporal), Y-axis: 'revenue' (quantitative, aggregated as sum).
-        Use blue color for the line. Add points to mark each data point."
-        """
-    )
-
-    title: str | None = Field(
-        default=None,
-        description="Optional title for this subplot. If omitted, will be generated during plot creation."
-    )
-
-
-class VegaLiteRow(BaseModel):
-    """A row in the layout, containing one or more plots arranged horizontally."""
-
-    plot_slugs: list[str] = Field(
-        description="""
-        List of plot slugs for this row, in left-to-right order.
-        All plots in a row are arranged side-by-side (hconcat).
-        """
-    )
-
-
-class VegaLiteLayoutPlan(BaseModel):
-    """
-    Plan for creating a multi-plot visualization.
-
-    Layout structure:
-    - Single row with 1 plot → Simple plot (no concat)
-    - Single row with N plots → hconcat (side-by-side)
-    - Multiple rows with 1 plot each → vconcat (stacked)
-    - Multiple rows with varying plots → vconcat of hconcats (grid)
-    """
-
-    chain_of_thought: str = Field(
-        description="""
-        Explain your visualization strategy:
-        - What story are you telling with this layout?
-        - Why did you choose these specific plots?
-        - Why this arrangement (side-by-side vs stacked)?
-        - How do the plots complement each other?
-        """
-    )
-
-    overall_title: str | None = Field(
-        default=None,
-        description="Optional overall title for the entire visualization dashboard."
-    )
-
-    plots: list[VegaLitePlotSpec] = Field(
-        description="""
-        All plots to generate, listed in the order they should appear.
-        Each plot will be generated independently in parallel.
-        """
-    )
-
-    rows: list[VegaLiteRow] = Field(
-        description="""
-        Layout structure defining how plots are arranged.
-        Each row contains plot slugs that will be arranged horizontally.
-        Multiple rows are stacked vertically.
-
-        Examples:
-        - Side-by-side: [{"plot_slugs": ["plot1", "plot2", "plot3"]}]
-        - Stacked: [{"plot_slugs": ["plot1"]}, {"plot_slugs": ["plot2"]}]
-        - Grid: [{"plot_slugs": ["plot1", "plot2"]}, {"plot_slugs": ["plot3"]}]
-        """
     )
 
 

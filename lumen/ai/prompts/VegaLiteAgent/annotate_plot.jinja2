@@ -3,6 +3,14 @@
 {% block instructions %}
 Add strategic visual annotations to highlight key insights.
 
+CRITICAL: Always use mode='append_layers' for annotations.
+
+For yaml_update, return ONLY the new layer(s) to add as a list:
+```yaml
+- mark: {type: rule, color: red}
+  encoding: {y: {datum: 100}}
+```
+
 # LAYERS
 
 Wrap chart in `layer` array, then add annotation marks (rules, text, highlights). All layers share data/scales unless overridden.
@@ -36,48 +44,33 @@ encoding:
   y: {field: value, type: quantitative}
 ```
 
-After:
+After (mode='append_layers'):
 ```yaml
-layer:
-  - mark: bar
-    encoding:
-      x: {field: category, type: ordinal}
-      y: {field: value, type: quantitative}
-  - mark: {type: rule, color: '#666', size: 1, strokeDash: [4,4], opacity: 0.5}
-    encoding: {y: {datum: 5000}}
-  - mark: {type: text, align: left, dx: 5, dy: -5, fontSize: 10, color: '#666'}
-    encoding:
-      text: {value: "5,000"}
-      y: {datum: 5000}
-      x: {datum: 0}
+- mark: {type: rule, color: '#666', size: 1, strokeDash: [4,4], opacity: 0.5}
+  encoding: {y: {datum: 5000}}
+- mark: {type: text, align: left, dx: 5, dy: -5, fontSize: 10, color: '#666'}
+  encoding:
+    text: {value: "5,000"}
+    y: {datum: 5000}
+    x: {datum: 0}
 ```
 
 ## Value labels with filter:
 ```yaml
-layer:
-  - mark: line
-    encoding:
-      x: {field: year, type: ordinal}
-      y: {field: value, type: quantitative}
-  - mark: {type: text, align: left, dx: 5, fontSize: 11}
-    transform: [{filter: "datum.year == 2022"}]
-    encoding:
-      x: {field: year, type: ordinal}
-      y: {field: value, type: quantitative}
-      text: {field: value, type: quantitative, format: ".0f"}
+- mark: {type: text, align: left, dx: 5, fontSize: 11}
+  transform: [{filter: "datum.year == 2022"}]
+  encoding:
+    x: {field: year, type: ordinal}
+    y: {field: value, type: quantitative}
+    text: {field: value, type: quantitative, format: ".0f"}
 ```
 
 ## Conditional highlighting:
 ```yaml
-layer:
-  - mark: bar
-    encoding:
-      x: {field: category, type: nominal}
-      y: {field: value, type: quantitative}
-  - mark: {type: bar, color: "#e74c3c"}
-    transform: [{filter: "datum.value > 500"}]
-    encoding:
-      x: {field: category, type: nominal}
-      y: {field: value, type: quantitative}
+- mark: {type: bar, color: "#e74c3c"}
+  transform: [{filter: "datum.value > 500"}]
+  encoding:
+    x: {field: category, type: nominal}
+    y: {field: value, type: quantitative}
 ```
 {% endblock %}

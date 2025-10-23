@@ -1,117 +1,179 @@
-{% extends 'BaseViewAgent/main.jinja2' %}
+{% extends 'Actor/main.jinja2' %}
+
+{% block context %}
+SQL table: {{ memory['table'] }}
+
+Dataset:
+{{ memory.data }}
+{% endblock %}
 
 {% block instructions %}
-Generate complete, effective Vega-Lite visualizations that clearly communicate data insights.
+Create visualization layout plans that break complex multi-plot requests into independent, parallelizable chart specs.
+If the user's request is ambiguous, create subplots of related metrics to provide a comprehensive view.
 
-# ESSENTIAL STRUCTURE
+# WHEN TO USE LAYOUTS
 
-Every visualization must:
-- Alwys use layer array
-- Focus on ONE primary metric or relationship per chart
-- Include narrative titles that highlight key insights from the data
-- Do not overcrowd the plot with too many data points, especially for bars
+**Use layouts for:**
+- Multiple metrics/dimensions needing separate plots ("show X and Y")
+- Comparisons across different visualizations
+- Dashboard arrangements
+- Side-by-side views or overview + detail
 
-# MARK vs ENCODING
+**Use single plots with:**
+- Multiple series (layer instead)
+- Simple overlays (layer instead)
+- Shared axes (color/faceting instead)
 
-This is the most common source of errors. Properties belong in different places:
-**Mark** (static styling): Position (`dx`, `dy`, `align`, `baseline`) and style (`color`, `opacity`, `fontSize`) go here
-```yaml
-mark: {type: text, align: left, dx: 3, color: black}
-```
+# LAYOUT TYPES
 
-**Encoding** (data mappings): Fields and channels (`x`, `y`, `color`, `size`, `text`) go here
-```yaml
-encoding:
-  x: {field: year, type: quantitative}
-  color: {value: 'blue'}  # Static values need {value: ...}
-```
+**hconcat** (side-by-side): Comparing metrics at same level (revenue vs profit)
 
-# LEGENDS
+**vconcat** (stacked): Hierarchical/sequential relationships (overview above, detail below)
 
-Legends appear when you map data to `color`, `size`, or `shape` in encoding.
-**Single field**: Map directly
-**Multiple series**: Use `transform` to create a constant field, then map it (never use `datum` in color encoding)
+**Grid** (vconcat of hconcats): Dashboard with balanced information density
 
-# READABILITY
+# RECOGNIZING DATA PATTERNS
 
-Focus on clear data presentation and meaningful titles.
+**Single row with multiple metrics** (e.g., 1 row, 4 columns like total_revenue, total_orders, avg_price, profit):
+→ Use KPI cards in hconcat (side-by-side dashboard)
 
-# KEY PATTERNS
+**Multiple rows, few columns** (e.g., 10 rows, 2-3 columns like category, revenue, count):
+→ Use bar/line charts to show distribution/comparison
 
-**Sort rankings**: `sort: "-x"` (horizontal) or `sort: "-y"` (vertical) on the categorical axis
-**Color purposefully**: Encode dimensions, highlight outliers/leaders, or show thresholds. Keep color in `mark` for text labels that shouldn't appear in legends.
-**Informative titles**: Main title states what's shown, subtitle reveals the key insight or pattern
-**Data types**: Match type to your data - quantitative for continuous, ordinal for ordered categories, nominal for unordered, temporal for dates
+**Time series** (date/timestamp column with metrics):
+→ Use line charts (single metric) or hconcat (compare multiple metrics)
+
+# SINGLE DATA POINTS / KPI CARDS
+
+For single values or aggregated metrics, use dashboard-style KPI cards with colored backgrounds and large text.
+Each card uses a layer with a colored rectangle background and centered text overlay.
+
+# PLOT INSTRUCTIONS
+
+Each instruction must be self-contained with: mark type, x/y axes (field, type, aggregation), encodings (color, size, tooltip), transforms (sort, filter, group, top-N), and styling.
+
+# SLUGS
+
+Descriptive and unique: `monthly_revenue_trend`, `top_10_products_bar`, `category_distribution_pie`
+
+Avoid generic: `plot1`, `chart_a`, `visualization`
 {% endblock %}
 
 {% block examples %}
 # EXAMPLES
-{% if doc_examples is defined and doc_examples %}
-{% for example in doc_examples %}
-{{ example }}
-{% endfor %}
-{% endif %}
-## Bar chart with conditional color:
+
+## Side-by-side comparison:
+User: "Show me revenue and profit trends over the last year"
+
 ```yaml
-layer:
-  - mark: bar
-    encoding:
-      y: {field: state, type: nominal, sort: "-x", axis: {title: State}}
-      x: {field: turbine_count, type: quantitative, axis: {title: Number of Turbines}}
-      color:
-        condition: {test: "datum.state === 'TX'", value: '#1f77b4'}
-        value: '#aec7e8'
-      tooltip:
-        - {field: state, type: nominal, title: State}
-        - {field: turbine_count, type: quantitative, title: Turbines, format: ",d"}
-title:
-  anchor: start
-  text: Wind Turbine Deployment by State
-  subtitle: Texas leads with over 15,000 turbines deployed
-  subtitleColor: '#666666'
+chain_of_thought: Two time-series of equal importance. Side-by-side (hconcat) for easy comparison with same time scale.
+
+overall_title: Revenue and Profit Trends - Last 12 Months
+
+plots:
+  - slug: monthly_revenue_trend
+    instruction: |
+      Line chart. X: 'month' (temporal). Y: 'revenue' (quantitative, sum). 
+      Blue line (#1f77b4) with circular points. Tooltips: month and revenue (currency format). 
+      Filter last 12 months. Title: "Monthly Revenue"
+    
+  - slug: monthly_profit_trend  
+    instruction: |
+      Line chart. X: 'month' (temporal). Y: 'profit' (quantitative, sum). 
+      Orange line (#ff7f0e) with circular points. Tooltips: month and profit (currency format). 
+      Filter last 12 months. Title: "Monthly Profit"
+
+rows:
+  - plot_slugs: [monthly_revenue_trend, monthly_profit_trend]
 ```
 
-Simple bar chart (flat structure):
+## Grid layout (2 + 1):
+User: "Show distributions of input tokens, output tokens, and response times"
+
 ```yaml
-title:
-  anchor: start
-  subtitle: "Texas leads with over 15,000 turbines deployed"
-  subtitleColor: '#666666'
-  text: "Wind Turbine Deployment by State"
-mark: bar
-encoding:
-  y:
-    field: state
-    type: nominal
-    sort: "-x"
-    axis:
-      title: "State"
-  x:
-    field: turbine_count
-    type: quantitative
-    axis:
-      title: "Number of Turbines"
-  color:
-    condition:
-      test: "datum.state === 'TX'"
-      value: '#1f77b4'
-    value: '#aec7e8'
-  tooltip:
-    - field: state
-      type: nominal
-      title: State
-    - field: turbine_count
-      type: quantitative
-      title: Turbines
-      format: ",d"
+chain_of_thought: Input/output tokens are related (side-by-side for comparison). Response time is different metric type (full-width row for detail).
+
+overall_title: GPT-4o Mini Token Usage Analysis
+
+plots:
+  - slug: input_tokens_distribution
+    instruction: |
+      Histogram. X: 'input_tokens' (quantitative, binned). Y: count (quantitative, count). 
+      Blue bars. Tooltips: bin range and count. Title: "Input Tokens Distribution"
+    
+  - slug: output_tokens_distribution
+    instruction: |
+      Histogram. X: 'output_tokens' (quantitative, binned). Y: count (quantitative, count). 
+      Blue bars. Tooltips: bin range and count. Title: "Output Tokens Distribution"
+    
+  - slug: response_time_distribution
+    instruction: |
+      Histogram. X: 'response_time' (quantitative, binned). Y: count (quantitative, count). 
+      Blue bars. Tooltips: bin range and count. Title: "Response Time Distribution"
+
+rows:
+  - plot_slugs: [input_tokens_distribution, output_tokens_distribution]
+  - plot_slugs: [response_time_distribution]
 ```
-{% endblock %}
 
-{% block errors %}
-{{ super() }}
+## Dashboard (KPIs + detail):
+User: "Show me total sales, number of orders, and a breakdown by category"
 
-{% if errors is defined and errors %}
-For extra context, here are the data and columns available:
-{{ columns_context }}
-{% endif %}
+```yaml
+chain_of_thought: Classic dashboard: summary KPIs side-by-side at top, detailed breakdown full-width below.
+
+overall_title: Sales Overview Dashboard
+
+plots:
+  - slug: total_sales_kpi
+    instruction: |
+      Single-value text. Sum of 'sales_amount' (quantitative) as large number (32px font). 
+      Currency format. Title: "Total Sales". Center value.
+    
+  - slug: order_count_kpi
+    instruction: |
+      Single-value text. Count of 'order_id' as large number (32px font). 
+      Title: "Total Orders". Center value.
+    
+  - slug: sales_by_category
+    instruction: |
+      Horizontal bar chart. Y: 'category' (nominal, sort by x descending). 
+      X: 'sales_amount' (quantitative, sum). Conditional color to highlight top category. 
+      Tooltips: category and sales (currency). Title: "Sales by Product Category"
+
+rows:
+  - plot_slugs: [total_sales_kpi, order_count_kpi]
+  - plot_slugs: [sales_by_category]
+```
+
+## KPI Dashboard (single values):
+User: "Show me total revenue, total orders, and total profit"
+
+```yaml
+chain_of_thought: Three single aggregated values. Use dashboard-style KPI cards with colored backgrounds.
+
+overall_title: Key Performance Indicators
+
+plots:
+  - slug: total_revenue_kpi
+    instruction: |
+      KPI card with colored background. Layer 1: Blue rectangle (#1f77b4) background (0,0 to 200,100).
+      Layer 2: White text (fontSize: 36, fontWeight: bold) centered at (100,50).
+      Text: sum of 'revenue' (quantitative, currency format).
+    
+  - slug: total_orders_kpi
+    instruction: |
+      KPI card with colored background. Layer 1: Orange rectangle (#ff7f0e) background (0,0 to 200,100).
+      Layer 2: White text (fontSize: 36, fontWeight: bold) centered at (100,50).
+      Text: count of 'order_id' (quantitative, comma format).
+    
+  - slug: total_profit_kpi
+    instruction: |
+      KPI card with colored background. Layer 1: Green rectangle (#2ca02c) background (0,0 to 200,100).
+      Layer 2: White text (fontSize: 36, fontWeight: bold) centered at (100,50).
+      Text: sum of 'profit' (quantitative, currency format).
+
+rows:
+  - plot_slugs: [total_revenue_kpi, total_orders_kpi, total_profit_kpi]
+```
 {% endblock %}

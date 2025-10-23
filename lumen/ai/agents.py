@@ -42,7 +42,7 @@ from .memory import _Memory
 from .models import (
     DbtslQueryParams, DiscoveryQueries, DiscoverySufficiency, DistinctQuery,
     PartialBaseModel, QueryCompletionValidation, RetrySpec, SampleQuery,
-    SqlQuery, VegaLiteLayoutPlan, VegaLiteSpec, VegaLiteSpecUpdate,
+    SqlQuery, VegaLiteLayoutPlan, VegaLiteSubplotSpec, VegaLiteUpdateSpec,
     make_sql_model,
 )
 from .schemas import get_metaset
@@ -51,8 +51,8 @@ from .tools import ToolUser
 from .translate import param_to_pydantic
 from .utils import (
     apply_changes, clean_sql, describe_data, get_data, get_pipeline,
-    get_root_exception, get_schema, load_json, log_debug, report_error,
-    retry_llm_output, set_nested, stream_details,
+    get_root_exception, get_schema, load_json, log_debug, merge_dicts,
+    report_error, retry_llm_output, set_nested, stream_details,
 )
 from .vector_store import DuckDBVectorStore
 from .views import AnalysisOutput, LumenOutput, VegaLiteOutput
@@ -1509,10 +1509,10 @@ class VegaLiteAgent(BaseViewAgent):
 
     prompts = param.Dict(
         default={
-            "main": {"response_model": VegaLiteSpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"},
-            "layout_plan": {"response_model": VegaLiteLayoutPlan, "template": PROMPTS_DIR / "VegaLiteAgent" / "layout_plan.jinja2"},
-            "annotate_plot": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "annotate_plot.jinja2"},
-            "retry_output": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "retry_output.jinja2"},
+            "main": {"response_model": VegaLiteLayoutPlan, "template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"},
+            "create_subplot": {"response_model": VegaLiteSubplotSpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "create_subplot.jinja2"},
+            "annotate_plot": {"response_model": VegaLiteUpdateSpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "annotate_plot.jinja2"},
+            "retry_output": {"response_model": VegaLiteUpdateSpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "retry_output.jinja2"},
         }
     )
 
@@ -1551,146 +1551,6 @@ class VegaLiteAgent(BaseViewAgent):
         self._vector_store = DuckDBVectorStore(uri=str(uri), read_only=True)
         return self._vector_store
 
-    def _deep_merge_dicts(self, base_dict: dict[str, Any], update_dict: dict[str, Any]) -> dict[str, Any]:
-        """Deep merge two dictionaries, with update_dict taking precedence.
-
-        Special handling:
-        - If update_dict contains 'layer', check if it's a partial update or new annotations
-        - Partial updates (no marks) merge with existing layers
-        - New annotations (different marks or annotation-type marks) append to existing layers
-        - hconcat/vconcat arrays are merged element-by-element, not replaced
-        - When merging layers, ensure each layer has both 'mark' and 'encoding'
-        """
-        if not update_dict:
-            return base_dict
-
-        result = base_dict.copy()
-
-        # Special handling for hconcat/vconcat arrays
-        for concat_key in ['hconcat', 'vconcat']:
-            if concat_key in update_dict and concat_key in result:
-                base_items = result[concat_key]
-                update_items = update_dict[concat_key]
-
-                # Merge each item in the array
-                merged_items = []
-                for i, update_item in enumerate(update_items):
-                    if i < len(base_items):
-                        # Merge with corresponding base item
-                        merged_item = self._deep_merge_dicts(base_items[i], update_item)
-                        merged_items.append(merged_item)
-                    else:
-                        # New item added by update
-                        merged_items.append(update_item)
-
-                # Keep any remaining base items not updated
-                merged_items.extend(base_items[len(update_items):])
-                result[concat_key] = merged_items
-                continue  # Skip standard merge for this key
-
-        # Special handling for layer arrays
-        if "layer" in update_dict and "layer" in result:
-            base_layers = result["layer"]
-            update_layers = update_dict["layer"]
-
-            # Determine if this is a partial update (modifying existing layers)
-            # or new annotations (adding new layers)
-            is_partial_update = False
-            is_append_operation = False
-
-            if update_layers and base_layers:
-                first_update_mark = self._get_layer_mark_type(update_layers[0])
-                first_base_mark = self._get_layer_mark_type(base_layers[0])
-                annotation_marks = {'rule', 'rect', 'text'}
-
-                # If update has no mark, it's a partial update
-                if first_update_mark is None:
-                    is_partial_update = True
-                # If marks are annotation types or different, it's an append
-                elif first_update_mark != first_base_mark or first_update_mark in annotation_marks:
-                    is_append_operation = True
-
-            if is_partial_update:
-                # Merge update layers with corresponding base layers
-                merged_layers = []
-                for i, base_layer in enumerate(base_layers):
-                    if i < len(update_layers):
-                        # Deep merge this layer
-                        merged_layer = self._deep_merge_dicts(base_layer, update_layers[i])
-                        merged_layers.append(merged_layer)
-                    else:
-                        # Keep remaining base layers unchanged
-                        merged_layers.append(base_layer)
-                result["layer"] = merged_layers
-            elif is_append_operation:
-                # Append all update layers as new annotation layers
-                normalized_updates = [self._normalize_layer_mark(layer.copy()) for layer in update_layers]
-                result["layer"] = base_layers + normalized_updates
-            else:
-                # Default merge behavior for layers
-                merged_layers = []
-                for i, update_layer in enumerate(update_layers):
-                    if i < len(base_layers):
-                        merged_layer = self._deep_merge_dicts(base_layers[i], update_layer)
-                        if "mark" not in merged_layer and "mark" in base_layers[i]:
-                            merged_layer["mark"] = base_layers[i]["mark"]
-                        merged_layers.append(merged_layer)
-                    else:
-                        merged_layers.append(self._normalize_layer_mark(update_layer.copy()))
-                merged_layers.extend(base_layers[len(update_layers):])
-                result["layer"] = merged_layers
-        else:
-            # Standard recursive merge for non-layer properties
-            for key, value in update_dict.items():
-                # Skip keys we already handled
-                if key in ['hconcat', 'vconcat']:
-                    continue
-
-                if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-                    result[key] = self._deep_merge_dicts(result[key], value)
-                else:
-                    result[key] = value
-
-        # If we're merging in a 'layer', remove conflicting top-level properties
-        if "layer" in update_dict:
-            result.pop("mark", None)
-            result.pop("encoding", None)
-
-        return result
-
-    def _get_layer_mark_type(self, layer: dict) -> str | None:
-        """Extract mark type from a layer, handling both dict and string formats."""
-        if "mark" in layer:
-            mark = layer["mark"]
-            if isinstance(mark, dict):
-                return mark.get("type")
-            return mark
-        return None
-
-    def _normalize_layer_mark(self, layer: dict) -> dict:
-        """Ensure layer has a properly formatted single mark property.
-
-        Handles cases where:
-        - Mark appears multiple times (duplicate keys in parsed YAML/dict)
-        - Mark is a string but needs to be an object with 'type'
-        - Layer might have conflicting mark definitions
-        """
-        if "mark" not in layer:
-            return layer
-
-        mark = layer["mark"]
-
-        # If mark is a string, convert to object with type
-        if isinstance(mark, str):
-            layer["mark"] = {"type": mark}
-        # If mark is a dict, ensure it has 'type'
-        elif isinstance(mark, dict) and "type" not in mark:
-            # Malformed mark without type - try to infer or leave as-is
-            # This shouldn't happen in valid Vega-Lite specs
-            pass
-
-        return layer
-
     def _add_tooltips_to_layer(self, layer):
         encoding = layer.get("encoding", {})
         if not encoding or encoding.get("tooltip"):
@@ -1724,7 +1584,7 @@ class VegaLiteAgent(BaseViewAgent):
             for item in spec["hconcat"]:
                 nested_config = extract_and_remove_config(item)
                 if nested_config:
-                    root_config = self._deep_merge_dicts(root_config, nested_config)
+                    root_config = merge_dicts(root_config, nested_config, mode="update")
 
         # Check vconcat items
         if "vconcat" in spec:
@@ -1734,11 +1594,11 @@ class VegaLiteAgent(BaseViewAgent):
                     for hconcat_item in item["hconcat"]:
                         nested_config = extract_and_remove_config(hconcat_item)
                         if nested_config:
-                            root_config = self._deep_merge_dicts(root_config, nested_config)
+                            root_config = merge_dicts(root_config, nested_config, mode="update")
                 else:
                     nested_config = extract_and_remove_config(item)
                     if nested_config:
-                        root_config = self._deep_merge_dicts(root_config, nested_config)
+                        root_config = merge_dicts(root_config, nested_config, mode="update")
 
         # Set merged config at root if we found any nested configs
         if root_config:
@@ -1909,7 +1769,7 @@ class VegaLiteAgent(BaseViewAgent):
         # Merge default font config with any existing config (existing takes precedence)
         if "config" not in vega_spec:
             vega_spec["config"] = {}
-        vega_spec["config"] = self._deep_merge_dicts(default_font_config, vega_spec.get("config", {}))
+        vega_spec["config"] = merge_dicts(default_font_config, vega_spec.get("config", {}), mode="update")
 
         # Only add width/height for single plots, not for layouts (hconcat/vconcat)
         is_layout = "hconcat" in vega_spec or "vconcat" in vega_spec
@@ -1998,11 +1858,14 @@ class VegaLiteAgent(BaseViewAgent):
                 model_spec=model_spec,
             )
             update_dict = yaml.safe_load(result.yaml_update)
+            mode = result.mode or 'update'
+            if mode == 'append_layers' and isinstance(update_dict, list):
+                update_dict = {"layer": update_dict}
 
-        # Merge and validate
+        # Merge and validate using the mode specified by the LLM
         final_dict = current_dict.copy()
         try:
-            final_dict["spec"] = self._deep_merge_dicts(final_dict["spec"], update_dict)
+            final_dict["spec"] = merge_dicts(final_dict["spec"], update_dict, mode=mode)
             await self._extract_spec({"yaml_spec": yaml.dump(final_dict["spec"])})
         except Exception as e:
             log_debug(f"Skipping invalid annotation update due to error: {e}")
@@ -2056,7 +1919,7 @@ class VegaLiteAgent(BaseViewAgent):
             self.interface.stream(replace=True, max_width=self._max_width, **message_kwargs)
         return out
 
-    async def _generate_single_plot(
+    async def _create_subplot(
         self,
         instruction: str,
         slug: str,
@@ -2086,24 +1949,20 @@ class VegaLiteAgent(BaseViewAgent):
             steps_layout=self._steps_layout
         ) as step:
             system_prompt = await self._render_prompt(
-                "main",
+                "create_subplot",
                 [instruction_message],
                 table=pipeline.table,
                 doc=doc,
                 doc_examples=doc_examples
             )
-            model_spec = self.prompts.get("main", {}).get("llm_spec", self.llm_spec_key)
+            model_spec = self.prompts.get("create_subplot", {}).get("llm_spec", self.llm_spec_key)
 
-            response = self.llm.stream(
+            output = await self.llm.invoke(
                 [instruction_message],
                 system=system_prompt,
                 model_spec=model_spec,
-                response_model=self.prompts["main"]["response_model"],
+                response_model=self.prompts["create_subplot"]["response_model"],
             )
-
-            async for output in response:
-                step.stream(output.chain_of_thought, replace=True)
-
             spec = yaml.safe_load(output.yaml_spec)
             step.success_title = f"Generated {slug}" if slug else "Plot generated"
 
@@ -2129,35 +1988,36 @@ class VegaLiteAgent(BaseViewAgent):
 
         # Step 1: Always plan the layout (handles both single and multi-plot)
         with self._add_step(title="Planning visualization", steps_layout=self._steps_layout) as step:
-            system_prompt = await self._render_prompt("layout_plan", messages)
-            model_spec = self.prompts.get("layout_plan", {}).get("llm_spec", self.llm_spec_key)
+            system_prompt = await self._render_prompt("main", messages)
+            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
 
             plan = await self.llm.invoke(
                 messages,
                 system=system_prompt,
                 model_spec=model_spec,
-                response_model=self.prompts["layout_plan"]["response_model"],
+                response_model=self.prompts["main"]["response_model"],
             )
 
-            step.stream(f"Planning {len(plan.plots)} plot(s) in {len(plan.rows)} row(s)")
+            subplots = plan.plots
+            step.stream(f"Planning {len(subplots)} plot(s) in {len(plan.rows)} row(s)")
             step.stream(f"\nStrategy: {plan.chain_of_thought}")
-            step.success_title = f"Planned {len(plan.plots)} plot(s)"
+            step.success_title = f"Planned {len(subplots)} plot(s)"
 
         # Step 2: Generate all plots (always use main prompt with examples)
-        is_single_plot = len(plan.plots) == 1
+        is_single_plot = len(subplots) == 1
 
         with self._add_step(
-            title=f"Generating {len(plan.plots)} plot(s){' in parallel' if not is_single_plot else ''}",
+            title=f"Generating {len(subplots)} plot(s){' in parallel' if not is_single_plot else ''}",
             steps_layout=self._steps_layout
         ) as step:
             results = await asyncio.gather(*[
-                self._generate_single_plot(
+                self._create_subplot(
                     plot.instruction,
                     plot.slug,
                     pipeline,
                     doc,
                     doc_examples
-                ) for plot in plan.plots
+                ) for plot in subplots
             ])
             plot_specs = dict(results)
             step.success_title = f"Generated {len(plot_specs)} plot(s)"

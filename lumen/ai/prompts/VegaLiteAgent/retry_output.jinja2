@@ -3,6 +3,34 @@
 {% block instructions %}
 {{ super() }}
 
+# MODE SELECTION
+
+Choose the correct merge mode:
+- mode='update': Fix errors, adjust colors/titles, refine encoding (preserves structure)
+- mode='replace': Change mark type (bar→line) or complete restructure
+- mode='append_layers': Add annotations (never for fixes)
+
+# CRITICAL: ALWAYS INCLUDE FULL HIERARCHY
+
+For layered specs, ALWAYS include the layer array in yaml_update:
+```yaml
+# CORRECT - includes layer wrapper:
+layer:
+  - mark: bar
+    encoding:
+      x: {aggregate: count}  # Changed
+      y: {bin: true, field: input_tokens}  # Keep all properties
+
+# WRONG - flat structure when base has layers:
+mark: bar
+encoding:
+  x: {aggregate: count}
+```
+
+RULE: Match the structure of the original spec (layered vs flat).
+
+# STRUCTURE RULES
+
 - For overlays: data at top level, encoding in layer
 - When updating layer properties: provide the complete layer structure with all encoding properties that should remain, not just the properties being changed
 {% endblock %}
@@ -14,6 +42,21 @@
 {{ example }}
 {% endfor %}
 {% endif %}
+
+Mode examples:
+```yaml
+# Fix error (mode='update') - INCLUDE full hierarchy:
+layer:
+  - encoding:
+      x: {field: corrected_field}
+
+# Change mark (mode='replace'):
+mark: line
+
+# Add layer (mode='append_layers') - return list:
+- mark: {type: rule, color: red}
+  encoding: {y: {datum: 100}}
+```
 
 Updating layer colors in hconcat:
 ```{{ language }}

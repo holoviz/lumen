@@ -1,0 +1,140 @@
+{% extends 'BaseViewAgent/main.jinja2' %}
+
+{% block instructions %}
+Generate complete, effective Vega-Lite visualizations that clearly communicate data insights.
+
+# ESSENTIAL STRUCTURE
+
+**CRITICAL: EVERY spec MUST use layer array, even for single marks.**
+
+Correct:
+```yaml
+layer:
+  - mark: bar
+    encoding: {...}
+```
+
+Wrong:
+```yaml
+mark: bar
+encoding: {...}
+```
+
+Every visualization must:
+- Focus on ONE primary metric or relationship per chart
+- Include narrative titles that highlight key insights from the data
+- Do not overcrowd the plot with too many data points, especially for bars
+- Use mode='update' (default for initial creation)
+
+# MARK vs ENCODING
+
+This is the most common source of errors. Properties belong in different places:
+**Mark** (static styling): Position (`dx`, `dy`, `align`, `baseline`) and style (`color`, `opacity`, `fontSize`) go here
+```yaml
+mark: {type: text, align: left, dx: 3, color: black}
+```
+
+**Encoding** (data mappings): Fields and channels (`x`, `y`, `color`, `size`, `text`) go here
+```yaml
+encoding:
+  x: {field: year, type: quantitative}
+  color: {value: 'blue'}  # Static values need {value: ...}
+```
+
+# LEGENDS
+
+Legends appear when you map data to `color`, `size`, or `shape` in encoding.
+**Single field**: Map directly
+**Multiple series**: Use `transform` to create a constant field, then map it (never use `datum` in color encoding)
+
+# READABILITY
+
+Focus on clear data presentation and meaningful titles.
+
+# KEY PATTERNS
+
+**Sort rankings**: `sort: "-x"` (horizontal) or `sort: "-y"` (vertical) on the categorical axis
+**Color purposefully**: Encode dimensions, highlight outliers/leaders, or show thresholds. Keep color in `mark` for text labels that shouldn't appear in legends.
+**Informative titles**: Main title states what's shown, subtitle reveals the key insight or pattern
+**Data types**: Match type to your data - quantitative for continuous, ordinal for ordered categories, nominal for unordered, temporal for dates
+**KPI cards**: For single values, layer a colored rect background with centered text overlay
+{% endblock %}
+
+{% block examples %}
+# EXAMPLES
+{% if doc_examples is defined and doc_examples %}
+{% for example in doc_examples %}
+{{ example }}
+{% endfor %}
+{% endif %}
+## Bar chart with conditional color (layered structure):
+```yaml
+layer:
+  - mark: bar
+    encoding:
+      y: {field: state, type: nominal, sort: "-x", axis: {title: State}}
+      x: {field: turbine_count, type: quantitative, axis: {title: Number of Turbines}}
+      color:
+        condition: {test: "datum.state === 'TX'", value: '#1f77b4'}
+        value: '#aec7e8'
+      tooltip:
+        - {field: state, type: nominal, title: State}
+        - {field: turbine_count, type: quantitative, title: Turbines, format: ",d"}
+title:
+  anchor: start
+  text: Wind Turbine Deployment by State
+  subtitle: Texas leads with over 15,000 turbines deployed
+  subtitleColor: '#666666'
+```
+
+## Simple line chart (single layer):
+```yaml
+layer:
+  - mark: line
+    encoding:
+      x: {field: year, type: temporal, axis: {title: Year}}
+      y: {field: revenue, type: quantitative, axis: {title: Revenue}}
+      tooltip:
+        - {field: year, type: temporal, title: Year}
+        - {field: revenue, type: quantitative, title: Revenue, format: "$,.0f"}
+title:
+  text: Annual Revenue Trend
+```
+
+## KPI card (single value with colored background):
+```yaml
+layer:
+  - mark:
+      type: rect
+      cornerRadius: 5
+      color: '#1f77b4'
+    encoding:
+      x: {value: 0}
+      x2: {value: 200}
+      y: {value: 0}
+      y2: {value: 100}
+  - mark:
+      type: text
+      align: center
+      baseline: middle
+      fontSize: 36
+      fontWeight: bold
+      color: white
+    encoding:
+      text: {field: total_revenue, type: quantitative, format: "$,.0f"}
+      x: {value: 100}
+      y: {value: 50}
+title:
+  text: Total Revenue
+  anchor: start
+```
+{% endblock %}
+
+{% block errors %}
+{{ super() }}
+
+{% if errors is defined and errors %}
+For extra context, here are the data and columns available:
+{{ columns_context }}
+{% endif %}
+{% endblock %}
