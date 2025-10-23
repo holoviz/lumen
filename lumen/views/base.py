@@ -1273,6 +1273,54 @@ class VegaLiteView(View):
     def get_panel(self) -> pn.pane.Vega:
         return pn.pane.Vega(**self._normalize_params(self._get_params()))
 
+    def convert(self, fmt: Literal['png', 'jpeg', 'svg', 'pdf', 'html', 'url', 'scenegraph'], **kwargs) -> bytes:
+        """
+        Converts the VegaLite spec to the specified data format.
+
+        Parameters
+        ----------
+        fmt: str
+            The format to convert to, one of 'png', 'jpeg', 'svg', 'pdf' or 'html'.
+        kwargs: dict
+            Additional keyword arguments passed to the conversion function.
+
+        Returns
+        -------
+        bytes
+            The converted data in the specified format.
+        """
+        try:
+            import vl_convert as vlc
+        except ImportError:
+            raise ImportError(
+                'vl-convert-python is required to convert VegaLite specs. '
+                'Please install it via `pip install vl-convert-python`.'
+            ) from None
+
+        spec = self.spec.copy()
+        spec['data'] = {'values': self.get_data().to_dict(orient='records')}
+        spec["width"] = self.kwargs.get("width", 800)
+        spec["height"] = self.kwargs.get("height", 400)
+
+        if fmt == 'png':
+            return vlc.vegalite_to_png(spec, **kwargs)
+        elif fmt == 'jpeg':
+            return vlc.vegalite_to_jpeg(spec, **kwargs)
+        elif fmt == 'svg':
+            return vlc.vegalite_to_svg(spec, **kwargs)
+        elif fmt == 'pdf':
+            return vlc.vegalite_to_pdf(spec, **kwargs)
+        elif fmt == 'html':
+            return vlc.vegalite_to_html(spec, **kwargs)
+        elif fmt == 'url':
+            return vlc.vegalite_to_url(spec, **kwargs)
+        elif fmt == 'scenegraph':
+            return vlc.vegalite_to_scenegraph(spec, **kwargs)
+        else:
+            raise ValueError(
+                f'Unsupported format {fmt}. Must be one of '
+                f"'png', 'jpeg', 'svg', 'pdf', 'html', 'url' or 'scenegraph'."
+            )
 
 class AltairView(View):
     """
