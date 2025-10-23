@@ -1273,7 +1273,7 @@ class VegaLiteView(View):
     def get_panel(self) -> pn.pane.Vega:
         return pn.pane.Vega(**self._normalize_params(self._get_params()))
 
-    def convert(self, fmt: Literal['png', 'jpeg', 'svg', 'pdf', 'html', 'url', 'scenegraph'], **kwargs) -> bytes:
+    def convert(self, fmt: Literal['png', 'jpeg', 'svg', 'pdf', 'html', 'url', 'scenegraph'], **kwargs) -> bytes | str | dict:
         """
         Converts the VegaLite spec to the specified data format.
 
@@ -1286,8 +1286,12 @@ class VegaLiteView(View):
 
         Returns
         -------
-        bytes
+        bytes | str | dict
             The converted data in the specified format.
+            - PNG/JPEG/PDF: Returns bytes
+            - SVG/HTML: Returns string or bytes depending on vl_convert version
+            - URL: Returns string (Vega Editor URL)
+            - scenegraph: Returns dict or JSON string
         """
         try:
             import vl_convert as vlc
