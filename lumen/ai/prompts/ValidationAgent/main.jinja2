@@ -44,6 +44,7 @@ Steps: {% for step in executed_steps %}{{ step }}{% if not loop.last %}, {% endi
 SQL: `{{ memory.sql }}`
 {%- endif -%}
 {%- if memory.get('data') is not none %}
-Data Overview: {{ memory["data"] }}
+Data Overview:
+{{ memory["data"] }}
 {%- endif -%}
 {%- endblock -%}

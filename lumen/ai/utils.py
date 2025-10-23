@@ -518,12 +518,7 @@ async def describe_data(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: boo
         size = df.size
         shape = df.shape
         if size < 250:
-            # Use the first column as index to save tokens
-            if len(df.columns) > 1:
-                df = df.set_index(df.columns[0])
-                return yaml.dump(df.to_dict('index'), default_flow_style=False, allow_unicode=True, sort_keys=False)
-            else:
-                return yaml.dump(df.to_dict("records"), default_flow_style=False, allow_unicode=True, sort_keys=False)
+            return df.to_markdown(index=False)
 
         is_sampled = False
         if shape[0] > 5000:
@@ -614,37 +609,6 @@ async def describe_data(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: boo
         return yaml.dump(result, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
     return await asyncio.to_thread(describe_data_sync, df)
-
-
-def format_data_as_yaml(data: pd.DataFrame | dict, title: str = "Data Overview") -> str:
-    """
-    Format a DataFrame or data dictionary as YAML.
-
-    Parameters
-    ----------
-    data : pd.DataFrame | dict
-        The data to format. Can be a DataFrame or dictionary.
-    title : str
-        The title to use in the YAML output.
-
-    Returns
-    -------
-    str
-        YAML formatted string representation of the data.
-    """
-    if isinstance(data, pd.DataFrame):
-        # Convert DataFrame to dictionary, using index as keys
-        if data.index.name:
-            data_dict = data.to_dict('index')
-        else:
-            data_dict = data.to_dict('records')
-    else:
-        data_dict = data
-
-    # Wrap in title
-    output = {title: data_dict}
-
-    return yaml.dump(output, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
 
 def clean_sql(sql_expr: str, dialect: str | None = None) -> str:
