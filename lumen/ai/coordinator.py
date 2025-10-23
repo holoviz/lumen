@@ -27,7 +27,7 @@ from .config import (
     DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR,
     MissingContextError,
 )
-from .context import TContext
+from .context import ContextError, TContext
 from .controls import SourceControls
 from .llm import LlamaCpp, Llm, Message
 from .logs import ChatLogs
@@ -1106,13 +1106,6 @@ class Planner(Coordinator):
                 log_debug(f"Warning: Agent or tool '{key}' not found in available agents/tools")
                 continue
 
-            # Check not_with constraints
-            not_with = getattr(subagent, 'not_with', [])
-            conflicts = [actor for actor in actors_in_graph if actor in not_with]
-            if conflicts:
-                # just to prompt the LLM
-                unmet_dependencies.add(f"{key} is incompatible with {', '.join(conflicts)}")
-
             requires = set(await subagent.requirements(messages))
             provided |= set(subagent.outputs.__annotations__)
             unmet_dependencies = (unmet_dependencies | requires) - provided
@@ -1163,7 +1156,7 @@ class Planner(Coordinator):
                 log_debug(f"Skipping summarization with {actor} due to conflicts: {conflicts}")
                 raw_plan.steps = steps
                 previous_actors = actors
-                return Plan(*tasks, title=raw_plan.title, history=messages, context=context, coordinator=self), unmet_dependencies, previous_actors
+                return Plan(*tasks, title=raw_plan.title, history=messages, context=context, coordinator=self), previous_actors
 
             summarize_step = type(step)(
                 actor=actor,
@@ -1197,7 +1190,7 @@ class Planner(Coordinator):
             actors_in_graph.add("ValidationAgent")
 
         raw_plan.steps = steps
-        return Plan(*tasks, title=raw_plan.title, history=messages, context=context, coordinator=self), unmet_dependencies, actors
+        return Plan(*tasks, title=raw_plan.title, history=messages, context=context, coordinator=self), actors
 
     async def _compute_plan(
         self,
@@ -1242,11 +1235,13 @@ class Planner(Coordinator):
                         self._todos_title.object = istep.failed_title = 'Failed to make plan. Ensure LLM is configured correctly and/or try again.'
                         traceback.print_exception(e)
                         raise e
-                    plan, unmet_dependencies, previous_actors = await self._resolve_plan(
+                    plan, previous_actors = await self._resolve_plan(
                         raw_plan, agents, tools, messages, context, previous_actors
                     )
-                    if unmet_dependencies:
-                        istep.stream(f"The plan didn't account for {unmet_dependencies!r}", replace=True)
+                    try:
+                        plan.validate()
+                    except ContextError as e:
+                        istep.stream(str(e), replace=True)
                         attempts += 1
                     else:
                         planned = True
