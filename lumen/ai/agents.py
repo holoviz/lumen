@@ -651,6 +651,9 @@ class SQLAgent(LumenBaseAgent):
         default=[
             "Use for displaying, examining, or querying data resulting in a data pipeline",
             "Use for calculations that require data (e.g., 'calculate average', 'sum by category')",
+            "Returns preprocessed raw values (wrangled strings, filtered nulls/invalid data)",
+            "For follow-ups adding metrics/dimensions, modify the original query to return all existing and new metrics in a single result set",
+            "Return all data without limits for vague queries",
             "Commonly used with AnalystAgent to analyze query results",
             "NOT for non-data questions or technical programming help",
             "NOT useful if the user is using the same data for plotting",
@@ -1440,6 +1443,7 @@ class hvPlotAgent(BaseViewAgent):
         default=[
             "Use for exploratory data analysis, interactive plots, and dynamic filtering",
             "Use for quick, iterative data visualization during analysis",
+            "Handles aggregation, binning, and counting for distributions and histograms",
         ]
     )
 
@@ -1502,6 +1506,7 @@ class VegaLiteAgent(BaseViewAgent):
         default=[
             "Use for publication-ready visualizations or when user specifically requests Vega-Lite charts",
             "Use for polished charts intended for presentation or sharing",
+            "Handles aggregation, binning, and counting for distributions and histograms",
         ]
     )
 

@@ -20,13 +20,12 @@ If the user's request is ambiguous, create subplots of related metrics to provid
 - Side-by-side views or overview + detail
 
 **Use single plots with:**
-- Multiple series (layer instead)
-- Simple overlays (layer instead)
-- Shared axes (color/faceting instead)
+- Multiple series via layering or color encoding
+- Related metrics (e.g., input_tokens and output_tokens) → combine with color/faceting rather than separate subplots
 
 # LAYOUT TYPES
 
-**hconcat** (side-by-side): Comparing metrics at same level (revenue vs profit)
+**hconcat** (side-by-side): Comparing different visualization types or unrelated metrics
 
 **vconcat** (stacked): Hierarchical/sequential relationships (overview above, detail below)
 
@@ -41,7 +40,7 @@ If the user's request is ambiguous, create subplots of related metrics to provid
 → Use bar/line charts to show distribution/comparison
 
 **Time series** (date/timestamp column with metrics):
-→ Use line charts (single metric) or hconcat (compare multiple metrics)
+→ Use line charts; combine related metrics with color encoding
 
 # SINGLE DATA POINTS / KPI CARDS
 
@@ -62,49 +61,21 @@ Avoid generic: `plot1`, `chart_a`, `visualization`
 {% block examples %}
 # EXAMPLES
 
-## Side-by-side comparison:
-User: "Show me revenue and profit trends over the last year"
-
-```yaml
-chain_of_thought: Two time-series of equal importance. Side-by-side (hconcat) for easy comparison with same time scale.
-
-overall_title: Revenue and Profit Trends - Last 12 Months
-
-plots:
-  - slug: monthly_revenue_trend
-    instruction: |
-      Line chart. X: 'month' (temporal). Y: 'revenue' (quantitative, sum). 
-      Blue line (#1f77b4) with circular points. Tooltips: month and revenue (currency format). 
-      Filter last 12 months. Title: "Monthly Revenue"
-    
-  - slug: monthly_profit_trend  
-    instruction: |
-      Line chart. X: 'month' (temporal). Y: 'profit' (quantitative, sum). 
-      Orange line (#ff7f0e) with circular points. Tooltips: month and profit (currency format). 
-      Filter last 12 months. Title: "Monthly Profit"
-
-rows:
-  - plot_slugs: [monthly_revenue_trend, monthly_profit_trend]
-```
-
-## Grid layout (2 + 1):
+## Combined metrics with grid layout:
 User: "Show distributions of input tokens, output tokens, and response times"
 
 ```yaml
-chain_of_thought: Input/output tokens are related (side-by-side for comparison). Response time is different metric type (full-width row for detail).
+chain_of_thought: Input/output tokens are related metrics, so combine them in one chart with color encoding. Response time is a different metric type (full-width row for detail).
 
 overall_title: GPT-4o Mini Token Usage Analysis
 
 plots:
-  - slug: input_tokens_distribution
+  - slug: token_usage_distribution
     instruction: |
-      Histogram. X: 'input_tokens' (quantitative, binned). Y: count (quantitative, count). 
-      Blue bars. Tooltips: bin range and count. Title: "Input Tokens Distribution"
-    
-  - slug: output_tokens_distribution
-    instruction: |
-      Histogram. X: 'output_tokens' (quantitative, binned). Y: count (quantitative, count). 
-      Blue bars. Tooltips: bin range and count. Title: "Output Tokens Distribution"
+      Histogram with two series. Transform data to long format with 'token_type' (input/output) and 'token_count' columns.
+      X: 'token_count' (quantitative, binned). Y: count (quantitative, count). 
+      Color: 'token_type' (nominal) with legend. Tooltips: token_type, bin range, and count. 
+      Title: "Input and Output Token Distribution"
     
   - slug: response_time_distribution
     instruction: |
@@ -112,45 +83,15 @@ plots:
       Blue bars. Tooltips: bin range and count. Title: "Response Time Distribution"
 
 rows:
-  - plot_slugs: [input_tokens_distribution, output_tokens_distribution]
+  - plot_slugs: [token_usage_distribution]
   - plot_slugs: [response_time_distribution]
 ```
 
-## Dashboard (KPIs + detail):
-User: "Show me total sales, number of orders, and a breakdown by category"
-
-```yaml
-chain_of_thought: Classic dashboard: summary KPIs side-by-side at top, detailed breakdown full-width below.
-
-overall_title: Sales Overview Dashboard
-
-plots:
-  - slug: total_sales_kpi
-    instruction: |
-      Single-value text. Sum of 'sales_amount' (quantitative) as large number (32px font). 
-      Currency format. Title: "Total Sales". Center value.
-    
-  - slug: order_count_kpi
-    instruction: |
-      Single-value text. Count of 'order_id' as large number (32px font). 
-      Title: "Total Orders". Center value.
-    
-  - slug: sales_by_category
-    instruction: |
-      Horizontal bar chart. Y: 'category' (nominal, sort by x descending). 
-      X: 'sales_amount' (quantitative, sum). Conditional color to highlight top category. 
-      Tooltips: category and sales (currency). Title: "Sales by Product Category"
-
-rows:
-  - plot_slugs: [total_sales_kpi, order_count_kpi]
-  - plot_slugs: [sales_by_category]
-```
-
-## KPI Dashboard (single values):
+## Dashboard with KPIs:
 User: "Show me total revenue, total orders, and total profit"
 
 ```yaml
-chain_of_thought: Three single aggregated values. Use dashboard-style KPI cards with colored backgrounds.
+chain_of_thought: Three single aggregated values. Use dashboard-style KPI cards with colored backgrounds side-by-side.
 
 overall_title: Key Performance Indicators
 
