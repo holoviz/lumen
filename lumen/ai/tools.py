@@ -832,13 +832,24 @@ class TableLookup(VectorLookupTool):
 
             if enriched_entries:
                 log_debug(f"[TableLookup] Upserting {len(enriched_entries)} enriched entries")
-                await self.vector_store.upsert(enriched_entries)
+                # Add timeout to the upsert operation to prevent deadlock
+                try:
+                    await asyncio.wait_for(
+                        self.vector_store.upsert(enriched_entries),
+                        timeout=60
+                    )
+                    log_debug(f"[TableLookup] Successfully upserted {len(enriched_entries)} entries")
+                except asyncio.TimeoutError:
+                    log_debug("[TableLookup] Timeout during upsert operation (60 seconds)")
+                    self._ready = None  # Set to error state
+                    return
             else:
                 log_debug("[TableLookup] No enriched entries to upsert")
             log_debug("[TableLookup] All table metadata tasks completed.")
             self._ready = True
         except Exception as e:
             log_debug(f"[TableLookup] Error in _mark_ready_when_done: {e!s}")
+            traceback.print_exc()
             self._ready = None  # Set to error state
             raise
         finally:
