@@ -10,16 +10,23 @@ import aiohttp
 import pandas as pd
 import param
 
-from panel.pane.markup import HTML
+from panel.io import state
+from panel.layout import Column, HSpacer, Row
+from panel.pane.markup import HTML, Markdown
 from panel.viewable import Viewer
 from panel.widgets import FileDropper, Tabulator, Tqdm
+from panel_gwalker import GraphicWalker
 from panel_material_ui import (
-    Button, ChatAreaInput, Column, FlexBox, Row, Select, Tabs, TextInput,
-    ToggleIcon,
+    Button, Card, ChatAreaInput, CheckBoxGroup, FlexBox, IconButton,
+    MultiChoice, Select, Switch, Tabs, TextInput, ToggleIcon, Typography,
 )
 
+from ..pipeline import Pipeline
 from ..sources.duckdb import DuckDBSource
+from ..transforms.sql import SQLLimit
 from ..util import detect_file_encoding
+from .config import SOURCE_TABLE_SEPARATOR
+from .context import TContext
 
 TABLE_EXTENSIONS = ("csv", "parquet", "parq", "json", "xlsx", "geojson", "wkt", "zip")
 
@@ -124,7 +131,7 @@ class SourceControls(Viewer):
 
     clear_uploads = param.Boolean(default=True, doc="Clear uploaded file tabs")
 
-    context = param.Dict()
+    context = param.Dict(default={})
 
     disabled = param.Boolean(default=False, doc="Disable controls")
 
@@ -144,7 +151,7 @@ class SourceControls(Viewer):
 
     replace_controls = param.Boolean(default=False, doc="Replace controls on add")
 
-    outputs = param.Dict()
+    outputs = param.Dict(default={})
 
     table_upload_callbacks = {}
 
@@ -182,7 +189,7 @@ class SourceControls(Viewer):
         self._input_tabs = Tabs(
             ("Upload Files", self._file_input),
             ("Download from URL", self._url_input),
-            sizing_mode="stretch_both",
+            sizing_mode="stretch_width",
             dynamic=True,
             active=self.param.active,
         )
@@ -608,6 +615,7 @@ class SourceControls(Viewer):
         else:
             self.outputs["sources"].append(duckdb_source)
         self.outputs["table"] = table
+        self.param.trigger('outputs')
         self._last_table = table
         return 1
 
@@ -644,6 +652,7 @@ class SourceControls(Viewer):
                 self.outputs["document_sources"].append(document)
         else:
             self.outputs["document_sources"] = [document]
+        self.param.trigger('outputs')
         return 1
 
     @param.depends("add", watch=True)
@@ -687,7 +696,7 @@ class SourceControls(Viewer):
                 src = self.output.get("source")
                 if src:
                     self.tables_tabs[:] = [
-                        (t, Tabulator(src.get(t), sizing_mode="stretch_both", pagination="remote"))
+                        (t, Tabulator(src.get(t), sizing_mode="stretch_width", pagination="remote"))
                         for t in src.get_tables()
                     ]
                 self.menu[0].visible = False
@@ -810,3 +819,405 @@ class AnnotationControls(Viewer):
 
     def __panel__(self):
         return self._row
+
+
+
+
+class TableSourceCard(Viewer):
+    """
+    A component that displays a single data source as a card with table selection controls.
+
+    The card includes:
+    - A header with the source name and a checkbox to toggle all tables
+    - A delete button (if multiple sources exist)
+    - Individual checkboxes for each table in the source
+    - Metadata display showing source information like filenames and other key-value pairs
+    """
+
+    all_selected = param.Boolean(default=True, doc="""
+        Whether all tables should be selected by default.""")
+
+    collapsed = param.Boolean(default=False, doc="""
+        Whether the card should start collapsed.""")
+
+    context = param.Dict()
+
+    deletable = param.Boolean(default=True, doc="""
+        Whether to show the delete button.""")
+
+    delete = param.Event(doc="""Action to delete this source from memory.""")
+
+    selected = param.List(default=None, doc="""
+        List of currently selected table names.""")
+
+    source = param.Parameter(doc="""
+        The data source to display in this card.""")
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self.all_tables = self.source.get_tables()
+
+        # Determine which tables are currently visible
+        if self.selected is None:
+            visible_tables = []
+            for table in self.all_tables:
+                visible_tables.append(table)
+            self.selected = visible_tables
+
+        # Create widgets once in init
+        self.source_toggle = Switch.from_param(
+            self.param.all_selected,
+            name=f"{self.source.name}",
+            margin=(5, -5, 0, 3),
+            sizing_mode='fixed',
+        )
+
+        self.delete_button = IconButton.from_param(
+            self.param.delete,
+            icon='delete',
+            icon_size='1em',
+            color="danger",
+            margin=(5, 0, 0, 0),
+            sizing_mode='fixed',
+            width=40,
+            height=40,
+            visible=self.param.deletable
+        )
+
+        # Create table checkboxes with metadata
+        self.table_controls = self._create_table_controls()
+
+        # Create source-level metadata display (if any non-table metadata exists)
+        self.metadata_display = self._create_source_metadata_display()
+
+    def _create_table_controls(self):
+        """Create table checkboxes with per-table metadata displayed next to each checkbox."""
+        table_controls = []
+
+        for table in self.all_tables:
+            # Create checkbox for this table
+            checkbox = CheckBoxGroup(
+                value=[table] if table in self.selected else [],
+                options=[table],
+                sizing_mode='stretch_width',
+                margin=(2, 10),
+                name="",
+            )
+
+            # Get metadata for this table
+            table_metadata = self.source.metadata.get(table, {}) if self.source.metadata else {}
+            metadata_parts = []
+
+            for key, value in table_metadata.items():
+                if isinstance(value, list):
+                    value_str = ', '.join(str(v) for v in value)
+                else:
+                    value_str = str(value)
+                metadata_parts.append(f"{key}: {value_str}")
+
+            if metadata_parts:
+                metadata_text = '; '.join(metadata_parts)
+                metadata_display = Typography(
+                    metadata_text,
+                    variant="caption",
+                    color="text.secondary",
+                    margin=(-10, 10, 0, 42),
+                    sizing_mode='stretch_width',
+                    styles={"min-height": "unset"} # Override ChatMessage CSS
+                )
+                table_controls.extend([checkbox, metadata_display])
+            else:
+                table_controls.append(checkbox)
+
+            # Watch checkbox changes
+            checkbox.param.watch(self._on_table_checkbox_change, 'value')
+
+        return Column(*table_controls, margin=0, sizing_mode='stretch_width')
+
+    def _on_table_checkbox_change(self, event):
+        """Handle individual table checkbox changes."""
+        # Collect all selected tables from all checkboxes
+        selected_tables = []
+        for obj in self.table_controls.objects:
+            if obj.value:
+                selected_tables.extend(obj.value)
+
+        # Update selected parameter
+        self.selected = selected_tables
+
+    def _create_source_metadata_display(self):
+        """Create a metadata display widget for source-level metadata (non-table metadata)."""
+        metadata_parts = []
+
+        if self.source.metadata:
+            # Only show metadata that's not table-specific
+            for key, value in self.source.metadata.items():
+                if key not in self.all_tables:  # Skip table-specific metadata
+                    if isinstance(value, list):
+                        value_str = ', '.join(str(v) for v in value)
+                    else:
+                        value_str = str(value)
+                    metadata_parts.append(f"{key}: {value_str}")
+
+        if metadata_parts:
+            metadata_text = '; '.join(metadata_parts)
+            return Typography(
+                metadata_text,
+                variant="caption",
+                color="text.secondary",
+                margin=(0, 10, 5, 10),
+                sizing_mode='stretch_width',
+            )
+        else:
+            return Typography(
+                "",
+                margin=0,
+                sizing_mode='stretch_width',
+                visible=False
+            )
+
+    @param.depends('all_selected', watch=True)
+    def _on_source_toggle(self):
+        """Handle source checkbox toggle (all tables on/off)."""
+        if not self.all_selected and len(self.selected) == len(self.all_tables):
+            # Important to check to see if all tables are selected for intuitive behavior
+            self.selected = []
+        elif self.all_selected:
+            self.selected = self.all_tables
+
+    @param.depends('selected', watch=True)
+    def _update_visible_slugs(self):
+        """Update visible_slugs in memory based on selected tables."""
+        self.all_selected = len(self.selected) == len(self.all_tables)
+        for table in self.all_tables:
+            table_slug = f"{self.source.name}{SOURCE_TABLE_SEPARATOR}{table}"
+            if table in self.selected:
+                self.context['visible_slugs'].add(table_slug)
+            else:
+                self.context['visible_slugs'].discard(table_slug)
+
+    @param.depends('delete', watch=True)
+    def _delete_source(self):
+        """Handle source deletion via param.Action."""
+        if self.source in self.context.get("sources", []):
+            # Remove all tables from this source from visible_slugs
+            for table in self.all_tables:
+                table_slug = f"{self.source.name}{SOURCE_TABLE_SEPARATOR}{table}"
+                self.context['visible_slugs'].discard(table_slug)
+
+            self.context["sources"] = [
+                source for source in self.context.get("sources", [])
+                if source is not self.source
+            ]
+
+    def __panel__(self):
+        card_header = Row(
+            self.source_toggle,
+            HSpacer(),
+            self.delete_button,
+            sizing_mode='stretch_width',
+            align='start',
+            height=35,
+            margin=0
+        )
+
+        # Create the card content with metadata display
+        card_content = Column(
+            self.metadata_display,
+            self.table_controls,
+            margin=0,
+            sizing_mode='stretch_width'
+        )
+
+        # Create the card
+        return Card(
+            card_content,
+            header=card_header,
+            collapsible=True,
+            collapsed=self.param.collapsed,
+            sizing_mode='stretch_width',
+            margin=0,
+            name="TableSourceCard"
+        )
+
+
+class SourceCatalog(Viewer):
+    """
+    A component that displays all data sources with table selection controls.
+
+    This component shows each source as a collapsible card with:
+    - A header checkbox to toggle all tables in the source
+    - Individual checkboxes for each table
+    - A delete button to remove the source (if multiple sources exist)
+
+    Tables can be selectively shown/hidden using the checkboxes, which updates
+    the 'visible_slugs' set in memory.
+    """
+
+    context = param.Dict(default={})
+
+    sources = param.List(default=[], doc="""
+        List of data sources to display in the catalog.""")
+
+    def __init__(self, /, context: TContext | None = None, **params):
+        self._title = Markdown(margin=0)
+        self._cards_column = Column()
+        self._layout = Column(
+            self._title,
+            self._cards_column,
+            sizing_mode='stretch_width'
+        )
+        if context is None:
+            raise ValueError("SourceCatalog must be given a context dictionary.")
+        if "source" in context and "sources" not in context:
+            context["sources"] = [context["source"]]
+        if "visible_slugs" not in context:
+            context["visible_slugs"] = set()
+        super().__init__(context=context, **params)
+
+    @param.depends("sources", watch=True, on_init=True)
+    def sync(self, sources=None):
+        """
+        Trigger the catalog with new sources.
+
+        Args:
+            sources: Optional list of sources. If None, uses sources from memory.
+        """
+        sources = self.sources or self.context.get('sources', [])
+
+        # Create a lookup of existing cards by source
+        existing_cards = {
+            card.source: card for card in self._cards_column.objects
+            if isinstance(card, TableSourceCard) and card.source in sources
+        }
+
+        # Build the new cards list
+        source_cards = []
+        multiple_sources = len(sources) > 1
+        for source in sources:
+            if source in existing_cards:
+                # Reuse existing card and update its deletable property
+                card = existing_cards[source]
+                card.deletable = multiple_sources
+                source_cards.append(card)
+            else:
+                # Create new card for new source
+                source_card = TableSourceCard(
+                    context=self.context,
+                    source=source,
+                    deletable=multiple_sources,
+                    collapsed=multiple_sources,
+                )
+                source_cards.append(source_card)
+
+        self._cards_column.objects = source_cards
+
+        if len(self.sources) == 0:
+            self._title.object = "No sources available. Add a source to get started."
+        else:
+            self._title.object = "Select the table and document sources you want visible to the LLM."
+
+    def __panel__(self):
+        """
+        Create the source catalog UI.
+
+        Returns a Column containing all source cards or a message if no sources exist.
+        """
+        return self._layout
+
+
+
+
+class TableExplorer(Viewer):
+    """
+    TableExplorer provides a high-level entrypoint to explore tables in a split UI.
+    It allows users to load tables, explore them using Graphic Walker, and then
+    interrogate the data via a chat interface.
+    """
+
+    context = param.Dict(default={})
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._table_select = MultiChoice(
+            label="Select table(s) to preview", sizing_mode='stretch_width',
+            max_height=200, max_items=5, margin=0
+        )
+        self._explore_button = Button(
+            name='Explore table(s)', icon='add_chart', button_type='primary', icon_size="2em",
+            disabled=self._table_select.param.value.rx().rx.not_(), on_click=self._update_explorers,
+            margin=(0, 0, 0, 10), width=200, align='end'
+        )
+        self._input_row = Row(self._table_select, self._explore_button)
+        self._source_map = {}
+        self.sync(init=True)
+
+        self._tabs = Tabs(dynamic=True, sizing_mode='stretch_both')
+        self._layout = Column(
+            self._input_row, self._tabs, sizing_mode='stretch_both',
+        )
+
+    def sync(self, init=False):
+        if "sources" in self.context:
+            sources = self.context["sources"]
+        elif "source" in self.context:
+            sources = [self.context["source"]]
+        else:
+            return
+        selected = list(self._table_select.value)
+        deduplicate = len(sources) > 1
+        new = {}
+
+        # Build the source map for UI display
+        for source in sources:
+            tables = source.get_tables()
+            for table in tables:
+                if deduplicate:
+                    table = f'{source.name}{SOURCE_TABLE_SEPARATOR}{table}'
+
+                if (table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)[-1] not in self._source_map and
+                    not init and not len(selected) > self._table_select.max_items and state.loaded):
+                    selected.append(table)
+                new[table] = source
+
+        self._source_map.clear()
+        self._source_map.update(new)
+        selected = selected if len(selected) == 1 else []
+        self._table_select.param.update(options=list(self._source_map), value=selected)
+        self._input_row.visible = bool(self._source_map)
+
+    def _explore_table_if_single(self, event):
+        """
+        If only one table is uploaded, help the user load it
+        without requiring them to click twice. This step
+        only triggers when the Upload in the Overview tab is used,
+        i.e. does not trigger with uploads through the SourceAgent
+        """
+        if len(self._table_select.options) == 1:
+            self._explore_button.param.trigger("value")
+
+    def _update_explorers(self, event):
+        if not event.new:
+            return
+
+        with self._explore_button.param.update(loading=True):
+            explorers = []
+            for table in self._table_select.value:
+                source = self._source_map[table]
+                if SOURCE_TABLE_SEPARATOR in table:
+                    _, table = table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
+                pipeline = Pipeline(
+                    source=source, table=table, sql_transforms=[SQLLimit(limit=100_000, read=source.dialect)]
+                )
+                table_label = f"{table[:25]}..." if len(table) > 25 else table
+                walker = GraphicWalker(
+                    pipeline.param.data, sizing_mode='stretch_both', min_height=800,
+                    kernel_computation=True, name=table_label, tab='data'
+                )
+                explorers.append(walker)
+
+            self._tabs.objects = explorers
+            self._table_select.value = []
+
+    def __panel__(self):
+        return self._layout
