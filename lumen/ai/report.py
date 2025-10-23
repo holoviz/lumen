@@ -35,7 +35,10 @@ from ..views.base import Panel, View
 from .actor import Actor, ContextProvider, TContext
 from .agents import AnalystAgent
 from .config import MissingContextError
-from .context import LWW, merge_contexts
+from .context import (
+    LWW, ContextError, ValidationIssue, collect_task_outputs, merge_contexts,
+    validate_task_inputs, validate_taskgroup_exclusions,
+)
 from .export import (
     format_output, make_md_cell, make_preamble, write_notebook,
 )
@@ -216,6 +219,56 @@ class TaskGroup(Task):
         self._current = 0
         self._init_view()
         self._populate_view()
+
+    def validate(
+        self, context: TContext | None = None,
+        available_types: dict[str, Any] | None = None,
+        path: str | None = None,
+        raise_on_error: bool = True
+    ):
+        """
+        Validate the task group and its subtasks.
+
+        Parameters
+        ----------
+        context : TContext | None, optional
+            The context to validate against, by default None
+        available_types : dict[str, Any] | None, optional
+            Dictionary of available types for validation, by default None
+        path : str | None, optional
+            Path to the current task group for error reporting, by default None
+        raise_on_error : bool, optional
+            Whether to raise an error if validation issues are found, by default True
+
+        Returns
+        -------
+        tuple[list[ValidationIssue], dict[str, Any]]
+            A tuple containing:
+            - List of validation issues found
+            - Dictionary of output types from all tasks
+        """
+        cur_path = path or self.name
+        issues: list[ValidationIssue] = validate_taskgroup_exclusions(self, path=cur_path)
+        value_ctx = dict((self.context or {}), **(context or {}))
+        types_out: dict[str, Any] = dict(available_types or {})
+        for idx, t in enumerate(self):
+            subpath = f"{cur_path}[{idx}] -> {t.name}"
+            if isinstance(t, TaskGroup):
+                sub_issues, sub_types = t.validate(
+                    value_ctx,
+                    available_types=types_out,
+                    path=subpath,
+                )
+            else:
+                sub_issues = validate_task_inputs(
+                    t, value_ctx, types_out, subpath
+                )
+                sub_types = collect_task_outputs(t)
+            issues.extend(sub_issues)
+            types_out.update(sub_types)
+        if path is None and issues and raise_on_error:
+            raise ContextError(issues)
+        return issues, types_out
 
     def __repr__(self):
         params = []
