@@ -7,7 +7,7 @@ Available visualization types:
 The current SQL table name: {{ memory['table'] }}.
 
 Here is the current dataset to use:
-{{ memory.data }}
+{{ memory['data'] }}
 
 {%- if "view" in memory %}
 The previous view specification was:
@@ -16,7 +16,7 @@ The previous view specification was:
 ```
 {%- endif %}
 
-{% if memory.source.dialect == "snowflake" %}
+{% if memory['source'].dialect == "snowflake" %}
 Please use all upper case for field names.
 {% endif %}
 {%- endblock %}
