@@ -612,12 +612,7 @@ async def describe_data(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: boo
         size = df.size
         shape = df.shape
         if size < 250:
-            # Use the first column as index to save tokens
-            if len(df.columns) > 1:
-                df = df.set_index(df.columns[0])
-                return yaml.dump(df.to_dict('index'), default_flow_style=False, allow_unicode=True, sort_keys=False)
-            else:
-                return yaml.dump(df.to_dict("records"), default_flow_style=False, allow_unicode=True, sort_keys=False)
+            return df.to_markdown(index=False)
 
         is_sampled = False
         if shape[0] > 5000:
