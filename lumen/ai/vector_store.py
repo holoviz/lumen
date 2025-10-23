@@ -1039,6 +1039,8 @@ class DuckDBVectorStore(VectorStore):
 
     uri = param.String(default=":memory:", doc="The URI of the DuckDB database")
 
+    read_only = param.Boolean(default=False, doc="Whether to open the database in read-only mode")
+
     embeddings = param.ClassSelector(
         class_=Embeddings,
         default=None,
@@ -1064,14 +1066,16 @@ class DuckDBVectorStore(VectorStore):
             return
         uri_exists = Path(self.uri).exists()
         try:
-            connection.execute(f"ATTACH DATABASE '{self.uri}' AS embedded;")
+            attach_mode = "READ_ONLY" if self.read_only else "READ_WRITE"
+            connection.execute(f"ATTACH DATABASE '{self.uri}' AS embedded ({attach_mode});")
         except duckdb.CatalogException:
             # handle "Failure while replaying WAL file"
             # remove .wal uri on corruption
             wal_path = Path(str(self.uri) + ".wal")
             if wal_path.exists():
                 wal_path.unlink()
-            connection.execute(f"ATTACH DATABASE '{self.uri}' AS embedded;")
+            attach_mode = "READ_ONLY" if self.read_only else "READ_WRITE"
+            connection.execute(f"ATTACH DATABASE '{self.uri}' AS embedded ({attach_mode});")
         connection.execute("USE embedded;")
         self.connection = connection
         has_documents = (
