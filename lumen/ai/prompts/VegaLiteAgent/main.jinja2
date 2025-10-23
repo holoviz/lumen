@@ -32,21 +32,9 @@ Legends appear when you map data to `color`, `size`, or `shape` in encoding.
 **Single field**: Map directly
 **Multiple series**: Use `transform` to create a constant field, then map it (never use `datum` in color encoding)
 
-# FONT SIZES AND READABILITY
+# READABILITY
 
-Ensure text is readable by setting appropriate font sizes. Use the `config` section for global defaults:
-```yaml
-config:
-  axis:
-    labelFontSize: 14      # Axis tick labels
-    titleFontSize: 16      # Axis titles
-  title:
-    fontSize: 20           # Main title
-    subtitleFontSize: 16   # Subtitle
-  text:
-    fontSize: 14           # Default for text marks
-```
-**Recommended sizes**: Titles 18-24, axis titles 14-16, labels 12-14, annotations 12-14
+Focus on clear data presentation and meaningful titles.
 
 # KEY PATTERNS
 
@@ -65,9 +53,6 @@ config:
 {% endif %}
 ## Bar chart with conditional color:
 ```yaml
-config:
-  axis: {labelFontSize: 14, titleFontSize: 16}
-  title: {fontSize: 20, subtitleFontSize: 16}
 layer:
   - mark: bar
     encoding:
@@ -90,10 +75,8 @@ Simple bar chart (flat structure):
 ```yaml
 title:
   anchor: start
-  fontSize: 20
   subtitle: "Texas leads with over 15,000 turbines deployed"
   subtitleColor: '#666666'
-  subtitleFontSize: 16
   text: "Wind Turbine Deployment by State"
 mark: bar
 encoding:

@@ -1719,22 +1719,12 @@ class VegaLiteAgent(BaseViewAgent):
                 return config
             return {}
 
-        def deep_merge_configs(base: dict, update: dict) -> dict:
-            """Deep merge two config dicts."""
-            result = base.copy()
-            for key, value in update.items():
-                if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-                    result[key] = deep_merge_configs(result[key], value)
-                else:
-                    result[key] = value
-            return result
-
         # Check hconcat items
         if "hconcat" in spec:
             for item in spec["hconcat"]:
                 nested_config = extract_and_remove_config(item)
                 if nested_config:
-                    root_config = deep_merge_configs(root_config, nested_config)
+                    root_config = self._deep_merge_dicts(root_config, nested_config)
 
         # Check vconcat items
         if "vconcat" in spec:
@@ -1744,11 +1734,11 @@ class VegaLiteAgent(BaseViewAgent):
                     for hconcat_item in item["hconcat"]:
                         nested_config = extract_and_remove_config(hconcat_item)
                         if nested_config:
-                            root_config = deep_merge_configs(root_config, nested_config)
+                            root_config = self._deep_merge_dicts(root_config, nested_config)
                 else:
                     nested_config = extract_and_remove_config(item)
                     if nested_config:
-                        root_config = deep_merge_configs(root_config, nested_config)
+                        root_config = self._deep_merge_dicts(root_config, nested_config)
 
         # Set merged config at root if we found any nested configs
         if root_config:
@@ -1900,6 +1890,26 @@ class VegaLiteAgent(BaseViewAgent):
 
         # Fix nested config issues before validation
         vega_spec = self._fix_nested_configs(vega_spec)
+
+        # Add default font sizes for better readability
+        default_font_config = {
+            "axis": {
+                "labelFontSize": 16,
+                "titleFontSize": 20
+            },
+            "text": {
+                "fontSize": 16
+            },
+            "title": {
+                "fontSize": 20,
+                "subtitleFontSize": 18
+            }
+        }
+
+        # Merge default font config with any existing config (existing takes precedence)
+        if "config" not in vega_spec:
+            vega_spec["config"] = {}
+        vega_spec["config"] = self._deep_merge_dicts(default_font_config, vega_spec.get("config", {}))
 
         # Only add width/height for single plots, not for layouts (hconcat/vconcat)
         is_layout = "hconcat" in vega_spec or "vconcat" in vega_spec
