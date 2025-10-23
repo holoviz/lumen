@@ -203,7 +203,7 @@ class SQLMetaset:
         return self.table_context
 
 
-async def get_metaset(sources: list[Source], tables: list[str]) -> SQLMetaset:
+async def get_metaset(sources: list[Source], tables: list[str], prev: SQLMetaset | None = None) -> SQLMetaset:
     """
     Get the metaset for the given sources and tables.
 
@@ -233,27 +233,34 @@ async def get_metaset(sources: list[Source], tables: list[str]) -> SQLMetaset:
         else:
             source_name = next(iter(sources)).name
             table_name = table_slug
-        source = next((s for s in sources if s.name == source_name), None)
-        schema = await get_schema(source, table_name, include_count=True)
-        tables_info[table_slug] = SQLMetadata(
-            table_slug=table_slug,
-            schema=schema,
-        )
-        try:
-            metadata = source.get_metadata(table_name)
-        except Exception as e:
-            log_debug(f"Failed to get metadata for table {table_name} in source {source_name}: {e}")
-            metadata = {}
-        tables_metadata[table_slug] = VectorMetadata(
-            table_slug=table_slug,
-            similarity=1,
-            base_sql=source.get_sql_expr(source.normalize_table(table_name)),
-            description=metadata.get("description"),
-            columns=[
-                Column(name=col_name, description=col_values.pop("description", None), metadata=col_values)
-                for col_name, col_values in metadata.get("columns", {}).items()
-            ],
-        )
+
+        if prev and table_slug in prev.sql_metadata_map:
+            sql_metadata = prev.sql_metadata_map[table_slug]
+        else:
+            source = next((s for s in sources if s.name == source_name), None)
+            schema = await get_schema(source, table_name, include_count=True)
+            sql_metadata = SQLMetadata(table_slug=table_slug, schema=schema)
+        tables_info[table_slug] = sql_metadata
+
+        if prev and table_slug in prev.vector_metaset.vector_metadata_map:
+            vector_metadata = prev.vector_metaset.vector_metadata_map[table_slug]
+        else:
+            try:
+                metadata = source.get_metadata(table_name)
+            except Exception as e:
+                log_debug(f"Failed to get metadata for table {table_name} in source {source_name}: {e}")
+                metadata = {}
+            vector_metadata = VectorMetadata(
+                table_slug=table_slug,
+                similarity=1,
+                base_sql=source.get_sql_expr(source.normalize_table(table_name)),
+                description=metadata.get("description"),
+                columns=[
+                    Column(name=col_name, description=col_values.pop("description", None), metadata=col_values)
+                    for col_name, col_values in metadata.get("columns", {}).items()
+                ],
+            )
+        tables_metadata[table_slug] = vector_metadata
     vector_metaset = VectorMetaset(vector_metadata_map=tables_metadata, query=None)
     return SQLMetaset(
         vector_metaset=vector_metaset,

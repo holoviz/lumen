@@ -37,7 +37,7 @@ from .agents import (
     SQLAgent, TableListAgent, ValidationAgent, VegaLiteAgent,
 )
 from .components import SplitJS
-from .config import PROVIDED_SOURCE_NAME
+from .config import PROVIDED_SOURCE_NAME, SOURCE_TABLE_SEPARATOR
 from .context import TContext
 from .controls import SourceCatalog, SourceControls, TableExplorer
 from .coordinator import Coordinator, Plan, Planner
@@ -334,11 +334,29 @@ class UI(Viewer):
             state.on_session_destroyed(self._destroy)
         state.onload(self._initialize_new_llm)
 
-    def _sync_sources(self, event):
+    async def _sync_sources(self, event):
         if 'sources' in event.new:
             old_sources = self.context.get("sources", [self.context["source"]] if "source" in self.context else [])
             new_sources = [src for src in event.new["sources"] if src not in old_sources]
             self.context["sources"] = old_sources + new_sources
+
+            all_slugs = set()
+            for source in new_sources:
+                tables = source.get_tables()
+                for table in tables:
+                    table_slug = f'{source.name}{SOURCE_TABLE_SEPARATOR}{table}'
+                    all_slugs.add(table_slug)
+
+            # Update visible_slugs, preserving existing visibility where possible
+            # This ensures removed tables are filtered out, new tables are added
+            current_visible = self.context.get('visible_slugs', set())
+            if current_visible:
+                # Keep intersection of current visible and available slugs
+                # Plus add any new slugs that weren't previously available
+                self.context['visible_slugs'] = current_visible.intersection(all_slugs) | (all_slugs - current_visible)
+            else:
+                # If no visible_slugs set, make all tables visible
+                self.context['visible_slugs'] = all_slugs
         if "source" in event.new:
             if "source" in self.context:
                 old_source = self.context["source"]
@@ -355,8 +373,9 @@ class UI(Viewer):
                 self.context["document_sources"] = new_docs
             else:
                 self.context["document_sources"].extend(new_docs)
-        self._explorer.sync()
-        self._source_catalog.sync()
+        await self._explorer.sync()
+        await self._source_catalog.sync()
+        await self._coordinator.sync(self.context)
 
     def _setup_actions(self):
         """Set up actions for the ChatAreaInput speed dial."""

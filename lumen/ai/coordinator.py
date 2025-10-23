@@ -22,13 +22,12 @@ from typing_extensions import Self
 
 from .actor import Actor
 from .agents import Agent, AnalysisAgent, ChatAgent
-from .components import TableSourceCard
 from .config import (
     DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR,
     MissingContextError,
 )
 from .context import ContextError, TContext
-from .controls import SourceControls
+from .controls import SourceControls, TableSourceCard
 from .llm import LlamaCpp, Llm, Message
 from .logs import ChatLogs
 from .models import (
@@ -258,7 +257,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
     agents = param.List(default=[ChatAgent], doc="""
         List of agents to coordinate.""")
 
-    context = param.Dict()
+    context = param.Dict(default={})
 
     demo_inputs = param.List(default=DEMO_MESSAGES, doc="""
         List of instructions to demo the Coordinator.""")
@@ -748,6 +747,12 @@ class Coordinator(Viewer, VectorLookupToolUser):
         )
 
         return result.yes
+
+    async def sync(self, context: TContext | None):
+        context = context or self.context
+        for tools in self._tools.values():
+            for tool in tools:
+                await tool.sync(context)
 
 
 class DependencyResolver(Coordinator):
