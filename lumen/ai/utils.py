@@ -109,6 +109,15 @@ def merge_dicts(
     # mode == "update": Deep merge
     result = base_dict.copy()
 
+    # Handle mutually exclusive Vega-Lite composition operators
+    composition_ops = {"hconcat", "vconcat", "concat", "repeat", "facet"}
+    update_composition_ops = composition_ops & set(update_dict.keys())
+    if update_composition_ops:
+        # Remove all other composition operators when one is being updated
+        for op in composition_ops:
+            if op not in update_composition_ops:
+                result.pop(op, None)
+
     for key, value in update_dict.items():
         if key not in result:
             # New key, just add it

@@ -10,6 +10,27 @@ Choose the correct merge mode:
 - mode='replace': Change mark type (bar→line) or complete restructure
 - mode='append_layers': Add annotations (never for fixes)
 
+# CRITICAL: 'mode' field placement
+
+The 'mode' field is METADATA for the merge operation and must NEVER appear in your yaml_update.
+It should only be returned as a separate field in your response model.
+
+CORRECT:
+```python
+VegaLiteUpdateSpec(
+    mode="update",
+    yaml_update="layer:\n  - mark: bar\n    encoding:..."  # NO 'mode' inside here!
+)
+```
+
+INCORRECT:
+```yaml
+# DO NOT include 'mode' in yaml_update:
+layer:
+  - mark: bar
+    mode: update  # ❌ WRONG - 'mode' is not a valid Vega-Lite property
+```
+
 # CRITICAL: ALWAYS INCLUDE FULL HIERARCHY
 
 For layered specs, ALWAYS include the layer array in yaml_update:

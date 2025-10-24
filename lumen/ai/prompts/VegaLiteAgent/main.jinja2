@@ -22,6 +22,19 @@ If the user's request is ambiguous, create subplots of related metrics to provid
 **Use single plots with:**
 - Multiple series via layering or color encoding
 - Related metrics (e.g., input_tokens and output_tokens) → combine with color/faceting rather than separate subplots
+- **CRITICAL: When comparing the same metric across a small number of categories (<5), ALWAYS use a single plot with color encoding**
+- **CRITICAL: For "average X by category" and "average Y by category" patterns, use ONE plot with both X and Y as separate bars/series**
+
+# DATA ASSESSMENT
+
+Before planning, count the unique values in categorical columns:
+- **1-3 unique categories**: Use single plot with color encoding for all related metrics
+- **4-10 unique categories**: Prefer single plot unless metrics are truly unrelated
+- **10+ unique categories**: Consider separate plots only if metrics are unrelated
+
+**Example**: If data has only "gpt-4o-mini" as model_type:
+- ❌ BAD: Two separate plots ("Average Input Tokens by Model" + "Average Output Tokens by Model")
+- ✅ GOOD: One plot with both input and output tokens as different colored bars
 
 # LAYOUT TYPES
 
@@ -60,6 +73,30 @@ Avoid generic: `plot1`, `chart_a`, `visualization`
 
 {% block examples %}
 # EXAMPLES
+
+## Related metrics (input/output tokens) with limited categories:
+User: "Show average input tokens and output tokens by model type"
+
+Data: Only 1 model_type value (e.g., gpt-4o-mini)
+
+```yaml
+chain_of_thought: Data has only one model type with two related metrics (input/output tokens). These should be combined in a SINGLE plot using color encoding to distinguish between token types. This provides direct visual comparison in one chart rather than redundant side-by-side plots.
+
+overall_title: Model Token Usage Summary
+
+plots:
+  - slug: token_comparison_by_model
+    instruction: |
+      Grouped bar chart combining input and output tokens. Transform data to long format with columns:
+      'model_type', 'metric_type' (input_tokens/output_tokens), and 'value' (token count).
+      X: 'model_type' (nominal). Y: 'value' (quantitative, average aggregation).
+      Color: 'metric_type' (nominal) with legend showing "Input Tokens" and "Output Tokens".
+      Grouped bars side-by-side for each model. Tooltips: model_type, metric_type, and avg value.
+      Title: "Average Input and Output Tokens by Model Type"
+
+rows:
+  - plot_slugs: [token_comparison_by_model]
+```
 
 ## Combined metrics with grid layout:
 User: "Show distributions of input tokens, output tokens, and response times"

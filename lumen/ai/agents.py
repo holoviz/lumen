@@ -1695,15 +1695,16 @@ class VegaLiteAgent(BaseViewAgent):
         dict
             Complete Vega-Lite specification with hconcat/vconcat
         """
-        # Build row structures - strip data and schema from each plot spec
+        # Build row structures - strip data, schema, and mode from each plot spec
         assembled_rows = []
         for row in plan.rows:
             if len(row.plot_slugs) == 1:
-                # Single plot in this row - add clean spec without data/schema
+                # Single plot in this row - add clean spec without data/schema/mode
                 slug = row.plot_slugs[0]
                 clean_spec = plot_specs[slug].copy()
                 clean_spec.pop("data", None)
                 clean_spec.pop("$schema", None)
+                clean_spec.pop("mode", None)  # Strip 'mode' - it's not a valid Vega-Lite property
                 assembled_rows.append(clean_spec)
             else:
                 # Multiple plots in this row - wrap in hconcat with clean specs
@@ -1712,6 +1713,7 @@ class VegaLiteAgent(BaseViewAgent):
                     clean_spec = plot_specs[slug].copy()
                     clean_spec.pop("data", None)
                     clean_spec.pop("$schema", None)
+                    clean_spec.pop("mode", None)  # Strip 'mode' - it's not a valid Vega-Lite property
                     row_plots.append(clean_spec)
                 assembled_rows.append({"hconcat": row_plots})
 
@@ -1739,7 +1741,15 @@ class VegaLiteAgent(BaseViewAgent):
                 lumen_spec = await self._extract_spec({"yaml_spec": vega_spec_yaml})
                 break
             except Exception as e:
-                vega_spec_yaml = await self._update_lumen_spec(str(e), messages, self._memory, yaml.safe_dump({"spec": vega_spec_yaml}), language="yaml")
+                # Wrap the parsed spec in {"spec": ...} for _update_lumen_spec
+                # Parse YAML first to avoid double-wrapping strings
+                wrapped_dict = {"spec": yaml.safe_load(vega_spec_yaml)}
+                updated_yaml = await self._update_lumen_spec(
+                    str(e), messages, self._memory, yaml.dump(wrapped_dict), language="yaml"
+                )
+                # Extract just the spec part from the returned wrapped dict
+                updated_dict = yaml.safe_load(updated_yaml)
+                vega_spec_yaml = yaml.dump(updated_dict["spec"])
         return lumen_spec
 
     async def _extract_spec(self, spec: dict[str, Any]) -> dict[str, Any]:
@@ -1869,11 +1879,15 @@ class VegaLiteAgent(BaseViewAgent):
 
         # Merge and validate using the mode specified by the LLM
         final_dict = current_dict.copy()
+
         try:
+            if isinstance(final_dict["spec"], str):
+                final_dict["spec"] = yaml.safe_load(final_dict["spec"])
             final_dict["spec"] = merge_dicts(final_dict["spec"], update_dict, mode=mode)
             await self._extract_spec({"yaml_spec": yaml.dump(final_dict["spec"])})
         except Exception as e:
             log_debug(f"Skipping invalid annotation update due to error: {e}")
+            breakpoint()
             return yaml.dump(current_dict)
         return yaml.dump(final_dict)
 
@@ -1969,6 +1983,8 @@ class VegaLiteAgent(BaseViewAgent):
                 response_model=self.prompts["create_subplot"]["response_model"],
             )
             spec = yaml.safe_load(output.yaml_spec)
+            # Strip 'mode' field if it accidentally got included in the spec
+            spec.pop('mode', None)
             step.success_title = f"Generated {slug}" if slug else "Plot generated"
 
             return slug, spec

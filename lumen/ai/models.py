@@ -205,6 +205,7 @@ class VegaLiteLayoutPlan(EscapeBaseModel):
     )
 
     plots: list[VegaLitePlotSpec] | None = Field(
+        default=None,
         description="""
         All plots to generate, listed in the order they should appear.
         Each plot will be generated independently in parallel.
@@ -212,6 +213,7 @@ class VegaLiteLayoutPlan(EscapeBaseModel):
     )
 
     rows: list[VegaLiteRow] | None = Field(
+        default=None,
         description="""
         Layout structure defining how plots are arranged.
         Each row contains plot slugs that will be arranged horizontally.
