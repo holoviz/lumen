@@ -42,7 +42,8 @@ from .memory import _Memory
 from .models import (
     DbtslQueryParams, DiscoveryQueries, DiscoverySufficiency, DistinctQuery,
     PartialBaseModel, QueryCompletionValidation, RetrySpec, SampleQuery,
-    SqlQuery, VegaLiteSpec, VegaLiteSpecUpdate, make_sql_model,
+    SqlQuery, VegaLiteLayoutPlan, VegaLiteSubplotSpec, VegaLiteUpdateSpec,
+    make_sql_model,
 )
 from .schemas import get_metaset
 from .services import DbtslMixin
@@ -50,8 +51,8 @@ from .tools import ToolUser
 from .translate import param_to_pydantic
 from .utils import (
     apply_changes, clean_sql, describe_data, get_data, get_pipeline,
-    get_root_exception, get_schema, load_json, log_debug, report_error,
-    retry_llm_output, set_nested, stream_details,
+    get_root_exception, get_schema, load_json, log_debug, merge_dicts,
+    report_error, retry_llm_output, set_nested, stream_details,
 )
 from .vector_store import DuckDBVectorStore
 from .views import AnalysisOutput, LumenOutput, VegaLiteOutput
@@ -572,7 +573,7 @@ class LumenBaseAgent(Agent):
         else:
             return apply_changes(lines, line_changes)
 
-    async def _retry_output_by_line(
+    async def _update_lumen_spec(
         self,
         feedback: str,
         messages: list[Message],
@@ -590,18 +591,17 @@ class LumenBaseAgent(Agent):
         )
 
         with self.param.update(memory=memory):
-            numbered_text = "\n".join(f"{i:2d}: {line}" for i, line in enumerate(lines, 1))
+            original_text = "\n".join(f"{i:2d}: {line}" for i, line in enumerate(lines, 1))
             system = await self._render_prompt(
                 "retry_output",
                 messages=messages,
-                numbered_text=numbered_text,
+                original_text=original_text,
                 language=language,
-                feedback=feedback,
                 **context
             )
         retry_model = self._lookup_prompt_key("retry_output", "response_model")
         invoke_kwargs = dict(
-            messages=messages,
+            messages=[{"role": "user", "content": feedback}],
             system=system,
             response_model=retry_model,
             model_spec="edit",
@@ -622,7 +622,7 @@ class LumenBaseAgent(Agent):
     ):
         async def _retry_invoke(event: param.parameterized.Event):
             with out.param.update(loading=True):
-                out.spec = await self._retry_output_by_line(event.new, messages, memory, out.spec, language=out.language)
+                out.spec = await self._update_lumen_spec(event.new, messages, memory, out.spec, language=out.language)
 
         memory = self._memory
         retry_controls = RetryControls()
@@ -651,6 +651,9 @@ class SQLAgent(LumenBaseAgent):
         default=[
             "Use for displaying, examining, or querying data resulting in a data pipeline",
             "Use for calculations that require data (e.g., 'calculate average', 'sum by category')",
+            "Returns preprocessed raw values (wrangled strings, filtered nulls/invalid data)",
+            "For follow-ups adding metrics/dimensions, modify the original query to return all existing and new metrics in a single result set",
+            "Return all data without limits for vague queries",
             "Commonly used with AnalystAgent to analyze query results",
             "NOT for non-data questions or technical programming help",
             "NOT useful if the user is using the same data for plotting",
@@ -782,7 +785,7 @@ class SQLAgent(LumenBaseAgent):
                 if "KeyError" in feedback:
                     feedback += " The data does not exist; select from available data sources."
 
-                retry_result = await self._retry_output_by_line(
+                retry_result = await self._update_lumen_spec(
                     feedback, messages, self._memory, sql_query, language=f"sql.{dialect}", discovery_context=discovery_context
                 )
                 sql_query = clean_sql(retry_result, dialect)
@@ -1391,7 +1394,7 @@ class BaseViewAgent(LumenBaseAgent):
                         title="Re-attempted view generation",
                         steps_layout=self._steps_layout,
                     ) as retry_step:
-                        view = await self._retry_output_by_line(e, messages, self._memory, yaml.safe_dump(spec), language="")
+                        view = await self._update_lumen_spec(e, messages, self._memory, yaml.safe_dump(spec), language="")
                         if "yaml_spec: " in view:
                             view = view.split("yaml_spec: ")[-1].rstrip('"').rstrip("'")
                         retry_step.stream(f"\n\n```yaml\n{view}\n```")
@@ -1440,6 +1443,7 @@ class hvPlotAgent(BaseViewAgent):
         default=[
             "Use for exploratory data analysis, interactive plots, and dynamic filtering",
             "Use for quick, iterative data visualization during analysis",
+            "Handles aggregation, binning, and counting for distributions and histograms",
         ]
     )
 
@@ -1502,6 +1506,7 @@ class VegaLiteAgent(BaseViewAgent):
         default=[
             "Use for publication-ready visualizations or when user specifically requests Vega-Lite charts",
             "Use for polished charts intended for presentation or sharing",
+            "Handles aggregation, binning, and counting for distributions and histograms",
         ]
     )
 
@@ -1509,10 +1514,10 @@ class VegaLiteAgent(BaseViewAgent):
 
     prompts = param.Dict(
         default={
-            "main": {"response_model": VegaLiteSpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"},
-            "interaction_polish": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "interaction_polish.jinja2"},
-            "annotate_plot": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "annotate_plot.jinja2"},
-            "retry_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "retry_output.jinja2"},
+            "main": {"response_model": VegaLiteLayoutPlan, "template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"},
+            "create_subplot": {"response_model": VegaLiteSubplotSpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "create_subplot.jinja2"},
+            "annotate_plot": {"response_model": VegaLiteUpdateSpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "annotate_plot.jinja2"},
+            "retry_output": {"response_model": VegaLiteUpdateSpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "retry_output.jinja2"},
         }
     )
 
@@ -1551,141 +1556,73 @@ class VegaLiteAgent(BaseViewAgent):
         self._vector_store = DuckDBVectorStore(uri=str(uri), read_only=True)
         return self._vector_store
 
-    def _deep_merge_dicts(self, base_dict: dict[str, Any], update_dict: dict[str, Any]) -> dict[str, Any]:
-        """Deep merge two dictionaries, with update_dict taking precedence.
+    def _add_tooltips_to_layer(self, layer):
+        encoding = layer.get("encoding", {})
+        if not encoding or encoding.get("tooltip"):
+            return  # Skip if no encoding or tooltips already exist
 
-        Special handling:
-        - If update_dict contains 'layer', append new annotation layers rather than merging
-        - When merging layers, ensure each layer has both 'mark' and 'encoding'
+        # Extract all fields from encoding and create tooltips
+        layer["encoding"]["tooltip"] = [
+            {"field": d["field"], "type": d.get("type", "nominal")}
+            for d in encoding.values()
+            if isinstance(d, dict) and "field" in d and "value" not in d
+        ]
+
+    def _fix_nested_configs(self, vega_spec: dict) -> dict:
+        """Fix nested config issues by moving configs to root level.
+
+        Detects configs that are incorrectly nested within hconcat/vconcat items
+        and moves them to the root level, merging with any existing root config.
         """
-        if not update_dict:
-            return base_dict
+        spec = vega_spec.copy()
+        root_config = spec.get("config", {})
 
-        result = base_dict.copy()
+        def extract_and_remove_config(item: dict) -> dict:
+            """Extract config from an item and remove it."""
+            if isinstance(item, dict) and "config" in item:
+                config = item.pop("config")
+                return config
+            return {}
 
-        # Special handling for layer arrays
-        if "layer" in update_dict and "layer" in result:
-            base_layers = result["layer"]
-            update_layers = update_dict["layer"]
+        # Check hconcat items
+        if "hconcat" in spec:
+            for item in spec["hconcat"]:
+                nested_config = extract_and_remove_config(item)
+                if nested_config:
+                    root_config = merge_dicts(root_config, nested_config, mode="update")
 
-            # Check if update layers are new annotations (have different mark types from base)
-            # If first update layer has a different mark type, treat as append operation
-            is_append_operation = False
-            if update_layers and base_layers:
-                first_update_mark = self._get_layer_mark_type(update_layers[0])
-                first_base_mark = self._get_layer_mark_type(base_layers[0])
-
-                # If marks are different, or if update has marks like 'rule', 'rect', 'text'
-                # which are typically annotations, treat as append
-                annotation_marks = {'rule', 'rect', 'text'}
-                if first_update_mark != first_base_mark or first_update_mark in annotation_marks:
-                    is_append_operation = True
-
-            if is_append_operation:
-                # Append all update layers as new annotation layers
-                # Normalize each layer to ensure proper mark structure
-                normalized_updates = [self._normalize_layer_mark(layer.copy()) for layer in update_layers]
-                result["layer"] = base_layers + normalized_updates
-            else:
-                # Original merge behavior for updating existing layers
-                merged_layers = []
-                for i, update_layer in enumerate(update_layers):
-                    if i < len(base_layers):
-                        # Merge with corresponding base layer
-                        base_layer = base_layers[i]
-                        merged_layer = self._deep_merge_dicts(base_layer, update_layer)
-
-                        # Ensure layer has mark (carry over from base if not in update)
-                        if "mark" not in merged_layer and "mark" in base_layer:
-                            merged_layer["mark"] = base_layer["mark"]
-
-                        merged_layers.append(merged_layer)
-                    else:
-                        # New layer added by update
-                        merged_layers.append(self._normalize_layer_mark(update_layer.copy()))
-
-                # Keep any remaining base layers not updated
-                merged_layers.extend(base_layers[len(update_layers):])
-                result["layer"] = merged_layers
-        else:
-            # Standard recursive merge for non-layer properties
-            for key, value in update_dict.items():
-                if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-                    result[key] = self._deep_merge_dicts(result[key], value)
+        # Check vconcat items
+        if "vconcat" in spec:
+            for item in spec["vconcat"]:
+                # Handle nested hconcat within vconcat
+                if isinstance(item, dict) and "hconcat" in item:
+                    for hconcat_item in item["hconcat"]:
+                        nested_config = extract_and_remove_config(hconcat_item)
+                        if nested_config:
+                            root_config = merge_dicts(root_config, nested_config, mode="update")
                 else:
-                    result[key] = value
+                    nested_config = extract_and_remove_config(item)
+                    if nested_config:
+                        root_config = merge_dicts(root_config, nested_config, mode="update")
 
-        # If we're merging in a 'layer', remove conflicting top-level properties
-        if "layer" in update_dict:
-            result.pop("mark", None)
-            result.pop("encoding", None)
+        # Set merged config at root if we found any nested configs
+        if root_config:
+            spec["config"] = root_config
 
-        return result
+        return spec
 
-    def _get_layer_mark_type(self, layer: dict) -> str | None:
-        """Extract mark type from a layer, handling both dict and string formats."""
-        if "mark" in layer:
-            mark = layer["mark"]
-            if isinstance(mark, dict):
-                return mark.get("type")
-            return mark
-        return None
+    def _add_tooltips_and_polish(self, vega_spec: dict) -> dict:
+        """Add tooltips to all encoded fields (bare minimum, no LLM needed)."""
+        spec = vega_spec.copy()
 
-    def _normalize_layer_mark(self, layer: dict) -> dict:
-        """Ensure layer has a properly formatted single mark property.
+        # Apply to layers or flat spec
+        if "layer" in spec:
+            for layer in spec["layer"]:
+                self._add_tooltips_to_layer(layer)
+        else:
+            self._add_tooltips_to_layer(spec)
 
-        Handles cases where:
-        - Mark appears multiple times (duplicate keys in parsed YAML/dict)
-        - Mark is a string but needs to be an object with 'type'
-        - Layer might have conflicting mark definitions
-        """
-        if "mark" not in layer:
-            return layer
-
-        mark = layer["mark"]
-
-        # If mark is a string, convert to object with type
-        if isinstance(mark, str):
-            layer["mark"] = {"type": mark}
-        # If mark is a dict, ensure it has 'type'
-        elif isinstance(mark, dict) and "type" not in mark:
-            # Malformed mark without type - try to infer or leave as-is
-            # This shouldn't happen in valid Vega-Lite specs
-            pass
-
-        return layer
-
-    async def _update_spec_step(
-        self,
-        step_name: str,
-        step_desc: str,
-        vega_spec: dict[str, Any],
-        prompt_name: str,
-        messages: list[Message],
-        doc: str | None = None,
-    ) -> tuple[str, dict[str, Any]]:
-        """Update a Vega-Lite spec with incremental changes for a specific step."""
-        with self.interface.param.update(callback_exception="raise"), self._add_step(title=step_desc, steps_layout=self._steps_layout) as step:
-            system_prompt = await self._render_prompt(
-                prompt_name,
-                messages,
-                vega_spec=yaml.dump(vega_spec, default_flow_style=False),
-                doc=doc,
-                table=self._memory["pipeline"].table,
-            )
-
-            model_spec = self.prompts.get(prompt_name, {}).get("llm_spec", self.llm_spec_key)
-            result = await self.llm.invoke(
-                messages=messages,
-                system=system_prompt,
-                response_model=VegaLiteSpecUpdate,
-                model_spec=model_spec,
-            )
-
-            step.stream(f"Reasoning: {result.chain_of_thought}")
-            step.stream(f"Update:\n```yaml\n{result.yaml_update}\n```", replace=False)
-            update_dict = yaml.safe_load(result.yaml_update)
-            return step_name, update_dict
+        return spec
 
     async def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
         try:
@@ -1734,67 +1671,88 @@ class VegaLiteAgent(BaseViewAgent):
         self._handle_map_compatibility(vega_spec, vega_spec_str)
         return vega_spec
 
-    @classmethod
-    def _extract_as_keys(cls, transforms: list[dict]) -> list[str]:
+    async def _assemble_layout(
+        self,
+        messages: list[Message],
+        plot_specs: dict[str, dict],
+        plan: VegaLiteLayoutPlan,
+        table_name: str
+    ) -> dict:
         """
-        Extracts all 'as' field names from a list of Vega-Lite transform definitions.
+        Assemble individual plot specs into a complete Vega-Lite layout.
 
         Parameters
         ----------
-        transforms : list[dict]
-            A list of Vega-Lite transform objects.
+        plot_specs : dict
+            Mapping of plot slugs to their minimal Vega-Lite specs
+        plan : VegaLiteLayoutPlan
+            The layout plan containing rows structure
+        table_name : str
+            Data table name to inject into data source
 
         Returns
         -------
-        list[str]
-            A list of field names from 'as' keys (flattened, deduplicated).
+        dict
+            Complete Vega-Lite specification with hconcat/vconcat
         """
-        as_fields = []
-        for t in transforms:
-            # Top-level 'as'
-            if "as" in t:
-                if isinstance(t["as"], list):
-                    as_fields.extend(t["as"])
-                elif isinstance(t["as"], str):
-                    as_fields.append(t["as"])
-            for key in ("aggregate", "joinaggregate", "window"):
-                if key in t and isinstance(t[key], list):
-                    for entry in t[key]:
-                        if "as" in entry:
-                            as_fields.append(entry["as"])
+        # Build row structures - strip data, schema, and mode from each plot spec
+        assembled_rows = []
+        for row in plan.rows:
+            if len(row.plot_slugs) == 1:
+                # Single plot in this row - add clean spec without data/schema/mode
+                slug = row.plot_slugs[0]
+                clean_spec = plot_specs[slug].copy()
+                clean_spec.pop("data", None)
+                clean_spec.pop("$schema", None)
+                clean_spec.pop("mode", None)  # Strip 'mode' - it's not a valid Vega-Lite property
+                assembled_rows.append(clean_spec)
+            else:
+                # Multiple plots in this row - wrap in hconcat with clean specs
+                row_plots = []
+                for slug in row.plot_slugs:
+                    clean_spec = plot_specs[slug].copy()
+                    clean_spec.pop("data", None)
+                    clean_spec.pop("$schema", None)
+                    clean_spec.pop("mode", None)  # Strip 'mode' - it's not a valid Vega-Lite property
+                    row_plots.append(clean_spec)
+                assembled_rows.append({"hconcat": row_plots})
 
-        return list(dict.fromkeys(as_fields))
+        # Determine top-level structure
+        if len(assembled_rows) == 1:
+            # Single row with one or more plots
+            vega_spec = assembled_rows[0]
+        else:
+            # Multiple rows = vconcat
+            vega_spec = {"vconcat": assembled_rows}
 
-    @retry_llm_output()
-    async def _generate_basic_spec(self, messages: list[Message], pipeline: Pipeline, doc_examples: list, doc: str, errors: list | None = None) -> dict[str, Any]:
-        """Generate the basic VegaLite spec structure."""
-        errors_context = self._build_errors_context(pipeline, errors)
-        with self._add_step(title="Creating basic plot structure", steps_layout=self._steps_layout) as step:
-            system_prompt = await self._render_prompt(
-                "main",
-                messages,
-                table=pipeline.table,
-                doc=doc,
-                doc_examples=doc_examples,
-                **errors_context,
-            )
-            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
+        # Wrap with schema, data, and optional title
+        # Note: Do NOT add width/height at top level for layouts
+        vega_spec = {
+            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+            "data": {"name": table_name},
+            **vega_spec
+        }
+        if plan.overall_title:
+            vega_spec["title"] = plan.overall_title
 
-            response = self.llm.stream(
-                messages,
-                system=system_prompt,
-                model_spec=model_spec,
-                response_model=VegaLiteSpec,
-            )
+        vega_spec_yaml = yaml.dump(vega_spec)
+        for _ in range(3):
+            try:
+                lumen_spec = await self._extract_spec({"yaml_spec": vega_spec_yaml})
+                break
+            except Exception as e:
+                # Wrap the parsed spec in {"spec": ...} for _update_lumen_spec
+                # Parse YAML first to avoid double-wrapping strings
+                wrapped_dict = {"spec": yaml.safe_load(vega_spec_yaml)}
+                updated_yaml = await self._update_lumen_spec(
+                    str(e), messages, self._memory, yaml.dump(wrapped_dict), language="yaml"
+                )
+                # Extract just the spec part from the returned wrapped dict
+                updated_dict = yaml.safe_load(updated_yaml)
+                vega_spec_yaml = yaml.dump(updated_dict["spec"])
+        return lumen_spec
 
-            async for output in response:
-                step.stream(output.chain_of_thought, replace=True)
-
-            current_spec = await self._extract_spec({"yaml_spec": output.yaml_spec})
-            step.success_title = "Complete visualization with titles and colors created"
-        return current_spec
-
-    async def _extract_spec(self, spec: dict[str, Any]):
+    async def _extract_spec(self, spec: dict[str, Any]) -> dict[str, Any]:
         # .encode().decode('unicode_escape') fixes a JSONDecodeError in Python
         # where it's expecting property names enclosed in double quotes
         # by properly handling the escaped characters in your JSON string
@@ -1804,10 +1762,38 @@ class VegaLiteAgent(BaseViewAgent):
             vega_spec = load_json(json_spec)
         if "$schema" not in vega_spec:
             vega_spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
-        if "width" not in vega_spec:
-            vega_spec["width"] = "container"
-        if "height" not in vega_spec:
-            vega_spec["height"] = "container"
+
+        # Fix nested config issues before validation
+        vega_spec = self._fix_nested_configs(vega_spec)
+
+        # Add default font sizes for better readability
+        default_font_config = {
+            "axis": {
+                "labelFontSize": 16,
+                "titleFontSize": 20
+            },
+            "text": {
+                "fontSize": 16
+            },
+            "title": {
+                "fontSize": 20,
+                "subtitleFontSize": 18
+            }
+        }
+
+        # Merge default font config with any existing config (existing takes precedence)
+        if "config" not in vega_spec:
+            vega_spec["config"] = {}
+        vega_spec["config"] = merge_dicts(default_font_config, vega_spec.get("config", {}), mode="update")
+
+        # Only add width/height for single plots, not for layouts (hconcat/vconcat)
+        is_layout = "hconcat" in vega_spec or "vconcat" in vega_spec
+        if not is_layout:
+            if "width" not in vega_spec:
+                vega_spec["width"] = "container"
+            if "height" not in vega_spec:
+                vega_spec["height"] = "container"
+
         self._output_type._validate_spec(vega_spec)
 
         # using string comparison because these keys could be in different nested levels
@@ -1822,94 +1808,88 @@ class VegaLiteAgent(BaseViewAgent):
         return {"spec": vega_spec, "sizing_mode": "stretch_both", "min_height": 300, "max_width": 1200}
 
     async def _get_doc_examples(self, user_query: str) -> list:
-        # Query vector store for relevant examples
+        """Query vector store for relevant examples."""
         doc_examples = []
         vector_store = self._get_vector_store()
-        if vector_store:
-            if user_query:
-                doc_results = await vector_store.query(user_query, top_k=5)
-                # Extract text and specs from results
-                k = 0
-                for result in doc_results:
-                    if "metadata" in result and "spec" in result["metadata"]:
-                        # Include the text description/title before the spec
-                        text_description = result.get("text", "")
-                        spec = result["metadata"]["spec"]
-                        if "hconcat" in spec or "vconcat" in spec or "repeat" in spec or "params" in spec:
-                            # Skip complex multi-view specs for simplicity
-                            continue
-                        doc_examples.append(f"{text_description}\n```yaml\n{spec}\n```")
-                        k += 1
-                    if k >= 3:  # Limit to top 3 examples
-                        break
+        if vector_store and user_query:
+            doc_results = await vector_store.query(user_query, top_k=5, threshold=0.7)
+            k = 0
+            for result in doc_results:
+                if "metadata" in result and "spec" in result["metadata"]:
+                    text_description = result.get("text", "")
+                    spec = result["metadata"]["spec"]
+                    spec_str = str(spec)
 
-    async def _retry_output_by_line(
+                    # Filter complex specs
+                    if any(x in spec for x in ["hconcat", "vconcat", "repeat"]):
+                        continue
+                    # Filter overly nested layers (>2 layers = too complex)
+                    if spec_str.count("layer") > 2:
+                        continue
+                    # Filter params (usually interactive/complex)
+                    if "params" in spec:
+                        continue
+                    # Size limit to avoid token bloat
+                    if len(spec_str) > 1500:
+                        continue
+
+                    doc_examples.append(f"{text_description}\n```yaml\n{spec}\n```")
+                    k += 1
+                if k >= 2:  # Limit to top 2 examples (down from 3)
+                    break
+        return doc_examples
+
+    async def _update_lumen_spec(
         self,
         feedback: str,
         messages: list[Message],
         memory: _Memory,
         original_output: str,
         language: str | None = None,
+        prompt_name: str = "retry_output",
         **context
     ) -> str:
+        """
+        Update the lumen spec based on user feedback in a targeted manner, e.g. nested dicts.
+        """
+        current_dict = yaml.safe_load(original_output)
         doc_examples = await self._get_doc_examples(feedback)
         context["doc_examples"] = doc_examples
-        return await super()._retry_output_by_line(feedback, messages, memory, original_output, language, **context)
-
-    async def respond(
-        self,
-        messages: list[Message],
-        step_title: str | None = None,
-    ) -> Any:
-        """
-        Generates a VegaLite visualization using progressive building approach with real-time updates.
-        """
-        pipeline = self._memory.get("pipeline")
-        if not pipeline:
-            raise ValueError("No current pipeline found in memory.")
-
-        schema = await get_schema(pipeline)
-        if not schema:
-            raise ValueError("Failed to retrieve schema for the current pipeline.")
-
-        user_query = messages[-1].get("content", "") if messages[-1].get("role") == "user" else ""
-        doc_examples = await self._get_doc_examples(user_query)
-
-        # Step 1: Generate basic spec
-        doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
-        # Produces {"spec": {$schema: ..., ...}, "sizing_mode": ..., ...}
-        full_dict = await self._generate_basic_spec(messages, pipeline, doc_examples, doc)
-
-        # Step 2: Show complete plot immediately
-        self._memory["view"] = dict(full_dict, type=self.view_type)
-        view = self.view_type(pipeline=pipeline, **full_dict)
-        out = self._render_lumen(view, messages=messages, title=step_title)
-        # Get the latest spec from the rendered view, which includes type: vega-lite
-        full_dict = yaml.safe_load(out.spec)
-
-        # Step 3: enhancements (LLM-driven creative decisions)
-        steps = {
-            "interaction_polish": "Add helpful tooltips and ensure responsive, accessible user experience",
-        }
-
-        # Execute steps sequentially
-        for step_name, step_desc in steps.items():
-            # Only pass the vega lite 'spec' portion to prevent ballooning context
-            step_name, update_dict = await self._update_spec_step(
-                step_name, step_desc, full_dict["spec"], step_name, messages, doc=doc
+        with self.interface.param.update(callback_exception="raise"), self.param.update(memory=memory):
+            system_prompt = await self._render_prompt(
+                prompt_name,
+                messages,
+                feedback=feedback,
+                original_text=yaml.dump(current_dict["spec"], default_flow_style=False),
+                language=language,
+                **context
             )
-            try:
-                test_spec = self._deep_merge_dicts(full_dict["spec"], update_dict)
-                await self._extract_spec({"yaml_spec": yaml.dump(test_spec)})  # Validation
-            except Exception as e:
-                log_debug(f"Skipping invalid {step_name} update due to error: {e}")
-                continue
-            full_dict["spec"] = self._deep_merge_dicts(full_dict["spec"], update_dict)
-            out.spec = yaml.dump(full_dict)
-            log_debug(f"📊 Applied {step_name} updates and refreshed visualization")
 
-        self._memory["view"] = full_dict
-        return view
+            model_spec = self.prompts.get(prompt_name, {}).get("llm_spec", self.llm_spec_key)
+            result = await self.llm.invoke(
+                messages=[{"role": "user", "content": feedback}],
+                system=system_prompt,
+                response_model=self.prompts[prompt_name]["response_model"],
+                model_spec=model_spec,
+            )
+            update_dict = yaml.safe_load(result.yaml_update)
+            mode = result.mode or 'update'
+            if mode == 'append_layers' and isinstance(update_dict, list):
+                update_dict = {"layer": update_dict}
+
+        # Merge and validate using the mode specified by the LLM
+        final_dict = current_dict.copy()
+
+        try:
+            if isinstance(final_dict["spec"], str):
+                final_dict["spec"] = yaml.safe_load(final_dict["spec"])
+            final_dict["spec"] = merge_dicts(final_dict["spec"], update_dict, mode=mode)
+            await self._extract_spec({"yaml_spec": yaml.dump(final_dict["spec"])})
+        except Exception as e:
+            log_debug(f"Skipping invalid annotation update due to error: {e}")
+            breakpoint()
+            return yaml.dump(current_dict)
+        return yaml.dump(final_dict)
 
     def _render_lumen(
         self,
@@ -1921,19 +1901,19 @@ class VegaLiteAgent(BaseViewAgent):
         """Override to add annotation controls alongside retry controls."""
         async def _retry_invoke(event: param.parameterized.Event):
             with out.param.update(loading=True):
-                out.spec = await self._retry_output_by_line(event.new, messages, self._memory, out.spec, language=out.language)
+                out.spec = await self._update_lumen_spec(event.new, messages, self._memory, out.spec, language=out.language)
 
         async def _annotation_invoke(event: param.parameterized.Event):
             """Handle annotation request."""
             with out.param.update(loading=True):
-                current_dict = yaml.safe_load(out.spec)
-                updated_dict = await self._apply_annotation(
-                    annotation_request=event.new,
-                    current_dict=current_dict,
+                out.spec = await self._update_lumen_spec(
+                    feedback=event.new,
                     messages=messages,
+                    memory=self._memory,
+                    original_output=out.spec,
+                    language=out.language,
+                    prompt_name="annotate_plot",
                 )
-                # Already converted to full spec
-                out.spec = yaml.dump(updated_dict)
 
         retry_controls = RetryControls()
         retry_controls.param.watch(_retry_invoke, "reason")
@@ -1958,62 +1938,117 @@ class VegaLiteAgent(BaseViewAgent):
             self.interface.stream(replace=True, max_width=self._max_width, **message_kwargs)
         return out
 
-    async def _apply_annotation(
+    async def _create_subplot(
         self,
-        annotation_request: str,
-        current_dict: dict,
-        messages: list[Message],
-    ) -> dict:
-        """
-        Apply annotations based on user request.
+        instruction: str,
+        slug: str,
+        pipeline: Pipeline,
+        doc: str,
+        doc_examples: list
+    ) -> tuple[str, dict]:
+        """Generate a single plot spec (works for both layout and standalone plots).
 
         Parameters
         ----------
-        annotation_request : str
-            User's description of what to annotate
-        current_spec : dict
-            The current VegaLite specification (full dict with 'spec' key)
-        messages : list[Message]
-            Chat history for context
-
-        Returns
-        -------
-        dict
-            Updated specification with annotations
+        instruction : str
+            The user instruction for generating the plot
+        slug : str
+            The identifier for this plot
+        pipeline : Pipeline
+            The data pipeline to visualize
+        doc : str
+            Documentation string for the view type
+        doc_examples : list
+            Example specs from vector store (can be empty list)
         """
-        # Add user's annotation request to messages context
-        annotation_messages = messages + [{
-            "role": "user",
-            "content": f"Add annotations: {annotation_request}"
-        }]
+        instruction_message = {"role": "user", "content": instruction}
 
-        with self.interface.param.update(callback_exception="raise"):
+        with self._add_step(
+            title=f"Generating {slug}" if slug else "Generating plot",
+            steps_layout=self._steps_layout
+        ) as step:
             system_prompt = await self._render_prompt(
-                "annotate_plot",
-                annotation_messages,
-                vega_spec=yaml.dump(current_dict["spec"], default_flow_style=False),
+                "create_subplot",
+                [instruction_message],
+                table=pipeline.table,
+                doc=doc,
+                doc_examples=doc_examples
             )
+            model_spec = self.prompts.get("create_subplot", {}).get("llm_spec", self.llm_spec_key)
 
-            model_spec = self.prompts.get("annotate_plot", {}).get("llm_spec", self.llm_spec_key)
-            result = await self.llm.invoke(
-                messages=annotation_messages,
+            output = await self.llm.invoke(
+                [instruction_message],
                 system=system_prompt,
-                response_model=VegaLiteSpecUpdate,
                 model_spec=model_spec,
+                response_model=self.prompts["create_subplot"]["response_model"],
             )
-            update_dict = yaml.safe_load(result.yaml_update)
+            spec = yaml.safe_load(output.yaml_spec)
+            # Strip 'mode' field if it accidentally got included in the spec
+            spec.pop('mode', None)
+            step.success_title = f"Generated {slug}" if slug else "Plot generated"
 
-        # Merge and validate
-        final_dict = current_dict.copy()
-        try:
-            final_dict["spec"] = self._deep_merge_dicts(final_dict["spec"], update_dict)
-            await self._extract_spec({"yaml_spec": yaml.dump(final_dict["spec"])})
-        except Exception as e:
-            log_debug(f"Skipping invalid annotation update due to error: {e}")
-            # Return original spec if annotation fails
-            return final_dict
+            return slug, spec
 
-        return final_dict
+    async def respond(
+        self,
+        messages: list[Message],
+        step_title: str | None = None,
+    ) -> Any:
+        """
+        Main entry point - always use layout planning path for consistency.
+        The layout planner decides whether to create single or multiple plots.
+        """
+        pipeline = self._memory.get("pipeline")
+        if not pipeline:
+            raise ValueError("No current pipeline found in memory.")
+
+        # Get doc and examples upfront
+        doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
+        user_query = messages[-1].get("content", "") if messages[-1].get("role") == "user" else ""
+        doc_examples = await self._get_doc_examples(user_query)
+
+        # Step 1: Always plan the layout (handles both single and multi-plot)
+        with self._add_step(title="Planning visualization", steps_layout=self._steps_layout) as step:
+            system_prompt = await self._render_prompt("main", messages)
+            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
+
+            plan = await self.llm.invoke(
+                messages,
+                system=system_prompt,
+                model_spec=model_spec,
+                response_model=self.prompts["main"]["response_model"],
+            )
+
+            subplots = plan.plots
+            step.stream(f"Planning {len(subplots)} plot(s) in {len(plan.rows)} row(s)")
+            step.stream(f"\nStrategy: {plan.chain_of_thought}")
+            step.success_title = f"Planned {len(subplots)} plot(s)"
+
+        # Step 2: Generate all plots (always use main prompt with examples)
+        is_single_plot = len(subplots) == 1
+
+        with self._add_step(
+            title=f"Generating {len(subplots)} plot(s){' in parallel' if not is_single_plot else ''}",
+            steps_layout=self._steps_layout
+        ) as step:
+            results = await asyncio.gather(*[
+                self._create_subplot(
+                    plot.instruction,
+                    plot.slug,
+                    pipeline,
+                    doc,
+                    doc_examples
+                ) for plot in subplots
+            ])
+            plot_specs = dict(results)
+            step.success_title = f"Generated {len(plot_specs)} plot(s)"
+
+        # Step 3: Assemble and render
+        full_dict = await self._assemble_layout(messages, plot_specs, plan, pipeline.table)
+        self._memory["view"] = dict(full_dict, type=self.view_type)
+        view = self.view_type(pipeline=pipeline, **full_dict)
+        self._render_lumen(view, messages=messages, title=step_title)
+        return view
 
 
 class AnalysisAgent(LumenBaseAgent):

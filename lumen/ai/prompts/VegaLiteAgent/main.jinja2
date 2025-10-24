@@ -1,221 +1,157 @@
-{% extends 'BaseViewAgent/main.jinja2' %}
+{% extends 'Actor/main.jinja2' %}
+
+{% block context %}
+SQL table: {{ memory['table'] }}
+
+Dataset:
+{{ memory.data }}
+{% endblock %}
 
 {% block instructions %}
-Generate complete, effective Vega-Lite visualizations that clearly communicate data insights.
+Create visualization layout plans that break complex multi-plot requests into independent, parallelizable chart specs.
+If the user's request is ambiguous, create subplots of related metrics to provide a comprehensive view.
 
-# ESSENTIAL STRUCTURE
+# WHEN TO USE LAYOUTS
 
-Every visualization must:
-- Use `data: {name: {{ memory['table'] }}}` with exact column names from source
-- Wrap all marks in a `layer` array, each with its own `mark` and `encoding`
-- Focus on ONE primary metric or relationship per chart
-- Include narrative titles that highlight key insights from the data
-- Do not overcrowd the plot with too many data points, especially for bars
+**Use layouts for:**
+- Multiple metrics/dimensions needing separate plots ("show X and Y")
+- Comparisons across different visualizations
+- Dashboard arrangements
+- Side-by-side views or overview + detail
 
-# MARK vs ENCODING
+**Use single plots with:**
+- Multiple series via layering or color encoding
+- Related metrics (e.g., input_tokens and output_tokens) → combine with color/faceting rather than separate subplots
+- **CRITICAL: When comparing the same metric across a small number of categories (<5), ALWAYS use a single plot with color encoding**
+- **CRITICAL: For "average X by category" and "average Y by category" patterns, use ONE plot with both X and Y as separate bars/series**
 
-This is the most common source of errors. Properties belong in different places:
+# DATA ASSESSMENT
 
-**Mark** (static styling): Position (`dx`, `dy`, `align`, `baseline`) and style (`color`, `opacity`, `fontSize`) go here
-```yaml
-mark: {type: text, align: left, dx: 3, color: black}
-```
+Before planning, count the unique values in categorical columns:
+- **1-3 unique categories**: Use single plot with color encoding for all related metrics
+- **4-10 unique categories**: Prefer single plot unless metrics are truly unrelated
+- **10+ unique categories**: Consider separate plots only if metrics are unrelated
 
-**Encoding** (data mappings): Fields and channels (`x`, `y`, `color`, `size`, `text`) go here
-```yaml
-encoding:
-  x: {field: year, type: quantitative}
-  color: {value: 'blue'}  # Static values need {value: ...}
-```
+**Example**: If data has only "gpt-4o-mini" as model_type:
+- ❌ BAD: Two separate plots ("Average Input Tokens by Model" + "Average Output Tokens by Model")
+- ✅ GOOD: One plot with both input and output tokens as different colored bars
 
-# LEGENDS
+# LAYOUT TYPES
 
-Legends appear when you map data to `color`, `size`, or `shape` in encoding.
+**hconcat** (side-by-side): Comparing different visualization types or unrelated metrics
 
-**Single field**: Map directly
-**Multiple series**: Use `transform` to create a constant field, then map it (never use `datum` in color encoding)
+**vconcat** (stacked): Hierarchical/sequential relationships (overview above, detail below)
 
-# KEY PATTERNS
+**Grid** (vconcat of hconcats): Dashboard with balanced information density
 
-**Sort rankings**: `sort: "-x"` (horizontal) or `sort: "-y"` (vertical) on the categorical axis
+# RECOGNIZING DATA PATTERNS
 
-**Color purposefully**: Encode dimensions, highlight outliers/leaders, or show thresholds. Keep color in `mark` for text labels that shouldn't appear in legends.
+**Single row with multiple metrics** (e.g., 1 row, 4 columns like total_revenue, total_orders, avg_price, profit):
+→ Use KPI cards in hconcat (side-by-side dashboard)
 
-**Informative titles**: Main title states what's shown, subtitle reveals the key insight or pattern
+**Multiple rows, few columns** (e.g., 10 rows, 2-3 columns like category, revenue, count):
+→ Use bar/line charts to show distribution/comparison
 
-**Data types**: Match type to your data - quantitative for continuous, ordinal for ordered categories, nominal for unordered, temporal for dates
+**Time series** (date/timestamp column with metrics):
+→ Use line charts; combine related metrics with color encoding
+
+# SINGLE DATA POINTS / KPI CARDS
+
+For single values or aggregated metrics, use dashboard-style KPI cards with colored backgrounds and large text.
+Each card uses a layer with a colored rectangle background and centered text overlay.
+
+# PLOT INSTRUCTIONS
+
+Each instruction must be self-contained with: mark type, x/y axes (field, type, aggregation), encodings (color, size, tooltip), transforms (sort, filter, group, top-N), and styling.
+
+# SLUGS
+
+Descriptive and unique: `monthly_revenue_trend`, `top_10_products_bar`, `category_distribution_pie`
+
+Avoid generic: `plot1`, `chart_a`, `visualization`
 {% endblock %}
 
 {% block examples %}
 # EXAMPLES
-{% if doc_examples is defined and doc_examples %}
-{% for example in doc_examples %}
-{{ example }}
-{% endfor %}
-{% endif %}
 
-Simple time series:
+## Related metrics (input/output tokens) with limited categories:
+User: "Show average input tokens and output tokens by model type"
+
+Data: Only 1 model_type value (e.g., gpt-4o-mini)
+
 ```yaml
-title:
-  anchor: start
-  fontSize: 20
-  subtitle: "Steady growth trend from 2010 to 2024"
-  subtitleColor: '#666666'
-  subtitleFontSize: 16
-  text: "Wind Turbine Capacity Over Time"
-data:
-  name: <TABLE_NAME>
-layer:
-  - mark:
-      type: line
-      point: true
-    encoding:
-      x: {field: year, type: quantitative}
-      y: {field: avg_capacity, type: quantitative}
+chain_of_thought: Data has only one model type with two related metrics (input/output tokens). These should be combined in a SINGLE plot using color encoding to distinguish between token types. This provides direct visual comparison in one chart rather than redundant side-by-side plots.
+
+overall_title: Model Token Usage Summary
+
+plots:
+  - slug: token_comparison_by_model
+    instruction: |
+      Grouped bar chart combining input and output tokens. Transform data to long format with columns:
+      'model_type', 'metric_type' (input_tokens/output_tokens), and 'value' (token count).
+      X: 'model_type' (nominal). Y: 'value' (quantitative, average aggregation).
+      Color: 'metric_type' (nominal) with legend showing "Input Tokens" and "Output Tokens".
+      Grouped bars side-by-side for each model. Tooltips: model_type, metric_type, and avg value.
+      Title: "Average Input and Output Tokens by Model Type"
+
+rows:
+  - plot_slugs: [token_comparison_by_model]
 ```
 
-Ranked bar chart with highlighting:
+## Combined metrics with grid layout:
+User: "Show distributions of input tokens, output tokens, and response times"
+
 ```yaml
-title:
-  anchor: start
-  fontSize: 20
-  subtitle: "Texas leads with over 15,000 turbines deployed"
-  subtitleColor: '#666666'
-  subtitleFontSize: 16
-  text: "Wind Turbine Deployment by State"
-data:
-  name: <TABLE_NAME>
-layer:
-  - mark: bar
-    encoding:
-      y:
-        field: state
-        type: nominal
-        sort: "-x"
-        axis:
-          title: "State"
-      x:
-        field: turbine_count
-        type: quantitative
-        axis:
-          title: "Number of Turbines"
-      color:
-        condition:
-          test: "datum.state === 'TX'"
-          value: '#1f77b4'
-        value: '#aec7e8'
+chain_of_thought: Input/output tokens are related metrics, so combine them in one chart with color encoding. Response time is a different metric type (full-width row for detail).
+
+overall_title: GPT-4o Mini Token Usage Analysis
+
+plots:
+  - slug: token_usage_distribution
+    instruction: |
+      Histogram with two series. Transform data to long format with 'token_type' (input/output) and 'token_count' columns.
+      X: 'token_count' (quantitative, binned). Y: count (quantitative, count). 
+      Color: 'token_type' (nominal) with legend. Tooltips: token_type, bin range, and count. 
+      Title: "Input and Output Token Distribution"
+    
+  - slug: response_time_distribution
+    instruction: |
+      Histogram. X: 'response_time' (quantitative, binned). Y: count (quantitative, count). 
+      Blue bars. Tooltips: bin range and count. Title: "Response Time Distribution"
+
+rows:
+  - plot_slugs: [token_usage_distribution]
+  - plot_slugs: [response_time_distribution]
 ```
 
-Bar chart with legend (single data field):
+## Dashboard with KPIs:
+User: "Show me total revenue, total orders, and total profit"
+
 ```yaml
-title:
-  text: "Sales by Category"
-data:
-  name: <TABLE_NAME>
-layer:
-  - mark: bar
-    encoding:
-      x:
-        field: category
-        type: nominal
-      y:
-        field: sales
-        type: quantitative
-      color:
-        field: category
-        type: nominal
-        legend:
-          title: "Category"
-          orient: "right"
+chain_of_thought: Three single aggregated values. Use dashboard-style KPI cards with colored backgrounds side-by-side.
+
+overall_title: Key Performance Indicators
+
+plots:
+  - slug: total_revenue_kpi
+    instruction: |
+      KPI card with colored background. Layer 1: Blue rectangle (#1f77b4) background (0,0 to 200,100).
+      Layer 2: White text (fontSize: 36, fontWeight: bold) centered at (100,50).
+      Text: sum of 'revenue' (quantitative, currency format).
+    
+  - slug: total_orders_kpi
+    instruction: |
+      KPI card with colored background. Layer 1: Orange rectangle (#ff7f0e) background (0,0 to 200,100).
+      Layer 2: White text (fontSize: 36, fontWeight: bold) centered at (100,50).
+      Text: count of 'order_id' (quantitative, comma format).
+    
+  - slug: total_profit_kpi
+    instruction: |
+      KPI card with colored background. Layer 1: Green rectangle (#2ca02c) background (0,0 to 200,100).
+      Layer 2: White text (fontSize: 36, fontWeight: bold) centered at (100,50).
+      Text: sum of 'profit' (quantitative, currency format).
+
+rows:
+  - plot_slugs: [total_revenue_kpi, total_orders_kpi, total_profit_kpi]
 ```
-
-Dual-axis chart with legend (multiple series):
-```yaml
-title:
-  text: "Growth Metrics Over Time"
-data:
-  name: <TABLE_NAME>
-layer:
-  - transform:
-    - calculate: "'Revenue'"
-      as: metric_name
-    mark:
-      type: line
-      point: true
-    encoding:
-      x:
-        field: year
-        type: quantitative
-      y:
-        field: revenue
-        type: quantitative
-        axis:
-          title: "Revenue ($M)"
-      color:
-        field: metric_name
-        type: nominal
-        scale:
-          domain: ["Revenue", "Profit"]
-          range: ['#1f77b4', '#ff7f0e']
-        legend:
-          title: "Metric"
-          orient: "top-right"
-  - transform:
-    - calculate: "'Profit'"
-      as: metric_name
-    mark:
-      type: line
-      point: true
-    encoding:
-      x:
-        field: year
-        type: quantitative
-      y:
-        field: profit
-        type: quantitative
-        axis:
-          title: "Profit ($M)"
-      color:
-        field: metric_name
-        type: nominal
-        scale:
-          domain: ["Revenue", "Profit"]
-          range: ['#1f77b4', '#ff7f0e']
-        legend:
-          title: "Metric"
-          orient: "top-right"
-```
-
-Top 10 bar chart with transform:
-```yaml
-title:
-  text: "Top 10 Cities by Average Fare"
-  subtitle: "Showing highest-cost destinations"
-data:
-  name: <TABLE_NAME>
-transform:
-  - window:
-      - op: row_number
-        as: row_number
-  - filter: datum.row_number <= 10
-layer:
-  - mark: bar
-    encoding:
-      y:
-        field: city
-        type: nominal
-        sort: "-x"
-      x:
-        field: avg_fare
-        type: quantitative
-```
-{% endblock %}
-
-{% block errors %}
-{{ super() }}
-
-{% if errors is defined and errors %}
-For extra context, here are the data and columns available:
-{{ columns_context }}
-{% endif %}
 {% endblock %}
