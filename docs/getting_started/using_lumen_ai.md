@@ -92,7 +92,6 @@ import lumen.ai as lmai
 
 ui = lmai.ExplorerUI(
     data='data.csv',
-    llm_choices=['gpt-4o', 'gpt-4o-mini'],
     # ... other configuration options
 )
 ui.servable()
