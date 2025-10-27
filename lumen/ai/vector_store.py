@@ -1129,6 +1129,8 @@ class DuckDBVectorStore(VectorStore):
             "params": {}
         }
         for param_name in self.embeddings.param:
+            if param_name == "api_key":
+                continue
             if param_name not in ['name']:
                 value = getattr(self.embeddings, param_name)
                 if isinstance(value, (str, int, float, bool, list, dict)) or value is None:
