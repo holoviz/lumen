@@ -733,11 +733,15 @@ class SourceControls(Viewer):
         return self.menu
 
 
-class RetryControls(Viewer):
+class RevisionControls(Viewer):
 
-    active = param.Boolean(False, doc="Click to retry")
+    active = param.Boolean(False, doc="Click to revise")
 
-    reason = param.String(doc="Reason for retry")
+    instruction = param.String(doc="Instruction to LLM to revise output")
+
+    toggle_kwargs = {}
+
+    input_kwargs = {}
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -745,13 +749,12 @@ class RetryControls(Viewer):
             self.param.active,
             active_icon="cancel",
             color="default",
-            description="Prompt LLM to retry",
-            icon="edit",
             icon_size="1em",
             label="",
             margin=(5, 0),
             size="small",
-            sx={".MuiIcon-root": {"color": "var(--mui-palette-default-dark)"}}
+            sx={".MuiIcon-root": {"color": "var(--mui-palette-default-dark)"}},
+            **self.toggle_kwargs
         )
         self._text_input = TextInput(
             placeholder="Enter feedback and press the <Enter> to retry.",
@@ -760,14 +763,12 @@ class RetryControls(Viewer):
             margin=(5, 0),
             size="small"
         )
-        row = Row(icon, self._text_input)
-        self._row = row
-
         self._text_input.param.watch(self._enter_reason, "enter_pressed")
+        self._row = Row(icon, self._text_input)
 
     def _enter_reason(self, _):
         self.param.update(
-            reason=self._text_input.value_input,
+            instruction=self._text_input.value_input,
             active=False,
         )
 
@@ -775,52 +776,27 @@ class RetryControls(Viewer):
         return self._row
 
 
-class AnnotationControls(Viewer):
+class RetryControls(RevisionControls):
+
+    instruction = param.String(doc="Reason for retry")
+
+    input_kwargs = {"placeholder": "Enter feedback and press the <Enter> to retry."}
+
+    toggle_kwargs = {"icon": "edit", "description": "Prompt LLM to retry"}
+
+
+
+class AnnotationControls(RevisionControls):
     """Controls for adding annotations to visualizations."""
 
-    active = param.Boolean(False, doc="Click to add annotations")
+    input_kwargs = {
+        "placeholder": "Describe what to annotate (e.g., 'highlight peak values', 'mark outliers')..."
+    }
 
-    annotation_request = param.String(doc="User's annotation request")
-
-    def __init__(self, **params):
-        super().__init__(**params)
-        icon = ToggleIcon.from_param(
-            self.param.active,
-            active_icon="cancel",
-            color="default",
-            description="Add annotations to highlight key insights",
-            icon="chat-bubble",
-            icon_size="1em",
-            label="",
-            margin=(5, 0),
-            size="small",
-            sx={".MuiIcon-root": {"color": "var(--mui-palette-default-dark)"}}
-        )
-        self._text_input = TextInput(
-            placeholder="Describe what to annotate (e.g., 'highlight peak values', 'mark outliers')...",
-            visible=icon.param.value,
-            max_length=200,
-            margin=(5, 0),
-            size="small"
-        )
-        row = Row(icon, self._text_input)
-        self._row = row
-
-        self._text_input.param.watch(self._enter_request, "enter_pressed")
-
-    def _enter_request(self, _):
-        """Handle Enter key press in text input."""
-        self.param.update(
-            annotation_request=self._text_input.value_input,
-            active=False,
-        )
-        # Clear the input after submission
-        self._text_input.value = ""
-
-    def __panel__(self):
-        return self._row
-
-
+    toggle_kwargs = {
+        "description": "Add annotations to highlight key insights",
+        "icon": "chat-bubble",
+    }
 
 
 class TableSourceCard(Viewer):

@@ -1,13 +1,10 @@
-from __future__ import annotations
-
 import asyncio
 import json
 import traceback
 
 from collections.abc import Callable
-from functools import partial
 from typing import (
-    Annotated, Any, ClassVar, Literal,
+    Annotated, Any, ClassVar, Literal, NotRequired,
 )
 
 import pandas as pd
@@ -23,7 +20,6 @@ from panel_material_ui.chat import ChatMessage
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
-from ..base import Component
 from ..dashboard import Config
 from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource, Source
@@ -40,7 +36,7 @@ from .config import (
     MissingContextError, RetriesExceededError,
 )
 from .context import ContextModel, TContext
-from .controls import AnnotationControls, RetryControls, SourceControls
+from .controls import SourceControls
 from .llm import Llm, Message, OpenAI
 from .models import (
     DbtslQueryParams, DiscoveryQueries, DiscoverySufficiency, DistinctQuery,
@@ -59,7 +55,9 @@ from .utils import (
     retry_llm_output, set_nested, stream_details,
 )
 from .vector_store import DuckDBVectorStore
-from .views import AnalysisOutput, LumenOutput, VegaLiteOutput
+from .views import (
+    AnalysisOutput, LumenOutput, SQLOutput, VegaLiteOutput,
+)
 
 
 class Agent(Viewer, ToolUser, ContextProvider):
@@ -183,7 +181,6 @@ class Agent(Viewer, ToolUser, ContextProvider):
         return [await self._stream(messages, system_prompt)], context
 
 
-
 class SourceOutputs(ContextModel):
 
     source: Source
@@ -280,9 +277,13 @@ class ChatAgent(Agent):
 
 class AnalystInputs(ContextModel):
 
+    data: NotRequired[Any]
+
     source: Source
 
     pipeline: Pipeline
+
+    sql: NotRequired[str]
 
 
 class AnalystAgent(ChatAgent):
@@ -406,6 +407,8 @@ class TableListInputs(ContextModel):
 
     source: Source
 
+    visible_slugs: NotRequired[set[str]]
+
 
 class TableListAgent(ListAgent):
     """
@@ -462,6 +465,11 @@ class TableListAgent(ListAgent):
         return tables_by_source
 
 
+class DocumentListInputs(ContextModel):
+
+    document_sources: dict[str, Any]
+
+
 class DocumentListAgent(ListAgent):
     """
     The DocumentListAgent lists all available documents provided by the user.
@@ -477,8 +485,6 @@ class DocumentListAgent(ListAgent):
     purpose = param.String(default="""
         Displays a list of all available documents.""")
 
-    requires = param.List(default=["document_sources"], readonly=True)
-
     _column_name = "Documents"
 
     _message_format = "Tell me about: {item}"
@@ -487,13 +493,12 @@ class DocumentListAgent(ListAgent):
     async def applies(cls, context: TContext) -> bool:
         sources = context.get("document_sources")
         if not sources:
-            return False  # source not loaded yet; always apply
+            return False
         return len(sources) > 1
 
     def _get_items(self, context: TContext) -> dict[str, list[str]]:
         # extract the filename, following this pattern `Filename: 'filename'``
         documents = [doc["metadata"].get("filename", "untitled") for doc in context.get("document_sources", [])]
-        # Return all documents under a single "Documents" category
         return {"Documents": documents} if documents else {}
 
 
@@ -517,7 +522,9 @@ class LumenBaseAgent(Agent):
         """
 
     @staticmethod
-    def _prepare_lines_for_retry(original_output: str, retry_target_keys: list[str] | None = None) -> tuple[list[str], bool, dict | None]:
+    def _prepare_lines_for_retry(
+        original_output: str, retry_target_keys: list[str] | None = None
+    ) -> tuple[list[str], bool, dict | None]:
         """
         Prepare lines for retry by optionally extracting targeted sections from YAML.
 
@@ -591,9 +598,9 @@ class LumenBaseAgent(Agent):
         else:
             return apply_changes(lines, line_changes)
 
-    async def _retry_output_by_line(
+    async def revise(
         self,
-        feedback: str,
+        instruction: str,
         messages: list[Message],
         context: TContext,
         original_output: str,
@@ -601,13 +608,12 @@ class LumenBaseAgent(Agent):
         **kwargs
     ) -> str:
         """
-        Retry the output by line, allowing the user to provide feedback on why the output was not satisfactory, or an error.
+        Retry the output by line, allowing the user to provide instruction on why the output was not satisfactory, or an error.
         """
         # Prepare lines for retry processing
         lines, targeted, original_spec = self._prepare_lines_for_retry(
             original_output, self._retry_target_keys
         )
-
         numbered_text = "\n".join(f"{i:2d}: {line}" for i, line in enumerate(lines, 1))
         system = await self._render_prompt(
             "retry_output",
@@ -615,68 +621,45 @@ class LumenBaseAgent(Agent):
             context,
             numbered_text=numbered_text,
             language=language,
-            feedback=feedback,
+            feedback=instruction,
             **kwargs
         )
         retry_model = self._lookup_prompt_key("retry_output", "response_model")
-        invoke_kwargs = dict(
-            messages=messages,
+        result = await self.llm.invoke(
+            messages,
             system=system,
             response_model=retry_model,
-            model_spec="edit",
+            model_spec="edit"
         )
-        result = await self.llm.invoke(**invoke_kwargs)
-
-        # Apply line changes and return result
         return self._apply_line_changes_to_output(
             lines, result.lines_changes, targeted, original_spec, self._retry_target_keys
         )
 
-    def _render_lumen(
-        self,
-        component: Component,
-        context: TContext,
-        messages: list | None = None,
-        title: str | None = None,
-        **kwargs,
-    ):
-        async def _retry_invoke(event: param.parameterized.Event):
-            with out.param.update(loading=True):
-                out.spec = await self._retry_output_by_line(event.new, messages, context, out.spec, language=out.language)
-
-        retry_controls = RetryControls()
-        retry_controls.param.watch(_retry_invoke, "reason")
-        out = self._output_type(
-            component=component,
-            footer=[retry_controls],
-            title=title,
-            **kwargs
-        )
-        out.param.watch(partial(self._update_spec, context), "spec")
-        if self.interface is not None:
-            message_kwargs = dict(value=out, user=self.user)
-            self.interface.stream(replace=True, max_width=self._max_width, **message_kwargs)
-        return out
-
 
 class SQLInputs(ContextModel):
+
+    data: NotRequired[Any]
 
     source: Source
 
     sources: Annotated[list[Source], ("accumulate", "source")]
 
+    sql: NotRequired[str]
+
     sql_metaset: SQLMetaset
+
+    visible_slugs: NotRequired[set[str]]
 
 
 class SQLOutputs(ContextModel):
+
+    data: Any
 
     table: str
 
     sql: str
 
     pipeline: Pipeline
-
-    data: Any
 
 
 class SQLAgent(LumenBaseAgent):
@@ -729,7 +712,7 @@ class SQLAgent(LumenBaseAgent):
 
     _extensions = ("codeeditor", "tabulator")
 
-    _output_type = LumenOutput
+    _output_type = SQLOutput
 
     inputs = SQLInputs
     outputs = SQLOutputs
@@ -767,7 +750,7 @@ class SQLAgent(LumenBaseAgent):
                 if "KeyError" in feedback:
                     feedback += " The data does not exist; select from available data sources."
 
-                retry_result = await self._retry_output_by_line(
+                retry_result = await self.revise(
                     feedback, messages, context, sql_query, language=f"sql.{dialect}", discovery_context=discovery_context
                 )
                 sql_query = clean_sql(retry_result, dialect)
@@ -826,15 +809,9 @@ class SQLAgent(LumenBaseAgent):
         if df.empty and raise_if_empty:
             raise ValueError(f"\nQuery `{result['sql']}` returned empty results; ensure all the WHERE filter values exist in the dataset.")
 
-        # Render output
-        view = self._render_lumen(
-            pipeline,
-            context,
-            messages=messages,
-            title=step_title,
-            spec=result["sql"]
+        view = self._output_type(
+            component=pipeline, title=step_title, spec=result["sql"]
         )
-
         return view, {
             "data": await describe_data(df),
             "sql": result["sql"],
@@ -1301,20 +1278,22 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
             return None
 
         pipeline = out_context["pipeline"]
-        out = self._render_lumen(
-            pipeline, context, messages=messages, title=step_title, spec=out_context["sql"]
+        view = self._output_type(
+            component=pipeline, title=step_title, spec=out_context["sql"]
         )
-        return [out], out_context
+        return [view], out_context
 
 
 
 class ViewInputs(ContextModel):
 
+    data: Any
+
     pipeline: Pipeline
 
-    table: str
+    sql_metaset: NotRequired[SQLMetaset]
 
-    data: Any
+    table: str
 
 
 class ViewOutputs(ContextModel):
@@ -1424,7 +1403,7 @@ class BaseViewAgent(LumenBaseAgent):
                         title="Re-attempted view generation",
                         steps_layout=self._steps_layout,
                     ) as retry_step:
-                        view = await self._retry_output_by_line(e, messages, context, yaml.safe_dump(spec), language="")
+                        view = await self.revise(e, messages, context, yaml.safe_dump(spec), language="")
                         if "yaml_spec: " in view:
                             view = view.split("yaml_spec: ")[-1].rstrip('"').rstrip("'")
                         retry_step.stream(f"\n\n```yaml\n{view}\n```")
@@ -1465,7 +1444,7 @@ class BaseViewAgent(LumenBaseAgent):
         spec = await self._create_valid_spec(messages, context, pipeline, schema, step_title)
         context["view"] = dict(spec, type=self.view_type)
         view = self.view_type(pipeline=pipeline, **spec)
-        out = self._render_lumen(view, context, messages=messages, title=step_title)
+        out = self._output_type(component=view, title=step_title)
         return [out], {"view": view}
 
 
@@ -1550,6 +1529,8 @@ class VegaLiteAgent(BaseViewAgent):
             "retry_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "retry_output.jinja2"},
         }
     )
+
+    user = param.String(default="Vega")
 
     vector_store_path = param.Path(default=None, check_exists=False, doc="""
         Path to a custom vector store for storing and retrieving Vega-Lite examples;
@@ -1888,7 +1869,7 @@ class VegaLiteAgent(BaseViewAgent):
                         break
         return doc_examples
 
-    async def _retry_output_by_line(
+    async def revise(
         self,
         feedback: str,
         messages: list[Message],
@@ -1899,7 +1880,7 @@ class VegaLiteAgent(BaseViewAgent):
     ) -> str:
         doc_examples = await self._get_doc_examples(feedback)
         context["doc_examples"] = doc_examples
-        return await super()._retry_output_by_line(feedback, messages, context, original_output, language, **kwargs)
+        return await super().revise(feedback, messages, context, original_output, language, **kwargs)
 
     async def respond(
         self,
@@ -1932,7 +1913,7 @@ class VegaLiteAgent(BaseViewAgent):
         # Step 2: Show complete plot immediately
         context["view"] = dict(full_dict, type=self.view_type)
         view = self.view_type(pipeline=pipeline, **full_dict)
-        out = self._render_lumen(view, context, messages=messages, title=step_title)
+        out = self._output_type(component=view, title=step_title)
         # Get the latest spec from the rendered view, which includes type: vega-lite
         full_dict = yaml.safe_load(out.spec)
 
@@ -1961,66 +1942,26 @@ class VegaLiteAgent(BaseViewAgent):
         out_context = {"view": full_dict}
         return [out], out_context
 
-    def _render_lumen(
+    async def annotate(
         self,
-        component: Component,
-        context: TContext,
-        messages: list | None = None,
-        title: str | None = None,
-        **kwargs,
-    ) -> LumenOutput:
-        """Override to add annotation controls alongside retry controls."""
-        async def _retry_invoke(event: param.parameterized.Event):
-            with out.param.update(loading=True):
-                out.spec = await self._retry_output_by_line(event.new, messages, context, out.spec, language=out.language)
-
-        async def _annotation_invoke(event: param.parameterized.Event):
-            """Handle annotation request."""
-            with out.param.update(loading=True):
-                current_dict = yaml.safe_load(out.spec)
-                updated_dict = await self._apply_annotation(
-                    annotation_request=event.new,
-                    current_dict=current_dict,
-                    messages=messages,
-                )
-                # Already converted to full spec
-                out.spec = yaml.dump(updated_dict)
-
-        retry_controls = RetryControls()
-        retry_controls.param.watch(_retry_invoke, "reason")
-
-        annotation_controls = AnnotationControls()
-        annotation_controls.param.watch(_annotation_invoke, "annotation_request")
-
-        out = self._output_type(
-            component=component,
-            footer=[retry_controls, annotation_controls],
-            title=title,
-            **kwargs
-        )
-        out.param.watch(partial(self._update_spec, context), "spec")
-        if self.interface is not None:
-            message_kwargs = dict(value=out, user=self.user)
-            self.interface.stream(replace=True, max_width=self._max_width, **message_kwargs)
-        return out
-
-    async def _apply_annotation(
-        self,
-        annotation_request: str,
-        current_dict: dict,
+        instruction: str,
         messages: list[Message],
+        context: TContext,
+        spec: dict
     ) -> dict:
         """
         Apply annotations based on user request.
 
         Parameters
         ----------
-        annotation_request : str
+        instruction: str
             User's description of what to annotate
-        current_spec : dict
-            The current VegaLite specification (full dict with 'spec' key)
-        messages : list[Message]
+        messages: list[Message]
             Chat history for context
+        context: TContext
+            Session context
+        spec : dict
+            The current VegaLite specification (full dict with 'spec' key)
 
         Returns
         -------
@@ -2030,14 +1971,15 @@ class VegaLiteAgent(BaseViewAgent):
         # Add user's annotation request to messages context
         annotation_messages = messages + [{
             "role": "user",
-            "content": f"Add annotations: {annotation_request}"
+            "content": f"Add annotations: {instruction}"
         }]
 
         with self.interface.param.update(callback_exception="raise"):
             system_prompt = await self._render_prompt(
                 "annotate_plot",
                 annotation_messages,
-                vega_spec=yaml.dump(current_dict["spec"], default_flow_style=False),
+                context,
+                vega_spec=yaml.dump(spec["spec"], default_flow_style=False),
             )
 
             model_spec = self.prompts.get("annotate_plot", {}).get("llm_spec", self.llm_spec_key)
@@ -2050,19 +1992,18 @@ class VegaLiteAgent(BaseViewAgent):
             update_dict = yaml.safe_load(result.yaml_update)
 
         # Merge and validate
-        final_dict = current_dict.copy()
+        final_dict = spec.copy()
         try:
             final_dict["spec"] = self._deep_merge_dicts(final_dict["spec"], update_dict)
             await self._extract_spec({"yaml_spec": yaml.dump(final_dict["spec"])})
         except Exception as e:
             log_debug(f"Skipping invalid annotation update due to error: {e}")
-            # Return original spec if annotation fails
-            return final_dict
-
         return final_dict
 
 
 class AnalysisInputs(ContextModel):
+
+    data: NotRequired[Any]
 
     pipeline: Pipeline
 
@@ -2186,11 +2127,13 @@ class AnalysisAgent(LumenBaseAgent):
         if view is None and analysis.autorun:
             self.interface.stream("Failed to find an analysis that applies to this data")
         else:
-            out = self._render_lumen(view, context, messages=messages, analysis=analysis, pipeline=pipeline, title=step_title)
+            out = self._output_type(
+                component=view, title=step_title, analysis=analysis, pipeline=pipeline
+            )
             self.interface.stream(
                 analysis.message or f"Successfully created view with {analysis_name} analysis.", user="Assistant"
             )
-        return [out] if view is None else [out], out_context
+        return [] if view is None else [out], out_context
 
 
 class ValidationOutputs(ContextModel):

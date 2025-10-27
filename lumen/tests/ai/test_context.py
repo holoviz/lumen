@@ -1,4 +1,4 @@
-from typing import Annotated, TypedDict
+from typing import Annotated, NotRequired, TypedDict
 
 from lumen.ai.context import (
     AccumulateSpec, ContextError, ContextModel, ValidationIssue, _dedupe,
@@ -174,3 +174,56 @@ def test_isinstance_like_nested_collections():
     value = {"id": 1, "tags": ["x", "y"]}
     assert isinstance_like([value], list[Node])
     assert not isinstance_like([{"id": "1", "tags": [1]}], list[Node])
+
+def test_typed_dict_notrequired_presence_and_type():
+    class User(TypedDict):
+        name: str
+        age: NotRequired[int]
+
+    # Missing optional key is ok
+    assert isinstance_like({"name": "Alice"}, User)
+    # Present with correct type is ok
+    assert isinstance_like({"name": "Alice", "age": 30}, User)
+    # Present with wrong type should fail
+    assert not isinstance_like({"name": "Alice", "age": "30"}, User)
+
+def test_schema_fields_notrequired_required_and_type_unwrapped():
+    class Item(TypedDict):
+        id: int
+        note: NotRequired[str]
+
+    fields = schema_fields(Item)
+    assert fields["id"]["required"] is True
+    assert fields["note"]["required"] is False
+
+    # When present, optional field type should still be enforced as str
+    # (accept correct)
+    assert isinstance_like("hello", fields["note"]["type"])
+    # (reject incorrect)
+    assert not isinstance_like(123, fields["note"]["type"])
+
+def test_validate_task_inputs_notrequired_type_mismatch():
+    class Inp(ContextModel):
+        name: str
+        notes: NotRequired[str]
+
+    task = DummyTask("T", Inp, None, None)
+
+    # Wrong type for optional field when present should be flagged
+    issues = validate_task_inputs(task, {"name": "ok", "notes": 123}, {}, path=("G", "T"))
+    assert any(i.key == "notes" and "Type mismatch" in i.message for i in issues)
+
+    # Optional field omitted: no issues
+    issues2 = validate_task_inputs(task, {"name": "ok"}, {}, path=("G", "T"))
+    assert issues2 == []
+
+def test_isinstance_like_notrequired_vs_optional_none():
+    class TD(TypedDict):
+        a: NotRequired[int]
+        b: int | None
+
+    assert isinstance_like({"b": None}, TD)
+
+    assert not isinstance_like({"a": None, "b": 1}, TD)
+
+    assert isinstance_like({"a": 5, "b": None}, TD)

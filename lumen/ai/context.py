@@ -5,8 +5,8 @@ import sys
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import (
-    Annotated, Any, Literal, TypedDict, Union, get_args, get_origin,
-    get_type_hints,
+    Annotated, Any, Literal, NotRequired, Required, TypedDict, Union, get_args,
+    get_origin, get_type_hints,
 )
 
 TContext = Mapping[str, Any]
@@ -18,7 +18,6 @@ class ContextModel(TypedDict):
     of an Actor.
     """
 
-
 @dataclass(frozen=True)
 class AccumulateSpec:
     from_key: str
@@ -29,7 +28,6 @@ class AccumulateSpec:
     dedupe_by: str | Callable[[Any], Any] | None = None
     # if contexts also supply the accumulator field directly, do we include those too?
     include_target_field: bool = True
-
 
 def _parse_accumulate_meta(annotation: Any) -> AccumulateSpec | None:
   """
@@ -62,7 +60,6 @@ def _parse_accumulate_meta(annotation: Any) -> AccumulateSpec | None:
           from_key = m[1]
           kwargs = m[2] if len(m) > 2 else {}
           return AccumulateSpec(from_key=from_key, func=func, **kwargs)
-
 
 def _dedupe(seq: Iterable[Any], key: str | Callable[[Any], Any] | None) -> list[Any]:
     """
@@ -198,9 +195,22 @@ def unwrap_annotated(tp: Any) -> tuple[Any, list[Any]]:
     return tp, []
 
 
+_NOTREQ_ORIGIN = getattr(NotRequired, "__origin__", NotRequired)  # defensive
+_REQ_ORIGIN = getattr(Required, "__origin__", Required)
+
+def unwrap_field_type(tp: Any) -> Any:
+    """Unwrap Annotated, NotRequired, and Required to get the inner type."""
+    # Unwrap Annotated
+    if get_origin(tp) is Annotated:
+        tp = get_args(tp)[0]
+    # Unwrap NotRequired / Required (PEP 655)
+    origin = get_origin(tp)
+    if origin in (_NOTREQ_ORIGIN, _REQ_ORIGIN):
+        tp = get_args(tp)[0]
+    return tp
+
 def is_typed_dict(tp: Any) -> bool:
     return isinstance(tp, type) and issubclass(tp, dict) and hasattr(tp, "__required_keys__")
-
 
 def schema_fields(schema: type[TypedDict]) -> dict[str, dict[str, Any]]:
     """
@@ -211,13 +221,36 @@ def schema_fields(schema: type[TypedDict]) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for k, tp in ann.items():
         base, meta = unwrap_annotated(tp)
+        base = unwrap_field_type(base)
         out[k] = {"type": base, "required": (k in req), "meta": meta}
     return out
 
+def _accumulate_from_key(meta: list[Any]) -> str | None:
+    for m in meta:
+        if isinstance(m, tuple) and len(m) >= 2 and m[0] == "accumulate":
+            return m[1]
+    return None
+
+def input_dependency_keys(schema: type[TypedDict]) -> set[str]:
+    """
+    Keys that, if invalidated, require rerunning a task with this inputs schema.
+    Includes the field names themselves PLUS any ('accumulate','<from_key>') sources.
+    """
+    deps: set[str] = set()
+    # include_extras=True keeps Annotated metadata
+    ann = get_type_hints(schema, include_extras=True)
+    for key, tp in ann.items():
+        deps.add(key)
+        if get_origin(tp) is Annotated:
+            _, *meta = get_args(tp)
+            src = _accumulate_from_key(meta)
+            if src:
+                deps.add(src)
+    return deps
 
 def isinstance_like(value: Any, tp: Any) -> bool:
     """A pragmatic structural checker for common typing forms."""
-    tp, _ = unwrap_annotated(tp)
+    tp = unwrap_field_type(tp)
 
     origin = get_origin(tp)
     args = get_args(tp)
@@ -275,6 +308,7 @@ def collect_task_outputs(task) -> dict[str, Any]:
 
 
 def _base_type(tp: Any) -> Any:
+    tp = unwrap_field_type(tp)
     return get_args(tp)[0] if get_origin(tp) is Annotated else tp
 
 
@@ -283,8 +317,8 @@ def types_compatible(expected: Any, produced: Any) -> bool:
     Is a value of 'produced' type usable where 'expected' is required?
     (Permissive but practical; handles Annotated, Union/Optional, list/dict/Mapping, TypedDict.)
     """
-    expected = _base_type(expected)
-    produced = _base_type(produced)
+    expected = unwrap_field_type(_base_type(expected))
+    produced = unwrap_field_type(_base_type(produced))
 
     if expected is Any or produced is Any:
         return True
@@ -334,8 +368,7 @@ def types_compatible(expected: Any, produced: Any) -> bool:
 
 def _list_elem_type(tp: Any) -> Any | None:
     """If tp is list[X] (or Annotated[list[X], ...]), return X; else None."""
-    if get_origin(tp) is Annotated:
-        tp = get_args(tp)[0]
+    tp = unwrap_field_type(tp)
     if get_origin(tp) is list:
         args = get_args(tp)
         return args[0] if args else Any
@@ -493,7 +526,7 @@ def render_issues_tree(issues: list[ValidationIssue], *, title: str = "Validatio
             node = node.children.setdefault(seg, Node())
         node.leaf_issues.append(issue)
 
-    lines: list[str] = [title]
+    lines: list[str] = []
 
     def walk(node: Node, prefix: str = "", is_last: bool = True, label: str | None = None):
         branch = "└─ " if is_last else "├─ "
@@ -533,8 +566,8 @@ def render_issues_tree(issues: list[ValidationIssue], *, title: str = "Validatio
             exp = _pretty_type(iss.expected)
             act = _pretty_type(iss.actual) if iss.actual is not None else "∅"
             lines.append(f"   {leaf_branch}{iss.key}  [{iss.severity}] {iss.message} (expected {exp}, got {act})")
-
-    return "\n".join(lines)
+    tree = "\n".join(lines)
+    return f"{title}\n```\n{tree}\n```"
 
 
 class ContextError(RuntimeError):

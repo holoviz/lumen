@@ -16,17 +16,18 @@ from panel.config import config, panel_extension
 from panel.io.document import hold
 from panel.io.resources import CSS_URLS
 from panel.io.state import state
-from panel.layout import Column as PnColumn, HSpacer
+from panel.layout import Column, HSpacer
 from panel.pane import SVG, Markdown
 from panel.param import ParamMethod
 from panel.util import edit_readonly
 from panel.viewable import Child, Children, Viewer
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
-    Accordion, Button, ChatFeed, ChatInterface, ChatMessage, Column, Dialog,
-    Divider, FileDownload, IconButton, MenuList, MenuToggle, Page, Paper, Row,
-    Switch, Tabs, ToggleIcon,
+    Accordion, Button, ChatFeed, ChatInterface, ChatMessage,
+    Column as MuiColumn, Dialog, Divider, FileDownload, IconButton, MenuList,
+    MenuToggle, Page, Paper, Row, Switch, Tabs, ToggleIcon,
 )
+from panel_splitjs import VSplit
 
 from ..pipeline import Pipeline
 from ..sources import Source
@@ -49,7 +50,7 @@ from .llm_dialog import LLMConfigDialog
 from .report import Report
 from .utils import wrap_logfire
 from .vector_store import VectorStore
-from .views import LumenOutput
+from .views import LumenOutput, SQLOutput
 
 DataT = str | Path | Source | Pipeline
 
@@ -334,10 +335,12 @@ class UI(Viewer):
             state.on_session_destroyed(self._destroy)
         state.onload(self._initialize_new_llm)
 
-    async def _sync_sources(self, event):
-        if 'sources' in event.new:
+    @param.depends('context', on_init=True, watch=True)
+    async def _sync_sources(self, event=None):
+        context = event.new if event else self.context
+        if 'sources' in context:
             old_sources = self.context.get("sources", [self.context["source"]] if "source" in self.context else [])
-            new_sources = [src for src in event.new["sources"] if src not in old_sources]
+            new_sources = [src for src in context["sources"] if src not in old_sources]
             self.context["sources"] = old_sources + new_sources
 
             all_slugs = set()
@@ -357,18 +360,18 @@ class UI(Viewer):
             else:
                 # If no visible_slugs set, make all tables visible
                 self.context['visible_slugs'] = all_slugs
-        if "source" in event.new:
+        if "source" in context:
             if "source" in self.context:
                 old_source = self.context["source"]
                 if "sources" not in self.context:
                     self.context["sources"] = [old_source]
                 elif old_source not in self.context["sources"]:
                     self.context["sources"].append(old_source)
-            self.context["source"] = event.new["source"]
-        if "table" in event.new:
-            self.context["table"] = event.new["table"]
-        if "document_sources" in event.new:
-            new_docs = event.new["document_sources"]
+            self.context["source"] = context["source"]
+        if "table" in context:
+            self.context["table"] = context["table"]
+        if "document_sources" in context:
+            new_docs = context["document_sources"]
             if "document_sources" not in self.context:
                 self.context["document_sources"] = new_docs
             else:
@@ -652,7 +655,7 @@ class ExplorerUI(UI):
             context=self.context,
             title='Home',
             conversation=self.interface.objects,
-            view=Column(self._explorations_intro, self._explorer)
+            view=MuiColumn(self._explorations_intro, self._explorer)
         )
         home_item = {'label': 'Home', 'icon': 'home', 'view': self._home}
         self._explorations.param.update(items=[home_item], value=home_item)
@@ -845,7 +848,7 @@ class ExplorerUI(UI):
         conversation = list(self.interface.objects)
 
         # Create new exploration
-        output = Column(sizing_mode='stretch_both', loading=True)
+        output = MuiColumn(sizing_mode='stretch_both', loading=True)
         exploration = Exploration(
             context=plan.context,
             conversation=conversation,
@@ -872,23 +875,8 @@ class ExplorerUI(UI):
             await self._update_conversation()
         self._last_synced = exploration
 
-    def _add_outputs(self, exploration: Exploration, outputs: list[LumenOutput] | str, context: TContext):
+    def _add_outputs(self, exploration: Exploration, outputs: list[Any], context: TContext):
         view = exploration.view
-        if "sql" in context:
-            sql = context["sql"]
-            sql_pane = Markdown(
-                f'```sql\n{sql}\n```',
-                margin=(-15, 0, 0, 0), sizing_mode='stretch_width', name='SQL'
-            )
-            if sql.count('\n') > 10:
-                sql_pane = PnColumn(
-                    sql_pane, max_height=325, scroll='y-auto', name='SQL'
-                )
-            if len(view) and view[0].name == 'SQL':
-                view[0] = sql_pane
-            else:
-                view.insert(0, sql_pane)
-
         content = []
         if view.loading and 'pipeline' in context:
             pipeline = context['pipeline']
@@ -906,7 +894,9 @@ class ExplorerUI(UI):
             title = out.title or type(out).__name__.replace('Output', '')
             if len(title) > 25:
                 title = f"{title[:25]}..."
-            content.append((title, ParamMethod(out.render, inplace=True, sizing_mode='stretch_both')))
+            output = ParamMethod(out.render, inplace=True, sizing_mode='stretch_both')
+            vsplit = VSplit(out.editor, output, sizes=(20, 80), expanded_sizes=(20, 80), sizing_mode="stretch_both")
+            content.append((title, vsplit))
         if view.loading:
             tabs = Tabs(*content, dynamic=True, active=len(content), sizing_mode='stretch_both')
             view.append(tabs)
@@ -914,6 +904,71 @@ class ExplorerUI(UI):
             tabs = view[-1]
             tabs.extend(content)
         tabs.active = len(tabs)-1
+
+    def _render_view(self, out: LumenOutput) -> VSplit:
+        title = out.title or type(out).__name__.replace('Output', '')
+        if len(title) > 25:
+            title = f"{title[:25]}..."
+        output = ParamMethod(out.render, inplace=True, sizing_mode='stretch_both')
+        return (title, VSplit(out.editor, output, sizes=(20, 80), expanded_sizes=(20, 80), sizing_mode="stretch_both"))
+
+    def _add_views(self, exploration: Exploration, event: param.parameterized.Event):
+        outputs = [view for view in event.new if isinstance(view, LumenOutput) and view not in event.old]
+
+        view = exploration.view
+        if len(view) == 0:
+            tabs = None
+            content = [('Overview', "Waiting on data...")]
+        else:
+            tabs = view[0]
+            content = []
+
+        for out in outputs:
+            title, vsplit = self._render_view(out)
+            content.append((title, vsplit))
+            if tabs and isinstance(out, SQLOutput) and not isinstance(tabs[0], GraphicWalker):
+                tabs[0] = ("Overview", GraphicWalker(
+                    out.component.param.data,
+                    kernel_computation=True,
+                    tab='data',
+                    sizing_mode='stretch_both'
+                ))
+
+        if tabs is None:
+            tabs = Tabs(*content, dynamic=True, active=len(content), sizing_mode='stretch_both')
+            view.append(tabs)
+        else:
+            tabs.extend(content)
+        tabs.active = len(tabs)-1
+        if self._split.collapsed:
+            self._split.param.update(
+                collapsed=False,
+                sizes=self._split.expanded_sizes,
+            )
+
+    def _update_views(self, exploration: Exploration, event: param.parameterized.Event):
+        current = [view for view in event.new if isinstance(view, LumenOutput)]
+        old = [view for view in event.old if isinstance(view, LumenOutput)]
+
+        tabs = exploration.view[0]
+
+        idx = None
+        content = list(zip(tabs._names, tabs, strict=False))
+        for out in old:
+            if old in current:
+                continue
+            matches = [i for i, (_, vsplit) in enumerate(content[1:]) if out.editor in vsplit]
+            if matches:
+                idx = matches[0]+1
+                content.pop(idx+1)
+
+        for out in current:
+            if out in old:
+                idx = next(i for i, tab in enumerate(tabs[1:]) if out.editor in tab) + 1
+                continue
+            title, vsplit = self._render_view(out)
+            content.insert(idx, (title, vsplit))
+        tabs[:] = content
 
     def _wrap_callback(self, callback):
         async def wrapper(messages: list[Message], user: str, instance: ChatInterface):
@@ -926,10 +981,14 @@ class ExplorerUI(UI):
                     new_exploration = True
                 else:
                     new_exploration = False
+                exploration = self._explorations.value['view']
+                watcher = plan.param.watch(partial(self._add_views, exploration), "views")
                 with plan.param.update(interface=self.interface):
                     new, out_context = await plan.execute()
+                plan.param.unwatch(watcher)
                 if "__error__" in out_context:
-                    exploration = self._explorations.value['view']
+                    # On error we have to sync the conversation, unwatch the plan,
+                    # and remove the exploration if it was newly created
                     prev['view'].conversation = exploration.conversation
                     del out_context['__error__']
                     if new_exploration:
@@ -940,15 +999,9 @@ class ExplorerUI(UI):
                             )
                             await self._update_conversation()
                 else:
-                    exploration = self._explorations.value['view']
-                    self._add_outputs(exploration, new, out_context)
                     exploration.context = out_context
                     exploration.view.loading = False
-                    if self._split.collapsed and prev['label'] == 'Home':
-                        self._split.param.update(
-                            collapsed=False,
-                            sizes=self._split.expanded_sizes,
-                        )
+                    plan.param.watch(partial(self._update_views, exploration), "views")
             finally:
                 self._explorations.value['view'].conversation = self.interface.objects
                 self._idle.set()

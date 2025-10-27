@@ -3,7 +3,7 @@
 {% block instructions %}
 {{ super() }}
 
-{% if discovery_context %}
+{% if discovery_context is defined %}
 ## Discovery Results:
 {{ discovery_context }}
 {% endif %}
