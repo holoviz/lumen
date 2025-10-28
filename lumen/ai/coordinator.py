@@ -216,8 +216,7 @@ class Plan(Section):
         context = context or self.context
         if '__error__' in context:
             del context['__error__']
-        with self.interface.param.update(callback_exception="raise"):
-            outputs, out_context = await super().execute(context, **kwargs)
+        outputs, out_context = await super().execute(context, **kwargs)
         _, todos = self._render_task_history(len(self))
         self.coordinator._todos.object = todos
         if self.status == 'success':
