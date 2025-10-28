@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
 
 from functools import partial
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal, TypedDict
 
@@ -130,16 +132,35 @@ class Llm(param.Parameterized):
             messages = [{"role": "system", "content": system}] + messages
         return messages, input_kwargs
 
-    def _check_for_image(self, messages: list[Message]) -> bool:
-        for message in messages:
+    def _serialize_image_pane(self, image: pn.pane.image.ImageBase | Image) -> Image:
+        if isinstance(image, Image):
+            return image
+
+        image_object = image.object
+        if isinstance(image_object, bytes):
+            # convert bytes to base64 string
+            base64_str = base64.b64encode(image_object).decode('utf-8')
+            image = Image.from_raw_base64(base64_str)
+        elif isinstance(image_object, (Path, str)) and Path(image_object).is_file():
+            image = Image.from_path(image_object)
+        elif isinstance(image_object, str):
+            image = Image.from_url(image_object)
+        return image
+
+    def _check_for_image(self, messages: list[Message]) -> tuple[list[Message], bool]:
+        contains_image = False
+        for i, message in enumerate(messages):
             content = message.get("content")
-            if isinstance(content, Image):
-                return True
+            if isinstance(content, (Image, pn.pane.image.ImageBase)):
+                messages[i]["content"] = self._serialize_image_pane(content)
+                contains_image = True
+
             elif isinstance(content, list):
                 for item in content:
-                    if isinstance(item, Image):
-                        return True
-        return False
+                    if isinstance(item, (Image, pn.pane.image.ImageBase)):
+                        messages[i]["content"] = self._serialize_image_pane(item)
+                        contains_image = True
+        return messages, contains_image
 
     @classmethod
     def warmup(cls, model_kwargs: dict | None):
@@ -186,7 +207,7 @@ class Llm(param.Parameterized):
         kwargs = dict(self._client_kwargs)
         kwargs.update(input_kwargs)
 
-        contains_image = self._check_for_image(messages)
+        messages, contains_image = self._check_for_image(messages)
         if contains_image:
             # Currently instructor does not support streaming with multimodal
             # https://github.com/567-labs/instructor/issues/1872
