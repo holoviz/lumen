@@ -986,7 +986,8 @@ class ExplorerUI(UI):
                 else:
                     exploration = self._explorations.value['view']
                     new_exploration = False
-                    plan = exploration.plan.merge(plan)
+                    if exploration.plan is not None:
+                        plan = exploration.plan.merge(plan)
                     watcher = None
                 with plan.param.update(interface=self.interface):
                     new, out_context = await plan.execute()
