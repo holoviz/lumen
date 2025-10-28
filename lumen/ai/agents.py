@@ -206,7 +206,7 @@ class SourceAgent(Agent):
 
     _extensions = ("filedropper",)
 
-    outputs = SourceOutputs
+    output_schema = SourceOutputs
 
     async def respond(
         self,
@@ -309,7 +309,7 @@ class AnalystAgent(ChatAgent):
         }
     )
 
-    inputs = AnalystInputs
+    input_schema = AnalystInputs
 
     async def respond(
         self,
@@ -430,7 +430,7 @@ class TableListAgent(ListAgent):
 
     _message_format = "Show the data: {item}"
 
-    inputs = TableListInputs
+    input_schema = TableListInputs
 
     @classmethod
     async def applies(cls, context: TContext) -> bool:
@@ -715,8 +715,8 @@ class SQLAgent(LumenBaseAgent):
 
     _output_type = SQLOutput
 
-    inputs = SQLInputs
-    outputs = SQLOutputs
+    input_schema = SQLInputs
+    output_schema = SQLOutputs
 
     def _update_spec(self, context: TContext, event: param.parameterized.Event):
         context["sql"] = event.new
@@ -1147,7 +1147,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
 
     _output_type = LumenOutput
 
-    outputs = DbtslOutputs
+    output_schema = DbtslOutputs
 
     def __init__(self, source: Source, **params):
         super().__init__(source=source, **params)
@@ -1310,8 +1310,8 @@ class BaseViewAgent(LumenBaseAgent):
         }
     )
 
-    inputs = ViewInputs
-    outputs = ViewOutputs
+    input_schema = ViewInputs
+    output_schema = ViewOutputs
 
     def __init__(self, **params):
         self._last_output = None
@@ -2168,7 +2168,7 @@ class ValidationAgent(Agent):
         }
     )
 
-    outputs = ValidationOutputs
+    output_schema = ValidationOutputs
 
     async def respond(
         self,

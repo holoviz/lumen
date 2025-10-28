@@ -300,7 +300,7 @@ class TaskGroup(Task):
     async def _retry_invoke(
         self, i: int, task: Task | Actor, context: TContext, view: LumenOutput, config: dict[str, Any], event: param.parameterized.Event
     ):
-        invalidation_keys = set(task.outputs.__annotations__)
+        invalidation_keys = set(task.output_schema.__annotations__)
         self.invalidate(invalidation_keys, start=i+1)
         if isinstance(task, LumenBaseAgent):
             with view.editor.param.update(loading=True):
@@ -580,7 +580,7 @@ class TaskGroup(Task):
         contexts = ([self.context] if self.context else []) + ([context] if context else [])
         contexts += [self._task_contexts[task] for task in self._tasks[:i]]
         if isinstance(task, Actor):
-            return merge_contexts(task.inputs, contexts)
+            return merge_contexts(task.input_schema, contexts)
         elif isinstance(task, TaskGroup):
             subcontexts = []
             for subtask in task:
@@ -589,7 +589,7 @@ class TaskGroup(Task):
                     subcontexts.append(subtask_context)
             return merge_contexts(LWW, subcontexts)
         elif isinstance(task, Action):
-            return merge_contexts(task.inputs, contexts)
+            return merge_contexts(task.input_schema, contexts)
         else:
             raise TypeError("Abstract Task does not implement _get_context.")
 
@@ -684,14 +684,14 @@ class TaskGroup(Task):
             if i < start:
                 continue
             if isinstance(task, ContextProvider):
-                deps = input_dependency_keys(task.inputs)
+                deps = input_dependency_keys(task.input_schema)
                 if not (deps & keys):
                     continue
                 invalidated = True
                 self._task_contexts.pop(task, None)
                 outputs = self._task_outputs.pop(task, [])
                 rendered = self._task_rendered.pop(task, None)
-                keys |= set(task.outputs.__annotations__)
+                keys |= set(task.output_schema.__annotations__)
                 if rendered is not None:
                     rendered_views.remove(rendered)
                 views = [view for view in views if view not in outputs]
@@ -712,12 +712,12 @@ class TaskGroup(Task):
         """
         Returns the notebook representation of the tasks.
         """
-        if len(self) and not len(self.outputs):
+        if len(self) and not len(self.output_schema):
             raise RuntimeError(
                 "Report has not been executed, run report before exporting to_notebook."
             )
         cells, extensions = [], ['tabulator']
-        for out in self.outputs:
+        for out in self.views:
             ext = None
             if isinstance(out, Typography):
                 level = int(out.variant[1:]) if out.variant and out.variant.startswith('h') else 0

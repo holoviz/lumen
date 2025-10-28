@@ -979,7 +979,7 @@ class ExplorerUI(UI):
             self._idle.clear()
             try:
                 plan = await callback(messages, prev["view"].context, user, instance)
-                if any('pipeline' in step[0].outputs.__annotations__ for step in plan):
+                if any("pipeline" in step[0].output_schema.__annotations__ for step in plan):
                     exploration = await self._add_exploration(plan)
                     new_exploration = True
                     watcher = plan.param.watch(partial(self._add_views, exploration), "views")

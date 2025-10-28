@@ -119,7 +119,7 @@ class ToolUser(Actor):
         tools_context = ""
         # TODO: INVESTIGATE WHY or self.tools is needed
         for tool in self._tools.get(prompt_name, []) or self.tools:
-            if all(requirement in context for requirement in tool.inputs.__annotations__):
+            if all(requirement in context for requirement in tool.input_schema.__annotations__):
                 tool_context = await tool.respond(messages, context)
                 if tool_context:
                     tools_context += f"\n{tool_context}"
