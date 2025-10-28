@@ -20,6 +20,8 @@ from panel_material_ui.chat import ChatMessage
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
+from lumen.layout import Layout
+
 from ..dashboard import Config
 from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource, Source
@@ -2093,6 +2095,7 @@ class AnalysisAgent(LumenBaseAgent):
                 for field in analysis_callable._field_params:
                     analysis_callable.param[field].objects = list(data.columns)
                 context["analysis"] = analysis_callable
+                out_context["analysis"] = analysis_callable
 
                 if analysis_callable.autorun:
                     if asyncio.iscoroutinefunction(analysis_callable.__call__):
@@ -2105,6 +2108,10 @@ class AnalysisAgent(LumenBaseAgent):
                     if isinstance(view, View):
                         view_type = view.view_type
                         out_context["view"] = dict(spec, type=view_type)
+                        out_context["pipeline"] = view.pipeline
+                    elif isinstance(view, Layout):
+                        out_context["view"] = dict(spec, type=Layout)
+                        out_context["pipeline"] = next(view.pipeline for view in view.views if view.pipeline)
                     elif isinstance(view, Pipeline):
                         out_context["pipeline"] = view
                     # Ensure data reflects processed pipeline
