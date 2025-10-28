@@ -29,7 +29,7 @@ class Message(TypedDict):
 
 class ImageResponse(BaseModel):
     # To easily analyze images, we need instructor patch activated,
-    # so we a pass-thru dummy string basemodel
+    # so we use a pass-thru dummy string basemodel
     output: str
 
 
@@ -130,6 +130,17 @@ class Llm(param.Parameterized):
             messages = [{"role": "system", "content": system}] + messages
         return messages, input_kwargs
 
+    def _check_for_image(self, messages: list[Message]) -> bool:
+        for message in messages:
+            content = message.get("content")
+            if isinstance(content, Image):
+                return True
+            elif isinstance(content, list):
+                for item in content:
+                    if isinstance(item, Image):
+                        return True
+        return False
+
     @classmethod
     def warmup(cls, model_kwargs: dict | None):
         """
@@ -175,23 +186,19 @@ class Llm(param.Parameterized):
         kwargs = dict(self._client_kwargs)
         kwargs.update(input_kwargs)
 
+        contains_image = self._check_for_image(messages)
+        if contains_image:
+            # Currently instructor does not support streaming with multimodal
+            # https://github.com/567-labs/instructor/issues/1872
+            kwargs["stream"] = False
+
         if response_model is not None:
             if allow_partial and isinstance(response_model, BaseModel):
                 response_model = Partial[response_model]
             kwargs["response_model"] = response_model
         # check if any of the messages contain images
-        elif response_model is None and ImageResponse:
-            for message in messages:
-                if not isinstance(message["content"], list):
-                    continue
-                for item in message["content"]:
-                    if not isinstance(item, Image):
-                        continue
-                    kwargs["response_model"] = ImageResponse
-                    # Currently instructor does not support streaming with multimodal
-                    # https://github.com/567-labs/instructor/issues/1872
-                    kwargs["stream"] = False
-                    break
+        elif response_model is None and contains_image:
+            kwargs["response_model"] = ImageResponse
 
         output = await self.run_client(model_spec, messages, **kwargs)
         if output is None or output == "":
