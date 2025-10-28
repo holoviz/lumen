@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import io
+import tempfile
 import traceback as tb
 
 from abc import abstractmethod
 from collections.abc import Iterator
+from datetime import datetime
 from functools import partial
+from pathlib import Path
 from types import FunctionType
 from typing import Any, final
 
@@ -607,6 +610,32 @@ class Report(TaskGroup):
 
     _tasks = param.List(item_type=Section)
 
+    docx_context = param.Dict(default={}, doc="""
+        Context dictionary for docx template rendering. If keys are not provided,
+        the following defaults will be used:
+        
+        - 'title': self.title or 'Lumen Report'
+        - 'subtitle': 'Generated on {date}' (e.g., 'Generated on October 27, 2025')
+        - 'cover_page_header': '' (empty string)
+        - 'cover_page_footer': '' (empty string)
+        - 'content_page_header': '' (empty string)
+        
+        The following keys are always auto-generated and cannot be overridden:
+        - 'sections': List of section dicts with 'title', 'image', and 'caption'
+        - 'page_break': R('\f') for page breaks
+        
+        Example:
+            report.docx_context = {
+                'title': 'Q4 Sales Report',
+                'subtitle': 'Quarterly Analysis',
+                'cover_page_header': 'ACME Corporation',
+                'cover_page_footer': 'Confidential'
+            }""")
+
+    docx_template_path = param.String(
+        default=str(Path(__file__).parent / "assets" / "lumen_template.docx"),
+        doc="""Path to the docx template file.""")
+
     level = 1
 
     def _init_view(self):
@@ -633,11 +662,17 @@ class Report(TaskGroup):
             icon="settings", on_click=self._open_settings, size="large", color="default",
             margin=0, description="Configure Report"
         )
-        self._export = FileDownload(
+        self._notebook_export_btn = FileDownload(
             callback=self._notebook_export, label="\u200b", variant='text', icon='get_app',
             icon_size="2.4em", color="default", margin=(8, 0, 10, 0),
             sx={".MuiButton-startIcon": {"mr": 0, "color": "var(--mui-palette-default-dark)"}},
             description="Export Report to .ipynb", filename=f"{self.title or 'Report'}.ipynb"
+        )
+        self._docx_export_btn = FileDownload(
+            callback=self._docx_export, label="\u200b", variant='text', icon='description',
+            icon_size="2.4em", color="default", margin=(8, 0, 10, 0),
+            sx={".MuiButton-startIcon": {"mr": 0, "color": "var(--mui-palette-default-dark)"}},
+            description="Export Report to .docx", filename=f"{self.title or 'Report'}.docx"
         )
         self._dialog = Dialog(
             TextInput.from_param(self.param.title, margin=(10, 0, 0, 0), sizing_mode="stretch_width"),
@@ -650,7 +685,8 @@ class Report(TaskGroup):
             self._run,
             self._clear,
             self._collapse,
-            self._export,
+            self._notebook_export_btn,
+            self._docx_export_btn,
             self._settings,
             sizing_mode="stretch_width"
         )
@@ -663,13 +699,18 @@ class Report(TaskGroup):
 
     @param.depends('title', watch=True)
     def _update_filename(self):
-        self._export.filename = f"{self.title or 'Report'}.ipynb"
+        self._notebook_export_btn.filename = f"{self.title or 'Report'}.ipynb"
+        self._docx_export_btn.filename = f"{self.title or 'Report'}.docx"
 
     def _add_outputs(self, i: int, task: Task | Actor, outputs: list, **kwargs):
         self.outputs += outputs
 
     def _notebook_export(self):
         return io.StringIO(self.to_notebook())
+
+    def _docx_export(self):
+        """Callback for FileDownload to export report as docx."""
+        return self.to_docx()
 
     async def _execute(self, *args):
         with self._run.param.update(loading=True):
@@ -708,6 +749,171 @@ class Report(TaskGroup):
             )
         )
 
+    def to_docx(self) -> io.BytesIO:
+        """
+        Export the report to a Word document (.docx) format.
+        
+        Returns
+        -------
+        BytesIO
+            A BytesIO buffer containing the rendered docx document.
+            
+        Raises
+        ------
+        RuntimeError
+            If the report has not been executed yet.
+        FileNotFoundError
+            If the template file is not found.
+        """
+        from docxtpl import DocxTemplate, R
+
+        # Validate execution
+        if len(self) and not len(self.outputs):
+            raise RuntimeError(
+                "Report has not been executed, run report before exporting to_docx."
+            )
+
+        # Load template
+        template_path = Path(self.docx_template_path)
+        if not template_path.exists():
+            raise FileNotFoundError(f"Template file not found: {template_path}")
+
+        doc = DocxTemplate(str(template_path))
+
+        # Start with copy of docx_context
+        context = dict(self.docx_context)
+
+        # Set defaults for missing keys
+        if 'title' not in context:
+            context['title'] = self.title or "Lumen Report"
+
+        if 'subtitle' not in context:
+            date_string = datetime.now().strftime("%B %d, %Y")
+            context['subtitle'] = f"Generated on {date_string}"
+
+        if 'cover_page_header' not in context:
+            context['cover_page_header'] = ""
+
+        if 'cover_page_footer' not in context:
+            context['cover_page_footer'] = ""
+
+        if 'content_page_header' not in context:
+            context['content_page_header'] = ""
+
+        # Always generate sections from report outputs
+        context['sections'] = self._generate_sections(doc)
+
+        # Always set page_break
+        context['page_break'] = R("\f")
+
+        # Render template
+        doc.render(context)
+
+        # Return as BytesIO
+        buffer = io.BytesIO()
+        doc.save(buffer)
+        buffer.seek(0)
+        return buffer
+
+    def _generate_sections(self, doc) -> list[dict]:
+        """
+        Generate sections list from report tasks for docx template.
+        
+        Arguments
+        ---------
+        doc : DocxTemplate
+            The document template instance (needed for InlineImage creation)
+            
+        Returns
+        -------
+        list[dict]
+            List of section dictionaries with title, image, and caption
+        """
+        from docx.shared import Mm
+        from docxtpl import InlineImage, RichText
+
+        sections = []
+
+        breakpoint()
+        for section in self._tasks:
+            if not isinstance(section, Section):
+                continue
+
+            section_dict = {
+                "title": section.title or "Untitled Section",
+                "image": None,
+                "caption": RichText("")
+            }
+
+            # Process section outputs to find visualizations and captions
+            image_found = False
+            for i, out in enumerate(section.outputs):
+                if isinstance(out, LumenOutput) and not image_found:
+                    # Convert LumenOutput to image
+                    image_path = self._output_to_image(out)
+                    if image_path:
+                        section_dict["image"] = InlineImage(doc, image_path, width=Mm(160))
+                        image_found = True
+
+                        # Check if next output is a Typography for caption
+                        if i + 1 < len(section.outputs):
+                            next_out = section.outputs[i + 1]
+                            if isinstance(next_out, Typography):
+                                section_dict["caption"] = RichText(next_out.object)
+                        break
+
+            if section_dict["image"]:  # Only add section if it has an image
+                sections.append(section_dict)
+
+        return sections
+
+    def _output_to_image(self, output: LumenOutput) -> str | None:
+        """
+        Convert a LumenOutput to an image file path.
+        
+        Arguments
+        ---------
+        output : LumenOutput
+            The output to convert
+            
+        Returns
+        -------
+        str | None
+            Path to temporary image file, or None if conversion failed
+        """
+        try:
+            # Create a temporary file for the image
+            tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+            tmp_path = tmp.name
+            tmp.close()
+
+            # Render the component and save as image
+            component = output.component
+
+            if isinstance(component, (View, Pipeline)):
+                # Render the view/pipeline to a panel
+                panel = output.render()
+                if hasattr(panel, 'save'):
+                    panel.save(tmp_path)
+                    return tmp_path
+            elif hasattr(component, 'save'):
+                component.save(tmp_path)
+                return tmp_path
+            else:
+                print("Output component is not renderable to image.")
+
+            # TODO: add vega-lite export and table to docx table
+            breakpoint()
+
+            # If we couldn't save, remove the temp file
+            import os
+            os.unlink(tmp_path)
+            return None
+
+        except Exception as e:
+            print(f"Failed to convert output to image: {e}")
+            return None
+
 
 class Action(Task):
     """
@@ -733,8 +939,8 @@ class SQLQuery(Action):
     and generates an LumenOutput to be rendered.
     """
 
-    generate_caption = param.Boolean(default=True, doc="""
-        Whether to generate a caption for the data.""")
+    schema = param.Dict(default=None, doc="""
+        Optional schema to use to not infer schema from data.""")
 
     source = param.ClassSelector(class_=BaseSQLSource, doc="""
         The Source to execute the SQL expression on.""")
@@ -749,8 +955,12 @@ class SQLQuery(Action):
     table = param.String(doc="""
         The name of the table generated from the SQL expression.""")
 
-    user_content = param.String(default="Generate a short caption for the data", doc="""
-        Additional instructions to provide to the analyst agent, i.e. what to focus on.""")
+    template_overrides = param.Dict(default={}, doc="""
+        Template overrides to provide to the AnalystAgent.""")
+
+    user_content = param.String(default=None, doc="""
+        Instructions to provide to the analyst agent, i.e. what to focus on;
+        if unset no additional instructions are provided.""")
 
     def _render_controls(self):
         return [
@@ -800,7 +1010,7 @@ class SQLQuery(Action):
         # Pass table_params if provided
         params = {self.table: self.table_params} if self.table_params else None
         source = source.create_sql_expr_source({self.table: self.sql_expr}, params=params)
-        pipeline = Pipeline(source=source, table=self.table)
+        pipeline = Pipeline(source=source, table=self.table, schema=self.schema)
         if self.memory is not None:
             self.memory["source"] = source
             if "sources" not in self.memory:
@@ -808,12 +1018,11 @@ class SQLQuery(Action):
             self.memory["sources"].append(source)
             self.memory["pipeline"] = pipeline
             self.memory["data"] = await describe_data(pipeline.data)
-            self.memory["sql_metaset"] = await get_metaset([source], [self.table])
             self.memory["table"] = self.table
         out = LumenOutput(component=pipeline)
         outputs = [Typography(f"### {self.title}", variant='h4', margin=(10, 10, 0, 10)), out] if self.title else [out]
-        if self.generate_caption:
-            caption = await AnalystAgent(llm=self.llm).respond(
+        if self.user_content:
+            caption = await AnalystAgent(llm=self.llm, template_overrides=self.template_overrides).respond(
                 [{"role": "user", "content": self.user_content}]
             )
             outputs.append(Typography(caption.object))
