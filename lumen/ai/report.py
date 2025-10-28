@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import os
 import tempfile
 import traceback as tb
 
@@ -45,7 +46,7 @@ from .utils import (
     describe_data, extract_block_source, get_block_names,
     wrap_logfire_on_method,
 )
-from .views import LumenOutput
+from .views import LumenOutput, VegaLiteOutput
 
 
 class Task(Viewer):
@@ -834,7 +835,6 @@ class Report(TaskGroup):
 
         sections = []
 
-        breakpoint()
         for section in self._tasks:
             if not isinstance(section, Section):
                 continue
@@ -848,7 +848,7 @@ class Report(TaskGroup):
             # Process section outputs to find visualizations and captions
             image_found = False
             for i, out in enumerate(section.outputs):
-                if isinstance(out, LumenOutput) and not image_found:
+                if isinstance(out, VegaLiteOutput) and not image_found:
                     # Convert LumenOutput to image
                     image_path = self._output_to_image(out)
                     if image_path:
@@ -881,37 +881,25 @@ class Report(TaskGroup):
         str | None
             Path to temporary image file, or None if conversion failed
         """
+        # Create a temporary file for the image
+        tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+        tmp_path = tmp.name
+        tmp.close()
         try:
-            # Create a temporary file for the image
-            tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
-            tmp_path = tmp.name
-            tmp.close()
-
             # Render the component and save as image
             component = output.component
-
-            if isinstance(component, (View, Pipeline)):
-                # Render the view/pipeline to a panel
-                panel = output.render()
-                if hasattr(panel, 'save'):
-                    panel.save(tmp_path)
-                    return tmp_path
-            elif hasattr(component, 'save'):
-                component.save(tmp_path)
+            with open(tmp_path, 'wb') as f:
+                vega_pane = component.__panel__()._pane
+                vega_pane.param.update(
+                    width=650,
+                    height=400,
+                )
+                image_bytes = vega_pane.export("png", scale=2, ppi=144)
+                f.write(image_bytes)
                 return tmp_path
-            else:
-                print("Output component is not renderable to image.")
-
-            # TODO: add vega-lite export and table to docx table
-            breakpoint()
-
-            # If we couldn't save, remove the temp file
-            import os
-            os.unlink(tmp_path)
-            return None
-
         except Exception as e:
-            print(f"Failed to convert output to image: {e}")
+            self.param.warning(f"Failed to convert output to image: {e}")
+            os.unlink(tmp_path)
             return None
 
 
