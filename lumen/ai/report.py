@@ -40,7 +40,6 @@ from .export import (
 )
 from .llm import Llm
 from .memory import _Memory
-from .schemas import get_metaset
 from .tools import FunctionTool, Tool
 from .utils import (
     describe_data, extract_block_source, get_block_names,
@@ -614,17 +613,17 @@ class Report(TaskGroup):
     docx_context = param.Dict(default={}, doc="""
         Context dictionary for docx template rendering. If keys are not provided,
         the following defaults will be used:
-        
+
         - 'title': self.title or 'Lumen Report'
         - 'subtitle': 'Generated on {date}' (e.g., 'Generated on October 27, 2025')
         - 'cover_page_header': '' (empty string)
         - 'cover_page_footer': '' (empty string)
         - 'content_page_header': '' (empty string)
-        
+
         The following keys are always auto-generated and cannot be overridden:
         - 'sections': List of section dicts with 'title', 'image', and 'caption'
         - 'page_break': R('\f') for page breaks
-        
+
         Example:
             report.docx_context = {
                 'title': 'Q4 Sales Report',
@@ -753,12 +752,12 @@ class Report(TaskGroup):
     def to_docx(self) -> io.BytesIO:
         """
         Export the report to a Word document (.docx) format.
-        
+
         Returns
         -------
         BytesIO
             A BytesIO buffer containing the rendered docx document.
-            
+
         Raises
         ------
         RuntimeError
@@ -819,12 +818,12 @@ class Report(TaskGroup):
     def _generate_sections(self, doc) -> list[dict]:
         """
         Generate sections list from report tasks for docx template.
-        
+
         Arguments
         ---------
         doc : DocxTemplate
             The document template instance (needed for InlineImage creation)
-            
+
         Returns
         -------
         list[dict]
@@ -870,12 +869,12 @@ class Report(TaskGroup):
     def _output_to_image(self, output: LumenOutput) -> str | None:
         """
         Convert a LumenOutput to an image file path.
-        
+
         Arguments
         ---------
         output : LumenOutput
             The output to convert
-            
+
         Returns
         -------
         str | None
