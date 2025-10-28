@@ -200,8 +200,6 @@ class Llm(param.Parameterized):
 
     @classmethod
     def _get_delta(cls, chunk) -> str:
-        if isinstance(chunk, tuple):
-            return chunk[1]
         if chunk.choices:
             return chunk.choices[0].delta.content or ""
         return ""
@@ -284,6 +282,10 @@ class Llm(param.Parameterized):
             model_spec=model_spec,
             **kwargs,
         )
+        if isinstance(chunks, BaseModel):
+            yield getattr(chunks, field) if field is not None else chunks
+            return
+
         try:
             async for chunk in chunks:
                 if response_model is None:
