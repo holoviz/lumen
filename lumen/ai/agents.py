@@ -130,7 +130,8 @@ class Agent(Viewer, ToolUser, ContextProvider):
     async def _stream(self, messages: list[Message], system_prompt: str) -> Any:
         message = None
         model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
-        async for output_chunk in self.llm.stream(messages, system=system_prompt, model_spec=model_spec, field="output"):
+        output = self.llm.stream(messages, system=system_prompt, model_spec=model_spec, field="output")
+        async for output_chunk in output:
             if self.interface is None:
                 if message is None:
                     message = ChatMessage(output_chunk, user=self.user)
