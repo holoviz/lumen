@@ -110,9 +110,10 @@ class LumenOutput(Viewer):
         self._last_output = {}
 
     @classmethod
-    def _serialize_component(cls, component: Component) -> str:
+    def _serialize_component(cls, component: Component) -> tuple[str, dict[str, Any]]:
         component_spec = component.to_spec()
-        return yaml.dump(component_spec, Dumper=NumpyDumper)
+        yaml_spec = yaml.dump(component_spec, Dumper=NumpyDumper)
+        return yaml_spec, component_spec
 
     @classmethod
     def _deserialize_component(cls, component: Component, yaml_spec: str, spec_dict: dict[str, Any]) -> str:
