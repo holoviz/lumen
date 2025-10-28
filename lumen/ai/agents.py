@@ -1547,7 +1547,8 @@ class VegaLiteAgent(BaseViewAgent):
                 response = requests.get(f"{VECTOR_STORE_ASSETS_URL}{db_file}", timeout=5)
                 response.raise_for_status()
                 uri.write_bytes(response.content)
-        self._vector_store = DuckDBVectorStore(uri=str(uri))
+        # Use a read-only connection to avoid lock conflicts
+        self._vector_store = DuckDBVectorStore(uri=str(uri), read_only=True)
         return self._vector_store
 
     def _deep_merge_dicts(self, base_dict: dict[str, Any], update_dict: dict[str, Any]) -> dict[str, Any]:

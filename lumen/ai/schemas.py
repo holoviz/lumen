@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+import yaml
+
 from ..sources import Source
 from .config import SOURCE_TABLE_SEPARATOR
 from .utils import (
@@ -40,20 +42,22 @@ class VectorMetaset:
 
     def _generate_context(self, include_columns: bool = False, truncate: bool = False) -> str:
         """
-        Generate formatted text representation of the context.
+        Generate YAML formatted representation of the context.
 
         Args:
             include_columns: Whether to include column details in the context
             truncate: Whether to truncate strings and columns for brevity
         """
-        context = ""
+        tables_data = {}
+
         for table_slug, vector_metadata in self.vector_metadata_map.items():
             base_sql = truncate_string(vector_metadata.base_sql, max_length=200) if truncate else vector_metadata.base_sql
-            context += f"{table_slug!r} (access this table with: {base_sql})\n"
+
+            table_data = {'read_with': base_sql}
 
             if vector_metadata.description:
                 desc = truncate_string(vector_metadata.description, max_length=100) if truncate else vector_metadata.description
-                context += f"Info: {desc}\n"
+                table_data['info'] = desc
 
             # Only include columns if explicitly requested
             if include_columns and vector_metadata.columns:
@@ -61,27 +65,29 @@ class VectorMetaset:
                 cols_to_show = vector_metadata.columns
 
                 show_ellipsis = False
-                original_indices = []
                 if truncate:
                     cols_to_show, original_indices, show_ellipsis = truncate_iterable(cols_to_show, max_length)
                 else:
                     cols_to_show = list(cols_to_show)
-                    original_indices = list(range(len(cols_to_show)))
 
-                for i, (col, orig_idx) in enumerate(zip(cols_to_show, original_indices, strict=False)):
+                columns_data = {}
+                for i, col in enumerate(cols_to_show):
                     if show_ellipsis and i == len(cols_to_show) // 2:
-                        context += "...\n"
-
-                    if i == 0:
-                        context += "Cols:\n"
+                        columns_data['...'] = '...'
 
                     col_name = truncate_string(col.name) if truncate else col.name
-                    context += f"{orig_idx}. {col_name!r}"
                     if col.description:
                         col_desc = truncate_string(col.description, max_length=100) if truncate else col.description
-                        context += f": {col_desc}"
-            context += "\n"
-        return context
+                        columns_data[col_name] = col_desc
+                    else:
+                        columns_data[col_name] = None
+
+                if columns_data:
+                    table_data['columns'] = columns_data
+
+            tables_data[table_slug] = table_data
+
+        return yaml.dump(tables_data, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
     @property
     def table_context(self) -> str:
@@ -120,16 +126,16 @@ class SQLMetaset:
 
     def _generate_context(self, include_columns: bool = False, truncate: bool = False) -> str:
         """
-        Generate formatted context with both vector and SQL data.
+        Generate YAML formatted context with both vector and SQL data.
 
         Args:
             include_columns: Whether to include column details in the context
             truncate: Whether to truncate strings and columns for brevity
 
         Returns:
-            Formatted context string
+            YAML formatted context string
         """
-        context = ""
+        tables_data = {}
 
         for table_slug in self.sql_metadata_map.keys():
             vector_metadata = self.vector_metaset.vector_metadata_map.get(table_slug)
@@ -137,22 +143,24 @@ class SQLMetaset:
                 continue
 
             base_sql = truncate_string(vector_metadata.base_sql, max_length=200) if truncate else vector_metadata.base_sql
-            context += f"\n{table_slug!r} (access this table with: {base_sql})\n"
+
+            table_data = {'read_with': base_sql}
 
             if vector_metadata.description:
                 desc = truncate_string(vector_metadata.description, max_length=100) if truncate else vector_metadata.description
-                context += f"Info: {desc}\n"
+                table_data['info'] = desc
 
             sql_data: SQLMetadata = self.sql_metadata_map.get(table_slug)
             if sql_data:
                 # Get the count from schema
                 if sql_data.schema.get("__len__"):
-                    context += f"Row count: {len(sql_data.schema)}\n"
+                    table_data['row_count'] = len(sql_data.schema)
 
             # Only include columns if explicitly requested
             if include_columns and vector_metadata.columns:
                 cols_to_show = vector_metadata.columns
-                context += "Columns:"
+                columns_data = {}
+
                 for col in cols_to_show:
                     schema_data = None
                     if sql_data and col.name in sql_data.schema:
@@ -160,23 +168,34 @@ class SQLMetaset:
                         if truncate and schema_data == "<null>":
                             continue
 
-                    # Get column name
-                    context += f"\n- {col.name}"
+                    col_info = {}
 
                     # Get column description with optional truncation
                     if col.description:
                         col_desc = truncate_string(col.description, max_length=100) if truncate else col.description
-                        context += f": {col_desc}"
-                    else:
-                        context += ": "
+                        col_info['description'] = col_desc
 
                     # Add schema info for the column if available
-                    if schema_data:
-                        if truncate and schema_data.get('type') == 'enum':
-                            schema_data = truncate_string(str(schema_data), max_length=50)
-                        context += f" `{schema_data}`"
-            context += "\n"
-        return context.replace("'type': 'str', ", "")  # Remove type info for lower token
+                    if schema_data and schema_data != "<null>":
+                        if isinstance(schema_data, dict):
+                            # Remove 'type': 'str' for token efficiency
+                            schema_copy = {k: v for k, v in schema_data.items() if not (k == 'type' and v == 'str')}
+                            if truncate and schema_copy.get('type') == 'enum':
+                                schema_str = str(schema_copy)
+                                if len(schema_str) > 50:
+                                    schema_copy = truncate_string(schema_str, max_length=50)
+                            col_info.update(schema_copy)
+                        else:
+                            col_info['value'] = schema_data
+
+                    columns_data[col.name] = col_info if col_info else None
+
+                if columns_data:
+                    table_data['columns'] = columns_data
+
+            tables_data[table_slug] = table_data
+
+        return yaml.dump(tables_data, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
     @property
     def table_context(self) -> str:
