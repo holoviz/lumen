@@ -13,6 +13,7 @@ import param
 
 from instructor import Mode, patch
 from instructor.dsl.partial import Partial
+from instructor.processing.multimodal import Image
 from pydantic import BaseModel
 
 from .interceptor import Interceptor
@@ -24,6 +25,13 @@ class Message(TypedDict):
     role: Literal["system", "user", "assistant"]
     content: str
     name: str | None
+
+
+class ImageResponse(BaseModel):
+    # To easily analyze images, we need instructor patch activated,
+    # so we a pass-thru dummy string basemodel
+    output: str
+
 
 BASE_MODES = list(Mode)
 
@@ -168,9 +176,22 @@ class Llm(param.Parameterized):
         kwargs.update(input_kwargs)
 
         if response_model is not None:
-            if allow_partial:
+            if allow_partial and isinstance(response_model, BaseModel):
                 response_model = Partial[response_model]
             kwargs["response_model"] = response_model
+        # check if any of the messages contain images
+        elif response_model is None and ImageResponse:
+            for message in messages:
+                if not isinstance(message["content"], list):
+                    continue
+                for item in message["content"]:
+                    if not isinstance(item, Image):
+                        continue
+                    kwargs["response_model"] = ImageResponse
+                    # Currently instructor does not support streaming with multimodal
+                    # https://github.com/567-labs/instructor/issues/1872
+                    kwargs["stream"] = False
+                    break
 
         output = await self.run_client(model_spec, messages, **kwargs)
         if output is None or output == "":
@@ -179,6 +200,8 @@ class Llm(param.Parameterized):
 
     @classmethod
     def _get_delta(cls, chunk) -> str:
+        if isinstance(chunk, tuple):
+            return chunk[1]
         if chunk.choices:
             return chunk.choices[0].delta.content or ""
         return ""
