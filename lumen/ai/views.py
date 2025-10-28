@@ -2,6 +2,7 @@ import asyncio
 import traceback
 
 from copy import deepcopy
+from typing import Any
 
 import panel as pn
 import param
@@ -47,13 +48,16 @@ class LumenOutput(Viewer):
     language = "yaml"
 
     def __init__(self, **params):
-        if 'spec' not in params and 'component' in params and params['component'] is not None:
+        if "spec" in params:
+            spec_dict = params["component"].to_spec()
+        else:
             try:
-                component_spec = params['component'].to_spec()
-                params['spec'] = yaml.dump(component_spec, Dumper=NumpyDumper)
+                params["spec"], spec_dict = self._serialize_component(params["component"])
             except Exception:
-                params['spec'] = None
+                spec_dict = {}
+                params["spec"] = None
         super().__init__(**params)
+        self._spec_dict = spec_dict
         self._editor = CodeEditor(
             value=self.param.spec.rx.or_(f'{self.title} output could not be serialized and may therefore not be edited.'),
             language=self.language,
@@ -104,6 +108,21 @@ class LumenOutput(Viewer):
         self._main.loading = self.param.loading
         self._rendered = False
         self._last_output = {}
+
+    @classmethod
+    def _serialize_component(cls, component: Component) -> str:
+        component_spec = component.to_spec()
+        return yaml.dump(component_spec, Dumper=NumpyDumper)
+
+    @classmethod
+    def _deserialize_component(cls, component: Component, yaml_spec: str, spec_dict: dict[str, Any]) -> str:
+        spec = load_yaml(yaml_spec)
+        cls._validate_spec(spec)
+        return type(component).from_spec(spec)
+
+    @classmethod
+    def _validate_spec(cls, spec):
+        return spec
 
     @param.depends("footer", watch=True)
     def _update_footer(self):
@@ -168,9 +187,7 @@ class LumenOutput(Viewer):
 
         try:
             if self._rendered:
-                yaml_spec = load_yaml(self.spec)
-                self._validate_spec(yaml_spec)
-                self.component = type(self.component).from_spec(yaml_spec)
+                self.component = self._deserialize_component(self.component, self.spec, self._spec_dict)
             if isinstance(self.component, Pipeline):
                 output = await self._render_pipeline(self.component)
             else:
@@ -185,10 +202,6 @@ class LumenOutput(Viewer):
                 f"**{type(e).__name__}**:{e}\n\nPlease press undo, edit the YAML, or continue chatting.",
                 alert_type="danger",
             )
-
-    @classmethod
-    def _validate_spec(cls, spec):
-        return spec
 
     def __panel__(self):
         return self._main
@@ -241,6 +254,19 @@ class VegaLiteOutput(LumenOutput):
 
         process_error(error)
         return "\n".join(errors.values())
+
+    @classmethod
+    def _serialize_component(cls, component: Component) -> tuple[str, dict[str, Any]]:
+        component_spec = component.to_spec()
+        vega_spec = component_spec['spec']
+        return yaml.dump(vega_spec, Dumper=NumpyDumper), component_spec
+
+    @classmethod
+    def _deserialize_component(cls, component: Component, yaml_spec: str, spec_dict: dict[str, Any]) -> str:
+        spec = load_yaml(yaml_spec)
+        cls._validate_spec(spec)
+        spec_dict = dict(spec_dict, spec=spec)
+        return type(component).from_spec(spec_dict)
 
     @classmethod
     def _validate_spec(cls, spec):
@@ -317,9 +343,9 @@ class AnalysisOutput(LumenOutput):
                 view = await asyncio.to_thread(self.analysis, self.pipeline)
             self.component = view
             self._rendered = False
-            spec = view.to_spec()
+            spec, self._spec_dict = self._serialize_component(view)
             self.param.update(
-                spec=yaml.dump(spec),
+                spec=spec,
                 active=0
             )
 
@@ -328,36 +354,17 @@ class SQLOutput(LumenOutput):
 
     language = "sql"
 
-    @param.depends('spec', 'active')
-    async def render(self):
-        yield CircularProgress(
-            value=True, label="Executing SQL query...", height=50, width=50
-        )
-        if self.active != 1:
-            return
+    @classmethod
+    def _serialize_component(cls, component: Component) -> tuple[str, dict[str, Any]]:
+        component_spec = component.to_spec()
+        sql_spec = component_spec["source"]["tables"][component.table]
+        return sql_spec, component_spec
 
-        pipeline = self.component
-        if self.spec in self._last_output:
-            yield self._last_output[self.spec]
-            return
-
-        try:
-            if self._rendered:
-                pipeline.source = pipeline.source.create_sql_expr_source(
-                    tables={pipeline.table: self.spec}
-                )
-            output = await self._render_pipeline(pipeline)
-            self._rendered = True
-            self._last_output.clear()
-            self._last_output[self.spec] = output
-            yield output
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            yield Alert(
-                f"```\n{e}\n```\nPlease press undo, edit the YAML, or continue chatting.",
-                alert_type="danger",
-            )
+    @classmethod
+    def _deserialize_component(cls, component: Component, sql_spec: str, spec_dict: dict[str, Any]) -> str:
+        spec_dict = deepcopy(spec_dict)
+        spec_dict["source"]["tables"][component.table] = sql_spec
+        return type(component).from_spec(spec_dict)
 
     def __panel__(self):
         return self._main

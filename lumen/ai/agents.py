@@ -1844,7 +1844,7 @@ class VegaLiteAgent(BaseViewAgent):
         #     # add pan/zoom controls to all plots except geographic ones and points overlaid on line plots
         #     # because those result in an blank plot without error
         #     vega_spec["params"] = [{"bind": "scales", "name": "grid", "select": "interval"}]
-        return {"spec": vega_spec, "sizing_mode": "stretch_both", "min_height": 300, "max_width": 1200}
+        return {"spec": vega_spec, "sizing_mode": "stretch_both", "min_height": 300}
 
     async def _get_doc_examples(self, user_query: str) -> list[str]:
         # Query vector store for relevant examples
@@ -1911,11 +1911,8 @@ class VegaLiteAgent(BaseViewAgent):
         full_dict = await self._generate_basic_spec(messages, context, pipeline, doc_examples, doc)
 
         # Step 2: Show complete plot immediately
-        context["view"] = dict(full_dict, type=self.view_type)
         view = self.view_type(pipeline=pipeline, **full_dict)
         out = self._output_type(component=view, title=step_title)
-        # Get the latest spec from the rendered view, which includes type: vega-lite
-        full_dict = yaml.safe_load(out.spec)
 
         # Step 3: enhancements (LLM-driven creative decisions)
         steps = {
@@ -1926,20 +1923,20 @@ class VegaLiteAgent(BaseViewAgent):
         for step_name, step_desc in steps.items():
             # Only pass the vega lite 'spec' portion to prevent ballooning context
             step_name, update_dict = await self._update_spec_step(
-                step_name, step_desc, full_dict["spec"], step_name, messages, context, doc=doc
+                step_name, step_desc, out.spec, step_name, messages, context, doc=doc
             )
             try:
-                test_spec = self._deep_merge_dicts(full_dict["spec"], update_dict)
+                test_spec = self._deep_merge_dicts(out.spec, update_dict)
                 await self._extract_spec({"yaml_spec": yaml.dump(test_spec)})  # Validation
             except Exception as e:
                 log_debug(f"Skipping invalid {step_name} update due to error: {e}")
                 continue
-            full_dict["spec"] = self._deep_merge_dicts(full_dict["spec"], update_dict)
-            out.spec = yaml.dump(full_dict)
+            spec = self._deep_merge_dicts(out.spec, update_dict)
+            out.spec = spec
             log_debug(f"📊 Applied {step_name} updates and refreshed visualization")
 
         # Update final context state
-        out_context = {"view": full_dict}
+        out_context = {"view": view}
         return [out], out_context
 
     async def annotate(
