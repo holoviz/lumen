@@ -362,20 +362,20 @@ class ContextProvider(param.Parameterized):
         Serves as a high-level explanation for other actors to understand
         what this actor does and when it might be useful to invoke it.""")
 
-    inputs: type[ContextModel] = ContextModel
-    outputs: type[ContextModel] = ContextModel
+    input_schema: type[ContextModel] = ContextModel
+    output_schema: type[ContextModel] = ContextModel
 
     async def prepare(self, context: TContext):
         pass
 
     async def requirements(self, messages: list[Message]) -> list[str]:
-        return list(self.inputs.__annotations__)
+        return list(self.input_schema.__annotations__)
 
     def __str__(self):
         string = (
             f"- {self.name[:-5]}: {' '.join(self.purpose.strip().split())}\n"
-            f"  Requires: `{'`, `'.join(self.inputs.__annotations__)}`\n"
-            f"  Provides: `{'`, `'.join(self.outputs.__annotations__)}`\n"
+            f"  Requires: `{'`, `'.join(self.input_schema.__annotations__)}`\n"
+            f"  Provides: `{'`, `'.join(self.output_schema.__annotations__)}`\n"
         )
         if self.conditions:
             string += "  Conditions:\n" + "\n".join(f"  - {condition}" for condition in self.conditions) + "\n"

@@ -5,9 +5,13 @@ import sys
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import (
-    Annotated, Any, Literal, NotRequired, Required, TypedDict, Union, get_args,
-    get_origin, get_type_hints,
+    TYPE_CHECKING, Annotated, Any, Literal, NotRequired, Required, TypedDict,
+    Union, get_args, get_origin, get_type_hints,
 )
+
+if TYPE_CHECKING:
+    from .actor import Actor
+    from .report import Action
 
 TContext = Mapping[str, Any]
 
@@ -28,6 +32,7 @@ class AccumulateSpec:
     dedupe_by: str | Callable[[Any], Any] | None = None
     # if contexts also supply the accumulator field directly, do we include those too?
     include_target_field: bool = True
+
 
 def _parse_accumulate_meta(annotation: Any) -> AccumulateSpec | None:
   """
@@ -297,12 +302,12 @@ def isinstance_like(value: Any, tp: Any) -> bool:
     return True
 
 
-def collect_task_outputs(task) -> dict[str, Any]:
+def collect_task_outputs(task: Action | Actor) -> dict[str, Any]:
     """
     Returns {key: type} for what this task guarantees to add/enrich in context,
-    based on task.outputs (a TypedDict schema).
+    based on task.output_schema (a TypedDict schema).
     """
-    out_schema = task.outputs
+    out_schema = task.output_schema
     fields = schema_fields(out_schema)
     return {k: f["type"] for k, f in fields.items()}
 
@@ -387,13 +392,13 @@ def _accumulate_alt_key(meta: list[Any]) -> str | None:
     return None
 
 def validate_task_inputs(
-    task, value_ctx: Mapping[str, Any], available_types: dict[str, Any], path: str
+    task: Action | Actor, value_ctx: Mapping[str, Any], available_types: dict[str, Any], path: str
 ) -> list[ValidationIssue]:
     """
-    Validates that task.inputs_schema are satisfied by value_ctx or prior available_types.
+    Validates that task.input_schema are satisfied by value_ctx or prior available_types.
     """
     issues: list[ValidationIssue] = []
-    schema = task.inputs
+    schema = task.input_schema
 
     if not schema:
         return issues

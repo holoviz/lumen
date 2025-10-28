@@ -103,7 +103,10 @@ class Plan(Section):
                 if error_outputs is not None:
                     return error_outputs, task_context
             if isinstance(task, TaskGroup):
-                unprovided = [p for actor in task for p in actor.outputs.__annotations__ if p not in task_context]
+                unprovided = [
+                    p for actor in task for p in actor.output_schema.__annotations__
+                    if p not in task_context
+                ]
             else:
                 unprovided = []
             if unprovided:
@@ -162,7 +165,7 @@ class Plan(Section):
             # Check if this task provides pipeline or other relevant context
             if isinstance(task, TaskGroup):
                 for actor in task:
-                    if 'pipeline' in actor.outputs.__annotations__:
+                    if 'pipeline' in actor.output_schema.__annotations__:
                         return idx
 
     async def _retry_from_provider(self, provider_index: int, failed_index: int, error_message: str) -> list:
@@ -994,7 +997,7 @@ class Planner(Coordinator):
         tools = list(tools.values())
         all_provides = set()
         for provider in agents + tools:
-            all_provides |= set(provider.outputs.__annotations__)
+            all_provides |= set(provider.output_schema.__annotations__)
         all_provides |= set(context)
 
         # filter agents using applies
@@ -1004,19 +1007,19 @@ class Planner(Coordinator):
         # e.g. DbtslAgent is unsatisfiable if DbtslLookup was used in planning
         # but did not provide dbtsl_metaset
         # also filter out agents where excluded keys exist in memory
-        agents = [agent for agent in agents if len(set(agent.inputs.__annotations__) - all_provides) == 0 and type(agent).__name__ != "ValidationAgent"]
-        tools = [tool for tool in tools if len(set(tool.inputs.__annotations__) - all_provides) == 0]
+        agents = [agent for agent in agents if len(set(agent.input_schema.__annotations__) - all_provides) == 0 and type(agent).__name__ != "ValidationAgent"]
+        tools = [tool for tool in tools if len(set(tool.input_schema.__annotations__) - all_provides) == 0]
         reasoning = None
         while reasoning is None:
             # candidates = agents and tools that can provide
             # the unmet dependencies
             agent_candidates = [
                 agent for agent in agents
-                if not unmet_dependencies or set(agent.outputs.__annotations__) & unmet_dependencies
+                if not unmet_dependencies or set(agent.output_schema.__annotations__) & unmet_dependencies
             ]
             tool_candidates = [
                 tool for tool in tools
-                if not unmet_dependencies or set(tool.outputs.__annotations__) & unmet_dependencies
+                if not unmet_dependencies or set(tool.output_schema.__annotations__) & unmet_dependencies
             ]
             system = await self._render_prompt(
                 "main",
@@ -1111,14 +1114,14 @@ class Planner(Coordinator):
                 continue
 
             requires = set(await subagent.requirements(messages))
-            provided |= set(subagent.outputs.__annotations__)
+            provided |= set(subagent.output_schema.__annotations__)
             unmet_dependencies = (unmet_dependencies | requires) - provided
             has_table_lookup = any(
                 any(isinstance(st, TableLookup) for st in task)
                 for task in tasks
             )
             if "table" in unmet_dependencies and not table_provided and "SQLAgent" in agents and has_table_lookup:
-                provided |= set(agents['SQLAgent'].outputs.__annotations__)
+                provided |= set(agents['SQLAgent'].output_schema.__annotations__)
                 sql_step = type(step)(
                     actor='SQLAgent',
                     instruction='Load the table',
@@ -1147,7 +1150,7 @@ class Planner(Coordinator):
 
         last_task = tasks[-1]
         if isinstance(last_task[0], Tool):
-            if "AnalystAgent" in agents and all(r in provided for r in agents["AnalystAgent"].inputs.__annotations__):
+            if "AnalystAgent" in agents and all(r in provided for r in agents["AnalystAgent"].input_schema.__annotations__):
                 actor = "AnalystAgent"
             else:
                 actor = "ChatAgent"
