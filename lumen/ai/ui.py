@@ -762,7 +762,7 @@ class ExplorerUI(UI):
         Cleanup on session destroy
         """
         for c in self._explorations.items[1:]:
-            c['view'].context.cleanup()
+            c['view'].context.clear()
 
     def _global_export_notebook(self):
         cells, extensions = [], []
@@ -874,6 +874,7 @@ class ExplorerUI(UI):
             self._notebook_export.filename = f"{plan.title.replace(' ', '_')}.ipynb"
             await self._update_conversation()
         self._last_synced = exploration
+        return exploration
 
     def _add_outputs(self, exploration: Exploration, outputs: list[Any], context: TContext):
         view = exploration.view
@@ -950,24 +951,26 @@ class ExplorerUI(UI):
         current = [view for view in event.new if isinstance(view, LumenOutput)]
         old = [view for view in event.old if isinstance(view, LumenOutput)]
 
-        tabs = exploration.view[0]
-
         idx = None
+        tabs = exploration.view[0]
         content = list(zip(tabs._names, tabs, strict=False))
         for out in old:
-            if old in current:
+            if out in current:
                 continue
-            matches = [i for i, (_, vsplit) in enumerate(content[1:]) if out.editor in vsplit]
+            matches = [
+                i for i, (_, vsplit) in enumerate(content)
+                if isinstance(vsplit, VSplit) and out.editor in vsplit
+            ]
             if matches:
-                idx = matches[0]+1
-                content.pop(idx+1)
+                idx = matches[0]
+                content.pop(idx)
 
         for out in current:
             if out in old:
                 idx = next(i for i, tab in enumerate(tabs[1:]) if out.editor in tab) + 1
                 continue
             title, vsplit = self._render_view(out)
-            content.insert(idx, (title, vsplit))
+            content.insert(idx+1, (title, vsplit))
         tabs[:] = content
 
     def _wrap_callback(self, callback):
@@ -977,15 +980,18 @@ class ExplorerUI(UI):
             try:
                 plan = await callback(messages, prev["view"].context, user, instance)
                 if any('pipeline' in step[0].outputs.__annotations__ for step in plan):
-                    await self._add_exploration(plan)
+                    exploration = await self._add_exploration(plan)
                     new_exploration = True
+                    watcher = plan.param.watch(partial(self._add_views, exploration), "views")
                 else:
+                    exploration = self._explorations.value['view']
                     new_exploration = False
-                exploration = self._explorations.value['view']
-                watcher = plan.param.watch(partial(self._add_views, exploration), "views")
+                    plan = exploration.plan.merge(plan)
+                    watcher = None
                 with plan.param.update(interface=self.interface):
                     new, out_context = await plan.execute()
-                plan.param.unwatch(watcher)
+                if watcher:
+                    plan.param.unwatch(watcher)
                 if "__error__" in out_context:
                     # On error we have to sync the conversation, unwatch the plan,
                     # and remove the exploration if it was newly created
