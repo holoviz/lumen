@@ -83,7 +83,13 @@ class SQLAlchemySource(BaseSQLSource):
 
     source_type = 'sqlalchemy'
 
-    dialect = 'any'
+    async_drivers = {
+        'postgresql+asyncpg',
+        'mysql+asyncmy',
+        'mysql+aiomysql',
+        'sqlite+aiosqlite',
+        'oracle+oracledb_async',
+    }
 
     def __init__(self, **params):
         engine = params.pop('engine', None)
@@ -117,9 +123,6 @@ class SQLAlchemySource(BaseSQLSource):
         # Detect if driver is async
         self._driver_is_async = self._is_async_driver(self._url.drivername)
 
-        # Set the dialect (as a class attribute override for this instance)
-        self.dialect = self._url.get_dialect().name
-
         # Create the engine
         if engine:
             self._engine = engine
@@ -135,21 +138,48 @@ class SQLAlchemySource(BaseSQLSource):
             else:
                 self._engine = create_engine(self._url, **engine_kwargs)
 
-        self._inspector = None
+        self._inspector_cache = None
+
+    @classmethod
+    def _is_async_driver(cls, drivername: str) -> bool:
+        """Check if the driver is asynchronous."""
+        return drivername in cls.async_drivers or 'async' in drivername
 
     @staticmethod
-    def _is_async_driver(drivername: str) -> bool:
-        """Check if the driver is asynchronous."""
-        async_drivers = {
-            'postgresql+asyncpg',
-            'mysql+asyncmy',
-            'mysql+aiomysql',
-            'sqlite+aiosqlite',
-            'oracle+oracledb_async',
-        }
-        return drivername in async_drivers
+    def _convert_params(sql_query: str, params: list | dict | None = None) -> tuple[str, dict]:
+        """
+        Convert parameters to SQLAlchemy-compatible format.
 
-    def _get_connection(self) -> Connection:
+        Converts positional parameters (list) to named parameters (dict) and
+        updates the SQL query accordingly.
+
+        Arguments
+        ---------
+        sql_query : str
+            The SQL query string
+        params : list | dict | None
+            Parameters to convert:
+            - list: Positional parameters for placeholder (?) syntax
+            - dict: Named parameters for :name, %(name)s, etc. syntax
+            - None: No parameters
+
+        Returns
+        -------
+        tuple[str, dict]
+            The updated SQL query and converted parameters dict
+        """
+        if params is None or isinstance(params, dict):
+            return sql_query, params or {}
+
+        # Convert list params to dict
+        params_dict = {f'param_{i}': v for i, v in enumerate(params)}
+        # Replace ? with :param_0, :param_1, etc.
+        for i in range(len(params)):
+            sql_query = sql_query.replace('?', f':param_{i}', 1)
+        return sql_query, params_dict
+
+    @property
+    def _connection(self) -> Connection:
         """Get or create a database connection."""
         if self._driver_is_async:
             raise RuntimeError(
@@ -159,11 +189,21 @@ class SQLAlchemySource(BaseSQLSource):
         # Don't cache connection - create new one each time to avoid transaction issues
         return self._engine.connect()
 
-    def _get_inspector(self):
+    @property
+    def _inspector(self):
         """Get or create a SQLAlchemy inspector for metadata operations."""
-        if self._inspector is None:
-            self._inspector = inspect(self._engine)
-        return self._inspector
+        if self._inspector_cache is None:
+            self._inspector_cache = inspect(self._engine)
+        return self._inspector_cache
+
+    @property
+    def dialect(self) -> str:
+        """Detect and return the database dialect name."""
+        try:
+            return self._url.get_dialect().name
+        except Exception:
+            # Fallback to 'any' if dialect detection fails
+            return 'any'
 
     def create_sql_expr_source(self, tables: dict[str, str], params: dict[str, list | dict] | None = None, **kwargs):
         """
@@ -222,17 +262,11 @@ class SQLAlchemySource(BaseSQLSource):
                 "Use execute_async() instead."
             )
 
-        # Convert list params to dict for SQLAlchemy
-        if params is not None and isinstance(params, list):
-            params_dict = {f'param_{i}': v for i, v in enumerate(params)}
-            # Replace ? with :param_0, :param_1, etc.
-            for i in range(len(params)):
-                sql_query = sql_query.replace('?', f':param_{i}', 1)
-            params = params_dict
+        sql_query, params = self._convert_params(sql_query, params)
 
         # Use context manager to ensure connection is closed
-        with self._get_connection() as connection:
-            result = connection.execute(text(sql_query), params or {}, *args, **kwargs)
+        with self._connection as connection:
+            result = connection.execute(text(sql_query), params, *args, **kwargs)
             df = pd.DataFrame(result.fetchall(), columns=result.keys())
             return df
 
@@ -267,16 +301,10 @@ class SQLAlchemySource(BaseSQLSource):
             # Fall back to running sync in thread
             return await asyncio.to_thread(self.execute, sql_query, params, *args, **kwargs)
 
-        async with self._engine.connect() as connection:
-            # Convert list params to dict for SQLAlchemy
-            if params is not None and isinstance(params, list):
-                params_dict = {f'param_{i}': v for i, v in enumerate(params)}
-                # Replace ? with :param_0, :param_1, etc.
-                for i in range(len(params)):
-                    sql_query = sql_query.replace('?', f':param_{i}', 1)
-                params = params_dict
+        sql_query, params = self._convert_params(sql_query, params)
 
-            result = await connection.execute(text(sql_query), params or {}, *args, **kwargs)
+        async with self._engine.connect() as connection:
+            result = await connection.execute(text(sql_query), params, *args, **kwargs)
             rows = result.fetchall()
             df = pd.DataFrame(rows, columns=result.keys())
             return df
@@ -291,7 +319,7 @@ class SQLAlchemySource(BaseSQLSource):
             ]
 
         # Otherwise, inspect the database
-        inspector = self._get_inspector()
+        inspector = self._inspector
         schema_name = self.schema
 
         tables = []
@@ -407,7 +435,7 @@ class SQLAlchemySource(BaseSQLSource):
         dict
             Dictionary mapping table names to their metadata
         """
-        inspector = self._get_inspector()
+        inspector = self._inspector
         metadata = {}
 
         for table_name in tables:
@@ -478,9 +506,8 @@ class SQLAlchemySource(BaseSQLSource):
         This method should be called when the source is no longer needed to prevent
         connection leaks and properly clean up server-side resources.
         """
-        # No persistent connection to close anymore
         if self._engine is not None:
             self._engine.dispose()
             self._engine = None
 
-        self._inspector = None
+        self._inspector_cache = None
