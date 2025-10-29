@@ -4,7 +4,7 @@
 Available visualization types:
 {{ doc }}
 
-The current SQL table name: {{ memory['table'] }}.
+The current SQL table name: {{ memory['pipeline'].table }}.
 
 Here is the current dataset to use:
 {{ memory['data'] }}
@@ -16,7 +16,7 @@ The previous view specification was:
 ```
 {%- endif %}
 
-{% if memory['source'].dialect == "snowflake" %}
+{% if memory['pipeline'].source.dialect == "snowflake" %}
 Please use all upper case for field names.
 {% endif %}
 {%- endblock %}

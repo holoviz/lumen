@@ -78,7 +78,7 @@ Guidelines:
 {%- endfor -%}
 {% if agent.not_with %}Should never be used together with: `{{ agent.not_with | join('`, `') }}`{%- endif %}
 {% endfor %}
-# Current Data Context
+## Current Data Context
 
 {%- if memory.get('document_sources') %}
 📂 Documents available:

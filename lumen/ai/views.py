@@ -11,8 +11,7 @@ import yaml
 from jsonschema import Draft7Validator, ValidationError
 from panel.config import config
 from panel.layout import Column, Row
-from panel.pane import Markdown
-from panel.param import ParamRef
+from panel.param import ParamMethod
 from panel.viewable import Viewer
 from panel.widgets import CodeEditor
 from panel_material_ui import (
@@ -39,7 +38,7 @@ class LumenOutput(Viewer):
 
     loading = param.Boolean()
 
-    footer = param.List()
+    footer = param.List(default=[])
 
     spec = param.String(allow_None=True)
 
@@ -55,25 +54,23 @@ class LumenOutput(Viewer):
             except Exception:
                 params['spec'] = None
         super().__init__(**params)
-        code_editor = CodeEditor(
-            value=self.param.spec.rx.or_(""),
+        self._editor = CodeEditor(
+            value=self.param.spec.rx.or_(f'{self.title} output could not be serialized and may therefore not be edited.'),
             language=self.language,
             theme="github_dark" if config.theme == "dark" else "github_light_default",
-            sizing_mode="stretch_width",
+            sizing_mode="stretch_both",
             soft_tabs=True,
             on_keyup=False,
             indent=2,
+            disabled=self.param.spec.rx.is_(None)
         )
-        code_editor.link(self, bidirectional=True, value='spec')
-        placeholder = Markdown(
-            f'{self.title} output could not be serialized and may therefore not be edited.'
-        )
+        self._editor.link(self, bidirectional=True, value='spec')
         copy_icon = IconButton(
             icon="content_copy", active_icon="check", margin=(5, 0), toggle_duration=1000,
             description="Copy YAML to clipboard", size="small", color="default", icon_size="0.8em"
         )
         copy_icon.js_on_click(
-            args={"code_editor": code_editor},
+            args={"code_editor": self._editor},
             code="navigator.clipboard.writeText(code_editor.code);",
         )
         download_icon = IconButton(
@@ -81,7 +78,7 @@ class LumenOutput(Viewer):
             description="Download YAML to file", size="small", color="default", icon_size="0.9em"
         )
         download_icon.js_on_click(
-            args={"code_editor": code_editor},
+            args={"code_editor": self._editor},
             code="""
             var text = code_editor.code;
             var blob = new Blob([text], {type: 'text/plain'});
@@ -94,20 +91,23 @@ class LumenOutput(Viewer):
             a.parentNode.removeChild(a);  //afterwards we remove the element again
             """,
         )
-        icons = Row(
-            copy_icon, download_icon, *self.footer,
+        self._icons = Row(
+            *([copy_icon, download_icon] + self.footer),
             margin=(0, 0, 5, 5)
         )
-        code_col = Column(
-            code_editor,
-            icons,
+        self.editor = Column(
+            self._editor,
+            self._icons,
             sizing_mode="stretch_both"
         )
-        no_spec = self.param.spec.rx.is_(None)
-        self._main = ParamRef(no_spec.rx.where(placeholder, code_col), min_height=no_spec.rx.where(None, 300))
+        self._main = ParamMethod(self.render, inplace=True, sizing_mode='stretch_width')
         self._main.loading = self.param.loading
         self._rendered = False
         self._last_output = {}
+
+    @param.depends("footer", watch=True)
+    def _update_footer(self):
+        self._icons[:] = list(self._icons[:2]) + self.footer
 
     async def _render_pipeline(self, pipeline):
         table = Table(
@@ -322,3 +322,45 @@ class AnalysisOutput(LumenOutput):
                 spec=yaml.dump(spec),
                 active=0
             )
+
+
+class SQLOutput(LumenOutput):
+
+    language = "sql"
+
+    @param.depends('spec', 'active')
+    async def render(self):
+        yield CircularProgress(
+            value=True, label="Executing SQL query...", height=50, width=50
+        )
+        if self.active != 1:
+            return
+
+        pipeline = self.component
+        if self.spec in self._last_output:
+            yield self._last_output[self.spec]
+            return
+
+        try:
+            if self._rendered:
+                pipeline.source = pipeline.source.create_sql_expr_source(
+                    tables={pipeline.table: self.spec}
+                )
+            output = await self._render_pipeline(pipeline)
+            self._rendered = True
+            self._last_output.clear()
+            self._last_output[self.spec] = output
+            yield output
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            yield Alert(
+                f"```\n{e}\n```\nPlease press undo, edit the YAML, or continue chatting.",
+                alert_type="danger",
+            )
+
+    def __panel__(self):
+        return self._main
+
+    def __str__(self):
+        return f"{self.__class__.__name__}:\n```sql\n{self.spec}\n```"

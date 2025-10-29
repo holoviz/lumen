@@ -7,7 +7,7 @@ import tempfile
 import traceback as tb
 
 from abc import abstractmethod
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from datetime import datetime
 from functools import partial
 from pathlib import Path
@@ -33,12 +33,14 @@ from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource
 from ..views.base import Panel, View
 from .actor import Actor, ContextProvider, TContext
-from .agents import AnalystAgent
+from .agents import AnalystAgent, LumenBaseAgent
 from .config import MissingContextError
 from .context import (
-    LWW, ContextError, ValidationIssue, collect_task_outputs, merge_contexts,
-    validate_task_inputs, validate_taskgroup_exclusions,
+    LWW, ContextError, ValidationIssue, collect_task_outputs,
+    input_dependency_keys, merge_contexts, validate_task_inputs,
+    validate_taskgroup_exclusions,
 )
+from .controls import RetryControls
 from .export import (
     format_output, make_md_cell, make_preamble, write_notebook,
 )
@@ -141,8 +143,8 @@ class Task(Viewer):
             return out
         elif isinstance(out, LumenOutput):
             return Tabs(
-                ('Specification', out),
-                ('Output', pn.param.ParamMethod(out.render, inplace=True, sizing_mode='stretch_width')),
+                ('Specification', out.editor),
+                ('Output', out),
                 active=1, sizing_mode='stretch_width', min_height=0, height_policy='fit'
             )
 
@@ -215,8 +217,10 @@ class TaskGroup(Task):
             _tasks.append(task)
             _contexts.append({})
         super().__init__(_tasks=_tasks, views=views, **params)
-        self._contexts = []
-        self._current = 0
+        self._watchers = {}
+        self._task_outputs = {}
+        self._task_contexts = {}
+        self._task_rendered = {}
         self._init_view()
         self._populate_view()
 
@@ -296,22 +300,74 @@ class TaskGroup(Task):
         using _add_outputs.
         """
 
-    def _add_outputs(self, i: int, task: Task | Actor, views: list, out_context: dict | None, **kwargs):
+    async def _retry_invoke(
+        self, i: int, task: Task | Actor, context: TContext, view: LumenOutput, event: param.parameterized.Event
+    ):
+        if isinstance(task, LumenBaseAgent):
+            with view.editor.param.update(loading=True):
+                messages = list(self.history)
+                task_context = self._get_context(i, context, task)
+                view.spec = await task.revise(
+                    event.new, messages, task_context, view.spec, language=view.language
+                )
+        if i < (len(self)-1):
+            invalidation_keys = set(task.outputs.__annotations__)
+            self.invalidate(invalidation_keys, start=i+1)
+        await self._execute(context)
+
+    def _add_outputs(
+        self, i: int, task: Task | Actor, views: list, context: TContext, out_context: TContext | None, **kwargs
+    ):
+        for view in views:
+            if not isinstance(view, LumenOutput):
+                continue
+            retry_controls = RetryControls()
+            view.footer = [retry_controls]
+            self._watchers[i] = retry_controls.param.watch(
+                partial(self._retry_invoke, i, task, context, view),
+                "instruction"
+            )
+
         if i >= 0:
-            self._contexts.append(out_context)
+            self._task_contexts[task] = out_context
+            self._task_outputs[task] = views
+
+        if i > 0:
+            prev_task = self._tasks[i-1]
+            prev_out = self._task_rendered[task]
+            if isinstance(prev_task, Task):
+                prev_view = prev_task.views[-1]
+            else:
+                prev_view = self._task_views[prev_task][-1]
+        else:
+            prev_view = prev_out = None
+
+        idx = 0 if prev_out is None else (self._view.index(prev_out) + 1)
         if isinstance(task, Task):
-            self._view.append(task)
-            self.views += task.views
+            self._view.insert(idx, task)
+            self._task_rendered[task] = self._view[idx]
+            views = task.views
         else:
             rendered = []
             for out in views:
                 view = self._render_output(out)
                 if view is not None:
                     rendered.append(view)
-            self._view.extend(rendered)
-            self.views += rendered
+            if rendered:
+                rendered_col = Column(*rendered)
+                if task is not None:
+                    self._task_rendered[task] = rendered_col
+                self._view.insert(idx, rendered_col)
+                views = rendered
+        new_views = list(self.views)
+        view_idx = 0 if prev_view is None else self.views.index(prev_view)
+        for vi, view in enumerate(views):
+            new_views.insert(view_idx+vi, view)
+        self.views = new_views
 
-    def _watch_child_outputs(self, i: int, previous: list, context: TContext, event: param.Event, **kwargs):
+    def _watch_child_outputs(
+        self, i: int, previous: list, context: TContext, event: param.Event, **kwargs
+    ):
         pass
 
     def append(self, task: Task | Actor):
@@ -350,14 +406,16 @@ class TaskGroup(Task):
         """
         Resets the view, removing generated outputs.
         """
-        self._current = 0
+        self._task_outputs.clear()
         self.views.clear()
         self._populate_view()
         for task in self._tasks:
             if isinstance(task, Task):
                 task.reset()
 
-    async def _run_task(self, i: int, task: Self | Actor, context: TContext, **kwargs) -> tuple[list[Any], TContext]:
+    async def _run_task(
+        self, i: int, task: Self | Actor, context: TContext, **kwargs
+    ) -> tuple[list[Any], TContext]:
         outputs = []
         messages = list(self.history)
         if self.instruction:
@@ -410,6 +468,7 @@ class TaskGroup(Task):
             else:
                 with task.param.update(running=True, history=messages):
                     out, out_context = await task.execute(context, **kwargs)
+            self._task_outputs[task] = out
             outputs += out
         return outputs, out_context
 
@@ -492,7 +551,8 @@ class TaskGroup(Task):
         )
 
     def _get_context(self, i: int, context: TContext | None, task: Task | Actor) -> TContext | None:
-        contexts = ([self.context] if self.context else []) + ([context] if context else []) + self._contexts[:i]
+        contexts = ([self.context] if self.context else []) + ([context] if context else [])
+        contexts += [self._task_contexts[task] for task in self._tasks[:i]]
         if isinstance(task, Actor):
             return merge_contexts(task.inputs, contexts)
         elif isinstance(task, TaskGroup):
@@ -518,15 +578,13 @@ class TaskGroup(Task):
         **kwargs: dict
             Additional keyword arguments to pass to the tasks.
         """
-        if self._current != 0:
-            views = list(self.views)
-        else:
-            title = Typography(f"{'#'*self.level} {self.title}", margin=(10, 10, 0, 10))
-            views = [title] if self.title else []
-            if views:
-                self._add_outputs(-1, None, views, None, **kwargs)
+        title = Typography(f"{'#'*self.level} {self.title}", margin=(10, 10, 0, 10))
+        views = [title] if self.title else []
+        if views and not self._task_outputs:
+            self._add_outputs(-1, None, views, context, None, **kwargs)
         for i, task in enumerate(self._tasks):
-            if i < self._current:
+            if task in self._task_outputs:
+                views += self._task_outputs[task]
                 continue
             subcontext = self._get_context(i, context, task)
             new = []
@@ -544,11 +602,62 @@ class TaskGroup(Task):
                 self.status = "success"
                 views += new
             self._add_outputs(
-                i, task, new, new_context, **kwargs
+                i, task, new, context, new_context, **kwargs
             )
-            self._current = i + 1
-        contexts = ([self.context] if self.context else []) + self._contexts
+        contexts = ([self.context] if self.context else [])
+        contexts += [self._task_contexts[task] for task in self]
         return views, merge_contexts(LWW, contexts)
+
+    def invalidate(self, keys: Iterable[str], start: int = 0) -> tuple[bool, set[str]]:
+        """
+        Invalidates tasks and propagates context dependencies within a TaskGroup.
+
+        Parameters
+        ----------
+        keys : Iterable[str]
+            A set of context keys that have been modified or invalidated by the user.
+            These represent outputs whose dependent tasks should be re-evaluated.
+        start : int
+            Index of the task to start invalidating.
+
+        Returns
+        -------
+        tuple[bool, set[str]]
+            A tuple ``(invalidated, keys)`` where:
+            - ``invalidated`` is ``True`` if any tasks in this group (or nested groups)
+                were marked invalid due to overlapping input dependencies.
+            - ``keys`` is the full, cumulative set of invalidated context keys after
+                propagating dependencies through all affected tasks.
+
+        Notes
+        -----
+        - If a task's input keys intersect with the provided invalidation keys,
+        that task is considered stale and will be rerun.
+        - When a task is invalidated, its recorded outputs are removed from
+        ``self._task_outputs`` and its output keys are added to the invalidation set,
+        ensuring that downstream tasks depending on those outputs are also invalidated.
+        - Nested TaskGroups are traversed recursively, and their invalidations
+        propagate upward to the parent group.
+        """
+        keys = set(keys)
+        invalidated = False
+        for i, task in enumerate(self):
+            if i < start:
+                continue
+            if isinstance(task, ContextProvider):
+                deps = input_dependency_keys(task.inputs)
+                if deps & keys:
+                    invalidated = True
+                    self._task_outputs.pop(task, None)
+                    self._task_contexts.pop(task, None)
+                    keys |= set(task.outputs.__annotations__)
+                if isinstance(task, Task):
+                    task.reset()
+            else:
+                subtask_invalidated, subtask_keys = task.invalidate(keys)
+                invalidated = invalidated or subtask_invalidated
+                keys |= subtask_keys
+        return invalidated, keys
 
     def to_notebook(self):
         """
@@ -596,10 +705,10 @@ class Section(TaskGroup):
         tasks = [f"\n    {task!r}" for task in self._tasks]
         return f"{self.__class__.__name__}({', '.join(params)}{''.join(tasks)})"
 
-    def _add_outputs(self, i: int, task: Task | Actor, views: list, out_context: dict | None, **kwargs):
+    def _add_outputs(self, i: int, task: Task | Actor, views: list, context: TContext, out_context: TContext | None, **kwargs):
         if out_context is not None:
-            self._contexts.append(out_context)
-        self.views += views
+            self._task_contexts[task] = out_context
+        self.views = self.views + views
 
     def _render_controls(self):
         return [
@@ -805,10 +914,10 @@ class Report(TaskGroup):
         self._notebook_export_btn.filename = f"{self.title or 'Report'}.ipynb"
         self._docx_export_btn.filename = f"{self.title or 'Report'}.docx"
 
-    def _add_outputs(self, i: int, task: Task | Actor, views: list, out_context: dict | None, **kwargs):
+    def _add_outputs(self, i: int, task: Task | Actor, views: list, context: TContext, out_context: dict | None, **kwargs):
         if out_context is not None:
-            self._contexts.append(out_context)
-        self.views += views
+            self._task_contexts[task] = out_context
+        self.views = self.views + views
 
     def _notebook_export(self):
         return io.StringIO(self.to_notebook())
@@ -1021,9 +1130,8 @@ class Action(Task, ContextProvider):
         views, out_context = await super().execute(context, **kwargs)
         if self.render_outputs:
             self._view[:] = [self._render_output(out) for out in views]
-        self.views += views
+        self.views = self.views + views
         return views, out_context
-
 
 
 class SQLQueryInputs(TypedDict):

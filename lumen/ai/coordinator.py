@@ -145,7 +145,7 @@ class Plan(Section):
             raise e
         else:
             traceback.print_exception(e)
-            self.memory['__error__'] = str(e)
+            context['__error__'] = str(e)
             raise e
 
     def _find_context_provider(self, failed_index: int, context: TContext) -> int | None:
@@ -1148,7 +1148,7 @@ class Planner(Coordinator):
 
         last_task = tasks[-1]
         if isinstance(last_task[0], Tool):
-            if "AnalystAgent" in agents and all(r in provided for r in agents["AnalystAgent"].requires):
+            if "AnalystAgent" in agents and all(r in provided for r in agents["AnalystAgent"].inputs.__annotations__):
                 actor = "AnalystAgent"
             else:
                 actor = "ChatAgent"
