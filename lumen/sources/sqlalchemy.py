@@ -192,6 +192,8 @@ class SQLAlchemySource(BaseSQLSource):
     @property
     def _inspector(self):
         """Get or create a SQLAlchemy inspector for metadata operations."""
+        if self._engine is None:
+            return None
         if self._inspector_cache is None:
             self._inspector_cache = inspect(self._engine)
         return self._inspector_cache
