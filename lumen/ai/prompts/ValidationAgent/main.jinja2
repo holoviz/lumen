@@ -41,7 +41,7 @@ SQL: SELECT state, SUM(amount) FROM data GROUP BY state
 Steps: {% for step in executed_steps %}{{ step }}{% if not loop.last %}, {% endif %}{% endfor %}
 {% endif %}
 {%- if memory.get('sql') %}
-SQL: `{{ memory.sql }}`
+SQL: `{{ memory['sql'] }}`
 {%- endif -%}
 {%- if memory.get('data') is not none %}
 Data Overview:

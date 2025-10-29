@@ -20,7 +20,6 @@ from panel_material_ui import (
 
 from ..sources.duckdb import DuckDBSource
 from ..util import detect_file_encoding
-from .memory import _Memory, memory
 
 TABLE_EXTENSIONS = ("csv", "parquet", "parq", "json", "xlsx", "geojson", "wkt", "zip")
 
@@ -125,6 +124,8 @@ class SourceControls(Viewer):
 
     clear_uploads = param.Boolean(default=True, doc="Clear uploaded file tabs")
 
+    context = param.Dict()
+
     disabled = param.Boolean(default=False, doc="Disable controls")
 
     downloaded_files = param.Dict(default={}, doc="Downloaded files to add as tabs")
@@ -137,15 +138,13 @@ class SourceControls(Viewer):
 
     cancel = param.Event(doc="Cancel")
 
-    memory = param.ClassSelector(class_=_Memory, default=None, doc="""
-        Local memory which will be used to provide the agent context.
-        If None the global memory will be used.""")
-
     multiple = param.Boolean(default=True, doc="Allow multiple files")
 
     show_input = param.Boolean(default=True, doc="Whether to show the input controls")
 
     replace_controls = param.Boolean(default=False, doc="Replace controls on add")
+
+    outputs = param.Dict()
 
     table_upload_callbacks = {}
 
@@ -155,7 +154,6 @@ class SourceControls(Viewer):
 
     def __init__(self, **params):
         super().__init__(**params)
-
         self.tables_tabs = Tabs(sizing_mode="stretch_width")
         self._markitdown = None
         self._file_input = FileDropper(
@@ -230,10 +228,6 @@ class SourceControls(Viewer):
         self._downloaded_media_controls = []  # Track downloaded file controls separately
         self._active_download_task = None  # Track active download task for cancellation
         self._add_downloaded_files_as_tabs()
-
-    @property
-    def _memory(self):
-        return memory if self.memory is None else self.memory
 
     def _handle_cancel(self, event):
         """Handle cancel button click by cancelling active download task"""
@@ -608,8 +602,12 @@ class SourceControls(Viewer):
         else:
             df_rel.to_view(table)
         duckdb_source.tables[table] = sql_expr
-        self._memory["source"] = duckdb_source
-        self._memory["table"] = table
+        self.outputs["source"] = duckdb_source
+        if "sources" not in self.outputs:
+            self.outputs["sources"] = [duckdb_source]
+        else:
+            self.outputs["sources"].append(duckdb_source)
+        self.outputs["table"] = table
         self._last_table = table
         return 1
 
@@ -637,15 +635,15 @@ class SourceControls(Viewer):
             "comments": document_controls._metadata_input.value,
         }
         document = {"text": text, "metadata": metadata}
-        if "document_sources" in self._memory:
-            for i, source in enumerate(self._memory["document_sources"]):
+        if "document_sources" in self.outputs:
+            for i, source in enumerate(self.outputs["document_sources"]):
                 if source.get("metadata", {})["filename"] == metadata["filename"]:
-                    self._memory["document_sources"][i] = document
+                    self.outputs["document_sources"][i] = document
                     break
             else:
-                self._memory["document_sources"].append(document)
+                self.outputs["document_sources"].append(document)
         else:
-            self._memory["document_sources"] = [document]
+            self.outputs["document_sources"] = [document]
         return 1
 
     @param.depends("add", watch=True)
@@ -658,7 +656,6 @@ class SourceControls(Viewer):
             return
 
         with self.menu.param.update(loading=True):
-
             source = None
             n_tables = 0
             n_docs = 0
@@ -687,7 +684,7 @@ class SourceControls(Viewer):
                     n_docs += self._add_document(media_controls.file_obj, media_controls)
 
             if self.replace_controls:
-                src = self._memory.get("source")
+                src = self.output.get("source")
                 if src:
                     self.tables_tabs[:] = [
                         (t, Tabulator(src.get(t), sizing_mode="stretch_both", pagination="remote"))
@@ -712,10 +709,6 @@ class SourceControls(Viewer):
                 self._add_button.visible = False
                 self._file_input.value = {}
                 self._url_input.value = ""
-
-            if n_docs > 0:
-                # Rather than triggering document sources on every upload, trigger it once
-                self._memory.trigger("document_sources")
 
             # Clear uploaded files and URLs from memory
             if (n_tables + n_docs) > 0:

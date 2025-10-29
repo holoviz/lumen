@@ -29,7 +29,7 @@ Ground Rules:
 ## 🛠️ Tools
 {% for tool in tools %}
 {%- set missing_reqs = [] %}
-{%- for req in tool.requires %}
+{%- for req in tool.inputs.__annotations__ %}
   {%- if req not in memory.keys() or memory[req] is none %}
     {%- set _ = missing_reqs.append(req) %}
   {%- endif %}
@@ -38,7 +38,7 @@ Ground Rules:
 {%- else %} ✅ READY
 {%- endif %}
 {{ ' '.join(dedent(tool.purpose).strip().split()) }}
-{% if tool.provides -%}Provides: `{{ tool.provides | join('`, `') }}`{%- endif %}
+{% if tool.outputs.__annotations__ -%}Provides: `{{ tool.outputs.__annotations__ | join('`, `') }}`{%- endif %}
 Conditions for use:
 {%- for condition in tool.conditions %}
   - {{ dedent(condition) }}
@@ -49,7 +49,7 @@ Conditions for use:
 ## 🧑‍💼 Agents
 {% for agent in agents %}
 {%- set missing_reqs = [] %}
-{%- for req in agent.requires %}
+{%- for req in agent.inputs.__annotations__ %}
   {%- if req not in memory.keys() or memory[req] is none %}
     {%- set _ = missing_reqs.append(req) %}
   {%- endif %}
@@ -58,12 +58,12 @@ Conditions for use:
   {%- set providers = [] %}
   {%- for req in missing_reqs %}
     {%- for tool in tools %}
-      {%- if req in tool.provides %}
+      {%- if req in tool.outputs.__annotations__ %}
         {%- set _ = providers.append(tool.__class__.__name__) %}
       {%- endif %}
     {%- endfor %}
     {%- for other_agent in agents %}
-      {%- if req in other_agent.provides %}
+      {%- if req in other_agent.outputs.__annotations__ %}
         {%- set _ = providers.append(other_agent.name[:-5]) %}
       {%- endif %}
     {%- endfor %}
@@ -71,7 +71,7 @@ Conditions for use:
 {%- else %} ✅ READY
 {%- endif %}
 {{ ' '.join(dedent(agent.purpose).strip().split()) }}
-{% if agent.provides -%}Provides: `{{ agent.provides | join('`, `') or 'None' }}`{%- endif %}
+{% if agent.outputs.__annotations__ -%}Provides: `{{ agent.outputs.__annotations__ | join('`, `') or 'None' }}`{%- endif %}
 Guidelines:
 {%- for condition in agent.conditions %}
   - {{ dedent(condition) }}
@@ -139,7 +139,7 @@ Failed because: The plan didn't satisfy dependencies: `{{ unmet_dependencies }}`
 {% if candidates %}
 Available solutions:
 {%- for candidate in candidates %}
-- `{{ candidate.name[:-5] if candidate.name.endswith('Agent') else candidate.__class__.__name__ }}` provides: `{{ candidate.provides | join('`, `') }}`
+- `{{ candidate.name[:-5] if candidate.name.endswith('Agent') else candidate.__class__.__name__ }}` provides: `{{ candidate.outputs.__annotations__ | join('`, `') }}`
 {%- endfor %}
 {% endif %}
 
