@@ -119,7 +119,7 @@ class ToolUser(Actor):
         tools_context = ""
         # TODO: INVESTIGATE WHY or self.tools is needed
         for tool in self._tools.get(prompt_name, []) or self.tools:
-            if all(requirement in context for requirement in tool.requires):
+            if all(requirement in context for requirement in tool.inputs.__annotations__):
                 tool_context = await tool.respond(messages, context)
                 if tool_context:
                     tools_context += f"\n{tool_context}"
@@ -228,6 +228,11 @@ class Tool(Actor, ContextProvider):
         Additional checks to determine if the tool should be used.
         """
         return True
+
+    async def sync(self, context: TContext):
+        """
+        Allows the tool to update when the provided context changes.
+        """
 
 
 
@@ -1022,32 +1027,26 @@ class IterativeTableLookup(TableLookup):
 
     outputs = IterativeTableLookupOutputs
 
-    async def _update_sql_metaset_for_visible_tables(self, context: TContext, new_slugs: list[str]):
+    async def sync(self, context: TContext):
         """
         Update sql_metaset when visible_slugs changes.
         This ensures SQL operations only work with visible tables by regenerating
         the sql_metaset using get_metaset.
         """
-        if new_slugs is None:
-            new_slugs = set()
+        slugs = context.get("visible_slugs", set())
 
         # If no visible slugs or no sources, clear sql_metaset
-        if not new_slugs or not context.get("sources"):
+        if not slugs or not context.get("sources"):
             if "sql_metaset" in context:
                 del context["sql_metaset"]
             return
 
-        # Only update if we have an existing sql_metaset to work with
-        if "sql_metaset" not in context:
-            return
-
         try:
             sources = context["sources"]
-            visible_tables = list(new_slugs)
-            if visible_tables:
-                new_sql_metaset = await get_metaset(sources, visible_tables)
-                context["sql_metaset"] = new_sql_metaset
-                log_debug(f"[IterativeTableLookup] Updated sql_metaset with {len(visible_tables)} visible tables")
+            visible_tables = list(slugs)
+            new_sql_metaset = await get_metaset(sources, visible_tables, prev=context.get("sql_metaset"))
+            context["sql_metaset"] = new_sql_metaset
+            log_debug(f"[IterativeTableLookup] Updated sql_metaset with {len(visible_tables)} visible tables")
         except Exception as e:
             log_debug(f"[IterativeTableLookup] Error updating sql_metaset: {e}")
 
@@ -1215,10 +1214,7 @@ class IterativeTableLookup(TableLookup):
     @classmethod
     async def applies(cls, context: TContext) -> bool:
         visible_slugs = context.get('visible_slugs', set())
-        is_necessary = len(visible_slugs) > 1
-        if not is_necessary:
-            context["sql_metaset"] = await get_metaset(sources=context["sources"], tables=visible_slugs)
-        return is_necessary
+        return len(visible_slugs) > 1
 
     async def respond(
         self, messages: list[Message], context: TContext, **kwargs: dict[str, Any]

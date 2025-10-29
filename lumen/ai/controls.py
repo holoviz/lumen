@@ -1076,14 +1076,15 @@ class SourceCatalog(Viewer):
         super().__init__(context=context, **params)
 
     @param.depends("sources", watch=True, on_init=True)
-    def sync(self, sources=None):
+    async def sync(self, context: TContext | None = None):
         """
         Trigger the catalog with new sources.
 
         Args:
             sources: Optional list of sources. If None, uses sources from memory.
         """
-        sources = self.sources or self.context.get('sources', [])
+        context = context or self.context
+        sources = self.sources or context.get('sources', [])
 
         # Create a lookup of existing cards by source
         existing_cards = {
@@ -1103,7 +1104,7 @@ class SourceCatalog(Viewer):
             else:
                 # Create new card for new source
                 source_card = TableSourceCard(
-                    context=self.context,
+                    context=context,
                     source=source,
                     deletable=multiple_sources,
                     collapsed=multiple_sources,
@@ -1126,8 +1127,6 @@ class SourceCatalog(Viewer):
         return self._layout
 
 
-
-
 class TableExplorer(Viewer):
     """
     TableExplorer provides a high-level entrypoint to explore tables in a split UI.
@@ -1138,6 +1137,7 @@ class TableExplorer(Viewer):
     context = param.Dict(default={})
 
     def __init__(self, **params):
+        self._initialized = False
         super().__init__(**params)
         self._table_select = MultiChoice(
             label="Select table(s) to preview", sizing_mode='stretch_width',
@@ -1150,18 +1150,20 @@ class TableExplorer(Viewer):
         )
         self._input_row = Row(self._table_select, self._explore_button)
         self._source_map = {}
-        self.sync(init=True)
-
         self._tabs = Tabs(dynamic=True, sizing_mode='stretch_both')
         self._layout = Column(
             self._input_row, self._tabs, sizing_mode='stretch_both',
         )
 
-    def sync(self, init=False):
-        if "sources" in self.context:
-            sources = self.context["sources"]
-        elif "source" in self.context:
-            sources = [self.context["source"]]
+    @param.depends("context", watch=True, on_init=True)
+    async def sync(self, context: TContext | None = None):
+        init = not self._initialized
+        self._initialized = True
+        context = context or self.context
+        if "sources" in context:
+            sources = context["sources"]
+        elif "source" in context:
+            sources = [context["source"]]
         else:
             return
         selected = list(self._table_select.value)
@@ -1185,6 +1187,7 @@ class TableExplorer(Viewer):
         selected = selected if len(selected) == 1 else []
         self._table_select.param.update(options=list(self._source_map), value=selected)
         self._input_row.visible = bool(self._source_map)
+        self._initialized = True
 
     def _explore_table_if_single(self, event):
         """
