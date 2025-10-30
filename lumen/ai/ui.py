@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
-import logging
 
 from functools import partial
 from io import StringIO
@@ -252,9 +251,6 @@ class UI(Viewer):
         )
 
         self.interface = self._coordinator.interface
-        levels = logging.getLevelNamesMapping()
-        if levels.get(self.log_level) < 20:
-            self.interface.callback_exception = "verbose"
         self.interface.disabled = True
 
         self._notebook_export = FileDownload(

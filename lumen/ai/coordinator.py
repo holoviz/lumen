@@ -63,20 +63,36 @@ class Plan(Section):
 
     interface = param.ClassSelector(class_=ChatFeed)
 
-    def _render_task_history(self, i: int) -> tuple[list[Message], str]:
+    def _render_task_history(self, i: int, failed: bool = False) -> tuple[list[Message], str]:
         user_query = None
         for msg in reversed(self.history):
             if msg.get('role') == 'user':
                 user_query = msg
                 break
-        todos = '\n'.join(
-            f"- [{'x' if idx < i else ' '}] {'<u>' + task.instruction + '</u>' if idx == i else task.instruction}" for idx, task in enumerate(self)
-        )
+
+        todos_list = []
+        for idx, task in enumerate(self):
+            instruction = task.instruction
+            if failed and idx == i:
+                status = "❌"
+            else:
+                if idx < i:
+                    status = "x"
+                    instruction = f"<u>{instruction}</u>"
+                else:
+                    status = " "
+                status = f"[{status}]"
+            todos_list.append(f"- {status} {instruction}")
+        todos = "\n".join(todos_list)
+
         formatted_content = f"User Request: {user_query['content']!r}\n\nComplete the underlined todo:\n{todos}"
-        return [
-            {'content': formatted_content, 'role': 'user'} if msg is user_query else msg
-            for msg in self.history
-        ], todos
+        rendered_history = []
+        for msg in self.history:
+            if msg is user_query:
+                rendered_history.append({'content': formatted_content, 'role': 'user'})
+            else:
+                rendered_history.append(msg)
+        return rendered_history, todos
 
     async def _run_task(self, i: int, task: Self | Actor, context: TContext, **kwargs):
         outputs = []
@@ -112,6 +128,9 @@ class Plan(Section):
             if unprovided:
                 step.failed_title = f"{task.title} did not provide {', '.join(unprovided)}. Aborting the plan."
                 raise RuntimeError(f"{task.title!r} task failed to provide declared context.")
+            elif task.status == "error":
+                step.failed_title = f"{task.title} errored during execution."
+                raise RuntimeError(step.failed_title)
             log_debug(f"\033[96mCompleted: {task.title}\033[0m", show_length=False)
             step.stream(f"\n\nSuccessfully completed task {task.title}:\n\n> {task.instruction}", replace=True)
             step.success_title = f"{task.title} successfully completed"
@@ -220,7 +239,7 @@ class Plan(Section):
         if '__error__' in context:
             del context['__error__']
         outputs, out_context = await super().execute(context, **kwargs)
-        _, todos = self._render_task_history(len(self))
+        _, todos = self._render_task_history(self._current, failed=self.status == "error")
         self.coordinator._todos.object = todos
         if self.status == 'success':
             self.coordinator._todos_title.object = f"✅ Sucessfully completed {self.title!r}"
@@ -381,6 +400,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
         if interface is None:
             interface = ChatInterface(
                 callback=self._chat_invoke,
+                callback_exception="raise",
                 load_buffer=5,
                 on_submit=on_submit,
                 show_button_tooltips=True,
@@ -1219,45 +1239,44 @@ class Planner(Coordinator):
 
         self._todos_title = Typography("📋 Building checklist...", css_classes=["todos-title"], margin=0, styles={"font-weight": "normal", "font-size": "1.1em"})
         self._todos = Typography(css_classes=["todos"], margin=0, styles={"font-weight": "normal"})
-        with self.interface.param.update(callback_exception="raise"):
-            with self.interface.add_step(
-                title="Planning how to solve user query...", user="Planner",
-                layout_params={"header": Column(self._todos_title, self._todos), "collapsed": not self.verbose}
-            ) as istep:
-                self.steps_layout = self.interface.objects[-1].object
-                while not planned:
-                    if attempts > 0:
-                        log_debug(f"\033[91m!! Attempt {attempts}\033[0m")
-                    plan = None
-                    try:
-                        raw_plan = await self._make_plan(
-                            messages, context, agents, tools, unmet_dependencies, previous_actors, previous_plans,
-                            plan_model, istep, is_follow_up=pre_plan_output["is_follow_up"]
-                        )
-                    except asyncio.CancelledError as e:
-                        self._todos_title.object = istep.failed_title = 'Planning was cancelled, please try again.'
-                        traceback.print_exception(e)
-                        raise e
-                    except Exception as e:
-                        self._todos_title.object = istep.failed_title = 'Failed to make plan. Ensure LLM is configured correctly and/or try again.'
-                        traceback.print_exception(e)
-                        raise e
-                    plan, previous_actors = await self._resolve_plan(
-                        raw_plan, agents, tools, messages, context, previous_actors
+        with self.interface.add_step(
+            title="Planning how to solve user query...", user="Planner",
+            layout_params={"header": Column(self._todos_title, self._todos), "collapsed": not self.verbose}
+        ) as istep:
+            self.steps_layout = self.interface.objects[-1].object
+            while not planned:
+                if attempts > 0:
+                    log_debug(f"\033[91m!! Attempt {attempts}\033[0m")
+                plan = None
+                try:
+                    raw_plan = await self._make_plan(
+                        messages, context, agents, tools, unmet_dependencies, previous_actors, previous_plans,
+                        plan_model, istep, is_follow_up=pre_plan_output["is_follow_up"]
                     )
-                    try:
-                        plan.validate()
-                    except ContextError as e:
-                        istep.stream(str(e), replace=True)
-                        attempts += 1
-                    else:
-                        planned = True
-                    if attempts > 5:
-                        istep.failed_title = "Planning failed to come up with viable plan, please restate the problem and try again."
-                        self._todos_title.object = "❌ Planning failed"
-                        e = RuntimeError("Planner failed to come up with viable plan after 5 attempts.")
-                        traceback.print_exception(e)
-                        raise e
+                except asyncio.CancelledError as e:
+                    self._todos_title.object = istep.failed_title = 'Planning was cancelled, please try again.'
+                    traceback.print_exception(e)
+                    raise e
+                except Exception as e:
+                    self._todos_title.object = istep.failed_title = 'Failed to make plan. Ensure LLM is configured correctly and/or try again.'
+                    traceback.print_exception(e)
+                    raise e
+                plan, previous_actors = await self._resolve_plan(
+                    raw_plan, agents, tools, messages, context, previous_actors
+                )
+                try:
+                    plan.validate()
+                except ContextError as e:
+                    istep.stream(str(e), replace=True)
+                    attempts += 1
+                else:
+                    planned = True
+                if attempts > 5:
+                    istep.failed_title = "Planning failed to come up with viable plan, please restate the problem and try again."
+                    self._todos_title.object = "❌ Planning failed"
+                    e = RuntimeError("Planner failed to come up with viable plan after 5 attempts.")
+                    traceback.print_exception(e)
+                    raise e
 
             # Store the todo message reference for later updates
             self._todo_step = istep

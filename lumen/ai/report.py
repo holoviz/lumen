@@ -55,7 +55,7 @@ class Task(Viewer):
     A `Task` defines a single unit of work that can be executed and rendered.
     """
 
-    abort_on_error = param.Boolean(default=False, doc="""
+    abort_on_error = param.Boolean(default=True, doc="""
         If True, the report will abort if an error occurs.""")
 
     context = param.Dict()
@@ -210,6 +210,7 @@ class TaskGroup(Task):
             _tasks.append(task)
             _contexts.append({})
         super().__init__(_tasks=_tasks, views=views, **params)
+        self._current = 0
         self._watchers = {}
         self._task_outputs = {}
         self._task_contexts = {}
@@ -463,6 +464,8 @@ class TaskGroup(Task):
                     # Re-raise MissingContextError to allow retry logic at Plan level
                     raise
                 except Exception as e:
+                    if self.interface.callback_exception == "raise":
+                        raise e
                     tb.print_exception(e)
                     alert = Alert(
                         f'Executing task {type(task).__name__} failed.', alert_type='error',
@@ -492,6 +495,13 @@ class TaskGroup(Task):
                     out, out_context = await task.execute(context, **kwargs)
             self._task_outputs[task] = out
             outputs += out
+        if isinstance(task, (Actor, Action)):
+            unprovided = [
+                p for p in task.output_schema.__annotations__
+                if p not in out_context
+            ]
+            if unprovided:
+                raise RuntimeError(f"{task.__class.__name__} failed to provide declared context.")
         return outputs, out_context
 
     def _render_tasks(self) -> Viewable:
@@ -605,6 +615,7 @@ class TaskGroup(Task):
         if views and not self._task_outputs:
             self._add_outputs(-1, None, views, context, None, **kwargs)
         for i, task in enumerate(self._tasks):
+            self._current = i
             if task in self._task_outputs:
                 views += self._task_outputs[task]
                 continue
@@ -620,14 +631,19 @@ class TaskGroup(Task):
                 self.status = "error"
                 if self.abort_on_error:
                     break
+                else:
+                    continue
             else:
-                self.status = "success"
+                status = task.status if isinstance(task, Task) and task.status != "success" else "success"
+                self.status = status
                 views += new
             self._add_outputs(
                 i, task, new, context, new_context, **kwargs
             )
+        if self.status != "error":
+            self._current += 1
         contexts = ([self.context] if self.context else [])
-        contexts += [self._task_contexts[task] for task in self]
+        contexts += [self._task_contexts[task] for task in self if task in self._task_contexts]
         return views, merge_contexts(LWW, contexts)
 
     def invalidate(self, keys: Iterable[str], start: int = 0, propagate: bool = True) -> tuple[bool, set[str]]:

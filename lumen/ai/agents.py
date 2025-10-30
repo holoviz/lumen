@@ -1911,23 +1911,22 @@ class VegaLiteAgent(BaseViewAgent):
             "content": f"Add annotations: {instruction}"
         }]
 
-        with self.interface.param.update(callback_exception="raise"):
-            vega_spec = dump_yaml(spec["spec"], default_flow_style=False)
-            system_prompt = await self._render_prompt(
-                "annotate_plot",
-                annotation_messages,
-                context,
-                vega_spec=vega_spec,
-            )
+        vega_spec = dump_yaml(spec["spec"], default_flow_style=False)
+        system_prompt = await self._render_prompt(
+            "annotate_plot",
+            annotation_messages,
+            context,
+            vega_spec=vega_spec,
+        )
 
-            model_spec = self.prompts.get("annotate_plot", {}).get("llm_spec", self.llm_spec_key)
-            result = await self.llm.invoke(
-                messages=annotation_messages,
-                system=system_prompt,
-                response_model=VegaLiteSpecUpdate,
-                model_spec=model_spec,
-            )
-            update_dict = load_yaml(result.yaml_update)
+        model_spec = self.prompts.get("annotate_plot", {}).get("llm_spec", self.llm_spec_key)
+        result = await self.llm.invoke(
+            messages=annotation_messages,
+            system=system_prompt,
+            response_model=VegaLiteSpecUpdate,
+            model_spec=model_spec,
+        )
+        update_dict = load_yaml(result.yaml_update)
 
         # Merge and validate
         final_dict = spec.copy()
@@ -2025,40 +2024,39 @@ class AnalysisAgent(LumenBaseAgent):
 
         view = None
         out_context = {}
-        with self.interface.param.update(callback_exception="raise"):
-            with self._add_step(title=step_title or "Creating view...", steps_layout=self._steps_layout) as step:
-                await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
-                analysis_callable = analyses[analysis_name].instance(agents=self.agents, context=context, interface=self.interface)
+        with self._add_step(title=step_title or "Creating view...", steps_layout=self._steps_layout) as step:
+            await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
+            analysis_callable = analyses[analysis_name].instance(agents=self.agents, context=context, interface=self.interface)
 
-                data = await get_data(pipeline)
-                for field in analysis_callable._field_params:
-                    analysis_callable.param[field].objects = list(data.columns)
-                context["analysis"] = analysis_callable
+            data = await get_data(pipeline)
+            for field in analysis_callable._field_params:
+                analysis_callable.param[field].objects = list(data.columns)
+            context["analysis"] = analysis_callable
 
-                if analysis_callable.autorun:
-                    if asyncio.iscoroutinefunction(analysis_callable.__call__):
-                        view = await analysis_callable(pipeline, context)
-                    else:
-                        view = await asyncio.to_thread(analysis_callable, pipeline, context)
-                    if isinstance(view, Viewable):
-                        view = Panel(object=view, pipeline=context.get("pipeline"))
-                    spec = view.to_spec()
-                    if isinstance(view, View):
-                        view_type = view.view_type
-                        out_context["view"] = dict(spec, type=view_type)
-                    elif isinstance(view, Pipeline):
-                        out_context["pipeline"] = view
-                    # Ensure data reflects processed pipeline
-                    if pipeline is not out_context["pipeline"]:
-                        pipeline = out_context["pipeline"]
-                        data = await get_data(pipeline)
-                        if len(data) > 0:
-                            out_context["data"] = await describe_data(data)
-                    yaml_spec = dump_yaml(spec)
-                    step.stream(f"Generated view\n```yaml\n{yaml_spec}\n```")
-                    step.success_title = "Generated view"
+            if analysis_callable.autorun:
+                if asyncio.iscoroutinefunction(analysis_callable.__call__):
+                    view = await analysis_callable(pipeline, context)
                 else:
-                    step.success_title = "Configure the analysis"
+                    view = await asyncio.to_thread(analysis_callable, pipeline, context)
+                if isinstance(view, Viewable):
+                    view = Panel(object=view, pipeline=context.get("pipeline"))
+                spec = view.to_spec()
+                if isinstance(view, View):
+                    view_type = view.view_type
+                    out_context["view"] = dict(spec, type=view_type)
+                elif isinstance(view, Pipeline):
+                    out_context["pipeline"] = view
+                # Ensure data reflects processed pipeline
+                if pipeline is not out_context["pipeline"]:
+                    pipeline = out_context["pipeline"]
+                    data = await get_data(pipeline)
+                    if len(data) > 0:
+                        out_context["data"] = await describe_data(data)
+                yaml_spec = dump_yaml(spec)
+                step.stream(f"Generated view\n```yaml\n{yaml_spec}\n```")
+                step.success_title = "Generated view"
+            else:
+                step.success_title = "Configure the analysis"
 
         analysis = out_context["analysis"]
         pipeline = out_context["pipeline"]
