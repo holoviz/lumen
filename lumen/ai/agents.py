@@ -527,21 +527,28 @@ class LumenBaseAgent(Agent):
         instruction: str,
         messages: list[Message],
         context: TContext,
-        view: LumenOutput,
+        view: LumenOutput | None = None,
+        spec: str | None = None,
+        language: str | None = None,
         errors: list[str] | None = None,
         **kwargs
     ) -> str:
         """
         Retry the output by line, allowing the user to provide instruction on why the output was not satisfactory, or an error.
         """
-        lines = view.spec.splitlines()
+        if view is not None:
+            spec = view.spec
+            language = view.language
+        if spec is None:
+            raise ValueError("Must provide previous spec to revise.")
+        lines = spec.splitlines()
         numbered_text = "\n".join(f"{i:2d}: {line}" for i, line in enumerate(lines, 1))
         system = await self._render_prompt(
             "retry_output",
             messages,
             context,
             numbered_text=numbered_text,
-            language=view.language,
+            language=language,
             feedback=instruction,
             errors=errors,
             **kwargs
@@ -553,7 +560,7 @@ class LumenBaseAgent(Agent):
             response_model=retry_model,
             model_spec="edit"
         )
-        spec = load_yaml(apply_changes(lines, result.line_changes))
+        spec = load_yaml(apply_changes(lines, result.edits))
         old_spec = view.spec
         try:
             view.spec = dump_yaml(spec)
@@ -678,7 +685,7 @@ class SQLAgent(LumenBaseAgent):
                     feedback += " The data does not exist; select from available data sources."
 
                 retry_result = await self.revise(
-                    feedback, messages, context, sql_query, language=f"sql.{dialect}", discovery_context=discovery_context
+                    feedback, messages, context, spec=sql_query, language=f"sql.{dialect}", discovery_context=discovery_context
                 )
                 sql_query = clean_sql(retry_result, dialect)
         return sql_query
@@ -1330,7 +1337,7 @@ class BaseViewAgent(LumenBaseAgent):
                         title="Re-attempted view generation",
                         steps_layout=self._steps_layout,
                     ) as retry_step:
-                        view = await self.revise(e, messages, context, dump_yaml(spec), language="")
+                        view = await self.revise(e, messages, context, dump_yaml(spec), language="yaml")
                         if "yaml_spec: " in view:
                             view = view.split("yaml_spec: ")[-1].rstrip('"').rstrip("'")
                         retry_step.stream(f"\n\n```yaml\n{view}\n```")
@@ -1802,7 +1809,9 @@ class VegaLiteAgent(BaseViewAgent):
         feedback: str,
         messages: list[Message],
         context: TContext,
-        view: LumenOutput,
+        view: LumenOutput | None = None,
+        spec: str | None = None,
+        language: str | None = None,
         errors: list[str] | None = None,
         **kwargs
     ) -> str:
@@ -1810,7 +1819,9 @@ class VegaLiteAgent(BaseViewAgent):
             kwargs["errors"] = errors
         doc_examples = await self._get_doc_examples(feedback)
         context["doc_examples"] = doc_examples
-        return await super().revise(feedback, messages, context, view, **kwargs)
+        return await super().revise(
+            feedback, messages, context, view=view, spec=spec, language=language, **kwargs
+        )
 
     async def respond(
         self,

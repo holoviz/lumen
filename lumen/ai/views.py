@@ -46,13 +46,14 @@ class LumenOutput(Viewer):
     language = "yaml"
 
     def __init__(self, **params):
-        if "spec" in params and "component" not in params:
-            params["component"] = self._deserialize_component(params["spec"])
-        elif "spec" not in params:
-            try:
-                params["spec"], spec_dict = self._serialize_component(params["component"])
-            except Exception:
-                params["spec"] = None
+        try:
+            spec, spec_dict = self._serialize_component(params["component"])
+        except Exception:
+            spec_dict = None
+            spec = None
+        if "spec" not in params:
+            params["spec"] = spec
+        self._spec_dict = spec_dict
         super().__init__(**params)
         self._editor = CodeEditor(
             value=self.param.spec.rx.or_(f'{self.title} output could not be serialized and may therefore not be edited.'),

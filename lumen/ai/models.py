@@ -1,7 +1,9 @@
-from typing import Literal
+from typing import Annotated, Literal
 
 from instructor.dsl.partial import PartialLiteralMixin
-from pydantic import BaseModel, Field, create_model
+from pydantic import (
+    BaseModel, Field, create_model, model_validator,
+)
 from pydantic.fields import FieldInfo
 from pydantic.json_schema import SkipJsonSchema
 
@@ -156,13 +158,6 @@ class VegaLiteSpecUpdate(BaseModel):
         Respect your step's scope; don't override previous steps."""
     )
 
-class LineChange(BaseModel):
-    line_no: int = Field(description="The line number in the original text that needs to be changed.")
-    replacement: str = Field(description="""
-        The new line that replaces the original line, and if applicable, ensuring the indentation matches the original.
-        To remove a line set this to an empty string."""
-    )
-
 
 class RawStep(BaseModel):
     actor: str
@@ -190,11 +185,48 @@ class Reasoning(BaseModel):
         """
     )
 
+
+class InsertLine(BaseModel):
+    op: Literal["insert"] = "insert"
+    line_no: int = Field(ge=0, description=(
+        "Insert BEFORE this 0-based line number. "
+        "Use line_no == len(lines) to append at the end."
+    ))
+    line: str = Field(min_length=1, description="Content for the new line (must be non-empty).")
+
+class ReplaceLine(BaseModel):
+    op: Literal["replace"] = "replace"
+    line_no: int = Field(ge=0, description="The 0-based line number to replace.")
+    line: str = Field(description="The new content for the line (empty string is allowed).")
+
+class DeleteLine(BaseModel):
+    op: Literal["delete"] = "delete"
+    line_no: int = Field(ge=0, description="The 0-based line number to delete.")
+
+LineEdit = Annotated[
+    InsertLine | ReplaceLine | DeleteLine,
+    Field(discriminator="op")
+]
+
 class RetrySpec(BaseModel):
     """Represents a revision of text with its content and changes."""
 
     chain_of_thought: str = Field(description="In a sentence or two, explain the plan to revise the text based on the feedback provided.")
-    line_changes: list[LineChange] = Field(description="A list of changes made to the lines in the original text based on the chain_of_thought.")
+    edits: list[LineEdit] = Field(description="A list of line edits based on the chain_of_thought.")
+
+    @model_validator(mode="after")
+    def validate_indices_nonconflicting(self) -> "RetrySpec":
+        # Disallow more than one delete/replace on the same original index.
+        seen_replace_or_delete: set[int] = set()
+        for e in self.edits:
+            if e.op in ("replace", "delete"):
+                if e.line_no in seen_replace_or_delete:
+                    raise ValueError(
+                        f"Multiple {e.op}/delete edits targeting the same line_no={e.line_no} "
+                        "are ambiguous. Combine them or split into separate patches."
+                    )
+                seen_replace_or_delete.add(e.line_no)
+        return self
 
 
 def make_plan_model(agents: list[str], tools: list[str]) -> type[RawPlan]:

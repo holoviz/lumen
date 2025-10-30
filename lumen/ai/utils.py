@@ -43,8 +43,10 @@ from .config import (
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
 
-    from lumen.ai.models import LineChange
-    from lumen.sources.base import Source
+    from ...sources.base import Source
+    from .models import (
+        DeleteLine, InsertLine, LineEdit, ReplaceLine,
+    )
 
 
 def format_float(num):
@@ -881,13 +883,51 @@ async def with_timeout(coro, timeout_seconds=10, default_value=None, error_messa
             log_debug(error_message)
         return default_value
 
+def apply_changes(lines: list[str], edits: list[LineEdit]) -> str:
+    """
+    Apply a Patch to a list of lines (no trailing newline characters in elements).
+    Indices in the Patch refer to the ORIGINAL `lines`.
 
-def apply_changes(original_lines: list[str], changes: list[LineChange]) -> str:
-    """Apply line changes to text."""
-    for change in changes:
-        original_lines[change.line_no - 1] = change.replacement
-    return "\n".join(original_lines)
+    Strategy:
+      - To keep indices stable, apply all non-insert edits in DESCENDING order of line_no.
+      - Apply inserts in ASCENDING order of line_no (grouped), inserting BEFORE that index.
+        Inserts at the same index are applied in the order they appear in `patch.edits`.
+    """
+    # Separate edits
+    inserts: list[InsertLine] = [e for e in edits if e.op == "insert"]
+    replaces: list[ReplaceLine] = [e for e in edits if e.op == "replace"]
+    deletes: list[DeleteLine] = [e for e in edits if e.op == "delete"]
 
+    n = len(lines)
+
+    # Validate bounds against the ORIGINAL text
+    for e in replaces:
+        if not (0 <= e.line_no < n):
+            raise IndexError(f"replace line_no out of range: {e.line_no} (0..{n-1})")
+    for e in deletes:
+        if not (0 <= e.line_no < n):
+            raise IndexError(f"delete line_no out of range: {e.line_no} (0..{n-1})")
+    for e in inserts:
+        if not (0 <= e.line_no <= n):  # allow == n for append
+            raise IndexError(f"insert line_no out of range: {e.line_no} (0..{n})")
+
+    out = lines[:]
+
+    # 1) Apply replace/delete in descending order to keep original indices valid
+    for e in sorted([*replaces, *deletes], key=lambda x: x.line_no, reverse=True):
+        if e.op == "replace":
+            out[e.line_no] = e.line  # type: ignore[union-attr]
+        else:  # delete
+            del out[e.line_no]
+
+    # 2) Apply inserts in ascending order; at same index keep user order
+    inserts_sorted = sorted(
+        enumerate(inserts), key=lambda pair: (pair[1].line_no, pair[0])
+    )
+    for _, ins in inserts_sorted:
+        out.insert(ins.line_no, ins.line)
+
+    return "\n".join(out)
 
 def class_name_to_llm_spec_key(class_name: str) -> str:
     """
