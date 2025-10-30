@@ -693,7 +693,7 @@ class SourceControls(Viewer):
                     n_docs += self._add_document(media_controls.file_obj, media_controls)
 
             if self.replace_controls:
-                src = self.output.get("source")
+                src = self.outputs.get("source")
                 if src:
                     self.tables_tabs[:] = [
                         (t, Tabulator(src.get(t), sizing_mode="stretch_width", pagination="remote"))
