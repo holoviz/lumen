@@ -112,10 +112,14 @@ class LumenOutput(Viewer):
         return dump_yaml(component_spec)
 
     @classmethod
-    def _deserialize_component(cls, component: Component, yaml_spec: str, spec_dict: dict[str, Any]) -> str:
+    def _deserialize_component(
+        cls, component: Component, yaml_spec: str, spec_dict: dict[str, Any], pipeline: Pipeline | None = None
+    ) -> str:
         spec = load_yaml(yaml_spec)
         cls._validate_spec(spec)
-        return type(component).from_spec(spec)
+        if pipeline is not None and 'pipeline' in spec:
+            del spec['pipeline']
+        return type(component).from_spec(spec, pipeline=pipeline)
 
     @classmethod
     def _validate_spec(cls, spec):
@@ -184,7 +188,10 @@ class LumenOutput(Viewer):
 
         try:
             if self._rendered:
-                self.component = self._deserialize_component(self.component, self.spec, self._spec_dict)
+                pipeline = getattr(self.component, 'pipeline', None)
+                self.component = self._deserialize_component(
+                    self.component, self.spec, self._spec_dict, pipeline=pipeline
+                )
             if isinstance(self.component, Pipeline):
                 output = await self._render_pipeline(self.component)
             else:
@@ -259,11 +266,15 @@ class VegaLiteOutput(LumenOutput):
         return dump_yaml(vega_spec), component_spec
 
     @classmethod
-    def _deserialize_component(cls, component: Component, yaml_spec: str, spec_dict: dict[str, Any]) -> str:
+    def _deserialize_component(
+        cls, component: Component, yaml_spec: str, spec_dict: dict[str, Any], pipeline: Pipeline | None = None
+    ) -> str:
         spec = load_yaml(yaml_spec)
         cls._validate_spec(spec)
         spec_dict = dict(spec_dict, spec=spec)
-        return type(component).from_spec(spec_dict)
+        if pipeline is not None:
+            spec_dict.pop('pipeline')
+        return type(component).from_spec(spec_dict, pipeline=pipeline)
 
     @classmethod
     def _validate_spec(cls, spec):
@@ -358,7 +369,9 @@ class SQLOutput(LumenOutput):
         return sql_spec, component_spec
 
     @classmethod
-    def _deserialize_component(cls, component: Component, sql_spec: str, spec_dict: dict[str, Any]) -> str:
+    def _deserialize_component(
+        cls, component: Component, sql_spec: str, spec_dict: dict[str, Any], pipeline: Pipeline | None = None
+    ) -> str:
         spec_dict = deepcopy(spec_dict)
         spec_dict["source"]["tables"][component.table] = sql_spec
         return type(component).from_spec(spec_dict)
