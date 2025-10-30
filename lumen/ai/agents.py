@@ -2047,7 +2047,7 @@ class AnalysisAgent(LumenBaseAgent):
                 elif isinstance(view, Pipeline):
                     out_context["pipeline"] = view
                 # Ensure data reflects processed pipeline
-                if pipeline is not out_context["pipeline"]:
+                if pipeline is not out_context.get("pipeline"):
                     pipeline = out_context["pipeline"]
                     data = await get_data(pipeline)
                     if len(data) > 0:
