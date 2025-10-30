@@ -332,13 +332,25 @@ class TaskGroup(Task):
             self._task_outputs[task] = views
 
         # Find view and output to insert the new outputs after
-        if i > 0:
-            prev_task = self._tasks[i-1]
-            prev_out = self._task_rendered[task]
-            if isinstance(prev_task, Task):
-                prev_view = prev_task.views[-1]
+        if i >= 0:
+            prev_task = None
+            for j in reversed(range(i)):
+                prev_task = self._tasks[j]
+                if prev_task in self._task_rendered:
+                    prev_out = self._task_rendered.get(prev_task)
+                    break
             else:
-                prev_view = self._task_views[prev_task][-1]
+                prev_out = self._task_rendered.get(None)
+            for j in reversed(range(i)):
+                prev_task = self._tasks[j]
+                if isinstance(prev_task, Task) and prev_task.views:
+                    prev_view = prev_task.views[-1]
+                    break
+                elif self._task_outputs.get(prev_task):
+                    prev_view = self._task_outputs[prev_task][-1]
+                    break
+            else:
+                prev_view = None
         else:
             prev_view = prev_out = None
 
@@ -355,8 +367,7 @@ class TaskGroup(Task):
                     rendered.append(view)
             if rendered:
                 rendered_col = Column(*rendered)
-                if task is not None:
-                    self._task_rendered[task] = rendered_col
+                self._task_rendered[task] = rendered_col
                 self._view.insert(idx, rendered_col)
         new_views = list(self.views)
         view_idx = 0 if prev_view is None else self.views.index(prev_view)
