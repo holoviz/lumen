@@ -11,7 +11,6 @@ import pandas as pd
 import panel as pn
 import param
 import requests
-import yaml
 
 from panel.chat import ChatInterface
 from panel.viewable import Viewable, Viewer
@@ -20,6 +19,7 @@ from panel_material_ui.chat import ChatMessage
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
+from ..config import dump_yaml, load_yaml
 from ..dashboard import Config
 from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource, Source
@@ -52,7 +52,7 @@ from .translate import param_to_pydantic
 from .utils import (
     apply_changes, clean_sql, describe_data, get_data, get_pipeline,
     get_root_exception, get_schema, load_json, log_debug, report_error,
-    retry_llm_output, set_nested, stream_details,
+    retry_llm_output, stream_details,
 )
 from .vector_store import DuckDBVectorStore
 from .views import (
@@ -514,114 +514,36 @@ class LumenBaseAgent(Agent):
 
     _max_width = None
     _output_type = LumenOutput
-    _retry_target_keys = []
+    _retry_target_keys: ClassVar[list[str]] = []
 
     def _update_spec(self, context: TContext, event: param.parameterized.Event):
         """
         Update the specification in the context dictionary.
         """
 
-    @staticmethod
-    def _prepare_lines_for_retry(
-        original_output: str, retry_target_keys: list[str] | None = None
-    ) -> tuple[list[str], bool, dict | None]:
-        """
-        Prepare lines for retry by optionally extracting targeted sections from YAML.
-
-        Parameters
-        ----------
-        original_output : str
-            The original output string to process
-        retry_target_keys : list[str], optional
-            List of keys to target specific sections in YAML
-
-        Returns
-        -------
-        tuple
-            A tuple containing:
-
-            - lines : list[str]
-                List of lines to be processed
-            - targeted : bool
-                Whether targeting was applied
-            - original_spec : dict or None
-                Original parsed spec if targeting was used, None otherwise
-        """
-        lines = original_output.splitlines()
-        targeted = False
-        original_spec = None
-
-        if retry_target_keys:
-            original_spec = yaml.safe_load(original_output)
-            targeted_output = original_spec.copy()
-            for key in retry_target_keys:
-                targeted_output = targeted_output[key]
-            lines = yaml.dump(targeted_output, default_flow_style=False).splitlines()
-            targeted = True
-
-        return lines, targeted, original_spec
-
-    @staticmethod
-    def _apply_line_changes_to_output(
-        lines: list[str],
-        line_changes: list,
-        targeted: bool,
-        original_spec: dict | None = None,
-        retry_target_keys: list[str] | None = None
-    ) -> str:
-        """
-        Apply line changes to output, handling both targeted and non-targeted cases.
-
-        Parameters
-        ----------
-        lines : list[str]
-            The lines that were modified
-        line_changes : list
-            Changes to apply to the lines
-        targeted : bool
-            Whether this was a targeted retry
-        original_spec : dict or None
-            Original parsed spec for targeted retries
-        retry_target_keys : list[str] or None
-            Keys used for targeting
-
-        Returns
-        -------
-        str
-            Final output string with changes applied
-        """
-        if targeted:
-            targeted_spec = yaml.safe_load(apply_changes(lines, line_changes))
-            updated_spec = original_spec.copy()
-            set_nested(updated_spec, retry_target_keys, targeted_spec)
-            return yaml.dump(updated_spec)
-        else:
-            return apply_changes(lines, line_changes)
-
+    @retry_llm_output()
     async def revise(
         self,
         instruction: str,
         messages: list[Message],
         context: TContext,
-        original_output: str,
-        language: str | None = None,
+        view: LumenOutput,
+        errors: list[str] | None = None,
         **kwargs
     ) -> str:
         """
         Retry the output by line, allowing the user to provide instruction on why the output was not satisfactory, or an error.
         """
-        # Prepare lines for retry processing
-        lines, targeted, original_spec = self._prepare_lines_for_retry(
-            original_output, self._retry_target_keys
-        )
+        lines = view.spec.splitlines()
         numbered_text = "\n".join(f"{i:2d}: {line}" for i, line in enumerate(lines, 1))
         system = await self._render_prompt(
             "retry_output",
             messages,
             context,
             numbered_text=numbered_text,
-            language=language,
+            language=view.language,
             feedback=instruction,
+            errors=errors,
             **kwargs
         )
         retry_model = self._lookup_prompt_key("retry_output", "response_model")
@@ -631,9 +553,14 @@ class LumenBaseAgent(Agent):
             response_model=retry_model,
             model_spec="edit"
         )
-        return self._apply_line_changes_to_output(
-            lines, result.lines_changes, targeted, original_spec, self._retry_target_keys
-        )
+        spec = load_yaml(apply_changes(lines, result.line_changes))
+        old_spec = view.spec
+        try:
+            view.spec = dump_yaml(spec)
+        except Exception as e:
+            view.spec = old_spec
+            raise e
+        return view.spec
 
 
 class SQLInputs(ContextModel):
@@ -1321,7 +1248,7 @@ class BaseViewAgent(LumenBaseAgent):
         if errors:
             errors = ("\n".join(f"{i + 1}. {error}" for i, error in enumerate(errors))).strip()
             try:
-                last_output = yaml.safe_load(self._last_output["yaml_spec"])
+                last_output = load_yaml(self._last_output["yaml_spec"])
             except Exception:
                 last_output = ""
 
@@ -1388,7 +1315,7 @@ class BaseViewAgent(LumenBaseAgent):
 
             for i in range(3):
                 try:
-                    spec = await self._extract_spec(spec)
+                    spec = await self._extract_spec(context, spec)
                     break
                 except Exception as e:
                     e = get_root_exception(e, exceptions=(MissingContextError,))
@@ -1397,13 +1324,13 @@ class BaseViewAgent(LumenBaseAgent):
 
                     error = str(e)
                     traceback.print_exception(e)
-                    context = f"```\n{yaml.safe_dump(yaml.safe_load(self._last_output['yaml_spec']))}\n```"
+                    context = f"```\n{dump_yaml(load_yaml(self._last_output['yaml_spec']))}\n```"
                     report_error(e, step, language="json", context=context, status="failed")
                     with self._add_step(
                         title="Re-attempted view generation",
                         steps_layout=self._steps_layout,
                     ) as retry_step:
-                        view = await self.revise(e, messages, context, yaml.safe_dump(spec), language="")
+                        view = await self.revise(e, messages, context, dump_yaml(spec), language="")
                         if "yaml_spec: " in view:
                             view = view.split("yaml_spec: ")[-1].rstrip('"').rstrip("'")
                         retry_step.stream(f"\n\n```yaml\n{view}\n```")
@@ -1418,11 +1345,11 @@ class BaseViewAgent(LumenBaseAgent):
         log_debug(f"{self.name} settled on spec: {spec!r}.")
         return spec
 
-    async def _extract_spec(self, spec: dict[str, Any]):
+    async def _extract_spec(self, context: TContext, spec: dict[str, Any]):
         return dict(spec)
 
     async def _update_spec(self, context: TContext, event: param.parameterized.Event):
-        context["view"] = dict(await self._extract_spec(event.new), type=self.view_type)
+        context["view"] = dict(await self._extract_spec(context, event.new), type=self.view_type)
 
     async def respond(
         self,
@@ -1491,7 +1418,7 @@ class hvPlotAgent(BaseViewAgent):
         return model[self.view_type.__name__]
 
     async def _update_spec(self, context: TContext, event: param.parameterized.Event):
-        spec = yaml.load(event.new, Loader=yaml.SafeLoader)
+        spec = load_yaml(event.new)
         context["view"] = dict(await self._extract_spec(context, spec), type=self.view_type)
 
     async def _extract_spec(self, context: TContext, spec: dict[str, Any]):
@@ -1543,7 +1470,7 @@ class VegaLiteAgent(BaseViewAgent):
 
     _output_type = VegaLiteOutput
 
-    _retry_target_keys = ["spec"]
+    _retry_target_keys = []
 
     def __init__(self, **params):
         self._vector_store: DuckDBVectorStore | None = None
@@ -1682,11 +1609,12 @@ class VegaLiteAgent(BaseViewAgent):
     ) -> tuple[str, dict[str, Any]]:
         """Update a Vega-Lite spec with incremental changes for a specific step."""
         with self._add_step(title=step_desc, steps_layout=self._steps_layout) as step:
+            vega_spec = dump_yaml(vega_spec, default_flow_style=False)
             system_prompt = await self._render_prompt(
                 prompt_name,
                 messages,
                 context,
-                vega_spec=yaml.dump(vega_spec, default_flow_style=False),
+                vega_spec=vega_spec,
                 doc=doc,
                 table=context["pipeline"].table,
             )
@@ -1701,12 +1629,12 @@ class VegaLiteAgent(BaseViewAgent):
 
             step.stream(f"Reasoning: {result.chain_of_thought}")
             step.stream(f"Update:\n```yaml\n{result.yaml_update}\n```", replace=False)
-            update_dict = yaml.safe_load(result.yaml_update)
-            return step_name, update_dict
+            update_dict = load_yaml(result.yaml_update)
+        return step_name, update_dict
 
     async def _update_spec(self, context: TContext, event: param.parameterized.Event):
         try:
-            spec = await self._extract_spec({"yaml_spec": event.new})
+            spec = await self._extract_spec(context, {"yaml_spec": event.new})
         except Exception as e:
             traceback.print_exception(e)
             return
@@ -1815,16 +1743,16 @@ class VegaLiteAgent(BaseViewAgent):
             async for output in response:
                 step.stream(output.chain_of_thought, replace=True)
 
-            current_spec = await self._extract_spec({"yaml_spec": output.yaml_spec})
+            current_spec = await self._extract_spec(context, {"yaml_spec": output.yaml_spec})
             step.success_title = "Complete visualization with titles and colors created"
         return current_spec
 
-    async def _extract_spec(self, spec: dict[str, Any]):
+    async def _extract_spec(self, context: TContext, spec: dict[str, Any]):
         # .encode().decode('unicode_escape') fixes a JSONDecodeError in Python
         # where it's expecting property names enclosed in double quotes
         # by properly handling the escaped characters in your JSON string
         if yaml_spec := spec.get("yaml_spec"):
-            vega_spec = yaml.load(yaml_spec, Loader=yaml.SafeLoader)
+            vega_spec = load_yaml(yaml_spec)
         elif json_spec := spec.get("json_spec"):
             vega_spec = load_json(json_spec)
         if "$schema" not in vega_spec:
@@ -1836,7 +1764,7 @@ class VegaLiteAgent(BaseViewAgent):
         self._output_type._validate_spec(vega_spec)
 
         # using string comparison because these keys could be in different nested levels
-        vega_spec_str = yaml.dump(vega_spec)
+        vega_spec_str = dump_yaml(vega_spec)
         # Handle different types of interactive controls based on chart type
         if "latitude:" in vega_spec_str or "longitude:" in vega_spec_str:
             vega_spec = self._add_geographic_items(vega_spec, vega_spec_str)
@@ -1874,13 +1802,15 @@ class VegaLiteAgent(BaseViewAgent):
         feedback: str,
         messages: list[Message],
         context: TContext,
-        original_output: str,
-        language: str | None = None,
+        view: LumenOutput,
+        errors: list[str] | None = None,
         **kwargs
     ) -> str:
+        if "errors":
+            kwargs["errors"] = errors
         doc_examples = await self._get_doc_examples(feedback)
         context["doc_examples"] = doc_examples
-        return await super().revise(feedback, messages, context, original_output, language, **kwargs)
+        return await super().revise(feedback, messages, context, view, **kwargs)
 
     async def respond(
         self,
@@ -1926,18 +1856,17 @@ class VegaLiteAgent(BaseViewAgent):
                 step_name, step_desc, out.spec, step_name, messages, context, doc=doc
             )
             try:
-                test_spec = self._deep_merge_dicts(out.spec, update_dict)
-                await self._extract_spec({"yaml_spec": yaml.dump(test_spec)})  # Validation
+                # Validate merged spec
+                test_spec = self._deep_merge_dicts(full_dict["spec"], update_dict)
+                await self._extract_spec(context, {"yaml_spec": dump_yaml(test_spec)})
             except Exception as e:
                 log_debug(f"Skipping invalid {step_name} update due to error: {e}")
                 continue
-            spec = self._deep_merge_dicts(out.spec, update_dict)
-            out.spec = spec
+            spec = self._deep_merge_dicts(full_dict["spec"], update_dict)
+            out.spec = dump_yaml(spec)
             log_debug(f"📊 Applied {step_name} updates and refreshed visualization")
 
-        # Update final context state
-        out_context = {"view": view}
-        return [out], out_context
+        return [out], {"view": view}
 
     async def annotate(
         self,
@@ -1972,11 +1901,12 @@ class VegaLiteAgent(BaseViewAgent):
         }]
 
         with self.interface.param.update(callback_exception="raise"):
+            vega_spec = dump_yaml(spec["spec"], default_flow_style=False)
             system_prompt = await self._render_prompt(
                 "annotate_plot",
                 annotation_messages,
                 context,
-                vega_spec=yaml.dump(spec["spec"], default_flow_style=False),
+                vega_spec=vega_spec,
             )
 
             model_spec = self.prompts.get("annotate_plot", {}).get("llm_spec", self.llm_spec_key)
@@ -1986,13 +1916,13 @@ class VegaLiteAgent(BaseViewAgent):
                 response_model=VegaLiteSpecUpdate,
                 model_spec=model_spec,
             )
-            update_dict = yaml.safe_load(result.yaml_update)
+            update_dict = load_yaml(result.yaml_update)
 
         # Merge and validate
         final_dict = spec.copy()
         try:
             final_dict["spec"] = self._deep_merge_dicts(final_dict["spec"], update_dict)
-            await self._extract_spec({"yaml_spec": yaml.dump(final_dict["spec"])})
+            await self._extract_spec(context, {"yaml_spec": dump_yaml(final_dict["spec"])})
         except Exception as e:
             log_debug(f"Skipping invalid annotation update due to error: {e}")
         return final_dict
@@ -2113,7 +2043,7 @@ class AnalysisAgent(LumenBaseAgent):
                         data = await get_data(pipeline)
                         if len(data) > 0:
                             out_context["data"] = await describe_data(data)
-                    yaml_spec = yaml.dump(spec)
+                    yaml_spec = dump_yaml(spec)
                     step.stream(f"Generated view\n```yaml\n{yaml_spec}\n```")
                     step.success_title = "Generated view"
                 else:

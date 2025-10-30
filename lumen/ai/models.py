@@ -194,7 +194,7 @@ class RetrySpec(BaseModel):
     """Represents a revision of text with its content and changes."""
 
     chain_of_thought: str = Field(description="In a sentence or two, explain the plan to revise the text based on the feedback provided.")
-    lines_changes: list[LineChange] = Field(description="A list of changes made to the lines in the original text based on the chain_of_thought.")
+    line_changes: list[LineChange] = Field(description="A list of changes made to the lines in the original text based on the chain_of_thought.")
 
 
 def make_plan_model(agents: list[str], tools: list[str]) -> type[RawPlan]:

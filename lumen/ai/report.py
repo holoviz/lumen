@@ -302,8 +302,8 @@ class TaskGroup(Task):
             with view.editor.param.update(loading=True):
                 messages = list(self.history)
                 task_context = self._get_context(i, context, task)
-                view.spec = await task.revise(
-                    event.new, messages, task_context, view.spec, language=view.language
+                await task.revise(
+                    event.new, messages, task_context, view
                 )
         root = self
         while root.parent is not None:

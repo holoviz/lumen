@@ -7,7 +7,6 @@ from typing import Any
 import panel as pn
 import param
 import requests
-import yaml
 
 from jsonschema import Draft7Validator, ValidationError
 from panel.config import config
@@ -21,11 +20,10 @@ from panel_material_ui import (
 from param.parameterized import discard_events
 
 from ..base import Component
-from ..dashboard import load_yaml
+from ..config import dump_yaml, load_yaml
 from ..downloads import Download
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
-from ..util import NumpyDumper
 from ..views.base import Table
 from .config import VEGA_ZOOMABLE_MAP_ITEMS
 from .utils import get_data
@@ -48,16 +46,14 @@ class LumenOutput(Viewer):
     language = "yaml"
 
     def __init__(self, **params):
-        if "spec" in params:
-            spec_dict = params["component"].to_spec()
-        else:
+        if "spec" in params and "component" not in params:
+            params["component"] = self._deserialize_component(params["spec"])
+        elif "spec" not in params:
             try:
                 params["spec"], spec_dict = self._serialize_component(params["component"])
             except Exception:
-                spec_dict = {}
                 params["spec"] = None
         super().__init__(**params)
-        self._spec_dict = spec_dict
         self._editor = CodeEditor(
             value=self.param.spec.rx.or_(f'{self.title} output could not be serialized and may therefore not be edited.'),
             language=self.language,
@@ -110,9 +106,9 @@ class LumenOutput(Viewer):
         self._last_output = {}
 
     @classmethod
-    def _serialize_component(cls, component: Component) -> str:
-        component_spec = component.to_spec()
-        return yaml.dump(component_spec, Dumper=NumpyDumper)
+    def _serialize_component(cls, component: Component, spec_dict: dict[str, Any] | None = None) -> str:
+        component_spec = spec_dict or component.to_spec()
+        return dump_yaml(component_spec)
 
     @classmethod
     def _deserialize_component(cls, component: Component, yaml_spec: str, spec_dict: dict[str, Any]) -> str:
@@ -256,10 +252,10 @@ class VegaLiteOutput(LumenOutput):
         return "\n".join(errors.values())
 
     @classmethod
-    def _serialize_component(cls, component: Component) -> tuple[str, dict[str, Any]]:
-        component_spec = component.to_spec()
+    def _serialize_component(cls, component: Component, spec_dict: dict[str, Any] | None = None) -> tuple[str, dict[str, Any]]:
+        component_spec = spec_dict or component.to_spec()
         vega_spec = component_spec['spec']
-        return yaml.dump(vega_spec, Dumper=NumpyDumper), component_spec
+        return dump_yaml(vega_spec), component_spec
 
     @classmethod
     def _deserialize_component(cls, component: Component, yaml_spec: str, spec_dict: dict[str, Any]) -> str:
@@ -355,8 +351,8 @@ class SQLOutput(LumenOutput):
     language = "sql"
 
     @classmethod
-    def _serialize_component(cls, component: Component) -> tuple[str, dict[str, Any]]:
-        component_spec = component.to_spec()
+    def _serialize_component(cls, component: Component, spec_dict: dict[str, Any] | None = None) -> tuple[str, dict[str, Any]]:
+        component_spec = spec_dict or component.to_spec()
         sql_spec = component_spec["source"]["tables"][component.table]
         return sql_spec, component_spec
 
