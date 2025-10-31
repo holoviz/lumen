@@ -26,7 +26,7 @@ from panel_material_ui import (
     Column as MuiColumn, Dialog, Divider, FileDownload, IconButton, MenuList,
     MenuToggle, Page, Paper, Row, Switch, Tabs, ToggleIcon,
 )
-from panel_splitjs import VSplit
+from panel_splitjs import HSplit, VSplit
 
 from ..pipeline import Pipeline
 from ..sources import Source
@@ -36,7 +36,6 @@ from .agents import (
     AnalysisAgent, AnalystAgent, ChatAgent, DocumentListAgent, SourceAgent,
     SQLAgent, TableListAgent, ValidationAgent, VegaLiteAgent,
 )
-from .components import SplitJS
 from .config import PROVIDED_SOURCE_NAME, SOURCE_TABLE_SEPARATOR
 from .context import TContext
 from .controls import SourceCatalog, SourceControls, TableExplorer
@@ -260,7 +259,7 @@ class UI(Viewer):
             icon_size="1.8em",
             filename=f"{self.title.replace(' ', '_')}.ipynb",
             label=" ",
-            margin=(12, 0, 10, 5),
+            margin=(15, 0, 10, 5),
             sx={"p": "6px 0", "minWidth": "32px"},
             styles={'z-index': '1000'},
             variant="text"
@@ -671,13 +670,13 @@ class ExplorerUI(UI):
         )
         self._exports.visible = False
         self._output = Paper(
-            self._home.view, elevation=2, margin=(5, 10, 5, 5), sx={'p': 3, 'pb': 2},
+            self._home.view, elevation=2, margin=(5, 10, 5, 5), sx={'pl': 1},
             height_policy='max', sizing_mode="stretch_both"
         )
-        self._split = SplitJS(
-            left=self._coordinator,
-            right=self._output,
-            sizes=(40, 60),
+        self._split = HSplit(
+            self._coordinator,
+            self._output,
+            collapsed=1,
             expanded_sizes=(40, 60),
             sizing_mode='stretch_both'
         )
@@ -939,7 +938,6 @@ class ExplorerUI(UI):
         tabs.active = len(tabs)-1
         if self._split.collapsed:
             self._split.param.update(
-                collapsed=False,
                 sizes=self._split.expanded_sizes,
             )
 
@@ -1003,7 +1001,7 @@ class ExplorerUI(UI):
                             )
                             await self._update_conversation()
                             if prev["view"] is self._home:
-                                self._split.collapsed = True
+                                self._split.collapsed = 1
                 else:
                     exploration.context = out_context
                     exploration.view.loading = False
