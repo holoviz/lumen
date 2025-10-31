@@ -1041,8 +1041,8 @@ class Planner(Coordinator):
         # e.g. DbtslAgent is unsatisfiable if DbtslLookup was used in planning
         # but did not provide dbtsl_metaset
         # also filter out agents where excluded keys exist in memory
-        agents = [agent for agent in agents if len(set(agent.input_schema.__annotations__) - all_provides) == 0 and type(agent).__name__ != "ValidationAgent"]
-        tools = [tool for tool in tools if len(set(tool.input_schema.__annotations__) - all_provides) == 0]
+        agents = [agent for agent in agents if len(set(agent.input_schema.__required_keys__) - all_provides) == 0 and type(agent).__name__ != "ValidationAgent"]
+        tools = [tool for tool in tools if len(set(tool.input_schema.__required_keys__) - all_provides) == 0]
         reasoning = None
         while reasoning is None:
             # candidates = agents and tools that can provide
