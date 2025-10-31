@@ -248,14 +248,12 @@ class Plan(Section):
 
             if isinstance(self.interface, ChatInterface):
                 # Add rerun button on failure
-                # Capture interface in closure to avoid None reference
                 interface = self.interface
                 rerun_button = Button(
                     name="Rerun",
                     on_click=lambda event: interface._click_rerun() if interface else None,
                     button_type="primary"
                 )
-                # Add the button to the last message's footer
                 if self.interface and len(self.interface.objects) > 0:
                     last_message = self.interface.objects[-1]
                     footer_objects = last_message.footer_objects or []
