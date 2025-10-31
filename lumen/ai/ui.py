@@ -25,7 +25,7 @@ from panel_gwalker import GraphicWalker
 from panel_material_ui import (
     Accordion, Button, ChatFeed, ChatInterface, ChatMessage, Column, Dialog,
     Divider, FileDownload, IconButton, MenuList, MenuToggle, MultiChoice, Page,
-    Paper, Row, Switch, Tabs, ToggleIcon,
+    Paper, Row, Switch, Tabs, ThemeToggle, ToggleIcon,
 )
 
 from ..pipeline import Pipeline
@@ -555,11 +555,14 @@ class UI(Viewer):
                     Divider(
                         orientation="vertical", height=30, margin=(17, 5, 17, 5),
                         sx={'border-color': 'white', 'border-width': '1px'}
-                    )
+                    ),
+                    self._theme_toggle,
+                    self._explorer_toggle,
                 ],
                 main=[self._main, self._sources_dialog_content, self._llm_dialog, self._info_dialog],
                 contextbar=[] if self._contextbar is None else [self._contextbar],
                 contextbar_open=False,
+                theme_toggle=False,
             )
             self._page.servable()
             return self._page
@@ -699,6 +702,20 @@ class ExplorerUI(UI):
         )
         self._report_toggle.param.watch(self._toggle_report_mode, ['value'])
 
+        self._explorer_toggle = ToggleIcon(
+            icon="chevron_right",
+            active_icon="chevron_left",
+            color="light",
+            description="Toggle Explorer Panel",
+            value=True,
+            margin=(13, 10, 10, 0),
+        )
+        self._explorer_toggle.param.watch(self._toggle_explorer_panel, ['value'])
+
+        self._theme_toggle = ThemeToggle(
+            margin=(13, 0, 10, 10)
+        )
+
         self._last_synced = self._home = Exploration(
             context=memory,
             title='Home',
@@ -800,6 +817,21 @@ class ExplorerUI(UI):
 
         # Update the coordinator's validation agent setting
         self._coordinator.validation_enabled = validation_enabled
+
+    def _toggle_explorer_panel(self, event):
+        """Toggle the explorer output panel visibility."""
+        if event.new:
+            # Collapse the panel (hide it)
+            self._split.param.update(
+                collapsed=True,
+                sizes=(100, 0),
+            )
+        else:
+            # Expand the panel (show it)
+            self._split.param.update(
+                collapsed=False,
+                sizes=self._split.expanded_sizes,
+            )
 
     def _delete_exploration(self, item):
         self._explorations.items = [it for it in self._explorations.items if it is not item]
