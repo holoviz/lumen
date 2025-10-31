@@ -245,6 +245,20 @@ class Plan(Section):
             self.coordinator._todos_title.object = f"✅ Sucessfully completed {self.title!r}"
         else:
             self.coordinator._todos_title.object = f"❌ Failed to execute {self.title!r}"
+
+            if isinstance(self.interface, ChatInterface):
+                # Add rerun button on failure
+                interface = self.interface
+                rerun_button = Button(
+                    name="Rerun",
+                    on_click=lambda event: interface._click_rerun() if interface else None,
+                    button_type="primary"
+                )
+                if self.interface and len(self.interface.objects) > 0:
+                    last_message = self.interface.objects[-1]
+                    footer_objects = last_message.footer_objects or []
+                    last_message.footer_objects = footer_objects + [rerun_button]
+
         if "pipeline" in out_context:
             await self.coordinator._add_analysis_suggestions(out_context)
             log_debug("\033[92mCompleted: Plan\033[0m", show_sep="below")
