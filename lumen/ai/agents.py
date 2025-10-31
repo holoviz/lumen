@@ -2119,8 +2119,10 @@ class ValidationAgent(Agent):
             self.interface.send(f"Follow these suggestions to fulfill the original intent {original_query}\n\n{suggestions_list}")
 
         executed_steps = None
-        if "plan" in context and hasattr(context["plan"], "steps"):
-            executed_steps = [f"{step.actor}: {step.instruction}" for step in context["plan"].steps]
+        if "plan" in context:
+            executed_steps = [
+                f"{step[0].__class__.__name__}: {step.instruction}" for step in context["plan"]
+            ]
 
         system_prompt = await self._render_prompt("main", messages, context, executed_steps=executed_steps)
         model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
