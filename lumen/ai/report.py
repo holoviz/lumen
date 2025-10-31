@@ -829,33 +829,6 @@ class Section(TaskGroup):
     def _open_settings(self, event):
         self._dialog.open = True
 
-    def _watch_child_outputs(self, i: int, previous: list, context: TContext, event: param.Event, **kwargs):
-        for out in (event.old or []):
-            if out not in event.new:
-                out.param.unwatch(self._watchers[out])
-        state = dict(interface=self.interface, llm=self.llm, steps_layout=self.steps_layout)
-        for out in event.new:
-            if isinstance(out, LumenOutput) and out not in self._watchers:
-                self._watchers[out] = out.param.watch(partial(self._rerun, i+1, dict(context), state), 'spec')
-
-    async def _rerun(self, i: int, context: TContext, state: dict, _: param.Event, **kwargs):
-        for task in self._tasks[i:]:
-            task.reset()
-        with self.param.update(running=True):
-            for j, task in enumerate(self._tasks[i:]):
-                try:
-                    with self.param.update(state):
-                        await self._run_task(i+j, task, context, **kwargs)
-                except Exception as e:
-                    tb.print_exception(e)
-                    self.status = "error"
-                    if self.abort_on_error:
-                        if self.parent is not None:
-                            raise e
-                        break
-                else:
-                    self.status = "success"
-
     async def _run_task(self, i: int, task: Task | Actor, context: TContext | None, **kwargs) -> list[Any]:
         if context is not None:
             instructions = "\n".join(
@@ -863,17 +836,7 @@ class Section(TaskGroup):
                 for i, task in enumerate(self._tasks)
             )
             context['reasoning'] = f"{self.title}\n\n{instructions}"
-        if isinstance(task, Task):
-            watcher = task.param.watch(
-                partial(self._watch_child_outputs, i, list(self.views), context, **kwargs),
-                'views'
-            )
-        try:
-            outputs, out = await super()._run_task(i, task, context, **kwargs)
-        finally:
-            if isinstance(task, Task):
-                task.param.unwatch(watcher)
-        return outputs, out
+        return await super()._run_task(i, task, context, **kwargs)
 
     @param.depends('running', watch=True)
     async def _running(self):
