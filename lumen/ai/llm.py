@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
 
 from functools import partial
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal, TypedDict
 
@@ -13,6 +15,7 @@ import param
 
 from instructor import Mode, patch
 from instructor.dsl.partial import Partial
+from instructor.processing.multimodal import Image
 from pydantic import BaseModel
 
 from .interceptor import Interceptor
@@ -24,6 +27,13 @@ class Message(TypedDict):
     role: Literal["system", "user", "assistant"]
     content: str
     name: str | None
+
+
+class ImageResponse(BaseModel):
+    # To easily analyze images, we need instructor patch activated,
+    # so we use a pass-thru dummy string basemodel
+    output: str
+
 
 BASE_MODES = list(Mode)
 
@@ -122,6 +132,36 @@ class Llm(param.Parameterized):
             messages = [{"role": "system", "content": system}] + messages
         return messages, input_kwargs
 
+    def _serialize_image_pane(self, image: pn.pane.image.ImageBase | Image) -> Image:
+        if isinstance(image, Image):
+            return image
+
+        image_object = image.object
+        if isinstance(image_object, bytes):
+            # convert bytes to base64 string
+            base64_str = base64.b64encode(image_object).decode('utf-8')
+            image = Image.from_raw_base64(base64_str)
+        elif isinstance(image_object, (Path, str)) and Path(image_object).is_file():
+            image = Image.from_path(image_object)
+        elif isinstance(image_object, str):
+            image = Image.from_url(image_object)
+        return image
+
+    def _check_for_image(self, messages: list[Message]) -> tuple[list[Message], bool]:
+        contains_image = False
+        for i, message in enumerate(messages):
+            content = message.get("content")
+            if isinstance(content, (Image, pn.pane.image.ImageBase)):
+                messages[i]["content"] = self._serialize_image_pane(content)
+                contains_image = True
+
+            elif isinstance(content, list):
+                for item in content:
+                    if isinstance(item, (Image, pn.pane.image.ImageBase)):
+                        messages[i]["content"] = self._serialize_image_pane(item)
+                        contains_image = True
+        return messages, contains_image
+
     @classmethod
     def warmup(cls, model_kwargs: dict | None):
         """
@@ -167,10 +207,19 @@ class Llm(param.Parameterized):
         kwargs = dict(self._client_kwargs)
         kwargs.update(input_kwargs)
 
+        messages, contains_image = self._check_for_image(messages)
+        if contains_image:
+            # Currently instructor does not support streaming with multimodal
+            # https://github.com/567-labs/instructor/issues/1872
+            kwargs["stream"] = False
+
         if response_model is not None:
-            if allow_partial:
+            if allow_partial and isinstance(response_model, BaseModel):
                 response_model = Partial[response_model]
             kwargs["response_model"] = response_model
+        # check if any of the messages contain images
+        elif response_model is None and contains_image:
+            kwargs["response_model"] = ImageResponse
 
         output = await self.run_client(model_spec, messages, **kwargs)
         if output is None or output == "":
@@ -261,6 +310,10 @@ class Llm(param.Parameterized):
             model_spec=model_spec,
             **kwargs,
         )
+        if isinstance(chunks, BaseModel):
+            yield getattr(chunks, field) if field is not None else chunks
+            return
+
         try:
             async for chunk in chunks:
                 if response_model is None:

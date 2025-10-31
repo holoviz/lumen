@@ -1129,6 +1129,8 @@ class DuckDBVectorStore(VectorStore):
             "params": {}
         }
         for param_name in self.embeddings.param:
+            if param_name == "api_key":
+                continue
             if param_name not in ['name']:
                 value = getattr(self.embeddings, param_name)
                 if isinstance(value, (str, int, float, bool, list, dict)) or value is None:
@@ -1256,30 +1258,29 @@ class DuckDBVectorStore(VectorStore):
 
         text_ids = []
 
-        for i in range(len(texts)):
-            vector = np.array(embeddings[i], dtype=np.float32)
+        # Acquire the lock once for the entire batch operation
+        async with self._add_items_lock:
+            for i in range(len(texts)):
+                vector = np.array(embeddings[i], dtype=np.float32)
 
-            # Prepare parameters and query
-            if force_ids is not None:
-                query = """
-                    INSERT INTO documents (id, text, metadata, embedding)
-                    VALUES (?, ?, ?::JSON, ?) RETURNING id;
-                    """
-                params = [
-                    force_ids[i],
-                    texts[i],
-                    json.dumps(metadata[i]),
-                    vector.tolist(),
-                ]
-            else:
-                query = """
-                    INSERT INTO documents (text, metadata, embedding)
-                    VALUES (?, ?::JSON, ?) RETURNING id;
-                    """
-                params = [texts[i], json.dumps(metadata[i]), vector.tolist()]
+                if force_ids is not None:
+                    query = """
+                        INSERT INTO documents (id, text, metadata, embedding)
+                        VALUES (?, ?, ?::JSON, ?) RETURNING id;
+                        """
+                    params = [
+                        force_ids[i],
+                        texts[i],
+                        json.dumps(metadata[i]),
+                        vector.tolist(),
+                    ]
+                else:
+                    query = """
+                        INSERT INTO documents (text, metadata, embedding)
+                        VALUES (?, ?::JSON, ?) RETURNING id;
+                        """
+                    params = [texts[i], json.dumps(metadata[i]), vector.tolist()]
 
-            # Run the potentially blocking DB operation in a thread
-            async with self._add_items_lock:
                 result = await asyncio.to_thread(self._execute_query, query, params)
                 text_ids.append(result)
 
