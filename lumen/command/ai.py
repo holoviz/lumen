@@ -30,8 +30,8 @@ CMD_DIR = THIS_DIR / ".." / "command"
 
 LLM_PROVIDERS = {
     'openai': 'OpenAI',
-    'google': 'GoogleAI',
-    'anthropic': 'AnthropicAI',
+    'google': 'Google',
+    'anthropic': 'Anthropic',
     'mistral': 'MistralAI',
     'azure-openai': 'AzureOpenAI',
     'azure-mistral': 'AzureMistralAI',
