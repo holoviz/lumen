@@ -821,13 +821,11 @@ class ExplorerUI(UI):
     def _toggle_explorer_panel(self, event):
         """Toggle the explorer output panel visibility."""
         if event.new:
-            # Collapse the panel (hide it)
             self._split.param.update(
                 collapsed=True,
                 sizes=(100, 0),
             )
         else:
-            # Expand the panel (show it)
             self._split.param.update(
                 collapsed=False,
                 sizes=self._split.expanded_sizes,
