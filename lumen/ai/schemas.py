@@ -222,7 +222,7 @@ class SQLMetaset:
         return self.table_context
 
 
-async def get_metaset(sources: list[Source], tables: list[str]) -> SQLMetaset:
+async def get_metaset(sources: list[Source], tables: list[str], schema: dict | None = None) -> SQLMetaset:
     """
     Get the metaset for the given sources and tables.
 
@@ -232,6 +232,8 @@ async def get_metaset(sources: list[Source], tables: list[str]) -> SQLMetaset:
         The sources to get the metaset for.
     tables: list[str]
         The tables to get the metaset for.
+    schema: dict | None
+        Optional schema to use instead of fetching from sources.
 
     Returns
     -------
@@ -253,7 +255,8 @@ async def get_metaset(sources: list[Source], tables: list[str]) -> SQLMetaset:
             source_name = next(iter(sources)).name
             table_name = table_slug
         source = next((s for s in sources if s.name == source_name), None)
-        schema = await get_schema(source, table_name, include_count=True)
+        if schema is None:
+            schema = await get_schema(source, table_name, include_count=True)
         tables_info[table_slug] = SQLMetadata(
             table_slug=table_slug,
             schema=schema,

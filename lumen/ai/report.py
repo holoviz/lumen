@@ -7,6 +7,7 @@ import traceback as tb
 from abc import abstractmethod
 from collections.abc import Iterator
 from functools import partial
+from pathlib import Path
 from types import FunctionType
 from typing import Any, final
 
@@ -32,11 +33,11 @@ from .actor import Actor
 from .agents import AnalystAgent
 from .config import MissingContextError
 from .export import (
-    format_output, make_md_cell, make_preamble, write_notebook,
+    format_output, make_md_cell, make_preamble, render_docx_template,
+    write_notebook,
 )
 from .llm import Llm
 from .memory import _Memory
-from .schemas import get_metaset
 from .tools import FunctionTool, Tool
 from .utils import (
     describe_data, extract_block_source, get_block_names,
@@ -607,6 +608,32 @@ class Report(TaskGroup):
 
     _tasks = param.List(item_type=Section)
 
+    docx_context = param.Dict(default={}, doc="""
+        Context dictionary for docx template rendering. If keys are not provided,
+        the following defaults will be used:
+
+        - 'title': self.title or 'Lumen Report'
+        - 'subtitle': 'Generated on {date}' (e.g., 'Generated on October 27, 2025')
+        - 'cover_page_header': '' (empty string)
+        - 'cover_page_footer': '' (empty string)
+        - 'content_page_header': '' (empty string)
+
+        The following keys are always auto-generated and cannot be overridden:
+        - 'sections': List of section dicts with 'title', 'image', and 'caption'
+        - 'page_break': R('\f') for page breaks
+
+        Example:
+            report.docx_context = {
+                'title': 'Q4 Sales Report',
+                'subtitle': 'Quarterly Analysis',
+                'cover_page_header': 'ACME Corporation',
+                'cover_page_footer': 'Confidential'
+            }""")
+
+    docx_template_path = param.String(
+        default=str(Path(__file__).parent / "assets" / "lumen_template.docx"),
+        doc="""Path to the docx template file.""")
+
     level = 1
 
     def _init_view(self):
@@ -633,11 +660,17 @@ class Report(TaskGroup):
             icon="settings", on_click=self._open_settings, size="large", color="default",
             margin=0, description="Configure Report"
         )
-        self._export = FileDownload(
+        self._notebook_export_btn = FileDownload(
             callback=self._notebook_export, label="\u200b", variant='text', icon='get_app',
             icon_size="2.4em", color="default", margin=(8, 0, 10, 0),
             sx={".MuiButton-startIcon": {"mr": 0, "color": "var(--mui-palette-default-dark)"}},
             description="Export Report to .ipynb", filename=f"{self.title or 'Report'}.ipynb"
+        )
+        self._docx_export_btn = FileDownload(
+            callback=self._docx_export, label="\u200b", variant='text', icon='description',
+            icon_size="2.4em", color="default", margin=(8, 0, 10, 0),
+            sx={".MuiButton-startIcon": {"mr": 0, "color": "var(--mui-palette-default-dark)"}},
+            description="Export Report to .docx", filename=f"{self.title or 'Report'}.docx"
         )
         self._dialog = Dialog(
             TextInput.from_param(self.param.title, margin=(10, 0, 0, 0), sizing_mode="stretch_width"),
@@ -650,7 +683,8 @@ class Report(TaskGroup):
             self._run,
             self._clear,
             self._collapse,
-            self._export,
+            self._notebook_export_btn,
+            self._docx_export_btn,
             self._settings,
             sizing_mode="stretch_width"
         )
@@ -663,13 +697,18 @@ class Report(TaskGroup):
 
     @param.depends('title', watch=True)
     def _update_filename(self):
-        self._export.filename = f"{self.title or 'Report'}.ipynb"
+        self._notebook_export_btn.filename = f"{self.title or 'Report'}.ipynb"
+        self._docx_export_btn.filename = f"{self.title or 'Report'}.docx"
 
     def _add_outputs(self, i: int, task: Task | Actor, outputs: list, **kwargs):
         self.outputs += outputs
 
     def _notebook_export(self):
         return io.StringIO(self.to_notebook())
+
+    def _docx_export(self):
+        """Callback for FileDownload to export report as docx."""
+        return self.to_docx()
 
     async def _execute(self, *args):
         with self._run.param.update(loading=True):
@@ -698,6 +737,33 @@ class Report(TaskGroup):
         finally:
             task.param.unwatch(watcher)
         return outputs
+
+    def to_docx(self) -> io.BytesIO:
+        """
+        Export the report to a Word document (.docx) format.
+
+        Returns
+        -------
+        BytesIO
+            A BytesIO buffer containing the rendered docx document.
+
+        Raises
+        ------
+        RuntimeError
+            If the report has not been executed yet.
+        FileNotFoundError
+            If the template file is not found.
+        """
+        if not len(self.outputs):
+            raise RuntimeError(
+                "Report has not been executed, run report before exporting to_docx."
+            )
+
+        return render_docx_template(
+            [task for task in self._tasks if isinstance(task, Section)],
+            self.docx_template_path,
+            **self.docx_context,
+        )
 
     def __panel__(self):
         return Column(
@@ -733,8 +799,8 @@ class SQLQuery(Action):
     and generates an LumenOutput to be rendered.
     """
 
-    generate_caption = param.Boolean(default=True, doc="""
-        Whether to generate a caption for the data.""")
+    schema = param.Dict(default=None, doc="""
+        Optional schema to use to not infer schema from data.""")
 
     source = param.ClassSelector(class_=BaseSQLSource, doc="""
         The Source to execute the SQL expression on.""")
@@ -749,8 +815,12 @@ class SQLQuery(Action):
     table = param.String(doc="""
         The name of the table generated from the SQL expression.""")
 
-    user_content = param.String(default="Generate a short caption for the data", doc="""
-        Additional instructions to provide to the analyst agent, i.e. what to focus on.""")
+    template_overrides = param.Dict(default={}, doc="""
+        Template overrides to provide to the AnalystAgent.""")
+
+    analyst_instructions = param.String(default=None, doc="""
+        Instructions to provide to the analyst agent, i.e. what to focus on;
+        if unset no additional instructions are provided.""")
 
     def _render_controls(self):
         return [
@@ -800,7 +870,7 @@ class SQLQuery(Action):
         # Pass table_params if provided
         params = {self.table: self.table_params} if self.table_params else None
         source = source.create_sql_expr_source({self.table: self.sql_expr}, params=params)
-        pipeline = Pipeline(source=source, table=self.table)
+        pipeline = Pipeline(source=source, table=self.table, schema=self.schema)
         if self.memory is not None:
             self.memory["source"] = source
             if "sources" not in self.memory:
@@ -808,13 +878,12 @@ class SQLQuery(Action):
             self.memory["sources"].append(source)
             self.memory["pipeline"] = pipeline
             self.memory["data"] = await describe_data(pipeline.data)
-            self.memory["sql_metaset"] = await get_metaset([source], [self.table])
             self.memory["table"] = self.table
         out = LumenOutput(component=pipeline)
         outputs = [Typography(f"### {self.title}", variant='h4', margin=(10, 10, 0, 10)), out] if self.title else [out]
-        if self.generate_caption:
-            caption = await AnalystAgent(llm=self.llm).respond(
-                [{"role": "user", "content": self.user_content}]
+        if self.analyst_instructions:
+            caption = await AnalystAgent(llm=self.llm, template_overrides=self.template_overrides).respond(
+                [{"role": "user", "content": self.analyst_instructions}]
             )
             outputs.append(Typography(caption.object))
         return outputs
