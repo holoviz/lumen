@@ -30,14 +30,14 @@ from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource
 from ..views.base import Panel, View
 from .actor import Actor, ContextProvider, TContext
-from .agents import AnalystAgent, LumenBaseAgent
+from .agents import AnalystAgent, LumenBaseAgent, VegaLiteAgent
 from .config import MissingContextError
 from .context import (
     LWW, ContextError, ValidationIssue, collect_task_outputs,
     input_dependency_keys, merge_contexts, validate_task_inputs,
     validate_taskgroup_exclusions,
 )
-from .controls import RetryControls
+from .controls import AnnotationControls, RetryControls
 from .export import (
     format_output, make_md_cell, make_preamble, write_notebook,
 )
@@ -48,7 +48,7 @@ from .utils import (
     describe_data, extract_block_source, get_block_names,
     wrap_logfire_on_method,
 )
-from .views import LumenOutput, SQLOutput
+from .views import LumenOutput, SQLOutput, VegaLiteOutput
 
 
 class Task(Viewer):
@@ -314,10 +314,28 @@ class TaskGroup(Task):
         with root.param.update(config):
             await root.execute()
 
+    async def _annotate_invoke(
+        self, i: int, task: Task | Actor, context: TContext, view: VegaLiteOutput,
+        config: dict[str, Any], event: param.parameterized.Event
+    ):
+        if isinstance(task, VegaLiteAgent):
+            with view.editor.param.update(loading=True):
+                messages = list(self.history)
+                task_context = self._get_context(i, context, task)
+                # Call the annotate method with the current spec dict
+                view.spec = await task.annotate(
+                    event.new, messages, task_context, view
+                )
+        root = self
+        while root.parent is not None:
+            root = root.parent
+        with root.param.update(config):
+            await root.execute()
+
     def _add_outputs(
         self, i: int, task: Task | Actor, views: list, context: TContext, out_context: TContext | None, **kwargs
     ):
-        # Attach retry controls
+        # Attach retry and annotation controls
         for view in views:
             if not isinstance(view, LumenOutput):
                 continue
@@ -327,6 +345,15 @@ class TaskGroup(Task):
                 partial(self._retry_invoke, i, task, context, view, {'interface': self.interface}),
                 "instruction"
             )
+
+            # Add annotation controls for VegaLite views
+            if isinstance(view, VegaLiteOutput):
+                annotation_controls = AnnotationControls()
+                view.footer = [*view.footer, annotation_controls]
+                self._watchers[f"{i}_annotate"] = annotation_controls.param.watch(
+                    partial(self._annotate_invoke, i, task, context, view, {'interface': self.interface}),
+                    "instruction"
+                )
 
         # Track context and outputs
         if i >= 0:

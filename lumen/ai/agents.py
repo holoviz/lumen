@@ -1876,13 +1876,16 @@ class VegaLiteAgent(BaseViewAgent):
 
         return [out], {"view": view}
 
+    @retry_llm_output()
     async def annotate(
         self,
         instruction: str,
         messages: list[Message],
         context: TContext,
-        spec: dict
-    ) -> dict:
+        view: LumenOutput | None = None,
+        spec: str | None = None,
+        errors: list[str] | None = None,
+    ) -> str:
         """
         Apply annotations based on user request.
 
@@ -1894,26 +1897,36 @@ class VegaLiteAgent(BaseViewAgent):
             Chat history for context
         context: TContext
             Session context
-        spec : dict
-            The current VegaLite specification (full dict with 'spec' key)
+        view: LumenOutput | None
+            Current view output
+        spec: str | None
+            Current specification as a string
+        errors: list[str] | None
+            List of errors to provide context
 
         Returns
         -------
         dict
             Updated specification with annotations
         """
+        if view is not None:
+            spec = view.spec
+        if spec is None:
+            raise ValueError("Must provide previous spec to revise.")
+
         # Add user's annotation request to messages context
         annotation_messages = messages + [{
             "role": "user",
             "content": f"Add annotations: {instruction}"
         }]
 
-        vega_spec = dump_yaml(spec["spec"], default_flow_style=False)
+        # Extract current vega spec
         system_prompt = await self._render_prompt(
             "annotate_plot",
             annotation_messages,
             context,
-            vega_spec=vega_spec,
+            vega_spec=spec,
+            errors=errors
         )
 
         model_spec = self.prompts.get("annotate_plot", {}).get("llm_spec", self.llm_spec_key)
@@ -1925,14 +1938,15 @@ class VegaLiteAgent(BaseViewAgent):
         )
         update_dict = load_yaml(result.yaml_update)
 
-        # Merge and validate
-        final_dict = spec.copy()
+        spec_dict = load_yaml(spec)
         try:
-            final_dict["spec"] = self._deep_merge_dicts(final_dict["spec"], update_dict)
-            await self._extract_spec(context, {"yaml_spec": dump_yaml(final_dict["spec"])})
+            spec_dict = self._deep_merge_dicts(spec_dict, update_dict)
+            output_spec = dump_yaml(spec_dict)
+            if view is not None:
+                view.validate_spec(output_spec)
         except Exception as e:
             log_debug(f"Skipping invalid annotation update due to error: {e}")
-        return final_dict
+        return output_spec
 
 
 class AnalysisInputs(ContextModel):
