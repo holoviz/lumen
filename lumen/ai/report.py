@@ -2,13 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import io
-import os
-import tempfile
 import traceback as tb
 
 from abc import abstractmethod
 from collections.abc import Iterator
-from datetime import datetime
 from functools import partial
 from pathlib import Path
 from types import FunctionType
@@ -36,7 +33,8 @@ from .actor import Actor
 from .agents import AnalystAgent
 from .config import MissingContextError
 from .export import (
-    format_output, make_md_cell, make_preamble, write_notebook,
+    format_output, make_md_cell, make_preamble, render_docx_template,
+    write_notebook,
 )
 from .llm import Llm
 from .memory import _Memory
@@ -45,7 +43,7 @@ from .utils import (
     describe_data, extract_block_source, get_block_names,
     wrap_logfire_on_method,
 )
-from .views import LumenOutput, VegaLiteOutput
+from .views import LumenOutput
 
 
 class Task(Viewer):
@@ -740,15 +738,6 @@ class Report(TaskGroup):
             task.param.unwatch(watcher)
         return outputs
 
-    def __panel__(self):
-        return Column(
-            self._menu,
-            Container(
-                self._container, sizing_mode="stretch_both", height_policy="max",
-                stylesheets=[":host > div { overflow-y: auto; }"], min_height=600
-            )
-        )
-
     def to_docx(self) -> io.BytesIO:
         """
         Export the report to a Word document (.docx) format.
@@ -765,141 +754,25 @@ class Report(TaskGroup):
         FileNotFoundError
             If the template file is not found.
         """
-        from docxtpl import DocxTemplate, R
-
-        # Validate execution
-        if len(self) and not len(self.outputs):
+        if not len(self.outputs):
             raise RuntimeError(
                 "Report has not been executed, run report before exporting to_docx."
             )
 
-        # Load template
-        template_path = Path(self.docx_template_path)
-        if not template_path.exists():
-            raise FileNotFoundError(f"Template file not found: {template_path}")
+        return render_docx_template(
+            self.outputs,
+            self.docx_template_path,
+            **self.docx_context,
+        )
 
-        doc = DocxTemplate(str(template_path))
-
-        # Start with copy of docx_context
-        context = dict(self.docx_context)
-
-        # Set defaults for missing keys
-        if 'title' not in context:
-            context['title'] = self.title or "Lumen Report"
-
-        if 'subtitle' not in context:
-            date_string = datetime.now().strftime("%B %d, %Y")
-            context['subtitle'] = f"Generated on {date_string}"
-
-        if 'cover_page_header' not in context:
-            context['cover_page_header'] = ""
-
-        if 'cover_page_footer' not in context:
-            context['cover_page_footer'] = ""
-
-        if 'content_page_header' not in context:
-            context['content_page_header'] = ""
-
-        # Always generate sections from report outputs
-        context['sections'] = self._generate_sections(doc)
-
-        # Always set page_break
-        context['page_break'] = R("\f")
-
-        # Render template
-        doc.render(context)
-
-        # Return as BytesIO
-        buffer = io.BytesIO()
-        doc.save(buffer)
-        buffer.seek(0)
-        return buffer
-
-    def _generate_sections(self, doc) -> list[dict]:
-        """
-        Generate sections list from report tasks for docx template.
-
-        Arguments
-        ---------
-        doc : DocxTemplate
-            The document template instance (needed for InlineImage creation)
-
-        Returns
-        -------
-        list[dict]
-            List of section dictionaries with title, image, and caption
-        """
-        from docx.shared import Mm
-        from docxtpl import InlineImage, RichText
-
-        sections = []
-
-        for section in self._tasks:
-            if not isinstance(section, Section):
-                continue
-
-            section_dict = {
-                "title": section.title or "Untitled Section",
-                "image": None,
-                "caption": RichText("")
-            }
-
-            # Process section outputs to find visualizations and captions
-            image_found = False
-            for i, out in enumerate(section.outputs):
-                if isinstance(out, VegaLiteOutput) and not image_found:
-                    # Convert LumenOutput to image
-                    image_path = self._output_to_image(out)
-                    if image_path:
-                        section_dict["image"] = InlineImage(doc, image_path, width=Mm(160))
-                        image_found = True
-
-                        # Check if next output is a Typography for caption
-                        if i + 1 < len(section.outputs):
-                            next_out = section.outputs[i + 1]
-                            if isinstance(next_out, Typography):
-                                section_dict["caption"] = RichText(next_out.object)
-                        break
-
-            if section_dict["image"]:  # Only add section if it has an image
-                sections.append(section_dict)
-
-        return sections
-
-    def _output_to_image(self, output: LumenOutput) -> str | None:
-        """
-        Convert a LumenOutput to an image file path.
-
-        Arguments
-        ---------
-        output : LumenOutput
-            The output to convert
-
-        Returns
-        -------
-        str | None
-            Path to temporary image file, or None if conversion failed
-        """
-        # Create a temporary file for the image
-        tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
-        tmp_path = tmp.name
-        tmp.close()
-        try:
-            # Render the component and save as image
-            component = output.component
-            with open(tmp_path, 'wb') as f:
-                vega_pane = component.__panel__()._pane
-                vega_pane.param.update(
-                    width=650,
-                    height=400,
-                )
-                image_bytes = vega_pane.export("png", scale=2, ppi=144)
-                f.write(image_bytes)
-                return tmp_path
-        except Exception as e:
-            self.param.warning(f"Failed to convert output to image: {e}")
-            os.unlink(tmp_path)
-            return None
+    def __panel__(self):
+        return Column(
+            self._menu,
+            Container(
+                self._container, sizing_mode="stretch_both", height_policy="max",
+                stylesheets=[":host > div { overflow-y: auto; }"], min_height=600
+            )
+        )
 
 
 class Action(Task):
@@ -945,7 +818,7 @@ class SQLQuery(Action):
     template_overrides = param.Dict(default={}, doc="""
         Template overrides to provide to the AnalystAgent.""")
 
-    user_content = param.String(default=None, doc="""
+    analyst_instructions = param.String(default=None, doc="""
         Instructions to provide to the analyst agent, i.e. what to focus on;
         if unset no additional instructions are provided.""")
 
@@ -1008,9 +881,9 @@ class SQLQuery(Action):
             self.memory["table"] = self.table
         out = LumenOutput(component=pipeline)
         outputs = [Typography(f"### {self.title}", variant='h4', margin=(10, 10, 0, 10)), out] if self.title else [out]
-        if self.user_content:
+        if self.analyst_instructions:
             caption = await AnalystAgent(llm=self.llm, template_overrides=self.template_overrides).respond(
-                [{"role": "user", "content": self.user_content}]
+                [{"role": "user", "content": self.analyst_instructions}]
             )
             outputs.append(Typography(caption.object))
         return outputs
