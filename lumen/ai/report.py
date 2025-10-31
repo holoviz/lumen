@@ -48,7 +48,7 @@ from .utils import (
     describe_data, extract_block_source, get_block_names,
     wrap_logfire_on_method,
 )
-from .views import LumenOutput
+from .views import LumenOutput, SQLOutput
 
 
 class Task(Viewer):
@@ -331,7 +331,7 @@ class TaskGroup(Task):
         # Track context and outputs
         if i >= 0:
             self._task_contexts[task] = out_context
-            self._task_outputs[task] = views
+        self._task_outputs[task] = list(views)
 
         # Find view and output to insert the new outputs after
         if i >= 0:
@@ -352,7 +352,8 @@ class TaskGroup(Task):
                     prev_view = self._task_outputs[prev_task][-1]
                     break
             else:
-                prev_view = None
+                task_out = self._task_outputs.get(None)
+                prev_view = task_out[-1] if task_out else None
         else:
             prev_view = prev_out = None
 
@@ -368,11 +369,14 @@ class TaskGroup(Task):
                 if view is not None:
                     rendered.append(view)
             if rendered:
-                rendered_col = Column(*rendered)
-                self._task_rendered[task] = rendered_col
-                self._view.insert(idx, rendered_col)
+                if len(rendered) > 1:
+                    rendered_out = Column(*rendered)
+                else:
+                    rendered_out = rendered[0]
+                self._task_rendered[task] = rendered_out
+                self._view.insert(idx, rendered_out)
         new_views = list(self.views)
-        view_idx = 0 if prev_view is None else self.views.index(prev_view)
+        view_idx = 0 if prev_view is None else new_views.index(prev_view)+1
         for vi, view in enumerate(views):
             new_views.insert(view_idx+vi, view)
         self.views = new_views
@@ -446,6 +450,7 @@ class TaskGroup(Task):
         """
         Resets the view, removing generated outputs.
         """
+        self._current = 0
         with hold():
             self._task_rendered.clear()
             self._task_contexts.clear()
@@ -625,10 +630,13 @@ class TaskGroup(Task):
         **kwargs: dict
             Additional keyword arguments to pass to the tasks.
         """
-        title = Typography(f"{'#'*self.level} {self.title}", margin=(10, 10, 0, 10))
-        views = [title] if self.title else []
-        if views and not self._task_outputs:
-            self._add_outputs(-1, None, views, context, None, **kwargs)
+        if None in self._task_outputs:
+            views = self._task_outputs[None]
+        else:
+            title = Typography(f"{'#'*self.level} {self.title}", margin=(10, 10, 0, 10))
+            views = [title] if self.title else []
+            if views:
+                self._add_outputs(-1, None, views, context, None, **kwargs)
         for i, task in enumerate(self._tasks):
             self._current = i
             if task in self._task_outputs:
@@ -664,7 +672,9 @@ class TaskGroup(Task):
         contexts += [self._task_contexts[task] for task in self if task in self._task_contexts]
         return views, merge_contexts(LWW, contexts)
 
-    def invalidate(self, keys: Iterable[str], start: int = 0, propagate: bool = True) -> tuple[bool, set[str]]:
+    def invalidate(
+        self, keys: Iterable[str], start: int = 0, propagate: bool = True
+    ) -> tuple[bool, set[str]]:
         """
         Invalidates tasks and propagates context dependencies within a TaskGroup.
 
@@ -742,7 +752,7 @@ class TaskGroup(Task):
         """
         Returns the notebook representation of the tasks.
         """
-        if len(self) and not len(self.output_schema):
+        if len(self) and not len(self._task_rendered):
             raise RuntimeError(
                 "Report has not been executed, run report before exporting to_notebook."
             )
@@ -1085,7 +1095,7 @@ class SQLQuery(Action):
             "sql_metaset": await get_metaset([source], [self.table]),
             "table": self.table,
         }
-        out = LumenOutput(component=pipeline)
+        out = SQLOutput(component=pipeline, spec=self.sql_expr)
         title = Typography(f"### {self.title}", variant='h4', margin=(10, 10, 0, 10))
         outputs = [title, out] if self.title else [out]
         if self.generate_caption:
