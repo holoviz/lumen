@@ -88,7 +88,11 @@ def _dedupe(seq: Iterable[Any], key: str | Callable[[Any], Any] | None) -> list[
     [1, 2, 3]
     """
     if key is None:
-        return list(seq)
+        new = []
+        for v in seq:
+            if v not in new:
+                new.append(v)
+        return new
     key_fn: Callable[[Any], Any]
     if key == "value":
         key_fn = lambda x: x
