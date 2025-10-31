@@ -76,9 +76,10 @@ class Plan(Section):
             if failed and idx == i:
                 status = "❌"
             else:
+                if i == idx:
+                    instruction = f"<u>{instruction}</u>"
                 if idx < i:
                     status = "x"
-                    instruction = f"<u>{instruction}</u>"
                 else:
                     status = " "
                 status = f"[{status}]"
