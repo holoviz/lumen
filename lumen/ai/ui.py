@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
-import logging
 
 from functools import partial
 from io import StringIO
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import param
 
@@ -16,43 +15,40 @@ from panel.config import config, panel_extension
 from panel.io.document import hold
 from panel.io.resources import CSS_URLS
 from panel.io.state import state
-from panel.layout import Column as PnColumn, HSpacer
+from panel.layout import Column, HSpacer
 from panel.pane import SVG, Markdown
 from panel.param import ParamMethod
 from panel.util import edit_readonly
 from panel.viewable import Child, Children, Viewer
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
-    Accordion, Button, ChatFeed, ChatInterface, ChatMessage, Column, Dialog,
-    Divider, FileDownload, IconButton, MenuList, MenuToggle, MultiChoice, Page,
-    Paper, Row, Switch, Tabs, ToggleIcon,
+    Accordion, Button, ChatFeed, ChatInterface, ChatMessage,
+    Column as MuiColumn, Dialog, Divider, FileDownload, IconButton, MenuList,
+    MenuToggle, Page, Paper, Row, Switch, Tabs, ToggleIcon,
 )
+from panel_splitjs import HSplit, VSplit
 
 from ..pipeline import Pipeline
 from ..sources import Source
 from ..sources.duckdb import DuckDBSource
-from ..transforms.sql import SQLLimit
 from ..util import log
 from .agents import (
     AnalysisAgent, AnalystAgent, ChatAgent, DocumentListAgent, SourceAgent,
     SQLAgent, TableListAgent, ValidationAgent, VegaLiteAgent,
 )
-from .components import SourceCatalog, SplitJS
 from .config import PROVIDED_SOURCE_NAME, SOURCE_TABLE_SEPARATOR
-from .controls import SourceControls
+from .context import TContext
+from .controls import SourceCatalog, SourceControls, TableExplorer
 from .coordinator import Coordinator, Plan, Planner
 from .export import (
     export_notebook, make_md_cell, make_preamble, render_cells, write_notebook,
 )
-from .llm import Llm, OpenAI
+from .llm import Llm, Message, OpenAI
 from .llm_dialog import LLMConfigDialog
-from .memory import _Memory, memory
 from .report import Report
 from .utils import wrap_logfire
 from .vector_store import VectorStore
-
-if TYPE_CHECKING:
-    from .views import LumenOutput
+from .views import LumenOutput, SQLOutput
 
 DataT = str | Path | Source | Pipeline
 
@@ -93,99 +89,6 @@ EXPLORATIONS_INTRO = """
 """
 
 
-class TableExplorer(Viewer):
-    """
-    TableExplorer provides a high-level entrypoint to explore tables in a split UI.
-    It allows users to load tables, explore them using Graphic Walker, and then
-    interrogate the data via a chat interface.
-    """
-
-    interface = param.ClassSelector(class_=ChatFeed, doc="""
-        The interface for the Coordinator to interact with.""")
-
-    def __init__(self, **params):
-        super().__init__(**params)
-        self._table_select = MultiChoice(
-            label="Select table(s) to preview", sizing_mode='stretch_width',
-            max_height=200, max_items=5, margin=0
-        )
-        self._explore_button = Button(
-            name='Explore table(s)', icon='add_chart', button_type='primary', icon_size="2em",
-            disabled=self._table_select.param.value.rx().rx.not_(), on_click=self._update_explorers,
-            margin=(0, 0, 0, 10), width=200, align='end'
-        )
-        self._input_row = Row(self._table_select, self._explore_button)
-        self._source_map = {}
-        memory.on_change("sources", self._update_source_map)
-        self._update_source_map(init=True)
-
-        self._tabs = Tabs(dynamic=True, sizing_mode='stretch_both')
-        self._layout = Column(
-            self._input_row, self._tabs, sizing_mode='stretch_both',
-        )
-
-    def _update_source_map(self, key=None, old=None, sources=None, init=False):
-        if sources is None:
-            sources = memory["sources"]
-        selected = list(self._table_select.value)
-        deduplicate = len(sources) > 1
-        new = {}
-
-        # Build the source map for UI display
-        for source in sources:
-            tables = source.get_tables()
-            for table in tables:
-                if deduplicate:
-                    table = f'{source.name}{SOURCE_TABLE_SEPARATOR}{table}'
-
-                if (table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)[-1] not in self._source_map and
-                    not init and not len(selected) > self._table_select.max_items and state.loaded):
-                    selected.append(table)
-                new[table] = source
-
-        self._source_map.clear()
-        self._source_map.update(new)
-        selected = selected if len(selected) == 1 else []
-        self._table_select.param.update(options=list(self._source_map), value=selected)
-        self._input_row.visible = bool(self._source_map)
-
-    def _explore_table_if_single(self, event):
-        """
-        If only one table is uploaded, help the user load it
-        without requiring them to click twice. This step
-        only triggers when the Upload in the Overview tab is used,
-        i.e. does not trigger with uploads through the SourceAgent
-        """
-        if len(self._table_select.options) == 1:
-            self._explore_button.param.trigger("value")
-
-    def _update_explorers(self, event):
-        if not event.new:
-            return
-
-        with self._explore_button.param.update(loading=True), self.interface.param.update(loading=True):
-            explorers = []
-            for table in self._table_select.value:
-                source = self._source_map[table]
-                if SOURCE_TABLE_SEPARATOR in table:
-                    _, table = table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
-                pipeline = Pipeline(
-                    source=source, table=table, sql_transforms=[SQLLimit(limit=100_000, read=source.dialect)]
-                )
-                table_label = f"{table[:25]}..." if len(table) > 25 else table
-                walker = GraphicWalker(
-                    pipeline.param.data, sizing_mode='stretch_both', min_height=800,
-                    kernel_computation=True, name=table_label, tab='data'
-                )
-                explorers.append(walker)
-
-            self._tabs.objects = explorers
-            self._table_select.value = []
-
-    def __panel__(self):
-        return self._layout
-
-
 class UI(Viewer):
     """
     UI provides a baseclass and high-level entrypoint to start chatting with your data.
@@ -198,6 +101,8 @@ class UI(Viewer):
     analyses = param.List(default=[], doc="""
         List of custom analyses. If provided the AnalysesAgent will be added."""
     )
+
+    context = param.Dict(default={})
 
     coordinator = param.ClassSelector(
         class_=Coordinator, default=Planner, is_instance=False, doc="""
@@ -281,7 +186,8 @@ class UI(Viewer):
         super().__init__(**params)
         SourceAgent.source_controls = self.source_controls
         SourceControls.table_upload_callbacks = self.table_upload_callbacks
-        self._source_controls = self.source_controls(memory=memory)
+        self._source_controls = self.source_controls(context=self.context)
+        self._source_controls.param.watch(self._sync_sources, 'outputs')
         log.setLevel(self.log_level)
 
         agents = self.agents
@@ -331,6 +237,7 @@ class UI(Viewer):
         self._settings_menu.param.watch(self._toggle_validation_agent, 'toggled')
         self._coordinator = self.coordinator(
             agents=agents,
+            context=self.context,
             interface=self.interface,
             llm=self.llm,
             tools=self.tools,
@@ -343,9 +250,6 @@ class UI(Viewer):
         )
 
         self.interface = self._coordinator.interface
-        levels = logging.getLevelNamesMapping()
-        if levels.get(self.log_level) < 20:
-            self.interface.callback_exception = "verbose"
         self.interface.disabled = True
 
         self._notebook_export = FileDownload(
@@ -355,7 +259,7 @@ class UI(Viewer):
             icon_size="1.8em",
             filename=f"{self.title.replace(' ', '_')}.ipynb",
             label=" ",
-            margin=(12, 0, 10, 5),
+            margin=(15, 0, 10, 5),
             sx={"p": "6px 0", "minWidth": "32px"},
             styles={'z-index': '1000'},
             variant="text"
@@ -398,10 +302,10 @@ class UI(Viewer):
         # Set up actions for the ChatAreaInput speed dial
         self._setup_actions()
         self._table_lookup_tool = None  # Will be set after coordinator is initialized
-        self._source_catalog = SourceCatalog()
+        self._source_catalog = SourceCatalog(context=self.context)
         self._source_accordion = Accordion(
             ("Add Sources", self._source_controls), ("View Sources", self._source_catalog),
-            margin=(-30, 10, 0, 10), sizing_mode="stretch_both", toggle=True, active=[0]
+            margin=(-30, 10, 0, 10), sizing_mode="stretch_width", toggle=True, active=[0]
         )
         self._sources_dialog_content = Dialog(
             self._source_accordion, close_on_click=True, show_close_button=True,
@@ -421,13 +325,55 @@ class UI(Viewer):
         self._report_toggle = None
         self._contextbar = None
 
-        memory.on_change("sources", self._update_source_catalog)
-
         # LLM status is now managed through actions
-
         if state.curdoc and state.curdoc.session_context:
             state.on_session_destroyed(self._destroy)
         state.onload(self._initialize_new_llm)
+
+    @param.depends('context', on_init=True, watch=True)
+    async def _sync_sources(self, event=None):
+        context = event.new if event else self.context
+        if 'sources' in context:
+            old_sources = self.context.get("sources", [self.context["source"]] if "source" in self.context else [])
+            new_sources = [src for src in context["sources"] if src not in old_sources]
+            self.context["sources"] = old_sources + new_sources
+
+            all_slugs = set()
+            for source in new_sources:
+                tables = source.get_tables()
+                for table in tables:
+                    table_slug = f'{source.name}{SOURCE_TABLE_SEPARATOR}{table}'
+                    all_slugs.add(table_slug)
+
+            # Update visible_slugs, preserving existing visibility where possible
+            # This ensures removed tables are filtered out, new tables are added
+            current_visible = self.context.get('visible_slugs', set())
+            if current_visible:
+                # Keep intersection of current visible and available slugs
+                # Plus add any new slugs that weren't previously available
+                self.context['visible_slugs'] = current_visible.intersection(all_slugs) | (all_slugs - current_visible)
+            else:
+                # If no visible_slugs set, make all tables visible
+                self.context['visible_slugs'] = all_slugs
+        if "source" in context:
+            if "source" in self.context:
+                old_source = self.context["source"]
+                if "sources" not in self.context:
+                    self.context["sources"] = [old_source]
+                elif old_source not in self.context["sources"]:
+                    self.context["sources"].append(old_source)
+            self.context["source"] = context["source"]
+        if "table" in context:
+            self.context["table"] = context["table"]
+        if "document_sources" in context:
+            new_docs = context["document_sources"]
+            if "document_sources" not in self.context:
+                self.context["document_sources"] = new_docs
+            else:
+                self.context["document_sources"].extend(new_docs)
+        await self._explorer.sync()
+        await self._source_catalog.sync()
+        await self._coordinator.sync(self.context)
 
     def _setup_actions(self):
         """Set up actions for the ChatAreaInput speed dial."""
@@ -534,7 +480,8 @@ class UI(Viewer):
                 uri=':memory:'
             )
             sources.append(source)
-        memory["sources"] = sources
+        self.context["sources"] = sources
+        self.context["source"] = sources[-1]
 
     def show(self, **kwargs):
         return self._create_view(server=True).show(**kwargs)
@@ -574,7 +521,7 @@ class UI(Viewer):
         """
         Update the sources dialog content when memory sources change.
         """
-        self._source_catalog.sources = memory["sources"]
+        self._source_catalog.sources = self.context["sources"]
         self._source_accordion.active = [1]
 
     def servable(self, title: str | None = None, **kwargs):
@@ -621,7 +568,7 @@ class ChatUI(UI):
 
 class Exploration(param.Parameterized):
 
-    context = param.ClassSelector(class_=_Memory)
+    context = param.Dict()
 
     conversation = Children()
 
@@ -681,7 +628,7 @@ class ExplorerUI(UI):
         self._explorations.on_action('up', self._move_up)
         self._explorations.on_action('down', self._move_down)
         self._explorations.on_action('remove', self._delete_exploration)
-        self._explorer = TableExplorer(interface=self.interface)
+        self._explorer = TableExplorer(context=self.context)
         self._explorations_intro = Markdown(
             EXPLORATIONS_INTRO,
             margin=(0, 0, 10, 10),
@@ -700,10 +647,10 @@ class ExplorerUI(UI):
         self._report_toggle.param.watch(self._toggle_report_mode, ['value'])
 
         self._last_synced = self._home = Exploration(
-            context=memory,
+            context=self.context,
             title='Home',
             conversation=self.interface.objects,
-            view=Column(self._explorations_intro, self._explorer)
+            view=MuiColumn(self._explorations_intro, self._explorer)
         )
         home_item = {'label': 'Home', 'icon': 'home', 'view': self._home}
         self._explorations.param.update(items=[home_item], value=home_item)
@@ -723,13 +670,14 @@ class ExplorerUI(UI):
         )
         self._exports.visible = False
         self._output = Paper(
-            self._home.view, elevation=2, margin=(5, 10, 5, 5), sx={'p': 3, 'pb': 2},
+            self._home.view, elevation=2, margin=(5, 10, 5, 5), sx={'pl': 1},
             height_policy='max', sizing_mode="stretch_both"
         )
-        self._split = SplitJS(
-            left=self._coordinator,
-            right=self._output,
-            invert=self.chat_ui_position != 'left',
+        self._split = HSplit(
+            self._coordinator,
+            self._output,
+            collapsed=1,
+            expanded_sizes=(40, 60),
             sizing_mode='stretch_both'
         )
         self._report = Column()
@@ -809,7 +757,7 @@ class ExplorerUI(UI):
         Cleanup on session destroy
         """
         for c in self._explorations.items[1:]:
-            c['view'].context.cleanup()
+            c['view'].context.clear()
 
     def _global_export_notebook(self):
         cells, extensions = [], []
@@ -884,7 +832,7 @@ class ExplorerUI(UI):
             messages.append(msg)
         return messages
 
-    async def _add_exploration(self, title: str, memory: _Memory):
+    async def _add_exploration(self, plan: Plan):
         # Sanpshot previous conversation
         last_exploration = self._explorations.value['view']
         is_home = last_exploration is self._home
@@ -895,15 +843,16 @@ class ExplorerUI(UI):
         conversation = list(self.interface.objects)
 
         # Create new exploration
-        output = Column(sizing_mode='stretch_both', loading=True)
+        output = MuiColumn(sizing_mode='stretch_both', loading=True)
         exploration = Exploration(
-            context=memory,
+            context=plan.context,
             conversation=conversation,
-            title=title,
+            plan=plan,
+            title=plan.title,
             view=output
         )
         view_item = {
-            'label': title,
+            'label': plan.title,
             'view': exploration,
             'icon': None,
             'actions': [{'action': 'remove', 'label': 'Remove', 'icon': 'delete'}]
@@ -917,32 +866,16 @@ class ExplorerUI(UI):
             )
             self._idle.clear()
             self._output[:] = [output]
-            self._notebook_export.filename = f"{title.replace(' ', '_')}.ipynb"
+            self._notebook_export.filename = f"{plan.title.replace(' ', '_')}.ipynb"
             await self._update_conversation()
         self._last_synced = exploration
+        return exploration
 
-    def _add_outputs(self, exploration: Exploration, outputs: list[LumenOutput] | str):
-        memory = exploration.context
+    def _add_outputs(self, exploration: Exploration, outputs: list[Any], context: TContext):
         view = exploration.view
-        if "sql" in memory:
-            sql = memory.rx("sql")
-            sql_pane = Markdown(
-                param.rx('```sql\n{sql}\n```').format(sql=sql),
-                margin=(-15, 0, 0, 0), sizing_mode='stretch_width', name='SQL'
-            )
-            if sql.count('\n') > 10:
-                sql_pane = PnColumn(
-                    sql_pane, max_height=325, scroll='y-auto', name='SQL'
-                )
-            if len(view) and view[0].name == 'SQL':
-                view[0] = sql_pane
-            else:
-                view.insert(0, sql_pane)
-
         content = []
-        if view.loading:
-            from panel_gwalker import GraphicWalker
-            pipeline = memory['pipeline']
+        if view.loading and 'pipeline' in context:
+            pipeline = context['pipeline']
             content.append(
                 ('Overview', GraphicWalker(
                     pipeline.param.data,
@@ -952,88 +885,128 @@ class ExplorerUI(UI):
                 ))
             )
         for out in outputs:
+            if not isinstance(out, LumenOutput):
+                continue
             title = out.title or type(out).__name__.replace('Output', '')
             if len(title) > 25:
                 title = f"{title[:25]}..."
-            content.append((title, ParamMethod(out.render, inplace=True, sizing_mode='stretch_both')))
+            output = ParamMethod(out.render, inplace=True, sizing_mode='stretch_both')
+            vsplit = VSplit(out.editor, output, sizes=(20, 80), expanded_sizes=(20, 80), sizing_mode="stretch_both")
+            content.append((title, vsplit))
         if view.loading:
-            tabs = Tabs(*content, dynamic=True, active=len(outputs), sizing_mode='stretch_both')
+            tabs = Tabs(*content, dynamic=True, active=len(content), sizing_mode='stretch_both')
             view.append(tabs)
         else:
             tabs = view[-1]
             tabs.extend(content)
         tabs.active = len(tabs)-1
 
+    def _render_view(self, out: LumenOutput) -> VSplit:
+        title = out.title or type(out).__name__.replace('Output', '')
+        if len(title) > 25:
+            title = f"{title[:25]}..."
+        output = ParamMethod(out.render, inplace=True, sizing_mode='stretch_both')
+        return (title, VSplit(out.editor, output, sizes=(20, 80), expanded_sizes=(20, 80), sizing_mode="stretch_both"))
+
+    def _add_views(self, exploration: Exploration, event: param.parameterized.Event):
+        outputs = [view for view in event.new if isinstance(view, LumenOutput) and view not in event.old]
+
+        view = exploration.view
+        if len(view) == 0:
+            tabs = None
+            content = [('Overview', "Waiting on data...")]
+        else:
+            tabs = view[0]
+            content = []
+
+        for out in outputs:
+            title, vsplit = self._render_view(out)
+            content.append((title, vsplit))
+            if tabs and isinstance(out, SQLOutput) and not isinstance(tabs[0], GraphicWalker):
+                tabs[0] = ("Overview", GraphicWalker(
+                    out.component.param.data,
+                    kernel_computation=True,
+                    tab='data',
+                    sizing_mode='stretch_both'
+                ))
+
+        if tabs is None:
+            tabs = Tabs(*content, dynamic=True, active=len(content), sizing_mode='stretch_both')
+            view.append(tabs)
+        else:
+            tabs.extend(content)
+        tabs.active = len(tabs)-1
+        if self._split.collapsed:
+            self._split.param.update(
+                sizes=self._split.expanded_sizes,
+            )
+
+    def _update_views(self, exploration: Exploration, event: param.parameterized.Event):
+        current = [view for view in event.new if isinstance(view, LumenOutput)]
+        old = [view for view in event.old if isinstance(view, LumenOutput)]
+
+        idx = None
+        tabs = exploration.view[0]
+        content = list(zip(tabs._names, tabs, strict=False))
+        for out in old:
+            if out in current:
+                continue
+            matches = [
+                i for i, (_, vsplit) in enumerate(content)
+                if isinstance(vsplit, VSplit) and out.editor in vsplit
+            ]
+            if matches:
+                idx = matches[0]
+                content.pop(idx)
+
+        for out in current:
+            if out in old:
+                idx = next(i for i, tab in enumerate(tabs[1:]) if out.editor in tab) + 1
+                continue
+            title, vsplit = self._render_view(out)
+            content.insert(idx+1, (title, vsplit))
+        tabs[:] = content
+        tabs.active = len(tabs)-1
+
     def _wrap_callback(self, callback):
-        async def wrapper(contents: list | str, user: str, instance: ChatInterface):
+        async def wrapper(messages: list[Message], user: str, instance: ChatInterface):
             prev = self._explorations.value
-            prev_memory = prev['view'].context
-            new_exploration = False
-            local_memory = prev_memory.clone()
-            local_memory["outputs"] = outputs = []
-
-            async def render_plan(_, old, new):
-                nonlocal new_exploration
-                plan = local_memory["plan"]
-                if any(step.actor in ('SQLAgent', 'DbtslAgent') for step in plan.steps):
-                    # Expand the contextbar when the first exploration is created
-                    await self._add_exploration(plan.title, local_memory)
-                    new_exploration = True
-
-            def sync_available_sources_memory(_, __, sources):
-                """
-                For cases when the user uploads a dataset through SourceAgent
-                this will update the available_sources in the global memory
-                """
-                memory["sources"] += [
-                    source for source in sources if source not in memory["sources"]
-                ]
-
-            local_memory.on_change('plan', render_plan)
-            local_memory.on_change('sources', sync_available_sources_memory)
-
-            async def render_output(_, old, new):
-                added = [out for out in new if out not in old]
-                exploration = self._explorations.value['view']
-                self._add_outputs(exploration, added)
-                exploration.view.loading = False
-                outputs[:] = new
-                if self._split.collapsed and prev['label'] == 'Home':
-                    self._split.param.update(
-                        collapsed=False,
-                        sizes=self._split.expanded_sizes,
-                    )
-            local_memory.on_change('outputs', render_output)
-
-            # Remove exploration on error if no outputs have been
-            # added yet and we launched a new exploration
-            async def remove_output(_, __, ___):
-                nonlocal new_exploration
-                if "__error__" in local_memory:
-                    del memory['__error__']
-                if outputs or not new_exploration:
-                    return
-                exploration = self._explorations.value['view']
-                prev['view'].conversation = exploration.conversation
-                with hold():
-                    self._explorations.param.update(
-                        items=self._explorations.items[:-1],
-                        value=prev
-                    )
-                    await self._update_conversation()
-                new_exploration = False
-            local_memory.on_change('__error__', remove_output)
-
+            self._idle.clear()
             try:
-                self._idle.clear()
-                with self._coordinator.param.update(memory=local_memory):
-                    plan = await callback(contents, user, instance)
-                self._explorations.value['view'].plan = plan
+                plan = await callback(messages, prev["view"].context, user, instance)
+                if any("pipeline" in step[0].output_schema.__annotations__ for step in plan):
+                    exploration = await self._add_exploration(plan)
+                    new_exploration = True
+                    watcher = plan.param.watch(partial(self._add_views, exploration), "views")
+                else:
+                    exploration = self._explorations.value['view']
+                    new_exploration = False
+                    if exploration.plan is not None:
+                        plan = exploration.plan.merge(plan)
+                    watcher = None
+                with plan.param.update(interface=self.interface):
+                    new, out_context = await plan.execute()
+                if watcher:
+                    plan.param.unwatch(watcher)
+                if "__error__" in out_context:
+                    # On error we have to sync the conversation, unwatch the plan,
+                    # and remove the exploration if it was newly created
+                    prev['view'].conversation = exploration.conversation
+                    del out_context['__error__']
+                    if new_exploration:
+                        with hold():
+                            self._explorations.param.update(
+                                items=self._explorations.items[:-1],
+                                value=prev
+                            )
+                            await self._update_conversation()
+                            if prev["view"] is self._home:
+                                self._split.collapsed = 1
+                else:
+                    exploration.context = out_context
+                    exploration.view.loading = False
+                    plan.param.watch(partial(self._update_views, exploration), "views")
             finally:
                 self._explorations.value['view'].conversation = self.interface.objects
                 self._idle.set()
-                local_memory.remove_on_change('plan', render_plan)
-                local_memory.remove_on_change('__error__', remove_output)
-                if not new_exploration:
-                    prev_memory.update(local_memory)
         return wrapper

@@ -1,18 +1,18 @@
 import asyncio
+import json
 import traceback
 
 from copy import deepcopy
+from typing import Any
 
 import panel as pn
 import param
 import requests
-import yaml
 
 from jsonschema import Draft7Validator, ValidationError
 from panel.config import config
 from panel.layout import Column, Row
-from panel.pane import Markdown
-from panel.param import ParamRef
+from panel.param import ParamMethod
 from panel.viewable import Viewer
 from panel.widgets import CodeEditor
 from panel_material_ui import (
@@ -21,11 +21,10 @@ from panel_material_ui import (
 from param.parameterized import discard_events
 
 from ..base import Component
-from ..dashboard import load_yaml
+from ..config import dump_yaml, load_yaml
 from ..downloads import Download
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
-from ..util import NumpyDumper
 from ..views.base import Table
 from .config import VEGA_ZOOMABLE_MAP_ITEMS
 from .utils import get_data
@@ -39,7 +38,7 @@ class LumenOutput(Viewer):
 
     loading = param.Boolean()
 
-    footer = param.List()
+    footer = param.List(default=[])
 
     spec = param.String(allow_None=True)
 
@@ -48,32 +47,32 @@ class LumenOutput(Viewer):
     language = "yaml"
 
     def __init__(self, **params):
-        if 'spec' not in params and 'component' in params and params['component'] is not None:
-            try:
-                component_spec = params['component'].to_spec()
-                params['spec'] = yaml.dump(component_spec, Dumper=NumpyDumper)
-            except Exception:
-                params['spec'] = None
+        try:
+            spec, spec_dict = self._serialize_component(params["component"])
+        except Exception:
+            spec_dict = None
+            spec = None
+        if "spec" not in params:
+            params["spec"] = spec
+        self._spec_dict = spec_dict
         super().__init__(**params)
-        code_editor = CodeEditor(
-            value=self.param.spec.rx.or_(""),
+        self._editor = CodeEditor(
+            value=self.param.spec.rx.or_(f'{self.title} output could not be serialized and may therefore not be edited.'),
             language=self.language,
             theme="github_dark" if config.theme == "dark" else "github_light_default",
-            sizing_mode="stretch_width",
+            sizing_mode="stretch_both",
             soft_tabs=True,
             on_keyup=False,
             indent=2,
+            disabled=self.param.spec.rx.is_(None)
         )
-        code_editor.link(self, bidirectional=True, value='spec')
-        placeholder = Markdown(
-            f'{self.title} output could not be serialized and may therefore not be edited.'
-        )
+        self._editor.link(self, bidirectional=True, value='spec')
         copy_icon = IconButton(
             icon="content_copy", active_icon="check", margin=(5, 0), toggle_duration=1000,
             description="Copy YAML to clipboard", size="small", color="default", icon_size="0.8em"
         )
         copy_icon.js_on_click(
-            args={"code_editor": code_editor},
+            args={"code_editor": self._editor},
             code="navigator.clipboard.writeText(code_editor.code);",
         )
         download_icon = IconButton(
@@ -81,7 +80,7 @@ class LumenOutput(Viewer):
             description="Download YAML to file", size="small", color="default", icon_size="0.9em"
         )
         download_icon.js_on_click(
-            args={"code_editor": code_editor},
+            args={"code_editor": self._editor},
             code="""
             var text = code_editor.code;
             var blob = new Blob([text], {type: 'text/plain'});
@@ -94,20 +93,42 @@ class LumenOutput(Viewer):
             a.parentNode.removeChild(a);  //afterwards we remove the element again
             """,
         )
-        icons = Row(
-            copy_icon, download_icon, *self.footer,
+        self._icons = Row(
+            *([copy_icon, download_icon] + self.footer),
             margin=(0, 0, 5, 5)
         )
-        code_col = Column(
-            code_editor,
-            icons,
+        self.editor = Column(
+            self._editor,
+            self._icons,
             sizing_mode="stretch_both"
         )
-        no_spec = self.param.spec.rx.is_(None)
-        self._main = ParamRef(no_spec.rx.where(placeholder, code_col), min_height=no_spec.rx.where(None, 300))
+        self._main = ParamMethod(self.render, inplace=True, sizing_mode='stretch_width')
         self._main.loading = self.param.loading
         self._rendered = False
         self._last_output = {}
+
+    @classmethod
+    def _serialize_component(cls, component: Component, spec_dict: dict[str, Any] | None = None) -> str:
+        component_spec = spec_dict or component.to_spec()
+        return dump_yaml(component_spec)
+
+    @classmethod
+    def _deserialize_component(
+        cls, component: Component, yaml_spec: str, spec_dict: dict[str, Any], pipeline: Pipeline | None = None
+    ) -> str:
+        spec = load_yaml(yaml_spec)
+        cls.validate_spec(spec)
+        if pipeline is not None and 'pipeline' in spec:
+            del spec['pipeline']
+        return type(component).from_spec(spec, pipeline=pipeline)
+
+    @classmethod
+    def validate_spec(cls, spec):
+        return spec
+
+    @param.depends("footer", watch=True)
+    def _update_footer(self):
+        self._icons[:] = list(self._icons[:2]) + self.footer
 
     async def _render_pipeline(self, pipeline):
         table = Table(
@@ -168,9 +189,10 @@ class LumenOutput(Viewer):
 
         try:
             if self._rendered:
-                yaml_spec = load_yaml(self.spec)
-                self._validate_spec(yaml_spec)
-                self.component = type(self.component).from_spec(yaml_spec)
+                pipeline = getattr(self.component, 'pipeline', None)
+                self.component = self._deserialize_component(
+                    self.component, self.spec, self._spec_dict, pipeline=pipeline
+                )
             if isinstance(self.component, Pipeline):
                 output = await self._render_pipeline(self.component)
             else:
@@ -185,10 +207,6 @@ class LumenOutput(Viewer):
                 f"**{type(e).__name__}**:{e}\n\nPlease press undo, edit the YAML, or continue chatting.",
                 alert_type="danger",
             )
-
-    @classmethod
-    def _validate_spec(cls, spec):
-        return spec
 
     def __panel__(self):
         return self._main
@@ -209,41 +227,103 @@ class VegaLiteOutput(LumenOutput):
 
     @staticmethod
     def _format_validation_error(error: ValidationError) -> str:
-        """Format JSONSchema validation errors into a readable message."""
-        errors = {}
-        last_path = ""
-        rejected_paths = set()
+        """Turn a (possibly nested) JSONSchema ValidationError into readable lines."""
 
-        def process_error(err):
-            nonlocal last_path
-            path = err.json_path
-            if errors and path == "$":
-                return  # these $ downstream errors are due to upstream errors
-            if err.validator != "anyOf":
-                # other downstream errors that are due to upstream errors
-                # $.encoding.x.sort: '-host_count' is not one of ..
-                #$.encoding.x: 'value' is a required property
-                if (
-                    (last_path != path
-                    and last_path.split(path)[-1].count(".") <= 1)
-                    or path in rejected_paths
-                ):
-                    rejected_paths.add(path)
-                # if we have a more specific error message, e.g. enum, don't overwrite it
-                elif path in errors and err.validator in ("const", "type"):
-                    pass
-                else:
-                    errors[path] = f"{path}: {err.message}"
-            last_path = path
+        # 1) Collect leaf errors (ignore parents that just aggregate alternatives)
+        GROUP_VALIDATORS = {"anyOf", "oneOf", "allOf", "not"}
+
+        def iter_leaves(err: ValidationError):
+            # If this error has nested contexts, descend; otherwise it's a leaf
             if err.context:
                 for e in err.context:
-                    process_error(e)
+                    yield from iter_leaves(e)
+            else:
+                yield err
 
-        process_error(error)
-        return "\n".join(errors.values())
+        leaves = list(iter_leaves(error))
+        if not leaves:
+            # Fallback: no leaves; return the top-level message
+            return f"{error.json_path}: {error.message}"
+
+        # 2) Remove group-validator parents that slipped through (rare on leaves, but safe)
+        leaves = [e for e in leaves if (e.validator or "") not in GROUP_VALIDATORS]
+
+        # 3) If there are any non-root errors, drop root-level `$` to reduce noise
+        if any(e.json_path != "$" for e in leaves):
+            leaves = [e for e in leaves if e.json_path != "$"]
+
+        # 4) Per-path choose the "best" error by (priority, -depth) then stable order
+        # Lower priority number wins; deeper path wins for ties
+        PRIORITY = {
+            "required": 0,
+            "additionalProperties": 1,
+            "enum": 2,
+            "const": 2,
+            "type": 3,
+            "format": 4,
+            "pattern": 4,
+        }
+
+        def path_depth(p: str) -> int:
+            # Rough depth metric: count of separators
+            return p.count(".") + p.count("[") + p.count("]")
+
+        def priority(err: ValidationError) -> tuple[int, int]:
+            return (PRIORITY.get(err.validator or "", 5), -path_depth(err.json_path))
+
+        winners: dict[str, ValidationError] = {}
+        for e in leaves:
+            p = e.json_path
+            if p not in winners or priority(e) < priority(winners[p]):
+                winners[p] = e
+
+        # 5) Nicely format each error; include a compact instance snippet when useful
+        def fmt_value(val) -> str:
+            try:
+                s = json.dumps(val, ensure_ascii=False)
+            except Exception:
+                s = repr(val)
+            if len(s) > 80:
+                s = s[:77] + "..."
+            return s
+
+        lines = []
+        # Sort by path, then by priority within the same path for deterministic output
+        for p, e in sorted(winners.items(), key=lambda kv: (kv[0], priority(kv[1]))):
+            # Some messages are already very clear; optionally append value snippet
+            suffix = ""
+            # Show the instance if it's short and the message isn't already repeating it
+            try:
+                inst = e.instance
+                if inst is not None and e.validator != "required":
+                    snippet = fmt_value(inst)
+                    if snippet and snippet not in e.message:
+                        suffix = f" (value={snippet})"
+            except Exception:
+                pass
+            lines.append(f"{p}: {e.message}{suffix}")
+
+        return "\n".join(lines)
 
     @classmethod
-    def _validate_spec(cls, spec):
+    def _serialize_component(cls, component: Component, spec_dict: dict[str, Any] | None = None) -> tuple[str, dict[str, Any]]:
+        component_spec = spec_dict or component.to_spec()
+        vega_spec = component_spec['spec']
+        return dump_yaml(vega_spec), component_spec
+
+    @classmethod
+    def _deserialize_component(
+        cls, component: Component, yaml_spec: str, spec_dict: dict[str, Any], pipeline: Pipeline | None = None
+    ) -> str:
+        spec = load_yaml(yaml_spec)
+        cls.validate_spec(spec)
+        spec_dict = dict(spec_dict, spec=spec)
+        if pipeline is not None:
+            spec_dict.pop('pipeline')
+        return type(component).from_spec(spec_dict, pipeline=pipeline)
+
+    @classmethod
+    def validate_spec(cls, spec):
         if "spec" in spec:
             spec = spec["spec"]
         try:
@@ -251,7 +331,7 @@ class VegaLiteOutput(LumenOutput):
                 spec.get("$schema", "https://vega.github.io/schema/vega-lite/v5.json")
             )
         except Exception:
-            return super()._validate_spec(spec)
+            return super().validate_spec(spec)
         vega_lite_validator = Draft7Validator(vega_lite_schema)
         try:
             # the zoomable params work, but aren't officially valid
@@ -263,8 +343,8 @@ class VegaLiteOutput(LumenOutput):
             spec_copy.pop("params", None)
             vega_lite_validator.validate(spec_copy)
         except ValidationError as e:
-            raise ValidationError(cls._format_validation_error(e)) from e
-        return super()._validate_spec(spec)
+            raise RuntimeError(cls._format_validation_error(e)) from e
+        return super().validate_spec(spec)
 
     def __str__(self):
         # Only keep the spec part
@@ -317,8 +397,33 @@ class AnalysisOutput(LumenOutput):
                 view = await asyncio.to_thread(self.analysis, self.pipeline)
             self.component = view
             self._rendered = False
-            spec = view.to_spec()
+            spec, self._spec_dict = self._serialize_component(view)
             self.param.update(
-                spec=yaml.dump(spec),
+                spec=spec,
                 active=0
             )
+
+
+class SQLOutput(LumenOutput):
+
+    language = "sql"
+
+    @classmethod
+    def _serialize_component(cls, component: Component, spec_dict: dict[str, Any] | None = None) -> tuple[str, dict[str, Any]]:
+        component_spec = spec_dict or component.to_spec()
+        sql_spec = component_spec["source"]["tables"][component.table]
+        return sql_spec, component_spec
+
+    @classmethod
+    def _deserialize_component(
+        cls, component: Component, sql_spec: str, spec_dict: dict[str, Any], pipeline: Pipeline | None = None
+    ) -> str:
+        spec_dict = deepcopy(spec_dict)
+        spec_dict["source"]["tables"][component.table] = sql_spec
+        return type(component).from_spec(spec_dict)
+
+    def __panel__(self):
+        return self._main
+
+    def __str__(self):
+        return f"{self.__class__.__name__}:\n```sql\n{self.spec}\n```"

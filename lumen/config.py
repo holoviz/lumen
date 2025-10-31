@@ -11,12 +11,14 @@ from weakref import WeakKeyDictionary
 
 import panel as pn
 import param  # type: ignore
+import yaml
 
 from panel import state
 from panel.template import DarkTheme, DefaultTheme
 from panel.template.base import BasicTemplate
 from panel.widgets.indicators import Indicator
 
+from .util import NumpyDumper, expand_spec
 from .validation import ValidationError, match_suggestion_message
 
 if TYPE_CHECKING:
@@ -224,5 +226,15 @@ class _config(param.Parameterized):
 
 
 config = _config()
+
+
+def load_yaml(yaml_spec: str, **kwargs) -> dict[str, Any]:
+    expanded = expand_spec(yaml_spec, config.template_vars, **kwargs)
+    return yaml.load(expanded, Loader=yaml.Loader)
+
+
+def dump_yaml(obj: Any, **kwargs) -> str:
+    return yaml.dump(obj, Dumper=NumpyDumper, **kwargs)
+
 
 SOURCE_TABLE_SEPARATOR = " ⦙ "
