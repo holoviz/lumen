@@ -229,7 +229,7 @@ def render_docx_template(
         context['content_page_header'] = ""
 
     # Always generate sections from outputs
-    context['sections'] = generate_sections(doc, outputs)
+    context['sections'] = generate_docx_sections(doc, outputs)
 
     # Always set page_break
     context['page_break'] = R("\f")
@@ -244,7 +244,7 @@ def render_docx_template(
     return buffer
 
 
-def generate_sections(doc, outputs: list) -> list[dict]:
+def generate_docx_sections(doc, outputs: list) -> list[dict]:
     """
     Generate sections list from outputs for docx template.
 
