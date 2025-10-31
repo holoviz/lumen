@@ -304,7 +304,7 @@ class TaskGroup(Task):
             with view.editor.param.update(loading=True):
                 messages = list(self.history)
                 task_context = self._get_context(i, context, task)
-                await task.revise(
+                view.spec = await task.revise(
                     event.new, messages, task_context, view
                 )
         root = self

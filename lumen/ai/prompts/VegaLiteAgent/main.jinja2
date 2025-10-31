@@ -210,12 +210,3 @@ layer:
         type: quantitative
 ```
 {% endblock %}
-
-{% block errors %}
-{{ super() }}
-
-{% if errors is defined and errors %}
-For extra context, here are the data and columns available:
-{{ columns_context }}
-{% endif %}
-{% endblock %}

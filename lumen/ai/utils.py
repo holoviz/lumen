@@ -28,6 +28,7 @@ from jinja2 import (
     nodes,
 )
 from jinja2.visitor import NodeVisitor
+from jsonschema import ValidationError
 from markupsafe import escape
 
 from lumen.pipeline import Pipeline
@@ -243,6 +244,8 @@ def get_root_exception(e: Exception, depth: int = 5, exceptions: tuple[Exception
         if exceptions and isinstance(e, tuple(exceptions)):
             return e
         if e.__cause__ is not None:
+            if isinstance(e.__cause__, ValidationError):
+                return e
             e = e.__cause__
     return e
 

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import traceback
 
 from copy import deepcopy
@@ -116,13 +117,13 @@ class LumenOutput(Viewer):
         cls, component: Component, yaml_spec: str, spec_dict: dict[str, Any], pipeline: Pipeline | None = None
     ) -> str:
         spec = load_yaml(yaml_spec)
-        cls._validate_spec(spec)
+        cls.validate_spec(spec)
         if pipeline is not None and 'pipeline' in spec:
             del spec['pipeline']
         return type(component).from_spec(spec, pipeline=pipeline)
 
     @classmethod
-    def _validate_spec(cls, spec):
+    def validate_spec(cls, spec):
         return spec
 
     @param.depends("footer", watch=True)
@@ -226,38 +227,83 @@ class VegaLiteOutput(LumenOutput):
 
     @staticmethod
     def _format_validation_error(error: ValidationError) -> str:
-        """Format JSONSchema validation errors into a readable message."""
-        errors = {}
-        last_path = ""
-        rejected_paths = set()
+        """Turn a (possibly nested) JSONSchema ValidationError into readable lines."""
 
-        def process_error(err):
-            nonlocal last_path
-            path = err.json_path
-            if errors and path == "$":
-                return  # these $ downstream errors are due to upstream errors
-            if err.validator != "anyOf":
-                # other downstream errors that are due to upstream errors
-                # $.encoding.x.sort: '-host_count' is not one of ..
-                #$.encoding.x: 'value' is a required property
-                if (
-                    (last_path != path
-                    and last_path.split(path)[-1].count(".") <= 1)
-                    or path in rejected_paths
-                ):
-                    rejected_paths.add(path)
-                # if we have a more specific error message, e.g. enum, don't overwrite it
-                elif path in errors and err.validator in ("const", "type"):
-                    pass
-                else:
-                    errors[path] = f"{path}: {err.message}"
-            last_path = path
+        # 1) Collect leaf errors (ignore parents that just aggregate alternatives)
+        GROUP_VALIDATORS = {"anyOf", "oneOf", "allOf", "not"}
+
+        def iter_leaves(err: ValidationError):
+            # If this error has nested contexts, descend; otherwise it's a leaf
             if err.context:
                 for e in err.context:
-                    process_error(e)
+                    yield from iter_leaves(e)
+            else:
+                yield err
 
-        process_error(error)
-        return "\n".join(errors.values())
+        leaves = list(iter_leaves(error))
+        if not leaves:
+            # Fallback: no leaves; return the top-level message
+            return f"{error.json_path}: {error.message}"
+
+        # 2) Remove group-validator parents that slipped through (rare on leaves, but safe)
+        leaves = [e for e in leaves if (e.validator or "") not in GROUP_VALIDATORS]
+
+        # 3) If there are any non-root errors, drop root-level `$` to reduce noise
+        if any(e.json_path != "$" for e in leaves):
+            leaves = [e for e in leaves if e.json_path != "$"]
+
+        # 4) Per-path choose the "best" error by (priority, -depth) then stable order
+        # Lower priority number wins; deeper path wins for ties
+        PRIORITY = {
+            "required": 0,
+            "additionalProperties": 1,
+            "enum": 2,
+            "const": 2,
+            "type": 3,
+            "format": 4,
+            "pattern": 4,
+        }
+
+        def path_depth(p: str) -> int:
+            # Rough depth metric: count of separators
+            return p.count(".") + p.count("[") + p.count("]")
+
+        def priority(err: ValidationError) -> tuple[int, int]:
+            return (PRIORITY.get(err.validator or "", 5), -path_depth(err.json_path))
+
+        winners: dict[str, ValidationError] = {}
+        for e in leaves:
+            p = e.json_path
+            if p not in winners or priority(e) < priority(winners[p]):
+                winners[p] = e
+
+        # 5) Nicely format each error; include a compact instance snippet when useful
+        def fmt_value(val) -> str:
+            try:
+                s = json.dumps(val, ensure_ascii=False)
+            except Exception:
+                s = repr(val)
+            if len(s) > 80:
+                s = s[:77] + "..."
+            return s
+
+        lines = []
+        # Sort by path, then by priority within the same path for deterministic output
+        for p, e in sorted(winners.items(), key=lambda kv: (kv[0], priority(kv[1]))):
+            # Some messages are already very clear; optionally append value snippet
+            suffix = ""
+            # Show the instance if it's short and the message isn't already repeating it
+            try:
+                inst = e.instance
+                if inst is not None and e.validator != "required":
+                    snippet = fmt_value(inst)
+                    if snippet and snippet not in e.message:
+                        suffix = f" (value={snippet})"
+            except Exception:
+                pass
+            lines.append(f"{p}: {e.message}{suffix}")
+
+        return "\n".join(lines)
 
     @classmethod
     def _serialize_component(cls, component: Component, spec_dict: dict[str, Any] | None = None) -> tuple[str, dict[str, Any]]:
@@ -270,14 +316,14 @@ class VegaLiteOutput(LumenOutput):
         cls, component: Component, yaml_spec: str, spec_dict: dict[str, Any], pipeline: Pipeline | None = None
     ) -> str:
         spec = load_yaml(yaml_spec)
-        cls._validate_spec(spec)
+        cls.validate_spec(spec)
         spec_dict = dict(spec_dict, spec=spec)
         if pipeline is not None:
             spec_dict.pop('pipeline')
         return type(component).from_spec(spec_dict, pipeline=pipeline)
 
     @classmethod
-    def _validate_spec(cls, spec):
+    def validate_spec(cls, spec):
         if "spec" in spec:
             spec = spec["spec"]
         try:
@@ -285,7 +331,7 @@ class VegaLiteOutput(LumenOutput):
                 spec.get("$schema", "https://vega.github.io/schema/vega-lite/v5.json")
             )
         except Exception:
-            return super()._validate_spec(spec)
+            return super().validate_spec(spec)
         vega_lite_validator = Draft7Validator(vega_lite_schema)
         try:
             # the zoomable params work, but aren't officially valid
@@ -297,8 +343,8 @@ class VegaLiteOutput(LumenOutput):
             spec_copy.pop("params", None)
             vega_lite_validator.validate(spec_copy)
         except ValidationError as e:
-            raise ValidationError(cls._format_validation_error(e)) from e
-        return super()._validate_spec(spec)
+            raise RuntimeError(cls._format_validation_error(e)) from e
+        return super().validate_spec(spec)
 
     def __str__(self):
         # Only keep the spec part

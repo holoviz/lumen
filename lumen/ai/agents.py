@@ -561,14 +561,9 @@ class LumenBaseAgent(Agent):
             model_spec="edit"
         )
         spec = load_yaml(apply_changes(lines, result.edits))
-        yaml_spec = dump_yaml(spec)
         if view is not None:
-            old_spec = view.spec
-            try:
-                view.spec = yaml_spec
-            except Exception as e:
-                view.spec = old_spec
-                raise e
+            view.validate_spec(spec)
+        yaml_spec = dump_yaml(spec)
         return yaml_spec
 
 
@@ -1770,7 +1765,7 @@ class VegaLiteAgent(BaseViewAgent):
             vega_spec["width"] = "container"
         if "height" not in vega_spec:
             vega_spec["height"] = "container"
-        self._output_type._validate_spec(vega_spec)
+        self._output_type.validate_spec(vega_spec)
 
         # using string comparison because these keys could be in different nested levels
         vega_spec_str = dump_yaml(vega_spec)
