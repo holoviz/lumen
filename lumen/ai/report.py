@@ -13,6 +13,7 @@ from typing import Any, TypedDict, final
 import panel as pn
 import param
 
+from panel.io import hold
 from panel.layout.base import (
     Column, ListLike, NamedListLike, Row,
 )
@@ -445,12 +446,16 @@ class TaskGroup(Task):
         """
         Resets the view, removing generated outputs.
         """
-        self._task_outputs.clear()
-        self.views.clear()
-        self._populate_view()
-        for task in self._tasks:
-            if isinstance(task, Task):
-                task.reset()
+        with hold():
+            self._task_rendered.clear()
+            self._task_contexts.clear()
+            self._task_outputs.clear()
+            self.views.clear()
+            self._view.clear()
+            for task in self._tasks:
+                if isinstance(task, Task):
+                    task.reset()
+            self._populate_view()
 
     async def _run_task(
         self, i: int, task: Self | Actor, context: TContext, **kwargs
@@ -911,7 +916,7 @@ class Report(TaskGroup):
             sx={"& .MuiAccordionDetails-root": {"p": "0 calc(2 * var(--mui-spacing)) 1em !important"}}
         )
         self._run = IconButton(
-            icon="play_arrow", on_click=self._execute, margin=0, size="large",
+            icon="play_arrow", on_click=self._execute_event, margin=0, size="large",
             description="Execute Report"
         )
         self._clear = IconButton(
@@ -953,6 +958,9 @@ class Report(TaskGroup):
             margin=(0, 0, 0, 5),
             sizing_mode="stretch_both"
         )
+
+    async def _execute_event(self, event):
+        await self.execute()
 
     @param.depends('title', watch=True)
     def _update_filename(self):
