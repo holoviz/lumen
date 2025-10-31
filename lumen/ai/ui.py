@@ -968,6 +968,7 @@ class ExplorerUI(UI):
             title, vsplit = self._render_view(out)
             content.insert(idx+1, (title, vsplit))
         tabs[:] = content
+        tabs.active = len(tabs)-1
 
     def _wrap_callback(self, callback):
         async def wrapper(messages: list[Message], user: str, instance: ChatInterface):
@@ -1001,6 +1002,8 @@ class ExplorerUI(UI):
                                 value=prev
                             )
                             await self._update_conversation()
+                            if prev["view"] is self._home:
+                                self._split.collapsed = True
                 else:
                     exploration.context = out_context
                     exploration.view.loading = False
