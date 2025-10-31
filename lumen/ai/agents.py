@@ -561,13 +561,15 @@ class LumenBaseAgent(Agent):
             model_spec="edit"
         )
         spec = load_yaml(apply_changes(lines, result.edits))
-        old_spec = view.spec
-        try:
-            view.spec = dump_yaml(spec)
-        except Exception as e:
-            view.spec = old_spec
-            raise e
-        return view.spec
+        yaml_spec = dump_yaml(spec)
+        if view is not None:
+            old_spec = view.spec
+            try:
+                view.spec = yaml_spec
+            except Exception as e:
+                view.spec = old_spec
+                raise e
+        return yaml_spec
 
 
 class SQLInputs(ContextModel):
