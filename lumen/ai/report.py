@@ -760,7 +760,7 @@ class Report(TaskGroup):
             )
 
         return render_docx_template(
-            self.outputs,
+            [task for task in self._tasks if isinstance(task, Section)],
             self.docx_template_path,
             **self.docx_context,
         )

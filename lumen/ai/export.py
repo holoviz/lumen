@@ -148,7 +148,7 @@ def export_notebook(messages: list[ChatMessage], preamble: str = ""):
 
 
 def render_docx_template(
-    outputs: list,
+    sections: list,
     docx_template_path: str | Path,
     **docx_context: dict,
 ) -> io.BytesIO:
@@ -157,8 +157,8 @@ def render_docx_template(
 
     Arguments
     ---------
-    outputs : list
-        List of output objects to export (Typography, LumenOutput, etc.)
+    sections: list
+        List of sections to process
     docx_context : dict | None
         Context dictionary for docx template rendering. If keys are not provided,
         the following defaults will be used:
@@ -228,8 +228,8 @@ def render_docx_template(
     if 'content_page_header' not in context:
         context['content_page_header'] = ""
 
-    # Always generate sections from outputs
-    context['sections'] = generate_docx_sections(doc, outputs)
+    # Always generate sections
+    context['sections'] = generate_docx_sections(doc, sections)
 
     # Always set page_break
     context['page_break'] = R("\f")
@@ -244,62 +244,50 @@ def render_docx_template(
     return buffer
 
 
-def generate_docx_sections(doc, outputs: list) -> list[dict]:
+def generate_docx_sections(doc: DocxTemplate, sections: list) -> list[dict]:
     """
-    Generate sections list from outputs for docx template.
+    Generate sections list from report tasks for docx template.
 
     Arguments
     ---------
     doc : DocxTemplate
         The document template instance (needed for InlineImage creation)
-    outputs : list
-        List of output objects to process
+    sections : list
+        List of sections to process
 
     Returns
     -------
     list[dict]
         List of section dictionaries with title, image, and caption
     """
-    sections = []
-    current_section = None
-    skip_next = False
+    output_sections = []
+    for section in sections:
+        section_dict = {
+            "title": section.title or "Untitled Section",
+            "image": None,
+            "caption": RichText("")
+        }
 
-    for i, out in enumerate(outputs):
-        if skip_next:
-            skip_next = False
-            continue
+        # Process section outputs to find visualizations and captions
+        image_found = False
+        for i, out in enumerate(section.outputs):
+            if isinstance(out, VegaLiteOutput) and not image_found:
+                # Convert LumenOutput to image
+                image_path = output_to_image(out)
+                if image_path:
+                    section_dict["image"] = InlineImage(doc, image_path, width=Mm(160))
+                    image_found = True
 
-        # Check if this is a section header (h2 Typography)
-        if isinstance(out, Typography) and out.variant == 'h2':
-            # Save previous section if it has an image
-            if current_section and current_section.get('image'):
-                sections.append(current_section)
+                    # Check if next output is a Typography for caption
+                    if i + 1 < len(section.outputs):
+                        next_out = section.outputs[i + 1]
+                        if isinstance(next_out, Typography):
+                            section_dict["caption"] = RichText(next_out.object)
+                    break
 
-            # Start new section
-            current_section = {
-                "title": out.object or "Untitled Section",
-                "image": None,
-                "caption": RichText("")
-            }
-
-        # Check for VegaLiteOutput to use as image
-        elif isinstance(out, VegaLiteOutput) and current_section and not current_section.get('image'):
-            image_path = output_to_image(out)
-            if image_path:
-                current_section["image"] = InlineImage(doc, image_path, width=Mm(160))
-
-                # Check if next output is a Typography for caption
-                if i + 1 < len(outputs):
-                    next_out = outputs[i + 1]
-                    if isinstance(next_out, Typography):
-                        current_section["caption"] = RichText(next_out.object)
-                        skip_next = True  # Skip the caption in next iteration
-
-    # Add the last section if it has an image
-    if current_section and current_section.get('image'):
-        sections.append(current_section)
-
-    return sections
+        if section_dict["image"]:  # Only add section if it has an image
+            output_sections.append(section_dict)
+    return output_sections
 
 
 def output_to_image(output: VegaLiteOutput) -> str | None:
