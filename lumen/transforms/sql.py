@@ -392,7 +392,7 @@ class SQLLimit(SQLTransform):
 
         parsed_expression = self.parse_sql(sql_in)
         if existing_limit := parsed_expression.args.get("limit"):
-            if int(existing_limit.expression.this) < self.limit:
+            if existing_limit.expression and int(existing_limit.expression.this) < self.limit:
                 # if existing limit is less than the new limit
                 # do not modify the original query
                 return sql_in
