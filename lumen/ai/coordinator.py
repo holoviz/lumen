@@ -103,6 +103,7 @@ class Plan(Section):
             self.coordinator._todos_title.object = f"⚙️ Working on task {task.title!r}..."
             step.stream(f"`Working on task {task.title}`:\n\n{task.instruction}")
             history, todos = self._render_task_history(i)
+            subcontext = self._get_context(i, context, task)
             self.coordinator._todos.object = todos
             try:
                 kwargs = {"agents": self.agents} if 'agents' in task.param else {}
@@ -110,23 +111,20 @@ class Plan(Section):
                     interface=self.interface, steps_layout=self.coordinator.steps_layout,
                     history=history, **kwargs
                 ):
-                    new, task_context = await task.execute(context, **kwargs)
-                    outputs += new
+                    outputs, task_context = await task.execute(subcontext, **kwargs)
             except Exception as e:
-                # Handle the exception using the dedicated error handler
-                task_context = {}
-                error_outputs = await self._handle_task_execution_error(e, task, task_context, step, i)
-                if error_outputs is not None:
-                    return error_outputs, task_context
-            if isinstance(task, TaskGroup):
-                unprovided = [
-                    p for actor in task for p in actor.output_schema.__annotations__
-                    if p not in task_context
-                ]
-            else:
-                unprovided = []
+                outputs, task_context = await self._handle_task_execution_error(
+                    e, task, context, step, i
+                )
+            unprovided = [
+                p for actor in task for p in actor.output_schema.__required_keys__
+                if p not in task_context
+            ]
             if unprovided:
-                step.failed_title = f"{task.title} did not provide {', '.join(unprovided)}. Aborting the plan."
+                step.failed_title = (
+                    f"{task.title!r} failed to provide declared context values {', '.join(unprovided)}. "
+                    "Aborting the plan."
+                )
                 raise RuntimeError(f"{task.title!r} task failed to provide declared context.")
             elif task.status == "error":
                 step.failed_title = f"{task.title} errored during execution."
@@ -136,7 +134,9 @@ class Plan(Section):
             step.success_title = f"{task.title} successfully completed"
         return outputs, task_context
 
-    async def _handle_task_execution_error(self, e: Exception, task: Self | Actor, context: TContext, step: ChatStep, i: int) -> list | None:
+    async def _handle_task_execution_error(
+        self, e: Exception, task: Self | Actor, context: TContext, step: ChatStep, i: int
+    ) -> tuple[list[Any], TContext]:
         """
         Handle exceptions that occur during task execution.
         Returns outputs if the error was handled successfully, None if the error should be re-raised.
@@ -153,21 +153,22 @@ class Plan(Section):
             provider_index = self._find_context_provider(i, context)
             if provider_index is not None:
                 # Re-run from the provider with the error as feedback
-                outputs = await self._retry_from_provider(provider_index, i, str(root_exception))
-                step.success_title = f"{task.title} successfully completed after retry"
-                return outputs  # Return after successful retry
+                outputs, out_context = await self._retry_from_provider(
+                    provider_index, i, str(root_exception), context
+                )
+                step.success_title = f"{task.title!r} task successfully completed after retry"
+                return outputs, out_context  # Return after successful retry
             else:
                 # If we can't find a provider, raise the original error
-                step.failed_title = f"{task.title} - Cannot resolve missing context"
+                step.failed_title = f"{task.title!r} - Cannot resolve missing context"
                 traceback.print_exception(e)
-                self.memory['__error__'] = str(e)
                 raise e
         elif isinstance(e, asyncio.CancelledError):
-            step.failed_title = f"{task.title} agent was cancelled"
+            step.failed_title = f"{task.title!r} task was cancelled"
             raise e
         else:
             traceback.print_exception(e)
-            context['__error__'] = str(e)
+            step.failed_title = f"{task.title!r} task failed due to an internal error"
             raise e
 
     def _find_context_provider(self, failed_index: int, context: TContext) -> int | None:
@@ -187,7 +188,9 @@ class Plan(Section):
                     if 'pipeline' in actor.output_schema.__annotations__:
                         return idx
 
-    async def _retry_from_provider(self, provider_index: int, failed_index: int, error_message: str) -> list:
+    async def _retry_from_provider(
+        self, provider_index: int, failed_index: int, error_message: str, context: TContext
+    ) -> tuple[list[Any], TContext]:
         """
         Re-run the plan from the provider task with additional feedback about the error.
         """
@@ -198,14 +201,13 @@ class Plan(Section):
             f"Previously, it was reported that: {error_message!r}. "
             "Try a different approach."
         )
-        # Re-run from the provider onwards
-        for idx in range(provider_index, len(self)):
+        # Re-run from the provider until the failed task
+        for idx in range(provider_index, failed_index+1):
             task = self[idx]
-            if idx < provider_index:
-                outputs += await self._run_task(idx, task)
+            task.reset()
+            if idx < failed_index:
+                out, out_context = await self._run_task(idx, task, context)
                 continue
-            elif idx > failed_index:
-                break # Stop after re-running the failed task
 
             # For the provider task, mutate the user message to include feedback
             retry_history = mutate_user_message(feedback_suffix, self.history.copy())
@@ -226,13 +228,14 @@ class Plan(Section):
 
                 # Run with mutated history
                 kwargs = {"agents": self.agents} if 'agents' in task.param else {}
+                subcontext = self._get_context(idx, context, task)
                 with task.param.update(
                     interface=self.interface, steps_layout=self.steps_layout,
                     history=retry_history, **kwargs
                 ):
-                    outputs += await task.execute(**kwargs)
+                    out, out_context = await task.execute(subcontext, **kwargs)
                 retry_step.success_title = f"✅ {task.title} successfully completed on retry"
-        return outputs
+        return outputs, out_context
 
     async def execute(self, context: TContext = None, **kwargs) -> list[Any]:
         context = context or self.context

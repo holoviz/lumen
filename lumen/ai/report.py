@@ -19,9 +19,9 @@ from panel.layout.base import (
 from panel.pane import Markdown
 from panel.viewable import Viewable, Viewer
 from panel_material_ui import (
-    Accordion, Alert, Button, ChatFeed, ChatMessage, Container, Dialog,
-    Divider, FileDownload, IconButton, Progress, Select, TextAreaInput,
-    TextInput, Typography,
+    Accordion, Button, ChatFeed, ChatMessage, Container, Dialog, Divider,
+    FileDownload, IconButton, Progress, Select, TextAreaInput, TextInput,
+    Typography,
 )
 from typing_extensions import Self
 
@@ -295,7 +295,8 @@ class TaskGroup(Task):
         """
 
     async def _retry_invoke(
-        self, i: int, task: Task | Actor, context: TContext, view: LumenOutput, config: dict[str, Any], event: param.parameterized.Event
+        self, i: int, task: Task | Actor, context: TContext, view: LumenOutput,
+        config: dict[str, Any], event: param.parameterized.Event
     ):
         invalidation_keys = set(task.output_schema.__annotations__)
         self.invalidate(invalidation_keys, start=i+1)
@@ -389,6 +390,8 @@ class TaskGroup(Task):
         task: Task | Actor
             The task to append.
         """
+        if isinstance(task, Task):
+            task.parent = self
         self._tasks.append(task)
         self._populate_view()
 
@@ -403,6 +406,8 @@ class TaskGroup(Task):
         task: Task | Actor
             The task to insert.
         """
+        if isinstance(task, Task):
+            task.parent = self
         self._tasks.insert(index, task)
         self._populate_view()
 
@@ -463,6 +468,7 @@ class TaskGroup(Task):
             elif self.instruction not in user_msg.get("content"):
                 user_msg["content"] = f'{user_msg["content"]}\n\nInstruction: {self.instruction}'
 
+        subcontext = self._get_context(i, context, task)
         with task.param.update(
             interface=self.interface,
             llm=task.llm or self.llm,
@@ -470,19 +476,12 @@ class TaskGroup(Task):
         ):
             if isinstance(task, Actor):
                 try:
-                    out, out_context = await task.respond(messages, context, **kwargs)
+                    out, out_context = await task.respond(messages, subcontext, **kwargs)
                 except MissingContextError:
                     # Re-raise MissingContextError to allow retry logic at Plan level
                     raise
                 except Exception as e:
-                    if self.interface.callback_exception == "raise":
-                        raise e
-                    tb.print_exception(e)
-                    alert = Alert(
-                        f'Executing task {type(task).__name__} failed.', alert_type='error',
-                        sizing_mode="stretch_width"
-                    )
-                    return [alert], {}
+                    raise e
                 # Handle Tool specific behaviors
                 if isinstance(task, Tool):
                     # Handle View/Viewable results regardless of agent type
@@ -503,12 +502,12 @@ class TaskGroup(Task):
                     out = rendered
             else:
                 with task.param.update(running=True, history=messages):
-                    out, out_context = await task.execute(context, **kwargs)
+                    out, out_context = await task.execute(subcontext, **kwargs)
             self._task_outputs[task] = out
             outputs += out
         if isinstance(task, (Actor, Action)):
             unprovided = [
-                p for p in task.output_schema.__annotations__
+                p for p in task.output_schema.__required_keys__
                 if p not in out_context
             ]
             if unprovided:
@@ -630,17 +629,20 @@ class TaskGroup(Task):
             if task in self._task_outputs:
                 views += self._task_outputs[task]
                 continue
-            subcontext = self._get_context(i, context, task)
             new = []
             try:
-                new, new_context = await self._run_task(i, task, subcontext, **kwargs)
+                new, new_context = await self._run_task(i, task, context, **kwargs)
             except MissingContextError:
                 # Re-raise MissingContextError to allow retry logic at Plan level
                 raise
             except Exception as e:
                 tb.print_exception(e)
                 self.status = "error"
+                new_context = {"__error__": str(e)}
+                self._task_contexts[task] = new_context
                 if self.abort_on_error:
+                    if self.parent is not None:
+                        raise e
                     break
                 else:
                     continue
@@ -690,7 +692,7 @@ class TaskGroup(Task):
         - Nested TaskGroups are traversed recursively, and their invalidations
         propagate upward to the parent group.
         """
-        if self.parent is not None and propagate:
+        if propagate and self.parent is not None and self in self.parent:
             parent_idx = self.parent._tasks.index(self)
             if start >= len(self):
                 # If the last task is being invalidated,
@@ -843,6 +845,8 @@ class Section(TaskGroup):
                     tb.print_exception(e)
                     self.status = "error"
                     if self.abort_on_error:
+                        if self.parent is not None:
+                            raise e
                         break
                 else:
                     self.status = "success"

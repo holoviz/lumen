@@ -1027,7 +1027,7 @@ class SQLAgent(LumenBaseAgent):
                 # If exploration is disabled, re-raise the error instead of falling back
                 raise e
             # Fall back to exploration mode if enabled
-            out_context = await self._explore_tables(messages, context, source, str(e), step_title)
+            out, out_context = await self._explore_tables(messages, context, source, str(e), step_title)
         return [out], out_context
 
 
