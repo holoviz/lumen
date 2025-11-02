@@ -1,6 +1,6 @@
 # Using Anthropic with Lumen AI
 
-Lumen AI ships with the {py:class}`lumen.ai.llm.AnthropicAI` wrapper for Anthropic LLM models. Lumen picks between a default and a reasoning model to solve different tasks, by default it will use the following models:
+Lumen AI ships with the {py:class}`lumen.ai.llm.Anthropic` wrapper for Anthropic LLM models. Lumen picks between a default and a reasoning model to solve different tasks, by default it will use the following models:
 
 - **`default`**: claude-3.5-haiku-latest
 - **`reasoning`**: claude-3-5-sonnet-latest
@@ -50,12 +50,12 @@ lumen-ai serve <your-data-file-or-url> --provider anthropic --api-key <your-anth
 
 ## Python
 
-In Python, simply import the LLM wrapper {py:class}`lumen.ai.llm.AnthropicAI` and pass it to the {py:class}`lumen.ai.ui.ExplorerUI`:
+In Python, simply import the LLM wrapper {py:class}`lumen.ai.llm.Anthropic` and pass it to the {py:class}`lumen.ai.ui.ExplorerUI`:
 
 ```python
 import lumen.ai as lmai
 
-anthropic_llm = lmai.llm.AnthropicAI(api_key='your-anthropic-api-key')
+anthropic_llm = lmai.llm.Anthropic(api_key='your-anthropic-api-key')
 
 ui = lmai.ui.ExplorerUI('<your-data-file-or-url>', llm=anthropic_llm)
 ui.servable()
@@ -75,19 +75,19 @@ config = {
     "reasoning": {"model": "claude-3-5-sonnet-latest"}
 }
 
-llm = lmai.llm.AnthropicAI(model_kwargs=config)
+llm = lmai.llm.Anthropic(model_kwargs=config)
 
 lmai.ui.ExplorerUI('<your-data-file-or-url>', llm=llm).servable()
 ```
 
 ## Additional Configuration Options
 
-The AnthropicAI wrapper supports several additional configuration parameters:
+The Anthropic wrapper supports several additional configuration parameters:
 
 ```python
 import lumen.ai as lmai
 
-llm = lmai.llm.AnthropicAI(
+llm = lmai.llm.Anthropic(
     api_key='your-anthropic-api-key',
     temperature=0.7,  # Controls randomness (0-1)
     mode='ANTHROPIC_TOOLS',  # Instructor mode: 'ANTHROPIC_TOOLS' or 'ANTHROPIC_JSON'
@@ -100,13 +100,13 @@ ui.servable()
 
 ### Environment Variables
 
-The AnthropicAI wrapper will automatically detect the `ANTHROPIC_API_KEY` environment variable if it is set:
+The Anthropic wrapper will automatically detect the `ANTHROPIC_API_KEY` environment variable if it is set:
 
 ```python
 import lumen.ai as lmai
 
 # Will use ANTHROPIC_API_KEY from environment
-llm = lmai.llm.AnthropicAI()
+llm = lmai.llm.Anthropic()
 
 ui = lmai.ui.ExplorerUI('<your-data-file-or-url>', llm=llm)
 ui.servable()
@@ -114,8 +114,8 @@ ui.servable()
 
 ### System Messages
 
-**Note:** Anthropic's API handles system messages differently than OpenAI. The AnthropicAI wrapper automatically converts system messages in the message list to the `system` parameter required by the Anthropic API.
+**Note:** Anthropic's API handles system messages differently than OpenAI. The Anthropic wrapper automatically converts system messages in the message list to the `system` parameter required by the Anthropic API.
 
 ### Interceptor Support
 
-**Important:** The AnthropicAI wrapper does not currently support interceptors for logging LLM calls. If you need logging functionality, consider using a different provider or implementing custom logging around the LLM calls.
+**Important:** The Anthropic wrapper does not currently support interceptors for logging LLM calls. If you need logging functionality, consider using a different provider or implementing custom logging around the LLM calls.
