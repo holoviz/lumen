@@ -3,7 +3,57 @@
 {% block instructions %}
 {{ super() }}
 
+# MODE SELECTION
+
+Choose the correct merge mode:
+- mode='update': Fix errors, adjust colors/titles, refine encoding (preserves structure)
+- mode='replace': Change mark type (bar→line) or complete restructure
+- mode='append_layers': Add annotations (never for fixes)
+
+# CRITICAL: 'mode' field placement
+
+The 'mode' field is METADATA for the merge operation and must NEVER appear in your yaml_update.
+It should only be returned as a separate field in your response model.
+
+CORRECT:
+```python
+VegaLiteUpdateSpec(
+    mode="update",
+    yaml_update="layer:\n  - mark: bar\n    encoding:..."  # NO 'mode' inside here!
+)
+```
+
+INCORRECT:
+```yaml
+# DO NOT include 'mode' in yaml_update:
+layer:
+  - mark: bar
+    mode: update  # ❌ WRONG - 'mode' is not a valid Vega-Lite property
+```
+
+# CRITICAL: ALWAYS INCLUDE FULL HIERARCHY
+
+For layered specs, ALWAYS include the layer array in yaml_update:
+```yaml
+# CORRECT - includes layer wrapper:
+layer:
+  - mark: bar
+    encoding:
+      x: {aggregate: count}  # Changed
+      y: {bin: true, field: input_tokens}  # Keep all properties
+
+# WRONG - flat structure when base has layers:
+mark: bar
+encoding:
+  x: {aggregate: count}
+```
+
+RULE: Match the structure of the original spec (layered vs flat).
+
+# STRUCTURE RULES
+
 - For overlays: data at top level, encoding in layer
+- When updating layer properties: provide the complete layer structure with all encoding properties that should remain, not just the properties being changed
 {% endblock %}
 
 {%- block examples -%}
@@ -13,15 +63,73 @@
 {{ example }}
 {% endfor %}
 {% endif %}
-Overlays:
+
+Mode examples:
+```yaml
+# Fix error (mode='update') - INCLUDE full hierarchy:
+layer:
+  - encoding:
+      x: {field: corrected_field}
+
+# Change mark (mode='replace'):
+mark: line
+
+# Add layer (mode='append_layers') - return list:
+- mark: {type: rule, color: red}
+  encoding: {y: {datum: 100}}
+```
+
+Updating layer colors in hconcat:
 ```{{ language }}
-spec:
-  data:
-    name: <TABLE_NAME>
-  layer:
-    - encoding:
-      # main data
-    - data:
-      # other data
+# To change bar colors from blue to gray, provide complete layer structure:
+hconcat:
+- layer:
+  - mark: bar
+    encoding:
+      color:
+        value: 'gray'
+      tooltip:
+      - bin: true
+        field: input_tokens
+        title: Input Tokens Range
+        type: quantitative
+      - aggregate: count
+        title: Count
+        type: quantitative
+      x:
+        axis:
+          title: Input Tokens (binned)
+        bin: true
+        field: input_tokens
+        type: quantitative
+      y:
+        aggregate: count
+        axis:
+          title: Count of Records
+        type: quantitative
+- layer:
+  - mark: bar
+    encoding:
+      color:
+        value: 'gray'
+      tooltip:
+      - bin: true
+        field: output_tokens
+        title: Output Tokens Range
+        type: quantitative
+      - aggregate: count
+        title: Count
+        type: quantitative
+      x:
+        axis:
+          title: Output Tokens (binned)
+        bin: true
+        field: output_tokens
+        type: quantitative
+      y:
+        aggregate: count
+        axis:
+          title: Count of Records
+        type: quantitative
 ```
 {%- endblock -%}

@@ -196,14 +196,15 @@ class Plan(Section):
                     for tidx, t in enumerate(self)
                 )
                 self._coordinator._todos.object = todos
-
                 # Run with mutated history
                 kwargs = {"agents": self.agents} if 'agents' in task.param else {}
                 with task.param.update(
                     memory=self.memory, interface=self.interface, steps_layout=self.steps_layout,
                     history=retry_history, **kwargs
                 ):
-                    outputs += await task.execute(**kwargs)
+                    output = await task.execute(**kwargs)
+                    breakpoint()  # TODO: investigate; is it caching??
+                    outputs += output
                 retry_step.success_title = f"✅ {task.title} successfully completed on retry"
         return outputs
 

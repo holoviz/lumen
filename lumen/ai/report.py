@@ -39,7 +39,7 @@ from .memory import _Memory
 from .schemas import get_metaset
 from .tools import FunctionTool, Tool
 from .utils import (
-    describe_data, extract_block_source, get_block_names,
+    describe_data, extract_block_source, get_block_names, get_root_exception,
     wrap_logfire_on_method,
 )
 from .views import LumenOutput
@@ -307,10 +307,10 @@ class TaskGroup(Task):
             if isinstance(task, Actor):
                 try:
                     out = await task.respond(messages, **kwargs)
-                except MissingContextError:
-                    # Re-raise MissingContextError to allow retry logic at Plan level
-                    raise
                 except Exception as e:
+                    e = get_root_exception(e, exceptions=(MissingContextError,))
+                    if isinstance(e, MissingContextError):
+                        raise e
                     tb.print_exception(e)
                     alert = Alert(
                         f'Executing task {type(task).__name__} failed.', alert_type='error',
@@ -441,10 +441,11 @@ class TaskGroup(Task):
             new = []
             try:
                 new = await self._run_task(i, task, **kwargs)
-            except MissingContextError:
-                # Re-raise MissingContextError to allow retry logic at Plan level
-                raise
             except Exception as e:
+                e = get_root_exception(e, exceptions=(MissingContextError,))
+                if isinstance(e, MissingContextError):
+                    # Re-raise MissingContextError to allow retry logic at Plan level
+                    raise e
                 tb.print_exception(e)
                 self.status = "error"
                 if self.abort_on_error:
