@@ -97,8 +97,10 @@ class Plan(Section):
 
     async def _run_task(self, i: int, task: Self | Actor, context: TContext, **kwargs):
         outputs = []
-        with self.interface.add_step(
-            title=f"{task.title}...", user="Runner", layout_params={"title": "🏗️ Plan Execution Steps"},
+        with self._add_step(
+            title=f"{task.title}...",
+            user="Runner",
+            layout_params={"title": "🏗️ Plan Execution Steps"},
             steps_layout=self.coordinator.steps_layout
         ) as step:
             self.coordinator._todos_title.object = f"⚙️ Working on task {task.title!r}..."

@@ -6,6 +6,7 @@ import traceback as tb
 
 from abc import abstractmethod
 from collections.abc import Iterable, Iterator
+from contextlib import nullcontext
 from functools import partial
 from types import FunctionType
 from typing import Any, TypedDict, final
@@ -29,7 +30,9 @@ from typing_extensions import Self
 from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource
 from ..views.base import Panel, View
-from .actor import Actor, ContextProvider, TContext
+from .actor import (
+    Actor, ContextProvider, NullStep, TContext,
+)
 from .agents import AnalystAgent, LumenBaseAgent
 from .config import MissingContextError
 from .context import (
@@ -101,6 +104,7 @@ class Task(Viewer):
         super().__init__(**params)
         self._prepared = False
         self._init_view()
+        self._null_step = NullStep()
 
     def __repr__(self):
         params = []
@@ -114,6 +118,16 @@ class Task(Viewer):
         self._view = self._container = Column(
             sizing_mode='stretch_width', styles={'min-height': 'unset'}, height_policy='fit'
         )
+
+    def _add_step(self, title: str = "", **kwargs):
+        """Private contextmanager for adding steps to the interface.
+
+        If self.interface is None, returns a nullcontext that captures calls.
+        Otherwise, returns the interface's add_step contextmanager.
+        """
+        if self.steps_layout is not None and 'steps_layout' not in kwargs:
+            kwargs['steps_layout'] = self.steps_layout
+        return nullcontext(self._null_step) if self.interface is None else self.interface.add_step(title=title, **kwargs)
 
     def _populate_view(self):
         self._view[:] = []
@@ -314,6 +328,9 @@ class TaskGroup(Task):
         with root.param.update(config):
             await root.execute()
 
+    def _update_spec(self, task: Task | Actor, context: TContext, event: param.parameterized.Event):
+        pass
+
     def _add_outputs(
         self, i: int, task: Task | Actor, views: list, context: TContext, out_context: TContext | None, **kwargs
     ):
@@ -321,6 +338,8 @@ class TaskGroup(Task):
         for view in views:
             if not isinstance(view, LumenOutput):
                 continue
+            view.param.watch(partial(self._update_spec, task, out_context), "spec")
+
             retry_controls = RetryControls()
             view.footer = [retry_controls]
             self._watchers[i] = retry_controls.param.watch(
@@ -455,9 +474,9 @@ class TaskGroup(Task):
             self._task_rendered.clear()
             self._task_contexts.clear()
             self._task_outputs.clear()
-            self.views.clear()
+            self.views = []
             self._view.clear()
-            for task in self._tasks:
+            for task in self:
                 if isinstance(task, Task):
                     task.reset()
             self._populate_view()
@@ -511,7 +530,8 @@ class TaskGroup(Task):
                         rendered.append(o)
                     out = rendered
             else:
-                with task.param.update(running=True, history=messages):
+                task_history = messages + task.history
+                with task.param.update(running=True, history=task_history):
                     out, out_context = await task.execute(subcontext, **kwargs)
             self._task_outputs[task] = out
             outputs += out

@@ -24,7 +24,7 @@ from panel_gwalker import GraphicWalker
 from panel_material_ui import (
     Accordion, Button, ChatFeed, ChatInterface, ChatMessage,
     Column as MuiColumn, Dialog, Divider, FileDownload, IconButton, MenuList,
-    MenuToggle, Page, Paper, Row, Switch, Tabs, ToggleIcon,
+    MenuToggle, NestedBreadcrumbs, Page, Paper, Row, Switch, Tabs, ToggleIcon,
 )
 from panel_splitjs import HSplit, VSplit
 
@@ -37,7 +37,6 @@ from .agents import (
     SQLAgent, TableListAgent, ValidationAgent, VegaLiteAgent,
 )
 from .config import PROVIDED_SOURCE_NAME, SOURCE_TABLE_SEPARATOR
-from .context import TContext
 from .controls import SourceCatalog, SourceControls, TableExplorer
 from .coordinator import Coordinator, Plan, Planner
 from .export import (
@@ -82,10 +81,9 @@ Click the toggle, or drag the right edge, to expand the results area and...
 EXPLORATIONS_INTRO = """
 🧪 **Explorations**
 
-- Explorations are analyses applied to one or more datasets.
-- An exploration consists of interactive tables and visualizations.
-- New explorations are launched in a new tab for each SQL query result.
-- Each exploration maintains its own context, so you can branch off an existing result by navigating to that tab.
+* **Analyze** one or more datasets through interactive tables and visualizations.
+* **Launch** a new exploration tab for each SQL query result.
+* **Branch** from any result using the breadcrumbs menu — each exploration keeps its own context.
 """
 
 
@@ -506,7 +504,7 @@ class UI(Viewer):
                 ],
                 main=[self._main, self._sources_dialog_content, self._llm_dialog, self._info_dialog],
                 contextbar=[] if self._contextbar is None else [self._contextbar],
-                contextbar_open=False,
+                contextbar_open=False
             )
             self._page.servable()
             return self._page
@@ -572,6 +570,8 @@ class Exploration(param.Parameterized):
 
     conversation = Children()
 
+    parent = param.Parameter()
+
     plan = param.ClassSelector(class_=Plan)
 
     title = param.String(default="")
@@ -608,54 +608,57 @@ class ExplorerUI(UI):
 
     title = param.String(default='Lumen Explorer', doc="Title of the app.")
 
-    def __init__(
-        self,
-        data: DataT | list[DataT] | None = None,
-        **params
-    ):
+    _exploration = param.Dict()
+
+    def __init__(self, data: DataT | list[DataT] | None = None, **params):
         super().__init__(data=data, **params)
         cb = self.interface.callback
-        self._coordinator.render_output = False
         self.interface.callback = self._wrap_callback(cb)
+        self._coordinator.render_output = False
+        self._init_ui()
+
+    def _init_ui(self):
+        self._intro = Markdown(
+            EXPLORATIONS_INTRO,
+            margin=(0, 0, 0, 10),
+            sizing_mode='stretch_width',
+        )
+
+        # Home
+        self._explorer = TableExplorer(context=self.context)
+        self._home = self._last_synced = Exploration(
+            context=self.context,
+            title='Home',
+            conversation=self.interface.objects,
+            view=MuiColumn(self._intro, self._explorer)
+        )
+
+        # Menus
+        self._exploration = home_item = {'label': 'Home', 'icon': 'home', 'view': self._home, 'items': []}
         self._explorations = MenuList(
+            items=[home_item], value=self.param._exploration, show_children=False,
             dense=True, label='Explorations', margin=(-50, 0, 0, 0), sizing_mode='stretch_width'
         )
+        self._explorations.on_action('up', self._move_up)
+        self._explorations.on_action('down', self._move_down)
+        self._explorations.on_action('remove', self._delete_exploration)
+        self._explorations.param.watch(self._cleanup_explorations, 'items')
+        self._explorations.param.watch(self._update_conversation, 'active')
+        self._explorations.param.watch(self._sync_active, 'value')
         self._reorder_switch = Switch(
             label='Edit', styles={'margin-left': 'auto', 'z-index': '999'},
             disabled=self._explorations.param.items.rx.len()<2
         )
         self._reorder_switch.param.watch(self._toggle_reorder, 'value')
-        self._explorations.on_action('up', self._move_up)
-        self._explorations.on_action('down', self._move_down)
-        self._explorations.on_action('remove', self._delete_exploration)
-        self._explorer = TableExplorer(context=self.context)
-        self._explorations_intro = Markdown(
-            EXPLORATIONS_INTRO,
-            margin=(0, 0, 10, 10),
-            sizing_mode='stretch_width',
-            visible=self._explorations.param["items"].rx.bool().rx.not_()
+        self._breadcrumbs = NestedBreadcrumbs(
+            items=[home_item],
+            value=self.param._exploration,
+            margin=(10, 0, 0, 5)
         )
-        self._report_toggle = ToggleIcon(
-            icon="chat",
-            active_icon="summarize",
-            color="light",
-            description="Toggle Report Mode",
-            value=False,
-            margin=(13, 0, 10, 0),
-            visible=self.interface.param["objects"].rx().rx.len() > 0
-        )
-        self._report_toggle.param.watch(self._toggle_report_mode, ['value'])
+        self._breadcrumbs.param.watch(self._sync_active, 'value')
 
-        self._last_synced = self._home = Exploration(
-            context=self.context,
-            title='Home',
-            conversation=self.interface.objects,
-            view=MuiColumn(self._explorations_intro, self._explorer)
-        )
-        home_item = {'label': 'Home', 'icon': 'home', 'view': self._home}
-        self._explorations.param.update(items=[home_item], value=home_item)
-        self._explorations.param.watch(self._cleanup_explorations, ['items'])
-        self._explorations.param.watch(self._update_conversation, ['active'])
+        # Header
+        self._exports.visible = False
         self._global_notebook_export = FileDownload(
             callback=self._global_export_notebook,
             color="light",
@@ -668,9 +671,20 @@ class ExplorerUI(UI):
             sx={"p": "6px 0", "minWidth": "32px"},
             variant="text"
         )
-        self._exports.visible = False
+        self._report_toggle = ToggleIcon(
+            icon="chat",
+            active_icon="summarize",
+            color="light",
+            description="Toggle Report Mode",
+            value=False,
+            margin=(13, 0, 10, 0),
+            visible=self.interface.param["objects"].rx().rx.len() > 0
+        )
+        self._report_toggle.param.watch(self._toggle_report_mode, ['value'])
+
+        # Main Area
         self._output = Paper(
-            self._home.view, elevation=2, margin=(5, 10, 5, 5), sx={'pl': 1},
+            self._breadcrumbs, self._home.view, elevation=2, margin=(5, 10, 5, 5), sx={'pl': 1},
             height_policy='max', sizing_mode="stretch_both"
         )
         self._split = HSplit(
@@ -685,6 +699,10 @@ class ExplorerUI(UI):
         self._contextbar = Column(self._reorder_switch, self._explorations)
         self._idle = asyncio.Event()
         self._idle.set()
+
+    def _sync_active(self, event: param.parameterized.Event):
+        if event.new is not self._exploration:
+            self._exploration = event.new
 
     def _move_up(self, item):
         items = list(self._explorations.items)
@@ -778,7 +796,7 @@ class ExplorerUI(UI):
 
     async def _update_conversation(self, event=None):
         exploration = self._explorations.value['view']
-        self._output[:] = [exploration.view]
+        self._output[1:] = [exploration.view]
 
         if event is not None:
             # When user switches explorations and coordinator is running
@@ -822,7 +840,7 @@ class ExplorerUI(UI):
             break
 
     def _snapshot_messages(self, new=False):
-        to = -3 if new else None
+        to = -2 if new else None
         messages = []
         for msg in self.interface.objects[:to]:
             if isinstance(msg, ChatMessage):
@@ -832,74 +850,52 @@ class ExplorerUI(UI):
             messages.append(msg)
         return messages
 
-    async def _add_exploration(self, plan: Plan):
+    async def _add_exploration(self, plan: Plan, parent: Exploration) -> Exploration:
         # Sanpshot previous conversation
-        last_exploration = self._explorations.value['view']
-        is_home = last_exploration is self._home
+        is_home = parent is self._home
         if is_home:
-            last_exploration.conversation = []
+            parent.conversation = []
         else:
-            last_exploration.conversation = self._snapshot_messages(new=True)
+            parent.conversation = self._snapshot_messages(new=True)
         conversation = list(self.interface.objects)
 
         # Create new exploration
-        output = MuiColumn(sizing_mode='stretch_both', loading=True)
+        output = MuiColumn(
+            Tabs(('Overview', "Waiting on data..."), dynamic=True, sizing_mode='stretch_both'),
+            loading=True,
+            sizing_mode='stretch_both'
+        )
         exploration = Exploration(
             context=plan.context,
             conversation=conversation,
+            parent=parent,
             plan=plan,
             title=plan.title,
             view=output
         )
+
+        # Update the UI
         view_item = {
             'label': plan.title,
             'view': exploration,
-            'icon': None,
-            'actions': [{'action': 'remove', 'label': 'Remove', 'icon': 'delete'}]
+            'icon': "insights",
+            'actions': [{'action': 'remove', 'label': 'Remove', 'icon': 'delete'}],
+            'items': []
         }
+        items = self._explorations.items + [view_item]
         with hold():
+            self._breadcrumbs.value["items"].append(view_item)
+            self._breadcrumbs.param.trigger("items")
             self.interface.objects = conversation
             self._idle.set()
-            self._explorations.param.update(
-                items=self._explorations.items+[view_item],
-                value=view_item
-            )
+            self._explorations.param.update(items=items)
+            self._exploration = view_item
             self._idle.clear()
-            self._output[:] = [output]
+            self._output[1:] = [output]
             self._notebook_export.filename = f"{plan.title.replace(' ', '_')}.ipynb"
             await self._update_conversation()
         self._last_synced = exploration
         return exploration
-
-    def _add_outputs(self, exploration: Exploration, outputs: list[Any], context: TContext):
-        view = exploration.view
-        content = []
-        if view.loading and 'pipeline' in context:
-            pipeline = context['pipeline']
-            content.append(
-                ('Overview', GraphicWalker(
-                    pipeline.param.data,
-                    kernel_computation=True,
-                    tab='data',
-                    sizing_mode='stretch_both'
-                ))
-            )
-        for out in outputs:
-            if not isinstance(out, LumenOutput):
-                continue
-            title = out.title or type(out).__name__.replace('Output', '')
-            if len(title) > 25:
-                title = f"{title[:25]}..."
-            output = ParamMethod(out.render, inplace=True, sizing_mode='stretch_both')
-            vsplit = VSplit(out.editor, output, sizes=(20, 80), expanded_sizes=(20, 80), sizing_mode="stretch_both")
-            content.append((title, vsplit))
-        if view.loading:
-            tabs = Tabs(*content, dynamic=True, active=len(content), sizing_mode='stretch_both')
-            view.append(tabs)
-        else:
-            tabs = view[-1]
-            tabs.extend(content)
-        tabs.active = len(tabs)-1
 
     def _render_view(self, out: LumenOutput) -> VSplit:
         title = out.title or type(out).__name__.replace('Output', '')
@@ -909,16 +905,9 @@ class ExplorerUI(UI):
         return (title, VSplit(out.editor, output, sizes=(20, 80), expanded_sizes=(20, 80), sizing_mode="stretch_both"))
 
     def _add_views(self, exploration: Exploration, event: param.parameterized.Event):
+        tabs = exploration.view[-1]
         outputs = [view for view in event.new if isinstance(view, LumenOutput) and view not in event.old]
-
-        view = exploration.view
-        if len(view) == 0:
-            tabs = None
-            content = [('Overview', "Waiting on data...")]
-        else:
-            tabs = view[0]
-            content = []
-
+        content = []
         for out in outputs:
             title, vsplit = self._render_view(out)
             content.append((title, vsplit))
@@ -930,11 +919,7 @@ class ExplorerUI(UI):
                     sizing_mode='stretch_both'
                 ))
 
-        if tabs is None:
-            tabs = Tabs(*content, dynamic=True, active=len(content), sizing_mode='stretch_both')
-            view.append(tabs)
-        else:
-            tabs.extend(content)
+        tabs.extend(content)
         tabs.active = len(tabs)-1
         if self._split.collapsed:
             self._split.param.update(
@@ -946,7 +931,7 @@ class ExplorerUI(UI):
         old = [view for view in event.old if isinstance(view, LumenOutput)]
 
         idx = None
-        tabs = exploration.view[0]
+        tabs = exploration.view[-1]
         content = list(zip(tabs._names, tabs, strict=False))
         for out in old:
             if out in current:
@@ -964,25 +949,25 @@ class ExplorerUI(UI):
                 idx = next(i for i, tab in enumerate(tabs[1:]) if out.editor in tab) + 1
                 continue
             title, vsplit = self._render_view(out)
-            content.insert(idx+1, (title, vsplit))
+            content.insert((idx or 0)+1, (title, vsplit))
         tabs[:] = content
         tabs.active = len(tabs)-1
 
     def _wrap_callback(self, callback):
         async def wrapper(messages: list[Message], user: str, instance: ChatInterface):
             prev = self._explorations.value
+            parent = prev["view"]
             self._idle.clear()
             try:
-                plan = await callback(messages, prev["view"].context, user, instance)
+                plan = await callback(messages, parent.context, user, instance)
                 if any("pipeline" in step[0].output_schema.__annotations__ for step in plan):
-                    exploration = await self._add_exploration(plan)
+                    exploration = await self._add_exploration(plan, parent)
                     new_exploration = True
                     watcher = plan.param.watch(partial(self._add_views, exploration), "views")
                 else:
-                    exploration = self._explorations.value['view']
                     new_exploration = False
-                    if exploration.plan is not None:
-                        plan = exploration.plan.merge(plan)
+                    if prev.plan is not None:
+                        plan = prev.plan.merge(plan)
                     watcher = None
                 with plan.param.update(interface=self.interface):
                     new, out_context = await plan.execute()
@@ -1000,7 +985,7 @@ class ExplorerUI(UI):
                                 value=prev
                             )
                             await self._update_conversation()
-                            if prev["view"] is self._home:
+                            if parent is self._home:
                                 self._split.collapsed = 1
                 else:
                     exploration.context = out_context

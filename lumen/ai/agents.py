@@ -516,11 +516,6 @@ class LumenBaseAgent(Agent):
     _output_type = LumenOutput
     _retry_target_keys: ClassVar[list[str]] = []
 
-    def _update_spec(self, context: TContext, event: param.parameterized.Event):
-        """
-        Update the specification in the context dictionary.
-        """
-
     @retry_llm_output()
     async def revise(
         self,
@@ -647,9 +642,6 @@ class SQLAgent(LumenBaseAgent):
 
     input_schema = SQLInputs
     output_schema = SQLOutputs
-
-    def _update_spec(self, context: TContext, event: param.parameterized.Event):
-        context["sql"] = event.new
 
     async def _validate_sql(
         self, context: TContext, sql_query: str, expr_slug: str, dialect: str,
@@ -1082,12 +1074,6 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
     def __init__(self, source: Source, **params):
         super().__init__(source=source, **params)
 
-    def _update_spec(self, context: TContext, event: param.parameterized.Event):
-        """
-        Update the SQL specification.
-        """
-        context["sql"] = event.new
-
     @retry_llm_output()
     async def _create_valid_query(
         self, messages: list[Message], title: str | None = None, errors: list | None = None
@@ -1352,9 +1338,6 @@ class BaseViewAgent(LumenBaseAgent):
     async def _extract_spec(self, context: TContext, spec: dict[str, Any]):
         return dict(spec)
 
-    async def _update_spec(self, context: TContext, event: param.parameterized.Event):
-        context["view"] = dict(await self._extract_spec(context, event.new), type=self.view_type)
-
     async def respond(
         self,
         messages: list[Message],
@@ -1420,10 +1403,6 @@ class hvPlotAgent(BaseViewAgent):
             },
         )
         return model[self.view_type.__name__]
-
-    async def _update_spec(self, context: TContext, event: param.parameterized.Event):
-        spec = load_yaml(event.new)
-        context["view"] = dict(await self._extract_spec(context, spec), type=self.view_type)
 
     async def _extract_spec(self, context: TContext, spec: dict[str, Any]):
         pipeline = context["pipeline"]
@@ -1635,14 +1614,6 @@ class VegaLiteAgent(BaseViewAgent):
             step.stream(f"Update:\n```yaml\n{result.yaml_update}\n```", replace=False)
             update_dict = load_yaml(result.yaml_update)
         return step_name, update_dict
-
-    async def _update_spec(self, context: TContext, event: param.parameterized.Event):
-        try:
-            spec = await self._extract_spec(context, {"yaml_spec": event.new})
-        except Exception as e:
-            traceback.print_exception(e)
-            return
-        context["view"] = dict(spec, type=self.view_type)
 
     def _add_zoom_params(self, vega_spec: dict) -> None:
         """Add zoom parameters to vega spec."""
@@ -1970,9 +1941,6 @@ class AnalysisAgent(LumenBaseAgent):
     )
 
     _output_type = AnalysisOutput
-
-    def _update_spec(self, context: TContext, event: param.parameterized.Event):
-        pass
 
     async def respond(
         self,
