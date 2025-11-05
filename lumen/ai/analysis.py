@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import panel as pn
 import param
 
@@ -8,9 +10,13 @@ from panel.viewable import Viewable
 from panel_material_ui import AutocompleteInput, TextInput
 
 from ..base import Component
+from .actor import TContext
 from .config import SOURCE_TABLE_SEPARATOR
 from .controls import SourceControls
 from .utils import get_data
+
+if TYPE_CHECKING:
+    from ..pipeline import Pipeline
 
 
 class Analysis(param.ParameterizedFunction):
@@ -29,8 +35,6 @@ class Analysis(param.ParameterizedFunction):
     columns = param.List(default=[], constant=True, doc="""
        The columns required for the analysis. May use tuples to declare that one of
        the columns must be present.""")
-
-    context = param.Dict()
 
     interface = param.ClassSelector(class_=ChatFeed, doc="""
         The ChatInterface instance that will be used to stream messages.""")
@@ -57,12 +61,12 @@ class Analysis(param.ParameterizedFunction):
                 applies &= col in data.columns
         return applies
 
-    def controls(self):
+    def controls(self, context: TContext):
         config_options = [p for p in self.param if p not in Analysis.param]
         if config_options:
-            return pn.Param(self.param, parameters=config_options)
+            return pn.Param(self.param, parameters=config_options, margin=0, show_name=False)
 
-    def __call__(self, pipeline) -> Component | Viewable:
+    def __call__(self, pipeline: Pipeline, context: TContext) -> Component | Viewable:
         return pipeline
 
 
@@ -85,9 +89,9 @@ class Join(Analysis):
     def _update_table_name(self, event):
         self.table_name = event.new
 
-    def controls(self):
+    def controls(self, context: TContext):
         self._source_controls = SourceControls(
-            multiple=True, replace_controls=False, context=self.context
+            multiple=True, replace_controls=False, context=context
         )
         self._run_button = self._source_controls._add_button
         self._source_controls.param.watch(self._update_table_name, "_last_table")
@@ -110,7 +114,7 @@ class Join(Analysis):
         )
         return controls
 
-    async def __call__(self, pipeline):
+    async def __call__(self, pipeline: Pipeline, context: TContext) -> Component | Viewable:
         if self.table_name:
             agent = next(agent for agent in self.agents if type(agent).__name__ == "SQLAgent")
             content = (
@@ -125,7 +129,7 @@ class Join(Analysis):
             if self.guidance:
                 content += f"\nadditional context:\n{self.guidance!r}"
             await agent.answer(messages=[{"role": "user", "content": content}])
-            pipeline = self.context["pipeline"]
+            pipeline = context["pipeline"]
 
         self.message = f"Joined {self._previous_table} with {self.table_name}."
         return pipeline

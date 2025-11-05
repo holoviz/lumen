@@ -15,7 +15,7 @@ from panel.config import config, panel_extension
 from panel.io.document import hold
 from panel.io.resources import CSS_URLS
 from panel.io.state import state
-from panel.layout import Column, HSpacer
+from panel.layout import Column, FlexBox, HSpacer
 from panel.pane import SVG, Markdown
 from panel.param import ParamMethod
 from panel.util import edit_readonly
@@ -36,7 +36,11 @@ from .agents import (
     AnalysisAgent, AnalystAgent, ChatAgent, DocumentListAgent, SourceAgent,
     SQLAgent, TableListAgent, ValidationAgent, VegaLiteAgent,
 )
-from .config import PROVIDED_SOURCE_NAME, SOURCE_TABLE_SEPARATOR
+from .config import (
+    DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROVIDED_SOURCE_NAME,
+    SOURCE_TABLE_SEPARATOR,
+)
+from .context import TContext
 from .controls import SourceCatalog, SourceControls, TableExplorer
 from .coordinator import Coordinator, Plan, Planner
 from .export import (
@@ -44,10 +48,10 @@ from .export import (
 )
 from .llm import Llm, Message, OpenAI
 from .llm_dialog import LLMConfigDialog
-from .report import Report
-from .utils import wrap_logfire
+from .report import Report, TaskGroup
+from .utils import log_debug, wrap_logfire
 from .vector_store import VectorStore
-from .views import LumenOutput, SQLOutput
+from .views import AnalysisOutput, LumenOutput, SQLOutput
 
 DataT = str | Path | Source | Pipeline
 
@@ -115,6 +119,9 @@ class UI(Viewer):
         TableListAgent, ChatAgent, DocumentListAgent, AnalystAgent, SourceAgent, SQLAgent, VegaLiteAgent, ValidationAgent
     ], doc="""List of default agents which will always be added.""")
 
+    demo_inputs = param.List(default=DEMO_MESSAGES, doc="""
+        List of instructions to demo the Coordinator.""")
+
     export_functions = param.Dict(default={}, doc="""
        Dictionary mapping from name of exporter to export function.""")
 
@@ -143,6 +150,9 @@ class UI(Viewer):
         class_=SourceControls, default=SourceControls,
         instantiate=False, is_instance=False, doc="""
         The source controls to use for managing data sources.""")
+
+    suggestions = param.List(default=GETTING_STARTED_SUGGESTIONS, doc="""
+        Initial list of suggestions of actions the user can take.""")
 
     table_upload_callbacks = param.Dict(default={}, doc="""
         Dictionary mapping from file extensions to callback function,
@@ -327,6 +337,17 @@ class UI(Viewer):
         if state.curdoc and state.curdoc.session_context:
             state.on_session_destroyed(self._destroy)
         state.onload(self._initialize_new_llm)
+
+        # Use existing method to create suggestions
+        if self.suggestions:
+            self._add_suggestions_to_footer(
+                self.suggestions,
+                num_objects=1,
+                inplace=True,
+                analysis=False,
+                append_demo=True,
+                hide_after_use=False
+            )
 
     @param.depends('context', on_init=True, watch=True)
     async def _sync_sources(self, event=None):
@@ -521,6 +542,133 @@ class UI(Viewer):
         """
         self._source_catalog.sources = self.context["sources"]
         self._source_accordion.active = [1]
+
+    def _add_suggestions_to_footer(
+        self,
+        suggestions: list[str],
+        num_objects: int = 2,
+        inplace: bool = True,
+        analysis: bool = False,
+        append_demo: bool = True,
+        hide_after_use: bool = True,
+        context: TContext | None = None
+    ):
+        async def hide_suggestions(_=None):
+            if len(self.interface.objects) > num_objects:
+                suggestion_buttons.visible = False
+
+        async def use_suggestion(event):
+            button = event.obj
+            with button.param.update(loading=True), self.interface.active_widget.param.update(loading=True):
+                # Find the original suggestion tuple to get the text
+                button_index = suggestion_buttons.objects.index(button)
+                if button_index < len(suggestions):
+                    suggestion = suggestions[button_index]
+                    contents = suggestion[1] if isinstance(suggestion, tuple) else suggestion
+                else:
+                    contents = button.name
+                if hide_after_use:
+                    suggestion_buttons.visible = False
+                    if event.new > 1:  # prevent double clicks
+                        return
+
+                if not analysis:
+                    self.interface.send(contents)
+
+                for agent in self.agents:
+                    if isinstance(agent, AnalysisAgent):
+                        break
+                else:
+                    log_debug("AnalysisAgent not available.")
+                    return
+
+                plan = Plan(
+                    TaskGroup(
+                        agent,
+                        instruction=contents,
+                        title=contents
+                    ),
+                    context=context,
+                    coordinator=self._coordinator,
+                    title=contents,
+                )
+                await self._execute_plan(plan)
+
+        async def run_demo(event):
+            if hide_after_use:
+                suggestion_buttons.visible = False
+                if event.new > 1:  # prevent double clicks
+                    return
+            with self.interface.active_widget.param.update(loading=True):
+                for demo_message in self.demo_inputs:
+                    while self.interface.disabled:
+                        await asyncio.sleep(1.25)
+                    self.interface.active_widget.value = demo_message
+                    await asyncio.sleep(2)
+
+        suggestion_buttons = FlexBox(
+            *[
+                Button(
+                    label=suggestion[1] if isinstance(suggestion, tuple) else suggestion,
+                    icon=suggestion[0] if isinstance(suggestion, tuple) else None,
+                    variant="outlined",
+                    on_click=use_suggestion,
+                    margin=5,
+                    disabled=self.interface.param.loading
+                )
+                for suggestion in suggestions
+            ],
+            margin=(5, 5),
+        )
+
+        if append_demo and self.demo_inputs:
+            suggestion_buttons.append(Button(
+                name="Show a demo",
+                icon="play_arrow",
+                button_type="primary",
+                variant="outlined",
+                on_click=run_demo,
+                margin=5,
+                disabled=self.interface.param.loading
+            ))
+        disable_js = "cb_obj.origin.disabled = true; setTimeout(() => cb_obj.origin.disabled = false, 3000)"
+        for b in suggestion_buttons:
+            b.js_on_click(code=disable_js)
+
+        if len(self.interface):
+            message = self.interface.objects[-1]
+            if inplace:
+                footer_objects = message.footer_objects or []
+                message.footer_objects = footer_objects + [suggestion_buttons]
+        else:
+            self._coordinator._main[0].append(suggestion_buttons)
+
+        self.interface.param.watch(hide_suggestions, "objects")
+
+    async def _add_analysis_suggestions(self, plan: Plan, outputs: list[Any], context: TContext):
+        pipeline = context["pipeline"]
+        current_analysis = context.get("analysis")
+
+        # Clear current_analysis unless the last message is the same AnalysisOutput
+        if current_analysis and outputs:
+            if not any(out.analysis is current_analysis for out in outputs if isinstance(out, AnalysisOutput)):
+                current_analysis = None
+
+        allow_consecutive = True#getattr(current_analysis, '_consecutive_calls', True)
+        applicable_analyses = []
+        for analysis in self._coordinator._analyses:
+            if await analysis.applies(pipeline) and (allow_consecutive or analysis is not type(current_analysis)):
+                applicable_analyses.append(analysis)
+        if not applicable_analyses:
+            return
+        self._add_suggestions_to_footer(
+            [f"Apply {analysis.__name__}" for analysis in applicable_analyses],
+            append_demo=False,
+            analysis=True,
+            context=context,
+            hide_after_use=False,
+            num_objects=len(self.interface.objects),
+        )
 
     def servable(self, title: str | None = None, **kwargs):
         if (state.curdoc and state.curdoc.session_context):
@@ -953,44 +1101,55 @@ class ExplorerUI(UI):
         tabs[:] = content
         tabs.active = len(tabs)-1
 
+    async def _execute_plan(self, plan: Plan):
+        prev = self._explorations.value
+        parent = prev["view"]
+
+        # Check if we are adding to existing exploration or creating a new one
+        new_exploration = any("pipeline" in step[0].output_schema.__annotations__ for step in plan)
+        if new_exploration:
+            exploration = await self._add_exploration(plan, parent)
+            watcher = plan.param.watch(partial(self._add_views, exploration), "views")
+        else:
+            exploration = parent
+            if parent.plan is not None:
+                plan = parent.plan.merge(plan)
+            watcher = None
+
+        # Execute plan
+        with plan.param.update(interface=self.interface):
+            outputs, out_context = await plan.execute()
+
+        # Clean up and render output
+        if watcher:
+            plan.param.unwatch(watcher)
+        if "__error__" in out_context:
+            # On error we have to sync the conversation, unwatch the plan,
+            # and remove the exploration if it was newly created
+            parent.conversation = exploration.conversation
+            del out_context['__error__']
+            if new_exploration:
+                with hold():
+                    self._explorations.param.update(
+                        items=self._explorations.items[:-1],
+                        value=prev
+                    )
+                    await self._update_conversation()
+                    if parent is self._home:
+                        self._split.collapsed = 1
+        else:
+            exploration.context = out_context
+            exploration.view.loading = False
+            if "pipeline" in out_context:
+                await self._add_analysis_suggestions(plan, outputs, out_context)
+            plan.param.watch(partial(self._update_views, exploration), "views")
+
     def _wrap_callback(self, callback):
         async def wrapper(messages: list[Message], user: str, instance: ChatInterface):
-            prev = self._explorations.value
-            parent = prev["view"]
             self._idle.clear()
             try:
-                plan = await callback(messages, parent.context, user, instance)
-                if any("pipeline" in step[0].output_schema.__annotations__ for step in plan):
-                    exploration = await self._add_exploration(plan, parent)
-                    new_exploration = True
-                    watcher = plan.param.watch(partial(self._add_views, exploration), "views")
-                else:
-                    new_exploration = False
-                    if prev.plan is not None:
-                        plan = prev.plan.merge(plan)
-                    watcher = None
-                with plan.param.update(interface=self.interface):
-                    new, out_context = await plan.execute()
-                if watcher:
-                    plan.param.unwatch(watcher)
-                if "__error__" in out_context:
-                    # On error we have to sync the conversation, unwatch the plan,
-                    # and remove the exploration if it was newly created
-                    prev['view'].conversation = exploration.conversation
-                    del out_context['__error__']
-                    if new_exploration:
-                        with hold():
-                            self._explorations.param.update(
-                                items=self._explorations.items[:-1],
-                                value=prev
-                            )
-                            await self._update_conversation()
-                            if parent is self._home:
-                                self._split.collapsed = 1
-                else:
-                    exploration.context = out_context
-                    exploration.view.loading = False
-                    plan.param.watch(partial(self._update_views, exploration), "views")
+                plan = await callback(messages, self._explorations.value["view"].context, user, instance)
+                await self._execute_plan(plan)
             finally:
                 self._explorations.value['view'].conversation = self.interface.objects
                 self._idle.set()

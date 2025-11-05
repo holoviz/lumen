@@ -13,19 +13,19 @@ from jsonschema import Draft7Validator, ValidationError
 from panel.config import config
 from panel.layout import Column, Row
 from panel.param import ParamMethod
-from panel.viewable import Viewer
+from panel.viewable import Viewable, Viewer
 from panel.widgets import CodeEditor
 from panel_material_ui import (
-    Alert, Button, Checkbox, CircularProgress, IconButton, Tabs,
+    Alert, Button, Checkbox, CircularProgress, IconButton,
 )
-from param.parameterized import discard_events
 
 from ..base import Component
 from ..config import dump_yaml, load_yaml
 from ..downloads import Download
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
-from ..views.base import Table
+from ..views.base import Panel, Table
+from .analysis import Analysis
 from .config import VEGA_ZOOMABLE_MAP_ITEMS
 from .utils import get_data
 
@@ -110,7 +110,9 @@ class LumenOutput(Viewer):
     @classmethod
     def _serialize_component(cls, component: Component, spec_dict: dict[str, Any] | None = None) -> str:
         component_spec = spec_dict or component.to_spec()
-        return dump_yaml(component_spec)
+        if isinstance(component, Panel):
+            component_spec = component_spec["object"]
+        return dump_yaml(component_spec), component_spec
 
     @classmethod
     def _deserialize_component(
@@ -118,6 +120,8 @@ class LumenOutput(Viewer):
     ) -> str:
         spec = load_yaml(yaml_spec)
         cls.validate_spec(spec)
+        if isinstance(component, Panel):
+            spec = {"type": "panel", "object": spec}
         if pipeline is not None and 'pipeline' in spec:
             del spec['pipeline']
         return type(component).from_spec(spec, pipeline=pipeline)
@@ -353,9 +357,11 @@ class VegaLiteOutput(LumenOutput):
 
 class AnalysisOutput(LumenOutput):
 
-    analysis = param.Parameter()
+    analysis = param.ClassSelector(class_=Analysis)
 
-    pipeline = param.Parameter()
+    context = param.Dict()
+
+    pipeline = param.ClassSelector(class_=Pipeline)
 
     def __init__(self, **params):
         if not params['analysis'].autorun:
@@ -366,35 +372,28 @@ class AnalysisOutput(LumenOutput):
             params['title'] = type(params['analysis']).__name__
 
         super().__init__(**params)
-        controls = self.analysis.controls()
+        controls = self.analysis.controls(self.context)
         if controls is not None or not self.analysis.autorun:
             controls = Column() if controls is None else controls
-            self._main = Tabs(
-                ('Specification', self._main),
-                styles={'min-width': '100%', 'height': 'fit-content', 'min-height': '300px'},
-                active=self.active,
-                dynamic=True
-            )
             if self.analysis._run_button:
                 run_button = self.analysis._run_button
                 run_button.param.watch(self._rerun, 'clicks')
-                self._main.insert(1, ('Config', controls))
             else:
                 self.analysis._run_button = run_button = Button(
-                    icon='player-play', name='Run', on_click=self._rerun,
-                    button_type='success', margin=(10, 0, 0 , 10)
+                    icon='play_circle_outline', label='Run', on_click=self._rerun,
+                    button_type='success', margin=(10, 0, 0 ,10)
                 )
-                self._main.insert(1, ('Config', Column(controls, run_button)))
-            with discard_events(self):
-                self._main.active = 1 if len(self._main) > 1 else 0
+            self.editor = Column(controls, run_button)
         self._rendered = True
 
     async def _rerun(self, event):
         with self._main.param.update(loading=True):
             if asyncio.iscoroutinefunction(self.analysis.__call__):
-                view = await self.analysis(self.pipeline)
+                view = await self.analysis(self.pipeline, self.context)
             else:
-                view = await asyncio.to_thread(self.analysis, self.pipeline)
+                view = await asyncio.to_thread(self.analysis, self.pipeline, self.context)
+            if isinstance(view, Viewable):
+                view = Panel(object=view, pipeline=self.pipeline)
             self.component = view
             self._rendered = False
             spec, self._spec_dict = self._serialize_component(view)

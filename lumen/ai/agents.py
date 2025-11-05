@@ -1991,12 +1991,12 @@ class AnalysisAgent(LumenBaseAgent):
         out_context = {}
         with self._add_step(title=step_title or "Creating view...", steps_layout=self._steps_layout) as step:
             await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
-            analysis_callable = analyses[analysis_name].instance(agents=self.agents, context=context, interface=self.interface)
+            analysis_callable = analyses[analysis_name].instance(agents=self.agents, interface=self.interface)
 
+            out_context["analysis"] = analysis_callable
             data = await get_data(pipeline)
             for field in analysis_callable._field_params:
                 analysis_callable.param[field].objects = list(data.columns)
-            context["analysis"] = analysis_callable
 
             if analysis_callable.autorun:
                 if asyncio.iscoroutinefunction(analysis_callable.__call__):
@@ -2012,7 +2012,7 @@ class AnalysisAgent(LumenBaseAgent):
                 elif isinstance(view, Pipeline):
                     out_context["pipeline"] = view
                 # Ensure data reflects processed pipeline
-                if pipeline is not out_context.get("pipeline"):
+                if "pipeline" in out_context:
                     pipeline = out_context["pipeline"]
                     data = await get_data(pipeline)
                     if len(data) > 0:
@@ -2024,15 +2024,11 @@ class AnalysisAgent(LumenBaseAgent):
                 step.success_title = "Configure the analysis"
 
         analysis = out_context["analysis"]
-        pipeline = out_context["pipeline"]
         if view is None and analysis.autorun:
-            self.interface.stream("Failed to find an analysis that applies to this data")
+            self.interface.stream("Failed to find an analysis that applies to this data.")
         else:
             out = self._output_type(
-                component=view, title=step_title, analysis=analysis, pipeline=pipeline
-            )
-            self.interface.stream(
-                analysis.message or f"Successfully created view with {analysis_name} analysis.", user="Assistant"
+                component=view, title=step_title, analysis=analysis, pipeline=out_context.get("pipeline"), context=context
             )
         return [] if view is None else [out], out_context
 

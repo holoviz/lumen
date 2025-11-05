@@ -14,18 +14,15 @@ from panel.io.document import hold
 from panel.pane import HTML, Markdown
 from panel.viewable import Viewer
 from panel_material_ui import (
-    Accordion, Button, Card, ChatInterface, ChatStep, Column, FlexBox, Paper,
-    Tabs, Typography,
+    Accordion, Button, Card, ChatInterface, ChatStep, Column, Paper, Tabs,
+    Typography,
 )
 from pydantic import BaseModel
 from typing_extensions import Self
 
 from .actor import Actor
 from .agents import Agent, AnalysisAgent, ChatAgent
-from .config import (
-    DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROMPTS_DIR,
-    MissingContextError,
-)
+from .config import PROMPTS_DIR, MissingContextError
 from .context import ContextError, TContext
 from .controls import SourceControls, TableSourceCard
 from .llm import LlamaCpp, Llm, Message
@@ -41,7 +38,6 @@ from .utils import (
     fuse_messages, get_root_exception, log_debug, mutate_user_message,
     normalized_name, wrap_logfire,
 )
-from .views import AnalysisOutput
 
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
@@ -265,9 +261,7 @@ class Plan(Section):
                     footer_objects = last_message.footer_objects or []
                     last_message.footer_objects = footer_objects + [rerun_button]
 
-        if "pipeline" in out_context:
-            await self.coordinator._add_analysis_suggestions(out_context)
-            log_debug("\033[92mCompleted: Plan\033[0m", show_sep="below")
+        log_debug("\033[92mCompleted: Plan\033[0m", show_sep="below")
         if self.interface is not None:
             for message_obj in self.interface.objects[::-1]:
                 if isinstance(message_obj.object, Card):
@@ -300,17 +294,11 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
     context = param.Dict(default={})
 
-    demo_inputs = param.List(default=DEMO_MESSAGES, doc="""
-        List of instructions to demo the Coordinator.""")
-
     history = param.Integer(default=3, doc="""
         Number of previous user-assistant interactions to include in the chat history.""")
 
     logs_db_path = param.String(default=None, doc="""
         The path to the log file that will store the messages exchanged with the LLM.""")
-
-    suggestions = param.List(default=GETTING_STARTED_SUGGESTIONS, doc="""
-        Initial list of suggestions of actions the user can take.""")
 
     verbose = param.Boolean(default=False, allow_refs=True, doc="""
         Whether to show verbose output.""")
@@ -430,35 +418,14 @@ class Coordinator(Viewer, VectorLookupToolUser):
         else:
             interface.callback = self._chat_invoke
             interface.on_submit = on_submit
-
-        welcome_title = Typography(
-            "Illuminate your data",
-            disable_anchors=True,
-            variant="h1"
-        )
+        interface.button_properties = {
+            "undo": {"callback": on_undo},
+            "rerun": {"callback": on_rerun},
+            "clear": {"callback": on_clear},
+        }
 
         if context is None:
             context = {}
-        num_sources = len(context.get("sources", []))
-        prefix_text = "Add your dataset to begin, then" if num_sources == 0 else f"{num_sources} source{'s' if num_sources > 1 else ''} connected;"
-        welcome_text = Typography(
-            f"{prefix_text} ask any question, or select a quick action below."
-        )
-
-        welcome_screen = Paper(
-            welcome_title,
-            welcome_text,
-            interface._widget,
-            max_width=850,
-            styles={'margin': 'auto'},
-            sx={'p': '0 20px 20px 20px'}
-        )
-
-        self._main = Column(
-            welcome_screen,
-            sx={'display': 'flex', 'align-items': 'center'},
-            height_policy='max'
-        )
 
         self._session_id = id(self)
 
@@ -472,33 +439,73 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
         llm = llm or self.llm
         instantiated = []
-        tools = tools or []
         self._analyses = []
         for agent in agents or self.agents:
             if not isinstance(agent, Agent):
-                kwargs = {"llm": llm} if agent.llm is None else {}
-                agent = agent(interface=interface, **kwargs)
+                agent = agent()
             if isinstance(agent, AnalysisAgent):
                 analyses = "\n".join(
                     f"- `{analysis.__name__}`: {(analysis.__doc__ or '').strip()}"
                     for analysis in agent.analyses if analysis._callable_by_llm
                 )
                 agent.purpose = f"Available analyses include:\n\n{analyses}\nSelect this agent to perform one of these analyses."
-                agent.interface = interface
                 self._analyses.extend(agent.analyses)
+            # must use the same interface or else nothing shows
             if agent.llm is None:
                 agent.llm = llm
-            # must use the same interface or else nothing shows
-            agent.interface = interface
             instantiated.append(agent)
+
+        params["tools"] = tools = self._process_tools(tools)
+        params["prompts"] = self._process_prompts(params.get("prompts"), tools)
+
+        super().__init__(
+            llm=llm,
+            agents=instantiated,
+            interface=interface,
+            logs_db_path=logs_db_path,
+            vector_store=vector_store,
+            document_vector_store=document_vector_store,
+            context=context,
+            **params
+        )
+        self._init_ui()
+
+    def _init_ui(self):
+        num_sources = len(self.context.get("sources", []))
+        if num_sources == 0:
+            prefix_text = "Add your dataset to begin, then"
+        else:
+            prefix_text = f"{num_sources} source{'s' if num_sources > 1 else ''} connected;"
+
+        self._main = Column(
+            Paper(
+                Typography(
+                    "Illuminate your data",
+                    disable_anchors=True,
+                    variant="h1"
+                ),
+                Typography(
+                    f"{prefix_text} ask any question, or select a quick action below."
+                ),
+                self.interface._widget,
+                max_width=850,
+                styles={'margin': 'auto'},
+                sx={'p': '0 20px 20px 20px'}
+            ),
+            sx={'display': 'flex', 'align-items': 'center'},
+            height_policy='max'
+        )
+
+    def _process_tools(self, tools: list[type[Tool] | Tool] | None) -> list[type[Tool] | Tool]:
+        tools = list(tools) if tools else []
 
         # If none of the tools provide vector_metaset, add tablelookup
         provides_vector_metaset = any(
-            "vector_metaset" in tool.provides
+            "vector_metaset" in tool.output_schema.__annotations__
             for tool in tools or []
         )
         provides_sql_metaset = any(
-            "sql_metaset" in tool.provides
+            "sql_metaset" in tool.output_schema.__annotations__
             for tool in tools or []
         )
         if not provides_vector_metaset and not provides_sql_metaset:
@@ -509,165 +516,25 @@ class Coordinator(Viewer, VectorLookupToolUser):
             tools += [TableLookup]
         elif not provides_sql_metaset:
             tools += [IterativeTableLookup]
+        return tools
 
+    def _process_prompts(
+        self, prompts: dict[str, dict[str, Any]], tools: list[type[Tool] | Tool]
+    ) -> dict[str, dict[str, Any]]:
         # Add user-provided tools to the list of tools of the coordinator
-        if "prompts" not in params:
-            params["prompts"] = {}
-        if "main" not in params["prompts"]:
-            params["prompts"]["main"] = {}
+        if prompts is None:
+            prompts = {}
 
-        if "tools" not in params["prompts"]["main"]:
-            params["prompts"]["main"]["tools"] = []
-        params["prompts"]["main"]["tools"] += [tool for tool in tools]
-        super().__init__(
-            llm=llm, agents=instantiated, interface=interface, logs_db_path=logs_db_path,
-            vector_store=vector_store, document_vector_store=document_vector_store, context=context,
-            **params
-        )
+        if "main" not in prompts:
+            prompts["main"] = {}
 
-        interface.button_properties = {
-            "undo": {"callback": on_undo},
-            "rerun": {"callback": on_rerun},
-            "clear": {"callback": on_clear},
-        }
-
-
-        # Use existing method to create suggestions
-        self._add_suggestions_to_footer(
-            self.suggestions,
-            num_objects=1,
-            inplace=True,
-            analysis=False,
-            append_demo=True,
-            hide_after_use=False
-        )
+        if "tools" not in prompts["main"]:
+            prompts["main"]["tools"] = []
+        prompts["main"]["tools"] += [tool for tool in tools]
+        return prompts
 
     def __panel__(self):
         return self._main
-
-    def _add_suggestions_to_footer(
-        self,
-        suggestions: list[str],
-        num_objects: int = 2,
-        inplace: bool = True,
-        analysis: bool = False,
-        append_demo: bool = True,
-        hide_after_use: bool = True,
-        context: TContext | None = None
-    ):
-        if not suggestions:
-            return
-
-        async def hide_suggestions(_=None):
-            if len(self.interface.objects) > num_objects:
-                suggestion_buttons.visible = False
-
-        async def use_suggestion(event):
-            if self._main[0] is not self.interface:
-                self._main[:] = [self.interface]
-
-            button = event.obj
-            with button.param.update(loading=True), self.interface.active_widget.param.update(loading=True):
-                # Find the original suggestion tuple to get the text
-                button_index = suggestion_buttons.objects.index(button)
-                if button_index < len(suggestions):
-                    suggestion = suggestions[button_index]
-                    contents = suggestion[1] if isinstance(suggestion, tuple) else suggestion
-                else:
-                    contents = button.name
-                if hide_after_use:
-                    suggestion_buttons.visible = False
-                    if event.new > 1:  # prevent double clicks
-                        return
-                if analysis:
-                    for agent in self.agents:
-                        if isinstance(agent, AnalysisAgent):
-                            break
-                    else:
-                        log_debug("No analysis agent found.")
-                        return
-                    messages = [{"role": "user", "content": contents}]
-                    with agent.param.update(agents=self.agents):
-                        await agent.respond(messages, context)
-                        # Pass the same memory to _add_analysis_suggestions
-                        await self._add_analysis_suggestions(context)
-                else:
-                    self.interface.send(contents)
-
-        async def run_demo(event):
-            if hide_after_use:
-                suggestion_buttons.visible = False
-                if event.new > 1:  # prevent double clicks
-                    return
-            with self.interface.active_widget.param.update(loading=True):
-                for demo_message in self.demo_inputs:
-                    while self.interface.disabled:
-                        await asyncio.sleep(1.25)
-                    self.interface.active_widget.value = demo_message
-                    await asyncio.sleep(2)
-
-        suggestion_buttons = FlexBox(
-            *[
-                Button(
-                    name=suggestion[1] if isinstance(suggestion, tuple) else suggestion,
-                    icon=suggestion[0] if isinstance(suggestion, tuple) else None,
-                    button_style="outlined",
-                    on_click=use_suggestion,
-                    margin=5,
-                    disabled=self.interface.param.loading
-                )
-                for suggestion in suggestions
-            ],
-            margin=(5, 5),
-        )
-
-        if append_demo and self.demo_inputs:
-            suggestion_buttons.append(Button(
-                name="Show a demo",
-                icon="play_arrow",
-                button_type="primary",
-                variant="outlined",
-                on_click=run_demo,
-                margin=5,
-                disabled=self.interface.param.loading
-            ))
-        disable_js = "cb_obj.origin.disabled = true; setTimeout(() => cb_obj.origin.disabled = false, 3000)"
-        for b in suggestion_buttons:
-            b.js_on_click(code=disable_js)
-
-        if len(self.interface) != 0:
-            message = self.interface.objects[-1]
-            if inplace:
-                footer_objects = message.footer_objects or []
-                message.footer_objects = footer_objects + [suggestion_buttons]
-        else:
-            self._main[0].append(suggestion_buttons)
-
-        self.interface.param.watch(hide_suggestions, "objects")
-
-    async def _add_analysis_suggestions(self, context: TContext):
-        pipeline = context["pipeline"]
-        current_analysis = context.get("analysis")
-
-        # Clear current_analysis unless the last message is the same AnalysisOutput
-        if current_analysis and self.interface.objects:
-            last_message_obj = self.interface.objects[-1].object
-            if not (isinstance(last_message_obj, AnalysisOutput) and last_message_obj.analysis is current_analysis):
-                current_analysis = None
-
-        allow_consecutive = getattr(current_analysis, '_consecutive_calls', True)
-        applicable_analyses = []
-        for analysis in self._analyses:
-            if await analysis.applies(pipeline) and (allow_consecutive or analysis is not type(current_analysis)):
-                applicable_analyses.append(analysis)
-        self._add_suggestions_to_footer(
-            [f"Apply {analysis.__name__}" for analysis in applicable_analyses],
-            append_demo=False,
-            analysis=True,
-            context=context,
-            hide_after_use=False,
-            num_objects=len(self.interface.objects),
-        )
 
     @wrap_logfire(span_name="Chat Invoke")
     async def _chat_invoke(self, messages: list[Message], context: TContext, user: str, instance: ChatInterface) -> Plan:
@@ -900,13 +767,13 @@ class DependencyResolver(Coordinator):
                 tasks.append(
                     TaskGroup(
                         subagent,
-                        provides=unmet_dependencies,
                         instruction=output.chain_of_thought,
                         title=output.agent_or_tool
                     )
                 )
                 step.success_title = f"Solved a dependency with {output.agent_or_tool}"
-        return Plan(*(tasks[::-1] + [TaskGroup(agent, instruction=cot)]), history=messages, context=context, coordinator=self)
+        tasks = tasks[::-1] + [TaskGroup(agent, instruction=cot)]
+        return Plan(*tasks, history=messages, context=context, coordinator=self)
 
 
 class Planner(Coordinator):
@@ -974,10 +841,13 @@ class Planner(Coordinator):
                     steps_layout = step_message.object
                     break
 
-        with self.interface.add_step(title="Gathering context for planning...", user="Assistant", steps_layout=steps_layout) as step:
+        with self.interface.add_step(
+            title="Gathering context for planning...", user="Assistant", steps_layout=steps_layout
+        ) as step:
             for tool in self.planner_tools:
                 is_relevant = await self._check_tool_relevance(
-                    tool, "", self, f"Gather context for planning to answer {user_query}", messages, context
+                    tool, "", self, f"Gather context for planning to answer {user_query}",
+                    messages, context
                 )
 
                 if not is_relevant:
@@ -1047,8 +917,13 @@ class Planner(Coordinator):
         # e.g. DbtslAgent is unsatisfiable if DbtslLookup was used in planning
         # but did not provide dbtsl_metaset
         # also filter out agents where excluded keys exist in memory
-        agents = [agent for agent in agents if len(set(agent.input_schema.__required_keys__) - all_provides) == 0 and type(agent).__name__ != "ValidationAgent"]
-        tools = [tool for tool in tools if len(set(tool.input_schema.__required_keys__) - all_provides) == 0]
+        agents = [
+            agent for agent in agents if len(set(agent.input_schema.__required_keys__) - all_provides) == 0
+            and type(agent).__name__ != "ValidationAgent"
+        ]
+        tools = [
+            tool for tool in tools if len(set(tool.input_schema.__required_keys__) - all_provides) == 0
+        ]
         reasoning = None
         while reasoning is None:
             # candidates = agents and tools that can provide
@@ -1257,8 +1132,13 @@ class Planner(Coordinator):
         attempts = 0
         plan = None
 
-        self._todos_title = Typography("📋 Building checklist...", css_classes=["todos-title"], margin=0, styles={"font-weight": "normal", "font-size": "1.1em"})
-        self._todos = Typography(css_classes=["todos"], margin=0, styles={"font-weight": "normal"})
+        self._todos_title = Typography(
+            "📋 Building checklist...", css_classes=["todos-title"], margin=0,
+            styles={"font-weight": "normal", "font-size": "1.1em"}
+        )
+        self._todos = Typography(
+            css_classes=["todos"], margin=0, styles={"font-weight": "normal"}
+        )
         with self.interface.add_step(
             title="Planning how to solve user query...", user="Planner",
             layout_params={"header": Column(self._todos_title, self._todos), "collapsed": not self.verbose}
