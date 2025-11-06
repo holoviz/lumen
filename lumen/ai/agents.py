@@ -220,7 +220,7 @@ class SourceAgent(Agent):
         else:
             help_message = "**Please upload new dataset(s)/document(s) to continue**, or click cancel if this was unintended..."
         output.insert(0, help_message)
-        self.interface.send(output, respond=False, user="Assistant")
+        self.interface.send(output, respond=False, user=self.__class__.__name__)
         while not source_controls._add_button.clicks > 0:
             await asyncio.sleep(0.05)
             if source_controls._cancel_button.clicks > 0:
@@ -398,7 +398,7 @@ class ListAgent(Agent):
             pn.Column(
                 f"The available {self._column_name.lower()}s are listed below. Click on the eye icon to show the {self._column_name.lower()} contents.",
                 self._tabs
-            ), user="Assistant"
+            ), user=self.__class__.__name__
         )
         return [self._tabs], {}
 
@@ -2072,7 +2072,6 @@ class ValidationAgent(Agent):
         self,
         messages: list[Message],
         context: TContext,
-        render_output: bool = False,
         step_title: str | None = None,
     ) -> tuple[list[Any], ValidationOutputs]:
         def on_click(event):

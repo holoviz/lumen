@@ -8,14 +8,11 @@ from typing import TYPE_CHECKING, Any
 
 import param
 
-from panel import bind
 from panel.chat import ChatFeed
-from panel.io.document import hold
-from panel.pane import HTML, Markdown
+from panel.pane import HTML
 from panel.viewable import Viewer
 from panel_material_ui import (
-    Accordion, Button, Card, ChatInterface, ChatStep, Column, Paper, Tabs,
-    Typography,
+    Button, Card, ChatInterface, ChatStep, Column, Tabs, Typography,
 )
 from pydantic import BaseModel
 from typing_extensions import Self
@@ -24,9 +21,7 @@ from .actor import Actor
 from .agents import Agent, AnalysisAgent, ChatAgent
 from .config import PROMPTS_DIR, MissingContextError
 from .context import ContextError, TContext
-from .controls import SourceControls, TableSourceCard
 from .llm import LlamaCpp, Llm, Message
-from .logs import ChatLogs
 from .models import (
     RawPlan, Reasoning, ThinkingYesNo, make_agent_model, make_plan_model,
 )
@@ -297,9 +292,6 @@ class Coordinator(Viewer, VectorLookupToolUser):
     history = param.Integer(default=3, doc="""
         Number of previous user-assistant interactions to include in the chat history.""")
 
-    logs_db_path = param.String(default=None, doc="""
-        The path to the log file that will store the messages exchanged with the LLM.""")
-
     verbose = param.Boolean(default=False, allow_refs=True, doc="""
         Whether to show verbose output.""")
 
@@ -320,122 +312,10 @@ class Coordinator(Viewer, VectorLookupToolUser):
         context: TContext | None = None,
         vector_store: VectorStore | None = None,
         document_vector_store: VectorStore | None = None,
-        logs_db_path: str = "",
         **params,
     ):
-        def on_message(message, instance):
-            def update_on_reaction(reactions):
-                if not self._logs:
-                    return
-                self._logs.update_status(
-                    message_id=message_id,
-                    liked="like" in reactions,
-                    disliked="dislike" in reactions,
-                )
-
-            bind(update_on_reaction, message.param.reactions, watch=True)
-            message_id = id(message)
-            message_index = instance.objects.index(message)
-            self._logs.upsert(
-                session_id=self._session_id,
-                message_id=message_id,
-                message_index=message_index,
-                message_user=message.user,
-                message_content=message.serialize(),
-            )
-
-        def on_undo(instance, _):
-            if not self._logs:
-                return
-            count = instance._get_last_user_entry_index()
-            messages = instance[-count:]
-            for message in messages:
-                self._logs.update_status(message_id=id(message), removed=True)
-
-        def on_rerun(instance, _):
-            if not self._logs:
-                return
-            count = instance._get_last_user_entry_index() - 1
-            messages = instance[-count:]
-            for message in messages:
-                self._logs.update_status(message_id=id(message), removed=True)
-
-        def on_clear(instance, _):
-            pass
-
-        def on_submit(event=None, instance=None):
-            chat_input = self.interface.active_widget
-            uploaded = chat_input.value_uploaded
-            user_prompt = chat_input.value_input
-            if not user_prompt and not uploaded:
-                return
-
-            with self.interface.param.update(disabled=True, loading=True):
-                if self._main[0] is not self.interface:
-                    # Reset value input because reset has no time to propagate
-                    self._main[:] = [self.interface]
-
-                old_sources = context.get("sources", [])
-                if uploaded:
-                    # Process uploaded files through SourceControls if any exist
-                    source_controls = SourceControls(
-                        downloaded_files={key: value["value"] for key, value in uploaded.items()},
-                        context=context,
-                        replace_controls=False,
-                        show_input=False,
-                        clear_uploads=True  # Clear the uploads after processing
-                    )
-                    source_controls.param.trigger("add")
-                    chat_input.value_uploaded = {}
-                    source_cards = [
-                        TableSourceCard(source=source, name=source.name)
-                        for source in context.get("sources", []) if source not in old_sources
-                    ]
-                    if len(source_cards) > 1:
-                        source_view = Accordion(*source_cards, sizing_mode="stretch_width", name="TableSourceCard")
-                    else:
-                        source_view = source_cards[0]
-                    msg = Column(chat_input.value, source_view) if user_prompt else source_view
-                else:
-                    msg = Markdown(user_prompt)
-
-                with hold():
-                    self.interface.send(msg, respond=bool(user_prompt))
-                    chat_input.value_input = ""
-
-        log_debug("New Session: \033[92mStarted\033[0m", show_sep="above")
-
-        if interface is None:
-            interface = ChatInterface(
-                callback=self._chat_invoke,
-                callback_exception="raise",
-                load_buffer=5,
-                on_submit=on_submit,
-                show_button_tooltips=True,
-                show_button_name=False,
-                sizing_mode="stretch_both"
-            )
-        else:
-            interface.callback = self._chat_invoke
-            interface.on_submit = on_submit
-        interface.button_properties = {
-            "undo": {"callback": on_undo},
-            "rerun": {"callback": on_rerun},
-            "clear": {"callback": on_clear},
-        }
-
         if context is None:
             context = {}
-
-        self._session_id = id(self)
-
-        if logs_db_path:
-            interface.message_params["reaction_icons"] = {"like": "thumb-up", "dislike": "thumb-down"}
-            self._logs = ChatLogs(filename=logs_db_path)
-            interface.post_hook = on_message
-        else:
-            interface.message_params["show_reaction_icons"] = False
-            self._logs = None
 
         llm = llm or self.llm
         instantiated = []
@@ -462,38 +342,10 @@ class Coordinator(Viewer, VectorLookupToolUser):
             llm=llm,
             agents=instantiated,
             interface=interface,
-            logs_db_path=logs_db_path,
             vector_store=vector_store,
             document_vector_store=document_vector_store,
             context=context,
             **params
-        )
-        self._init_ui()
-
-    def _init_ui(self):
-        num_sources = len(self.context.get("sources", []))
-        if num_sources == 0:
-            prefix_text = "Add your dataset to begin, then"
-        else:
-            prefix_text = f"{num_sources} source{'s' if num_sources > 1 else ''} connected;"
-
-        self._main = Column(
-            Paper(
-                Typography(
-                    "Illuminate your data",
-                    disable_anchors=True,
-                    variant="h1"
-                ),
-                Typography(
-                    f"{prefix_text} ask any question, or select a quick action below."
-                ),
-                self.interface._widget,
-                max_width=850,
-                styles={'margin': 'auto'},
-                sx={'p': '0 20px 20px 20px'}
-            ),
-            sx={'display': 'flex', 'align-items': 'center'},
-            height_policy='max'
         )
 
     def _process_tools(self, tools: list[type[Tool] | Tool] | None) -> list[type[Tool] | Tool]:
@@ -532,14 +384,6 @@ class Coordinator(Viewer, VectorLookupToolUser):
             prompts["main"]["tools"] = []
         prompts["main"]["tools"] += [tool for tool in tools]
         return prompts
-
-    def __panel__(self):
-        return self._main
-
-    @wrap_logfire(span_name="Chat Invoke")
-    async def _chat_invoke(self, messages: list[Message], context: TContext, user: str, instance: ChatInterface) -> Plan:
-        log_debug(f"New Message: \033[91m{messages!r}\033[0m", show_sep="above")
-        return await self.respond(messages, context)
 
     async def _fill_model(self, messages, system, agent_model):
         model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
@@ -605,11 +449,17 @@ class Coordinator(Viewer, VectorLookupToolUser):
             obj = obj.value
         return str(obj)
 
-    async def respond(self, messages: list[Message], context: TContext, **kwargs: dict[str, Any]) -> Plan | None:
+    async def respond(
+        self, messages: list[Message], context: TContext, **kwargs: dict[str, Any]
+    ) -> Plan | None:
         context = {"agent_tool_contexts": [], **context}
         with self.interface.param.update(loading=True):
             if isinstance(self.llm, LlamaCpp):
-                with self.interface.add_step(title="Loading LlamaCpp model...", success_title="Using the cached LlamaCpp model", user="Assistant") as step:
+                with self.interface.add_step(
+                    success_title="Using the cached LlamaCpp model",
+                    title="Loading LlamaCpp model...",
+                    user="Assistant"
+                ) as step:
                     default_kwargs = self.llm.model_kwargs["default"]
                     if 'repo' in default_kwargs and 'model_file' in default_kwargs:
                         step.stream(f"Model: `{default_kwargs['repo']}/{default_kwargs['model_file']}`")
@@ -628,20 +478,23 @@ class Coordinator(Viewer, VectorLookupToolUser):
             agents = {normalized_name(agent): agent for agent in self.agents}
             tools = {normalized_name(tool): tool for tool in self._tools["main"]}
 
-            agents, tools, pre_plan_output = await self._pre_plan(messages, context, agents, tools)
-            context["plan"] = plan = await self._compute_plan(messages, context, agents, tools, pre_plan_output)
+            agents, tools, pre_plan_output = await self._pre_plan(
+                messages, context, agents, tools
+            )
+            plan = await self._compute_plan(
+                messages, context, agents, tools, pre_plan_output
+            )
             if plan is None:
                 msg = (
                     "Assistant could not settle on a plan of action to perform the requested query. "
                     "Please restate your request."
                 )
-                self.interface.stream(msg, user='Lumen')
-                return
-
+                self.interface.stream(msg, user=self.__class__.__name__)
         return plan
 
     async def _check_tool_relevance(
-        self, tool: Tool, tool_output: str, actor: Actor, actor_task: str, messages: list[Message], context: TContext
+        self, tool: Tool, tool_output: str, actor: Actor, actor_task: str,
+        messages: list[Message], context: TContext
     ) -> bool:
         result = await self._invoke_prompt(
             "tool_relevance",
@@ -656,6 +509,9 @@ class Coordinator(Viewer, VectorLookupToolUser):
         )
 
         return result.yes
+
+    def __panel__(self):
+        return self._interface
 
     async def sync(self, context: TContext | None):
         context = context or self.context
