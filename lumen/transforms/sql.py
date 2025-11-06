@@ -244,6 +244,8 @@ class SQLFormat(SQLTransform):
                 else:
                     parameters[k] = v
             replaced_expression = replace_placeholders(expression, **parameters)
+        else:
+            replaced_expression = expression
         return self.to_sql(replaced_expression,)
 
 
@@ -252,7 +254,7 @@ class SQLSelectFrom(SQLFormat):
     sql_expr = param.String(
         default="SELECT * FROM {table}",
         doc="""
-        The SQL expression to useif the sql_in does NOT
+        The SQL expression to use if the sql_in does NOT
         already contain a SELECT statement.""",
     )
 

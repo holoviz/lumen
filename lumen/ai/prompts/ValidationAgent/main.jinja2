@@ -45,7 +45,8 @@ Current context contains the following keys: {{ ", ".join(memory) }}
 {% if memory.get('sql') %}
 SQL: `{{ memory['sql'] }}`
 {%- endif -%}
-{% if memory.get('data') is not none %}
-Data Overview: {{ memory["data"] }}
+{%- if memory.get('data') is not none %}
+Data Overview:
+{{ memory["data"] }}
 {%- endif -%}
 {%- endblock -%}

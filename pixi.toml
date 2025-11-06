@@ -32,6 +32,7 @@ panel = ">=1.7.5"
 param = ">=2.2.1"
 pip = "*"
 sqlglot = "*"
+sqlglotrs = "*"
 
 [feature.py310.dependencies]
 python = "3.10.*"

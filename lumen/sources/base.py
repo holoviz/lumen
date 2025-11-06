@@ -950,6 +950,17 @@ class BaseSQLSource(Source):
         - Table name only: 'TABLE'
         - Wildcards: 'SCHEMA.*'""")
 
+    table_params = param.Dict(
+        default={},
+        doc="""
+        Dictionary mapping table names to SQL parameters.
+        Parameters can be:
+        - list: Positional parameters for placeholder (?) syntax
+        - dict: Named parameters for :name, %(name)s, etc. syntax
+        Each table maps to either a list or dict of parameters.
+        Example: {'my_table': [2024, 'active'], 'other_table': {'year': 2024}}""",
+    )
+
     load_schema = param.Boolean(default=True, doc="Whether to load the schema")
 
     # Declare this source supports SQL transforms
@@ -1015,17 +1026,32 @@ class BaseSQLSource(Source):
         else:
             table = self.normalize_table(table)
 
-        sql_expr = SQLSelectFrom(sql_expr=self.sql_expr).apply(table)
+        sql_expr = SQLSelectFrom(sql_expr=self.sql_expr, read=self.dialect).apply(table)
         return sql_expr
 
-    def create_sql_expr_source(self, tables: dict[str, str], **kwargs):
+    def create_sql_expr_source(self, tables: dict[str, str], params: dict[str, list | dict] | None = None, **kwargs):
         """
         Creates a new SQL Source given a set of table names and
         corresponding SQL expressions.
+
+        Arguments
+        ---------
+        tables: dict[str, str]
+            Mapping from table name to SQL expression.
+        params: dict[str, list | dict] | None
+            Optional mapping from table name to parameters:
+            - list: Positional parameters for placeholder (?) syntax
+            - dict: Named parameters for :name, %(name)s, etc. syntax
+        kwargs: any
+            Additional keyword arguments.
+
+        Returns
+        -------
+        source: BaseSQLSource subclass
         """
         raise NotImplementedError
 
-    def execute(self, sql_query: str, *args, **kwargs) -> pd.DataFrame:
+    def execute(self, sql_query: str, params: list | dict | None = None, *args, **kwargs) -> pd.DataFrame:
         """
         Executes a SQL query and returns the result as a DataFrame.
 
@@ -1033,8 +1059,13 @@ class BaseSQLSource(Source):
         ---------
         sql_query : str
             The SQL Query to execute
+        params : list | dict | None
+            Parameters to use in the SQL query:
+            - list: Positional parameters for placeholder (?) syntax
+            - dict: Named parameters for :name, %(name)s, etc. syntax
+            - None: No parameters
         *args : list
-            Positional arguments to pass to the SQL query
+            Additional positional arguments to pass to the SQL query
         **kwargs : dict
             Keyword arguments to pass to the SQL query
 
@@ -1045,7 +1076,7 @@ class BaseSQLSource(Source):
         """
         raise NotImplementedError
 
-    async def execute_async(self, sql_query: str, *args, **kwargs) -> pd.DataFrame:
+    async def execute_async(self, sql_query: str, params: list | dict | None = None, *args, **kwargs) -> pd.DataFrame:
         """
         Executes a SQL query asynchronously and returns the result as a DataFrame.
 
@@ -1057,8 +1088,13 @@ class BaseSQLSource(Source):
         ---------
         sql_query : str
             The SQL Query to execute
+        params : list | dict | None
+            Parameters to use in the SQL query:
+            - list: Positional parameters for placeholder (?) syntax
+            - dict: Named parameters for :name, %(name)s, etc. syntax
+            - None: No parameters
         *args : list
-            Positional arguments to pass to the SQL query
+            Additional positional arguments to pass to the SQL query
         **kwargs : dict
             Keyword arguments to pass to the SQL query
 
@@ -1067,7 +1103,7 @@ class BaseSQLSource(Source):
         pd.DataFrame
             The result as a pandas DataFrame
         """
-        return await asyncio.to_thread(self.execute, sql_query, *args, **kwargs)
+        return await asyncio.to_thread(self.execute, sql_query, params, *args, **kwargs)
 
     async def get_async(self, table: str, **query) -> DataFrame:
         """
@@ -1113,12 +1149,12 @@ class BaseSQLSource(Source):
             data_sql_expr = sql_expr
             for sql_transform in sql_transforms:
                 data_sql_expr = sql_transform.apply(data_sql_expr)
-            data = self.execute(data_sql_expr)
+            data = self.execute(data_sql_expr, self.table_params.get(entry, []))
             schemas[entry] = schema = get_dataframe_schema(data)['items']['properties']
 
             count_expr = SQLCount(read=self.dialect).apply(sql_expr)
             count_expr = ' '.join(count_expr.splitlines())
-            count_data = self.execute(count_expr)
+            count_data = self.execute(count_expr, self.table_params.get(entry, []))
             count_col = 'count' if 'count' in count_data else 'COUNT'
             count = int(count_data[count_col].iloc[0])
             if limit:
@@ -1136,7 +1172,7 @@ class BaseSQLSource(Source):
             for col in enums:
                 distinct_expr = SQLDistinct(columns=[col], read=self.dialect).apply(sql_expr)
                 distinct_expr = ' '.join(distinct_expr.splitlines())
-                distinct = self.execute(distinct_expr)
+                distinct = self.execute(distinct_expr, self.table_params.get(entry, []))
                 schema[col]['enum'] = distinct[col].tolist()
 
             schema['__len__'] = count
@@ -1145,7 +1181,7 @@ class BaseSQLSource(Source):
 
             minmax_expr = SQLMinMax(columns=min_maxes, read=self.dialect).apply(sql_expr)
             minmax_expr = ' '.join(minmax_expr.splitlines())
-            minmax_data = self.execute(minmax_expr)
+            minmax_data = self.execute(minmax_expr, self.table_params.get(entry, []))
             for col in min_maxes:
                 kind = data[col].dtype.kind
                 if kind in 'iu':

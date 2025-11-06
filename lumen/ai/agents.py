@@ -130,7 +130,8 @@ class Agent(Viewer, ToolUser, ContextProvider):
     async def _stream(self, messages: list[Message], system_prompt: str) -> Any:
         message = None
         model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
-        async for output_chunk in self.llm.stream(messages, system=system_prompt, model_spec=model_spec, field="output"):
+        output = self.llm.stream(messages, system=system_prompt, model_spec=model_spec, field="output")
+        async for output_chunk in output:
             if self.interface is None:
                 if message is None:
                     message = ChatMessage(output_chunk, user=self.user)
@@ -1473,7 +1474,8 @@ class VegaLiteAgent(BaseViewAgent):
                 response = requests.get(f"{VECTOR_STORE_ASSETS_URL}{db_file}", timeout=5)
                 response.raise_for_status()
                 uri.write_bytes(response.content)
-        self._vector_store = DuckDBVectorStore(uri=str(uri))
+        # Use a read-only connection to avoid lock conflicts
+        self._vector_store = DuckDBVectorStore(uri=str(uri), read_only=True)
         return self._vector_store
 
     def _deep_merge_dicts(self, base_dict: dict[str, Any], update_dict: dict[str, Any]) -> dict[str, Any]:
