@@ -247,7 +247,6 @@ class BaseWidgetFilter(Filter):
     __abstract = True
 
     def __init__(self, **params):
-        self.widget = None
         super().__init__(**params)
 
     def _setup_sync(self):
