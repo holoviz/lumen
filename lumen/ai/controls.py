@@ -1124,7 +1124,7 @@ class TableExplorer(Viewer):
             disabled=self._table_select.param.value.rx().rx.not_(), on_click=self._update_explorers,
             margin=(0, 0, 0, 10), width=200, align='end'
         )
-        self._input_row = Row(self._table_select, self._explore_button, margin=(0, 10, 0, 5))
+        self._input_row = Row(self._table_select, self._explore_button, margin=(0, 10, 0, 10))
         self._source_map = {}
         self._tabs = Tabs(dynamic=True, sizing_mode='stretch_both')
         self._layout = Column(

@@ -53,7 +53,7 @@ from .export import (
 from .llm import Llm, Message, OpenAI
 from .llm_dialog import LLMConfigDialog
 from .logs import ChatLogs
-from .report import Report, TaskGroup
+from .report import ActorTask, Report
 from .utils import log_debug, wrap_logfire
 from .vector_store import VectorStore
 from .views import AnalysisOutput, LumenOutput, SQLOutput
@@ -753,7 +753,7 @@ class UI(Viewer):
                     return
 
                 plan = Plan(
-                    TaskGroup(
+                    ActorTask(
                         agent,
                         instruction=contents,
                         title=contents
@@ -893,7 +893,7 @@ class ChatUI(UI):
 
 class Exploration(param.Parameterized):
 
-    context = param.Dict()
+    context = param.Dict(allow_refs=True)
 
     conversation = Children()
 
@@ -988,7 +988,7 @@ class ExplorerUI(UI):
         # Render home page
         self._explorations_intro = Markdown(
             EXPLORATIONS_INTRO,
-            margin=(0, 0, 0, 10),
+            margin=(0, 0, 0, 20),
             sizing_mode='stretch_width',
         )
         self._explorer = TableExplorer(context=self.context)
@@ -998,13 +998,13 @@ class ExplorerUI(UI):
         self._breadcrumbs = NestedBreadcrumbs(
             items=[self._exploration],
             value=self.param._exploration,
-            margin=(10, 0, 0, 5)
+            margin=(10, 0, 0, 13)
         )
         self._breadcrumbs.param.watch(self._sync_active, 'value')
 
         # Main Area
         self._output = Paper(
-            self._breadcrumbs, self._home.view, elevation=2, margin=(5, 10, 5, 5), sx={'pl': 1},
+            self._breadcrumbs, self._home.view, elevation=2, margin=(5, 10, 5, 5),
             height_policy='max', sizing_mode="stretch_both"
         )
         self._split = HSplit(
@@ -1188,13 +1188,14 @@ class ExplorerUI(UI):
         conversation = list(self.interface.objects)
 
         # Create new exploration
-        output = MuiColumn(
-            Tabs(('Overview', "Waiting on data..."), dynamic=True, sizing_mode='stretch_both'),
-            loading=True,
-            sizing_mode='stretch_both'
+        output = Tabs(
+            ('Overview', "Waiting on data..."),
+            dynamic=True,
+            sizing_mode='stretch_both',
+            loading=plan.param.running
         )
         exploration = Exploration(
-            context=plan.context,
+            context=plan.param.out_context,
             conversation=conversation,
             parent=parent,
             plan=plan,
@@ -1233,7 +1234,7 @@ class ExplorerUI(UI):
         return (title, VSplit(out.editor, output, sizes=(20, 80), expanded_sizes=(20, 80), sizing_mode="stretch_both"))
 
     def _add_views(self, exploration: Exploration, event: param.parameterized.Event):
-        tabs = exploration.view[-1]
+        tabs = exploration.view
         outputs = [view for view in event.new if isinstance(view, LumenOutput) and view not in event.old]
         content = []
         for out in outputs:
@@ -1259,7 +1260,7 @@ class ExplorerUI(UI):
         old = [view for view in event.old if isinstance(view, LumenOutput)]
 
         idx = None
-        tabs = exploration.view[-1]
+        tabs = exploration.view
         content = list(zip(tabs._names, tabs, strict=False))
         for out in old:
             if out in current:
@@ -1286,7 +1287,7 @@ class ExplorerUI(UI):
         parent = prev["view"]
 
         # Check if we are adding to existing exploration or creating a new one
-        new_exploration = any("pipeline" in step[0].output_schema.__annotations__ for step in plan)
+        new_exploration = any("pipeline" in step.actor.output_schema.__annotations__ for step in plan)
         if new_exploration:
             exploration = await self._add_exploration(plan, parent)
             watcher = plan.param.watch(partial(self._add_views, exploration), "views")
@@ -1306,6 +1307,14 @@ class ExplorerUI(UI):
         if "__error__" in out_context:
             # On error we have to sync the conversation, unwatch the plan,
             # and remove the exploration if it was newly created
+            rerun_button = Button(
+                name="Rerun",
+                on_click=lambda event: self.interface._click_rerun(),
+                button_type="primary"
+            )
+            last_message = self.interface.objects[-1]
+            footer_objects = last_message.footer_objects or []
+            last_message.footer_objects = footer_objects + [rerun_button]
             parent.conversation = exploration.conversation
             del out_context['__error__']
             if new_exploration:
@@ -1318,8 +1327,6 @@ class ExplorerUI(UI):
                     if parent is self._home:
                         self._split.collapsed = 1
         else:
-            exploration.context = out_context
-            exploration.view.loading = False
             if "pipeline" in out_context:
                 await self._add_analysis_suggestions(plan, outputs, out_context)
             plan.param.watch(partial(self._update_views, exploration), "views")
@@ -1331,9 +1338,9 @@ class ExplorerUI(UI):
         log_debug(f"New Message: \033[91m{messages!r}\033[0m", show_sep="above")
         self._idle.clear()
         try:
-            context = self._explorations.value["view"].context
-            plan = await self._coordinator.respond(messages, context)
+            exploration = self._exploration['view']
+            plan = await self._coordinator.respond(messages, exploration.context)
             await self._execute_plan(plan)
         finally:
-            self._explorations.value['view'].conversation = self.interface.objects
+            self._exploration['view'].conversation = self.interface.objects
             self._idle.set()

@@ -1357,10 +1357,9 @@ class BaseViewAgent(LumenBaseAgent):
             raise ValueError("Failed to retrieve schema for the current pipeline.")
 
         spec = await self._create_valid_spec(messages, context, pipeline, schema, step_title)
-        context["view"] = dict(spec, type=self.view_type)
         view = self.view_type(pipeline=pipeline, **spec)
         out = self._output_type(component=view, title=step_title)
-        return [out], {"view": view}
+        return [out], {"view": dict(spec, type=self.view_type.view_type)}
 
 
 class hvPlotAgent(BaseViewAgent):
@@ -1847,7 +1846,7 @@ class VegaLiteAgent(BaseViewAgent):
             out.spec = dump_yaml(spec)
             log_debug(f"📊 Applied {step_name} updates and refreshed visualization")
 
-        return [out], {"view": view}
+        return [out], {"view": dict(full_dict, type=view.view_type)}
 
     async def annotate(
         self,

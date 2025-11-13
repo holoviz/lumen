@@ -27,12 +27,10 @@ from ..transforms.sql import SQLLimit
 from ..views.base import Panel, Table
 from .analysis import Analysis
 from .config import VEGA_ZOOMABLE_MAP_ITEMS
-from .utils import get_data
+from .utils import describe_data
 
 
 class LumenOutput(Viewer):
-
-    active = param.Integer(default=1)
 
     component = param.ClassSelector(class_=Component)
 
@@ -64,7 +62,9 @@ class LumenOutput(Viewer):
             soft_tabs=True,
             on_keyup=False,
             indent=2,
-            disabled=self.param.spec.rx.is_(None)
+            margin=(0, 10),
+            disabled=self.param.spec.rx.is_(None),
+            styles={"border": "1px solid var(--border-color)"}
         )
         self._editor.link(self, bidirectional=True, value='spec')
         copy_icon = IconButton(
@@ -95,7 +95,7 @@ class LumenOutput(Viewer):
         )
         self._icons = Row(
             *([copy_icon, download_icon] + self.footer),
-            margin=(0, 0, 5, 5)
+            margin=(0, 0, 5, 10)
         )
         self.editor = Column(
             self._editor,
@@ -134,6 +134,15 @@ class LumenOutput(Viewer):
     def _update_footer(self):
         self._icons[:] = list(self._icons[:2]) + self.footer
 
+    @param.depends("spec", watch=True)
+    def _update_component(self):
+        if self.spec in self._last_output and self.component is None:
+            return
+        pipeline = getattr(self.component, 'pipeline', None)
+        self.component = self._deserialize_component(
+            self.component, self.spec, self._spec_dict, pipeline=pipeline
+        )
+
     async def _render_pipeline(self, pipeline):
         table = Table(
             pipeline=pipeline, pagination='remote',
@@ -163,7 +172,7 @@ class LumenOutput(Viewer):
         else:
             sql_limit = None
         if sql_limit:
-            data = await get_data(pipeline)
+            data = pipeline.data
             limited = len(data) == sql_limit.limit
             if limited:
                 def unlimit(e):
@@ -175,8 +184,18 @@ class LumenOutput(Viewer):
                 controls.insert(0, full_data)
         return Column(controls, table)
 
-    @param.depends('spec', 'active')
+    async def render_context(self):
+        return {"view": self.component}
+
+    @param.depends('spec')
     async def render(self):
+        if self.component is None:
+            yield Alert(
+                "No component to render. Please complete the Config tab.",
+                alert_type="warning",
+            )
+            return
+
         yield CircularProgress(
             value=True, label="Rendering component...", height=50, width=50
         )
@@ -184,19 +203,8 @@ class LumenOutput(Viewer):
         if self.spec in self._last_output:
             yield self._last_output[self.spec]
             return
-        elif self.component is None:
-            yield Alert(
-                "No component to render. Please complete the Config tab.",
-                alert_type="warning",
-            )
-            return
 
         try:
-            if self._rendered:
-                pipeline = getattr(self.component, 'pipeline', None)
-                self.component = self._deserialize_component(
-                    self.component, self.spec, self._spec_dict, pipeline=pipeline
-                )
             if isinstance(self.component, Pipeline):
                 output = await self._render_pipeline(self.component)
             else:
@@ -381,7 +389,7 @@ class AnalysisOutput(LumenOutput):
             else:
                 self.analysis._run_button = run_button = Button(
                     icon='play_circle_outline', label='Run', on_click=self._rerun,
-                    button_type='success', margin=(10, 0, 0 ,10)
+                    button_type='success', margin=(10, 0, 0, 10)
                 )
             self.editor = Column(controls, run_button)
         self._rendered = True
@@ -396,16 +404,21 @@ class AnalysisOutput(LumenOutput):
                 view = Panel(object=view, pipeline=self.pipeline)
             self.component = view
             self._rendered = False
-            spec, self._spec_dict = self._serialize_component(view)
-            self.param.update(
-                spec=spec,
-                active=0
-            )
+            self.spec, self._spec_dict = self._serialize_component(view)
 
 
 class SQLOutput(LumenOutput):
 
     language = "sql"
+
+    async def render_context(self):
+        return {
+            "sql": self.spec,
+            "pipeline": self.component,
+            "table": self.component.table,
+            "source": self.component.source,
+            "data": await describe_data(self.component.data)
+        }
 
     @classmethod
     def _serialize_component(cls, component: Component, spec_dict: dict[str, Any] | None = None) -> tuple[str, dict[str, Any]]:

@@ -12,7 +12,7 @@ from panel.chat import ChatFeed
 from panel.pane import HTML
 from panel.viewable import Viewer
 from panel_material_ui import (
-    Button, Card, ChatInterface, ChatStep, Column, Tabs, Typography,
+    Card, ChatInterface, ChatStep, Column, Tabs, Typography,
 )
 from pydantic import BaseModel
 from typing_extensions import Self
@@ -25,7 +25,7 @@ from .llm import LlamaCpp, Llm, Message
 from .models import (
     RawPlan, Reasoning, ThinkingYesNo, make_agent_model, make_plan_model,
 )
-from .report import Section, TaskGroup
+from .report import ActorTask, Section, TaskWrapper
 from .tools import (
     IterativeTableLookup, TableLookup, Tool, VectorLookupToolUser,
 )
@@ -54,7 +54,9 @@ class Plan(Section):
 
     interface = param.ClassSelector(class_=ChatFeed)
 
-    def _render_task_history(self, i: int, failed: bool = False) -> tuple[list[Message], str]:
+    _tasks = param.List(item_type=ActorTask)
+
+    def render_task_history(self, i: int, failed: bool = False) -> tuple[list[Message], str]:
         user_query = None
         for msg in reversed(self.history):
             if msg.get('role') == 'user':
@@ -88,21 +90,22 @@ class Plan(Section):
 
     async def _run_task(self, i: int, task: Self | Actor, context: TContext, **kwargs):
         outputs = []
+        steps = self.coordinator.steps_layout
         with self._add_step(
             title=f"{task.title}...",
             user="Runner",
-            layout_params={"title": "🏗️ Plan Execution Steps"},
-            steps_layout=self.coordinator.steps_layout
+            layout_params={"title": "🏗️ Running "},
+            steps_layout=steps
         ) as step:
-            self.coordinator._todos_title.object = f"⚙️ Working on task {task.title!r}..."
-            step.stream(f"`Working on task {task.title}`:\n\n{task.instruction}")
-            history, todos = self._render_task_history(i)
+            steps.header[0].object = f"⚙️ Working on task {task.title!r}..."
+            step.stream(task.instruction)
+            history, todos = self.render_task_history(i)
             subcontext = self._get_context(i, context, task)
             self.coordinator._todos.object = todos
             try:
                 kwargs = {"agents": self.agents} if 'agents' in task.param else {}
                 with task.param.update(
-                    interface=self.interface, steps_layout=self.coordinator.steps_layout,
+                    interface=self.interface, steps_layout=self.coordinator.steps_layout[-1],
                     history=history, **kwargs
                 ):
                     outputs, task_context = await task.execute(subcontext, **kwargs)
@@ -123,9 +126,10 @@ class Plan(Section):
             elif task.status == "error":
                 step.failed_title = f"{task.title} errored during execution."
                 raise RuntimeError(step.failed_title)
+            context_keys = ", ".join(f'`{k}`' for k in task_context)
+            step.stream(f"Generated {len(outputs)} and provided {context_keys}.")
+            step.success_title = f"Task {task.title!r} successfully completed"
             log_debug(f"\033[96mCompleted: {task.title}\033[0m", show_length=False)
-            step.stream(f"\n\nSuccessfully completed task {task.title}:\n\n> {task.instruction}", replace=True)
-            step.success_title = f"{task.title} successfully completed"
         return outputs, task_context
 
     async def _handle_task_execution_error(
@@ -177,7 +181,7 @@ class Plan(Section):
         for idx in reversed(range(failed_index)):
             task = self._tasks[idx]
             # Check if this task provides pipeline or other relevant context
-            if isinstance(task, TaskGroup):
+            if isinstance(task, TaskWrapper):
                 for actor in task:
                     if 'pipeline' in actor.output_schema.__annotations__:
                         return idx
@@ -206,7 +210,7 @@ class Plan(Section):
             # For the provider task, mutate the user message to include feedback
             retry_history = mutate_user_message(feedback_suffix, self.history.copy())
             # Show retry in UI
-            with self.interface.add_step(
+            with self._add_step(
                 title=f"🔄 Retrying {task.title} with feedback...",
                 user="Runner",
                 steps_layout=self.steps_layout
@@ -236,31 +240,16 @@ class Plan(Section):
         if '__error__' in context:
             del context['__error__']
         outputs, out_context = await super().execute(context, **kwargs)
-        _, todos = self._render_task_history(self._current, failed=self.status == "error")
-        self.coordinator._todos.object = todos
+        _, todos = self.render_task_history(self._current, failed=self.status == "error")
+        steps_title, todo_list = self.coordinator.steps_layout.header
+        todo_list.object = todos
         if self.status == 'success':
-            self.coordinator._todos_title.object = f"✅ Sucessfully completed {self.title!r}"
+            steps_title.object = f"✅ Sucessfully completed {self.title!r}"
         else:
-            self.coordinator._todos_title.object = f"❌ Failed to execute {self.title!r}"
-
-            if isinstance(self.interface, ChatInterface):
-                # Add rerun button on failure
-                interface = self.interface
-                rerun_button = Button(
-                    name="Rerun",
-                    on_click=lambda event: interface._click_rerun() if interface else None,
-                    button_type="primary"
-                )
-                if self.interface and len(self.interface.objects) > 0:
-                    last_message = self.interface.objects[-1]
-                    footer_objects = last_message.footer_objects or []
-                    last_message.footer_objects = footer_objects + [rerun_button]
-
+            steps_title.object = f"❌ Failed to execute {self.title!r}"
         log_debug("\033[92mCompleted: Plan\033[0m", show_sep="below")
         if self.interface is not None:
-            for message_obj in self.interface.objects[::-1]:
-                if isinstance(message_obj.object, Card):
-                    message_obj.object.collapsed = True
+            self.coordinator.steps_layout.collapsed = True
         return outputs, out_context
 
 
@@ -271,6 +260,14 @@ class Coordinator(Viewer, VectorLookupToolUser):
     computing an execution graph and then executing each
     step along the graph.
     """
+
+    agents = param.List(default=[ChatAgent], doc="""
+        List of agents to coordinate.""")
+
+    context = param.Dict(default={})
+
+    history = param.Integer(default=3, doc="""
+        Number of previous user-assistant interactions to include in the chat history.""")
 
     prompts = param.Dict(
         default={
@@ -283,14 +280,6 @@ class Coordinator(Viewer, VectorLookupToolUser):
             },
         },
     )
-
-    agents = param.List(default=[ChatAgent], doc="""
-        List of agents to coordinate.""")
-
-    context = param.Dict(default={})
-
-    history = param.Integer(default=3, doc="""
-        Number of previous user-assistant interactions to include in the chat history.""")
 
     verbose = param.Boolean(default=False, allow_refs=True, doc="""
         Whether to show verbose output.""")
@@ -316,6 +305,16 @@ class Coordinator(Viewer, VectorLookupToolUser):
     ):
         if context is None:
             context = {}
+
+        if interface is None:
+            interface = ChatInterface(
+                callback=self._chat_invoke,
+                callback_exception="raise",
+                load_buffer=5,
+                show_button_tooltips=True,
+                show_button_name=False,
+                sizing_mode="stretch_both"
+            )
 
         llm = llm or self.llm
         instantiated = []
@@ -347,6 +346,20 @@ class Coordinator(Viewer, VectorLookupToolUser):
             context=context,
             **params
         )
+
+        self._todos_title = Typography(
+            "📋 Building checklist...", css_classes=["todos-title"], margin=0,
+            styles={"font-weight": "normal", "font-size": "1.1em"}
+        )
+        self._todos = Typography(
+            css_classes=["todos"], margin=0, styles={"font-weight": "normal"}
+        )
+        self._todos_layout = Column(self._todos_title, self._todos)
+
+    @wrap_logfire(span_name="Chat Invoke")
+    async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface) -> Plan:
+        log_debug(f"New Message: \033[91m{contents!r}\033[0m", show_sep="above")
+        return await self.respond(contents, self.context)
 
     def _process_tools(self, tools: list[type[Tool] | Tool] | None) -> list[type[Tool] | Tool]:
         tools = list(tools) if tools else []
@@ -455,7 +468,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
         context = {"agent_tool_contexts": [], **context}
         with self.interface.param.update(loading=True):
             if isinstance(self.llm, LlamaCpp):
-                with self.interface.add_step(
+                with self._add_step(
                     success_title="Using the cached LlamaCpp model",
                     title="Loading LlamaCpp model...",
                     user="Assistant"
@@ -490,6 +503,10 @@ class Coordinator(Viewer, VectorLookupToolUser):
                     "Please restate your request."
                 )
                 self.interface.stream(msg, user=self.__class__.__name__)
+        if plan is not None:
+            self._todos_title.object = "🧾 Checklist ready..."
+            _, todos = plan.render_task_history(-1)
+            self._todos.object = todos
         return plan
 
     async def _check_tool_relevance(
@@ -580,7 +597,7 @@ class DependencyResolver(Coordinator):
             agent = next(iter(agents.values()))
         else:
             agent = None
-            with self.interface.add_step(title="Selecting primary agent...", user="Assistant") as step:
+            with self._add_step(title="Selecting primary agent...", user="Assistant") as step:
                 try:
                     output = await self._choose_agent(messages, context, self.agents, primary=True)
                 except Exception as e:
@@ -605,7 +622,7 @@ class DependencyResolver(Coordinator):
         while (unmet_dependencies := tuple(
             r for r in await subagent.requirements(messages) if r not in self._memory
         )):
-            with self.interface.add_step(title="Resolving dependencies...", user="Assistant") as step:
+            with self._add_step(title="Resolving dependencies...", user="Assistant") as step:
                 step.stream(f"Found {len(unmet_dependencies)} unmet dependencies: {', '.join(unmet_dependencies)}")
                 log_debug(f"\033[91m### Unmet dependencies: {unmet_dependencies}\033[0m")
                 subagents = [
@@ -621,14 +638,14 @@ class DependencyResolver(Coordinator):
                 else:
                     subagent = agents[output.agent_or_tool]
                 tasks.append(
-                    TaskGroup(
+                    ActorTask(
                         subagent,
                         instruction=output.chain_of_thought,
                         title=output.agent_or_tool
                     )
                 )
                 step.success_title = f"Solved a dependency with {output.agent_or_tool}"
-        tasks = tasks[::-1] + [TaskGroup(agent, instruction=cot)]
+        tasks = tasks[::-1] + [ActorTask(agent, instruction=cot)]
         return Plan(*tasks, history=messages, context=context, coordinator=self)
 
 
@@ -689,16 +706,8 @@ class Planner(Coordinator):
             if msg.get("role") == "user"), ""
         )
 
-        steps_layout = self.steps_layout
-        if self.interface and steps_layout is None:
-            steps_layout = None
-            for step_message in reversed(self.interface.objects[-5:]):
-                if step_message.user == "Planner" and isinstance(step_message.object, Card):
-                    steps_layout = step_message.object
-                    break
-
-        with self.interface.add_step(
-            title="Gathering context for planning...", user="Assistant", steps_layout=steps_layout
+        with self._add_step(
+            title="Gathering context for planning...", user="Assistant", steps_layout=self.steps_layout
         ) as step:
             for tool in self.planner_tools:
                 is_relevant = await self._check_tool_relevance(
@@ -711,12 +720,12 @@ class Planner(Coordinator):
 
                 tool_name = getattr(tool, "name", type(tool).__name__)
                 step.stream(f"Using {tool_name} to gather planning context...")
-                task = TaskGroup(
+                task = ActorTask(
                     tool,
                     interface=self.interface,
                     instruction=user_query,
                     title=f"Gathering context with {tool_name}",
-                    steps_layout=steps_layout,
+                    steps_layout=self.steps_layout,
                 )
                 await task.execute(context)
                 if task.status != "error":
@@ -735,7 +744,7 @@ class Planner(Coordinator):
             await self._execute_planner_tools(messages, context)
         else:
             log_debug("\033[92mDetected follow-up question, using existing context\033[0m")
-            with self.interface.add_step(
+            with self._add_step(
                 title="Using existing data context...", user="Assistant", steps_layout=self.steps_layout
             ) as step:
                 step.stream("Detected that this is a follow-up question related to the previous dataset.")
@@ -812,7 +821,6 @@ class Planner(Coordinator):
                 response_model=Reasoning,
                 max_retries=3,
             ):
-                self.steps_layout.title = "🧠 Reasoning about the plan..."
                 if reasoning.chain_of_thought:  # do not replace with empty string
                     context["reasoning"] = reasoning.chain_of_thought
                     step.stream(reasoning.chain_of_thought, replace=True)
@@ -899,7 +907,7 @@ class Planner(Coordinator):
                     title='Loading table',
                 )
                 tasks.append(
-                    TaskGroup(
+                    ActorTask(
                         agents['SQLAgent'],
                         instruction=sql_step.instruction,
                         title=sql_step.title
@@ -910,7 +918,7 @@ class Planner(Coordinator):
                 unmet_dependencies -= provided
                 actors_in_graph.add('SQLAgent')
             tasks.append(
-                TaskGroup(
+                ActorTask(
                     subagent,
                     instruction=step.instruction,
                     title=step.title
@@ -919,8 +927,8 @@ class Planner(Coordinator):
             steps.append(step)
             actors_in_graph.add(key)
 
-        last_task = tasks[-1]
-        if isinstance(last_task[0], Tool):
+        last_task = tasks[-1] if tasks else None
+        if last_task and isinstance(last_task.actor, Tool):
             if "AnalystAgent" in agents and all(r in provided for r in agents["AnalystAgent"].input_schema.__annotations__):
                 actor = "AnalystAgent"
             else:
@@ -943,7 +951,7 @@ class Planner(Coordinator):
             )
             steps.append(summarize_step)
             tasks.append(
-                TaskGroup(
+                ActorTask(
                     agents[actor],
                     instruction=summarize_step.instruction,
                     title=summarize_step.title,
@@ -959,7 +967,7 @@ class Planner(Coordinator):
             )
             steps.append(validation_step)
             tasks.append(
-                TaskGroup(
+                ActorTask(
                     agents["ValidationAgent"],
                     instruction=validation_step.instruction,
                     title=validation_step.title
@@ -987,18 +995,11 @@ class Planner(Coordinator):
         previous_plans, previous_actors = [], []
         attempts = 0
         plan = None
-
-        self._todos_title = Typography(
-            "📋 Building checklist...", css_classes=["todos-title"], margin=0,
-            styles={"font-weight": "normal", "font-size": "1.1em"}
-        )
-        self._todos = Typography(
-            css_classes=["todos"], margin=0, styles={"font-weight": "normal"}
-        )
-        with self.interface.add_step(
+        with self._add_step(
             title="Planning how to solve user query...", user="Planner",
-            layout_params={"header": Column(self._todos_title, self._todos), "collapsed": not self.verbose}
+            layout_params={"header": self._todos_layout, "collapsed": not self.verbose, "elevation": 2}
         ) as istep:
+            await asyncio.sleep(1)
             self.steps_layout = self.interface.objects[-1].object
             while not planned:
                 if attempts > 0:
