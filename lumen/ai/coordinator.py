@@ -90,22 +90,21 @@ class Plan(Section):
 
     async def _run_task(self, i: int, task: Self | Actor, context: TContext, **kwargs):
         outputs = []
-        steps = self.coordinator.steps_layout
         with self._add_step(
             title=f"{task.title}...",
             user="Runner",
             layout_params={"title": "🏗️ Running "},
-            steps_layout=steps
+            steps_layout=self.steps_layout
         ) as step:
-            steps.header[0].object = f"⚙️ Working on task {task.title!r}..."
+            self.steps_layout.header[0].object = f"⚙️ Working on task {task.title!r}..."
             step.stream(task.instruction)
             history, todos = self.render_task_history(i)
             subcontext = self._get_context(i, context, task)
-            self.coordinator._todos.object = todos
+            self.steps_layout.header[1].object = todos
             try:
                 kwargs = {"agents": self.agents} if 'agents' in task.param else {}
                 with task.param.update(
-                    interface=self.interface, steps_layout=self.coordinator.steps_layout[-1],
+                    interface=self.interface, steps_layout=self.steps_layout[-1],
                     history=history, **kwargs
                 ):
                     outputs, task_context = await task.execute(subcontext, **kwargs)
@@ -192,6 +191,7 @@ class Plan(Section):
         """
         Re-run the plan from the provider task with additional feedback about the error.
         """
+
         outputs = []
         # Create feedback suffix to add to user message
         feedback_suffix = (
@@ -222,7 +222,7 @@ class Plan(Section):
                     f"- [{'x' if tidx < idx else '🔄' if tidx == idx else ' '}] {'<u>' + t.instruction + '</u>' if tidx == idx else t.instruction}"
                     for tidx, t in enumerate(self)
                 )
-                self.coordinator._todos.object = todos
+                self.steps_layout.headers[1].object = todos
 
                 # Run with mutated history
                 kwargs = {"agents": self.agents} if 'agents' in task.param else {}
@@ -241,7 +241,7 @@ class Plan(Section):
             del context['__error__']
         outputs, out_context = await super().execute(context, **kwargs)
         _, todos = self.render_task_history(self._current, failed=self.status == "error")
-        steps_title, todo_list = self.coordinator.steps_layout.header
+        steps_title, todo_list = self.steps_layout.header
         todo_list.object = todos
         if self.status == 'success':
             steps_title.object = f"✅ Sucessfully completed {self.title!r}"
@@ -249,7 +249,7 @@ class Plan(Section):
             steps_title.object = f"❌ Failed to execute {self.title!r}"
         log_debug("\033[92mCompleted: Plan\033[0m", show_sep="below")
         if self.interface is not None:
-            self.coordinator.steps_layout.collapsed = True
+            self.steps_layout.collapsed = True
         return outputs, out_context
 
 
@@ -346,15 +346,6 @@ class Coordinator(Viewer, VectorLookupToolUser):
             context=context,
             **params
         )
-
-        self._todos_title = Typography(
-            "📋 Building checklist...", css_classes=["todos-title"], margin=0,
-            styles={"font-weight": "normal", "font-size": "1.1em"}
-        )
-        self._todos = Typography(
-            css_classes=["todos"], margin=0, styles={"font-weight": "normal"}
-        )
-        self._todos_layout = Column(self._todos_title, self._todos)
 
     @wrap_logfire(span_name="Chat Invoke")
     async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface) -> Plan:
@@ -504,9 +495,9 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 )
                 self.interface.stream(msg, user=self.__class__.__name__)
         if plan is not None:
-            self._todos_title.object = "🧾 Checklist ready..."
+            self.steps_layout.header[0].object = "🧾 Checklist ready..."
             _, todos = plan.render_task_history(-1)
-            self._todos.object = todos
+            self.steps_layout.header[1].object = todos
         return plan
 
     async def _check_tool_relevance(
@@ -942,7 +933,7 @@ class Planner(Coordinator):
                 log_debug(f"Skipping summarization with {actor} due to conflicts: {conflicts}")
                 raw_plan.steps = steps
                 previous_actors = actors
-                return Plan(*tasks, title=raw_plan.title, history=messages, context=context, coordinator=self), previous_actors
+                return Plan(*tasks, title=raw_plan.title, history=messages, context=context, coordinator=self, steps_layout=self.steps_layout), previous_actors
 
             summarize_step = type(step)(
                 actor=actor,
@@ -976,7 +967,7 @@ class Planner(Coordinator):
             actors_in_graph.add("ValidationAgent")
 
         raw_plan.steps = steps
-        return Plan(*tasks, title=raw_plan.title, history=messages, context=context, coordinator=self), actors
+        return Plan(*tasks, title=raw_plan.title, history=messages, context=context, coordinator=self, steps_layout=self.steps_layout), actors
 
     async def _compute_plan(
         self,
@@ -995,11 +986,21 @@ class Planner(Coordinator):
         previous_plans, previous_actors = [], []
         attempts = 0
         plan = None
+
+        todos_title = Typography(
+            "📋 Building checklist...", css_classes=["todos-title"], margin=0,
+            styles={"font-weight": "normal", "font-size": "1.1em"}
+        )
+        todos = Typography(
+            css_classes=["todos"], margin=0, styles={"font-weight": "normal"}
+        )
+        todos_layout = Column(todos_title, todos)
+
         with self._add_step(
             title="Planning how to solve user query...", user="Planner",
-            layout_params={"header": self._todos_layout, "collapsed": not self.verbose, "elevation": 2}
+            layout_params={"header": todos_layout, "collapsed": not self.verbose, "elevation": 2}
         ) as istep:
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.1)
             self.steps_layout = self.interface.objects[-1].object
             while not planned:
                 if attempts > 0:
@@ -1011,11 +1012,11 @@ class Planner(Coordinator):
                         plan_model, istep, is_follow_up=pre_plan_output["is_follow_up"]
                     )
                 except asyncio.CancelledError as e:
-                    self._todos_title.object = istep.failed_title = 'Planning was cancelled, please try again.'
+                    todos_title.object = istep.failed_title = 'Planning was cancelled, please try again.'
                     traceback.print_exception(e)
                     raise e
                 except Exception as e:
-                    self._todos_title.object = istep.failed_title = 'Failed to make plan. Ensure LLM is configured correctly and/or try again.'
+                    todos_title.object = istep.failed_title = 'Failed to make plan. Ensure LLM is configured correctly and/or try again.'
                     traceback.print_exception(e)
                     raise e
                 plan, previous_actors = await self._resolve_plan(
@@ -1030,13 +1031,12 @@ class Planner(Coordinator):
                     planned = True
                 if attempts > 5:
                     istep.failed_title = "Planning failed to come up with viable plan, please restate the problem and try again."
-                    self._todos_title.object = "❌ Planning failed"
+                    todos_title.object = "❌ Planning failed"
                     e = RuntimeError("Planner failed to come up with viable plan after 5 attempts.")
                     traceback.print_exception(e)
                     raise e
 
             # Store the todo message reference for later updates
-            self._todo_step = istep
             if attempts > 0:
                 istep.success_title = f"Plan with {len(raw_plan.steps)} steps created after {attempts + 1} attempts"
             else:

@@ -138,6 +138,9 @@ class Task(Viewer):
     def _populate_view(self):
         self._view[:] = []
 
+    def cleanup(self):
+        self.reset()
+
     def reset(self):
         """Resets the view, removing generated outputs."""
         self._view[:] = []
@@ -417,6 +420,11 @@ class TaskWrapper(Task):
         for task in self._tasks:
             await task.prepare(context)
         self._prepared = True
+
+    def cleanup(self):
+        for task, watcher in self._task_watchers.items():
+            task.param.unwatch(watcher)
+        super().cleanup()
 
     def reset(self):
         """

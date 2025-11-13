@@ -1294,7 +1294,15 @@ class ExplorerUI(UI):
         else:
             exploration = parent
             if parent.plan is not None:
+                plan.steps_layout.header[:] = [
+                    Typography(
+                        "🔀 Combined tasks with previous checklist", css_classes=["todos-title"], margin=0,
+                        styles={"font-weight": "normal", "font-size": "1.1em"}
+                    )
+                ]
+                partial_plan = plan
                 plan = parent.plan.merge(plan)
+                partial_plan.cleanup()
             watcher = None
 
         # Execute plan
@@ -1329,7 +1337,8 @@ class ExplorerUI(UI):
         else:
             if "pipeline" in out_context:
                 await self._add_analysis_suggestions(plan, outputs, out_context)
-            plan.param.watch(partial(self._update_views, exploration), "views")
+            if new_exploration:
+                plan.param.watch(partial(self._update_views, exploration), "views")
 
     @wrap_logfire(span_name="Chat Invoke")
     async def _chat_invoke(
