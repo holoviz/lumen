@@ -647,10 +647,10 @@ class TaskWrapper(Task):
                 if not (deps & keys):
                     continue
                 keys |= set(task.output_schema.__annotations__)
-            if isinstance(task, TaskWrapper):
+            if isinstance(task, Task):
                 old = list(task.views)
+            if isinstance(task, TaskWrapper):
                 subtask_invalidated, subtask_keys = task.invalidate(keys, propagate=not propagate)
-                new = list(task.views)
                 if invalidated or subtask_invalidated:
                     invalidated.append(i)
                 if not subtask_invalidated:
@@ -667,7 +667,7 @@ class TaskWrapper(Task):
                     rendered_views.remove(rendered)
                 views = [view for view in views if view not in outputs]
             else:
-                views = [view for view in views if not (view in old and view not in new)]
+                views = [view for view in views if not (view in old and view not in task.views)]
         if invalidated:
             self._current = max(min(invalidated), 0)
         self.views = views

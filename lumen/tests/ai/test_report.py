@@ -16,7 +16,7 @@ from panel.pane import Markdown
 
 from lumen.ai.actor import ContextModel
 from lumen.ai.report import (
-    Action, Report, Section, SQLQuery, TaskGroup, Typography,
+    Action, ActorTask, Report, Section, SQLQuery, TaskGroup, Typography,
 )
 from lumen.ai.views import LumenOutput, SQLOutput
 
@@ -83,9 +83,9 @@ async def test_taskgroup_sequences_actions():
 
     assert len(tg._view) == 3
     v1, v2, v3 = tg._view
-
-    assert isinstance(v1, Typography)
-    assert v1.object == "### Seq"
+    assert isinstance(v1, Column)
+    assert isinstance(v1[0], Typography)
+    assert v1[0].object == "### Seq"
     assert isinstance(v2, Column)
     assert len(v2.objects) == 1
     assert v2.objects[0].object == "A done"
@@ -128,8 +128,9 @@ async def test_taskgroup_append_action():
 
     assert len(tg._view) == 3
     v1, v2, v3 = tg._view
-    assert isinstance(v1, Typography)
-    assert v1.object == "### Seq"
+    assert isinstance(v1, Column)
+    assert isinstance(v1[0], Typography)
+    assert v1[0].object == "### Seq"
     assert isinstance(v2, Column)
     assert len(v2.objects) == 1
     assert v2.objects[0].object == "A done"
@@ -163,12 +164,13 @@ async def test_taskgroup_continue_on_error():
     assert isinstance(out2, Markdown) and out2.object == "B done"
 
     assert len(tg._view) == 2
-    v1, v3 = tg._view
-    assert isinstance(v1, Typography)
-    assert v1.object == "### Error"
-    assert isinstance(v3, Column)
-    assert len(v3.objects) == 1
-    assert v3.objects[0].object == "B done"
+    v1, v2 = tg._view
+    assert isinstance(v1, Column)
+    assert isinstance(v1[0], Typography)
+    assert v1[0].object == "### Error"
+    assert isinstance(v2, Column)
+    assert len(v2.objects) == 1
+    assert v2[0].object == "B done"
 
 async def test_taskgroup_abort_on_error():
     order = []
@@ -195,7 +197,57 @@ async def test_taskgroup_abort_on_error():
     assert out.object == "### Error"
 
     assert len(tg._view) == 1
-    assert outs == list(tg._view)
+    assert outs == list(tg._view[0])
+
+
+async def test_taskgroup_context_invalidate():
+
+    class AInputs(ContextModel):
+
+        input: NotRequired[str]
+
+    class AOutputs(ContextModel):
+
+        a: str
+
+    class A(Action):
+
+        input_schema = AInputs
+        output_schema = AOutputs
+
+        async def _execute(self, context, **kwargs):
+            return [], {'a': context.get("input", "A")}
+
+    class BInputs(ContextModel):
+
+        a: str
+
+    class BOutputs(ContextModel):
+
+        b: str
+
+    class B(Action):
+
+        input_schema = BInputs
+        output_schema = BOutputs
+
+        async def _execute(self, context, **kwargs):
+            a = context["a"]
+            return [Markdown(a)], {"b": a*2}
+
+    tg = TaskGroup(A(), B())
+
+    await tg.execute()
+
+    tg[0].out_context = {"a": "B"}
+
+    await asyncio.sleep(0.1)
+
+    assert tg.out_context["a"] == "B"
+    assert tg.out_context["b"] == "BB"
+    assert len(tg.views) == 1
+    assert isinstance(tg.views[0], Markdown)
+    assert tg.views[0].object == "B"
 
 async def test_taskgroup_invalidate():
 

@@ -5,7 +5,10 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
-from lumen.ai.coordinator import Planner
+from panel_material_ui import Card
+
+from lumen.ai.coordinator import Plan, Planner
+from lumen.ai.models import Reasoning, make_plan_model
 from lumen.ai.tools import IterativeTableLookup, TableLookup
 from lumen.ai.vector_store import NumpyVectorStore
 
@@ -36,3 +39,26 @@ async def test_planner_instantiate_tools_provided_vector_store():
 
     assert tool1.vector_store is vector_store
     assert tool2.vector_store is vector_store
+
+
+async def test_planner_empty_plan(llm):
+    plan_model = make_plan_model(["ChatAgent"], [])
+
+    llm.set_responses([
+        Reasoning(chain_of_thought="Just use ChatAgent"),
+        plan_model(title="Hello!", steps=[])
+    ])
+
+    planner = Planner(llm=llm)
+
+    plan = await planner.respond([{'role': 'user', 'content': 'Hello?'}], {})
+
+    assert isinstance(plan, Plan)
+    assert plan.title == "Hello!"
+    assert len(plan) == 0
+
+    assert len(planner.interface) == 1
+    isinstance(planner.interface[0].object, Card)
+    title, todos = planner.interface[0].object.header
+
+    assert title.object == "🧾 Checklist ready..."
