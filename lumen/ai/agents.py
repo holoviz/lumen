@@ -2034,6 +2034,15 @@ class AnalysisAgent(LumenBaseAgent):
         return [] if view is None else [out], out_context
 
 
+class ValidationInputs(ContextModel):
+
+    data: NotRequired[Any]
+
+    sql: NotRequired[str]
+
+    view: NotRequired[Any]
+
+
 class ValidationOutputs(ContextModel):
 
     validation_result: str
@@ -2066,6 +2075,8 @@ class ValidationAgent(Agent):
             "main": {"template": PROMPTS_DIR / "ValidationAgent" / "main.jinja2", "response_model": QueryCompletionValidation, "tools": []},
         }
     )
+
+    input_schema = ValidationInputs
 
     output_schema = ValidationOutputs
 

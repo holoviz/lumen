@@ -49,4 +49,8 @@ SQL: `{{ memory['sql'] }}`
 Data Overview:
 {{ memory["data"] }}
 {%- endif -%}
+{% if memory.get('view') %}
+Generated View:
+{{ memory["view"] }}
+{%- endif -%}
 {%- endblock -%}
