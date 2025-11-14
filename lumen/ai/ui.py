@@ -1349,7 +1349,8 @@ class ExplorerUI(UI):
         try:
             exploration = self._exploration['view']
             plan = await self._coordinator.respond(messages, exploration.context)
-            await self._execute_plan(plan)
+            if plan is not None:
+                await self._execute_plan(plan)
         finally:
             self._exploration['view'].conversation = self.interface.objects
             self._idle.set()

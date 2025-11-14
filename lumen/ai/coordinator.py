@@ -488,12 +488,6 @@ class Coordinator(Viewer, VectorLookupToolUser):
             plan = await self._compute_plan(
                 messages, context, agents, tools, pre_plan_output
             )
-            if plan is None:
-                msg = (
-                    "Assistant could not settle on a plan of action to perform the requested query. "
-                    "Please restate your request."
-                )
-                self.interface.stream(msg, user=self.__class__.__name__)
         if plan is not None:
             self.steps_layout.header[0].object = "🧾 Checklist ready..."
             _, todos = plan.render_task_history(-1)
@@ -519,7 +513,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
         return result.yes
 
     def __panel__(self):
-        return self._interface
+        return self.interface
 
     async def sync(self, context: TContext | None):
         context = context or self.context
@@ -1016,7 +1010,11 @@ class Planner(Coordinator):
                     traceback.print_exception(e)
                     raise e
                 except Exception as e:
-                    todos_title.object = istep.failed_title = 'Failed to make plan. Ensure LLM is configured correctly and/or try again.'
+                    istep.failed_title = "Internal execution error during planning stage."
+                    todos_title.object = (
+                        "Planner could not settle on a plan of action to perform the requested query. "
+                        "Please restate your request."
+                    )
                     traceback.print_exception(e)
                     raise e
                 plan, previous_actors = await self._resolve_plan(
