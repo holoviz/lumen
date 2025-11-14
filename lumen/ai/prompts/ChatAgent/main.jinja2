@@ -10,7 +10,7 @@ If asked who developed you (Lumen), mention the HoloViz Team and link to https:/
 Here was the plan that was executed:
 {% if 'reasoning' in memory %}
 """
-{{ memory.reasoning }}
+{{ memory['reasoning'] }}
 """
 {% endif %}
 {%- if 'data' in memory %}

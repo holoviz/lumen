@@ -13,8 +13,8 @@ from panel.layout.base import ListLike, NamedListLike
 from pydantic import BaseModel
 
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
+from .context import ContextModel, TContext
 from .llm import Llm, Message
-from .memory import _Memory, memory
 from .utils import (
     class_name_to_llm_spec_key, log_debug, render_template,
     warn_on_unused_variables, wrap_logfire_on_method,
@@ -130,16 +130,18 @@ class LLMUser(param.Parameterized):
             kwargs['steps_layout'] = self.steps_layout
         return nullcontext(self._null_step) if self.interface is None else self.interface.add_step(title=title, **kwargs)
 
-    async def _gather_prompt_context(self, prompt_name: str, messages: list[Message], **context):
+    async def _gather_prompt_context(self, prompt_name: str, messages: list[Message], context: TContext, **kwargs):
         """Gather context for the prompt template."""
-        context["current_datetime"] = datetime.datetime.now()
-        return context
+        prompt_context = dict(kwargs)
+        prompt_context["memory"] = context
+        prompt_context["current_datetime"] = datetime.datetime.now()
+        return prompt_context
 
-    async def _render_prompt(self, prompt_name: str, messages: list[Message], **context) -> str:
+    async def _render_prompt(self, prompt_name: str, messages: list[Message], context: TContext, **kwargs) -> str:
         """Render a prompt template with context."""
         prompt_template = self._lookup_prompt_key(prompt_name, "template")
         overrides = self.template_overrides.get(prompt_name, {})
-        context = await self._gather_prompt_context(prompt_name, messages, **context)
+        prompt_context = await self._gather_prompt_context(prompt_name, messages, context, **kwargs)
 
         prompt_label = f"\033[92m{self.name}.prompts['{prompt_name}']['template']\033[0m"
         try:
@@ -148,7 +150,7 @@ class LLMUser(param.Parameterized):
             path_exists = False
         if isinstance(prompt_template, str) and not path_exists:
             # check if all the format_kwargs keys are contained in prompt_template
-            format_kwargs = dict(**overrides, **context)
+            format_kwargs = dict(**overrides, **prompt_context)
             warn_on_unused_variables(prompt_template, format_kwargs, prompt_label)
             try:
                 prompt = prompt_template.format(**format_kwargs)
@@ -161,7 +163,7 @@ class LLMUser(param.Parameterized):
             prompt = render_template(
                 prompt_template,
                 overrides=overrides,
-                **context
+                **prompt_context
             )
         prompt = prompt.strip()
         log_debug(f"{prompt_label}:\n\033[90m{prompt}\033[0m", show_length=True)
@@ -171,9 +173,10 @@ class LLMUser(param.Parameterized):
         self,
         prompt_name: str,
         messages: list[Message],
+        context: TContext,
         response_model: type[BaseModel] | None = None,
         model_spec: str | None = None,
-        **context
+        **kwargs
     ) -> Any:
         """
         Render a prompt and invoke the LLM.
@@ -184,21 +187,23 @@ class LLMUser(param.Parameterized):
             Name of the prompt template to use
         messages : list[Message]
             The conversation messages
+        context : TContext
+            The context dictionary
         response_model : type[BaseModel], optional
             Pydantic model to structure the response
         model_spec : str, optional
             Specification for which LLM to use
-        **context : dict
+        **kwargs : dict
             Additional context variables for the prompt template
 
         Returns
         -------
         The structured response from the LLM
         """
-        system = await self._render_prompt(prompt_name, messages, **context)
+        system = await self._render_prompt(prompt_name, messages, context, **kwargs)
         if response_model is None:
             try:
-                response_model = self._get_model(prompt_name, **context)
+                response_model = self._get_model(prompt_name, **kwargs)
             except (KeyError, AttributeError):
                 pass
 
@@ -220,10 +225,11 @@ class LLMUser(param.Parameterized):
         self,
         prompt_name: str,
         messages: list[Message],
+        context: TContext,
         response_model: type[BaseModel] | None = None,
         model_spec: str | None = None,
         field: str | None = None,
-        **context
+        **kwargs
     ):
         """
         Render a prompt and stream responses from the LLM.
@@ -234,13 +240,15 @@ class LLMUser(param.Parameterized):
             Name of the prompt template to use
         messages : list[Message]
             The conversation messages
+        context : TContext
+            The context dictionary
         response_model : type[BaseModel], optional
             Pydantic model to structure the response
         model_spec : str, optional
             Specification for which LLM to use
         field : str, optional
             Specific field to extract from the response model
-        **context : dict
+        **kwargs : dict
             Additional context variables for the prompt template
 
         Yields
@@ -248,12 +256,12 @@ class LLMUser(param.Parameterized):
         Chunks of the response from the LLM as they are generated
         """
         # Render the prompt
-        system = await self._render_prompt(prompt_name, messages, **context)
+        system = await self._render_prompt(prompt_name, messages, context, **kwargs)
 
         # Determine the response model
         if response_model is None:
             try:
-                response_model = self._get_model(prompt_name, **context)
+                response_model = self._get_model(prompt_name, **kwargs)
             except (KeyError, AttributeError):
                 pass
 
@@ -283,14 +291,11 @@ class LLMUser(param.Parameterized):
         return class_name_to_llm_spec_key(type(self).__name__)
 
 
+
 class Actor(LLMUser):
 
     interface = param.ClassSelector(class_=ChatFeed, doc="""
         The interface for the Coordinator to interact with.""")
-
-    memory = param.ClassSelector(class_=_Memory, default=None, doc="""
-        Local memory which will be used to provide the agent context.
-        If None the global memory will be used.""")
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -311,22 +316,21 @@ class Actor(LLMUser):
         """
         return nullcontext(self._null_step) if self.interface is None else self.interface.add_step(title=title, **kwargs)
 
-    @property
-    def _memory(self) -> _Memory:
-        return memory if self.memory is None else self.memory
-
-    async def _gather_prompt_context(self, prompt_name: str, messages: list[Message], **context):
+    async def _gather_prompt_context(self, prompt_name: str, messages: list[Message], context: TContext, **kwargs):
         """Gather context for the prompt template."""
-        context = await super()._gather_prompt_context(prompt_name, messages, **context)
-        context["memory"] = self._memory
+        context = await super()._gather_prompt_context(prompt_name, messages, context, **kwargs)
         context["actor_name"] = self.name
         context["source_table_sep"] = SOURCE_TABLE_SEPARATOR
         return context
 
     @abstractmethod
-    async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> Any:
+    async def respond(
+        self, messages: list[Message], context: TContext, **kwargs: dict[str, Any]
+    ) -> tuple[list[Any], ContextModel]:
         """
-        Responds to the provided messages.
+        Responds to the provided messages and context, returning
+        a list of visual outputs and a ContextModel containing
+        the context for subsequent Actors.
         """
 
 
@@ -353,25 +357,25 @@ class ContextProvider(param.Parameterized):
     not_with = param.List(default=[], doc="""
         List of actors that this actor should not be invoked with.""")
 
-    provides = param.List(default=[], readonly=True, doc="""
-        List of context values it provides to current working memory.""")
-
     purpose = param.String(default="", doc="""
         A descriptive statement of this actor's functionality and capabilities.
         Serves as a high-level explanation for other actors to understand
         what this actor does and when it might be useful to invoke it.""")
 
-    requires = param.List(default=[], readonly=True, doc="""
-        List of context values it requires to be in memory.""")
+    input_schema: type[ContextModel] = ContextModel
+    output_schema: type[ContextModel] = ContextModel
+
+    async def prepare(self, context: TContext):
+        pass
 
     async def requirements(self, messages: list[Message]) -> list[str]:
-        return self.requires
+        return list(self.input_schema.__annotations__)
 
     def __str__(self):
         string = (
             f"- {self.name[:-5]}: {' '.join(self.purpose.strip().split())}\n"
-            f"  Requires: `{'`, `'.join(self.requires)}`\n"
-            f"  Provides: `{'`, `'.join(self.provides)}`\n"
+            f"  Requires: `{'`, `'.join(self.input_schema.__required_keys__)}`\n"
+            f"  Provides: `{'`, `'.join(self.output_schema.__required_keys__)}`\n"
         )
         if self.conditions:
             string += "  Conditions:\n" + "\n".join(f"  - {condition}" for condition in self.conditions) + "\n"

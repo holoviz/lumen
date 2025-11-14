@@ -1,17 +1,16 @@
-from __future__ import annotations
-
 import asyncio
 import json
 import traceback
 
-from functools import partial
-from typing import Any, ClassVar, Literal
+from collections.abc import Callable
+from typing import (
+    Annotated, Any, ClassVar, Literal, NotRequired,
+)
 
 import pandas as pd
 import panel as pn
 import param
 import requests
-import yaml
 
 from panel.chat import ChatInterface
 from panel.viewable import Viewable, Viewer
@@ -20,7 +19,7 @@ from panel_material_ui.chat import ChatMessage
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
-from ..base import Component
+from ..config import dump_yaml, load_yaml
 from ..dashboard import Config
 from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource, Source
@@ -36,37 +35,38 @@ from .config import (
     VEGA_LITE_EXAMPLES_OPENAI_DB_FILE, VEGA_MAP_LAYER, VEGA_ZOOMABLE_MAP_ITEMS,
     MissingContextError, RetriesExceededError,
 )
-from .controls import AnnotationControls, RetryControls, SourceControls
+from .context import ContextModel, TContext
+from .controls import SourceControls
 from .llm import Llm, Message, OpenAI
-from .memory import _Memory
 from .models import (
     DbtslQueryParams, DiscoveryQueries, DiscoverySufficiency, DistinctQuery,
     PartialBaseModel, QueryCompletionValidation, RetrySpec, SampleQuery,
-    SqlQuery, VegaLiteSpec, VegaLiteSpecUpdate, make_sql_model,
+    VegaLiteSpec, VegaLiteSpecUpdate, make_sql_model,
 )
-from .schemas import get_metaset
+from .schemas import (
+    DbtslMetadata, DbtslMetaset, SQLMetaset, get_metaset,
+)
 from .services import DbtslMixin
 from .tools import ToolUser
 from .translate import param_to_pydantic
 from .utils import (
     apply_changes, clean_sql, describe_data, get_data, get_pipeline,
     get_root_exception, get_schema, load_json, log_debug, report_error,
-    retry_llm_output, set_nested, stream_details,
+    retry_llm_output, stream_details,
 )
 from .vector_store import DuckDBVectorStore
-from .views import AnalysisOutput, LumenOutput, VegaLiteOutput
+from .views import (
+    AnalysisOutput, LumenOutput, SQLOutput, VegaLiteOutput,
+)
 
 
 class Agent(Viewer, ToolUser, ContextProvider):
     """
     Agents are actors responsible for taking a user query and
-    performing a particular task and responding by adding context to
-    the current memory and creating outputs.
+    performing a particular task, either by adding context or
+    generating outputs.
 
-    Each Agent can require certain context that is needed to perform
-    the task and should declare any context it itself provides.
-
-    Agents have access to an LLM and the current memory and can
+    Agents have access to an LLM and are given context and can
     solve tasks by executing a series of prompts or by rendering
     contents such as forms or widgets to gather user input.
     """
@@ -141,29 +141,27 @@ class Agent(Viewer, ToolUser, ContextProvider):
                 message = self.interface.stream(output_chunk, replace=True, message=message, user=self.user, max_width=self._max_width)
         return message
 
-    async def _gather_prompt_context(self, prompt_name: str, messages: list, **context):
-        context = await super()._gather_prompt_context(prompt_name, messages, **context)
+    async def _gather_prompt_context(self, prompt_name: str, messages: list, context: TContext, **kwargs):
+        context = await super()._gather_prompt_context(prompt_name, messages, context, **kwargs)
         if "tool_context" not in context:
-            context["tool_context"] = await self._use_tools(prompt_name, messages)
+            context["tool_context"] = await self._use_tools(prompt_name, messages, context)
         return context
 
     # Public API
 
     @classmethod
-    async def applies(cls, memory: _Memory) -> bool:
+    async def applies(cls, context: TContext) -> bool:
         """
         Additional checks to determine if the agent should be used.
         """
         return True
 
-    async def requirements(self, messages: list[Message]) -> list[str]:
-        return self.requires
-
     async def respond(
         self,
         messages: list[Message],
+        context: TContext,
         step_title: str | None = None,
-    ) -> Any:
+    ) -> tuple[list[Any], TContext]:
         """
         Provides a response to the user query.
 
@@ -174,12 +172,21 @@ class Agent(Viewer, ToolUser, ContextProvider):
         messages: list[Message]
             The list of messages corresponding to the user query and any other
             system messages to be included.
+        context: TContext
+            A mapping containing context for the agent to perform its task.
         step_title: str | None
             If the Agent response is part of a longer query this describes
             the step currently being processed.
         """
-        system_prompt = await self._render_prompt("main", messages)
-        return await self._stream(messages, system_prompt)
+        system_prompt = await self._render_prompt("main", messages, context)
+        return [await self._stream(messages, system_prompt)], context
+
+
+class SourceOutputs(ContextModel):
+
+    source: Source
+
+    document_sources: list[Any]
 
 
 class SourceAgent(Agent):
@@ -195,35 +202,33 @@ class SourceAgent(Agent):
 
     purpose = param.String(default="Allows a user to upload new datasets, data, or documents.")
 
-    requires = param.List(default=[], readonly=True)
-
-    provides = param.List(default=["sources", "source", "document_sources"], readonly=True)
-
     source_controls: ClassVar[SourceControls] = SourceControls
 
     _extensions = ("filedropper",)
 
+    output_schema = SourceOutputs
+
     async def respond(
         self,
         messages: list[Message],
+        context: TContext,
         step_title: str | None = None,
-    ) -> Any:
-        source_controls = self.source_controls(memory=self._memory, cancellable=True, replace_controls=True)
-
+    ) -> tuple[list[Any], SourceOutputs]:
+        source_controls = self.source_controls(context=context, cancellable=True, replace_controls=True)
         output = pn.Column(source_controls)
-        if "source" not in self._memory:
+        if "source" not in context:
             help_message = "No datasets or documents were found, **please upload at least one to continue**..."
         else:
             help_message = "**Please upload new dataset(s)/document(s) to continue**, or click cancel if this was unintended..."
         output.insert(0, help_message)
-        self.interface.send(output, respond=False, user="Assistant")
+        self.interface.send(output, respond=False, user=self.__class__.__name__)
         while not source_controls._add_button.clicks > 0:
             await asyncio.sleep(0.05)
             if source_controls._cancel_button.clicks > 0:
                 self.interface.undo()
                 self.interface.disabled = False
-                return None
-        return source_controls
+                return [], {}
+        return [], source_controls.outputs
 
 
 class ChatAgent(Agent):
@@ -255,21 +260,31 @@ class ChatAgent(Agent):
         }
     )
 
-    requires = param.List(default=[], readonly=True)
-
     async def respond(
         self,
         messages: list[Message],
+        context: TContext,
         step_title: str | None = None,
-    ) -> Any:
-        context = {"tool_context": await self._use_tools("main", messages)}
-        if "vector_metaset" not in self._memory and "source" in self._memory and "table" in self._memory:
-            source = self._memory["source"]
-            self._memory["vector_metaset"] = await get_metaset(
-                [source], [f"{source.name}{SOURCE_TABLE_SEPARATOR}{self._memory['table']}"],
+    ) -> tuple[list[Any], dict[str, Any]]:
+        prompt_context = {"tool_context": await self._use_tools("main", messages, context)}
+        if "vector_metaset" not in context and "source" in context and "table" in context:
+            source = context["source"]
+            context["vector_metaset"] = await get_metaset(
+                [source], [f"{source.name}{SOURCE_TABLE_SEPARATOR}{context['table']}"],
             )
-        system_prompt = await self._render_prompt("main", messages, **context)
-        return await self._stream(messages, system_prompt)
+        system_prompt = await self._render_prompt("main", messages, context, **prompt_context)
+        return [await self._stream(messages, system_prompt)], {}
+
+
+class AnalystInputs(ContextModel):
+
+    data: NotRequired[Any]
+
+    source: Source
+
+    pipeline: Pipeline
+
+    sql: NotRequired[str]
 
 
 class AnalystAgent(ChatAgent):
@@ -294,17 +309,18 @@ class AnalystAgent(ChatAgent):
         }
     )
 
-    requires = param.List(default=["source", "pipeline"], readonly=True)
+    input_schema = AnalystInputs
 
     async def respond(
         self,
         messages: list[Message],
+        context: TContext,
         step_title: str | None = None,
-    ) -> Any:
-        messages = await super().respond(messages, step_title)
-        if len(self._memory.get("data", [])) == 0 and self._memory.get("sql"):
-            self._memory["sql"] = f"{self._memory['sql']}\n-- No data was returned from the query."
-        return messages
+    ) -> tuple[list[Any], TContext]:
+        messages, out_context = await super().respond(messages, context, step_title=step_title)
+        if len(context.get("data", [])) == 0 and context.get("sql"):
+            context["sql"] = f"{context['sql']}\n-- No data was returned from the query."
+        return messages, out_context
 
 
 class ListAgent(Agent):
@@ -315,8 +331,6 @@ class ListAgent(Agent):
     purpose = param.String(default="""
         Renders a list of items to the user and lets the user pick one.""")
 
-    requires = param.List(default=[], readonly=True)
-
     _extensions = ("tabulator",)
 
     _column_name = None
@@ -325,7 +339,7 @@ class ListAgent(Agent):
 
     __abstract = True
 
-    def _get_items(self) -> dict[str, list[str]]:
+    def _get_items(self, context: TContext) -> dict[str, list[str]]:
         """Return dict of items grouped by source/category"""
 
     def _use_item(self, event):
@@ -345,9 +359,10 @@ class ListAgent(Agent):
     async def respond(
         self,
         messages: list[Message],
+        context: TContext,
         step_title: str | None = None,
-    ) -> Any:
-        items = self._get_items()
+    ) -> tuple[list[Any], dict[str, Any]]:
+        items = self._get_items(context)
 
         # Create tabs with one tabulator per source
         tabs = []
@@ -384,9 +399,16 @@ class ListAgent(Agent):
             pn.Column(
                 f"The available {self._column_name.lower()}s are listed below. Click on the eye icon to show the {self._column_name.lower()} contents.",
                 self._tabs
-            ), user="Assistant"
+            ), user=self.__class__.__name__
         )
-        return self._tabs
+        return [self._tabs], {}
+
+
+class TableListInputs(ContextModel):
+
+    source: Source
+
+    visible_slugs: NotRequired[set[str]]
 
 
 class TableListAgent(ListAgent):
@@ -402,25 +424,25 @@ class TableListAgent(ListAgent):
     not_with = param.List(default=["DbtslAgent", "SQLAgent"])
 
     purpose = param.String(default="""
-        Displays a list of all available data & datasets in memory. Not useful for identifying which dataset to use for analysis.""")
-
-    requires = param.List(default=["source"], readonly=True)
+        Displays a list of all available data & datasets. Not useful for identifying which dataset to use for analysis.""")
 
     _column_name = "Data"
 
     _message_format = "Show the data: {item}"
 
-    @classmethod
-    async def applies(cls, memory: _Memory) -> bool:
-        return len(memory.get('visible_slugs', set())) > 1
+    input_schema = TableListInputs
 
-    def _get_items(self) -> dict[str, list[str]]:
-        if "closest_tables" in self._memory:
+    @classmethod
+    async def applies(cls, context: TContext) -> bool:
+        return len(context.get('visible_slugs', set())) > 1
+
+    def _get_items(self, context: TContext) -> dict[str, list[str]]:
+        if "closest_tables" in context:
             # If we have closest_tables from search, return as a single group
-            return {"Search Results": self._memory["closest_tables"]}
+            return {"Search Results": context["closest_tables"]}
 
         # Group tables by source
-        visible_slugs = self._memory.get('visible_slugs', set())
+        visible_slugs = context.get('visible_slugs', set())
         if not visible_slugs:
             return {}
 
@@ -444,6 +466,11 @@ class TableListAgent(ListAgent):
         return tables_by_source
 
 
+class DocumentListInputs(ContextModel):
+
+    document_sources: dict[str, Any]
+
+
 class DocumentListAgent(ListAgent):
     """
     The DocumentListAgent lists all available documents provided by the user.
@@ -457,25 +484,22 @@ class DocumentListAgent(ListAgent):
     )
 
     purpose = param.String(default="""
-        Displays a list of all available documents in memory.""")
-
-    requires = param.List(default=["document_sources"], readonly=True)
+        Displays a list of all available documents.""")
 
     _column_name = "Documents"
 
     _message_format = "Tell me about: {item}"
 
     @classmethod
-    async def applies(cls, memory: _Memory) -> bool:
-        sources = memory.get("document_sources")
+    async def applies(cls, context: TContext) -> bool:
+        sources = context.get("document_sources")
         if not sources:
-            return False  # source not loaded yet; always apply
+            return False
         return len(sources) > 1
 
-    def _get_items(self) -> dict[str, list[str]]:
+    def _get_items(self, context: TContext) -> dict[str, list[str]]:
         # extract the filename, following this pattern `Filename: 'filename'``
-        documents = [doc["metadata"].get("filename", "untitled") for doc in self._memory.get("document_sources", [])]
-        # Return all documents under a single "Documents" category
+        documents = [doc["metadata"].get("filename", "untitled") for doc in context.get("document_sources", [])]
         return {"Documents": documents} if documents else {}
 
 
@@ -491,159 +515,78 @@ class LumenBaseAgent(Agent):
 
     _max_width = None
     _output_type = LumenOutput
-    _retry_target_keys = []
+    _retry_target_keys: ClassVar[list[str]] = []
 
-    def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
-        """
-        Update the specification in memory.
-        """
-
-    @staticmethod
-    def _prepare_lines_for_retry(original_output: str, retry_target_keys: list[str] | None = None) -> tuple[list[str], bool, dict | None]:
-        """
-        Prepare lines for retry by optionally extracting targeted sections from YAML.
-
-        Parameters
-        ----------
-        original_output : str
-            The original output string to process
-        retry_target_keys : list[str], optional
-            List of keys to target specific sections in YAML
-
-        Returns
-        -------
-        tuple
-            A tuple containing:
-
-            - lines : list[str]
-                List of lines to be processed
-            - targeted : bool
-                Whether targeting was applied
-            - original_spec : dict or None
-                Original parsed spec if targeting was used, None otherwise
-        """
-        lines = original_output.splitlines()
-        targeted = False
-        original_spec = None
-
-        if retry_target_keys:
-            original_spec = yaml.safe_load(original_output)
-            targeted_output = original_spec.copy()
-            for key in retry_target_keys:
-                targeted_output = targeted_output[key]
-            lines = yaml.dump(targeted_output, default_flow_style=False).splitlines()
-            targeted = True
-
-        return lines, targeted, original_spec
-
-    @staticmethod
-    def _apply_line_changes_to_output(
-        lines: list[str],
-        line_changes: list,
-        targeted: bool,
-        original_spec: dict | None = None,
-        retry_target_keys: list[str] | None = None
-    ) -> str:
-        """
-        Apply line changes to output, handling both targeted and non-targeted cases.
-
-        Parameters
-        ----------
-        lines : list[str]
-            The lines that were modified
-        line_changes : list
-            Changes to apply to the lines
-        targeted : bool
-            Whether this was a targeted retry
-        original_spec : dict or None
-            Original parsed spec for targeted retries
-        retry_target_keys : list[str] or None
-            Keys used for targeting
-
-        Returns
-        -------
-        str
-            Final output string with changes applied
-        """
-        if targeted:
-            targeted_spec = yaml.safe_load(apply_changes(lines, line_changes))
-            updated_spec = original_spec.copy()
-            set_nested(updated_spec, retry_target_keys, targeted_spec)
-            return yaml.dump(updated_spec)
-        else:
-            return apply_changes(lines, line_changes)
-
-    async def _retry_output_by_line(
+    @retry_llm_output()
+    async def revise(
         self,
-        feedback: str,
+        instruction: str,
         messages: list[Message],
-        memory: _Memory,
-        original_output: str,
+        context: TContext,
+        view: LumenOutput | None = None,
+        spec: str | None = None,
         language: str | None = None,
-        **context
+        errors: list[str] | None = None,
+        **kwargs
     ) -> str:
         """
-        Retry the output by line, allowing the user to provide feedback on why the output was not satisfactory, or an error.
+        Retry the output by line, allowing the user to provide instruction on why the output was not satisfactory, or an error.
         """
-        # Prepare lines for retry processing
-        lines, targeted, original_spec = self._prepare_lines_for_retry(
-            original_output, self._retry_target_keys
-        )
-
-        with self.param.update(memory=memory):
-            numbered_text = "\n".join(f"{i:2d}: {line}" for i, line in enumerate(lines, 1))
-            system = await self._render_prompt(
-                "retry_output",
-                messages=messages,
-                numbered_text=numbered_text,
-                language=language,
-                feedback=feedback,
-                **context
-            )
-        retry_model = self._lookup_prompt_key("retry_output", "response_model")
-        invoke_kwargs = dict(
-            messages=messages,
-            system=system,
-            response_model=retry_model,
-            model_spec="edit",
-        )
-        result = await self.llm.invoke(**invoke_kwargs)
-
-        # Apply line changes and return result
-        return self._apply_line_changes_to_output(
-            lines, result.lines_changes, targeted, original_spec, self._retry_target_keys
-        )
-
-    def _render_lumen(
-        self,
-        component: Component,
-        messages: list | None = None,
-        title: str | None = None,
-        **kwargs,
-    ):
-        async def _retry_invoke(event: param.parameterized.Event):
-            with out.param.update(loading=True):
-                out.spec = await self._retry_output_by_line(event.new, messages, memory, out.spec, language=out.language)
-
-        memory = self._memory
-        retry_controls = RetryControls()
-        retry_controls.param.watch(_retry_invoke, "reason")
-        out = self._output_type(
-            component=component,
-            footer=[retry_controls],
-            title=title,
+        if view is not None:
+            spec = view.spec
+            language = view.language
+        if spec is None:
+            raise ValueError("Must provide previous spec to revise.")
+        lines = spec.splitlines()
+        numbered_text = "\n".join(f"{i:2d}: {line}" for i, line in enumerate(lines, 1))
+        system = await self._render_prompt(
+            "retry_output",
+            messages,
+            context,
+            numbered_text=numbered_text,
+            language=language,
+            feedback=instruction,
+            errors=errors,
             **kwargs
         )
-        out.param.watch(partial(self._update_spec, self._memory), "spec")
-        if "outputs" in self._memory:
-            # We have to create a new list to trigger an event
-            # since inplace updates will not trigger updates
-            # and won't allow diffing between old and new values
-            self._memory["outputs"] = self._memory["outputs"] + [out]
-        if self.interface is not None:
-            message_kwargs = dict(value=out, user=self.user)
-            self.interface.stream(replace=True, max_width=self._max_width, **message_kwargs)
-        return out
+        retry_model = self._lookup_prompt_key("retry_output", "response_model")
+        result = await self.llm.invoke(
+            messages,
+            system=system,
+            response_model=retry_model,
+            model_spec="edit"
+        )
+        spec = load_yaml(apply_changes(lines, result.edits))
+        if view is not None:
+            view.validate_spec(spec)
+        yaml_spec = dump_yaml(spec)
+        return yaml_spec
+
+
+class SQLInputs(ContextModel):
+
+    data: NotRequired[Any]
+
+    source: Source
+
+    sources: Annotated[list[Source], ("accumulate", "source")]
+
+    sql: NotRequired[str]
+
+    sql_metaset: SQLMetaset
+
+    visible_slugs: NotRequired[set[str]]
+
+
+class SQLOutputs(ContextModel):
+
+    data: Any
+
+    table: str
+
+    sql: str
+
+    pipeline: Pipeline
 
 
 class SQLAgent(LumenBaseAgent):
@@ -692,69 +635,17 @@ class SQLAgent(LumenBaseAgent):
         }
     )
 
-    provides = param.List(default=["table", "sql", "pipeline", "data"], readonly=True)
-
-    requires = param.List(default=["sources", "source", "sql_metaset"], readonly=True)
-
     user = param.String(default="SQL")
 
     _extensions = ("codeeditor", "tabulator")
 
-    _output_type = LumenOutput
+    _output_type = SQLOutput
 
-    def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
-        memory["sql"] = event.new
-
-    @retry_llm_output()
-    async def _generate_sql_queries(
-        self, messages: list[Message], dialect: str, step_number: int,
-        is_final: bool, context_entries: list[dict] | None,
-        sql_plan_context: str | None = None, errors: list | None = None
-    ) -> dict[str, str]:
-        """Generate SQL queries using LLM."""
-        # Build SQL history from context
-        sql_query_history = {}
-        if context_entries:
-            for entry in context_entries:
-                for query in entry.get("queries", []):
-                    sql_query_history[query["sql"]] = query["table_status"]
-
-        # Render prompt
-        system_prompt = await self._render_prompt(
-            "main",
-            messages,
-            dialect=dialect,
-            step_number=step_number,
-            is_final_step=is_final,
-            current_step=messages[0]["content"] if not is_final else "",
-            sql_query_history=sql_query_history,
-            current_iteration=getattr(self, '_current_iteration', 1),
-            sql_plan_context=sql_plan_context,
-            errors=errors,
-        )
-
-        # Generate SQL
-        model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
-
-        sql_response_model = self._get_model("main", is_final=is_final)
-        output = await self.llm.invoke(
-            messages,
-            system=system_prompt,
-            model_spec=model_spec,
-            response_model=sql_response_model,
-        )
-        if not output:
-            raise ValueError("No output was generated.")
-
-        sql_queries = {}
-        for query_obj in ([output] if isinstance(output, SqlQuery) else output.queries):
-            if query_obj.query and query_obj.expr_slug:
-                sql_queries[query_obj.expr_slug.strip()] = query_obj.query.strip()
-
-        return sql_queries
+    input_schema = SQLInputs
+    output_schema = SQLOutputs
 
     async def _validate_sql(
-        self, sql_query: str, expr_slug: str, dialect: str,
+        self, context: TContext, sql_query: str, expr_slug: str, dialect: str,
         source, messages: list[Message], step, max_retries: int = 2,
         discovery_context: str | None = None,
     ) -> str:
@@ -783,14 +674,14 @@ class SQLAgent(LumenBaseAgent):
                 if "KeyError" in feedback:
                     feedback += " The data does not exist; select from available data sources."
 
-                retry_result = await self._retry_output_by_line(
-                    feedback, messages, self._memory, sql_query, language=f"sql.{dialect}", discovery_context=discovery_context
+                retry_result = await self.revise(
+                    feedback, messages, context, spec=sql_query, language=f"sql.{dialect}", discovery_context=discovery_context
                 )
                 sql_query = clean_sql(retry_result, dialect)
         return sql_query
 
     async def _execute_query(
-        self, source, expr_slug: str, sql_query: str,
+        self, source, context: TContext, expr_slug: str, sql_query: str,
         is_final: bool, should_materialize: bool, step
     ) -> tuple[Pipeline, Source, str]:
         """Execute SQL query and return pipeline and summary."""
@@ -800,7 +691,7 @@ class SQLAgent(LumenBaseAgent):
         )
 
         if should_materialize:
-            self._memory["source"] = sql_expr_source
+            context["source"] = sql_expr_source
 
         # Create pipeline
         if is_final:
@@ -826,14 +717,15 @@ class SQLAgent(LumenBaseAgent):
         results: dict,
         context_entries: list[dict],
         messages: list[Message],
+        context: TContext,
         step_title: str | None,
         raise_if_empty: bool = False
-    ) -> None:
+    ) -> tuple[LumenOutput, SQLOutputs]:
         """Finalize execution for final step."""
         # Get first result (typically only one for final step)
         expr_slug, result = next(iter(results.items()))
 
-        # Update memory
+        # Update context
         pipeline = result["pipeline"]
         df = await get_data(pipeline)
 
@@ -841,31 +733,29 @@ class SQLAgent(LumenBaseAgent):
         if df.empty and raise_if_empty:
             raise ValueError(f"\nQuery `{result['sql']}` returned empty results; ensure all the WHERE filter values exist in the dataset.")
 
-        self._memory["data"] = await describe_data(df)
-        self._memory["sql"] = result["sql"]
-        self._memory["pipeline"] = pipeline
-        self._memory["table"] = pipeline.table
-        self._memory["source"] = pipeline.source
-        self._memory["sql_plan_context"] = context_entries
-
-        # Render output
-        self._render_lumen(
-            pipeline,
-            messages=messages,
-            title=step_title,
-            spec=result["sql"]
+        view = self._output_type(
+            component=pipeline, title=step_title, spec=result["sql"]
         )
+        return view, {
+            "data": await describe_data(df),
+            "sql": result["sql"],
+            "pipeline": pipeline,
+            "table": pipeline.table,
+            "source": pipeline.source,
+            "sql_plan_context": context_entries
+        }
 
     async def _render_execute_query(
         self,
         messages: list[Message],
+        context: TContext,
         source: Source,
         step_title: str,
         success_message: str,
         discovery_context: str | None = None,
         raise_if_empty: bool = False,
         output_title: str | None = None
-    ) -> Pipeline:
+    ) -> tuple[LumenOutput, SQLOutputs]:
         """
         Helper method that generates, validates, and executes final SQL queries.
 
@@ -896,6 +786,7 @@ class SQLAgent(LumenBaseAgent):
             system_prompt = await self._render_prompt(
                 "main",
                 messages,
+                context,
                 dialect=source.dialect,
                 step_number=1,
                 is_final_step=True,
@@ -926,12 +817,13 @@ class SQLAgent(LumenBaseAgent):
 
             # Validate SQL
             validated_sql = await self._validate_sql(
-                sql_query, expr_slug, source.dialect, source, messages, step, discovery_context=discovery_context
+                context, sql_query, expr_slug, source.dialect, source, messages,
+                step, discovery_context=discovery_context
             )
 
             # Execute and get results
             pipeline, sql_expr_source, summary = await self._execute_query(
-                source, expr_slug, validated_sql, is_final=True,
+                source, context, expr_slug, validated_sql, is_final=True,
                 should_materialize=True, step=step
             )
 
@@ -945,24 +837,26 @@ class SQLAgent(LumenBaseAgent):
                 }
             }
 
-            await self._finalize_execution(
-                results, [], messages, output_title, raise_if_empty=raise_if_empty
+            view, out_context = await self._finalize_execution(
+                results, [], messages, context, output_title, raise_if_empty=raise_if_empty
             )
 
             step.status = "success"
             step.success_title = success_message
 
-        return pipeline
+        return view, out_context
 
     async def _select_discoveries(
         self,
         messages: list[Message],
+        context: TContext,
         error_context: str,
     ) -> DiscoveryQueries:
         """Let LLM choose which discoveries to run based on error and available tables."""
         system_prompt = await self._render_prompt(
             "select_discoveries",
             messages,
+            context,
             error_context=error_context,
         )
 
@@ -978,6 +872,7 @@ class SQLAgent(LumenBaseAgent):
     async def _check_discovery_sufficiency(
         self,
         messages: list[Message],
+        context: TContext,
         error_context: str,
         discovery_results: list[tuple[str, str]],
     ) -> DiscoverySufficiency:
@@ -985,6 +880,7 @@ class SQLAgent(LumenBaseAgent):
         system_prompt = await self._render_prompt(
             "check_sufficiency",
             messages,
+            context,
             error_context=error_context,
             discovery_results=discovery_results,
         )
@@ -1045,14 +941,15 @@ class SQLAgent(LumenBaseAgent):
     async def _explore_tables(
         self,
         messages: list[Message],
+        context: TContext,
         source: Source,
         error_context: str,
         step_title: str | None = None,
-    ) -> Any:
+    ) -> tuple[LumenOutput, SQLOutputs]:
         """Run adaptive exploration: initial discoveries → sufficiency check → optional follow-ups → final answer."""
         # Step 1: LLM selects initial discoveries
         with self._add_step(title="Selecting initial discoveries", steps_layout=self._steps_layout) as step:
-            selection = await self._select_discoveries(messages, error_context)
+            selection = await self._select_discoveries(messages, context, error_context)
             step.stream(f"Strategy: {selection.reasoning}\n\nSelected {len(selection.queries)} initial discoveries")
 
         # Step 2: Run initial discoveries in parallel
@@ -1060,7 +957,7 @@ class SQLAgent(LumenBaseAgent):
 
         # Step 3: Check if discoveries are sufficient
         with self._add_step(title="Evaluating discovery sufficiency", steps_layout=self._steps_layout) as step:
-            sufficiency = await self._check_discovery_sufficiency(messages, error_context, initial_results)
+            sufficiency = await self._check_discovery_sufficiency(messages, context, error_context, initial_results)
             step.stream(f"Assessment: {sufficiency.reasoning}")
 
             if sufficiency.sufficient:
@@ -1082,7 +979,8 @@ class SQLAgent(LumenBaseAgent):
         ])
 
         return await self._render_execute_query(
-            messages=messages,
+            messages,
+            context,
             source=source,
             step_title="Generating final answer with discoveries",
             success_message="Final answer generated with discovery context",
@@ -1094,15 +992,17 @@ class SQLAgent(LumenBaseAgent):
     async def respond(
         self,
         messages: list[Message],
+        context: TContext,
         step_title: str | None = None,
-    ) -> Any:
+    ) -> tuple[list[Any], SQLOutputs]:
         """Execute SQL generation with one-shot attempt first, then exploration if needed."""
         # Setup sources
-        source = self._memory["source"]
+        source = context["source"]
         try:
             # Try one-shot approach first
-            pipeline = await self._render_execute_query(
-                messages=messages,
+            out, out_context = await self._render_execute_query(
+                messages,
+                context,
                 source=source,
                 step_title="Attempting one-shot SQL generation...",
                 success_message="One-shot SQL generation successful",
@@ -1115,8 +1015,16 @@ class SQLAgent(LumenBaseAgent):
                 # If exploration is disabled, re-raise the error instead of falling back
                 raise e
             # Fall back to exploration mode if enabled
-            pipeline = await self._explore_tables(messages, source, str(e), step_title)
-        return pipeline
+            out, out_context = await self._explore_tables(messages, context, source, str(e), step_title)
+        return [out], out_context
+
+
+
+class DbtslOutputs(SQLOutputs):
+
+    dbtsl_vector_metaset: DbtslMetadata
+
+    dbtsl_sql_metaset: DbtslMetaset
 
 
 class DbtslAgent(LumenBaseAgent, DbtslMixin):
@@ -1148,8 +1056,6 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
         }
     )
 
-    provides = param.List(default=["table", "sql", "pipeline", "data", "dbtsl_vector_metaset", "dbtsl_sql_metaset"], readonly=True)
-
     requires = param.List(default=["source", "dbtsl_metaset"], readonly=True)
 
     source = param.ClassSelector(
@@ -1164,17 +1070,15 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
 
     _output_type = LumenOutput
 
+    output_schema = DbtslOutputs
+
     def __init__(self, source: Source, **params):
         super().__init__(source=source, **params)
 
-    def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
-        """
-        Update the SQL specification in memory.
-        """
-        memory["sql"] = event.new
-
     @retry_llm_output()
-    async def _create_valid_query(self, messages: list[Message], title: str | None = None, errors: list | None = None):
+    async def _create_valid_query(
+        self, messages: list[Message], title: str | None = None, errors: list | None = None
+    ) -> DbtslOutputs:
         """
         Create a valid dbt Semantic Layer query based on user messages.
         """
@@ -1184,6 +1088,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
             errors=errors,
         )
 
+        out_context = {}
         with self._add_step(title=title or "dbt Semantic Layer query", steps_layout=self._steps_layout) as step:
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
             response = self.llm.stream(
@@ -1219,7 +1124,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
                 formatted_params = json.dumps(query_params, indent=2)
                 step.stream(f"\n\n`{expr_slug}`\n```json\n{formatted_params}\n```")
 
-                self._memory["dbtsl_query_params"] = query_params
+                out_context["dbtsl_query_params"] = query_params
             except asyncio.CancelledError as e:
                 step.failed_title = "Cancelled dbt Semantic Layer query generation"
                 raise e
@@ -1245,7 +1150,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
                 step.stream(f"\nCompiled SQL:\n```sql\n{sql_query}\n```", replace=False)
 
             sql_expr_source = self.source.create_sql_expr_source({expr_slug: sql_query})
-            self._memory["sql"] = sql_query
+            out_context["sql"] = sql_query
 
             # Apply transforms
             sql_transforms = [SQLLimit(limit=1_000_000, write=self.source.dialect, pretty=True, identify=False)]
@@ -1262,42 +1167,59 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
             sql_metaset = await get_metaset([sql_expr_source], [expr_slug])
             vector_metaset = sql_metaset.vector_metaset
 
-            # Update memory
-            self._memory["data"] = await describe_data(df)
-            self._memory["source"] = sql_expr_source
-            self._memory["pipeline"] = pipeline
-            self._memory["table"] = pipeline.table
-            self._memory["dbtsl_vector_metaset"] = vector_metaset
-            self._memory["dbtsl_sql_metaset"] = sql_metaset
-            return sql_query, pipeline
+            # Update context
+            out_context["data"] = await describe_data(df)
+            out_context["source"] = sql_expr_source
+            out_context["pipeline"] = pipeline
+            out_context["table"] = pipeline.table
+            out_context["dbtsl_vector_metaset"] = vector_metaset
+            out_context["dbtsl_sql_metaset"] = sql_metaset
         except Exception as e:
             report_error(e, step)
             raise e
+        return out_context
 
     async def respond(
         self,
         messages: list[Message],
+        context: TContext,
         step_title: str | None = None,
-    ) -> Any:
+    ) -> tuple[list[Any], DbtslOutputs]:
         """
         Responds to user messages by generating and executing a dbt Semantic Layer query.
         """
         try:
-            sql_query, pipeline = await self._create_valid_query(messages, step_title)
+            out_context = await self._create_valid_query(messages, step_title)
         except RetriesExceededError as e:
             traceback.print_exception(e)
-            self._memory["__error__"] = str(e)
+            context["__error__"] = str(e)
             return None
 
-        self._render_lumen(pipeline, messages=messages, title=step_title, spec=sql_query)
-        return pipeline
+        pipeline = out_context["pipeline"]
+        view = self._output_type(
+            component=pipeline, title=step_title, spec=out_context["sql"]
+        )
+        return [view], out_context
+
+
+
+class ViewInputs(ContextModel):
+
+    data: Any
+
+    pipeline: Pipeline
+
+    sql_metaset: NotRequired[SQLMetaset]
+
+    table: str
+
+
+class ViewOutputs(ContextModel):
+
+    view = Any
 
 
 class BaseViewAgent(LumenBaseAgent):
-
-    requires = param.List(default=["pipeline", "table", "data"], readonly=True)
-
-    provides = param.List(default=["view"], readonly=True)
 
     prompts = param.Dict(
         default={
@@ -1305,24 +1227,27 @@ class BaseViewAgent(LumenBaseAgent):
         }
     )
 
+    input_schema = ViewInputs
+    output_schema = ViewOutputs
+
     def __init__(self, **params):
         self._last_output = None
         super().__init__(**params)
 
-    def _build_errors_context(self, pipeline: Pipeline, errors: list[str] | None) -> dict:
+    def _build_errors_context(self, pipeline: Pipeline, context: TContext, errors: list[str] | None) -> dict:
         errors_context = {}
         if errors:
             errors = ("\n".join(f"{i + 1}. {error}" for i, error in enumerate(errors))).strip()
             try:
-                last_output = yaml.safe_load(self._last_output["yaml_spec"])
+                last_output = load_yaml(self._last_output["yaml_spec"])
             except Exception:
                 last_output = ""
 
             vector_metadata_map = None
-            if "sql_metaset" in self._memory:
-                vector_metadata_map = self._memory["sql_metaset"].vector_metaset.vector_metadata_map
-            elif "dbtsl_sql_metaset" in self._memory:
-                vector_metadata_map = self._memory["dbtsl_sql_metaset"].vector_metaset.vector_metadata_map
+            if "sql_metaset" in context:
+                vector_metadata_map = context["sql_metaset"].vector_metaset.vector_metadata_map
+            elif "dbtsl_sql_metaset" in context:
+                vector_metadata_map = context["dbtsl_sql_metaset"].vector_metaset.vector_metadata_map
 
             columns_context = ""
             if vector_metadata_map is not None:
@@ -1342,16 +1267,18 @@ class BaseViewAgent(LumenBaseAgent):
     async def _create_valid_spec(
         self,
         messages: list[Message],
+        context: TContext,
         pipeline: Pipeline,
         schema: dict[str, Any],
         step_title: str | None = None,
         errors: list[str] | None = None,
     ) -> dict[str, Any]:
-        errors_context = self._build_errors_context(pipeline, errors)
+        errors_context = self._build_errors_context(pipeline, context, errors)
         doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
         system = await self._render_prompt(
             "main",
             messages,
+            context,
             table=pipeline.table,
             doc=doc,
             **errors_context,
@@ -1368,7 +1295,9 @@ class BaseViewAgent(LumenBaseAgent):
         e = None
         error = ""
         spec = ""
-        with self._add_step(title=step_title or "Generating view...", steps_layout=self._steps_layout) as step:
+        with self._add_step(
+            title=step_title or "Generating view...", steps_layout=self._steps_layout
+        ) as step:
             async for output in response:
                 chain_of_thought = output.chain_of_thought or ""
                 step.stream(chain_of_thought, replace=True)
@@ -1377,7 +1306,7 @@ class BaseViewAgent(LumenBaseAgent):
 
             for i in range(3):
                 try:
-                    spec = await self._extract_spec(spec)
+                    spec = await self._extract_spec(context, spec)
                     break
                 except Exception as e:
                     e = get_root_exception(e, exceptions=(MissingContextError,))
@@ -1386,13 +1315,13 @@ class BaseViewAgent(LumenBaseAgent):
 
                     error = str(e)
                     traceback.print_exception(e)
-                    context = f"```\n{yaml.safe_dump(yaml.safe_load(self._last_output['yaml_spec']))}\n```"
+                    context = f"```\n{dump_yaml(load_yaml(self._last_output['yaml_spec']))}\n```"
                     report_error(e, step, language="json", context=context, status="failed")
                     with self._add_step(
                         title="Re-attempted view generation",
                         steps_layout=self._steps_layout,
                     ) as retry_step:
-                        view = await self._retry_output_by_line(e, messages, self._memory, yaml.safe_dump(spec), language="")
+                        view = await self.revise(e, messages, context, dump_yaml(spec), language="yaml")
                         if "yaml_spec: " in view:
                             view = view.split("yaml_spec: ")[-1].rstrip('"').rstrip("'")
                         retry_step.stream(f"\n\n```yaml\n{view}\n```")
@@ -1407,36 +1336,34 @@ class BaseViewAgent(LumenBaseAgent):
         log_debug(f"{self.name} settled on spec: {spec!r}.")
         return spec
 
-    async def _extract_spec(self, spec: dict[str, Any]):
+    async def _extract_spec(self, context: TContext, spec: dict[str, Any]):
         return dict(spec)
-
-    async def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
-        memory["view"] = dict(await self._extract_spec(event.new), type=self.view_type)
 
     async def respond(
         self,
         messages: list[Message],
+        context: TContext,
         step_title: str | None = None,
-    ) -> Any:
+    ) -> tuple[list[Any], ViewOutputs]:
         """
         Generates a visualization based on user messages and the current data pipeline.
         """
-        pipeline = self._memory.get("pipeline")
+        pipeline = context.get("pipeline")
         if not pipeline:
-            raise ValueError("No current pipeline found in memory.")
+            raise ValueError("Context did not contain a pipeline.")
 
         schema = await get_schema(pipeline)
         if not schema:
             raise ValueError("Failed to retrieve schema for the current pipeline.")
 
-        spec = await self._create_valid_spec(messages, pipeline, schema, step_title)
-        self._memory["view"] = dict(spec, type=self.view_type)
+        spec = await self._create_valid_spec(messages, context, pipeline, schema, step_title)
         view = self.view_type(pipeline=pipeline, **spec)
-        self._render_lumen(view, messages=messages, title=step_title)
-        return view
+        out = self._output_type(component=view, title=step_title)
+        return [out], {"view": dict(spec, type=self.view_type.view_type)}
 
 
 class hvPlotAgent(BaseViewAgent):
+
     conditions = param.List(
         default=[
             "Use for exploratory data analysis, interactive plots, and dynamic filtering",
@@ -1477,12 +1404,8 @@ class hvPlotAgent(BaseViewAgent):
         )
         return model[self.view_type.__name__]
 
-    async def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
-        spec = yaml.load(event.new, Loader=yaml.SafeLoader)
-        memory["view"] = dict(await self._extract_spec(spec), type=self.view_type)
-
-    async def _extract_spec(self, spec: dict[str, Any]):
-        pipeline = self._memory["pipeline"]
+    async def _extract_spec(self, context: TContext, spec: dict[str, Any]):
+        pipeline = context["pipeline"]
         spec = {key: val for key, val in spec.items() if val is not None}
         spec["type"] = "hvplot_ui"
         self.view_type.validate(spec)
@@ -1517,6 +1440,8 @@ class VegaLiteAgent(BaseViewAgent):
         }
     )
 
+    user = param.String(default="Vega")
+
     vector_store_path = param.Path(default=None, check_exists=False, doc="""
         Path to a custom vector store for storing and retrieving Vega-Lite examples;
         if not provided a default store will be used depending on the LLM--
@@ -1528,7 +1453,7 @@ class VegaLiteAgent(BaseViewAgent):
 
     _output_type = VegaLiteOutput
 
-    _retry_target_keys = ["spec"]
+    _retry_target_keys = []
 
     def __init__(self, **params):
         self._vector_store: DuckDBVectorStore | None = None
@@ -1663,16 +1588,19 @@ class VegaLiteAgent(BaseViewAgent):
         vega_spec: dict[str, Any],
         prompt_name: str,
         messages: list[Message],
+        context: TContext,
         doc: str | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """Update a Vega-Lite spec with incremental changes for a specific step."""
-        with self.interface.param.update(callback_exception="raise"), self._add_step(title=step_desc, steps_layout=self._steps_layout) as step:
+        with self._add_step(title=step_desc, steps_layout=self._steps_layout) as step:
+            vega_spec = dump_yaml(vega_spec, default_flow_style=False)
             system_prompt = await self._render_prompt(
                 prompt_name,
                 messages,
-                vega_spec=yaml.dump(vega_spec, default_flow_style=False),
+                context,
+                vega_spec=vega_spec,
                 doc=doc,
-                table=self._memory["pipeline"].table,
+                table=context["pipeline"].table,
             )
 
             model_spec = self.prompts.get(prompt_name, {}).get("llm_spec", self.llm_spec_key)
@@ -1685,16 +1613,8 @@ class VegaLiteAgent(BaseViewAgent):
 
             step.stream(f"Reasoning: {result.chain_of_thought}")
             step.stream(f"Update:\n```yaml\n{result.yaml_update}\n```", replace=False)
-            update_dict = yaml.safe_load(result.yaml_update)
-            return step_name, update_dict
-
-    async def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
-        try:
-            spec = await self._extract_spec({"yaml_spec": event.new})
-        except Exception as e:
-            traceback.print_exception(e)
-            return
-        memory["view"] = dict(spec, type=self.view_type)
+            update_dict = load_yaml(result.yaml_update)
+        return step_name, update_dict
 
     def _add_zoom_params(self, vega_spec: dict) -> None:
         """Add zoom parameters to vega spec."""
@@ -1767,20 +1687,28 @@ class VegaLiteAgent(BaseViewAgent):
         return list(dict.fromkeys(as_fields))
 
     @retry_llm_output()
-    async def _generate_basic_spec(self, messages: list[Message], pipeline: Pipeline, doc_examples: list, doc: str, errors: list | None = None) -> dict[str, Any]:
+    async def _generate_basic_spec(
+        self,
+        messages: list[Message],
+        context: TContext,
+        pipeline: Pipeline,
+        doc_examples: list,
+        doc: str,
+        errors: list | None = None
+    ) -> dict[str, Any]:
         """Generate the basic VegaLite spec structure."""
-        errors_context = self._build_errors_context(pipeline, errors)
+        errors_context = self._build_errors_context(pipeline, context, errors)
         with self._add_step(title="Creating basic plot structure", steps_layout=self._steps_layout) as step:
             system_prompt = await self._render_prompt(
                 "main",
                 messages,
+                context,
                 table=pipeline.table,
                 doc=doc,
                 doc_examples=doc_examples,
                 **errors_context,
             )
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
-
             response = self.llm.stream(
                 messages,
                 system=system_prompt,
@@ -1791,16 +1719,16 @@ class VegaLiteAgent(BaseViewAgent):
             async for output in response:
                 step.stream(output.chain_of_thought, replace=True)
 
-            current_spec = await self._extract_spec({"yaml_spec": output.yaml_spec})
+            current_spec = await self._extract_spec(context, {"yaml_spec": output.yaml_spec})
             step.success_title = "Complete visualization with titles and colors created"
         return current_spec
 
-    async def _extract_spec(self, spec: dict[str, Any]):
+    async def _extract_spec(self, context: TContext, spec: dict[str, Any]):
         # .encode().decode('unicode_escape') fixes a JSONDecodeError in Python
         # where it's expecting property names enclosed in double quotes
         # by properly handling the escaped characters in your JSON string
         if yaml_spec := spec.get("yaml_spec"):
-            vega_spec = yaml.load(yaml_spec, Loader=yaml.SafeLoader)
+            vega_spec = load_yaml(yaml_spec)
         elif json_spec := spec.get("json_spec"):
             vega_spec = load_json(json_spec)
         if "$schema" not in vega_spec:
@@ -1809,10 +1737,10 @@ class VegaLiteAgent(BaseViewAgent):
             vega_spec["width"] = "container"
         if "height" not in vega_spec:
             vega_spec["height"] = "container"
-        self._output_type._validate_spec(vega_spec)
+        self._output_type.validate_spec(vega_spec)
 
         # using string comparison because these keys could be in different nested levels
-        vega_spec_str = yaml.dump(vega_spec)
+        vega_spec_str = dump_yaml(vega_spec)
         # Handle different types of interactive controls based on chart type
         if "latitude:" in vega_spec_str or "longitude:" in vega_spec_str:
             vega_spec = self._add_geographic_items(vega_spec, vega_spec_str)
@@ -1820,9 +1748,9 @@ class VegaLiteAgent(BaseViewAgent):
         #     # add pan/zoom controls to all plots except geographic ones and points overlaid on line plots
         #     # because those result in an blank plot without error
         #     vega_spec["params"] = [{"bind": "scales", "name": "grid", "select": "interval"}]
-        return {"spec": vega_spec, "sizing_mode": "stretch_both", "min_height": 300, "max_width": 1200}
+        return {"spec": vega_spec, "sizing_mode": "stretch_both", "min_height": 300}
 
-    async def _get_doc_examples(self, user_query: str) -> list:
+    async def _get_doc_examples(self, user_query: str) -> list[str]:
         # Query vector store for relevant examples
         doc_examples = []
         vector_store = self._get_vector_store()
@@ -1843,50 +1771,58 @@ class VegaLiteAgent(BaseViewAgent):
                         k += 1
                     if k >= 3:  # Limit to top 3 examples
                         break
+        return doc_examples
 
-    async def _retry_output_by_line(
+    async def revise(
         self,
         feedback: str,
         messages: list[Message],
-        memory: _Memory,
-        original_output: str,
+        context: TContext,
+        view: LumenOutput | None = None,
+        spec: str | None = None,
         language: str | None = None,
-        **context
+        errors: list[str] | None = None,
+        **kwargs
     ) -> str:
+        if "errors":
+            kwargs["errors"] = errors
         doc_examples = await self._get_doc_examples(feedback)
         context["doc_examples"] = doc_examples
-        return await super()._retry_output_by_line(feedback, messages, memory, original_output, language, **context)
+        return await super().revise(
+            feedback, messages, context, view=view, spec=spec, language=language, **kwargs
+        )
 
     async def respond(
         self,
         messages: list[Message],
+        context: TContext,
         step_title: str | None = None,
-    ) -> Any:
+    ) -> tuple[list[Any], TContext]:
         """
         Generates a VegaLite visualization using progressive building approach with real-time updates.
         """
-        pipeline = self._memory.get("pipeline")
+        pipeline = context.get("pipeline")
         if not pipeline:
-            raise ValueError("No current pipeline found in memory.")
+            raise ValueError("Context did not contain a pipeline.")
 
         schema = await get_schema(pipeline)
         if not schema:
             raise ValueError("Failed to retrieve schema for the current pipeline.")
 
         user_query = messages[-1].get("content", "") if messages[-1].get("role") == "user" else ""
-        doc_examples = await self._get_doc_examples(user_query)
+        try:
+            doc_examples = await self._get_doc_examples(user_query)
+        except Exception:
+            doc_examples = []
 
         # Step 1: Generate basic spec
         doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
         # Produces {"spec": {$schema: ..., ...}, "sizing_mode": ..., ...}
-        full_dict = await self._generate_basic_spec(messages, pipeline, doc_examples, doc)
+        full_dict = await self._generate_basic_spec(messages, context, pipeline, doc_examples, doc)
 
         # Step 2: Show complete plot immediately
-        self._memory["view"] = dict(full_dict, type=self.view_type)
         view = self.view_type(pipeline=pipeline, **full_dict)
-        out = self._render_lumen(view, messages=messages, title=step_title)
-        # Get the latest spec from the rendered view, which includes type: vega-lite
-        full_dict = yaml.safe_load(out.spec)
+        out = self._output_type(component=view, title=step_title)
 
         # Step 3: enhancements (LLM-driven creative decisions)
         steps = {
@@ -1897,85 +1833,41 @@ class VegaLiteAgent(BaseViewAgent):
         for step_name, step_desc in steps.items():
             # Only pass the vega lite 'spec' portion to prevent ballooning context
             step_name, update_dict = await self._update_spec_step(
-                step_name, step_desc, full_dict["spec"], step_name, messages, doc=doc
+                step_name, step_desc, out.spec, step_name, messages, context, doc=doc
             )
             try:
+                # Validate merged spec
                 test_spec = self._deep_merge_dicts(full_dict["spec"], update_dict)
-                await self._extract_spec({"yaml_spec": yaml.dump(test_spec)})  # Validation
+                await self._extract_spec(context, {"yaml_spec": dump_yaml(test_spec)})
             except Exception as e:
                 log_debug(f"Skipping invalid {step_name} update due to error: {e}")
                 continue
-            full_dict["spec"] = self._deep_merge_dicts(full_dict["spec"], update_dict)
-            out.spec = yaml.dump(full_dict)
+            spec = self._deep_merge_dicts(full_dict["spec"], update_dict)
+            out.spec = dump_yaml(spec)
             log_debug(f"📊 Applied {step_name} updates and refreshed visualization")
 
-        self._memory["view"] = full_dict
-        return view
+        return [out], {"view": dict(full_dict, type=view.view_type)}
 
-    def _render_lumen(
+    async def annotate(
         self,
-        component: Component,
-        messages: list | None = None,
-        title: str | None = None,
-        **kwargs,
-    ):
-        """Override to add annotation controls alongside retry controls."""
-        async def _retry_invoke(event: param.parameterized.Event):
-            with out.param.update(loading=True):
-                out.spec = await self._retry_output_by_line(event.new, messages, self._memory, out.spec, language=out.language)
-
-        async def _annotation_invoke(event: param.parameterized.Event):
-            """Handle annotation request."""
-            with out.param.update(loading=True):
-                current_dict = yaml.safe_load(out.spec)
-                updated_dict = await self._apply_annotation(
-                    annotation_request=event.new,
-                    current_dict=current_dict,
-                    messages=messages,
-                )
-                # Already converted to full spec
-                out.spec = yaml.dump(updated_dict)
-
-        retry_controls = RetryControls()
-        retry_controls.param.watch(_retry_invoke, "reason")
-
-        annotation_controls = AnnotationControls()
-        annotation_controls.param.watch(_annotation_invoke, "annotation_request")
-
-        out = self._output_type(
-            component=component,
-            footer=[retry_controls, annotation_controls],
-            title=title,
-            **kwargs
-        )
-        out.param.watch(partial(self._update_spec, self._memory), "spec")
-        if "outputs" in self._memory:
-            # We have to create a new list to trigger an event
-            # since inplace updates will not trigger updates
-            # and won't allow diffing between old and new values
-            self._memory["outputs"] = self._memory["outputs"] + [out]
-        if self.interface is not None:
-            message_kwargs = dict(value=out, user=self.user)
-            self.interface.stream(replace=True, max_width=self._max_width, **message_kwargs)
-        return out
-
-    async def _apply_annotation(
-        self,
-        annotation_request: str,
-        current_dict: dict,
+        instruction: str,
         messages: list[Message],
+        context: TContext,
+        spec: dict
     ) -> dict:
         """
         Apply annotations based on user request.
 
         Parameters
         ----------
-        annotation_request : str
+        instruction: str
             User's description of what to annotate
-        current_spec : dict
-            The current VegaLite specification (full dict with 'spec' key)
-        messages : list[Message]
+        messages: list[Message]
             Chat history for context
+        context: TContext
+            Session context
+        spec : dict
+            The current VegaLite specification (full dict with 'spec' key)
 
         Returns
         -------
@@ -1985,36 +1877,48 @@ class VegaLiteAgent(BaseViewAgent):
         # Add user's annotation request to messages context
         annotation_messages = messages + [{
             "role": "user",
-            "content": f"Add annotations: {annotation_request}"
+            "content": f"Add annotations: {instruction}"
         }]
 
-        with self.interface.param.update(callback_exception="raise"):
-            system_prompt = await self._render_prompt(
-                "annotate_plot",
-                annotation_messages,
-                vega_spec=yaml.dump(current_dict["spec"], default_flow_style=False),
-            )
+        vega_spec = dump_yaml(spec["spec"], default_flow_style=False)
+        system_prompt = await self._render_prompt(
+            "annotate_plot",
+            annotation_messages,
+            context,
+            vega_spec=vega_spec,
+        )
 
-            model_spec = self.prompts.get("annotate_plot", {}).get("llm_spec", self.llm_spec_key)
-            result = await self.llm.invoke(
-                messages=annotation_messages,
-                system=system_prompt,
-                response_model=VegaLiteSpecUpdate,
-                model_spec=model_spec,
-            )
-            update_dict = yaml.safe_load(result.yaml_update)
+        model_spec = self.prompts.get("annotate_plot", {}).get("llm_spec", self.llm_spec_key)
+        result = await self.llm.invoke(
+            messages=annotation_messages,
+            system=system_prompt,
+            response_model=VegaLiteSpecUpdate,
+            model_spec=model_spec,
+        )
+        update_dict = load_yaml(result.yaml_update)
 
         # Merge and validate
-        final_dict = current_dict.copy()
+        final_dict = spec.copy()
         try:
             final_dict["spec"] = self._deep_merge_dicts(final_dict["spec"], update_dict)
-            await self._extract_spec({"yaml_spec": yaml.dump(final_dict["spec"])})
+            await self._extract_spec(context, {"yaml_spec": dump_yaml(final_dict["spec"])})
         except Exception as e:
             log_debug(f"Skipping invalid annotation update due to error: {e}")
-            # Return original spec if annotation fails
-            return final_dict
-
         return final_dict
+
+
+class AnalysisInputs(ContextModel):
+
+    data: NotRequired[Any]
+
+    pipeline: Pipeline
+
+
+class AnalysisOutputs(ContextModel):
+
+    analysis: Callable
+
+    view: Any
 
 
 class AnalysisAgent(LumenBaseAgent):
@@ -2037,21 +1941,15 @@ class AnalysisAgent(LumenBaseAgent):
         }
     )
 
-    provides = param.List(default=["view"])
-
-    requires = param.List(default=["pipeline"])
-
     _output_type = AnalysisOutput
-
-    def _update_spec(self, memory: _Memory, event: param.parameterized.Event):
-        pass
 
     async def respond(
         self,
         messages: list[Message],
+        context: TContext,
         step_title: str | None = None
-    ) -> Any:
-        pipeline = self._memory["pipeline"]
+    ) -> tuple[list[Any], TContext]:
+        pipeline = context.get("pipeline")
         analyses = {a.name: a for a in self.analyses if await a.applies(pipeline)}
         if not analyses:
             log_debug("No analyses apply to the current data.")
@@ -2073,7 +1971,7 @@ class AnalysisAgent(LumenBaseAgent):
                     "main",
                     messages,
                     analyses=analyses,
-                    data=self._memory.get("data"),
+                    data=context.get("data"),
                 )
                 model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
                 analysis_name = (
@@ -2091,51 +1989,63 @@ class AnalysisAgent(LumenBaseAgent):
             analysis_name = next(iter(analyses))
 
         view = None
-        with self.interface.param.update(callback_exception="raise"):
-            with self._add_step(title=step_title or "Creating view...", steps_layout=self._steps_layout) as step:
-                await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
-                analysis_callable = analyses[analysis_name].instance(agents=self.agents, memory=self._memory, interface=self.interface)
+        out_context = {}
+        with self._add_step(title=step_title or "Creating view...", steps_layout=self._steps_layout) as step:
+            await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
+            analysis_callable = analyses[analysis_name].instance(agents=self.agents, interface=self.interface)
 
-                data = await get_data(pipeline)
-                for field in analysis_callable._field_params:
-                    analysis_callable.param[field].objects = list(data.columns)
-                self._memory["analysis"] = analysis_callable
+            out_context["analysis"] = analysis_callable
+            data = await get_data(pipeline)
+            for field in analysis_callable._field_params:
+                analysis_callable.param[field].objects = list(data.columns)
 
-                if analysis_callable.autorun:
-                    if asyncio.iscoroutinefunction(analysis_callable.__call__):
-                        view = await analysis_callable(pipeline)
-                    else:
-                        view = await asyncio.to_thread(analysis_callable, pipeline)
-                    if isinstance(view, Viewable):
-                        view = Panel(object=view, pipeline=self._memory.get("pipeline"))
-                    spec = view.to_spec()
-                    if isinstance(view, View):
-                        view_type = view.view_type
-                        self._memory["view"] = dict(spec, type=view_type)
-                    elif isinstance(view, Pipeline):
-                        self._memory["pipeline"] = view
-                    # Ensure data reflects processed pipeline
-                    if pipeline is not self._memory["pipeline"]:
-                        pipeline = self._memory["pipeline"]
-                        data = await get_data(pipeline)
-                        if len(data) > 0:
-                            self._memory["data"] = await describe_data(data)
-                    yaml_spec = yaml.dump(spec)
-                    step.stream(f"Generated view\n```yaml\n{yaml_spec}\n```")
-                    step.success_title = "Generated view"
+            if analysis_callable.autorun:
+                if asyncio.iscoroutinefunction(analysis_callable.__call__):
+                    view = await analysis_callable(pipeline, context)
                 else:
-                    step.success_title = "Configure the analysis"
+                    view = await asyncio.to_thread(analysis_callable, pipeline, context)
+                if isinstance(view, Viewable):
+                    view = Panel(object=view, pipeline=context.get("pipeline"))
+                spec = view.to_spec()
+                if isinstance(view, View):
+                    view_type = view.view_type
+                    out_context["view"] = dict(spec, type=view_type)
+                elif isinstance(view, Pipeline):
+                    out_context["pipeline"] = view
+                # Ensure data reflects processed pipeline
+                if "pipeline" in out_context:
+                    pipeline = out_context["pipeline"]
+                    data = await get_data(pipeline)
+                    if len(data) > 0:
+                        out_context["data"] = await describe_data(data)
+                yaml_spec = dump_yaml(spec)
+                step.stream(f"Generated view\n```yaml\n{yaml_spec}\n```")
+                step.success_title = "Generated view"
+            else:
+                step.success_title = "Configure the analysis"
 
-        analysis = self._memory["analysis"]
-        pipeline = self._memory["pipeline"]
+        analysis = out_context["analysis"]
         if view is None and analysis.autorun:
-            self.interface.stream("Failed to find an analysis that applies to this data")
+            self.interface.stream("Failed to find an analysis that applies to this data.")
         else:
-            self._render_lumen(view, analysis=analysis, pipeline=pipeline, title=step_title)
-            self.interface.stream(
-                analysis.message or f"Successfully created view with {analysis_name} analysis.", user="Assistant"
+            out = self._output_type(
+                component=view, title=step_title, analysis=analysis, pipeline=out_context.get("pipeline"), context=context
             )
-        return view
+        return [] if view is None else [out], out_context
+
+
+class ValidationInputs(ContextModel):
+
+    data: NotRequired[Any]
+
+    sql: NotRequired[str]
+
+    view: NotRequired[Any]
+
+
+class ValidationOutputs(ContextModel):
+
+    validation_result: str
 
 
 class ValidationAgent(Agent):
@@ -2166,16 +2076,16 @@ class ValidationAgent(Agent):
         }
     )
 
-    requires = param.List(default=[], readonly=True)
+    input_schema = ValidationInputs
 
-    provides = param.List(default=["validation_result"], readonly=True)
+    output_schema = ValidationOutputs
 
     async def respond(
         self,
         messages: list[Message],
-        render_output: bool = False,
+        context: TContext,
         step_title: str | None = None,
-    ) -> Any:
+    ) -> tuple[list[Any], ValidationOutputs]:
         def on_click(event):
             if messages:
                 user_messages = [msg for msg in reversed(messages) if msg.get("role") == "user"]
@@ -2184,10 +2094,12 @@ class ValidationAgent(Agent):
             self.interface.send(f"Follow these suggestions to fulfill the original intent {original_query}\n\n{suggestions_list}")
 
         executed_steps = None
-        if "plan" in self._memory and hasattr(self._memory["plan"], "steps"):
-            executed_steps = [f"{step.actor}: {step.instruction}" for step in self._memory["plan"].steps]
+        if "plan" in context:
+            executed_steps = [
+                f"{step[0].__class__.__name__}: {step.instruction}" for step in context["plan"]
+            ]
 
-        system_prompt = await self._render_prompt("main", messages, executed_steps=executed_steps)
+        system_prompt = await self._render_prompt("main", messages, context, executed_steps=executed_steps)
         model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
 
         result = await self.llm.invoke(
@@ -2196,12 +2108,9 @@ class ValidationAgent(Agent):
             model_spec=model_spec,
             response_model=QueryCompletionValidation,
         )
-
-        self._memory["validation_result"] = result
-
         response_parts = []
         if result.correct:
-            return result
+            return [result], {"validation_result": result}
 
         response_parts.append(f"**Query Validation: ✗ Incomplete** - {result.chain_of_thought}")
         if result.missing_elements:
@@ -2215,4 +2124,4 @@ class ValidationAgent(Agent):
         footer_objects = [button]
         formatted_response = "\n\n".join(response_parts)
         self.interface.stream(formatted_response, user=self.user, max_width=self._max_width, footer_objects=footer_objects)
-        return result
+        return [result], {"validation_result": result}
