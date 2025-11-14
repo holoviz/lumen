@@ -1,5 +1,10 @@
 from typing import Annotated, NotRequired, TypedDict
 
+try:
+    import lumen.ai  # noqa
+except ModuleNotFoundError:
+    pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
+
 from lumen.ai.context import (
     AccumulateSpec, ContextError, ContextModel, ValidationIssue, _dedupe,
     _parse_accumulate_meta, isinstance_like, merge_contexts,
