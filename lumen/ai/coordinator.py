@@ -988,7 +988,7 @@ class Planner(Coordinator):
         todos = Typography(
             css_classes=["todos"], margin=0, styles={"font-weight": "normal"}
         )
-        todos_layout = Column(todos_title, todos)
+        todos_layout = Column(todos_title, todos, stylesheets=[".markdown { padding-inline: unset; }"])
 
         with self._add_step(
             title="Planning how to solve user query...", user="Planner",

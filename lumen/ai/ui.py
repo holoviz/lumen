@@ -222,7 +222,7 @@ class UI(Viewer):
             List of sources.
         """
         if data is None:
-            return
+            return []
         elif isinstance(data, dict):
             data = data.items()
         elif not isinstance(data, list):
@@ -283,7 +283,8 @@ class UI(Viewer):
             The data to resolve.
         """
         self.context["sources"] = sources = self._resolve_data(data)
-        self.context["source"] = sources[-1]
+        if sources:
+            self.context["source"] = sources[-1]
 
     @wrap_logfire(span_name="Initialize LLM")
     async def _initialize_new_llm(self):

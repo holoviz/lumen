@@ -17,8 +17,9 @@ from panel.viewable import Viewer
 from panel.widgets import FileDropper, Tabulator, Tqdm
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
-    Button, Card, ChatAreaInput, CheckBoxGroup, FlexBox, IconButton,
-    MultiChoice, Select, Switch, Tabs, TextInput, ToggleIcon, Typography,
+    Button, Card, ChatAreaInput, CheckBoxGroup, Column as MuiColumn, FlexBox,
+    IconButton, MultiChoice, Select, Switch, Tabs, TextInput, ToggleIcon,
+    Typography,
 )
 
 from ..pipeline import Pipeline
@@ -210,7 +211,7 @@ class SourceControls(Viewer):
         )
         self._cancel_button.param.watch(self._handle_cancel, "clicks")
 
-        self._error_placeholder = HTML("", visible=False, margin=(0, 10))
+        self._error_placeholder = HTML("", visible=False, margin=(0, 10, 5, 10))
         self._message_placeholder = HTML("", visible=False, margin=(0, 10))
 
         # Progress bar for downloads
@@ -220,7 +221,7 @@ class SourceControls(Viewer):
             sizing_mode="stretch_width"
         )
 
-        self.menu = Column(
+        self.menu = MuiColumn(
             *((self._input_tabs,) if self.show_input else ()),
             self._upload_tabs,
             Row(self._add_button, self._cancel_button),
@@ -676,9 +677,17 @@ class SourceControls(Viewer):
 
             for media_controls in all_media_controls:
                 if media_controls.extension.endswith(custom_table_extensions):
-                    n_tables += int(table_upload_callbacks[media_controls.extension](
-                        media_controls.file_obj, media_controls.alias, media_controls.filename
-                    ))
+                    source = table_upload_callbacks[media_controls.extension](
+                        self.context, media_controls.file_obj, media_controls.alias, media_controls.filename
+                    )
+                    if source is not None:
+                        n_tables += len(source.get_tables())
+                        self.outputs["source"] = source
+                        if "sources" not in self.outputs:
+                            self.outputs["sources"] = [source]
+                        else:
+                            self.outputs["sources"].append(source)
+                        self.param.trigger("outputs")
                 elif media_controls.extension.endswith(TABLE_EXTENSIONS):
                     if source is None:
                         source_id = f"UploadedSource{self._count:06d}"
