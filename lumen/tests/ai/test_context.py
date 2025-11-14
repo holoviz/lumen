@@ -39,10 +39,10 @@ class ReportOutputs(TypedDict):
     report: str
 
 class DummyTask:
-    def __init__(self, name: str, inputs: type[TypedDict] | None, outputs: type[TypedDict] | None, not_with=None):
+    def __init__(self, name: str, input_schema: type[TypedDict] | None, output_schema: type[TypedDict] | None, not_with=None):
         self.name = name
-        self.inputs = inputs
-        self.outputs = outputs
+        self.input_schema = input_schema
+        self.output_schema = output_schema
         self.not_with = not_with
 
 # -----------------------
