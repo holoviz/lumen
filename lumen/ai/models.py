@@ -185,7 +185,7 @@ class VegaLiteSpecUpdate(BaseModel):
 
 class RawStep(BaseModel):
     actor: str
-    instruction: str
+    instruction: str = Field(description="Concise instruction defining the specific subtask. Never generate instructions to create synthetic data.")
     title: str
 
 
