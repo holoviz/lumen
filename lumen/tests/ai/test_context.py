@@ -1,6 +1,8 @@
-from typing import Annotated, NotRequired, TypedDict
+from typing import Annotated, TypedDict
 
 import pytest
+
+from typing_extensions import NotRequired
 
 try:
     import lumen.ai  # noqa
