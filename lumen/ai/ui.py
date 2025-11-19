@@ -38,8 +38,8 @@ from .agents import (
     SQLAgent, TableListAgent, ValidationAgent, VegaLiteAgent,
 )
 from .config import (
-    DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROVIDED_SOURCE_NAME,
-    SOURCE_TABLE_SEPARATOR,
+    DEMO_MESSAGES, FORMAT_ICONS, FORMAT_LABELS, GETTING_STARTED_SUGGESTIONS,
+    PROVIDED_SOURCE_NAME, SOURCE_TABLE_SEPARATOR,
 )
 from .context import TContext
 from .controls import (
@@ -1236,13 +1236,19 @@ class ExplorerUI(UI):
             title = f"{title[:25]}..."
 
         export_menu = MenuButton(
-            label="Export", variant='text', icon="menu", margin=0,
-            items=[{"label": f"Download as .{fmt}", "format": fmt} for fmt in view.export_formats]
+            label="Export as...", variant='text', icon="file_download", margin=0,
+            items=[
+                {
+                    "label": FORMAT_LABELS.get(fmt, f"{fmt.upper()} (.{fmt})"),
+                    "format": fmt,
+                    "icon": FORMAT_ICONS.get(fmt, "insert_drive_file")
+                } for fmt in view.export_formats
+            ],
+            on_click=lambda _: file_download.transfer()
         )
         def download_export(item):
             fmt = item["format"]
             file_download.filename = f"{title}.{fmt}"
-            state.schedule(lambda: file_download.param.update(_clicks=file_download._clicks+1), schedule=True)
             return view.export(fmt)
         file_download = FileDownload(
             auto=True, callback=param.bind(download_export, export_menu), filename=title, visible=False
@@ -1252,7 +1258,7 @@ class ExplorerUI(UI):
         tabs = exploration.view[0]
         position = len(tabs)
 
-        task = exploration.plan[position-1]
+        task = next(task for task in exploration.plan if view in task.views)
         async def revise(event):
             try:
                 await task.revise(
@@ -1272,9 +1278,9 @@ class ExplorerUI(UI):
                 )
                 tabs.active = max(exploration.view[0].active-1, 0)
                 tabs.remove(vsplit)
-                exploration.view.append(vsplit)
+                exploration.view.append(standalone)
             else:
-                exploration.view.remove(vsplit)
+                exploration.view.remove(standalone)
                 tabs.insert(position, (title, vsplit))
                 tabs.active = position
                 pop_button.param.update(
@@ -1295,6 +1301,10 @@ class ExplorerUI(UI):
         )
         editor = Column(actions, view.editor)
         vsplit = VSplit(editor, view, sizes=(20, 80), expanded_sizes=(20, 80), sizing_mode="stretch_both")
+        standalone = Column(
+            Typography(title.upper(), variant="subtitle1", color="primary", sx={"border-bottom": "2px solid var(--mui-palette-primary-main)"}),
+            vsplit
+        )
         return (title, vsplit)
 
     def _add_views(self, exploration: Exploration, event: param.parameterized.Event):

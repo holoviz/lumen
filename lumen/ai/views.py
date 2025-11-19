@@ -3,7 +3,7 @@ import json
 import traceback
 
 from copy import deepcopy
-from io import StringIO
+from io import BytesIO, StringIO
 from typing import Any
 
 import panel as pn
@@ -247,7 +247,8 @@ class VegaLiteOutput(LumenOutput):
         ret = super().export(fmt)
         if ret is not None:
             return ret
-        return self.component.get_panel().export(fmt)
+        out = self.component.get_panel().export(fmt, scale=2)
+        return BytesIO(out) if isinstance(out, bytes) else StringIO(out)
 
     @pn.cache
     @staticmethod
