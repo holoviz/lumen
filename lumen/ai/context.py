@@ -5,9 +5,11 @@ import sys
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import (
-    TYPE_CHECKING, Annotated, Any, Literal, NotRequired, Required, TypedDict,
-    Union, get_args, get_origin, get_type_hints,
+    TYPE_CHECKING, Annotated, Any, Literal, TypedDict, Union, get_args,
+    get_origin, get_type_hints,
 )
+
+from typing_extensions import NotRequired, Required
 
 if TYPE_CHECKING:
     from .actor import Actor
