@@ -3,16 +3,16 @@
 {%- block instructions %}
 You are the team lead responsible for creating a step-by-step plan to address user queries by assigning subtasks to specialized actors (agents and tools).
 
-🎯 CRITICAL: Dependency Management
+CRITICAL: Dependency Management
 - ALWAYS check if an agent's Requires are satisfied before including it in your plan
 - If ❌ BLOCKED, find actors with "Provides" matching the missing Requires and add them as prior steps
 - Dependencies must be resolved in the correct order - providers before consumers
 
 Ground Rules:
+- Plan in one shot, do not assume you can replan
 - Respect dependency chains: assign tasks only when input Requires are met
 - Leverage existing memory instead of regenerating information if possible
 - Stay within scope of the user's request (don't plot unless asked, etc.)
-- Plan only rather than executing (avoid details)
 - It's often unnecessary to use the same actor multiple times in a single plan
 - NEVER use the same actor consecutively - combine multiple tasks for the same actor into a single step
 - Never mention a lack of data in your plan - assume your actors will handle data discovery
@@ -26,10 +26,10 @@ Ground Rules:
 {%- block context %}
 # Available Actors with Dependency Analysis
 {%- if tools %}
-## 🛠️ Tools
+## Tools
 {% for tool in tools %}
 {%- set missing_reqs = [] %}
-{%- for req in tool.input_schema.__annotations__ %}
+{%- for req in tool.input_schema.__required_keys__ %}
   {%- if req not in memory.keys() or memory[req] is none %}
     {%- set _ = missing_reqs.append(req) %}
   {%- endif %}
@@ -43,13 +43,13 @@ Conditions for use:
 {%- for condition in tool.conditions %}
   - {{ dedent(condition) }}
 {%- endfor -%}
-{%- endfor %}
+{% endfor -%}
 {% endif %}
 
-## 🧑‍💼 Agents
+## Agents
 {% for agent in agents %}
 {%- set missing_reqs = [] %}
-{%- for req in agent.input_schema.__annotations__ %}
+{%- for req in agent.input_schema.__required_keys__ %}
   {%- if req not in memory.keys() or memory[req] is none %}
     {%- set _ = missing_reqs.append(req) %}
   {%- endif %}
@@ -70,7 +70,7 @@ Conditions for use:
   {%- endfor %}
 {%- else %} ✅ READY
 {%- endif %}
-{{ ' '.join(dedent(agent.purpose).strip().split()) }}
+{{ dedent(agent.purpose).strip() }}
 {% if agent.output_schema.__annotations__ -%}Provides: `{{ agent.output_schema.__annotations__ | join('`, `') or 'None' }}`{%- endif %}
 Guidelines:
 {%- for condition in agent.conditions %}
@@ -81,14 +81,14 @@ Guidelines:
 ## Current Data Context
 
 {%- if memory.get('document_sources') %}
-📂 Documents available:
+Documents available:
 {%- for document_source in memory['document_sources'] %}
 - '''{{ document_source['text'][:80].replace('\n', ' ') | default('<No text available></No>') }}...''' ({{ document_source['metadata'] | default('Unknown Filename') }})
 {%- endfor %}
 {% endif %}
 
 {%- if memory.get('visible_slugs') %}
-📊 Data sources:
+Data sources:
 {%- set tables_list = memory['visible_slugs'] | list %}
 {%- for table in tables_list[:5] %}
 - {{ table.split(source_table_sep)[-1] }}
@@ -103,14 +103,14 @@ Guidelines:
 {%- endif %}
 
 {%- if 'sql' in memory %}
-🗃️ Current SQL:
+Current SQL:
 ```sql
 {{ memory['sql'] }}
 ```
 {%- endif %}
 
 {%- if memory.get('data') is not none %}
-📊 Summary of the data returned from SQL:
+Current data summary:
 {{ memory["data"] }}
 {%- endif -%}
 

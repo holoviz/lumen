@@ -28,8 +28,8 @@ from .schemas import (
 from .services import DbtslMixin
 from .translate import function_to_model
 from .utils import (
-    get_schema, log_debug, process_enums, stream_details, truncate_string,
-    with_timeout,
+    get_schema, log_debug, parse_table_slug, process_enums, stream_details,
+    truncate_string, with_timeout,
 )
 from .vector_store import NumpyVectorStore, VectorStore
 
@@ -285,7 +285,7 @@ class VectorLookupTool(Tool):
 
     __abstract = True
 
-    outputs = VectorLookupOutputs
+    output_schema = VectorLookupOutputs
 
     def __init__(self, **params):
         if 'vector_store' not in params:
@@ -293,7 +293,8 @@ class VectorLookupTool(Tool):
         super().__init__(**params)
 
     async def prepare(self, context: TContext):
-        context["tables_metadata"] = {}
+        if "tables_metadata" not in context:
+            context["tables_metadata"] = {}
         await self._update_vector_store(context)
 
     def _handle_ready_task_done(self, task):
@@ -520,13 +521,10 @@ class DocumentLookup(VectorLookupTool):
     purpose = param.String(default="""
         Looks up relevant documents based on the user query.""")
 
-    sync_sources = param.Boolean(default=True, doc="""
-        Whether to automatically sync newly added document sources to the vector store.""")
-
     # Override the item type name
     _item_type_name = "documents"
 
-    inputs = VectorLookupInputs
+    input_schema = VectorLookupInputs
 
     def _format_results_for_refinement(self, results: list[dict[str, Any]]) -> str:
         """
@@ -629,9 +627,6 @@ class TableLookup(VectorLookupTool):
     n = param.Integer(default=10, bounds=(1, None), doc="""
         The number of document results to return.""")
 
-    sync_sources = param.Boolean(default=True, doc="""
-        Whether to automatically sync newly added data sources to the vector store.""")
-
     _ready = param.Boolean(default=False, allow_None=True, doc="""
         Whether the vector store is ready.""")
 
@@ -641,8 +636,8 @@ class TableLookup(VectorLookupTool):
     _sources_in_progress = {}
     _progress_lock = asyncio.Lock()  # Lock for thread-safe access
 
-    inputs = TableLookupInputs
-    outputs = TableLookupOutputs
+    input_schema = TableLookupInputs
+    output_schema = TableLookupOutputs
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -745,7 +740,7 @@ class TableLookup(VectorLookupTool):
         sources = context.get("sources")
         if sources is None and "source" in context:
             sources = [context["source"]]
-        else:
+        elif sources is None:
             raise ValueError("Context does not contain a \"source\" or \"sources\".")
         self._ready = False
         await asyncio.sleep(0.5)  # allow main thread time to load UI first
@@ -976,7 +971,7 @@ class TableLookup(VectorLookupTool):
         return [self._format_context(out_model)], out_model
 
 
-class IterativeTableLookupOutputs(TableLookupOutputs):
+class IterativeTableLookupOutputs(ContextModel):
 
     sql_metaset: SQLMetaset
 
@@ -997,12 +992,6 @@ class IterativeTableLookup(TableLookup):
 
     purpose = param.String(default="""
         Looks up the most relevant tables and provides SQL schemas of those tables.""")
-
-    # Override sync_sources to False by default to prevent duplicate processing
-    # when used together with TableLookup
-    sync_sources = param.Boolean(default=False, doc="""
-        Whether to automatically sync newly added data sources to the vector store.
-        Default is False to prevent duplicate processing when used with TableLookup.""")
 
     max_selection_iterations = param.Integer(default=3, doc="""
         Maximum number of iterations for the iterative table selection process.""")
@@ -1025,7 +1014,7 @@ class IterativeTableLookup(TableLookup):
         },
     )
 
-    outputs = IterativeTableLookupOutputs
+    output_schema = IterativeTableLookupOutputs
 
     async def sync(self, context: TContext):
         """
@@ -1037,8 +1026,10 @@ class IterativeTableLookup(TableLookup):
 
         # If no visible slugs or no sources, clear sql_metaset
         if not slugs or not context.get("sources"):
-            if "sql_metaset" in context:
-                del context["sql_metaset"]
+            context.pop("sql_metaset", None)
+            return
+
+        if "sql_metaset" not in context:
             return
 
         try:
@@ -1060,7 +1051,7 @@ class IterativeTableLookup(TableLookup):
         4. Repeats until the LLM is satisfied with the context
         """
         out_model = await super()._gather_info(messages, context)
-        vector_metaset =  out_model["vector_metaset"]
+        vector_metaset = out_model["vector_metaset"]
         vector_metadata_map = vector_metaset.vector_metadata_map
 
         sql_metadata_map = {}
@@ -1070,6 +1061,21 @@ class IterativeTableLookup(TableLookup):
         visible_slugs = context.get('visible_slugs', set())
         if visible_slugs:
             all_slugs = [slug for slug in all_slugs if slug in visible_slugs]
+
+        if len(all_slugs) == 1:
+            table_slug = all_slugs[0]
+            source_obj, table_name = parse_table_slug(table_slug, context["sources"])
+            schema = await get_schema(source_obj, table_name, reduce_enums=False)
+            sql_metadata = SQLMetadata(
+                table_slug=table_slug,
+                schema=schema,
+            )
+            return {
+                "sql_metaset": SQLMetaset(
+                    vector_metaset=vector_metaset,
+                    sql_metadata_map={table_slug: sql_metadata},
+                )
+            }
 
         failed_slugs = []
         selected_slugs = []
@@ -1196,10 +1202,8 @@ class IterativeTableLookup(TableLookup):
                     # based on similarity search alone, if we have selected tables, we're done!!
                     break
 
-        # Filter sql_metadata_map to match satisfied_slugs
         sql_metadata_map = {table_slug: schema_data for table_slug, schema_data in sql_metadata_map.items()}
 
-        # Create SQLMetaset object using the vector schema and SQL data
         sql_metaset = SQLMetaset(
             vector_metaset=vector_metaset,
             sql_metadata_map=sql_metadata_map,
@@ -1211,11 +1215,6 @@ class IterativeTableLookup(TableLookup):
         sql_metaset = outputs.get("sql_metaset")
         return str(sql_metaset)
 
-    @classmethod
-    async def applies(cls, context: TContext) -> bool:
-        visible_slugs = context.get('visible_slugs', set())
-        return len(visible_slugs) > 1
-
     async def respond(
         self, messages: list[Message], context: TContext, **kwargs: dict[str, Any]
     ) -> tuple[list[Any], IterativeTableLookupOutputs]:
@@ -1224,7 +1223,6 @@ class IterativeTableLookup(TableLookup):
         """
         out_model = await self._gather_info(messages, context)
         return [self._format_context(out_model)], out_model
-
 
 
 class DbtslLookupOutputs(ContextModel):
@@ -1270,7 +1268,7 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
 
     _item_type_name = "metrics"
 
-    outputs = DbtslLookupOutputs
+    output_schema = DbtslLookupOutputs
 
     def __init__(self, environment_id: int, **params):
         params["environment_id"] = environment_id

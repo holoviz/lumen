@@ -4,11 +4,14 @@ import asyncio
 import re
 import traceback
 
+from functools import partial
+from textwrap import dedent
 from typing import TYPE_CHECKING, Any
 
 import param
 
 from panel.chat import ChatFeed
+from panel.io.state import state
 from panel.pane import HTML
 from panel.viewable import Viewer
 from panel_material_ui import (
@@ -324,7 +327,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 agent = agent()
             if isinstance(agent, AnalysisAgent):
                 analyses = "\n".join(
-                    f"- `{analysis.__name__}`: {(analysis.__doc__ or '').strip()}"
+                    f"- `{analysis.__name__}`: {dedent(analysis.__doc__ or '').strip()}"
                     for analysis in agent.analyses if analysis._callable_by_llm
                 )
                 agent.purpose = f"Available analyses include:\n\n{analyses}\nSelect this agent to perform one of these analyses."
@@ -346,6 +349,9 @@ class Coordinator(Viewer, VectorLookupToolUser):
             context=context,
             **params
         )
+        for tools in self._tools.values():
+            for tool in tools:
+                state.execute(partial(tool.prepare, context))
 
     @wrap_logfire(span_name="Chat Invoke")
     async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface) -> Plan:
@@ -415,7 +421,6 @@ class Coordinator(Viewer, VectorLookupToolUser):
         tools = {tool_name: tool for tool_name, tool in tools.items() if not any(excluded_key in context for excluded_key in tool.exclusions)}
         applies = await asyncio.gather(*[tool.applies(context) for tool in tools.values()])
         tools = {tool_name: tool for (tool_name, tool), tapply in zip(tools.items(), applies, strict=False) if tapply}
-
         return agents, tools, {}
 
     async def _compute_plan(
@@ -766,7 +771,7 @@ class Planner(Coordinator):
         # ensure these candidates are satisfiable
         # e.g. DbtslAgent is unsatisfiable if DbtslLookup was used in planning
         # but did not provide dbtsl_metaset
-        # also filter out agents where excluded keys exist in memory
+        # also filter out agents where excluded keys exist in context
         agents = [
             agent for agent in agents if len(set(agent.input_schema.__required_keys__) - all_provides) == 0
             and type(agent).__name__ != "ValidationAgent"

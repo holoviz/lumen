@@ -15,7 +15,7 @@ import requests
 from panel.chat import ChatInterface
 from panel.viewable import Viewable, Viewer
 from panel_material_ui import Button, Tabs
-from panel_material_ui.chat import ChatMessage
+from panel_material_ui.chat import ChatMessage, ChatStep
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
 
@@ -23,6 +23,7 @@ from ..config import dump_yaml, load_yaml
 from ..dashboard import Config
 from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource, Source
+from ..sources.duckdb import DuckDBSource
 from ..state import state
 from ..transforms.sql import SQLLimit
 from ..views import (
@@ -39,9 +40,9 @@ from .context import ContextModel, TContext
 from .controls import SourceControls
 from .llm import Llm, Message, OpenAI
 from .models import (
-    DbtslQueryParams, DiscoveryQueries, DiscoverySufficiency, DistinctQuery,
-    PartialBaseModel, QueryCompletionValidation, RetrySpec, SampleQuery,
-    VegaLiteSpec, VegaLiteSpecUpdate, make_sql_model,
+    DbtslQueryParams, DiscoverySufficiency, DistinctQuery, PartialBaseModel,
+    QueryCompletionValidation, RetrySpec, SampleQuery, VegaLiteSpec,
+    VegaLiteSpecUpdate, make_discovery_model, make_sql_model,
 )
 from .schemas import (
     DbtslMetadata, DbtslMetaset, SQLMetaset, get_metaset,
@@ -51,8 +52,8 @@ from .tools import ToolUser
 from .translate import param_to_pydantic
 from .utils import (
     apply_changes, clean_sql, describe_data, get_data, get_pipeline,
-    get_root_exception, get_schema, load_json, log_debug, report_error,
-    retry_llm_output, stream_details,
+    get_root_exception, get_schema, load_json, log_debug, parse_table_slug,
+    report_error, retry_llm_output, stream_details,
 )
 from .vector_store import DuckDBVectorStore
 from .views import (
@@ -267,11 +268,11 @@ class ChatAgent(Agent):
         step_title: str | None = None,
     ) -> tuple[list[Any], dict[str, Any]]:
         prompt_context = {"tool_context": await self._use_tools("main", messages, context)}
-        if "vector_metaset" not in context and "source" in context and "table" in context:
+        if "vector_metaset" not in context and "sql_metaset" not in context and "source" in context and "table" in context:
             source = context["source"]
-            context["vector_metaset"] = await get_metaset(
+            context["vector_metaset"] = (await get_metaset(
                 [source], [f"{source.name}{SOURCE_TABLE_SEPARATOR}{context['table']}"],
-            )
+            )).vector_metaset
         system_prompt = await self._render_prompt("main", messages, context, **prompt_context)
         return [await self._stream(messages, system_prompt)], {}
 
@@ -624,7 +625,7 @@ class SQLAgent(LumenBaseAgent):
                 "template": PROMPTS_DIR / "SQLAgent" / "main.jinja2",
             },
             "select_discoveries": {
-                "response_model": DiscoveryQueries,
+                "response_model": make_discovery_model,
                 "template": PROMPTS_DIR / "SQLAgent" / "select_discoveries.jinja2",
             },
             "check_sufficiency": {
@@ -645,14 +646,19 @@ class SQLAgent(LumenBaseAgent):
     output_schema = SQLOutputs
 
     async def _validate_sql(
-        self, context: TContext, sql_query: str, expr_slug: str, dialect: str,
-        source, messages: list[Message], step, max_retries: int = 2,
+        self, context: TContext,
+        sql_query: str,
+        expr_slug: str,
+        source: BaseSQLSource,
+        messages: list[Message],
+        step: ChatStep,
+        max_retries: int = 2,
         discovery_context: str | None = None,
     ) -> str:
         """Validate and potentially fix SQL query."""
         # Clean SQL
         try:
-            sql_query = clean_sql(sql_query, dialect)
+            sql_query = clean_sql(sql_query, source.dialect)
         except Exception as e:
             step.stream(f"\n\n❌ SQL cleaning failed: {e}")
 
@@ -660,7 +666,7 @@ class SQLAgent(LumenBaseAgent):
         for i in range(max_retries):
             try:
                 step.stream(f"\n\n`{expr_slug}`\n```sql\n{sql_query}\n```")
-                source.create_sql_expr_source({expr_slug: sql_query}, materialize=True)
+                source.execute(sql_query)
                 step.stream("\n\n✅ SQL validation successful")
                 return sql_query
             except Exception as e:
@@ -675,9 +681,10 @@ class SQLAgent(LumenBaseAgent):
                     feedback += " The data does not exist; select from available data sources."
 
                 retry_result = await self.revise(
-                    feedback, messages, context, spec=sql_query, language=f"sql.{dialect}", discovery_context=discovery_context
+                    feedback, messages, context, spec=sql_query, language=f"sql.{source.dialect}",
+                    discovery_context=discovery_context
                 )
-                sql_query = clean_sql(retry_result, dialect)
+                sql_query = clean_sql(retry_result, source.dialect)
         return sql_query
 
     async def _execute_query(
@@ -722,6 +729,7 @@ class SQLAgent(LumenBaseAgent):
         raise_if_empty: bool = False
     ) -> tuple[LumenOutput, SQLOutputs]:
         """Finalize execution for final step."""
+
         # Get first result (typically only one for final step)
         expr_slug, result = next(iter(results.items()))
 
@@ -745,11 +753,27 @@ class SQLAgent(LumenBaseAgent):
             "sql_plan_context": context_entries
         }
 
+    def _merge_sources(
+        self, sources: dict[tuple[str, str], BaseSQLSource], tables: list[tuple[str, str]]
+    ) -> BaseSQLSource:
+        if len(set(m.source for m in tables)) == 1:
+            m = tables[0]
+            return sources[(m.source, m.table)]
+        mirrors = {}
+        for m in tables:
+            if not any(m.table.rstrip(")").rstrip("'").rstrip('"').endswith(ext)
+                       for ext in [".csv", ".parquet", ".parq", ".json", ".xlsx"]):
+                renamed_table = m.table.replace(".", "_")
+            else:
+                renamed_table = m.table
+            mirrors[renamed_table] = (sources[(m.source, m.table)], m.table)
+        return DuckDBSource(uri=":memory:", mirrors=mirrors)
+
     async def _render_execute_query(
         self,
         messages: list[Message],
         context: TContext,
-        source: Source,
+        sources: dict[tuple[str, str], BaseSQLSource],
         step_title: str,
         success_message: str,
         discovery_context: str | None = None,
@@ -763,8 +787,8 @@ class SQLAgent(LumenBaseAgent):
         ----------
         messages : list[Message]
             List of user messages
-        source : Source
-            Data source to execute against
+        sources : dict[tuple[str, str], BaseSQLSource]
+            Data sources to execute against
         step_title : str
             Title for the execution step
         success_message : str
@@ -783,11 +807,13 @@ class SQLAgent(LumenBaseAgent):
         """
         with self._add_step(title=step_title, steps_layout=self._steps_layout) as step:
             # Generate SQL using common prompt pattern
+            dialects = set(src.dialect for src in sources.values())
+            dialect = "duckdb" if len(dialects) > 1 else next(iter(dialects))
             system_prompt = await self._render_prompt(
                 "main",
                 messages,
                 context,
-                dialect=source.dialect,
+                dialect=dialect,
                 step_number=1,
                 is_final_step=True,
                 current_step="",
@@ -800,34 +826,34 @@ class SQLAgent(LumenBaseAgent):
 
             # Generate SQL using existing model
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
-            sql_response_model = self._get_model("main", is_final=True)
+            sql_response_model = self._get_model("main", sources=list(sources))
+
             output = await self.llm.invoke(
                 messages,
                 system=system_prompt,
                 model_spec=model_spec,
                 response_model=sql_response_model,
             )
-
             if not output:
                 raise ValueError("No output was generated.")
 
-            # Extract SQL query
+            if len(sources) == 1:
+                source = next(iter(sources.values()))
+            else:
+                source = self._merge_sources(sources, output.tables)
             sql_query = output.query.strip()
-            expr_slug = output.expr_slug.strip()
+            expr_slug = output.table_slug.strip()
 
-            # Validate SQL
             validated_sql = await self._validate_sql(
-                context, sql_query, expr_slug, source.dialect, source, messages,
+                context, sql_query, expr_slug, source, messages,
                 step, discovery_context=discovery_context
             )
 
-            # Execute and get results
             pipeline, sql_expr_source, summary = await self._execute_query(
                 source, context, expr_slug, validated_sql, is_final=True,
                 should_materialize=True, step=step
             )
 
-            # Finalize execution
             results = {
                 expr_slug: {
                     "sql": validated_sql,
@@ -836,13 +862,15 @@ class SQLAgent(LumenBaseAgent):
                     "source": sql_expr_source
                 }
             }
-
             view, out_context = await self._finalize_execution(
-                results, [], messages, context, output_title, raise_if_empty=raise_if_empty
+                results, [], messages, context, output_title,
+                raise_if_empty=raise_if_empty
             )
 
-            step.status = "success"
-            step.success_title = success_message
+            step.param.update(
+                status="success",
+                success_title=success_message
+            )
 
         return view, out_context
 
@@ -850,8 +878,9 @@ class SQLAgent(LumenBaseAgent):
         self,
         messages: list[Message],
         context: TContext,
+        sources: dict[tuple[str, str], BaseSQLSource],
         error_context: str,
-    ) -> DiscoveryQueries:
+    ) -> BaseModel:
         """Let LLM choose which discoveries to run based on error and available tables."""
         system_prompt = await self._render_prompt(
             "select_discoveries",
@@ -860,12 +889,13 @@ class SQLAgent(LumenBaseAgent):
             error_context=error_context,
         )
 
+        discovery_model = self._get_model("select_discoveries", sources=list(sources))
         model_spec = self.prompts["select_discoveries"].get("llm_spec", self.llm_spec_key)
         selection = await self.llm.invoke(
             messages,
             system=system_prompt,
             model_spec=model_spec,
-            response_model=DiscoveryQueries,
+            response_model=discovery_model
         )
         return selection
 
@@ -897,63 +927,64 @@ class SQLAgent(LumenBaseAgent):
     async def _execute_discovery_query(
         self,
         query_model: SampleQuery | DistinctQuery,
-        source: Source,
+        sources: dict[tuple[str, str], Source],
     ) -> tuple[str, str]:
         """Execute a single discovery query and return formatted result."""
         # Generate the actual SQL
-        sql = query_model.query.format(**query_model.dict(exclude={'query'}))
+        format_kwargs = query_model.dict(exclude={'query'})
+        sql = query_model.query.format(**format_kwargs)
+        table = query_model.slug.table
+        source = sources[(query_model.slug.source, table)]
+        if isinstance(query_model, SampleQuery):
+            query_type = f"Sample from {table}"
+        elif isinstance(query_model, DistinctQuery):
+            query_type = f"Distinct values from {table!r} table column {query_model.column!r}"
         try:
             df = source.execute(sql)
-            # Format results compactly for context
-            if isinstance(query_model, SampleQuery):
-                # Limit to first 5 rows, truncate long values
-                result_summary = f"Sample from {query_model.table}:\n```\n{df.head().to_string(max_cols=10)}\n```"
-            elif isinstance(query_model, DistinctQuery):
-                # Show distinct values
-                values = df.iloc[:, 0].tolist()[:10]  # First column, max 10 values
-                result_summary = f"Distinct {query_model.column}: `{values}`"
-            return query_model.__class__.__name__, result_summary
         except Exception as e:
-            return query_model.__class__.__name__, f"Error: {e!s}"
+            return f"Discovery query {query_type[0].lower()}{query_type[1:]} failed", str(e)
+        if isinstance(query_model, SampleQuery):
+            result = f"\n```\n{df.head().to_string(max_cols=10)}\n```"
+        else:
+            result = f" `{df.iloc[:10, 0].tolist()}`"
+        return query_type, result
 
     async def _run_discoveries_parallel(
         self,
         discovery_queries: list[SampleQuery | DistinctQuery],
-        source: Source,
-    ) -> list[tuple[str, str]]:
+        sources: dict[tuple[str, str], Source],
+    ) -> list[str]:
         """Execute all discoveries concurrently and stream results as they complete."""
         # Create all tasks
         tasks = [
-            asyncio.create_task(self._execute_discovery_query(query, source))
+            asyncio.create_task(self._execute_discovery_query(query, sources))
             for query in discovery_queries
         ]
 
         results = []
-        # Stream results as they complete (fastest first)
         for completed_task in asyncio.as_completed(tasks):
             query_type, result = await completed_task
-            results.append((query_type, result))
-            # Stream each result immediately when ready
-            with self._add_step(title=f"Discovery: {query_type}", steps_layout=self._steps_layout) as step:
+            with self._add_step(title=query_type, steps_layout=self._steps_layout) as step:
                 step.stream(result)
+            results.append((query_type, result))
         return results
 
     async def _explore_tables(
         self,
         messages: list[Message],
         context: TContext,
-        source: Source,
+        sources: dict[tuple[str, str], Source],
         error_context: str,
         step_title: str | None = None,
     ) -> tuple[LumenOutput, SQLOutputs]:
         """Run adaptive exploration: initial discoveries → sufficiency check → optional follow-ups → final answer."""
         # Step 1: LLM selects initial discoveries
         with self._add_step(title="Selecting initial discoveries", steps_layout=self._steps_layout) as step:
-            selection = await self._select_discoveries(messages, context, error_context)
+            selection = await self._select_discoveries(messages, context, sources, error_context)
             step.stream(f"Strategy: {selection.reasoning}\n\nSelected {len(selection.queries)} initial discoveries")
 
         # Step 2: Run initial discoveries in parallel
-        initial_results = await self._run_discoveries_parallel(selection.queries, source)
+        initial_results = await self._run_discoveries_parallel(selection.queries, sources)
 
         # Step 3: Check if discoveries are sufficient
         with self._add_step(title="Evaluating discovery sufficiency", steps_layout=self._steps_layout) as step:
@@ -968,7 +999,7 @@ class SQLAgent(LumenBaseAgent):
 
         # Step 4: Run follow-up discoveries if needed
         if not sufficiency.sufficient and sufficiency.follow_up_needed:
-            follow_up_results = await self._run_discoveries_parallel(sufficiency.follow_up_needed, source)
+            follow_up_results = await self._run_discoveries_parallel(sufficiency.follow_up_needed, sources)
             final_results = initial_results + follow_up_results
         else:
             final_results = initial_results
@@ -981,7 +1012,7 @@ class SQLAgent(LumenBaseAgent):
         return await self._render_execute_query(
             messages,
             context,
-            source=source,
+            sources=sources,
             step_title="Generating final answer with discoveries",
             success_message="Final answer generated with discovery context",
             discovery_context=discovery_context,
@@ -996,14 +1027,22 @@ class SQLAgent(LumenBaseAgent):
         step_title: str | None = None,
     ) -> tuple[list[Any], SQLOutputs]:
         """Execute SQL generation with one-shot attempt first, then exploration if needed."""
-        # Setup sources
-        source = context["source"]
+        sources = context["sources"]
+        vector_metaset = context["sql_metaset"].vector_metaset
+        selected_slugs = list(vector_metaset.vector_metadata_map)
+        visible_slugs = context['visible_slugs']
+        if visible_slugs:
+            selected_slugs = [slug for slug in selected_slugs if slug in visible_slugs]
+        tables_to_source = {
+            tuple(table_slug.split(SOURCE_TABLE_SEPARATOR)): parse_table_slug(table_slug, sources)[0]
+            for table_slug in selected_slugs
+        }
         try:
             # Try one-shot approach first
             out, out_context = await self._render_execute_query(
                 messages,
                 context,
-                source=source,
+                sources=tables_to_source,
                 step_title="Attempting one-shot SQL generation...",
                 success_message="One-shot SQL generation successful",
                 discovery_context=None,
@@ -1015,7 +1054,9 @@ class SQLAgent(LumenBaseAgent):
                 # If exploration is disabled, re-raise the error instead of falling back
                 raise e
             # Fall back to exploration mode if enabled
-            out, out_context = await self._explore_tables(messages, context, source, str(e), step_title)
+            out, out_context = await self._explore_tables(
+                messages, context, tables_to_source, str(e), step_title
+            )
         return [out], out_context
 
 

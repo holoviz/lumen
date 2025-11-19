@@ -53,18 +53,23 @@ class ThinkingYesNo(BaseModel):
 
 # Essential Discovery Toolkit
 
+def make_source_table(sources: list[tuple[str, str]]):
+    class LiteralSourceTable(BaseModel):
+        source: Literal[tuple(set(src for src, _ in sources))]
+        table: Literal[tuple(set(table for _, table in sources))]
+    return LiteralSourceTable
+
+
 class SampleQuery(PartialBaseModel):
     """See actual data content - reveals format issues and patterns."""
 
-    query: SkipJsonSchema[str] = Field(default="SELECT * FROM {table} LIMIT 5")
-    table: str = Field(description="Table to sample")
+    query: SkipJsonSchema[str] = Field(default="SELECT * FROM {slug[table]} LIMIT 5")
 
 
 class DistinctQuery(PartialBaseModel):
     """Universal column analysis with optional pattern matching - handles join keys, categories, date ranges."""
 
-    query: SkipJsonSchema[str] = Field(default="SELECT DISTINCT {column} FROM {table} WHERE {column} ILIKE '%{pattern}%' LIMIT 10 OFFSET {offset}")
-    table: str = Field(description="Table to query")
+    query: SkipJsonSchema[str] = Field(default="SELECT DISTINCT {column} FROM {slug[table]} WHERE {column} ILIKE '%{pattern}%' LIMIT 10 OFFSET {offset}")
     column: str = Field(description="Column to analyze unique values")
     pattern: str = Field(default="", description="Optional pattern to search for (e.g., 'chin' for China/Chinese variations). Leave empty for all distinct values.")
     offset: int = Field(default=0, description="Number of distinct values to skip (0 for initial, 10 for follow-up)")
@@ -73,19 +78,40 @@ class DistinctQuery(PartialBaseModel):
         """Adjust query template based on whether pattern is provided."""
         if not self.pattern.strip():
             # No pattern - get all distinct values
-            self.query = "SELECT DISTINCT {column} FROM {table} LIMIT 10 OFFSET {offset}"
+            self.query = "SELECT DISTINCT {column} FROM {slug[table]} LIMIT 10 OFFSET {offset}"
         else:
             # Pattern provided - use ILIKE for case-insensitive partial matching
-            self.query = "SELECT DISTINCT {column} FROM {table} WHERE {column} ILIKE '%{pattern}%' LIMIT 10 OFFSET {offset}"
+            self.query = "SELECT DISTINCT {column} FROM {slug[table]} WHERE {column} ILIKE '%{pattern}%' LIMIT 10 OFFSET {offset}"
 
 
-class DiscoveryQueries(PartialBaseModel):
-    """LLM selects 2-4 essential discoveries using the core toolkit."""
+def make_discovery_model(sources: list[tuple[str, str]]):
 
-    reasoning: str = Field(description="Brief discovery strategy")
-    queries: list[SampleQuery | DistinctQuery] = Field(
-        description="Choose 2-4 discovery queries from the Essential Three toolkit"
+    SourceTable = make_source_table(sources)
+
+    SampleQueryLiteral = create_model(
+        "LiteralSampleQuery",
+        slug=(
+                SourceTable, FieldInfo(description="The source and table identifier(s) referenced in the SQL query.")
+        ),
+        __base__=SampleQuery
     )
+
+    DistinctQueryLiteral = create_model(
+        "LiteralDistinctQuery",
+        slug=(
+                SourceTable, FieldInfo(description="The source and table identifier(s) referenced in the SQL query.")
+        ),
+        __base__=DistinctQuery
+    )
+
+    class DiscoveryQueries(PartialBaseModel):
+        """LLM selects 2-4 essential discoveries using the core toolkit."""
+
+        reasoning: str = Field(description="Brief discovery strategy")
+        queries: list[SampleQueryLiteral | DistinctQueryLiteral] = Field(
+            description="Choose 2-4 discovery queries from the Essential Three toolkit"
+        )
+    return DiscoveryQueries
 
 
 class DiscoverySufficiency(PartialBaseModel):
@@ -108,9 +134,9 @@ class SqlQuery(PartialBaseModel):
         One, correct, valid SQL query that answers the user's question;
         should only be one query and do NOT add extraneous comments; no multiple semicolons""")
 
-    expr_slug: str = Field(
+    table_slug: str = Field(
         description="""
-        Provide a unique, descriptive slug for the SQL expression that clearly indicates the key transformations and source tables involved.
+        Provide a unique, descriptive table slug for the SQL expression that clearly indicates the key transformations and source tables involved.
         Include 1 or 2 elements of data lineage in the slug, such as the main transformation and original table names,
         e.g. top_5_athletes_in_2020 or distinct_years_from_wx_table.
         Ensure the slug does not duplicate any existing table names or slugs.
@@ -118,20 +144,18 @@ class SqlQuery(PartialBaseModel):
     )
 
 
-class SqlQueries(PartialBaseModel):
-    """Multiple SQL queries to execute in sequence."""
-
-    queries: list[SqlQuery] = Field(
-        default_factory=list,
-        description="""List of SQL queries to execute."""
-    )
-
-
-def make_sql_model(is_final: bool = False):
-    if is_final:
+def make_sql_model(sources: list[tuple[str, str]]):
+    if len(sources) == 1:
         return SqlQuery
-    else:
-        return SqlQueries
+
+    SourceTable = make_source_table(sources)
+    return create_model(
+        "SqlQueryWithSources",
+        tables=(
+            list[SourceTable], FieldInfo(description="The source and table identifier(s) referenced in the SQL query.")
+        ),
+        __base__=SqlQuery
+    )
 
 
 class VegaLiteSpec(EscapeBaseModel):
