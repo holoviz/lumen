@@ -898,30 +898,30 @@ def apply_changes(lines: list[str], edits: list[LineEdit]) -> str:
 
     # Validate bounds against the ORIGINAL text
     for e in replaces:
-        if not (0 <= e.line_no < n):
-            raise IndexError(f"replace line_no out of range: {e.line_no} (0..{n-1})")
+        if not (0 <= e.line_no <= n ):
+            raise IndexError(f"replace line_no out of range: {e.line_no} (1..{n})")
     for e in deletes:
-        if not (0 <= e.line_no < n):
-            raise IndexError(f"delete line_no out of range: {e.line_no} (0..{n-1})")
+        if not (0 <= e.line_no <= n):
+            raise IndexError(f"delete line_no out of range: {e.line_no} (1..{n})")
     for e in inserts:
-        if not (0 <= e.line_no <= n):  # allow == n for append
-            raise IndexError(f"insert line_no out of range: {e.line_no} (0..{n})")
+        if not (0 <= e.line_no <= n+1):  # allow == n for append
+            raise IndexError(f"insert line_no out of range: {e.line_no} (1..{n+1})")
 
     out = lines[:]
 
     # 1) Apply replace/delete in descending order to keep original indices valid
     for e in sorted([*replaces, *deletes], key=lambda x: x.line_no, reverse=True):
         if e.op == "replace":
-            out[e.line_no] = e.line  # type: ignore[union-attr]
+            out[e.line_no-1] = e.line  # type: ignore[union-attr]
         else:  # delete
-            del out[e.line_no]
+            del out[e.line_no-1]
 
     # 2) Apply inserts in ascending order; at same index keep user order
     inserts_sorted = sorted(
         enumerate(inserts), key=lambda pair: (pair[1].line_no, pair[0])
     )
     for _, ins in inserts_sorted:
-        out.insert(ins.line_no, ins.line)
+        out.insert(ins.line_no+1, ins.line)
 
     return "\n".join(out)
 
