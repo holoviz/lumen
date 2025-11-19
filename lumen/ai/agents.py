@@ -561,6 +561,8 @@ class LumenBaseAgent(Agent):
         spec = load_yaml(apply_changes(lines, result.edits))
         if view is not None:
             view.validate_spec(spec)
+        if isinstance(spec, str):
+            return spec
         yaml_spec = dump_yaml(spec)
         return yaml_spec
 
@@ -1021,6 +1023,25 @@ class SQLAgent(LumenBaseAgent):
             output_title=step_title
         )
 
+
+    async def revise(
+        self,
+        feedback: str,
+        messages: list[Message],
+        context: TContext,
+        view: LumenOutput | None = None,
+        spec: str | None = None,
+        language: str | None = None,
+        errors: list[str] | None = None,
+        **kwargs
+    ) -> str:
+        result = await super().revise(
+            feedback, messages, context, view=view, spec=spec, language=language, **kwargs
+        )
+        if view is not None:
+            result = clean_sql(result, view.component.source.dialect)
+        return result
+
     async def respond(
         self,
         messages: list[Message],
@@ -1471,7 +1492,7 @@ class VegaLiteAgent(BaseViewAgent):
         ]
     )
 
-    purpose = param.String(default="Generates a vega-lite specification of the plot the user requested.")
+    purpose = param.String(default="Generates a vega-lite plot specification from the input data pipeline.")
 
     prompts = param.Dict(
         default={

@@ -255,7 +255,7 @@ class TaskWrapper(Task):
                 task.param.unwatch(watcher)
             return
         index = self._tasks.index(task)
-        if index >= self._current:
+        if index >= self._current or self.running:
             # No need to invalidate if the task hasn't been executed
             return
         changed = {k for k, v in event.new.items() if k in event.old and not is_equal(event.old.get(k), v)}
@@ -264,7 +264,8 @@ class TaskWrapper(Task):
             root = self
             while root.parent is not None:
                 root = root.parent
-            await root.execute()
+            if root is not self or (index+1) < len(self):
+                await root.execute()
 
     def validate(
         self, context: TContext | None = None,
@@ -1017,6 +1018,7 @@ class ActorTask(TaskWrapper):
             steps_layout=self.steps_layout
         ):
             try:
+                kwargs["step_title"] = self.title
                 out, out_context = await task.respond(messages, subcontext, **kwargs)
             except MissingContextError:
                 # Re-raise MissingContextError to allow retry logic at Plan level
@@ -1069,11 +1071,12 @@ class ActorTask(TaskWrapper):
                 except Exception as e:
                     view.spec = old
                     raise e
-        root = self
-        while root.parent is not None:
-            root = root.parent
-        with root.param.update(config):
-            await root.execute()
+        else:
+            root = self
+            while root.parent is not None:
+                root = root.parent
+            with root.param.update(config):
+                await root.execute()
 
     def _actor_prompt(self, actor: Actor):
         prompt = Select(
