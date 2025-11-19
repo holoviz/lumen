@@ -1,8 +1,6 @@
 import asyncio
 import json
 
-from typing import NotRequired
-
 import panel as pn
 import pytest
 
@@ -13,6 +11,7 @@ except ModuleNotFoundError:
 
 from panel.layout import Column
 from panel.pane import Markdown
+from typing_extensions import NotRequired
 
 from lumen.ai.actor import ContextModel
 from lumen.ai.report import (
