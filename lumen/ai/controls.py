@@ -17,9 +17,9 @@ from panel.viewable import Viewer
 from panel.widgets import FileDropper, Tabulator, Tqdm
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
-    Button, Card, ChatAreaInput, CheckBoxGroup, Column as MuiColumn, FlexBox,
-    IconButton, MultiChoice, Select, Switch, Tabs, TextInput, ToggleIcon,
-    Typography,
+    Button, Card, ChatAreaInput, CheckBoxGroup, Column as MuiColumn,
+    IconButton, MultiChoice, Popup, Select, Switch, Tabs, TextInput,
+    ToggleIcon, Typography,
 )
 
 from ..pipeline import Pipeline
@@ -79,7 +79,7 @@ class DocumentControls(MediaControls):
             self.param.alias, name="Document alias",
         )
         self._metadata_input = TextInput(name="Metadata", description="Comments or notes about this document")
-        self.box = FlexBox(
+        self.box = Row(
             self._name_input,
             self._metadata_input,
         )
@@ -92,12 +92,12 @@ class TableControls(MediaControls):
     def __init__(self, file_obj: io.BytesIO, **params):
         super().__init__(file_obj, **params)
         self._name_input = TextInput.from_param(
-            self.param.alias, name="Table alias",
+            self.param.alias, name="Table alias", margin=(15, 10, 0, 10)
         )
         self._sheet_select = Select.from_param(
             self.param.sheet, name="Sheet", visible=False
         )
-        self.box = FlexBox(
+        self.box = Row(
             self._name_input,
             self._sheet_select,
         )
@@ -156,6 +156,8 @@ class SourceControls(Viewer):
 
     table_upload_callbacks = {}
 
+    _active_download_task = param.ClassSelector(class_=asyncio.Task)
+
     _last_table = param.String(default="", doc="Last table added")
 
     _count = param.Integer(default=0, doc="Count of sources added")
@@ -174,6 +176,8 @@ class SourceControls(Viewer):
         )
         self._file_input.param.watch(self._generate_media_controls, "value")
         self._upload_tabs = Tabs(sizing_mode="stretch_width", closable=True)
+        files_to_process = self._upload_tabs.param["objects"].rx.len() > 0
+        self._upload_tabs.visible = files_to_process
 
         # URL input for downloading files
         self._url_input = ChatAreaInput.from_param(
@@ -192,27 +196,27 @@ class SourceControls(Viewer):
             ("Download from URL", self._url_input),
             sizing_mode="stretch_width",
             dynamic=True,
-            active=self.param.active,
+            active=self.param.active
         )
 
         self._add_button = Button.from_param(
             self.param.add,
             name="Use file(s)",
             icon="table-plus",
-            visible=self._upload_tabs.param["objects"].rx().rx.len() > 0,
-            button_type="success",
+            visible=files_to_process,
+            button_type="success"
         )
 
         self._cancel_button = Button.from_param(
             self.param.cancel,
             name="Cancel",
             icon="circle-x",
-            visible=self.param.cancellable.rx().rx.bool() or self._add_button.param.clicks.rx() == 0,
+            on_click=self._handle_cancel,
+            visible=self.param._active_download_task.rx.is_not(None)
         )
-        self._cancel_button.param.watch(self._handle_cancel, "clicks")
 
         self._error_placeholder = HTML("", visible=False, margin=(0, 10, 5, 10))
-        self._message_placeholder = HTML("", visible=False, margin=(0, 10))
+        self._message_placeholder = HTML("", visible=False, margin=(0, 10, 10, 10))
 
         # Progress bar for downloads
         self._progress_bar = Tqdm(
@@ -533,9 +537,6 @@ class SourceControls(Viewer):
             self._upload_tabs.append((display_name, media_controls))
             self._downloaded_media_controls.append(media_controls)
 
-        # Show add button since we have files to process
-        self._add_button.visible = True
-
     def _generate_media_controls(self, event):
         """Generate media controls for uploaded files"""
         self._upload_tabs.clear()
@@ -554,9 +555,6 @@ class SourceControls(Viewer):
 
             self._upload_tabs.append((filename, media_controls))
             self._media_controls.append(media_controls)
-
-        # Show add button if we have files to process
-        self._add_button.visible = len(self._upload_tabs) > 0 or len(self._downloaded_media_controls) > 0
 
     def _add_table(
         self,
@@ -748,38 +746,47 @@ class RevisionControls(Viewer):
 
     instruction = param.String(doc="Instruction to LLM to revise output")
 
+    layout_kwargs = param.Dict()
+
     toggle_kwargs = {}
 
     input_kwargs = {}
 
     def __init__(self, **params):
         super().__init__(**params)
+        self._text_input = TextInput(
+            placeholder="Enter feedback and press the <Enter> to retry.",
+            max_length=200,
+            margin=10,
+            size="small"
+        )
+        popup = Popup(self._text_input, open=self.param.active)
         icon = ToggleIcon.from_param(
             self.param.active,
             active_icon="cancel",
-            color="default",
-            icon_size="1em",
+            attached=[popup],
+            icon_size="1.1em",
             label="",
             margin=(5, 0),
             size="small",
-            sx={".MuiIcon-root": {"color": "var(--mui-palette-default-dark)"}},
             **self.toggle_kwargs
         )
-        self._text_input = TextInput(
-            placeholder="Enter feedback and press the <Enter> to retry.",
-            visible=icon.param.value,
-            max_length=200,
-            margin=(5, 0),
-            size="small"
-        )
+        popup.param.watch(self._close, "open")
         self._text_input.param.watch(self._enter_reason, "enter_pressed")
-        self._row = Row(icon, self._text_input)
+        self._row = Row(icon, **self.layout_kwargs)
+
+    @param.depends("active", watch=True)
+    def _open(self):
+        if self.active:
+            state.execute(self._text_input.focus, schedule=True)
+
+    def _close(self, event):
+        self.active = event.new
 
     def _enter_reason(self, _):
-        self.param.update(
-            instruction=self._text_input.value_input,
-            active=False,
-        )
+        instruction = self._text_input.value_input
+        self._text_input.value = ""
+        self.param.update(active=False, instruction=instruction)
 
     def __panel__(self):
         return self._row
@@ -791,7 +798,7 @@ class RetryControls(RevisionControls):
 
     input_kwargs = {"placeholder": "Enter feedback and press the <Enter> to retry."}
 
-    toggle_kwargs = {"icon": "edit", "description": "Prompt LLM to retry"}
+    toggle_kwargs = {"icon": "auto_awesome", "description": "Prompt LLM to retry"}
 
 
 
@@ -1045,7 +1052,7 @@ class SourceCatalog(Viewer):
         List of data sources to display in the catalog.""")
 
     def __init__(self, /, context: TContext | None = None, **params):
-        self._title = Markdown(margin=0)
+        self._title = Markdown(margin=(0, 10))
         self._cards_column = Column()
         self._layout = Column(
             self._title,
@@ -1098,7 +1105,7 @@ class SourceCatalog(Viewer):
 
         self._cards_column.objects = source_cards
 
-        if len(self.sources) == 0:
+        if len(sources) == 0:
             self._title.object = "No sources available. Add a source to get started."
         else:
             self._title.object = "Select the table and document sources you want visible to the LLM."

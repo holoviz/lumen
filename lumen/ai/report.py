@@ -41,7 +41,6 @@ from .context import (
     input_dependency_keys, merge_contexts, validate_task_inputs,
     validate_taskgroup_exclusions,
 )
-from .controls import RetryControls
 from .export import (
     format_output, make_md_cell, make_preamble, write_notebook,
 )
@@ -244,6 +243,9 @@ class TaskWrapper(Task):
         self._task_rendered = {}
         self._init_view()
         self._populate_view()
+
+    def __len__(self) -> int:
+        return len(self._tasks)
 
     async def _sync_context(self, event: param.parameterized.Event):
         task = event.obj
@@ -720,9 +722,6 @@ class TaskGroup(TaskWrapper):
 
     __abstract = True
 
-    def __len__(self) -> int:
-        return len(self._tasks)
-
     def __getitem__(self, index) -> Task:
         return self._tasks[index]
 
@@ -1000,12 +999,6 @@ class ActorTask(TaskWrapper):
             if not isinstance(view, LumenOutput):
                 continue
             view.param.watch(self._update_spec, "spec")
-            retry_controls = RetryControls()
-            view.footer = [retry_controls]
-            self._watchers[i] = retry_controls.param.watch(
-                partial(self._retry_invoke, i, task, context, view, {'interface': self.interface}),
-                "instruction"
-            )
 
         # Track context and outputs
         if i >= 0:
@@ -1055,22 +1048,27 @@ class ActorTask(TaskWrapper):
             if p not in out_context
         ]
         if unprovided:
-            raise RuntimeError(f"{task.__class.__name__} failed to provide declared context.")
+            raise RuntimeError(f"{task.__class__.__name__} failed to provide declared context.")
         return outputs, out_context
 
-    async def _retry_invoke(
-        self, i: int, task: Task | Actor, context: TContext, view: LumenOutput,
-        config: dict[str, Any], event: param.parameterized.Event
+    async def revise(
+        self, instruction: str, task: Task | Actor, context: TContext,
+        view: LumenOutput, config: dict[str, Any]
     ):
         invalidation_keys = set(task.output_schema.__annotations__)
-        self.invalidate(invalidation_keys, start=i+1)
+        self.invalidate(invalidation_keys, start=1)
         if isinstance(task, LumenBaseAgent):
             with view.editor.param.update(loading=True):
                 messages = list(self.history)
-                task_context = self._get_context(i, context, task)
-                view.spec = await task.revise(
-                    event.new, messages, task_context, view
-                )
+                task_context = self._get_context(0, context, task)
+                try:
+                    old = view.spec
+                    view.spec = await task.revise(
+                        instruction, messages, task_context, view
+                    )
+                except Exception as e:
+                    view.spec = old
+                    raise e
         root = self
         while root.parent is not None:
             root = root.parent

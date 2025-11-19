@@ -3,6 +3,7 @@ import json
 import traceback
 
 from copy import deepcopy
+from io import StringIO
 from typing import Any
 
 import panel as pn
@@ -11,12 +12,12 @@ import requests
 
 from jsonschema import Draft7Validator, ValidationError
 from panel.config import config
-from panel.layout import Column, Row
+from panel.layout import Row
 from panel.param import ParamMethod
 from panel.viewable import Viewable, Viewer
 from panel.widgets import CodeEditor
 from panel_material_ui import (
-    Alert, Button, Checkbox, CircularProgress, IconButton,
+    Alert, Button, Checkbox, CircularProgress, Column, IconButton,
 )
 
 from ..base import Component
@@ -41,6 +42,8 @@ class LumenOutput(Viewer):
     spec = param.String(allow_None=True)
 
     title = param.String(allow_None=True)
+
+    export_formats = ["yaml"]
 
     language = "yaml"
 
@@ -102,10 +105,16 @@ class LumenOutput(Viewer):
             self._icons,
             sizing_mode="stretch_both"
         )
-        self._main = ParamMethod(self.render, inplace=True, sizing_mode='stretch_width')
-        self._main.loading = self.param.loading
+        self.view = ParamMethod(self.render, inplace=True, sizing_mode='stretch_width')
+        self.view.loading = self.param.loading
         self._rendered = False
         self._last_output = {}
+
+    def export(self, fmt: str) -> str | bytes:
+        if fmt not in self.export_formats:
+            raise ValueError(f"Unknown export format {fmt!r} for {self.__class__.__name__}")
+        if fmt == "yaml":
+            return self.spec
 
     @classmethod
     def _serialize_component(cls, component: Component, spec_dict: dict[str, Any] | None = None) -> str:
@@ -221,7 +230,7 @@ class LumenOutput(Viewer):
             )
 
     def __panel__(self):
-        return self._main
+        return self.view
 
     def __repr__(self):
         return self.spec
@@ -231,6 +240,14 @@ class LumenOutput(Viewer):
 
 
 class VegaLiteOutput(LumenOutput):
+
+    export_formats = ("yaml", "png", "jpeg", "pdf", "svg", "html")
+
+    def export(self, fmt: str) -> str | bytes:
+        ret = super().export(fmt)
+        if ret is not None:
+            return ret
+        return self.component.get_panel().export(fmt)
 
     @pn.cache
     @staticmethod
@@ -395,7 +412,7 @@ class AnalysisOutput(LumenOutput):
         self._rendered = True
 
     async def _rerun(self, event):
-        with self._main.param.update(loading=True):
+        with self.view.param.update(loading=True):
             if asyncio.iscoroutinefunction(self.analysis.__call__):
                 view = await self.analysis(self.pipeline, self.context)
             else:
@@ -410,6 +427,17 @@ class AnalysisOutput(LumenOutput):
 class SQLOutput(LumenOutput):
 
     language = "sql"
+
+    export_formats = ("sql", "csv", "xlsx")
+
+    def export(self, fmt: str) -> str | bytes:
+        ret = super().export(fmt)
+        if ret is not None:
+            return ret
+        sio = StringIO()
+        self.component.data.to_csv(sio)
+        sio.seek(0)
+        return sio
 
     async def render_context(self):
         return {
@@ -435,7 +463,7 @@ class SQLOutput(LumenOutput):
         return type(component).from_spec(spec_dict)
 
     def __panel__(self):
-        return self._main
+        return self.view
 
     def __str__(self):
         return f"{self.__class__.__name__}:\n```sql\n{self.spec}\n```"

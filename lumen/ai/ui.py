@@ -16,7 +16,6 @@ from panel.io.document import hold
 from panel.io.state import state
 from panel.layout import Column, FlexBox, HSpacer
 from panel.pane import SVG, Markdown
-from panel.param import ParamMethod
 from panel.util import edit_readonly
 from panel.viewable import (
     Child, Children, Viewable, Viewer,
@@ -24,11 +23,11 @@ from panel.viewable import (
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
     Accordion, Button, ChatFeed, ChatInterface, ChatMessage,
-    Column as MuiColumn, Dialog, Divider, FileDownload, IconButton, MenuList,
-    MenuToggle, NestedBreadcrumbs, Page, Paper, Row, Switch, Tabs, ToggleIcon,
-    Typography,
+    Column as MuiColumn, Dialog, Divider, FileDownload, IconButton, MenuButton,
+    MenuList, MenuToggle, NestedBreadcrumbs, Page, Paper, Row, Switch, Tabs,
+    ToggleIcon, Typography,
 )
-from panel_splitjs import HSplit, VSplit
+from panel_splitjs import HSplit, MultiSplit, VSplit
 
 from ..pipeline import Pipeline
 from ..sources import Source
@@ -44,7 +43,8 @@ from .config import (
 )
 from .context import TContext
 from .controls import (
-    SourceCatalog, SourceControls, TableExplorer, TableSourceCard,
+    RetryControls, SourceCatalog, SourceControls, TableExplorer,
+    TableSourceCard,
 )
 from .coordinator import Coordinator, Plan, Planner
 from .export import (
@@ -607,11 +607,12 @@ class UI(Viewer):
         self._source_catalog = SourceCatalog(context=self.context)
         self._source_accordion = Accordion(
             ("Add Sources", self._source_controls), ("View Sources", self._source_catalog),
-            margin=(-30, 10, 0, 10), sizing_mode="stretch_width", toggle=True, active=[0]
+            margin=(0, 10, 10, 10), sizing_mode="stretch_width", toggle=True, active=[0],
+            sx={".MuiAccordion-region > .MuiAccordionDetails-root": {"p": 0}}, title_variant="h4"
         )
         self._sources_dialog_content = Dialog(
             self._source_accordion, close_on_click=True, show_close_button=True,
-            sizing_mode='stretch_width', width_option='lg',
+            sizing_mode='stretch_width', width_option='lg', title="Manage Data"
         )
 
         # Create LLM configuration dialog
@@ -1005,7 +1006,7 @@ class ExplorerUI(UI):
 
         # Main Area
         self._output = Paper(
-            self._breadcrumbs, self._home.view, elevation=2, margin=(5, 10, 5, 5),
+            self._breadcrumbs, self._home, elevation=2, margin=(5, 10, 5, 5),
             height_policy='max', sizing_mode="stretch_both"
         )
         self._split = HSplit(
@@ -1013,7 +1014,8 @@ class ExplorerUI(UI):
             self._output,
             collapsed=1,
             expanded_sizes=(40, 60),
-            sizing_mode='stretch_both'
+            sizing_mode='stretch_both',
+            stylesheets=[".gutter-horizontal > .divider { background: unset }"]
         )
         self._main[:] = [self._split]
         return main
@@ -1125,7 +1127,7 @@ class ExplorerUI(UI):
 
     async def _update_conversation(self, event=None):
         exploration = self._explorations.value['view']
-        self._output[1:] = [exploration.view]
+        self._output[1:] = [exploration]
 
         if event is not None:
             # When user switches explorations and coordinator is running
@@ -1189,12 +1191,13 @@ class ExplorerUI(UI):
         conversation = list(self.interface.objects)
 
         # Create new exploration
-        output = Tabs(
+        tabs = Tabs(
             ('Overview', "Waiting on data..."),
             dynamic=True,
             sizing_mode='stretch_both',
             loading=plan.param.running
         )
+        output = MultiSplit(tabs, sizing_mode='stretch_both')
         exploration = Exploration(
             context=plan.param.out_context,
             conversation=conversation,
@@ -1227,19 +1230,79 @@ class ExplorerUI(UI):
         self._last_synced = exploration
         return exploration
 
-    def _render_view(self, out: LumenOutput) -> VSplit:
-        title = out.title or type(out).__name__.replace('Output', '')
+    def _render_view(self, exploration: Exploration, view: LumenOutput) -> VSplit:
+        title = view.title or type(view).__name__.replace('Output', '')
         if len(title) > 25:
             title = f"{title[:25]}..."
-        output = ParamMethod(out.render, inplace=True, sizing_mode='stretch_both')
-        return (title, VSplit(out.editor, output, sizes=(20, 80), expanded_sizes=(20, 80), sizing_mode="stretch_both"))
+
+        export_menu = MenuButton(
+            label="Export", variant='text', icon="menu", margin=0,
+            items=[{"label": f"Download as .{fmt}", "format": fmt} for fmt in view.export_formats]
+        )
+        def download_export(item):
+            fmt = item["format"]
+            file_download.filename = f"{title}.{fmt}"
+            state.schedule(lambda: file_download.param.update(_clicks=file_download._clicks+1), schedule=True)
+            return view.export(fmt)
+        file_download = FileDownload(
+            auto=True, callback=param.bind(download_export, export_menu), filename=title, visible=False
+        )
+        export_menu.attached.append(file_download)
+
+        tabs = exploration.view[0]
+        position = len(tabs)
+
+        task = exploration.plan[position-1]
+        async def revise(event):
+            try:
+                await task.revise(
+                    event.new, task.actor, exploration.context, view, {'interface': self.interface}
+                )
+            except Exception:
+                pass
+        revise_controls = RetryControls(layout_kwargs={"styles": {"margin-left": "auto"}})
+        revise_controls.param.watch(revise, "instruction")
+
+        @hold()
+        def pop_out(event):
+            if vsplit in tabs:
+                pop_button.param.update(
+                    description="Reattach",
+                    icon="open_in_browser"
+                )
+                tabs.active = max(exploration.view[0].active-1, 0)
+                tabs.remove(vsplit)
+                exploration.view.append(vsplit)
+            else:
+                exploration.view.remove(vsplit)
+                tabs.insert(position, (title, vsplit))
+                tabs.active = position
+                pop_button.param.update(
+                    description="Open in new pane",
+                    icon="open_in_new"
+                )
+
+        pop_button = IconButton(
+            description="Pop-out", icon="open_in_new", icon_size="1.1em", size="small",
+            margin=(5, 0, 0, 0), on_click=pop_out
+        )
+
+        actions = Row(
+            export_menu,
+            revise_controls,
+            pop_button,
+            sizing_mode="stretch_width", margin=(0, 10)
+        )
+        editor = Column(actions, view.editor)
+        vsplit = VSplit(editor, view, sizes=(20, 80), expanded_sizes=(20, 80), sizing_mode="stretch_both")
+        return (title, vsplit)
 
     def _add_views(self, exploration: Exploration, event: param.parameterized.Event):
-        tabs = exploration.view
+        tabs = exploration.view[0]
         outputs = [view for view in event.new if isinstance(view, LumenOutput) and view not in event.old]
         content = []
         for out in outputs:
-            title, vsplit = self._render_view(out)
+            title, vsplit = self._render_view(exploration, out)
             content.append((title, vsplit))
             if tabs and isinstance(out, SQLOutput) and not isinstance(tabs[0], GraphicWalker):
                 tabs[0] = ("Overview", GraphicWalker(
@@ -1261,14 +1324,14 @@ class ExplorerUI(UI):
         old = [view for view in event.old if isinstance(view, LumenOutput)]
 
         idx = None
-        tabs = exploration.view
+        tabs = exploration.view[0]
         content = list(zip(tabs._names, tabs, strict=False))
         for out in old:
             if out in current:
                 continue
             matches = [
                 i for i, (_, vsplit) in enumerate(content)
-                if isinstance(vsplit, VSplit) and out.editor in vsplit
+                if isinstance(vsplit, VSplit) and out.view in vsplit
             ]
             if matches:
                 idx = matches[0]
@@ -1276,9 +1339,9 @@ class ExplorerUI(UI):
 
         for out in current:
             if out in old:
-                idx = next(i for i, tab in enumerate(tabs[1:]) if out.editor in tab) + 1
+                idx = next(i for i, tab in enumerate(tabs[1:]) if out.view in tab) + 1
                 continue
-            title, vsplit = self._render_view(out)
+            title, vsplit = self._render_view(exploration, out)
             content.insert((idx or 0)+1, (title, vsplit))
         tabs[:] = content
         tabs.active = len(tabs)-1
@@ -1297,7 +1360,9 @@ class ExplorerUI(UI):
             if parent.plan is not None:
                 plan.steps_layout.header[:] = [
                     Typography(
-                        "🔀 Combined tasks with previous checklist", css_classes=["todos-title"], margin=0,
+                        "🔀 Combined tasks with previous checklist",
+                        css_classes=["todos-title"],
+                        margin=0,
                         styles={"font-weight": "normal", "font-size": "1.1em"}
                     )
                 ]
