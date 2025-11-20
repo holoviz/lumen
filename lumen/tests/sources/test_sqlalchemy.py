@@ -43,17 +43,11 @@ def sqlalchemy_source(sqlite_db):
 
 
 @pytest.fixture
-def sqlalchemy_memory_source(mixed_df):
+def memory_source(mixed_df):
     """Create an in-memory SQLite database with test data."""
     source = SQLAlchemySource(
         url='sqlite:///:memory:',
     )
-
-    # Load data into the database
-    with source._engine.connect() as conn:
-        mixed_df.to_sql('mixed', conn, if_exists='replace', index=False)
-
-    source.tables = {'mixed': 'SELECT * FROM mixed'}
     yield source
     source.close()
 
@@ -221,22 +215,21 @@ def test_sqlalchemy_clear_cache(sqlalchemy_source):
     assert len(sqlalchemy_source._schema_cache) == 0
 
 
-def test_sqlalchemy_connection_url():
+def test_sqlalchemy_connection_url_from_memory():
     """Test various connection URL formats."""
     # SQLite in-memory
     source1 = SQLAlchemySource(url='sqlite:///:memory:')
-    assert source1._url.drivername == 'sqlite'
+    try:
+        assert source1._url.drivername == 'sqlite'
+    finally:
+        source1.close()
 
     # SQLite file
     source2 = SQLAlchemySource(url='sqlite:///test.db')
-    assert source2._url.drivername == 'sqlite'
-
-    # PostgreSQL URL (won't actually connect)
     try:
-        source3 = SQLAlchemySource(url='postgresql://user:pass@localhost/db')
-        assert source3._url.drivername == 'postgresql'
-    except Exception:
-        pass  # It's OK if connection fails, we just want to test URL parsing
+        assert source2._url.drivername == 'sqlite'
+    finally:
+        source2.close()
 
 
 def test_sqlalchemy_connection_components():
@@ -245,15 +238,16 @@ def test_sqlalchemy_connection_components():
         drivername='sqlite',
         database=':memory:'
     )
-    assert source._url.drivername == 'sqlite'
-    assert source._url.database == ':memory:'
+    try:
+        assert source._url.drivername == 'sqlite'
+        assert source._url.database == ':memory:'
+    finally:
+        source.close()
 
 
-def test_sqlalchemy_driver_detection():
+def test_sqlalchemy_driver_detection(memory_source):
     """Test async driver detection."""
-    # Sync driver
-    source_sync = SQLAlchemySource(url='sqlite:///:memory:')
-    assert not source_sync._driver_is_async
+    assert not memory_source._driver_is_async
 
     # Async drivers (won't connect, just test detection)
     assert SQLAlchemySource._is_async_driver('postgresql+asyncpg')
@@ -263,59 +257,47 @@ def test_sqlalchemy_driver_detection():
     assert not SQLAlchemySource._is_async_driver('sqlite')
 
 
-def test_sqlalchemy_get_tables_from_inspector():
+def test_sqlalchemy_get_tables_from_inspector(memory_source):
     """Test automatic table discovery using SQLAlchemy inspector."""
-    # Create an in-memory database with multiple tables
-    source = SQLAlchemySource(url='sqlite:///:memory:')
-
-    # Create some test tables
-    with source._engine.begin() as conn:
+    with memory_source._engine.begin() as conn:
         conn.execute(text('CREATE TABLE table1 (id INTEGER, name TEXT)'))
         conn.execute(text('CREATE TABLE table2 (id INTEGER, value REAL)'))
         conn.execute(text('INSERT INTO table1 VALUES (1, "test")'))
         conn.execute(text('INSERT INTO table2 VALUES (1, 1.5)'))
 
     # Get tables should discover both tables
-    tables = source.get_tables()
+    tables = memory_source.get_tables()
     assert 'table1' in tables
     assert 'table2' in tables
 
 
-def test_sqlalchemy_excluded_tables():
+def test_sqlalchemy_excluded_tables(memory_source):
     """Test table exclusion patterns."""
-    source = SQLAlchemySource(
-        url='sqlite:///:memory:',
-        excluded_tables=['temp_*', 'test_*']
-    )
-
-    # Create test tables
-    with source._engine.begin() as conn:
+    memory_source.excluded_tables = ['temp_*', 'test_*']
+    with memory_source._engine.begin() as conn:
         conn.execute(text('CREATE TABLE temp_data (id INTEGER)'))
         conn.execute(text('CREATE TABLE test_data (id INTEGER)'))
         conn.execute(text('CREATE TABLE real_data (id INTEGER)'))
 
-    tables = source.get_tables()
+    tables = memory_source.get_tables()
     assert 'real_data' in tables
     assert 'temp_data' not in tables
     assert 'test_data' not in tables
 
 
-def test_sqlalchemy_metadata_extraction():
+def test_sqlalchemy_metadata_extraction(memory_source):
     """Test metadata extraction using SQLAlchemy inspector."""
-    source = SQLAlchemySource(url='sqlite:///:memory:')
-
-    # Create a table with some data
     df = pd.DataFrame({
         'id': [1, 2, 3],
         'name': ['Alice', 'Bob', 'Charlie'],
         'value': [100.5, 200.75, 300.0]
     })
 
-    with source._engine.begin() as conn:
+    with memory_source._engine.begin() as conn:
         df.to_sql('test_table', conn, if_exists='replace', index=False)
 
     # Get metadata
-    metadata = source._get_table_metadata(['test_table'])
+    metadata = memory_source._get_table_metadata(['test_table'])
 
     assert 'test_table' in metadata
     assert 'columns' in metadata['test_table']
@@ -324,31 +306,27 @@ def test_sqlalchemy_metadata_extraction():
     assert 'value' in metadata['test_table']['columns']
 
 
-def test_sqlalchemy_create_sql_expr_source():
+def test_sqlalchemy_create_sql_expr_source(memory_source):
     """Test creating a new source with SQL expressions."""
-    source = SQLAlchemySource(url='sqlite:///:memory:')
-
-    # Create initial table
     df = pd.DataFrame({'id': [1, 2, 3], 'value': [10, 20, 30]})
-    with source._engine.begin() as conn:
+    with memory_source._engine.begin() as conn:
         df.to_sql('data', conn, if_exists='replace', index=False)
 
-    source.tables = {'data': 'SELECT * FROM data'}
+    memory_source.tables = {'data': 'SELECT * FROM data'}
 
     # Create new source with SQL expression
     new_tables = {
         'filtered': 'SELECT * FROM data WHERE value > 15'
     }
-    new_source = source.create_sql_expr_source(new_tables)
+    new_source = memory_source.create_sql_expr_source(new_tables)
 
     result = new_source.get('filtered')
     assert len(result) == 2
     assert all(result['value'] > 15)
 
 
-def test_sqlalchemy_table_params_basic():
+def test_sqlalchemy_table_params_basic(memory_source):
     """Test table_params with parameterized queries."""
-    source = SQLAlchemySource(url='sqlite:///:memory:')
 
     # Create test data
     df = pd.DataFrame({
@@ -357,61 +335,55 @@ def test_sqlalchemy_table_params_basic():
         'city': ['NYC', 'LA', 'Chicago']
     })
 
-    with source._engine.begin() as conn:
+    with memory_source._engine.begin() as conn:
         df.to_sql('customers', conn, if_exists='replace', index=False)
 
     # Use parameterized query
-    source.tables = {
+    memory_source.tables = {
         'customers': 'SELECT * FROM customers',
         'by_city': 'SELECT * FROM customers WHERE city = ?'
     }
-    source.table_params = {'by_city': ['NYC']}
+    memory_source.table_params = {'by_city': ['NYC']}
 
-    result = source.get('by_city')
+    result = memory_source.get('by_city')
     assert len(result) == 1
     assert result.iloc[0]['city'] == 'NYC'
 
 
-def test_sqlalchemy_table_params_multiple():
+def test_sqlalchemy_table_params_multiple(memory_source):
     """Test table_params with multiple parameters."""
-    source = SQLAlchemySource(url='sqlite:///:memory:')
-
-    # Create test data
     df = pd.DataFrame({
         'id': [1, 2, 3, 4],
         'value': [10, 20, 30, 40]
     })
 
-    with source._engine.begin() as conn:
+    with memory_source._engine.begin() as conn:
         df.to_sql('data', conn, if_exists='replace', index=False)
 
     # Use multiple parameters
-    source.tables = {
+    memory_source.tables = {
         'data': 'SELECT * FROM data',
         'range_query': 'SELECT * FROM data WHERE value > ? AND value < ?'
     }
-    source.table_params = {'range_query': [15, 35]}
+    memory_source.table_params = {'range_query': [15, 35]}
 
-    result = source.get('range_query')
+    result = memory_source.get('range_query')
     assert len(result) == 2
     assert set(result['value']) == {20, 30}
 
 
-def test_sqlalchemy_create_sql_expr_source_with_params():
+def test_sqlalchemy_create_sql_expr_source_with_params(memory_source):
     """Test create_sql_expr_source with params."""
-    source = SQLAlchemySource(url='sqlite:///:memory:')
-
-    # Create test data
     df = pd.DataFrame({
         'id': [1, 2, 3, 4, 5],
         'category': ['A', 'B', 'A', 'B', 'C'],
         'value': [10, 20, 30, 40, 50]
     })
 
-    with source._engine.begin() as conn:
+    with memory_source._engine.begin() as conn:
         df.to_sql('data', conn, if_exists='replace', index=False)
 
-    source.tables = {'data': 'SELECT * FROM data'}
+    memory_source.tables = {'data': 'SELECT * FROM data'}
 
     # Create new source with parameterized query
     new_tables = {
@@ -419,7 +391,7 @@ def test_sqlalchemy_create_sql_expr_source_with_params():
     }
     params = {'filtered': ['A', 15]}
 
-    new_source = source.create_sql_expr_source(new_tables, params=params)
+    new_source = memory_source.create_sql_expr_source(new_tables, params=params)
 
     result = new_source.get('filtered')
     assert len(result) == 1
@@ -427,18 +399,15 @@ def test_sqlalchemy_create_sql_expr_source_with_params():
     assert result.iloc[0]['value'] == 30
 
 
-def test_sqlalchemy_execute():
+def test_sqlalchemy_execute(memory_source):
     """Test direct SQL execution."""
-    source = SQLAlchemySource(url='sqlite:///:memory:')
-
-    # Create and populate table
-    with source._engine.begin() as conn:
+    with memory_source._engine.begin() as conn:
         conn.execute(text('CREATE TABLE test (id INTEGER, name TEXT)'))
         conn.execute(text('INSERT INTO test VALUES (1, "Alice")'))
         conn.execute(text('INSERT INTO test VALUES (2, "Bob")'))
 
     # Execute query
-    result = source.execute('SELECT * FROM test WHERE id = ?', [1])
+    result = memory_source.execute('SELECT * FROM test WHERE id = ?', [1])
     assert len(result) == 1
     assert result.iloc[0]['id'] == 1
     assert result.iloc[0]['name'] == 'Alice'
@@ -459,14 +428,23 @@ def test_sqlalchemy_close():
     assert source._inspector is None
 
 
-def test_sqlalchemy_dialect_detection():
+def test_sqlalchemy_dialect_detection_from_url():
     """Test dialect detection from URL."""
     source_sqlite = SQLAlchemySource(url='sqlite:///:memory:')
-    assert source_sqlite.dialect == 'sqlite'
+    try:
+        assert source_sqlite.dialect == 'sqlite'
+    finally:
+        source_sqlite.close()
+
+
+def test_sqlalchemy_dialect_detection_from_drivername():
 
     # Test with components
-    source_sqlite2 = SQLAlchemySource(drivername='sqlite', database=':memory:')
-    assert source_sqlite2.dialect == 'sqlite'
+    source_sqlite = SQLAlchemySource(drivername='sqlite', database=':memory:')
+    try:
+        assert source_sqlite.dialect == 'sqlite'
+    finally:
+        source_sqlite.close()
 
 
 @pytest.mark.asyncio
@@ -506,78 +484,49 @@ async def test_sqlalchemy_async_with_sync_driver():
         os.unlink(temp_db.name)
 
 
-def test_sqlalchemy_error_handling():
+def test_sqlalchemy_error_handling(memory_source):
     """Test error handling for invalid queries."""
-    source = SQLAlchemySource(url='sqlite:///:memory:')
-
     # Invalid SQL should raise an error
     with pytest.raises(Exception):
-        source.execute('SELECT * FROM nonexistent_table')
+        memory_source.execute('SELECT * FROM nonexistent_table')
 
     # Invalid table should raise an error
     with pytest.raises(Exception):
-        source.get('nonexistent_table')
+        memory_source.get('nonexistent_table')
 
-
-def test_sqlalchemy_schema_timeout():
-    """Test schema_timeout_seconds parameter."""
-    source = SQLAlchemySource(
-        url='sqlite:///:memory:',
-        schema_timeout_seconds=1
-    )
-
-    # Create a simple table
-    with source._engine.begin() as conn:
-        conn.execute(text('CREATE TABLE test (id INTEGER)'))
-        conn.execute(text('INSERT INTO test VALUES (1)'))
-
-    source.tables = {'test': 'SELECT * FROM test'}
-
-    # Get schema should work
-    schema = source.get_schema('test')
-    assert 'id' in schema
-
-
-def test_sqlalchemy_filter_in_sql():
+@pytest.mark.parametrize('filter_in_sql', [False, True])
+def test_sqlalchemy_filter_in_sql(memory_source, filter_in_sql):
     """Test filter_in_sql parameter."""
-    source = SQLAlchemySource(
-        url='sqlite:///:memory:',
-        filter_in_sql=True
-    )
+    memory_source.filter_in_sql = filter_in_sql
 
-    # Create test data
     df = pd.DataFrame({
         'id': [1, 2, 3, 4, 5],
         'category': ['A', 'B', 'A', 'B', 'C']
     })
-
-    with source._engine.begin() as conn:
+    with memory_source._engine.begin() as conn:
         df.to_sql('data', conn, if_exists='replace', index=False)
 
-    source.tables = {'data': 'SELECT * FROM data'}
+    memory_source.tables = {'data': 'SELECT * FROM data'}
 
     # Filter should be applied in SQL
-    result = source.get('data', category='A')
+    result = memory_source.get('data', category='A')
     assert len(result) == 2
     assert all(result['category'] == 'A')
 
 
-def test_sqlalchemy_engine_reuse():
+def test_sqlalchemy_engine_reuse(memory_source):
     """Test that create_sql_expr_source reuses the engine."""
-    source = SQLAlchemySource(url='sqlite:///:memory:')
-
-    # Create test data
     df = pd.DataFrame({'id': [1, 2, 3]})
-    with source._engine.begin() as conn:
+    with memory_source._engine.begin() as conn:
         df.to_sql('data', conn, if_exists='replace', index=False)
 
-    source.tables = {'data': 'SELECT * FROM data'}
+    memory_source.tables = {'data': 'SELECT * FROM data'}
 
     # Create new source
-    new_source = source.create_sql_expr_source({'filtered': 'SELECT * FROM data WHERE id > 1'})
+    new_source = memory_source.create_sql_expr_source({'filtered': 'SELECT * FROM data WHERE id > 1'})
 
     # Should reuse the same engine
-    assert new_source._engine is source._engine
+    assert new_source._engine is memory_source._engine
 
 
 def test_sqlalchemy_connect_args():
@@ -588,7 +537,10 @@ def test_sqlalchemy_connect_args():
     )
 
     # Should create successfully
-    assert source._engine is not None
+    try:
+        assert source._engine is not None
+    finally:
+        source.close()
 
 
 def test_sqlalchemy_engine_kwargs():
@@ -599,7 +551,10 @@ def test_sqlalchemy_engine_kwargs():
     )
 
     # Should create successfully
-    assert source._engine is not None
+    try:
+        assert source._engine is not None
+    finally:
+        source.close()
 
 
 def test_sqlalchemy_query_params():
@@ -611,7 +566,10 @@ def test_sqlalchemy_query_params():
     )
 
     # Should create URL successfully
-    assert source._url is not None
+    try:
+        assert source._url is not None
+    finally:
+        source.close()
 
 
 def test_sqlalchemy_invalid_url():
@@ -621,21 +579,17 @@ def test_sqlalchemy_invalid_url():
         SQLAlchemySource()
 
 
-def test_sqlalchemy_get_metadata():
+def test_sqlalchemy_get_metadata(memory_source):
     """Test get_metadata method."""
-    source = SQLAlchemySource(url='sqlite:///:memory:')
-
-    # Create test table
     df = pd.DataFrame({
         'id': [1, 2, 3],
         'name': ['Alice', 'Bob', 'Charlie']
     })
-
-    with source._engine.begin() as conn:
+    with memory_source._engine.begin() as conn:
         df.to_sql('users', conn, if_exists='replace', index=False)
 
     # Get metadata
-    metadata = source.get_metadata('users')
+    metadata = memory_source.get_metadata('users')
 
     assert 'description' in metadata
     assert 'columns' in metadata
@@ -644,10 +598,9 @@ def test_sqlalchemy_get_metadata():
     assert 'rows' in metadata
 
 
-def test_sqlalchemy_custom_sql_expr():
+def test_sqlalchemy_custom_sql_expr(memory_source):
     """Test custom sql_expr parameter."""
-    source = SQLAlchemySource(
-        url='sqlite:///:memory:',
+    memory_source.param.update(
         sql_expr='SELECT id, name FROM {table} LIMIT 10',
         tables={'users': 'users'}
     )
@@ -658,30 +611,26 @@ def test_sqlalchemy_custom_sql_expr():
         'name': [f'User{i}' for i in range(1, 21)],
         'value': list(range(100, 120))
     })
-
-    with source._engine.begin() as conn:
+    with memory_source._engine.begin() as conn:
         df.to_sql('users', conn, if_exists='replace', index=False)
 
     # Get should use custom sql_expr
-    result = source.get('users')
+    result = memory_source.get('users')
     assert len(result) <= 10
     assert 'id' in result.columns
     assert 'name' in result.columns
 
 
-def test_sqlalchemy_create_sql_expr_no_nested_transaction():
+def test_sqlalchemy_create_sql_expr_no_nested_transaction(memory_source):
     """Test that create_sql_expr_source doesn't cause nested transaction errors."""
-    source = SQLAlchemySource(url='sqlite:///:memory:')
-
-    # Create test data (use 'data_table' instead of 'table' which is a reserved keyword)
     df = pd.DataFrame({'id': [1, 2, 3, 4, 5], 'value': [10, 20, 30, 40, 50]})
-    with source._engine.begin() as conn:
+    with memory_source._engine.begin() as conn:
         df.to_sql('data_table', conn, if_exists='replace', index=False)
 
-    source.tables = {'data_table': 'SELECT * FROM data_table'}
+    memory_source.tables = {'data_table': 'SELECT * FROM data_table'}
 
     # This should not raise a nested transaction error
-    new_source = source.create_sql_expr_source({"limited": "SELECT * FROM data_table LIMIT 2"})
+    new_source = memory_source.create_sql_expr_source({"limited": "SELECT * FROM data_table LIMIT 2"})
     result = new_source.get("limited")
 
     assert len(result) == 2

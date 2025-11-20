@@ -104,6 +104,7 @@ filterwarnings = [
     "ignore:Couldn't find ffmpeg or avconv - defaulting to ffmpeg:RuntimeWarning",
     "ignore:Unsupported Windows version",
     "ignore:unclosed <socket.socket:ResourceWarning", # Windows Python 3.10 test-example
+    "ignore:ArrowStringArray._data is a deprecated and will be removed in a future version, use ._pa_array instead:FutureWarning"
 ]
 
 [tool.ruff]
