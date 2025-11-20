@@ -614,7 +614,7 @@ class DependencyResolver(Coordinator):
         subagent = agent
         tasks = []
         while (unmet_dependencies := tuple(
-            r for r in await subagent.requirements(messages) if r not in self._memory
+            r for r in await subagent.requirements(messages) if r not in context
         )):
             with self._add_step(title="Resolving dependencies...", user="Assistant") as step:
                 step.stream(f"Found {len(unmet_dependencies)} unmet dependencies: {', '.join(unmet_dependencies)}")
