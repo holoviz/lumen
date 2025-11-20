@@ -99,16 +99,20 @@ class Plan(Section):
             layout_params={"title": "🏗️ Running "},
             steps_layout=self.steps_layout
         ) as step:
-            self.steps_layout.header[0].object = f"⚙️ Working on task {task.title!r}..."
-            step.stream(task.instruction)
             history, todos = self.render_task_history(i)
             subcontext = self._get_context(i, context, task)
-            self.steps_layout.header[1].object = todos
+            if self.steps_layout is not None:
+                self.steps_layout.header[0].object = f"⚙️ Working on task {task.title!r}..."
+                self.steps_layout.header[1].object = todos
+            step.stream(task.instruction)
             try:
                 kwargs = {"agents": self.agents} if 'agents' in task.param else {}
                 with task.param.update(
-                    interface=self.interface, steps_layout=self.steps_layout[-1],
-                    history=history, **kwargs
+                    interface=self.interface,
+                    llm=task.llm or self.llm,
+                    steps_layout=self.steps_layout[-1] if self.steps_layout else None,
+                    history=history,
+                    **kwargs
                 ):
                     outputs, task_context = await task.execute(subcontext, **kwargs)
             except Exception as e:
@@ -244,15 +248,15 @@ class Plan(Section):
             del context['__error__']
         outputs, out_context = await super().execute(context, **kwargs)
         _, todos = self.render_task_history(self._current, failed=self.status == "error")
-        steps_title, todo_list = self.steps_layout.header
-        todo_list.object = todos
-        if self.status == 'success':
-            steps_title.object = f"✅ Sucessfully completed {self.title!r}"
-        else:
-            steps_title.object = f"❌ Failed to execute {self.title!r}"
-        log_debug("\033[92mCompleted: Plan\033[0m", show_sep="below")
-        if self.interface is not None:
+        if self.steps_layout is not None:
+            steps_title, todo_list = self.steps_layout.header
+            todo_list.object = todos
+            if self.status == 'success':
+                steps_title.object = f"✅ Sucessfully completed {self.title!r}"
+            else:
+                steps_title.object = f"❌ Failed to execute {self.title!r}"
             self.steps_layout.collapsed = True
+        log_debug("\033[92mCompleted: Plan\033[0m", show_sep="below")
         return outputs, out_context
 
 

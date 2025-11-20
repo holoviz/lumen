@@ -874,10 +874,11 @@ class SQLAgent(LumenBaseAgent):
                 raise_if_empty=raise_if_empty
             )
 
-            step.param.update(
-                status="success",
-                success_title=success_message
-            )
+            if isinstance(step, ChatStep):
+                step.param.update(
+                    status="success",
+                    success_title=success_message
+                )
 
         return view, out_context
 
@@ -2155,12 +2156,13 @@ class ValidationAgent(Agent):
         context: TContext,
         step_title: str | None = None,
     ) -> tuple[list[Any], ValidationOutputs]:
+        interface = self.interface
         def on_click(event):
             if messages:
                 user_messages = [msg for msg in reversed(messages) if msg.get("role") == "user"]
                 original_query = user_messages[0].get("content", "").split("-- For context...")[0]
             suggestions_list = '\n- '.join(result.suggestions)
-            self.interface.send(f"Follow these suggestions to fulfill the original intent {original_query}\n\n{suggestions_list}")
+            interface.send(f"Follow these suggestions to fulfill the original intent {original_query}\n\n{suggestions_list}")
 
         executed_steps = None
         if "plan" in context:
@@ -2192,5 +2194,5 @@ class ValidationAgent(Agent):
         button = Button(name="Rerun", on_click=on_click)
         footer_objects = [button]
         formatted_response = "\n\n".join(response_parts)
-        self.interface.stream(formatted_response, user=self.user, max_width=self._max_width, footer_objects=footer_objects)
+        interface.stream(formatted_response, user=self.user, max_width=self._max_width, footer_objects=footer_objects)
         return [result], {"validation_result": result}
