@@ -65,7 +65,9 @@ pydantic = ">=2.8.0"
 pydantic-extra-types = "*"
 semchunk = "*"
 tiktoken = "*"
-panel-splitjs = "*"
+
+[feature.ai.pypi-dependencies]
+panel-splitjs = ">0.2.1"
 
 [feature.sql.dependencies]
 duckdb = "*"
