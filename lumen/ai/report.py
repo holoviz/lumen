@@ -254,17 +254,17 @@ class TaskWrapper(Task):
                 watcher = self._task_watchers.pop(task)
                 task.param.unwatch(watcher)
             return
-        index = self._tasks.index(task)
-        if index >= self._current or self.running:
+        index = self._tasks.index(task)+1
+        if index > self._current or self.running:
             # No need to invalidate if the task hasn't been executed
             return
         changed = {k for k, v in event.new.items() if k in event.old and not is_equal(event.old.get(k), v)}
         if changed:
-            self.invalidate(changed, start=index+1)
+            self.invalidate(changed, start=index)
             root = self
             while root.parent is not None:
                 root = root.parent
-            if root is not self or (index+1) < len(self):
+            if not (root is self and index >= len(self)):
                 await root.execute()
 
     def validate(
@@ -469,16 +469,17 @@ class TaskWrapper(Task):
         messages = self._render_message_history(context)
 
         subcontext = self._get_context(i, context, task)
+        task_history = messages + task.history
         with task.param.update(
             interface=self.interface,
             llm=task.llm or self.llm,
-            steps_layout=self.steps_layout
+            steps_layout=self.steps_layout,
+            running=True,
+            history=task_history
         ):
-            task_history = messages + task.history
-            with task.param.update(running=True, history=task_history):
-                out, out_context = await task.execute(subcontext, **kwargs)
-            self._task_outputs[task] = out
-            outputs += out
+            out, out_context = await task.execute(subcontext, **kwargs)
+        self._task_outputs[task] = out
+        outputs += out
         if isinstance(task, ContextProvider):
             unprovided = [
                 p for p in task.output_schema.__required_keys__
@@ -567,6 +568,7 @@ class TaskWrapper(Task):
             if task in self._task_outputs:
                 views += self._task_outputs[task]
                 continue
+
             new = []
             try:
                 new, new_context = await self._run_task(i, task, context, **kwargs)
@@ -646,10 +648,17 @@ class TaskWrapper(Task):
                 parent_idx += 1
             self.parent.invalidate(keys, start=parent_idx)
             return
+
         keys = set(keys)
         invalidated = []
         views = list(self.views)
         rendered_views = list(self._view)
+        if start == 0:
+            title_views = self._task_outputs.pop(None, None)
+            self._task_rendered.pop(None, None)
+            if title_views:
+                views = [view for view in views if view not in title_views]
+
         for i, task in enumerate(self):
             if i < start:
                 continue
@@ -661,7 +670,7 @@ class TaskWrapper(Task):
             if isinstance(task, Task):
                 old = list(task.views)
             if isinstance(task, TaskWrapper):
-                subtask_invalidated, subtask_keys = task.invalidate(keys, propagate=not propagate)
+                subtask_invalidated, subtask_keys = task.invalidate(keys, propagate=False)
                 if invalidated or subtask_invalidated:
                     invalidated.append(i)
                 if not subtask_invalidated:
@@ -1055,23 +1064,28 @@ class ActorTask(TaskWrapper):
 
     async def revise(
         self, instruction: str, task: Task | Actor, context: TContext,
-        view: LumenOutput, config: dict[str, Any]
+        view: LumenOutput, config: dict[str, Any] | None = None
     ):
+        config = config or {}
         invalidation_keys = set(task.output_schema.__annotations__)
-        self.invalidate(invalidation_keys, start=1)
         if isinstance(task, LumenBaseAgent):
             with view.editor.param.update(loading=True):
                 messages = list(self.history)
+                task_config = dict(config)
+                if "llm" not in task_config:
+                    task_config = task.llm or self.llm
                 task_context = self._get_context(0, context, task)
                 try:
                     old = view.spec
-                    view.spec = await task.revise(
-                        instruction, messages, task_context, view
-                    )
+                    with task.param.update(**task_config):
+                        view.spec = await task.revise(
+                            instruction, messages, task_context, view
+                        )
                 except Exception as e:
                     view.spec = old
                     raise e
         else:
+            self.invalidate(invalidation_keys, start=1)
             root = self
             while root.parent is not None:
                 root = root.parent
