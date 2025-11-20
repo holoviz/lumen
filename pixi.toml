@@ -67,7 +67,7 @@ semchunk = "*"
 tiktoken = "*"
 
 [feature.ai.pypi-dependencies]
-panel-splitjs = ">0.2.1"
+panel-splitjs = ">=0.2.1"
 
 [feature.sql.dependencies]
 duckdb = "*"
