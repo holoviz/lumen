@@ -21,7 +21,7 @@ lint = ["py311", "lint"]
 [dependencies]
 bokeh = "*"
 holoviews = ">=1.17.0"
-panel-material-ui = ">=0.4.0"
+panel-material-ui = ">=0.6.0"
 hvplot = "*"
 intake = "<2"
 jinja2 = ">3.0"
@@ -65,6 +65,7 @@ pydantic = ">=2.8.0"
 pydantic-extra-types = "*"
 semchunk = "*"
 tiktoken = "*"
+panel-splitjs = "*"
 
 [feature.sql.dependencies]
 duckdb = "*"
