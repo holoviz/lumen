@@ -10,9 +10,8 @@ install = 'python -m pip install --no-deps --disable-pip-version-check -e .'
 PYTHONIOENCODING = "utf-8"
 
 [environments]
-test-310 = ["py310", "test-core", "test", "ai", "sql"]
-test-311 = ["py311", "test-core", "test", "ai", "sql"]
 test-312 = ["py312", "test-core", "test", "ai", "sql"]
+test-313 = ["py313", "test-core", "test", "ai", "sql"]
 test-core = ["py313", "test-core"]
 docs = ["py311", "doc", "ai", "sql"]
 build = ["py311", "build"]
@@ -33,12 +32,6 @@ param = ">=2.2.1"
 pip = "*"
 sqlglot = "*"
 sqlglotrs = "*"
-
-[feature.py310.dependencies]
-python = "3.10.*"
-
-[feature.py311.dependencies]
-python = "3.11.*"
 
 [feature.py312.dependencies]
 python = "3.12.*"
@@ -65,6 +58,7 @@ pydantic = ">=2.8.0"
 pydantic-extra-types = "*"
 semchunk = "*"
 tiktoken = "*"
+tabulate = "*"
 
 [feature.ai.pypi-dependencies]
 panel-splitjs = ">=0.2.1"
