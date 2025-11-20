@@ -13,9 +13,9 @@ PYTHONIOENCODING = "utf-8"
 test-312 = ["py312", "test-core", "test", "ai", "sql"]
 test-313 = ["py313", "test-core", "test", "ai", "sql"]
 test-core = ["py313", "test-core"]
-docs = ["py311", "doc", "ai", "sql"]
-build = ["py311", "build"]
-lint = ["py311", "lint"]
+docs = ["py312", "doc", "ai", "sql"]
+build = ["py312", "build"]
+lint = ["py312", "lint"]
 
 [dependencies]
 bokeh = "*"
