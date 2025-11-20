@@ -691,13 +691,16 @@ class SQLAgent(LumenBaseAgent):
         return sql_query
 
     async def _execute_query(
-        self, source, context: TContext, expr_slug: str, sql_query: str,
-        is_final: bool, should_materialize: bool, step
+        self, source, context: TContext, expr_slug: str, sql_query: str, tables: list[str],
+        is_final: bool, should_materialize: bool, step: ChatStep
     ) -> tuple[Pipeline, Source, str]:
         """Execute SQL query and return pipeline and summary."""
         # Create SQL source
+        table_defs = {table: source.tables[table] for table in tables if table in source.tables}
+        table_defs[expr_slug] = sql_query
+
         sql_expr_source = source.create_sql_expr_source(
-            {expr_slug: sql_query}, materialize=should_materialize
+            table_defs, materialize=should_materialize
         )
 
         if should_materialize:
@@ -758,10 +761,10 @@ class SQLAgent(LumenBaseAgent):
 
     def _merge_sources(
         self, sources: dict[tuple[str, str], BaseSQLSource], tables: list[tuple[str, str]]
-    ) -> BaseSQLSource:
+    ) -> tuple[BaseSQLSource, list[str]]:
         if len(set(m.source for m in tables)) == 1:
             m = tables[0]
-            return sources[(m.source, m.table)]
+            return sources[(m.source, m.table)], [m.table]
         mirrors = {}
         for m in tables:
             if not any(m.table.rstrip(")").rstrip("'").rstrip('"').endswith(ext)
@@ -770,7 +773,7 @@ class SQLAgent(LumenBaseAgent):
             else:
                 renamed_table = m.table
             mirrors[renamed_table] = (sources[(m.source, m.table)], m.table)
-        return DuckDBSource(uri=":memory:", mirrors=mirrors)
+        return DuckDBSource(uri=":memory:", mirrors=mirrors), list(mirrors)
 
     async def _render_execute_query(
         self,
@@ -842,8 +845,9 @@ class SQLAgent(LumenBaseAgent):
 
             if len(sources) == 1:
                 source = next(iter(sources.values()))
+                tables = [next(table for _, table in sources)]
             else:
-                source = self._merge_sources(sources, output.tables)
+                source, tables = self._merge_sources(sources, output.tables)
             sql_query = output.query.strip()
             expr_slug = output.table_slug.strip()
 
@@ -853,8 +857,8 @@ class SQLAgent(LumenBaseAgent):
             )
 
             pipeline, sql_expr_source, summary = await self._execute_query(
-                source, context, expr_slug, validated_sql, is_final=True,
-                should_materialize=True, step=step
+                source, context, expr_slug, validated_sql, tables=tables,
+                is_final=True, should_materialize=True, step=step
             )
 
             results = {
@@ -1055,16 +1059,18 @@ class SQLAgent(LumenBaseAgent):
         visible_slugs = context['visible_slugs']
         if visible_slugs:
             selected_slugs = [slug for slug in selected_slugs if slug in visible_slugs]
-        tables_to_source = {
+        sources = {
             tuple(table_slug.split(SOURCE_TABLE_SEPARATOR)): parse_table_slug(table_slug, sources)[0]
             for table_slug in selected_slugs
         }
+        if not sources:
+            return [], {}
         try:
             # Try one-shot approach first
             out, out_context = await self._render_execute_query(
                 messages,
                 context,
-                sources=tables_to_source,
+                sources=sources,
                 step_title="Attempting one-shot SQL generation...",
                 success_message="One-shot SQL generation successful",
                 discovery_context=None,
@@ -1077,7 +1083,7 @@ class SQLAgent(LumenBaseAgent):
                 raise e
             # Fall back to exploration mode if enabled
             out, out_context = await self._explore_tables(
-                messages, context, tables_to_source, str(e), step_title
+                messages, context, sources, str(e), step_title
             )
         return [out], out_context
 
