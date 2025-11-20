@@ -180,7 +180,7 @@ def test_duckdb_clear_cache(duckdb_source):
 def test_duckdb_source_ephemeral_roundtrips(duckdb_memory_source, mixed_df):
     source = DuckDBSource.from_spec(duckdb_memory_source.to_spec())
     df = source.get('mixed')
-    assert df.equal(mixed_df)
+    assert df.equals(mixed_df)
 
 
 def test_duckdb_source_mirrors_source(duckdb_source):
