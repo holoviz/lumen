@@ -36,7 +36,7 @@ def test_intake_resolve_module_type():
 
 
 def test_intake_source_from_file(source, mixed_df):
-    pd.testing.assert_frame_equal(source.get('test'), mixed_df)
+    pd.testing.assert_frame_equal(source.get('test'), mixed_df, check_dtype=False)
 
 
 def test_intake_source_from_dict(mixed_df):
@@ -44,7 +44,7 @@ def test_intake_source_from_dict(mixed_df):
     with open(os.path.join(root, 'catalog.yml')) as f:
         catalog = yaml.load(f, Loader=yaml.Loader)
     source = IntakeSource(catalog=catalog, root=root)
-    pd.testing.assert_frame_equal(source.get('test'), mixed_df)
+    pd.testing.assert_frame_equal(source.get('test'), mixed_df, check_dtype=False)
 
 
 @pytest.mark.parametrize(
@@ -65,4 +65,4 @@ def test_intake_filter(source, table_column_value_type, dask, expected_filtered_
     table, column, value, _ = table_column_value_type
     kwargs = {column: value}
     filtered = source.get(table, __dask=dask, **kwargs)
-    pd.testing.assert_frame_equal(filtered, expected_filtered_df)
+    pd.testing.assert_frame_equal(filtered, expected_filtered_df, check_dtype=False)

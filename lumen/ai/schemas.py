@@ -252,6 +252,7 @@ async def get_metaset(sources: list[Source], tables: list[str], prev: SQLMetaset
         else:
             source_name = next(iter(sources)).name
             table_name = table_slug
+            table_slug = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
 
         if prev and table_slug in prev.sql_metadata_map:
             sql_metadata = prev.sql_metadata_map[table_slug]

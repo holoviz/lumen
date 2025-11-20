@@ -209,7 +209,7 @@ async def test_plan_execute(sql_plan):
 
 async def test_plan_edit(sql_plan):
     assert sql_plan.status != "error"
-    llm.set_responses([
+    sql_plan.llm.set_responses([
         lambda: f"Result: {sql_plan[0].out_context['pipeline'].data.iloc[0, 0]}"
     ])
 

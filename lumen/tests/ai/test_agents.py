@@ -10,171 +10,115 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
-from lumen.ai import memory
 from lumen.ai.agents import (
     AnalystAgent, ChatAgent, SQLAgent, VegaLiteAgent,
 )
 from lumen.ai.llm import Llm
-from lumen.ai.models import NextStep, SQLRoadmap
+from lumen.ai.models import SqlQuery, VegaLiteSpec, VegaLiteSpecUpdate
 from lumen.ai.schemas import get_metaset
+from lumen.ai.views import SQLOutput, VegaLiteOutput
+from lumen.config import dump_yaml
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
 
-try:
-    from lumen.sources.duckdb import DuckDBSource
-
-    pytestmark = pytest.mark.xdist_group("duckdb")
-except ImportError:
-    pytestmark = pytest.mark.skip(reason="Duckdb is not installed")
-
 root = str(Path(__file__).parent.parent / "sources")
-
 
 @pytest.fixture
 def duckdb_source():
     duckdb_source = DuckDBSource(
         initializers=["INSTALL sqlite;", "LOAD sqlite;", f"SET home_directory='{root}';"],
         root=root,
-        sql_expr="SELECT A, B, C, D::TIMESTAMP_NS AS D FROM {table}",
-        tables={"test_sql": f"(SELECT * FROM READ_CSV('{root + '/test.csv'}'))"},
+        tables={"test_sql": f"SELECT A, B, C, D::TIMESTAMP_NS AS D FROM READ_CSV('{root + '/test.csv'}')"},
     )
     return duckdb_source
 
 
-class MockLLM(Llm):
-    """Mock LLM for testing"""
+@pytest.fixture
+def test_messages():
+    """Create test messages for agent respond method"""
+    return [{"role": "user", "content": "Test message"}]
 
-    _supports_stream = True
-    _supports_model_stream = True
+async def test_chat_agent(llm, test_messages):
+    agent = ChatAgent(llm=llm)
 
-    def __init__(self, **params):
-        super().__init__(model_kwargs={"default": {"model": "test"}}, **params)
+    llm.set_responses([
+        "Test Response"
+    ])
 
-    async def invoke(self, messages, system="", response_model=None, allow_partial=False, model_spec="default", **input_kwargs):
-        return "Test response"
+    out, out_context = await agent.respond(test_messages, {})
+    assert out[0].object == "Test Response" 
 
-    async def stream(self, messages, system="", response_model=None, field=None, model_spec="default", **kwargs):
-        if response_model:
-            if response_model.__name__ == "Sql":
-                yield response_model(
-                    query=f"(SELECT * FROM READ_CSV('{root + '/test.csv'}'))",
-                    expr_slug="test_query",
-                    chain_of_thought="Sample SQL thought process"
-                )
-                return
-            elif response_model.__name__ == "VegaLiteSpec":
-                vega_spec = {
-                    "data": {
-                        "values": [
-                            {"A": 1, "B": 2, "C": 3, "D": "2023-01-01T00:00:00Z"},
-                            {"A": 4, "B": 5, "C": 6, "D": "2023-01-02T00:00:00Z"},
-                        ]
-                    },
-                    "mark": "bar",
-                    "encoding": {
-                        "x": {"field": "A", "type": "quantitative"},
-                        "y": {"field": "B", "type": "quantitative"},
-                    },
-                }
-                yield response_model(
-                    chain_of_thought="Sample thought process",
-                    json_spec=json.dumps(vega_spec)
-                )
-                return
-        else:
-            yield "Test response"  # Only yield this if no response_model is provided
+async def test_analyst_agent(llm, duckdb_source, test_messages):
+    agent = AnalystAgent(llm=llm)
+    context = {
+        "source": duckdb_source,
+        "pipeline": Pipeline(source=duckdb_source, table="test_sql")
+    }
+    llm.set_responses([
+        "Foo"
+    ])
+    out, out_context = await agent.respond(test_messages, context)
+    assert len(out) == 1
+    assert out[0].object == "Foo"
+    assert out_context == {}
 
+async def test_sql_agent(llm, duckdb_source, test_messages):
+    agent = SQLAgent(llm=llm)
 
-    async def run_client(self, model_spec, messages, **kwargs):
-        # Mock implementation
-        return "Test client response"
+    context = {
+        "source": duckdb_source,
+        "sources": [duckdb_source],
+        "sql_metaset": await get_metaset([duckdb_source], ["test_sql"]),
+    }
+    llm.set_responses([
+        SqlQuery(query="SELECT SUM(A) as A_sum FROM test_sql", table_slug="test_sql_agg"),
+    ])
+    out, out_context = await agent.respond(test_messages, context)
+    assert len(out) == 1
+    assert isinstance(out[0], SQLOutput)
+    assert out[0].spec == "SELECT SUM(A) as A_sum FROM test_sql"
+    assert set(out_context) == {"data", "pipeline", "sql", "sql_plan_context", "table", "source"}
 
-    async def get_client(self, model_spec, response_model=None, **kwargs):
-        # Mock implementation
-        async def mock_client(**kwargs):
-            return "Test client response"
+async def test_vegalite_agent(llm, duckdb_source, test_messages):
+    """Test VegaLiteAgent instantiation and respond"""
 
-        return mock_client
+    agent = VegaLiteAgent(llm=llm)
 
-    async def initialize(self, log_level):
-        # Do nothing for initialization
-        pass
+    context = {
+        "source": duckdb_source,
+        "pipeline": Pipeline(source=duckdb_source, table="test_sql"),
+        "table": "test_sql",
+        "sources": [duckdb_source],
+        "sql_metaset": await get_metaset([duckdb_source], ["test_sql"]),
+        "data": duckdb_source.get("test_sql")
+    }
 
-
-class TestSoloAgentRespond:
-
-    @pytest.fixture
-    def mock_memory(self):
-        """Create a mock memory object with necessary data for agents"""
-        return memory
-
-    @pytest.fixture
-    def mock_llm(self):
-        """Create a mock LLM instance"""
-        return MockLLM()
-
-    @pytest.fixture
-    def test_messages(self):
-        """Create test messages for agent respond method"""
-        return [{"role": "user", "content": "Test message"}]
-
-    async def test_chat_agent(self, mock_llm, mock_memory, test_messages):
-        agent = ChatAgent(llm=mock_llm, memory=mock_memory)
-        response = await agent.respond(test_messages)
-        assert response is not None
-
-    async def test_analyst_agent(self, mock_llm, mock_memory, duckdb_source, test_messages):
-        mock_memory["source"] = duckdb_source
-        mock_memory["pipeline"] = Pipeline(source=duckdb_source, table="test_sql")
-        agent = AnalystAgent(llm=mock_llm, memory=mock_memory)
-        response = await agent.respond(test_messages)
-        assert response is not None
-
-    async def test_sql_agent(self, mock_llm, mock_memory, duckdb_source, test_messages):
-        """Test SQLAgent instantiation and respond"""
-        mock_memory["source"] = duckdb_source
-        mock_memory["sources"] = sources = [duckdb_source]
-        mock_memory["sql_metaset"] = await get_metaset(sources, ["test_sql"])
-
-        agent = SQLAgent(llm=mock_llm, memory=mock_memory)
-
-        dummy_roadmap = SQLRoadmap(
-            estimated_steps=1,
-            discovery_steps=["Check schema"],
-            validation_checks=["Check for NULLs"],
-            potential_issues=[],
-            join_strategy="Simple lookup"
+    spec = {
+        "data": {
+            "values": [
+                {"A": 1, "B": 2, "C": 3, "D": "2023-01-01T00:00:00Z"},
+                {"A": 4, "B": 5, "C": 6, "D": "2023-01-02T00:00:00Z"},
+            ]
+        },
+        "mark": "bar",
+        "encoding": {
+            "x": {"field": "A", "type": "quantitative"},
+            "y": {"field": "B", "type": "quantitative"},
+        }
+    }
+    llm.set_responses([
+        VegaLiteSpec(
+            chain_of_thought="Test plot",
+            yaml_spec=dump_yaml(spec),
+            insufficient_context=False,
+            insufficient_context_reason="none"
+        ),
+        VegaLiteSpecUpdate(
+            chain_of_thought="All good",
+            yaml_update=""
         )
-
-        dummy_next_step = NextStep(
-            step_type="discover",
-            action_description="SELECT * FROM test_sql",
-            should_materialize=False,
-            is_final_answer=True,
-            reasoning="It's a simple query.",
-            pre_step_validation="Valid",
-        )
-
-        with patch.object(SQLAgent, "_generate_roadmap", new=AsyncMock(return_value=dummy_roadmap)), \
-            patch.object(SQLAgent, "_plan_next_step", new=AsyncMock(return_value=dummy_next_step)), \
-            patch.object(SQLAgent, "_generate_sql_queries", new=AsyncMock(return_value={"test_query": "SELECT * FROM test_sql"})), \
-            patch.object(SQLAgent, "_validate_sql", new=AsyncMock(side_effect=lambda *a, **kw: a[1])), \
-            patch.object(SQLAgent, "_execute_query", new=AsyncMock(return_value=("done", "done", "summary"))), \
-            patch.object(SQLAgent, "_finalize_execution", new=AsyncMock(return_value="done")):
-            response = await agent.respond(test_messages)
-            assert response is "done"
-
-    async def test_vegalite_agent(self, mock_llm, mock_memory, duckdb_source, test_messages):
-        """Test VegaLiteAgent instantiation and respond"""
-        # Set up necessary data in memory
-        mock_memory["source"] = duckdb_source
-        mock_memory["pipeline"] = Pipeline(source=duckdb_source, table="test_sql")
-        mock_memory["table"] = "test_sql"
-        mock_memory["sources"] = sources = [duckdb_source]
-        mock_memory["sql_metaset"] = await get_metaset(sources, ["test_sql"])
-        mock_memory["data"] = duckdb_source.get("test_sql")
-
-        agent = VegaLiteAgent(llm=mock_llm, memory=mock_memory)
-
-        response = await agent.respond(test_messages)
-        assert response is not None
+    ])
+    out, out_context = await agent.respond(test_messages, context)
+    assert len(out) == 1
+    assert isinstance(out[0], VegaLiteOutput)
+    assert out[0].spec == "$schema: https://vega.github.io/schema/vega-lite/v5.json\ndata:\n  values:\n  - A: 1\n    B: 2\n    C: 3\n    D: '2023-01-01T00:00:00Z'\n  - A: 4\n    B: 5\n    C: 6\n    D: '2023-01-02T00:00:00Z'\nencoding:\n  x:\n    field: A\n    type: quantitative\n  y:\n    field: B\n    type: quantitative\nheight: container\nmark: bar\nwidth: container\n"

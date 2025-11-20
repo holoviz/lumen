@@ -1057,7 +1057,7 @@ class SQLAgent(LumenBaseAgent):
         sources = context["sources"]
         vector_metaset = context["sql_metaset"].vector_metaset
         selected_slugs = list(vector_metaset.vector_metadata_map)
-        visible_slugs = context['visible_slugs']
+        visible_slugs = context.get('visible_slugs', [])
         if visible_slugs:
             selected_slugs = [slug for slug in selected_slugs if slug in visible_slugs]
         sources = {
