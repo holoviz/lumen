@@ -368,19 +368,8 @@ async def test_taskgroup_invalidate_partial():
 
 
 
-@duckdb_available
-async def test_sql_query_action():
-    source = DuckDBSource(tables={
-    'tiny': """
-        SELECT * FROM (
-          VALUES (1,'A',10.5),
-                 (2,'B',20.0),
-                 (3,'A', 7.5)
-        ) AS t(id, category, value)
-    """
-    })
-
-    action = SQLQuery(source=source, sql_expr="SELECT category FROM tiny", table="foo", generate_caption=False)
+async def test_sql_query_action(tiny_source):
+    action = SQLQuery(source=tiny_source, sql_expr="SELECT category FROM tiny", table="foo", generate_caption=False)
 
     outs, ctx = await action.execute()
 

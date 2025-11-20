@@ -1,5 +1,6 @@
 from typing import get_args
 
+import pandas as pd
 import pytest
 
 try:
@@ -7,14 +8,20 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
-from panel_material_ui import Card
+from panel.tests.util import async_wait_until
+from panel_material_ui import Card, ChatMessage, Typography
 
-from lumen.ai.agents import ChatAgent
+from lumen.ai.agents import AnalystAgent, ChatAgent, SQLAgent
 from lumen.ai.coordinator import Plan, Planner
-from lumen.ai.models import Reasoning, make_plan_model
+from lumen.ai.models import (
+    Reasoning, ReplaceLine, RetrySpec, SqlQuery, make_plan_model,
+)
 from lumen.ai.report import ActorTask
+from lumen.ai.schemas import get_metaset
 from lumen.ai.tools import IterativeTableLookup, TableLookup
 from lumen.ai.vector_store import NumpyVectorStore
+from lumen.ai.views import SQLOutput
+from lumen.config import SOURCE_TABLE_SEPARATOR
 
 
 async def test_planner_instantiate():
@@ -112,7 +119,6 @@ async def test_planner_simple_plan(llm):
     assert isinstance(plan[0].actor, ChatAgent)
 
 
-
 async def test_planner_error(llm):
     PlanModel = make_plan_model(["ChatAgent"], [])
 
@@ -147,3 +153,95 @@ async def test_planner_error(llm):
     title, todos = steps_layout.header
     assert title.object == "Planner could not settle on a plan of action to perform the requested query. Please restate your request."
     assert todos.object is None
+
+
+@pytest.fixture
+async def sql_plan(llm, tiny_source):
+    sql_agent = SQLAgent()
+    analyst_agent = AnalystAgent()
+
+    slug = f"{tiny_source.name}{SOURCE_TABLE_SEPARATOR}tiny"
+    metaset = await get_metaset([tiny_source], [slug])
+    context = {
+        "source": tiny_source,
+        "sources": [tiny_source],
+        "sql_metaset": metaset,
+        "visible_slugs": [slug]
+    }
+
+    llm.set_responses([
+        SqlQuery(query="SELECT SUM(value) as value_sum FROM tiny", table_slug="tiny_agg"),
+        lambda: f"Result: {plan[0].out_context['pipeline'].data.iloc[0, 0]}"
+    ])
+
+    plan = Plan(
+        ActorTask(sql_agent, title="Aggregate"),
+        ActorTask(analyst_agent, title="Analyze"),
+        context=context,
+        history=[{"role": "user", "content": "Aggregate and Analyze"}],
+        llm=llm
+    )
+    await plan.execute()
+    return plan
+
+
+async def test_plan_execute(sql_plan):
+    assert sql_plan.status != "error"
+    assert "sql" in sql_plan.out_context
+    assert sql_plan.out_context["sql"] == "SELECT SUM(value) as value_sum FROM tiny"
+    assert "pipeline" in sql_plan.out_context
+    pd.testing.assert_frame_equal(
+        sql_plan.out_context["pipeline"].data,
+        pd.DataFrame([38.], columns=["value_sum"])
+    )
+
+    assert len(sql_plan.views) == 4
+    v1, v2, v3, v4 = sql_plan.views
+    assert isinstance(v1, Typography)
+    assert v1.object == "### Aggregate"
+    assert isinstance(v2, SQLOutput)
+    assert v2.spec == "SELECT SUM(value) as value_sum FROM tiny"
+    assert isinstance(v3, Typography)
+    assert v3.object == "### Analyze"
+    assert isinstance(v4, ChatMessage)
+    assert v4.object == "Result: 38.0"
+
+
+async def test_plan_edit(sql_plan):
+    assert sql_plan.status != "error"
+    llm.set_responses([
+        lambda: f"Result: {sql_plan[0].out_context['pipeline'].data.iloc[0, 0]}"
+    ])
+
+    sql_plan.views[1].spec = "SELECT value as value_sum FROM tiny LIMIT 1"
+
+    await async_wait_until(lambda: sql_plan.out_context["sql"] == "SELECT value as value_sum FROM tiny LIMIT 1")
+    assert sql_plan.status != "error"
+    assert "pipeline" in sql_plan.out_context
+    pd.testing.assert_frame_equal(
+        sql_plan.out_context["pipeline"].data,
+        pd.DataFrame([10.5], columns=["value_sum"])
+    )
+    await async_wait_until(lambda: len(sql_plan.views) == 4)
+    assert sql_plan.views[3].object == "Result: 10.5"
+
+
+async def test_plan_revise(sql_plan):
+    sql_plan.llm.set_responses([
+        RetrySpec(chain_of_thought="Select first row", edits=[ReplaceLine(line_no=1, line="SELECT value as value_sum FROM tiny LIMIT 1")]),
+        lambda: f"Result: {sql_plan[0].out_context['pipeline'].data.iloc[0, 0]}"
+    ])
+
+    await sql_plan[0].revise(
+        "LIMIT 1", sql_plan[0].actor, sql_plan.context, sql_plan.views[1], config={'llm': sql_plan.llm}
+    )
+
+    await async_wait_until(lambda: sql_plan.out_context["sql"] == "SELECT value as value_sum FROM tiny LIMIT 1")
+    assert sql_plan.status != "error"
+    assert "pipeline" in sql_plan.out_context
+    pd.testing.assert_frame_equal(
+        sql_plan.out_context["pipeline"].data,
+        pd.DataFrame([10.5], columns=["value_sum"])
+    )
+    await async_wait_until(lambda: len(sql_plan.views) == 4)
+    assert sql_plan.views[3].object == "Result: 10.5"
