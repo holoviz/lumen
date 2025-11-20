@@ -1,6 +1,11 @@
 import param
 import pytest
 
+try:
+    import lumen.ai  # noqa
+except ModuleNotFoundError:
+    pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
+
 from pydantic import BaseModel
 
 from lumen.ai.llm import Llm, Message
