@@ -349,7 +349,7 @@ async def test_taskgroup_invalidate_partial():
     assert isinstance(outs[0], Markdown)
     assert outs[0].object == "A"
 
-    is_invalidated, keys = tg.invalidate(["m"])
+    tg.invalidate(["m"])
 
     outs, ctx = await tg.execute({"m": 3})
 

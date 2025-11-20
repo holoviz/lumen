@@ -307,7 +307,9 @@ class VectorLookupTool(Tool):
             log_debug(f"Error in ready task: {type(e).__name__} - {e!s}")
             traceback.print_exc()
 
-    def _format_results_for_refinement(self, results: list[dict[str, Any]]) -> str:
+    def _format_results_for_refinement(
+        self, results: list[dict[str, Any]], context: TContext
+    ) -> str:
         """
         Format search results for inclusion in the refinement prompt.
 
@@ -526,7 +528,9 @@ class DocumentLookup(VectorLookupTool):
 
     input_schema = VectorLookupInputs
 
-    def _format_results_for_refinement(self, results: list[dict[str, Any]]) -> str:
+    def _format_results_for_refinement(
+        self, results: list[dict[str, Any]], context: TContext
+    ) -> str:
         """
         Format document search results for inclusion in the refinement prompt.
 
