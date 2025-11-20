@@ -212,20 +212,20 @@ class Reasoning(BaseModel):
 
 class InsertLine(BaseModel):
     op: Literal["insert"] = "insert"
-    line_no: int = Field(ge=0, description=(
-        "Insert BEFORE this 0-based line number. "
+    line_no: int = Field(ge=1, description=(
+        "Insert BEFORE this 1-based line number. "
         "Use line_no == len(lines) to append at the end."
     ))
     line: str = Field(min_length=1, description="Content for the new line (must be non-empty).")
 
 class ReplaceLine(BaseModel):
     op: Literal["replace"] = "replace"
-    line_no: int = Field(ge=0, description="The 0-based line number to replace.")
+    line_no: int = Field(ge=1, description="The 1-based line number to replace.")
     line: str = Field(description="The new content for the line (empty string is allowed).")
 
 class DeleteLine(BaseModel):
     op: Literal["delete"] = "delete"
-    line_no: int = Field(ge=0, description="The 0-based line number to delete.")
+    line_no: int = Field(ge=1, description="The 1-based line number to delete.")
 
 LineEdit = Annotated[
     InsertLine | ReplaceLine | DeleteLine,

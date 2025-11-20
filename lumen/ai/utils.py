@@ -682,7 +682,7 @@ def stream_details(content: Any, step: Any, title: str = "Expand for details", a
         code = match.group(2)
 
         details = Details(
-            f"```{language}\n\n{code}\n\n```",
+            f"```{language}\n{code}```",
             title=title,
             collapsed=True,
             margin=(0, 20, 5, 20),
@@ -898,13 +898,13 @@ def apply_changes(lines: list[str], edits: list[LineEdit]) -> str:
 
     # Validate bounds against the ORIGINAL text
     for e in replaces:
-        if not (0 <= e.line_no <= n ):
+        if not (1 <= e.line_no <= n):
             raise IndexError(f"replace line_no out of range: {e.line_no} (1..{n})")
     for e in deletes:
-        if not (0 <= e.line_no <= n):
+        if not (1 <= e.line_no <= n):
             raise IndexError(f"delete line_no out of range: {e.line_no} (1..{n})")
     for e in inserts:
-        if not (0 <= e.line_no <= n+1):  # allow == n for append
+        if not (1 <= e.line_no <= n+1):  # allow == n for append
             raise IndexError(f"insert line_no out of range: {e.line_no} (1..{n+1})")
 
     out = lines[:]
@@ -918,10 +918,10 @@ def apply_changes(lines: list[str], edits: list[LineEdit]) -> str:
 
     # 2) Apply inserts in ascending order; at same index keep user order
     inserts_sorted = sorted(
-        enumerate(inserts), key=lambda pair: (pair[1].line_no, pair[0])
+        enumerate(inserts), key=lambda pair: (pair[1].line_no, -pair[0])
     )
     for _, ins in inserts_sorted:
-        out.insert(ins.line_no+1, ins.line)
+        out.insert(ins.line_no-1, ins.line)
 
     return "\n".join(out)
 
