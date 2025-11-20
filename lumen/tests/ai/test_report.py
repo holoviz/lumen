@@ -17,14 +17,7 @@ from lumen.ai.actor import ContextModel
 from lumen.ai.report import (
     Action, ActorTask, Report, Section, SQLQuery, TaskGroup, Typography,
 )
-from lumen.ai.views import LumenOutput, SQLOutput
-
-try:
-    from lumen.sources.duckdb import DuckDBSource
-except ImportError:
-    DuckDBSource = None
-
-duckdb_available = pytest.mark.skipif(DuckDBSource is None, reason="Duckdb is not installed")
+from lumen.ai.views import SQLOutput
 
 
 class HelloAction(Action):

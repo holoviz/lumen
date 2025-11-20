@@ -1854,7 +1854,7 @@ class VegaLiteAgent(BaseViewAgent):
         errors: list[str] | None = None,
         **kwargs
     ) -> str:
-        if "errors":
+        if errors is not None:
             kwargs["errors"] = errors
         doc_examples = await self._get_doc_examples(feedback)
         context["doc_examples"] = doc_examples
