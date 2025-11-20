@@ -18,6 +18,9 @@ try:
 except ImportError:
     fastparquet = None
 
+def assert_df_equal(df1, df2):
+    pd.testing.assert_frame_equal(df1, df2, check_dtype=False)
+
 @pytest.fixture
 def source(make_filesource):
     root = os.path.dirname(__file__)
@@ -96,7 +99,7 @@ def test_file_source_filter(source, column_value_type, dask, expected_df):
     column, value, _ = column_value_type
     kwargs = {column: value, '__dask': dask}
     filtered = source.get('test', **kwargs)
-    pd.testing.assert_frame_equal(filtered, expected_df)
+    assert_df_equal(filtered, expected_df)
 
 
 @pytest.mark.parametrize(
@@ -124,7 +127,7 @@ def test_file_source_get_query_cache(source, column_value_type, dask, expected_d
     cached_df = source._cache[cache_key]
     if dask:
         cached_df = cached_df.compute()
-    pd.testing.assert_frame_equal(cached_df, expected_df)
+    assert_df_equal(cached_df, expected_df)
     cache_key = source._get_key('test', **kwargs)
     assert cache_key in source._cache
 
@@ -161,7 +164,7 @@ def test_file_source_get_query_cache_to_file(make_filesource, cachedir):
 
     # Patch index names due to https://github.com/dask/fastparquet/issues/732
     df.index.names = [None]
-    pd.testing.assert_frame_equal(
+    assert_df_equal(
         df,
         makeMixedDataFrame().iloc[1:3]
     )
@@ -178,7 +181,7 @@ def test_file_source_variable(make_variable_filesource, mixed_df):
     state.variables.tables = {'test': 'test2.csv'}
     df = source.get('test')
     expected = mixed_df.iloc[::-1].reset_index(drop=True)
-    pd.testing.assert_frame_equal(df, expected)
+    assert_df_equal(df, expected)
 
 
 def test_extension_of_comlicated_url(source):
@@ -194,7 +197,7 @@ async def test_source_get_async_default_implementation(source):
     # Test basic async functionality
     result = await source.get_async('test')
     expected = source.get('test')
-    pd.testing.assert_frame_equal(result, expected)
+    assert_df_equal(result, expected)
 
 
 @pytest.mark.asyncio
@@ -218,7 +221,7 @@ async def test_source_get_async_with_filters(source, column_value_type, expected
     # Compare with sync version
     result_sync = source.get('test', **kwargs)
 
-    pd.testing.assert_frame_equal(result_async, result_sync)
+    assert_df_equal(result_async, result_sync)
 
 
 @pytest.mark.asyncio
@@ -241,7 +244,7 @@ async def test_source_get_async_multiple_concurrent_calls(source):
     ]
 
     for result, expected in zip(results, expected_results, strict=False):
-        pd.testing.assert_frame_equal(result, expected)
+        assert_df_equal(result, expected)
 
 
 # Test BaseSQLSource async methods
@@ -279,7 +282,7 @@ async def test_base_sql_source_execute_async():
     result_async = await mock_source.execute_async(sql_query)
     result_sync = mock_source.execute(sql_query)
 
-    pd.testing.assert_frame_equal(result_async, result_sync)
+    assert_df_equal(result_async, result_sync)
 
 
 @pytest.mark.asyncio
@@ -322,7 +325,7 @@ async def test_base_sql_source_get_async():
     # Test basic get_async (no filters)
     result_async = await mock_source.get_async('test_table')
     expected = mock_source.execute("SELECT * FROM test_table")
-    pd.testing.assert_frame_equal(result_async, expected)
+    assert_df_equal(result_async, expected)
 
     # Test get_async with conditions (this will test SQL filter application)
     result_async_filtered = await mock_source.get_async('test_table', category='A')

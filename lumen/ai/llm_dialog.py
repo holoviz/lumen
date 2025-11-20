@@ -137,7 +137,7 @@ class LLMConfigDialog(Viewer):
             self.provider_choices = self._get_available_providers()
 
         # Title
-        self._title = Markdown("## LLM Configuration\n\nConfigure your language model provider, settings and select models for different tasks.", margin=(0, 0, 8, 0))
+        self._subtitle = Markdown("Configure your language model provider, settings and select models for different tasks.", margin=(0, 0, 8, 0))
 
         # Provider selection
         current_provider_class = type(self.llm)
@@ -152,7 +152,7 @@ class LLMConfigDialog(Viewer):
 
         # Temperature slider
         self._temperature_slider = FloatSlider(
-            name="Temperature", value=self._original_temp, start=0.0, end=2.0, step=0.1, sizing_mode="stretch_width", margin=(5, 0)
+            label="Temperature", value=self._original_temp, start=0.0, end=2.0, step=0.1, sizing_mode="stretch_width", margin=(5, 0)
         )
 
         # Model type cards
@@ -160,7 +160,7 @@ class LLMConfigDialog(Viewer):
 
         # Buttons
         self._apply_button = Button(
-            label="Apply Changes", color="primary", on_click=self._apply_changes, margin=(12, 0, 0, 0)
+            label="Apply Changes", color="primary", on_click=self._apply_changes, margin=(12, 0, 0, 12)
         )
 
         self._cancel_button = Button(
@@ -175,7 +175,7 @@ class LLMConfigDialog(Viewer):
 
         # Create the dialog content
         self._content = Column(
-            self._title,
+            self._subtitle,
             Divider(sizing_mode="stretch_width"),
             Markdown("### Provider Selection", margin=0),
             Markdown(
@@ -208,6 +208,7 @@ class LLMConfigDialog(Viewer):
             close_on_click=True,
             show_close_button=True,
             sizing_mode="stretch_width",
+            title="LLM Configuration",
             width_option="md",
             sx={".MuiDialogContent-root": {"p": "0 24px 20px 24px"}}
         )

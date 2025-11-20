@@ -6,7 +6,6 @@ except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
 from lumen.ai.coordinator import Coordinator
-from lumen.ai.memory import _Memory
 from lumen.ai.tools import (
     DocumentLookup, FunctionTool, IterativeTableLookup, TableLookup,
 )
@@ -36,26 +35,21 @@ def test_function_tool_constructor():
     tool = FunctionTool(add)
 
     assert tool.name == "add"
-    assert tool.purpose == "Adds two integers"
+    assert tool.purpose == "add: Adds two integers"
 
 
 async def test_function_tool_requires():
     tool = FunctionTool(add, requires=["a", "b"])
-    with tool.param.update(memory=_Memory()):
-        tool.memory["a"] = 1
-        tool.memory["b"] = 3
-        result = await tool.respond([])
-    assert result == "add(a=1, b=3) returned: 4"
+    context = {"a": 1, "b": 3}
+    views, out_context = await tool.respond([], context)
+    assert views[0] == "add(a=1, b=3) returned: 4"
 
 
 async def test_function_tool_provides():
     tool = FunctionTool(add, requires=["a", "b"], provides=["c"])
-    memory = _Memory()
-    with tool.param.update(memory=memory):
-        tool.memory["a"] = 1
-        tool.memory["b"] = 3
-        await tool.respond([])
-    assert memory["c"] == 4
+    context = {"a": 1, "b": 3}
+    views, out_context = await tool.respond([], context)
+    assert out_context["c"] == 4
 
 
 class TestVectorLookupToolUser:

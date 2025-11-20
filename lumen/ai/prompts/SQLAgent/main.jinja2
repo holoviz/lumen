@@ -1,10 +1,10 @@
 {% extends 'Agent/main.jinja2' %}
 
 {%- block instructions %}
-# Instructions:
+# Instructions
 Write a SQL query for the user's data transformation request, focusing on intent over literal interpretation.
 
-## 🎯 PRIMARY RULES:
+## PRIMARY RULES
 1. Reuse materialized data - Check "Current Knowledge" first before writing CTEs
 2. Column quotes - Use double quotes: `"column_name"`
 3. String quotes - Single quotes: `'string_value'`
@@ -12,7 +12,7 @@ Write a SQL query for the user's data transformation request, focusing on intent
 5. No LIMIT clauses unless explicitly requested by the user - Pagination is automatically handled
 6. Progressive approach - Each step builds on previous
 
-## Query Patterns:
+## Query Patterns
 - NULL handling: Exclude unless specified
 - Clean data: `TRIM("column") != ''`, filter -9999, empty strings
 - Headers: Use OFFSET 1 for header/metadata rows
@@ -21,39 +21,54 @@ Write a SQL query for the user's data transformation request, focusing on intent
 - No inline comments in SQL code
 - Use CTEs only when necessary
 
-{% if not is_final_step %}## Discovery Mode:
+{% if not is_final_step -%}
+## Discovery Mode
 - LIMIT 100 for exploration only
 - One table at a time, no UNION
 - Entity search: Use multiple ILIKE patterns with variations
 - Format variation checking: underscores vs spaces using ILIKE
 {% endif %}
-{%- endblock %}
+{%- endblock -%}
 
-{% block context -%}
-{%- if memory.get('visible_slugs') %}
-📊 Available:
-{% set tables_list = memory['visible_slugs'] | list %}
-{{- tables_list[:5] | join(', ') }}
-{%- if tables_list | length > 5 %} (+{{tables_list | length - 5}} more){%- endif %}
-{% endif %}
+{%- block context -%}
+{%- if memory.get('visible_slugs') -%}
+### Visible Tables (by Source)
+{%- set ns = namespace(grouped={}) -%}
+{%- for slug in memory['visible_slugs'] -%}
+  {%- set parts = slug.split(source_table_sep, 1) -%}
+  {%- set source = parts[0] -%}
+  {%- set table = parts[1] if parts | length > 1 else '' -%}
+  {%- if source not in ns.grouped -%}
+    {% set _ = ns.grouped.update({source: [table]}) -%}
+  {%- else -%}
+    {%- set current = ns.grouped[source] -%}
+    {%- set _ = current.append(table) -%}
+  {%- endif -%}
+{%- endfor -%}
+{%- for source, tables in ns.grouped.items() %}
+- {{ source }}
+  - {{ tables | join("\n  - ") }}
+{%- endfor %}
+{%- endif %}
 
+### Data summary
 {{ memory["sql_metaset"].compact_context }}
 
 {%- if 'sql' in memory %}
-🗃️ Previous: `{{ memory['sql'][:100] }}...`
+Previous: `{{ memory['sql'][:100] }}...`
 {%- endif %}
 
 {%- if memory.get('data') is not none %}
-📊 Data Summary:
+Data Summary:
 {{ memory["data"] }}
 {%- endif %}
 
 Use `{{ dialect }}` SQL dialect.
 {%- if dialect == 'duckdb' %}
 
-## DuckDB Essentials:
+## DuckDB Essentials
 - Table references: Use exact names `read_csv('table.csv')`, alias if needed `as table_name`
-- Reference full slugs: `source {{ source_table_sep }} table`
+- Reference just the table in the SQL query: `source {{ source_table_sep }} table`
 - Range predicates: `"date" >= '2023-06-01' AND "date" < '2023-09-01'`
 - Date selection: CAST(col as DATE) == '2023-06-01'
 - Window filtering: `QUALIFY ROW_NUMBER() OVER (...) <= 5`
@@ -67,27 +82,25 @@ Use `{{ dialect }}` SQL dialect.
 Step {{ step_number }}: {{ current_step }}
 {% endif %}
 
-{% if sql_plan_context %}
+{%- if sql_plan_context %}
 ## Current Knowledge:
 {{ sql_plan_context }}
 
-⚠️ Use materialized tables above instead of rebuilding CTEs
-{%- else %}
-## Starting fresh
+Use materialized tables above instead of rebuilding CTEs
 {%- endif %}
 
 {% if discovery_context %}
-## Discovery Results:
+## Discovery Results
 {{ discovery_context }}
 
-💡 Use the ACTUAL values from discoveries above - don't assume or guess!
+Use the ACTUAL values from discoveries above - don't assume or guess!
 {%- endif %}
 {% endblock %}
 
 {%- block errors %}
 {{ super() }}
 {% if errors is defined and errors %}
-## Quick Fixes:
+## Quick Fixes
 - Mixed units: Use CASE to normalize units before aggregating
 - Cast errors: Use `TRY_CAST`, check for headers with OFFSET 1  
 - Table names: Use exact `read_parquet('file.parq')`

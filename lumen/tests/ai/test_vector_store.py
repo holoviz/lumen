@@ -1,3 +1,5 @@
+import asyncio
+
 from pathlib import Path
 
 import pytest
@@ -510,6 +512,7 @@ class VectorStoreTestKit:
 
         # Add the directory to the store
         ids = await empty_store.add_directory(dir_path, metadata={"version": 1}, upsert=True)
+        await asyncio.sleep(0.1)
         assert len(ids) > 0, "Should add at least one document"
 
         # Query for a specific term in the added documents

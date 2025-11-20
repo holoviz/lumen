@@ -92,7 +92,7 @@ collection issue or seasonal effect that requires validation before making strat
 Here was the plan that was executed:
 {% if memory.get('reasoning') %}
 """
-{{ memory.reasoning }}
+{{ memory['reasoning'] }}
 """
 {% endif %}
 
@@ -102,14 +102,14 @@ Here is the current dataset:
 The data is empty. Critique the SQL query and suggest what other columns or values should be used instead. Then prompt
 the user to click the rerun button below if they'd like to try again.
 {% else %}
-{{ memory.data }}
+{{ memory['data'] }}
 {%- endif %}
 {%- endif -%}
 
 {% if memory.get('sql') %}
 Here is the current SQL query:
 ```sql
-{{ memory.sql }}
+{{ memory['sql'] }}
 ```
 {%- endif -%}
 {%- endblock -%}

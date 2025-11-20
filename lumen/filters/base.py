@@ -247,8 +247,8 @@ class BaseWidgetFilter(Filter):
     __abstract = True
 
     def __init__(self, **params):
-        self.widget = None
         super().__init__(**params)
+        self.widget = None
 
     def _setup_sync(self):
         if self._sync_with_url and self.widget is not None:

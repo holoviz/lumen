@@ -29,6 +29,7 @@ from jinja2 import (
     nodes,
 )
 from jinja2.visitor import NodeVisitor
+from jsonschema import ValidationError
 from markupsafe import escape
 
 from lumen.pipeline import Pipeline
@@ -44,8 +45,10 @@ from .config import (
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
 
-    from lumen.ai.models import LineChange
-    from lumen.sources.base import Source
+    from ...sources.base import Source
+    from .models import (
+        DeleteLine, InsertLine, LineEdit, ReplaceLine,
+    )
 
 
 def format_float(num):
@@ -242,6 +245,8 @@ def get_root_exception(e: Exception, depth: int = 5, exceptions: tuple[Exception
         if exceptions and isinstance(e, tuple(exceptions)):
             return e
         if e.__cause__ is not None:
+            if isinstance(e.__cause__, ValidationError):
+                return e
             e = e.__cause__
     return e
 
@@ -677,7 +682,7 @@ def stream_details(content: Any, step: Any, title: str = "Expand for details", a
         code = match.group(2)
 
         details = Details(
-            f"```{language}\n\n{code}\n\n```",
+            f"```{language}\n{code}```",
             title=title,
             collapsed=True,
             margin=(0, 20, 5, 20),
@@ -874,13 +879,51 @@ async def with_timeout(coro, timeout_seconds=10, default_value=None, error_messa
             log_debug(error_message)
         return default_value
 
+def apply_changes(lines: list[str], edits: list[LineEdit]) -> str:
+    """
+    Apply a Patch to a list of lines (no trailing newline characters in elements).
+    Indices in the Patch refer to the ORIGINAL `lines`.
 
-def apply_changes(original_lines: list[str], changes: list[LineChange]) -> str:
-    """Apply line changes to text."""
-    for change in changes:
-        original_lines[change.line_no - 1] = change.replacement
-    return "\n".join(original_lines)
+    Strategy:
+      - To keep indices stable, apply all non-insert edits in DESCENDING order of line_no.
+      - Apply inserts in ASCENDING order of line_no (grouped), inserting BEFORE that index.
+        Inserts at the same index are applied in the order they appear in `patch.edits`.
+    """
+    # Separate edits
+    inserts: list[InsertLine] = [e for e in edits if e.op == "insert"]
+    replaces: list[ReplaceLine] = [e for e in edits if e.op == "replace"]
+    deletes: list[DeleteLine] = [e for e in edits if e.op == "delete"]
 
+    n = len(lines)
+
+    # Validate bounds against the ORIGINAL text
+    for e in replaces:
+        if not (1 <= e.line_no <= n):
+            raise IndexError(f"replace line_no out of range: {e.line_no} (1..{n})")
+    for e in deletes:
+        if not (1 <= e.line_no <= n):
+            raise IndexError(f"delete line_no out of range: {e.line_no} (1..{n})")
+    for e in inserts:
+        if not (1 <= e.line_no <= n+1):  # allow == n for append
+            raise IndexError(f"insert line_no out of range: {e.line_no} (1..{n+1})")
+
+    out = lines[:]
+
+    # 1) Apply replace/delete in descending order to keep original indices valid
+    for e in sorted([*replaces, *deletes], key=lambda x: x.line_no, reverse=True):
+        if e.op == "replace":
+            out[e.line_no-1] = e.line  # type: ignore[union-attr]
+        else:  # delete
+            del out[e.line_no-1]
+
+    # 2) Apply inserts in ascending order; at same index keep user order
+    inserts_sorted = sorted(
+        enumerate(inserts), key=lambda pair: (pair[1].line_no, -pair[0])
+    )
+    for _, ins in inserts_sorted:
+        out.insert(ins.line_no-1, ins.line)
+
+    return "\n".join(out)
 
 def class_name_to_llm_spec_key(class_name: str) -> str:
     """

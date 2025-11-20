@@ -10,6 +10,7 @@ import param
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine.url import URL, make_url
 
+from ..transforms.base import Filter
 from ..transforms.sql import SQLFilter
 from .base import BaseSQLSource, cached, cached_schema
 
@@ -359,7 +360,10 @@ class SQLAlchemySource(BaseSQLSource):
             sql_expr = st.apply(sql_expr)
 
         params = self.table_params.get(table, None)
-        return self.execute(sql_expr, params)
+        df = self.execute(sql_expr, params)
+        if not self.filter_in_sql:
+            df = Filter.apply_to(df, conditions=conditions)
+        return df
 
     async def get_async(self, table: str, **query):
         """
