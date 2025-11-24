@@ -649,7 +649,8 @@ class SQLAgent(LumenBaseAgent):
     output_schema = SQLOutputs
 
     async def _validate_sql(
-        self, context: TContext,
+        self,
+        context: TContext,
         sql_query: str,
         expr_slug: str,
         source: BaseSQLSource,
@@ -691,7 +692,7 @@ class SQLAgent(LumenBaseAgent):
         return sql_query
 
     async def _execute_query(
-        self, source, context: TContext, expr_slug: str, sql_query: str, tables: list[str],
+        self, source: BaseSQLSource, context: TContext, expr_slug: str, sql_query: str, tables: list[str],
         is_final: bool, should_materialize: bool, step: ChatStep
     ) -> tuple[Pipeline, Source, str]:
         """Execute SQL query and return pipeline and summary."""
