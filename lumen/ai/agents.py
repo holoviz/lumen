@@ -728,36 +728,26 @@ class SQLAgent(LumenBaseAgent):
 
     async def _finalize_execution(
         self,
-        results: dict,
-        context_entries: list[dict],
-        messages: list[Message],
-        context: TContext,
+        pipeline: Pipeline,
+        sql: str,
         step_title: str | None,
         raise_if_empty: bool = False
     ) -> tuple[LumenOutput, SQLOutputs]:
         """Finalize execution for final step."""
 
-        # Get first result (typically only one for final step)
-        expr_slug, result = next(iter(results.items()))
-
-        # Update context
-        pipeline = result["pipeline"]
         df = await get_data(pipeline)
-
-        # If dataframe is empty, raise error to fall back to exploration
         if df.empty and raise_if_empty:
-            raise ValueError(f"\nQuery `{result['sql']}` returned empty results; ensure all the WHERE filter values exist in the dataset.")
+            raise ValueError(f"\nQuery `{sql}` returned empty results; ensure all the WHERE filter values exist in the dataset.")
 
         view = self._output_type(
-            component=pipeline, title=step_title, spec=result["sql"]
+            component=pipeline, title=step_title, spec=sql
         )
         return view, {
             "data": await describe_data(df),
-            "sql": result["sql"],
+            "sql": sql,
             "pipeline": pipeline,
             "table": pipeline.table,
-            "source": pipeline.source,
-            "sql_plan_context": context_entries
+            "source": pipeline.source
         }
 
     def _merge_sources(
@@ -862,16 +852,10 @@ class SQLAgent(LumenBaseAgent):
                 is_final=True, should_materialize=True, step=step
             )
 
-            results = {
-                expr_slug: {
-                    "sql": validated_sql,
-                    "summary": summary,
-                    "pipeline": pipeline,
-                    "source": sql_expr_source
-                }
-            }
             view, out_context = await self._finalize_execution(
-                results, [], messages, context, output_title,
+                pipeline,
+                validated_sql,
+                output_title,
                 raise_if_empty=raise_if_empty
             )
 
