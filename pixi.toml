@@ -60,6 +60,7 @@ semchunk = "*"
 tiktoken = "*"
 tabulate = "*"
 panel-splitjs = ">=0.2.1"
+panel-graphic-walker = ">=0.6.4"
 
 [feature.sql.dependencies]
 duckdb = "*"
