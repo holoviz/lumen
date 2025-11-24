@@ -440,7 +440,7 @@ class SourceControls(Viewer):
                     self._progress_bar.visible = False
                     return filename, content, None
 
-        except (aiohttp.ClientError, asyncio.TimeoutError, asyncio.CancelledError, Exception) as e:
+        except (TimeoutError, aiohttp.ClientError, asyncio.CancelledError, Exception) as e:
             self._progress_bar.visible = False
             return None, None, self._format_download_error(e)
 

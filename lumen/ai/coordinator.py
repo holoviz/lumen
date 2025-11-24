@@ -6,7 +6,7 @@ import traceback
 
 from functools import partial
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 import param
 
@@ -18,7 +18,6 @@ from panel_material_ui import (
     Card, ChatInterface, ChatStep, Column, Tabs, Typography,
 )
 from pydantic import BaseModel
-from typing_extensions import Self
 
 from .actor import Actor
 from .agents import Agent, AnalysisAgent, ChatAgent

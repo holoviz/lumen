@@ -844,7 +844,7 @@ class TableLookup(VectorLookupTool):
                         ]
 
                 enriched_entries = await asyncio.wait_for(_gather_with_semaphore(), timeout=300)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 log_debug("[TableLookup] Timeout waiting for tasks to complete (5 minutes)")
                 self._ready = None  # Set to error state
                 return
@@ -858,7 +858,7 @@ class TableLookup(VectorLookupTool):
                         timeout=60
                     )
                     log_debug(f"[TableLookup] Successfully upserted {len(enriched_entries)} entries")
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     log_debug("[TableLookup] Timeout during upsert operation (60 seconds)")
                     self._ready = None  # Set to error state
                     return
