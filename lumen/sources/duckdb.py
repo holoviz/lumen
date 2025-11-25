@@ -89,7 +89,6 @@ class DuckDBSource(BaseSQLSource):
                     cursor.execute(init)
 
         # Process tables to handle automatic file detection
-        # Skip view creation if connection was passed in (views already exist)
         if isinstance(self.tables, dict):
             processed_tables = {}
             self._file_based_tables = {}
