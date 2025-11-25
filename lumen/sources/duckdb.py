@@ -93,7 +93,6 @@ class DuckDBSource(BaseSQLSource):
             processed_tables = {}
             self._file_based_tables = {}
             sql_based_tables = {}
-
             # First pass: separate file paths from SQL expressions
             for table_name, table_expr in self.tables.items():
                 if isinstance(table_expr, str) and self._is_file_path(table_expr):
@@ -356,7 +355,14 @@ class DuckDBSource(BaseSQLSource):
             params = {}
 
         source_params = dict(self.param.values(), **kwargs)
-        source_params['tables'] = tables
+        preserved_tables = {}
+        for table_name, sql_expr in tables.items():
+            if table_name in self._file_based_tables:
+                preserved_tables[table_name] = self._file_based_tables[table_name]
+            else:
+                preserved_tables[table_name] = sql_expr
+        source_params['tables'] = preserved_tables
+
         if params:
             source_params['table_params'] = params
         # Reuse connection unless it has changed
