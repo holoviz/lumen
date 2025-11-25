@@ -1122,6 +1122,7 @@ class IterativeTableLookup(TableLookup):
                         system = await self._render_prompt(
                             "iterative_selection",
                             messages,
+                            context,
                             chain_of_thought=chain_of_thought,
                             current_query=messages[-1]["content"],
                             available_slugs=available_slugs,
