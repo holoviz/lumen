@@ -111,20 +111,20 @@ def make_discovery_model(sources: list[tuple[str, str]]):
         queries: list[SampleQueryLiteral | DistinctQueryLiteral] = Field(
             description="Choose 2-4 discovery queries from the Essential Three toolkit"
         )
-    return DiscoveryQueries
 
+    class DiscoverySufficiency(PartialBaseModel):
+        """Evaluate if discovery results provide enough context to fix the original error."""
 
-class DiscoverySufficiency(PartialBaseModel):
-    """Evaluate if discovery results provide enough context to fix the original error."""
+        reasoning: str = Field(description="Analyze discovery results - do they reveal the cause of the error?")
 
-    reasoning: str = Field(description="Analyze discovery results - do they reveal the cause of the error?")
+        sufficient: bool = Field(description="True if discoveries provide enough context to fix the error")
 
-    sufficient: bool = Field(description="True if discoveries provide enough context to fix the error")
+        follow_up_needed: list[SampleQueryLiteral | DistinctQueryLiteral] = Field(
+            default_factory=list,
+            description="If insufficient, specify 1-3 follow-up discoveries (e.g., OFFSET for more values)"
+        )
 
-    follow_up_needed: list[SampleQuery | DistinctQuery] = Field(
-        default_factory=list,
-        description="If insufficient, specify 1-3 follow-up discoveries (e.g., OFFSET for more values)"
-    )
+    return DiscoveryQueries, DiscoverySufficiency
 
 
 class SqlQuery(PartialBaseModel):

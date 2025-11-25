@@ -114,9 +114,9 @@ Current data summary:
 {{ memory["data"] }}
 {%- endif -%}
 
-{%- if is_follow_up and 'vector_metaset' in memory %}
+{%- if is_follow_up and 'metaset' in memory %}
 👉 Follow-up detected: Prioritize using existing data before retrieving new information
-{%- elif 'vector_metaset' in memory and not is_follow_up %}
+{%- elif 'metaset' in memory and not is_follow_up %}
 👉 Existing metadata found: Evaluate if current data is sufficient before requesting more
 {%- endif %}
 

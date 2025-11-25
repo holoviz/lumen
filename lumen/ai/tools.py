@@ -22,8 +22,8 @@ from .models import (
     ThinkingYesNo, make_iterative_selection_model, make_refined_query_model,
 )
 from .schemas import (
-    Column, DbtslMetadata, DbtslMetaset, SQLMetadata, SQLMetaset,
-    VectorMetadata, VectorMetaset, get_metaset,
+    Column, DbtslMetadata, DbtslMetaset, Metaset, TableCatalogEntry,
+    get_metaset,
 )
 from .services import DbtslMixin
 from .translate import function_to_model
@@ -578,7 +578,7 @@ class TableLookupInputs(ContextModel):
 
 class TableLookupOutputs(ContextModel):
 
-    vector_metaset: VectorMetaset
+    metaset: Metaset
 
 
 class TableLookup(VectorLookupTool):
@@ -899,7 +899,7 @@ class TableLookup(VectorLookupTool):
         any_matches = any(result["similarity"] >= self.min_similarity for result in results)
         same_table = len([result["metadata"]["table_name"] for result in results])
 
-        vector_metadata_map = {}
+        catalog = {}
         for result in results:
             source_name = result["metadata"]["source"]
             table_name = result["metadata"]["table_name"]
@@ -933,15 +933,15 @@ class TableLookup(VectorLookupTool):
                     )
                     columns.append(column_schema)
 
-            vector_metadata = VectorMetadata(
+            catalog_entry = TableCatalogEntry(
                 table_slug=table_slug,
                 similarity=similarity_score,
                 description=table_description,
-                base_sql=sql,
+                sql_expr=sql,
                 columns=columns,
                 metadata=context["tables_metadata"].get(table_slug, {}).copy()
             )
-            vector_metadata_map[table_slug] = vector_metadata
+            catalog[table_slug] = catalog_entry
 
         # If query contains an exact table name, mark it as max similarity
         visible_slugs = context.get("visible_slugs", set())
@@ -951,18 +951,18 @@ class TableLookup(VectorLookupTool):
 
         for table_slug in tables_to_check:
             if table_slug.split(SOURCE_TABLE_SEPARATOR)[-1].lower() in query.lower():
-                if table_slug in vector_metadata_map:
-                    vector_metadata_map[table_slug].similarity = 1
+                if table_slug in catalog:
+                    catalog[table_slug].similarity = 1
 
-        vector_metaset = VectorMetaset(
-            vector_metadata_map=vector_metadata_map, query=query)
-        return {"vector_metaset": vector_metaset}
+        metaset = Metaset(
+            catalog=catalog, query=query)
+        return {"metaset": metaset}
 
     def _format_context(self, outputs: TableLookupOutputs) -> str:
         """Generate formatted text representation from schema objects."""
         # Get schema objects from memory
-        vector_metaset = outputs.get("vector_metaset")
-        return str(vector_metaset)
+        metaset = outputs.get("metaset")
+        return str(metaset)
 
     async def respond(
         self, messages: list[Message], context: TContext, **kwargs: dict[str, Any]
@@ -977,7 +977,7 @@ class TableLookup(VectorLookupTool):
 
 class IterativeTableLookupOutputs(ContextModel):
 
-    sql_metaset: SQLMetaset
+    metaset: Metaset
 
 
 class IterativeTableLookup(TableLookup):
@@ -1022,28 +1022,28 @@ class IterativeTableLookup(TableLookup):
 
     async def sync(self, context: TContext):
         """
-        Update sql_metaset when visible_slugs changes.
+        Update metaset when visible_slugs changes.
         This ensures SQL operations only work with visible tables by regenerating
-        the sql_metaset using get_metaset.
+        the metaset using get_metaset.
         """
         slugs = context.get("visible_slugs", set())
 
-        # If no visible slugs or no sources, clear sql_metaset
+        # If no visible slugs or no sources, clear metaset
         if not slugs or not context.get("sources"):
-            context.pop("sql_metaset", None)
+            context.pop("metaset", None)
             return
 
-        if "sql_metaset" not in context:
+        if "metaset" not in context:
             return
 
         try:
             sources = context["sources"]
             visible_tables = list(slugs)
-            new_sql_metaset = await get_metaset(sources, visible_tables, prev=context.get("sql_metaset"))
-            context["sql_metaset"] = new_sql_metaset
-            log_debug(f"[IterativeTableLookup] Updated sql_metaset with {len(visible_tables)} visible tables")
+            new_metaset = await get_metaset(sources, visible_tables, prev=context.get("metaset"))
+            context["metaset"] = new_metaset
+            log_debug(f"[IterativeTableLookup] Updated metaset with {len(visible_tables)} visible tables")
         except Exception as e:
-            log_debug(f"[IterativeTableLookup] Error updating sql_metaset: {e}")
+            log_debug(f"[IterativeTableLookup] Error updating metaset: {e}")
 
     async def _gather_info(self, messages: list[dict[str, str]], context: TContext) -> IterativeTableLookupOutputs:
         """
@@ -1055,13 +1055,13 @@ class IterativeTableLookup(TableLookup):
         4. Repeats until the LLM is satisfied with the context
         """
         out_model = await super()._gather_info(messages, context)
-        vector_metaset = out_model["vector_metaset"]
-        vector_metadata_map = vector_metaset.vector_metadata_map
+        metaset = out_model["metaset"]
+        catalog = metaset.catalog
 
-        sql_metadata_map = {}
-        examined_slugs = set(sql_metadata_map.keys())
+        schemas = {}
+        examined_slugs = set(schemas.keys())
         # Filter to only include visible tables
-        all_slugs = list(vector_metadata_map.keys())
+        all_slugs = list(catalog.keys())
         visible_slugs = context.get('visible_slugs', set())
         if visible_slugs:
             all_slugs = [slug for slug in all_slugs if slug in visible_slugs]
@@ -1070,14 +1070,11 @@ class IterativeTableLookup(TableLookup):
             table_slug = all_slugs[0]
             source_obj, table_name = parse_table_slug(table_slug, context["sources"])
             schema = await get_schema(source_obj, table_name, reduce_enums=False)
-            sql_metadata = SQLMetadata(
-                table_slug=table_slug,
-                schema=schema,
-            )
             return {
-                "sql_metaset": SQLMetaset(
-                    vector_metaset=vector_metaset,
-                    sql_metadata_map={table_slug: sql_metadata},
+                "metaset": Metaset(
+                    catalog=catalog,
+                    schemas={table_slug: schema},
+                    query=metaset.query,
                 )
             }
 
@@ -1106,12 +1103,12 @@ class IterativeTableLookup(TableLookup):
                 if iteration == 1:
                     # For the first iteration, select tables based on similarity
                     # If any tables have a similarity score above the threshold, select up to 5 of those tables
-                    any_matches = any(schema.similarity > self.table_similarity_threshold for schema in vector_metadata_map.values())
-                    limited_tables = len(vector_metadata_map) <= 5
+                    any_matches = any(schema.similarity > self.table_similarity_threshold for schema in catalog.values())
+                    limited_tables = len(catalog) <= 5
                     if any_matches or len(all_slugs) == 1 or limited_tables:
                         selected_slugs = sorted(
-                            vector_metadata_map.keys(),
-                            key=lambda x: vector_metadata_map[x].similarity,
+                            catalog.keys(),
+                            key=lambda x: catalog[x].similarity,
                             reverse=True
                         )[:5]
                         step.stream("Selected tables based on similarity threshold.\n\n")
@@ -1131,8 +1128,8 @@ class IterativeTableLookup(TableLookup):
                             examined_slugs=examined_slugs,
                             selected_slugs=selected_slugs,
                             failed_slugs=failed_slugs,
-                            sql_metadata_map=sql_metadata_map,
-                            vector_metadata_map=vector_metadata_map,
+                            schemas=schemas,
+                            catalog=catalog,
                             iteration=iteration,
                             max_iterations=max_iterations,
                         )
@@ -1169,7 +1166,7 @@ class IterativeTableLookup(TableLookup):
 
                 step.stream("\n\nFetching detailed schema information for tables\n")
                 for table_slug in selected_slugs:
-                    stream_details(str(vector_metaset.vector_metadata_map[table_slug]), step, title="Table details", auto=False)
+                    stream_details(str(metaset.catalog[table_slug]), step, title="Table details", auto=False)
                     try:
                         view_definition = truncate_string(
                             context["tables_metadata"].get(table_slug, {}).get("view_definition", ""),
@@ -1189,11 +1186,7 @@ class IterativeTableLookup(TableLookup):
                         else:
                             schema = await get_schema(source_obj, table_name, reduce_enums=False)
 
-                        sql_metadata = SQLMetadata(
-                            table_slug=table_slug,
-                            schema=schema,
-                        )
-                        sql_metadata_map[table_slug] = sql_metadata
+                        schemas[table_slug] = schema
 
                         examined_slugs.add(table_slug)
                         stream_details(f"```yaml\n{schema}\n```", step, title="Schema")
@@ -1206,18 +1199,17 @@ class IterativeTableLookup(TableLookup):
                     # based on similarity search alone, if we have selected tables, we're done!!
                     break
 
-        sql_metadata_map = {table_slug: schema_data for table_slug, schema_data in sql_metadata_map.items()}
-
-        sql_metaset = SQLMetaset(
-            vector_metaset=vector_metaset,
-            sql_metadata_map=sql_metadata_map,
+        metaset = Metaset(
+            catalog=catalog,
+            schemas=schemas,
+            query=metaset.query,
         )
-        return {"sql_metaset": sql_metaset}
+        return {"metaset": metaset}
 
     def _format_context(self, outputs: IterativeTableLookupOutputs) -> str:
         """Generate formatted text representation from schema objects."""
-        sql_metaset = outputs.get("sql_metaset")
-        return str(sql_metaset)
+        metaset = outputs.get("metaset")
+        return str(metaset)
 
     async def respond(
         self, messages: list[Message], context: TContext, **kwargs: dict[str, Any]

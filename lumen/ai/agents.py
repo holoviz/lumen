@@ -41,13 +41,11 @@ from .context import ContextModel, TContext
 from .controls import SourceControls
 from .llm import Llm, Message, OpenAI
 from .models import (
-    DbtslQueryParams, DiscoverySufficiency, DistinctQuery, PartialBaseModel,
+    DbtslQueryParams, DistinctQuery, PartialBaseModel,
     QueryCompletionValidation, RetrySpec, SampleQuery, VegaLiteSpec,
     VegaLiteSpecUpdate, make_discovery_model, make_sql_model,
 )
-from .schemas import (
-    DbtslMetadata, DbtslMetaset, SQLMetaset, get_metaset,
-)
+from .schemas import DbtslMetaset, Metaset, get_metaset
 from .services import DbtslMixin
 from .tools import ToolUser
 from .translate import param_to_pydantic
@@ -269,11 +267,10 @@ class ChatAgent(Agent):
         step_title: str | None = None,
     ) -> tuple[list[Any], dict[str, Any]]:
         prompt_context = {"tool_context": await self._use_tools("main", messages, context)}
-        if "vector_metaset" not in context and "sql_metaset" not in context and "source" in context and "table" in context:
-            source = context["source"]
-            context["vector_metaset"] = (await get_metaset(
-                [source], [f"{source.name}{SOURCE_TABLE_SEPARATOR}{context['table']}"],
-            )).vector_metaset
+        if "metaset" not in context and "source" in context and "table" in context:
+            context["metaset"] = await get_metaset(
+                [context["source"]], [context["table"]]
+            )
         system_prompt = await self._render_prompt("main", messages, context, **prompt_context)
         return [await self._stream(messages, system_prompt)], {}
 
@@ -577,7 +574,7 @@ class SQLInputs(ContextModel):
 
     sql: NotRequired[str]
 
-    sql_metaset: SQLMetaset
+    metaset: Metaset
 
     visible_slugs: NotRequired[set[str]]
 
@@ -632,7 +629,7 @@ class SQLAgent(LumenBaseAgent):
                 "template": PROMPTS_DIR / "SQLAgent" / "select_discoveries.jinja2",
             },
             "check_sufficiency": {
-                "response_model": DiscoverySufficiency,
+                "response_model": make_discovery_model,
                 "template": PROMPTS_DIR / "SQLAgent" / "check_sufficiency.jinja2",
             },
             "retry_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "SQLAgent" / "retry_output.jinja2"},
@@ -882,7 +879,8 @@ class SQLAgent(LumenBaseAgent):
             error_context=error_context,
         )
 
-        discovery_model = self._get_model("select_discoveries", sources=list(sources))
+        discovery_models = self._get_model("select_discoveries", sources=list(sources))
+        discovery_model = discovery_models[0]
         model_spec = self.prompts["select_discoveries"].get("llm_spec", self.llm_spec_key)
         selection = await self.llm.invoke(
             messages,
@@ -898,7 +896,7 @@ class SQLAgent(LumenBaseAgent):
         context: TContext,
         error_context: str,
         discovery_results: list[tuple[str, str]],
-    ) -> DiscoverySufficiency:
+    ) -> BaseModel:
         """Check if discovery results are sufficient to fix the error."""
         system_prompt = await self._render_prompt(
             "check_sufficiency",
@@ -908,12 +906,26 @@ class SQLAgent(LumenBaseAgent):
             discovery_results=discovery_results,
         )
 
+        # Get sources from context for the discovery models
+        metaset = context["metaset"]
+        selected_slugs = list(metaset.catalog)
+        visible_slugs = context.get('visible_slugs', [])
+        if visible_slugs:
+            selected_slugs = [slug for slug in selected_slugs if slug in visible_slugs]
+        sources_list = [
+            tuple(table_slug.split(SOURCE_TABLE_SEPARATOR))
+            for table_slug in selected_slugs
+        ]
+
+        discovery_models = self._get_model("check_sufficiency", sources=sources_list)
+        sufficiency_model = discovery_models[1]
+
         model_spec = self.prompts["check_sufficiency"].get("llm_spec", self.llm_spec_key)
         sufficiency = await self.llm.invoke(
             messages,
             system=system_prompt,
             model_spec=model_spec,
-            response_model=DiscoverySufficiency,
+            response_model=sufficiency_model,
         )
         return sufficiency
 
@@ -1040,8 +1052,8 @@ class SQLAgent(LumenBaseAgent):
     ) -> tuple[list[Any], SQLOutputs]:
         """Execute SQL generation with one-shot attempt first, then exploration if needed."""
         sources = context["sources"]
-        vector_metaset = context["sql_metaset"].vector_metaset
-        selected_slugs = list(vector_metaset.vector_metadata_map)
+        metaset = context["metaset"]
+        selected_slugs = list(metaset.catalog)
         visible_slugs = context.get('visible_slugs', [])
         if visible_slugs:
             selected_slugs = [slug for slug in selected_slugs if slug in visible_slugs]
@@ -1077,9 +1089,7 @@ class SQLAgent(LumenBaseAgent):
 
 class DbtslOutputs(SQLOutputs):
 
-    dbtsl_vector_metaset: DbtslMetadata
-
-    dbtsl_sql_metaset: DbtslMetaset
+    dbtsl_metaset: DbtslMetaset
 
 
 class DbtslAgent(LumenBaseAgent, DbtslMixin):
@@ -1219,16 +1229,14 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
             pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms)
 
             df = await get_data(pipeline)
-            sql_metaset = await get_metaset([sql_expr_source], [expr_slug])
-            vector_metaset = sql_metaset.vector_metaset
+            metaset = await get_metaset([sql_expr_source], [expr_slug])
 
             # Update context
             out_context["data"] = await describe_data(df)
             out_context["source"] = sql_expr_source
             out_context["pipeline"] = pipeline
             out_context["table"] = pipeline.table
-            out_context["dbtsl_vector_metaset"] = vector_metaset
-            out_context["dbtsl_sql_metaset"] = sql_metaset
+            out_context["dbtsl_metaset"] = metaset
         except Exception as e:
             report_error(e, step)
             raise e
@@ -1264,7 +1272,7 @@ class ViewInputs(ContextModel):
 
     pipeline: Pipeline
 
-    sql_metaset: NotRequired[SQLMetaset]
+    metaset: NotRequired[Metaset]
 
     table: str
 
@@ -1298,19 +1306,19 @@ class BaseViewAgent(LumenBaseAgent):
             except Exception:
                 last_output = ""
 
-            vector_metadata_map = None
-            if "sql_metaset" in context:
-                vector_metadata_map = context["sql_metaset"].vector_metaset.vector_metadata_map
-            elif "dbtsl_sql_metaset" in context:
-                vector_metadata_map = context["dbtsl_sql_metaset"].vector_metaset.vector_metadata_map
+            catalog = None
+            if "metaset" in context:
+                catalog = context["metaset"].catalog
+            elif "dbtsl_metaset" in context:
+                catalog = context["dbtsl_metaset"].catalog
 
             columns_context = ""
-            if vector_metadata_map is not None:
-                for table_slug, vector_metadata in vector_metadata_map.items():
+            if catalog is not None:
+                for table_slug, catalog_entry in catalog.items():
                     table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[-1]
                     if table_name in pipeline.table:
-                        columns = [col.name for col in vector_metadata.columns]
-                        columns_context += f"\nSQL: {vector_metadata.base_sql}\nColumns: {', '.join(columns)}\n\n"
+                        columns = [col.name for col in catalog_entry.columns]
+                        columns_context += f"\nSQL: {catalog_entry.sql_expr}\nColumns: {', '.join(columns)}\n\n"
             errors_context = {
                 "errors": errors,
                 "last_output": last_output,

@@ -7,222 +7,161 @@ import yaml
 
 from ..sources import Source
 from .config import SOURCE_TABLE_SEPARATOR
-from .utils import (
-    get_schema, log_debug, truncate_iterable, truncate_string,
-)
+from .utils import get_schema, log_debug, truncate_string
 
 
 @dataclass
 class Column:
-    """Schema for a column with its description."""
-
     name: str
     description: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
-class VectorMetadata:
-    """Schema for vector lookup data for a single table."""
-
-    table_slug: str  # Combined source_name and table_name with separator
+class TableCatalogEntry:
+    table_slug: str
     similarity: float
     columns: list[Column]
     description: str | None = None
-    base_sql: str | None = None
+    sql_expr: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
-class VectorMetaset:
-    """Schema container for vector data for multiple tables_metadata."""
+class Metaset:
+    """
+    Schema container for table metadata with optional SQL enrichment.
 
-    query: str
-    vector_metadata_map: dict[str, VectorMetadata]
+    Contains table catalog from discovery (descriptions, columns) and optionally
+    SQL schema data (types, enums, row counts).
+    """
 
-    def _generate_context(self, include_columns: bool = False, truncate: bool = False) -> str:
-        """
-        Generate YAML formatted representation of the context.
+    query: str | None
+    catalog: dict[str, TableCatalogEntry]
+    schemas: dict[str, dict[str, Any]] | None = None
 
-        Args:
-            include_columns: Whether to include column details in the context
-            truncate: Whether to truncate strings and columns for brevity
-        """
-        tables_data = {}
+    @property
+    def has_schemas(self) -> bool:
+        return self.schemas is not None and len(self.schemas) > 0
 
-        for table_slug, vector_metadata in self.vector_metadata_map.items():
-            base_sql = truncate_string(vector_metadata.base_sql, max_length=200) if truncate else vector_metadata.base_sql
+    def _build_table_data(
+        self,
+        table_slug: str,
+        catalog_entry: TableCatalogEntry,
+        include_columns: bool,
+        truncate: bool
+    ) -> dict:
+        sql_expr = catalog_entry.sql_expr
+        if truncate and sql_expr:
+            sql_expr = truncate_string(sql_expr, max_length=200)
 
-            table_data = {'read_with': base_sql}
+        data = {'read_with': sql_expr}
 
-            if vector_metadata.description:
-                desc = truncate_string(vector_metadata.description, max_length=100) if truncate else vector_metadata.description
-                table_data['info'] = desc
+        if catalog_entry.description:
+            desc = catalog_entry.description
+            if truncate:
+                desc = truncate_string(desc, max_length=100)
+            data['info'] = desc
 
-            # Only include columns if explicitly requested
-            if include_columns and vector_metadata.columns:
-                max_length = 20
-                cols_to_show = vector_metadata.columns
+        if self.has_schemas:
+            schema = self.schemas.get(table_slug)
+            if schema and schema.get("__len__"):
+                data['row_count'] = len(schema)
 
-                show_ellipsis = False
+        if include_columns and catalog_entry.columns:
+            data['columns'] = self._build_columns_data(
+                table_slug, catalog_entry.columns, truncate
+            )
+
+        return data
+
+    def _build_columns_data(
+        self,
+        table_slug: str,
+        columns: list[Column],
+        truncate: bool
+    ) -> dict:
+        columns_data = {}
+        schema = self.schemas.get(table_slug) if self.has_schemas else None
+
+        for col in columns:
+            col_info = {}
+
+            if col.description:
+                desc = col.description
                 if truncate:
-                    cols_to_show, original_indices, show_ellipsis = truncate_iterable(cols_to_show, max_length)
-                else:
-                    cols_to_show = list(cols_to_show)
+                    desc = truncate_string(desc, max_length=100)
+                col_info['description'] = desc
 
-                columns_data = {}
-                for i, col in enumerate(cols_to_show):
-                    if show_ellipsis and i == len(cols_to_show) // 2:
-                        columns_data['...'] = '...'
+            if schema and col.name in schema:
+                schema_data = schema[col.name]
 
-                    col_name = truncate_string(col.name) if truncate else col.name
-                    if col.description:
-                        col_desc = truncate_string(col.description, max_length=100) if truncate else col.description
-                        columns_data[col_name] = col_desc
+                if truncate and schema_data == "<null>":
+                    continue
+
+                if schema_data != "<null>":
+                    if isinstance(schema_data, dict):
+                        schema_copy = {
+                            k: v for k, v in schema_data.items()
+                            if not (k == 'type' and v == 'str')
+                        }
+                        if truncate and schema_copy.get('type') == 'enum':
+                            schema_str = str(schema_copy)
+                            if len(schema_str) > 50:
+                                schema_copy = truncate_string(schema_str, max_length=50)
+                        col_info.update(schema_copy)
                     else:
-                        columns_data[col_name] = None
+                        col_info['value'] = schema_data
 
-                if columns_data:
-                    table_data['columns'] = columns_data
+            columns_data[col.name] = col_info if col_info else None
 
-            tables_data[table_slug] = table_data
+        return columns_data
 
-        return yaml.dump(tables_data, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    def _generate_context(
+        self,
+        include_columns: bool = False,
+        truncate: bool = False
+    ) -> str:
+        table_slugs = self.schemas.keys() if self.has_schemas else self.catalog.keys()
 
-    @property
-    def table_context(self) -> str:
-        """Generate formatted text representation showing only table info (no columns)."""
-        return self._generate_context(include_columns=False, truncate=False)
-
-    @property
-    def full_context(self) -> str:
-        """Generate formatted text representation with all table and column details."""
-        return self._generate_context(include_columns=True, truncate=False)
-
-    @property
-    def compact_context(self) -> str:
-        """Generate truncated context with tables and columns for brevity."""
-        return self._generate_context(include_columns=True, truncate=True)
-
-    def __str__(self) -> str:
-        """String representation shows table context by default."""
-        return self.table_context
-
-
-@dataclass
-class SQLMetadata:
-    """Schema for SQL schema data for a single table."""
-
-    table_slug: str
-    schema: dict[str, Any]
-
-
-@dataclass
-class SQLMetaset:
-    """Schema container for SQL data for multiple tables_metadata that builds on vector context."""
-
-    vector_metaset: VectorMetaset
-    sql_metadata_map: dict[str, SQLMetadata]
-
-    def _generate_context(self, include_columns: bool = False, truncate: bool = False) -> str:
-        """
-        Generate YAML formatted context with both vector and SQL data.
-
-        Args:
-            include_columns: Whether to include column details in the context
-            truncate: Whether to truncate strings and columns for brevity
-
-        Returns:
-            YAML formatted context string
-        """
         tables_data = {}
-
-        for table_slug in self.sql_metadata_map.keys():
-            vector_metadata = self.vector_metaset.vector_metadata_map.get(table_slug)
-            if not vector_metadata:
+        for table_slug in table_slugs:
+            catalog_entry = self.catalog.get(table_slug)
+            if not catalog_entry:
                 continue
 
-            base_sql = truncate_string(vector_metadata.base_sql, max_length=200) if truncate else vector_metadata.base_sql
+            tables_data[table_slug] = self._build_table_data(
+                table_slug, catalog_entry, include_columns, truncate
+            )
 
-            table_data = {'read_with': base_sql}
-
-            if vector_metadata.description:
-                desc = truncate_string(vector_metadata.description, max_length=100) if truncate else vector_metadata.description
-                table_data['info'] = desc
-
-            sql_data: SQLMetadata = self.sql_metadata_map.get(table_slug)
-            if sql_data:
-                # Get the count from schema
-                if sql_data.schema.get("__len__"):
-                    table_data['row_count'] = len(sql_data.schema)
-
-            # Only include columns if explicitly requested
-            if include_columns and vector_metadata.columns:
-                cols_to_show = vector_metadata.columns
-                columns_data = {}
-
-                for col in cols_to_show:
-                    schema_data = None
-                    if sql_data and col.name in sql_data.schema:
-                        schema_data = sql_data.schema[col.name]
-                        if truncate and schema_data == "<null>":
-                            continue
-
-                    col_info = {}
-
-                    # Get column description with optional truncation
-                    if col.description:
-                        col_desc = truncate_string(col.description, max_length=100) if truncate else col.description
-                        col_info['description'] = col_desc
-
-                    # Add schema info for the column if available
-                    if schema_data and schema_data != "<null>":
-                        if isinstance(schema_data, dict):
-                            # Remove 'type': 'str' for token efficiency
-                            schema_copy = {k: v for k, v in schema_data.items() if not (k == 'type' and v == 'str')}
-                            if truncate and schema_copy.get('type') == 'enum':
-                                schema_str = str(schema_copy)
-                                if len(schema_str) > 50:
-                                    schema_copy = truncate_string(schema_str, max_length=50)
-                            col_info.update(schema_copy)
-                        else:
-                            col_info['value'] = schema_data
-
-                    columns_data[col.name] = col_info if col_info else None
-
-                if columns_data:
-                    table_data['columns'] = columns_data
-
-            tables_data[table_slug] = table_data
-
-        return yaml.dump(tables_data, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        return yaml.dump(
+            tables_data,
+            default_flow_style=False,
+            allow_unicode=True,
+            sort_keys=False
+        )
 
     @property
     def table_context(self) -> str:
-        """Generate formatted text representation showing only table info (no columns)."""
         return self._generate_context(include_columns=False, truncate=False)
 
     @property
     def full_context(self) -> str:
-        """Generate comprehensive formatted context with both vector and SQL data."""
         return self._generate_context(include_columns=True, truncate=False)
 
     @property
     def compact_context(self) -> str:
-        """Generate context with tables and columns, with truncation."""
         return self._generate_context(include_columns=True, truncate=True)
 
-    @property
-    def query(self) -> str:
-        """Get the original query that generated this context."""
-        return self.vector_metaset.query
-
     def __str__(self) -> str:
-        """String representation shows table context by default."""
         return self.table_context
 
 
-async def get_metaset(sources: list[Source], tables: list[str], prev: SQLMetaset | None = None) -> SQLMetaset:
+async def get_metaset(
+    sources: list[Source],
+    tables: list[str],
+    prev: Metaset | None = None
+) -> Metaset:
     """
     Get the metaset for the given sources and tables.
 
@@ -232,13 +171,16 @@ async def get_metaset(sources: list[Source], tables: list[str], prev: SQLMetaset
         The sources to get the metaset for.
     tables: list[str]
         The tables to get the metaset for.
+    prev: Metaset | None
+        Previous metaset to reuse cached data from.
 
     Returns
     -------
-    metaset: SQLMetaset
+    metaset: Metaset
         The metaset for the given sources and tables.
     """
-    tables_info, tables_metadata = {}, {}
+    schemas_data, catalog_data = {}, {}
+
     for table_slug in tables:
         if SOURCE_TABLE_SEPARATOR in table_slug:
             source_name, table_name = table_slug.split(SOURCE_TABLE_SEPARATOR)
@@ -247,44 +189,50 @@ async def get_metaset(sources: list[Source], tables: list[str], prev: SQLMetaset
                 f"Cannot resolve table {table_slug} without providing "
                 "the source, when multiple sources are provided. Ensure "
                 f"that you qualify the table name as follows:\n\n"
-                "    <source>{SOURCE_TABLE_SEPARATOR}<table>"
+                f"    <source>{SOURCE_TABLE_SEPARATOR}<table>"
             )
         else:
             source_name = next(iter(sources)).name
             table_name = table_slug
             table_slug = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
 
-        if prev and table_slug in prev.sql_metadata_map:
-            sql_metadata = prev.sql_metadata_map[table_slug]
-        else:
-            source = next((s for s in sources if s.name == source_name), None)
-            schema = await get_schema(source, table_name, include_count=True)
-            sql_metadata = SQLMetadata(table_slug=table_slug, schema=schema)
-        tables_info[table_slug] = sql_metadata
+        source = next((s for s in sources if s.name == source_name), None)
 
-        if prev and table_slug in prev.vector_metaset.vector_metadata_map:
-            vector_metadata = prev.vector_metaset.vector_metadata_map[table_slug]
+        if prev and prev.schemas and table_slug in prev.schemas:
+            schema = prev.schemas[table_slug]
+        else:
+            schema = await get_schema(source, table_name, include_count=True)
+        schemas_data[table_slug] = schema
+
+        if prev and table_slug in prev.catalog:
+            catalog_entry = prev.catalog[table_slug]
         else:
             try:
                 metadata = source.get_metadata(table_name)
             except Exception as e:
                 log_debug(f"Failed to get metadata for table {table_name} in source {source_name}: {e}")
                 metadata = {}
-            vector_metadata = VectorMetadata(
+
+            catalog_entry = TableCatalogEntry(
                 table_slug=table_slug,
                 similarity=1,
-                base_sql=source.get_sql_expr(source.normalize_table(table_name)),
+                sql_expr=source.get_sql_expr(source.normalize_table(table_name)),
                 description=metadata.get("description"),
                 columns=[
-                    Column(name=col_name, description=col_values.pop("description", None), metadata=col_values)
+                    Column(
+                        name=col_name,
+                        description=col_values.pop("description", None),
+                        metadata=col_values
+                    )
                     for col_name, col_values in metadata.get("columns", {}).items()
                 ],
             )
-        tables_metadata[table_slug] = vector_metadata
-    vector_metaset = VectorMetaset(vector_metadata_map=tables_metadata, query=None)
-    return SQLMetaset(
-        vector_metaset=vector_metaset,
-        sql_metadata_map=tables_info,
+        catalog_data[table_slug] = catalog_entry
+
+    return Metaset(
+        query=None,
+        catalog=catalog_data,
+        schemas=schemas_data,
     )
 
 
