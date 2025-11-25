@@ -346,6 +346,11 @@ class UI(Viewer):
         interface.message_params["reaction_icons"] = {"like": "thumb-up", "dislike": "thumb-down"}
         interface.post_hook = on_message
 
+    def _transition_to_chat(self):
+        """Transition from splash screen to chat interface."""
+        if self._split[0][0] is not self.interface:
+            self._split[0][0] = self.interface
+
     def _configure_interface(self):
         def on_undo(instance, _):
             if not self._logs:
@@ -374,8 +379,7 @@ class UI(Viewer):
                 return
 
             with self.interface.param.update(disabled=True, loading=True):
-                if self._split[0][0] is not self.interface:
-                    self._split[0][0] = self.interface
+                self._transition_to_chat()
 
                 old_sources = self.context.get("sources", [])
                 if uploaded:
@@ -742,6 +746,8 @@ class UI(Viewer):
                     suggestion_buttons.visible = False
                     if event.new > 1:  # prevent double clicks
                         return
+
+                self._transition_to_chat()
 
                 if not analysis:
                     self.interface.send(contents)
