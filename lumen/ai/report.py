@@ -45,7 +45,7 @@ from .export import (
     format_output, make_md_cell, make_preamble, write_notebook,
 )
 from .llm import Llm, Message
-from .schemas import SQLMetaset, get_metaset
+from .schemas import Metaset, get_metaset
 from .tools import FunctionTool, Tool
 from .utils import (
     describe_data, extract_block_source, get_block_names,
@@ -1169,7 +1169,7 @@ class SQLQueryOutputs(TypedDict):
     source: BaseSQLSource
     pipeline: Pipeline
     data: dict
-    sql_metaset: SQLMetaset
+    metaset: Metaset
     table: str
 
 
@@ -1254,7 +1254,7 @@ class SQLQuery(Action):
             "source": source,
             "pipeline": pipeline,
             "data": await describe_data(pipeline.data),
-            "sql_metaset": await get_metaset([source], [self.table]),
+            "metaset": await get_metaset([source], [self.table]),
             "table": self.table,
         }
         out = SQLOutput(component=pipeline, spec=self.sql_expr)

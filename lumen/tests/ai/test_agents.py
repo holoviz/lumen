@@ -68,7 +68,7 @@ async def test_sql_agent(llm, duckdb_source, test_messages):
     context = {
         "source": duckdb_source,
         "sources": [duckdb_source],
-        "sql_metaset": await get_metaset([duckdb_source], ["test_sql"]),
+        "metaset": await get_metaset([duckdb_source], ["test_sql"]),
     }
     llm.set_responses([
         SqlQuery(query="SELECT SUM(A) as A_sum FROM test_sql", table_slug="test_sql_agg"),
@@ -77,7 +77,7 @@ async def test_sql_agent(llm, duckdb_source, test_messages):
     assert len(out) == 1
     assert isinstance(out[0], SQLOutput)
     assert out[0].spec == "SELECT SUM(A) as A_sum FROM test_sql"
-    assert set(out_context) == {"data", "pipeline", "sql", "sql_plan_context", "table", "source"}
+    assert set(out_context) == {"data", "pipeline", "sql", "table", "source"}
 
 async def test_vegalite_agent(llm, duckdb_source, test_messages):
     """Test VegaLiteAgent instantiation and respond"""
@@ -89,7 +89,7 @@ async def test_vegalite_agent(llm, duckdb_source, test_messages):
         "pipeline": Pipeline(source=duckdb_source, table="test_sql"),
         "table": "test_sql",
         "sources": [duckdb_source],
-        "sql_metaset": await get_metaset([duckdb_source], ["test_sql"]),
+        "metaset": await get_metaset([duckdb_source], ["test_sql"]),
         "data": duckdb_source.get("test_sql")
     }
 

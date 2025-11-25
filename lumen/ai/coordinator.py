@@ -365,23 +365,15 @@ class Coordinator(Viewer, VectorLookupToolUser):
     def _process_tools(self, tools: list[type[Tool] | Tool] | None) -> list[type[Tool] | Tool]:
         tools = list(tools) if tools else []
 
-        # If none of the tools provide vector_metaset, add tablelookup
-        provides_vector_metaset = any(
-            "vector_metaset" in tool.output_schema.__annotations__
+        # If none of the tools provide metaset, add tablelookup
+        provides_metaset = any(
+            "metaset" in tool.output_schema.__annotations__
             for tool in tools or []
         )
-        provides_sql_metaset = any(
-            "sql_metaset" in tool.output_schema.__annotations__
-            for tool in tools or []
-        )
-        if not provides_vector_metaset and not provides_sql_metaset:
+        if not provides_metaset:
             # Add both tools - they will share the same vector store through VectorLookupToolUser
             # Both need to be added as classes, not instances, for proper initialization
             tools += [TableLookup, IterativeTableLookup]
-        elif not provides_vector_metaset:
-            tools += [TableLookup]
-        elif not provides_sql_metaset:
-            tools += [IterativeTableLookup]
         return tools
 
     def _process_prompts(

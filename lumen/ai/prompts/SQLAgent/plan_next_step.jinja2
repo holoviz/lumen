@@ -24,7 +24,7 @@ Examples: Direct query → Final | Complex → Batch discoveries → Final | Reu
 {% endblock %}
 
 {% block context %}
-{{ memory["sql_metaset"].compact_context }}
+{{ memory["metaset"].compact_context }}
 
 Steps: {{ total_steps }}
 {%- if sql_plan_context %}

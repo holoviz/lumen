@@ -165,7 +165,7 @@ async def sql_plan(llm, tiny_source):
     context = {
         "source": tiny_source,
         "sources": [tiny_source],
-        "sql_metaset": metaset,
+        "metaset": metaset,
         "visible_slugs": [slug]
     }
 

@@ -24,7 +24,7 @@ class Source(TypedDict):
     id: str
     title: str
 
-class SQLMetaset(TypedDict):
+class Metaset(TypedDict):
     tables: list[str]
 
 class SQLInputs(ContextModel):
@@ -33,7 +33,7 @@ class SQLInputs(ContextModel):
     # accumulate into sources from 'source'
     sources: Annotated[list[Source], ("accumulate", "source")]
     # another required input
-    sql_metaset: SQLMetaset
+    metaset: Metaset
 
 class SummOutputs(TypedDict, total=False):
     # produced optional summary
@@ -80,7 +80,7 @@ def test_schema_fields_required_optional_and_meta():
     fields = schema_fields(SQLInputs)
     assert fields["source"]["required"] is True
     assert fields["sources"]["required"] is True
-    assert fields["sql_metaset"]["required"] is True
+    assert fields["metaset"]["required"] is True
     assert ("accumulate", "source") in fields["sources"]["meta"] or _accumulate_alt_key(fields["sources"]["meta"]) == "source"
 
 def test_isinstance_like_typed_dict_and_list():
@@ -99,7 +99,7 @@ def test_validate_task_inputs_with_concrete_values_ok():
     ctx = {
         "source": {"id": "1", "title": "Doc"},
         "sources": [{"id": "2", "title": "Doc2"}],
-        "sql_metaset": {"tables": ["t1"]}
+        "metaset": {"tables": ["t1"]}
     }
     issues = validate_task_inputs(task, ctx, available_types={}, path=("Group", "TaskA"))
     assert issues == []
@@ -108,7 +108,7 @@ def test_validate_task_inputs_uses_upstream_types():
     task = DummyTask("Summarize", SQLInputs, SummOutputs, None)
     available_types = {
         "source": Source,
-        "sql_metaset": SQLMetaset,
+        "metaset": Metaset,
     }
     issues = validate_task_inputs(task, {}, available_types, path=("Group", "TaskA"))
     assert [i for i in issues if i.key == "sources"] == []
@@ -118,12 +118,12 @@ def test_validate_task_inputs_flags_incompatible_type():
     task = DummyTask("Summarize", SQLInputs, SummOutputs, None)
     class Wrong(TypedDict):
         x: int
-    issues = validate_task_inputs(task, {}, available_types={"sql_metaset": Wrong}, path=("G", "Task"))
-    assert any("Incompatible upstream type" in i.message and i.key == "sql_metaset" for i in issues)
+    issues = validate_task_inputs(task, {}, available_types={"metaset": Wrong}, path=("G", "Task"))
+    assert any("Incompatible upstream type" in i.message and i.key == "metaset" for i in issues)
 
 def test_validate_task_inputs_accumulator_value_single_elem_allowed():
     task = DummyTask("Summarize", SQLInputs, SummOutputs, None)
-    ctx = {"source": {"id": "1", "title": "Doc"}, "sql_metaset": {"tables": []}}
+    ctx = {"source": {"id": "1", "title": "Doc"}, "metaset": {"tables": []}}
     issues = validate_task_inputs(task, ctx, {}, path=("G", "Task"))
     assert [i for i in issues if i.key == "sources"] == []
     assert issues == []
