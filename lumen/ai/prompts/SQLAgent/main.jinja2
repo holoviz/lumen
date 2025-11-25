@@ -55,7 +55,7 @@ Write a SQL query for the user's data transformation request, focusing on intent
 {{ memory["sql_metaset"].compact_context }}
 
 {%- if 'sql' in memory %}
-Previous: `{{ memory['sql']`
+Previous: `{{ memory['sql'] }}`
 {%- endif %}
 
 {%- if memory.get('data') is not none %}
