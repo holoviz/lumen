@@ -884,10 +884,7 @@ class Planner(Coordinator):
             requires = set(await subagent.requirements(messages))
             provided |= set(subagent.output_schema.__annotations__)
             unmet_dependencies = (unmet_dependencies | requires) - provided
-            has_table_lookup = any(
-                any(isinstance(st, TableLookup) for st in task)
-                for task in tasks
-            )
+            has_table_lookup = any(isinstance(task.actor, TableLookup) for task in tasks)
             if "table" in unmet_dependencies and not table_provided and "SQLAgent" in agents and has_table_lookup:
                 provided |= set(agents['SQLAgent'].output_schema.__annotations__)
                 sql_step = type(step)(
