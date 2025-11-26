@@ -22,7 +22,7 @@ from panel.layout.base import (
 from panel.pane import Markdown
 from panel.viewable import Viewable, Viewer
 from panel_material_ui import (
-    Accordion, Button, ChatFeed, ChatMessage, Container, Dialog, Divider,
+    Accordion, Button, Card, ChatFeed, ChatMessage, Container, Dialog, Divider,
     FileDownload, IconButton, Progress, Select, TextAreaInput, TextInput,
     Typography,
 )
@@ -95,8 +95,10 @@ class Task(Viewer):
     title = param.String(doc="""
         The title of the task.""")
 
-    views = param.List(doc="""
+    views = param.List(allow_refs=True, doc="""
         The generated viewable outputs of the task.""")
+
+    _header = param.List()
 
     def __init_subclass__(cls, **kwargs):
         """
@@ -110,6 +112,11 @@ class Task(Viewer):
         self._prepared = False
         self._init_view()
         self._null_step = NullStep()
+        self._title = Typography(f"{'#'*self.level} {self.title}", margin=(10, 10, 0, 10))
+
+    @param.depends("title", watch=True)
+    def _update_title(self):
+        self._title = f"{'#'*self.level} {self.title}"
 
     def __repr__(self):
         params = []
@@ -135,15 +142,7 @@ class Task(Viewer):
         return nullcontext(self._null_step) if self.interface is None else self.interface.add_step(title=title, **kwargs)
 
     def _populate_view(self):
-        self._view[:] = []
-
-    def cleanup(self):
-        self.reset()
-
-    def reset(self):
-        """Resets the view, removing generated outputs."""
-        self._view[:] = []
-        self.views.clear()
+        self._view[:] = self._header
 
     def _render_controls(self):
         return [
@@ -155,6 +154,22 @@ class Task(Viewer):
             ),
         ]
 
+    def _render_message_history(self, context: TContext) -> list[Message]:
+        messages = list(self.history)
+        if not self.instruction:
+            return messages
+
+        user_msg = None
+        for msg in messages[::-1]:
+            if msg.get("role") == "user":
+                user_msg = msg
+                break
+        if not user_msg:
+            messages.append({"role": "user", "content": self.instruction})
+        elif self.instruction not in user_msg.get("content"):
+            user_msg["content"] = f'{user_msg["content"]}\n\nInstruction: {self.instruction}'
+        return messages
+
     def _render_output(self, out):
         if isinstance(out, str):
             return Typography(out, margin=(20, 10))
@@ -162,6 +177,21 @@ class Task(Viewer):
             return Typography(out.object, margin=(20, 10))
         elif isinstance(out, (Viewable, View, LumenOutput)):
             return out
+
+    def __panel__(self):
+        return self._container
+
+    @abstractmethod
+    async def _execute(self, context: TContext, **kwargs) -> tuple[list[Any], TContext]:
+        raise NotImplementedError(f"{self.__class__.__name__} does not implement the execute.")
+
+    def cleanup(self):
+        """
+        Cleanup when the task is not longer needed.
+
+        Distinct from reset which only resets the outputs.
+        """
+        self.reset()
 
     def editor(self, show_title: bool = True) -> Viewable:
         """
@@ -177,16 +207,6 @@ class Task(Viewer):
         The editor for the task.
         """
         return Column(*self._render_controls())
-
-    def __panel__(self):
-        return self._container
-
-    @abstractmethod
-    async def _execute(self, context: TContext, **kwargs) -> tuple[list[Any], TContext]:
-        raise NotImplementedError(f"{self.__class__.__name__} does not implement the execute.")
-
-    async def prepare(self, context: TContext):
-        self._prepared = True
 
     async def execute(self, context: TContext | None = None, **kwargs) -> tuple[list[Any], TContext]:
         """
@@ -209,10 +229,21 @@ class Task(Viewer):
         self.out_context = out_context
         return views, out_context
 
+    async def prepare(self, context: TContext):
+        self._prepared = True
 
-class TaskWrapper(Task):
+    def reset(self):
+        """Resets the view, removing generated outputs."""
+        self.status = "idle"
+        self._view[:] = []
+        self.out_context.clear()
+
+
+class TaskGroup(Task):
 
     _tasks = param.List(item_type=Task)
+
+    level = 3
 
     __abstract = True
 
@@ -222,34 +253,34 @@ class TaskWrapper(Task):
         else:
             tasks = list(tasks)
         self._task_watchers = {}
-        views, _tasks = [], []
+        _tasks = []
         for task in tasks:
             if isinstance(task, FunctionType):
                 task = FunctionTool(task)
             if isinstance(task, Actor) and not issubclass(Actor, self.param._tasks.item_type):
                 task = ActorTask(task)
             if isinstance(task, Task):
-                views += task.views
                 task.parent = self
                 self._task_watchers[task] = task.param.watch(
                     self._sync_context, 'out_context'
                 )
             _tasks.append(task)
-        super().__init__(_tasks=_tasks, views=views, **params)
+        super().__init__(_tasks=_tasks, **params)
         self._current = 0
         self._watchers = {}
-        self._task_outputs = {}
-        self._task_contexts = {}
-        self._task_rendered = {}
         self._init_view()
+        self._init_views()
         self._populate_view()
 
-    def __len__(self) -> int:
-        return len(self._tasks)
+    def _init_views(self):
+        views = self.param._header.rx()
+        for task in self:
+            views += task.param.views.rx()
+        self.views = views
 
     async def _sync_context(self, event: param.parameterized.Event):
         task = event.obj
-        if task not in self._tasks:
+        if task not in self:
             if task in self._task_watchers:
                 watcher = self._task_watchers.pop(task)
                 task.param.unwatch(watcher)
@@ -267,8 +298,322 @@ class TaskWrapper(Task):
             if not (root is self and index >= len(self)):
                 await root.execute()
 
+    def __len__(self) -> int:
+        return len(self._tasks)
+
+    def __iter__(self) -> Iterator[Task]:
+        return iter(self._tasks)
+
+    def __getitem__(self, index) -> Task:
+        return self._tasks[index]
+
+    def __contains__(self, value: Any):
+        return value in self._tasks
+
+    def __repr__(self):
+        params = []
+        if self.title:
+            params.append(f"title='{self.title}'")
+        tasks = [f"\n    {task!r}" for task in self]
+        return f"{self.__class__.__name__}({', '.join(params)}{''.join(tasks)})"
+
+    def _populate_view(self):
+        self._view[:] = self._header + self._tasks
+
+    async def _run_task(
+        self, i: int, task: Self | Actor, context: TContext, **kwargs
+    ) -> tuple[list[Any], TContext]:
+        if task.status == "success":
+            return task.views, task.out_context
+        messages = self._render_message_history(context)
+        subcontext = self._get_context(i, context, task)
+        task_history = messages + task.history
+        with task.param.update(
+            interface=self.interface,
+            llm=task.llm or self.llm,
+            steps_layout=self.steps_layout,
+            running=True,
+            history=task_history
+        ):
+            outputs, out_context = await task.execute(subcontext, **kwargs)
+        if isinstance(task, ContextProvider):
+            unprovided = [
+                p for p in task.output_schema.__required_keys__
+                if p not in out_context
+            ]
+            if unprovided:
+                raise RuntimeError(f"{task.__class.__name__} failed to provide declared context.")
+        return outputs, out_context
+
+    def _render_tasks(self) -> list[tuple[str, Viewable]]:
+        tasks = []
+        for task in self:
+            task_type = type(task).__name__
+            tasks.append((
+                f'{task_type}: {task.title}',
+                task.editor(show_title=False)
+            ))
+        return tasks
+
+    def _get_context(
+        self, i: int, context: TContext | None, task: Task | ContextProvider
+    ) -> TContext | None:
+        contexts = ([self.context] if self.context else []) + ([context] if context else [])
+        contexts += [task.out_context for task in self[:i]]
+        if isinstance(task, ContextProvider):
+            return merge_contexts(task.input_schema, contexts)
+        elif isinstance(task, TaskGroup):
+            # Accumulate contexts requested by subtasks and merge based
+            subcontexts = []
+            for subtask in task:
+                subtask_context = self._get_context(i, context, subtask)
+                if subtask_context is not None:
+                    subcontexts.append(subtask_context)
+            return merge_contexts(LWW, subcontexts)
+        else:
+            raise TypeError("Abstract Task does not implement _get_context.")
+
+    async def _execute(self, context: TContext, **kwargs):
+        """
+        Executes the tasks.
+
+        Arguments
+        ---------
+        context: TContext
+            The context given to the task
+        **kwargs: dict
+            Additional keyword arguments to pass to the tasks.
+        """
+        if self.title and not self._header:
+            self._view.insert(0, self._title)
+            self._header = views = [self._title]
+
+        views = list(self._header)
+        for i, task in enumerate(self):
+            new = []
+            try:
+                new, new_context = await self._run_task(i, task, context, **kwargs)
+            except MissingContextError:
+                # Re-raise MissingContextError to allow retry logic at Plan level
+                raise
+            except Exception as e:
+                tb.print_exception(e)
+                self.status = "error"
+                new_context = {"__error__": str(e)}
+                task.out_context = new_context
+                if self.abort_on_error:
+                    if self.parent is not None:
+                        raise e
+                    break
+                else:
+                    continue
+            else:
+                if task.status == "error":
+                    self.status = "error"
+                    if self.abort_on_error:
+                        break
+                self._current = i
+                views += new
+        if self.status != "error":
+            self.status = "success"
+            self._current += 1
+        contexts = [self.context] if self.context else []
+        contexts += [task.out_context for task in self]
+        return views, merge_contexts(LWW, contexts)
+
+    def append(self, task: Task | Actor):
+        """
+        Appends a task to the collection.
+
+        Arguments
+        ----------
+        task: Task | Actor
+            The task to append.
+        """
+        if not isinstance(task, Task):
+            task = ActorTask(task)
+        task.parent = self
+        self._tasks.append(task)
+        self._populate_view()
+        self._init_views()
+
+    def cleanup(self):
+        for task, watcher in self._task_watchers.items():
+            task.param.unwatch(watcher)
+        super().cleanup()
+
+    def editor(self, show_title=True):
+        """
+        Returns the editor for the tasks.
+
+        Arguments
+        ----------
+        show_title: bool
+            Whether to show the title of the tasks.
+
+        Returns
+        -------
+        The editor for the tasks.
+        """
+        return Column(
+            *self._render_controls(),
+            *((
+                Divider(sizing_mode="stretch_width", margin=(10, 0)),
+                Accordion(
+                    *self._render_tasks(), margin=(10, 0, 10, 0), title_variant="h4",
+                    sizing_mode="stretch_width"
+                ),
+              ) if self._tasks else ()
+            )
+        )
+
+    def insert(self, index, task: Task | Actor):
+        """
+        Inserts a task at the given index.
+
+        Arguments
+        ----------
+        index: int
+            The index to insert the task at.
+        task: Task | Actor
+            The task to insert.
+        """
+        if not isinstance(task, Task):
+            task = ActorTask(task)
+        task.parent = self
+        self._tasks.insert(index, task)
+        self._populate_view()
+        self._init_views()
+
+    def invalidate(
+        self, keys: Iterable[str], start: int = 0, propagate: bool = True
+    ) -> tuple[list[Task], set[str]]:
+        """
+        Invalidates tasks and propagates context dependencies within a TaskGroup.
+
+        Parameters
+        ----------
+        keys : Iterable[str]
+            A set of context keys that have been modified or invalidated by the user.
+            These represent outputs whose dependent tasks should be re-evaluated.
+        start : int
+            Index of the task to start invalidating.
+        propagate: bool
+            Whether to propagate the invalidation to the parent task group.
+
+        Returns
+        -------
+        tuple[bool, set[str]]
+            A tuple ``(invalidated, keys)`` where:
+            - ``invalidated`` is ``True`` if any tasks in this group (or nested groups)
+                were marked invalid due to overlapping input dependencies.
+            - ``keys`` is the full, cumulative set of invalidated context keys after
+                propagating dependencies through all affected tasks.
+
+        Notes
+        -----
+        - If a task's input keys intersect with the provided invalidation keys,
+        that task is considered stale and will be rerun.
+        - Nested TaskGroups are traversed recursively, and their invalidations
+        propagate upward to the parent group.
+        """
+        if propagate and self.parent is not None and self in self.parent:
+            parent_idx = self.parent._tasks.index(self)
+            if start >= len(self):
+                # If the last task is being invalidated,
+                # only subsequent tasks on the parent
+                # have to be invalidated
+                parent_idx += 1
+            self.parent.invalidate(keys, start=parent_idx)
+            return
+
+        if start == 0:
+            self._header = []
+
+        keys = set(keys)
+        invalidated = []
+        for i, task in enumerate(self):
+            if i < start:
+                continue
+            subtask_invalidated, subtask_keys = task.invalidate(keys, propagate=False)
+            if subtask_invalidated:
+                invalidated.append(i)
+                keys |= subtask_keys
+
+        if invalidated:
+            self._current = max(min(invalidated), 0)
+        return [self[i] for i in invalidated], keys
+
+    def merge(self, other: TaskGroup):
+        """
+        Merges another task group into the current task group.
+
+        Parameters
+        ---------
+        other: TaskGroup
+            The other task group to merge with.
+
+        Returns
+        -------
+        self: TaskGroup
+            The current task group.
+        """
+        for task in other:
+            other.parent = self
+            self._tasks.append(task)
+        self._view[:] = list(self._view) + list(other._view)
+        self._init_views()
+        return self
+
+    async def prepare(self, context: TContext):
+        for task in self:
+            await task.prepare(context)
+        self._prepared = True
+
+    def reset(self):
+        """
+        Resets the view, removing generated outputs.
+        """
+        self.status = "idle"
+        self._current = 0
+        with hold():
+            self._header = []
+            self._view.clear()
+            for task in self:
+                if isinstance(task, Task):
+                    task.reset()
+            self._populate_view()
+
+    def to_notebook(self):
+        """
+        Returns the notebook representation of the tasks.
+        """
+        if len(self) and not self.status == "success":
+            raise RuntimeError(
+                "Report has not been executed, run report before exporting to_notebook."
+            )
+        cells, extensions = [], ['tabulator']
+        for out in self.views:
+            ext = None
+            if isinstance(out, Typography):
+                level = int(out.variant[1:]) if out.variant and out.variant.startswith('h') else 0
+                prefix = f"{'#'*level} " if level else ''
+                cell = make_md_cell(f"{prefix}{out.object}")
+            elif isinstance(out, Markdown):
+                cell = make_md_cell(out.object)
+            elif isinstance(out, LumenOutput):
+                cell, ext = format_output(out)
+            elif isinstance(out, Viewable):
+                cell, ext = format_output(Panel(out))
+            cells.append(cell)
+            if ext and ext not in extensions:
+                extensions.append(ext)
+        cells = make_preamble("", extensions=extensions) + cells
+        return write_notebook(cells)
+
     def validate(
-        self, context: TContext | None = None,
+        self,
+        context: TContext | None = None,
         available_types: dict[str, Any] | None = None,
         path: str | None = None,
         raise_on_error: bool = True
@@ -300,475 +645,16 @@ class TaskWrapper(Task):
         types_out: dict[str, Any] = dict(available_types or {})
         for idx, t in enumerate(self):
             subpath = f"{cur_path}[{idx}] -> {t.name}"
-            if isinstance(t, TaskWrapper):
-                sub_issues, sub_types = t.validate(
-                    value_ctx,
-                    available_types=types_out,
-                    path=subpath,
-                )
-            else:
-                sub_issues = validate_task_inputs(
-                    t, value_ctx, types_out, subpath
-                )
-                sub_types = collect_task_outputs(t)
+            sub_issues, sub_types = t.validate(
+                value_ctx,
+                available_types=types_out,
+                path=subpath,
+            )
             issues.extend(sub_issues)
             types_out.update(sub_types)
         if path is None and issues and raise_on_error:
             raise ContextError(issues)
         return issues, types_out
-
-    def __iter__(self) -> Iterator[Task]:
-        return iter(self._tasks)
-
-    def __repr__(self):
-        params = []
-        if self.instruction:
-            params.append(f"instruction='{self.instruction}'")
-        if self.title:
-            params.append(f"title='{self.title}'")
-        tasks = [f"\n    {task!r}" for task in self._tasks]
-        return f"{self.__class__.__name__}({', '.join(params)}{''.join(tasks)})"
-
-    def _populate_view(self):
-        """Populates the view on initialization or reset.
-
-        Should either pre-populate the view with all tasks
-        or act as a no-op since outputs are added progressively
-        using _add_outputs.
-        """
-
-    def _add_outputs(
-        self, i: int, task: Task | Actor, views: list, context: TContext, out_context: TContext | None, **kwargs
-    ):
-        self._task_outputs[task] = list(views)
-
-        # Find view and output to insert the new outputs after
-        if i >= 0:
-            prev_task = None
-            for j in reversed(range(i)):
-                prev_task = self._tasks[j]
-                if prev_task in self._task_rendered:
-                    prev_out = self._task_rendered.get(prev_task)
-                    break
-            else:
-                prev_out = self._task_rendered.get(None)
-            for j in reversed(range(i)):
-                prev_task = self._tasks[j]
-                if isinstance(prev_task, Task) and prev_task.views:
-                    prev_view = prev_task.views[-1]
-                    break
-                elif self._task_outputs.get(prev_task):
-                    prev_view = self._task_outputs[prev_task][-1]
-                    break
-            else:
-                task_out = self._task_outputs.get(None)
-                prev_view = task_out[-1] if task_out else None
-        else:
-            prev_view = prev_out = None
-
-        idx = 0 if prev_out is None else (self._view.index(prev_out) + 1)
-        if isinstance(task, Task):
-            self._view.insert(idx, task)
-            self._task_rendered[task] = self._view[idx]
-            views = task.views
-        else:
-            rendered = []
-            for out in views:
-                view = self._render_output(out)
-                if view is not None:
-                    rendered.append(view)
-            if rendered:
-                rendered_out = Column(*rendered)
-                self._task_rendered[task] = rendered_out
-                self._view.insert(idx, rendered_out)
-        new_views = list(self.views)
-        if prev_view is None or prev_view not in new_views:
-            view_idx = 0
-        else:
-            view_idx = new_views.index(prev_view)+1
-        for vi, view in enumerate(views):
-            new_views.insert(view_idx+vi, view)
-        self.views = new_views
-
-    def _watch_child_outputs(
-        self, i: int, previous: list, context: TContext, event: param.Event, **kwargs
-    ):
-        pass
-
-    def merge(self, other: TaskWrapper):
-        """
-        Merges another task group into the current task group.
-
-        Parameters
-        ---------
-        other: TaskWrapper
-            The other task group to merge with.
-
-        Returns
-        -------
-        self: TaskWrapper
-            The current task group.
-        """
-        for task in other:
-            other.parent = self
-            self._tasks.append(task)
-        self._task_contexts.update(other._task_contexts)
-        self._task_rendered.update(other._task_rendered)
-        self._task_outputs.update(other._task_outputs)
-        self._view[:] = list(self._view) + list(other._view)
-        self.views = self.views + other.views
-        return self
-
-    async def prepare(self, context: TContext):
-        for task in self._tasks:
-            await task.prepare(context)
-        self._prepared = True
-
-    def cleanup(self):
-        for task, watcher in self._task_watchers.items():
-            task.param.unwatch(watcher)
-        super().cleanup()
-
-    def reset(self):
-        """
-        Resets the view, removing generated outputs.
-        """
-        self._current = 0
-        with hold():
-            self._task_rendered.clear()
-            self._task_contexts.clear()
-            self._task_outputs.clear()
-            self.views = []
-            self._view.clear()
-            for task in self:
-                if isinstance(task, Task):
-                    task.reset()
-            self._populate_view()
-
-    def _render_message_history(self, context: TContext) -> list[Message]:
-        messages = list(self.history)
-        if not self.instruction:
-            return messages
-
-        user_msg = None
-        for msg in messages[::-1]:
-            if msg.get("role") == "user":
-                user_msg = msg
-                break
-        if not user_msg:
-            messages.append({"role": "user", "content": self.instruction})
-        elif self.instruction not in user_msg.get("content"):
-            user_msg["content"] = f'{user_msg["content"]}\n\nInstruction: {self.instruction}'
-        return messages
-
-    async def _run_task(
-        self, i: int, task: Self | Actor, context: TContext, **kwargs
-    ) -> tuple[list[Any], TContext]:
-        outputs = []
-
-        messages = self._render_message_history(context)
-
-        subcontext = self._get_context(i, context, task)
-        task_history = messages + task.history
-        with task.param.update(
-            interface=self.interface,
-            llm=task.llm or self.llm,
-            steps_layout=self.steps_layout,
-            running=True,
-            history=task_history
-        ):
-            out, out_context = await task.execute(subcontext, **kwargs)
-        self._task_outputs[task] = out
-        outputs += out
-        if isinstance(task, ContextProvider):
-            unprovided = [
-                p for p in task.output_schema.__required_keys__
-                if p not in out_context
-            ]
-            if unprovided:
-                raise RuntimeError(f"{task.__class.__name__} failed to provide declared context.")
-        return outputs, out_context
-
-    def _render_tasks(self) -> list[tuple[str, Viewable]]:
-        tasks = []
-        for task in self._tasks:
-            task_type = type(task).__name__
-            tasks.append((
-                f'{task_type}: {task.title}',
-                task.editor(show_title=False)
-            ))
-        return tasks
-
-    def editor(self, show_title=True):
-        """
-        Returns the editor for the tasks.
-
-        Arguments
-        ----------
-        show_title: bool
-            Whether to show the title of the tasks.
-
-        Returns
-        -------
-        The editor for the tasks.
-        """
-        return Column(
-            *self._render_controls(),
-            *((
-                Divider(sizing_mode="stretch_width", margin=(10, 0)),
-                Accordion(
-                    *self._render_tasks(), margin=(10, 0, 10, 0), title_variant="h4",
-                    sizing_mode="stretch_width"
-                ),
-              ) if self._tasks else ()
-            )
-        )
-
-    def _get_context(
-        self, i: int, context: TContext | None, task: Task | ContextProvider
-    ) -> TContext | None:
-        contexts = ([self.context] if self.context else []) + ([context] if context else [])
-        contexts += [
-            self._task_contexts[task] if task in self._task_contexts else task.out_context
-            for task in self._tasks[:i]
-        ]
-        if isinstance(task, ContextProvider):
-            return merge_contexts(task.input_schema, contexts)
-        elif isinstance(task, TaskWrapper):
-            # Accumulate contexts requested by subtasks and merge based
-            subcontexts = []
-            for subtask in task:
-                subtask_context = self._get_context(i, context, subtask)
-                if subtask_context is not None:
-                    subcontexts.append(subtask_context)
-            return merge_contexts(LWW, subcontexts)
-        else:
-            raise TypeError("Abstract Task does not implement _get_context.")
-
-    async def _execute(self, context: TContext, **kwargs):
-        """
-        Executes the tasks.
-
-        Arguments
-        ---------
-        context: TContext
-            The context given to the task
-        **kwargs: dict
-            Additional keyword arguments to pass to the tasks.
-        """
-        if None in self._task_outputs:
-            views = self._task_outputs[None]
-        else:
-            title = Typography(f"{'#'*self.level} {self.title}", margin=(10, 10, 0, 10))
-            views = [title] if self.title else []
-            if views:
-                self._add_outputs(-1, None, views, context, None, **kwargs)
-        for i, task in enumerate(self._tasks):
-            self._current = i
-            if task in self._task_outputs:
-                views += self._task_outputs[task]
-                continue
-
-            new = []
-            try:
-                new, new_context = await self._run_task(i, task, context, **kwargs)
-            except MissingContextError:
-                # Re-raise MissingContextError to allow retry logic at Plan level
-                raise
-            except Exception as e:
-                tb.print_exception(e)
-                self.status = "error"
-                new_context = {"__error__": str(e)}
-                self._task_contexts[task] = new_context
-                if self.abort_on_error:
-                    if self.parent is not None:
-                        raise e
-                    break
-                else:
-                    continue
-            else:
-                if not isinstance(task, Actor) and task in self._task_contexts:
-                    del self._task_contexts[task]
-                status = task.status if isinstance(task, Task) and task.status != "success" else "success"
-                self.status = status
-                views += new
-            self._add_outputs(
-                i, task, new, context, new_context, **kwargs
-            )
-        if self.status != "error":
-            self._current += 1
-        contexts = ([self.context] if self.context else [])
-        contexts += [
-            self._task_contexts[task] if task in self._task_contexts else task.out_context
-            for task in self
-        ]
-        return views, merge_contexts(LWW, contexts)
-
-    def invalidate(
-        self, keys: Iterable[str], start: int = 0, propagate: bool = True
-    ) -> tuple[list[Task], set[str]]:
-        """
-        Invalidates tasks and propagates context dependencies within a TaskGroup.
-
-        Parameters
-        ----------
-        keys : Iterable[str]
-            A set of context keys that have been modified or invalidated by the user.
-            These represent outputs whose dependent tasks should be re-evaluated.
-        start : int
-            Index of the task to start invalidating.
-        propagate: bool
-            Whether to propagate the invalidation to the parent task group.
-
-        Returns
-        -------
-        tuple[bool, set[str]]
-            A tuple ``(invalidated, keys)`` where:
-            - ``invalidated`` is ``True`` if any tasks in this group (or nested groups)
-                were marked invalid due to overlapping input dependencies.
-            - ``keys`` is the full, cumulative set of invalidated context keys after
-                propagating dependencies through all affected tasks.
-
-        Notes
-        -----
-        - If a task's input keys intersect with the provided invalidation keys,
-        that task is considered stale and will be rerun.
-        - When a task is invalidated, its recorded outputs are removed from
-        ``self._task_outputs`` and its output keys are added to the invalidation set,
-        ensuring that downstream tasks depending on those outputs are also invalidated.
-        - Nested TaskGroups are traversed recursively, and their invalidations
-        propagate upward to the parent group.
-        """
-        if propagate and self.parent is not None and self in self.parent:
-            parent_idx = self.parent._tasks.index(self)
-            if start >= len(self):
-                # If the last task is being invalidated,
-                # only subsequent tasks on the parent
-                # have to be invalidated
-                parent_idx += 1
-            self.parent.invalidate(keys, start=parent_idx)
-            return
-
-        keys = set(keys)
-        invalidated = []
-        views = list(self.views)
-        rendered_views = list(self._view)
-        if start == 0:
-            title_views = self._task_outputs.pop(None, None)
-            self._task_rendered.pop(None, None)
-            if title_views:
-                views = [view for view in views if view not in title_views]
-
-        for i, task in enumerate(self):
-            if i < start:
-                continue
-            if isinstance(task, ContextProvider):
-                deps = input_dependency_keys(task.input_schema)
-                if not (deps & keys):
-                    continue
-                keys |= set(task.output_schema.__annotations__)
-            if isinstance(task, Task):
-                old = list(task.views)
-            if isinstance(task, TaskWrapper):
-                subtask_invalidated, subtask_keys = task.invalidate(keys, propagate=False)
-                if invalidated or subtask_invalidated:
-                    invalidated.append(i)
-                if not subtask_invalidated:
-                    continue
-                keys |= subtask_keys
-            elif isinstance(task, Task):
-                task.reset()
-            self._task_contexts.pop(task, None)
-            outputs = self._task_outputs.pop(task, [])
-            rendered = self._task_rendered.pop(task, None)
-            invalidated.append(i)
-            if isinstance(task, Actor):
-                if rendered is not None:
-                    rendered_views.remove(rendered)
-                views = [view for view in views if view not in outputs]
-            else:
-                views = [view for view in views if not (view in old and view not in task.views)]
-        if invalidated:
-            self._current = max(min(invalidated), 0)
-        self.views = views
-        self._view[:] = rendered_views
-        return [self._tasks[i] for i in invalidated], keys
-
-    def to_notebook(self):
-        """
-        Returns the notebook representation of the tasks.
-        """
-        if len(self) and not len(self._task_rendered):
-            raise RuntimeError(
-                "Report has not been executed, run report before exporting to_notebook."
-            )
-        cells, extensions = [], ['tabulator']
-        for out in self.views:
-            ext = None
-            if isinstance(out, Typography):
-                level = int(out.variant[1:]) if out.variant and out.variant.startswith('h') else 0
-                prefix = f"{'#'*level} " if level else ''
-                cell = make_md_cell(f"{prefix}{out.object}")
-            elif isinstance(out, Markdown):
-                cell = make_md_cell(out.object)
-            elif isinstance(out, LumenOutput):
-                cell, ext = format_output(out)
-            elif isinstance(out, Viewable):
-                cell, ext = format_output(Panel(out))
-            cells.append(cell)
-            if ext and ext not in extensions:
-                extensions.append(ext)
-        cells = make_preamble("", extensions=extensions) + cells
-        return write_notebook(cells)
-
-
-
-class TaskGroup(TaskWrapper):
-    """
-    A `TaskGroup` defines a collection of `Task` objects which are executed and rendered in sequence.
-    """
-
-    level = 3
-
-    __abstract = True
-
-    def __getitem__(self, index) -> Task:
-        return self._tasks[index]
-
-    def __contains__(self, value: Any):
-        return value in self._tasks
-
-    def append(self, task: Task | Actor):
-        """
-        Appends a task to the collection.
-
-        Arguments
-        ----------
-        task: Task | Actor
-            The task to append.
-        """
-        if not isinstance(task, Task):
-            task = ActorTask(task)
-        task.parent = self
-        self._tasks.append(task)
-        self._populate_view()
-
-    def insert(self, index, task: Task | Actor):
-        """
-        Inserts a task at the given index.
-
-        Arguments
-        ----------
-        index: int
-            The index to insert the task at.
-        task: Task | Actor
-            The task to insert.
-        """
-        if not isinstance(task, Task):
-            task = ActorTask(task)
-        task.parent = self
-        self._tasks.insert(index, task)
-        self._populate_view()
 
 
 class Section(TaskGroup):
@@ -786,14 +672,8 @@ class Section(TaskGroup):
         params = []
         if self.title:
             params.append(f"title='{self.title}'")
-        tasks = [f"\n    {task!r}" for task in self._tasks]
+        tasks = [f"\n    {task!r}" for task in self]
         return f"{self.__class__.__name__}({', '.join(params)}{''.join(tasks)})"
-
-    def _add_outputs(self, i: int, task: Task | Actor, views: list, context: TContext, out_context: TContext | None, **kwargs):
-        if out_context is not None:
-            self._task_outputs[task] = views
-            self._task_rendered[task] = task
-        self.views = self.views + views
 
     def _render_controls(self):
         return [
@@ -827,9 +707,6 @@ class Section(TaskGroup):
             height_policy='fit'
         )
 
-    def _populate_view(self):
-        self._view[:] = self._tasks
-
     def _open_settings(self, event):
         self._dialog.open = True
 
@@ -837,7 +714,7 @@ class Section(TaskGroup):
         if context is not None:
             instructions = "\n".join(
                 f"{i+1}. {task.instruction}" if hasattr(task, 'instruction') else f"{i+1}. <no instruction>"
-                for i, task in enumerate(self._tasks)
+                for i, task in enumerate(self)
             )
             context['reasoning'] = f"{self.title}\n\n{instructions}"
         return await super()._run_task(i, task, context, **kwargs)
@@ -875,7 +752,7 @@ class Report(TaskGroup):
         pn.state.execute(partial(self.prepare, self.context))
 
     def _init_view(self):
-        self._title = Typography(
+        self._header_title = Typography(
             self.param.title, variant="h1", margin=(0, 10, 0, 10)
         )
         self._view = Accordion(
@@ -884,7 +761,7 @@ class Report(TaskGroup):
         )
         self._run = IconButton(
             icon="play_arrow", on_click=self._execute_event, margin=0, size="large",
-            description="Execute Report"
+            description="Execute Report", loading=self.param.running
         )
         self._clear = IconButton(
             icon="clear", on_click=lambda _: self.reset(), margin=0, size="large",
@@ -911,7 +788,7 @@ class Report(TaskGroup):
             title=f"Report Settings: {self.title}",
         )
         self._menu = Row(
-            self._title,
+            self._header_title,
             self._run,
             self._clear,
             self._collapse,
@@ -933,18 +810,8 @@ class Report(TaskGroup):
     def _update_filename(self):
         self._export.filename = f"{self.title or 'Report'}.ipynb"
 
-    def _add_outputs(self, i: int, task: Task | Actor, views: list, context: TContext, out_context: dict | None, **kwargs):
-        if out_context is not None:
-            self._task_outputs[task] = views
-            self._task_rendered[task] = task
-        self.views = self.views + views
-
     def _notebook_export(self):
         return io.StringIO(self.to_notebook())
-
-    async def _execute(self, context: TContext, *args):
-        with self._run.param.update(loading=True):
-            return await super()._execute(context)
 
     def _expand_all(self, event):
         if self._collapse.icon == "unfold_less":
@@ -958,16 +825,12 @@ class Report(TaskGroup):
         self._dialog.open = True
 
     def _populate_view(self):
-        self._view[:] = objects = [(task.title, task) for task in self._tasks]
+        self._view[:] = objects = [(task.title, task) for task in self]
         self._view.active = list(range(len(objects)))
 
     async def _run_task(self, i: int, task: Section, context: TContext, **kwargs):
         self._view.active = self._view.active + [i]
-        watcher = task.param.watch(partial(self._watch_child_outputs, i, self.views, dict(context)), "views")
-        try:
-            outputs = await super()._run_task(i, task, context, **kwargs)
-        finally:
-            task.param.unwatch(watcher)
+        outputs = await super()._run_task(i, task, context, **kwargs)
         return outputs
 
     def __panel__(self):
@@ -980,117 +843,192 @@ class Report(TaskGroup):
         )
 
 
-class ActorTask(TaskWrapper):
+class ExecutableTask(Task, ContextProvider):
+
+    level = 3
+
+    def reset(self):
+        super().reset()
+        self.views = []
+
+    def invalidate(
+        self, keys: Iterable[str], start: int = 0, propagate: bool = True
+    ) -> tuple[list[Task], set[str]]:
+        """
+        Invalidates tasks and propagates context dependencies within a TaskGroup.
+
+        Parameters
+        ----------
+        keys : Iterable[str]
+            A set of context keys that have been modified or invalidated by the user.
+            These represent outputs whose dependent tasks should be re-evaluated.
+        start : int
+            Index of the task to start invalidating.
+        propagate: bool
+            Whether to propagate the invalidation to the parent task group.
+
+        Returns
+        -------
+        tuple[bool, set[str]]
+            A tuple ``(invalidated, keys)`` where:
+            - ``invalidated`` is ``True`` if any tasks in this group (or nested groups)
+                were marked invalid due to overlapping input dependencies.
+            - ``keys`` is the full, cumulative set of invalidated context keys after
+                propagating dependencies through all affected tasks.
+
+        Notes
+        -----
+        - If a task's input keys intersect with the provided invalidation keys,
+        that task is considered stale and will be rerun.
+        - Nested TaskGroups are traversed recursively, and their invalidations
+        propagate upward to the parent group.
+        """
+        if propagate and self.parent is not None and self in self.parent:
+            parent_idx = self.parent._tasks.index(self)
+            if start >= len(self):
+                # If the last task is being invalidated,
+                # only subsequent tasks on the parent
+                # have to be invalidated
+                parent_idx += 1
+            self.parent.invalidate(keys, start=parent_idx)
+            return
+
+        keys = set(keys)
+        deps = input_dependency_keys(self.input_schema)
+        if (deps & keys):
+            if start == 0:
+                # Do no reset if invalidation was called
+                # solely to notify parent
+                self.reset()
+            keys |= set(self.output_schema.__annotations__)
+            return [self], keys
+        return [], keys
+
+    def validate(
+        self,
+        context: TContext | None = None,
+        available_types: dict[str, Any] | None = None,
+        path: str | None = None,
+        raise_on_error: bool = True
+    ):
+        """
+        Validate the task group and its subtasks.
+
+        Parameters
+        ----------
+        context : TContext | None, optional
+            The context to validate against, by default None
+        available_types : dict[str, Any] | None, optional
+            Dictionary of available types for validation, by default None
+        path : str | None, optional
+            Path to the current task group for error reporting, by default None
+        raise_on_error : bool, optional
+            Whether to raise an error if validation issues are found, by default True
+
+        Returns
+        -------
+        tuple[list[ValidationIssue], dict[str, Any]]
+            A tuple containing:
+            - List of validation issues found
+            - Dictionary of output types from all tasks
+        """
+        subpath = f"{path} -> {self.name}" if path else self.name
+        value_ctx = dict((self.context or {}), **(context or {}))
+        issues = validate_task_inputs(
+            self, value_ctx, available_types, subpath
+        )
+        types_out = collect_task_outputs(self)
+        if path is None and issues and raise_on_error:
+            raise ContextError(issues)
+        return issues, types_out
+
+
+class ActorTask(ExecutableTask):
     """
     An `ActorTask` wraps an `Actor` in a way that allows persisting
     the message history, instructions, and context as well as making
     it possible to track its outputs.
     """
 
-    _tasks = param.List(item_type=Actor)
+    actor = param.ClassSelector(class_=Actor)
 
     level = 3
 
     def __init__(self, actor: Actor, **params):
-        super().__init__(actor, **params)
+        super().__init__(actor=actor, **params)
+
+    @property
+    def input_schema(self):
+        return self.actor.input_schema
+
+    @property
+    def output_schema(self):
+        return self.actor.output_schema
 
     async def _update_spec(self, event: param.parameterized.Event):
         self.out_context = dict(self.out_context, **(await event.obj.render_context()))
 
-    @property
-    def actor(self) -> Actor:
-        return self._tasks[0]
+    def _add_outputs(self, views: list, context: TContext):
+        # Handle Tool specific behaviors
+        if isinstance(self.actor, Tool):
+            # Handle View/Viewable results regardless of agent type
+            rendered = []
+            for o in views:
+                if not isinstance(o, (View, Viewable)):
+                    continue
+                if isinstance(o, Viewable):
+                    pipeline = None if context is None else context.get('pipeline')
+                    o = Panel(object=o, pipeline=pipeline)
+                o = LumenOutput(
+                    component=o, title=self.title
+                )
+                message_kwargs = dict(value=o, user=self.actor.name)
+                if self.interface:
+                    self.interface.stream(**message_kwargs)
+                rendered.append(o)
+            views = rendered
 
-    def _add_outputs(
-        self, i: int, task: Task | Actor, views: list, context: TContext, out_context: TContext | None, **kwargs
-    ):
         # Attach retry controls
         for view in views:
             if not isinstance(view, LumenOutput):
                 continue
             view.param.watch(self._update_spec, "spec")
 
-        # Track context and outputs
-        if i >= 0:
-            self._task_contexts[task] = out_context
-        super()._add_outputs(i, task, views, context, out_context, **kwargs)
+        self.views = self._header + views
 
-    async def _run_task(
-        self, i: int, task: Actor, context: TContext, **kwargs
-    ) -> tuple[list[Any], TContext]:
-        outputs = []
+    async def _execute(self, context: TContext, **kwargs) -> tuple[list[Any], TContext]:
+        views = []
+        if self.title and not self._header:
+            title = Typography(f"{'#'*self.level} {self.title}", margin=(10, 10, 0, 10))
+            views.append(title)
+            self.views = self._header = [title]
+
         messages = self._render_message_history(context)
-        subcontext = self._get_context(i, context, task)
-        with task.param.update(
+        subcontext = merge_contexts(self.input_schema, [self.context, context])
+        with self.actor.param.update(
             interface=self.interface,
-            llm=task.llm or self.llm,
+            llm=self.actor.llm or self.llm,
             steps_layout=self.steps_layout
         ):
             try:
                 kwargs["step_title"] = self.title
-                out, out_context = await task.respond(messages, subcontext, **kwargs)
+                outputs, out_context = await self.actor.respond(messages, subcontext, **kwargs)
             except MissingContextError:
                 # Re-raise MissingContextError to allow retry logic at Plan level
                 raise
             except Exception as e:
+                self.status = "error"
                 raise e
-            # Handle Tool specific behaviors
-            if isinstance(task, Tool):
-                # Handle View/Viewable results regardless of agent type
-                rendered = []
-                for o in out:
-                    if not isinstance(o, (View, Viewable)):
-                        continue
-                    if isinstance(o, Viewable):
-                        pipeline = None if context is None else context.get('pipeline')
-                        o = Panel(object=o, pipeline=pipeline)
-                    o = LumenOutput(
-                        component=o, title=self.title
-                    )
-                    message_kwargs = dict(value=o, user=task.name)
-                    if self.interface:
-                        self.interface.stream(**message_kwargs)
-                    rendered.append(o)
-                out = rendered
-            self._task_outputs[task] = out
-            outputs += out
+            self._add_outputs(outputs, out_context)
+        self.status = "success"
         unprovided = [
-            p for p in task.output_schema.__required_keys__
+            p for p in self.output_schema.__required_keys__
             if p not in out_context
         ]
         if unprovided:
-            raise RuntimeError(f"{task.__class__.__name__} failed to provide declared context.")
-        return outputs, out_context
-
-    async def revise(
-        self, instruction: str, task: Task | Actor, context: TContext,
-        view: LumenOutput, config: dict[str, Any] | None = None
-    ):
-        config = config or {}
-        invalidation_keys = set(task.output_schema.__annotations__)
-        if isinstance(task, LumenBaseAgent):
-            with view.editor.param.update(loading=True):
-                messages = list(self.history)
-                task_config = dict(config)
-                if "llm" not in task_config:
-                    task_config = task.llm or self.llm
-                task_context = self._get_context(0, context, task)
-                try:
-                    old = view.spec
-                    with task.param.update(**task_config):
-                        view.spec = await task.revise(
-                            instruction, messages, task_context, view
-                        )
-                except Exception as e:
-                    view.spec = old
-                    raise e
-        else:
-            self.invalidate(invalidation_keys, start=1)
-            root = self
-            while root.parent is not None:
-                root = root.parent
-            with root.param.update(config):
-                await root.execute()
+            raise RuntimeError(f"{self.actor.__class__.__name__} failed to provide declared context.")
+        contexts = [self.context, out_context] if self.context else [out_context]
+        return outputs, merge_contexts(LWW, contexts)
 
     def _actor_prompt(self, actor: Actor):
         prompt = Select(
@@ -1130,19 +1068,65 @@ class ActorTask(TaskWrapper):
         layout = Column(Row(prompt, block, edit))
         return layout
 
-    def _render_tasks(self) -> Viewable:
-        tasks = []
-        for task in self._tasks:
-            task_type = type(task).__name__
-            if isinstance(task, FunctionTool):
-                tasks.append((f"{task_type}: {task.function.__name__}", ''))
-            else:
-                tasks.append((task_type, self._actor_prompt(task)))
-        return tasks
+    def editor(self, show_title=True):
+        """
+        Returns the editor for the tasks.
+
+        Arguments
+        ----------
+        show_title: bool
+            Whether to show the title of the tasks.
+
+        Returns
+        -------
+        The editor for the tasks.
+        """
+        task_type = type(self.actor).__name__
+        if isinstance(self.actor, FunctionTool):
+            title, prompt = f"{task_type}: {self.actor.function.__name__}", ''
+        else:
+            title, prompt = task_type, self._actor_prompt(self.actor)
+        return Column(
+            *self._render_controls(),
+            Divider(sizing_mode="stretch_width", margin=(10, 0)),
+            Card(
+                prompt, margin=(10, 0, 10, 0), title=title, title_variant="h4",
+                sizing_mode="stretch_width"
+            )
+        )
+
+    async def revise(
+        self, instruction: str, task: Task | Actor, context: TContext,
+        view: LumenOutput, config: dict[str, Any] | None = None
+    ):
+        config = config or {}
+        invalidation_keys = set(task.output_schema.__annotations__)
+        if isinstance(task, LumenBaseAgent):
+            with view.editor.param.update(loading=True):
+                messages = list(self.history)
+                task_config = dict(config)
+                if "llm" not in task_config:
+                    task_config["llm"] = task.llm or self.llm
+                task_context = merge_contexts(self.input_schema, [self.context, context])
+                try:
+                    old = view.spec
+                    with task.param.update(**task_config):
+                        view.spec = await task.revise(
+                            instruction, messages, task_context, view
+                        )
+                except Exception as e:
+                    view.spec = old
+                    raise e
+        else:
+            self.invalidate(invalidation_keys, start=1)
+            root = self
+            while root.parent is not None:
+                root = root.parent
+            with root.param.update(config):
+                await root.execute()
 
 
-
-class Action(Task, ContextProvider):
+class Action(ExecutableTask):
     """
     An `Action` implements an execute method that performs some unit of work
     and optionally generates outputs to be rendered.
@@ -1156,7 +1140,8 @@ class Action(Task, ContextProvider):
         views, out_context = await super().execute(context, **kwargs)
         if self.render_outputs:
             self._view[:] = [self._render_output(out) for out in views]
-        self.views = self.views + views
+        self.views = views
+        self.status = "success"
         return views, out_context
 
 

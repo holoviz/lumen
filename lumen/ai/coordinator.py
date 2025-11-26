@@ -28,7 +28,7 @@ from .llm import LlamaCpp, Llm, Message
 from .models import (
     RawPlan, Reasoning, ThinkingYesNo, make_agent_model, make_plan_model,
 )
-from .report import ActorTask, Section, TaskWrapper
+from .report import ActorTask, Section, TaskGroup
 from .tools import (
     IterativeTableLookup, TableLookup, Tool, VectorLookupToolUser,
 )
@@ -92,6 +92,9 @@ class Plan(Section):
         return rendered_history, todos
 
     async def _run_task(self, i: int, task: Self | Actor, context: TContext, **kwargs):
+        if task.status == "success":
+            return task.views, task.out_context
+
         outputs = []
         with self._add_step(
             title=f"{task.title}...",
@@ -120,7 +123,7 @@ class Plan(Section):
                     e, task, context, step, i
                 )
             unprovided = [
-                p for actor in task for p in actor.output_schema.__required_keys__
+                p for p in task.output_schema.__required_keys__
                 if p not in task_context
             ]
             if unprovided:
@@ -187,7 +190,7 @@ class Plan(Section):
         for idx in reversed(range(failed_index)):
             task = self._tasks[idx]
             # Check if this task provides pipeline or other relevant context
-            if isinstance(task, TaskWrapper):
+            if isinstance(task, TaskGroup):
                 for actor in task:
                     if 'pipeline' in actor.output_schema.__annotations__:
                         return idx

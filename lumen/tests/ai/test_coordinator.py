@@ -186,7 +186,7 @@ async def sql_plan(llm, tiny_source):
 
 
 async def test_plan_execute(sql_plan):
-    assert sql_plan.status != "error"
+    assert sql_plan.status == "success"
     assert "sql" in sql_plan.out_context
     assert sql_plan.out_context["sql"] == "SELECT SUM(value) as value_sum FROM tiny"
     assert "pipeline" in sql_plan.out_context
@@ -208,7 +208,7 @@ async def test_plan_execute(sql_plan):
 
 
 async def test_plan_edit(sql_plan):
-    assert sql_plan.status != "error"
+    assert sql_plan.status == "success"
     sql_plan.llm.set_responses([
         lambda: f"Result: {sql_plan[0].out_context['pipeline'].data.iloc[0, 0]}"
     ])
@@ -216,7 +216,7 @@ async def test_plan_edit(sql_plan):
     sql_plan.views[1].spec = "SELECT value as value_sum FROM tiny LIMIT 1"
 
     await async_wait_until(lambda: sql_plan.out_context["sql"] == "SELECT value as value_sum FROM tiny LIMIT 1")
-    assert sql_plan.status != "error"
+    assert sql_plan.status == "success"
     assert "pipeline" in sql_plan.out_context
     pd.testing.assert_frame_equal(
         sql_plan.out_context["pipeline"].data,
@@ -237,7 +237,7 @@ async def test_plan_revise(sql_plan):
     )
 
     await async_wait_until(lambda: sql_plan.out_context["sql"] == "SELECT value as value_sum FROM tiny LIMIT 1")
-    assert sql_plan.status != "error"
+    assert sql_plan.status == "success"
     assert "pipeline" in sql_plan.out_context
     pd.testing.assert_frame_equal(
         sql_plan.out_context["pipeline"].data,
