@@ -9,7 +9,9 @@ from collections.abc import Iterable, Iterator
 from contextlib import nullcontext
 from functools import partial
 from types import FunctionType
-from typing import Any, TypedDict, final
+from typing import (
+    Any, Self, TypedDict, final,
+)
 
 import panel as pn
 import param
@@ -26,7 +28,6 @@ from panel_material_ui import (
     FileDownload, IconButton, Progress, Select, TextAreaInput, TextInput,
     Typography,
 )
-from typing_extensions import Self
 
 from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource

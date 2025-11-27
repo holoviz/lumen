@@ -4,7 +4,7 @@ import traceback
 
 from collections.abc import Callable
 from typing import (
-    Annotated, Any, ClassVar, Literal,
+    Annotated, Any, ClassVar, Literal, NotRequired,
 )
 
 import pandas as pd
@@ -18,7 +18,6 @@ from panel_material_ui import Button, Tabs
 from panel_material_ui.chat import ChatMessage, ChatStep
 from pydantic import BaseModel, create_model
 from pydantic.fields import FieldInfo
-from typing_extensions import NotRequired
 
 from ..config import dump_yaml, load_yaml
 from ..dashboard import Config

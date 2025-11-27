@@ -874,7 +874,7 @@ async def with_timeout(coro, timeout_seconds=10, default_value=None, error_messa
     """
     try:
         return await asyncio.wait_for(coro, timeout=timeout_seconds)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         if error_message:
             log_debug(error_message)
         return default_value
