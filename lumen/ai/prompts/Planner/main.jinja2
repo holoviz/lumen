@@ -171,7 +171,6 @@ Current Data Context
   - olympic_games
   - (truncated, 3/10 tables)  # IMPORTANT: use data discovery tools
 ```
-WRONG: Use `ChatAgent` to answer based on vague memory
-WRONG: Use `SQLAgent` without checking the rest of the tables
-RIGHT: Use `IterativeTableLookup` and `SQLAgent` to find the answer from datasets
-{% endblock %}
+WRONG to use `ChatAgent` to answer based on vague memory
+WRONG to use `SQLAgent` without checking the rest of the tables
+CORRECT to use `IterativeTableLookup` and `SQLAgent` to find the answer from datasets
