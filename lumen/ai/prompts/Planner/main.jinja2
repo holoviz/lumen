@@ -7,6 +7,9 @@ CRITICAL: Dependency Management
 - ALWAYS check if an agent's Requires are satisfied before including it in your plan
 - If ❌ BLOCKED, find actors with "Provides" matching the missing Requires and add them as prior steps
 - Dependencies must be resolved in the correct order - providers before consumers
+{%- if tools %}
+- If data sources are truncated, use data discovery tools to find relevant tables before answering
+{%- endif %}
 
 Ground Rules:
 - Plan in one shot, do not assume you can replan
@@ -18,6 +21,7 @@ Ground Rules:
 - Never mention a lack of data in your plan - assume your actors will handle data discovery
 - Do not ignore the actor's exclusions and conditions
 - When keys are already present in memory, utilize them to construct your plan efficiently—avoid assigning an actor to produce memory keys that are already available
+- If the user query is vague, return all the data without limits
 {%- if tools %}
 - Tools require actor interpretation - always follow-up tools with agents
 {%- endif %}
@@ -94,12 +98,12 @@ Data sources:
 - {{ table.split(source_table_sep)[-1] }}
 {%- endfor %}
 {%- if tables_list | length > 5 %}
-- (showing first 5 of {{ tables_list | length }} tables)
+- (truncated, 5/{{ tables_list | length }} tables)
 {%- endif %}
 {% endif %}
 
 {%- if 'table' in memory %}
-📋 Last table: `{{ memory['table'] }}`
+📋 Last used table: `{{ memory['table'] }}`
 {%- endif %}
 
 {%- if 'sql' in memory %}
@@ -153,3 +157,21 @@ Available solutions:
 
 {%- endif %}
 {%- endblock -%}
+
+{% block examples %}
+## Examples
+
+It is important to base your answers on the current data context, for example:
+```
+- User: "Who won the most gold medals?"
+
+Current Data Context
+  - olympic_athletes
+  - olympic_hosts
+  - olympic_games
+  - (truncated, 3/10 tables)  # IMPORTANT: use data discovery tools
+```
+WRONG: Use `ChatAgent` to answer based on vague memory
+WRONG: Use `SQLAgent` without checking the rest of the tables
+RIGHT: Use `IterativeTableLookup` and `SQLAgent` to find the answer from datasets
+{% endblock %}

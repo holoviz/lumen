@@ -5,7 +5,7 @@
 Write a SQL query for the user's data transformation request, focusing on intent over literal interpretation.
 
 ## PRIMARY RULES
-1. Reuse materialized data - Check "Current Knowledge" first before writing CTEs
+1. **Reuse and extend** - If previous metrics are related, include them in the new query, rather than replacing them completely
 2. Column quotes - Use double quotes: `"column_name"`
 3. String quotes - Single quotes: `'string_value'`
 4. No CREATE statements - System handles materialization
