@@ -87,7 +87,7 @@ class Task(Viewer):
     running = param.Boolean(doc="""
         Whether the task is currently running.""")
 
-    status = param.Selector(objects=["idle", "success", "error"], default="idle", doc="""
+    status = param.Selector(objects=["idle", "running", "success", "error"], default="idle", doc="""
         The current status of the task.""")
 
     steps_layout = param.ClassSelector(default=None, class_=(ListLike, NamedListLike), allow_None=True, doc="""
@@ -223,10 +223,18 @@ class Task(Viewer):
         The outputs of the task.
         """
         context = dict(self.context or {}, **(context or {}))
-        with self.param.update(running=True):
+        self.param.update(status="running", running=True)
+        try:
             if not self._prepared:
                 await self.prepare(context)
             views, out_context = await self._execute(context, **kwargs)
+        except Exception:
+            self.status = "error"
+            raise
+        finally:
+            if self.status != "error":
+                self.status = "success"
+            self.running = False
         self.out_context = out_context
         return views, out_context
 
@@ -390,6 +398,7 @@ class TaskGroup(Task):
             self._header = views = [self._title]
 
         views = list(self._header)
+        self.status = "running"
         for i, task in enumerate(self):
             new = []
             try:
@@ -542,6 +551,7 @@ class TaskGroup(Task):
                 keys |= subtask_keys
 
         if invalidated:
+            self.status = "idle"
             self._current = max(min(invalidated), 0)
         return [self[i] for i in invalidated], keys
 
