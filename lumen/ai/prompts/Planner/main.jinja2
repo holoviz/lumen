@@ -173,4 +173,5 @@ Current Data Context
 ```
 WRONG to use `ChatAgent` to answer based on vague memory
 WRONG to use `SQLAgent` without checking the rest of the tables
-CORRECT to use `IterativeTableLookup` and `SQLAgent` to find the answer from datasets
+CORRECT to note data context is truncated so use `IterativeTableLookup` and `SQLAgent` to find the answer from datasets
+{% endblock %}
