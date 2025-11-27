@@ -3,6 +3,7 @@ import json
 import traceback
 
 from collections.abc import Callable
+from functools import partial
 from typing import (
     Annotated, Any, ClassVar, Literal, NotRequired,
 )
@@ -340,7 +341,7 @@ class ListAgent(Agent):
     def _get_items(self, context: TContext) -> dict[str, list[str]]:
         """Return dict of items grouped by source/category"""
 
-    def _use_item(self, event):
+    def _use_item(self, event, interface=None):
         """Handle when a user clicks on an item in the list"""
         if event.column != "show":
             return
@@ -352,7 +353,7 @@ class ListAgent(Agent):
             raise ValueError("Subclass must define _message_format")
 
         message = self._message_format.format(item=repr(item))
-        self.interface.send(message)
+        interface.send(message)
 
     async def respond(
         self,
@@ -388,7 +389,7 @@ class ListAgent(Agent):
                 sizing_mode="stretch_width",
                 name=source_name
             )
-            item_list.on_click(self._use_item)
+            item_list.on_click(partial(self._use_item, interface=self.interface))
             tabs.append(item_list)
 
         self._tabs = Tabs(*tabs, sizing_mode="stretch_width")
