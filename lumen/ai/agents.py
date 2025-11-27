@@ -184,9 +184,11 @@ class Agent(Viewer, ToolUser, ContextProvider):
 
 class SourceOutputs(ContextModel):
 
+    document_sources: list[Any]
+
     source: Source
 
-    document_sources: list[Any]
+    sources: list[Source]
 
 
 class SourceAgent(Agent):
