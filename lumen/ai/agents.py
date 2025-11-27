@@ -516,7 +516,6 @@ class LumenBaseAgent(Agent):
 
     _max_width = None
     _output_type = LumenOutput
-    _retry_target_keys: ClassVar[list[str]] = []
 
     @retry_llm_output()
     async def revise(
@@ -1517,8 +1516,6 @@ class VegaLiteAgent(BaseViewAgent):
     _extensions = ("vega",)
 
     _output_type = VegaLiteOutput
-
-    _retry_target_keys = []
 
     def __init__(self, **params):
         self._vector_store: DuckDBVectorStore | None = None
