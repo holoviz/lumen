@@ -39,6 +39,21 @@ dependencies = [
     "param >=2.2.1",
     "sqlglot",
     "sqlglotrs",
+    "griffe",
+    "nbformat",
+    "duckdb >= 1.2.0",
+    "pyarrow",
+    "instructor >=1.6.4",
+    "pydantic >=2.8.0",
+    "pydantic-extra-types",
+    "panel-graphic-walker[kernel] >=0.6.4",
+    "markitdown",
+    "semchunk",
+    "tiktoken",
+    "chardet",
+    "panel-material-ui >=0.6.0",
+    "tabulate",
+    "panel-splitjs",
 ]
 
 [project.urls]
@@ -49,24 +64,21 @@ HoloViz = "https://holoviz.org/"
 [project.optional-dependencies]
 tests = ['pytest', 'pytest-rerunfailures', 'pytest-asyncio']
 sql = ['duckdb', 'intake-sql', 'sqlalchemy']
-ai = [
-    'griffe', 'nbformat', 'duckdb >= 1.2.0', 'pyarrow', 'instructor >=1.6.4', 'pydantic >=2.8.0', 'pydantic-extra-types', 'panel-graphic-walker[kernel] >=0.6.4',
-    'markitdown', 'semchunk', 'tiktoken', 'chardet', 'panel-material-ui >=0.6.0', 'tabulate', 'panel-splitjs'
-]
-ai-local = ['lumen[ai]', 'huggingface_hub', 'hf_xet']
-ai-openai = ['lumen[ai]', 'openai']
-ai-mistralai = ['lumen[ai]', 'mistralai']
-ai-anthropic = ['lumen[ai]', 'anthropic']
+ai-local = ['huggingface_hub', 'hf_xet']
+ai-openai = ['openai']
+ai-mistralai = ['mistralai']
+ai-anthropic = ['anthropic']
 ai-transformers = ['lumen[ai-local]', 'sentence_transformers>=2.7.0', 'transformers>=4.51.0']  # for embeddings
 ai-llama = ['lumen[ai-local]', 'llama-cpp-python >=0.3.15']
-ai-google = ['lumen[ai]', 'google-genai', 'jsonref']
-ai-litellm = ['lumen[ai]', 'litellm']
-ai-ollama = ['lumen[ai]', 'ollama']
+ai-google = ['google-genai', 'jsonref']
+ai-litellm = ['litellm']
+ai-ollama = ['ollama']
 bigquery = ['google-cloud-bigquery', 'sqlalchemy-bigquery']
 
 [project.scripts]
-lumen = "lumen.command:main"
+lumen-spec = "lumen.command:main"
 lumen-ai = "lumen.command.ai:main"
+lumen = "lumen.command.ai:main"
 
 [project.entry-points.'panel.io.rest']
 lumen = "lumen.rest:lumen_rest_provider"
