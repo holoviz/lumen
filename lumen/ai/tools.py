@@ -990,7 +990,7 @@ class IterativeTableLookup(TableLookup):
         "Useful for answering data queries",
         "Avoid for follow-up questions when existing data is sufficient",
         "Use only when existing information is insufficient for the current query",
-        "When hidden tables exist and the query could plausibly relate to data"
+        "Use if there are truncated tables that could relate to data"
     ])
 
     not_with = param.List(default=["TableLookup"])
