@@ -1,3 +1,5 @@
+import sys
+
 import param
 import pytest
 
@@ -10,6 +12,15 @@ from pydantic import BaseModel
 
 from lumen.ai.llm import Llm, Message
 from lumen.sources.duckdb import DuckDBSource
+
+
+def pytest_collection_modifyitems(config, items):
+    if not sys.platform.startswith("win"):
+        return
+
+    for item in items:
+        if "duckdb" in item.nodeid.lower() or any("duckdb" in fn for fn in item.fixturenames):
+            item.add_marker(pytest.mark.xdist_group("duckdb"))
 
 
 class MockLLM(Llm):
