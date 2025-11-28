@@ -244,6 +244,8 @@ class DuckDBSource(BaseSQLSource):
             # For dictionary case, process each SQL expression
             processed_tables = {}
             for table_name, sql_expr in self.tables.items():
+                if table_name in self._file_based_tables:
+                    sql_expr = self._file_based_tables[table_name]
                 processed_tables[table_name] = self._process_sql_paths(sql_expr)
             spec['tables'] = processed_tables
 
