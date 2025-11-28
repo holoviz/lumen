@@ -394,7 +394,6 @@ class TaskGroup(Task):
             Additional keyword arguments to pass to the tasks.
         """
         if self.title and not self._header:
-            self._view.insert(0, self._title)
             self._header = views = [self._title]
 
         views = list(self._header)
@@ -1006,6 +1005,12 @@ class ActorTask(ExecutableTask):
             view.param.watch(self._update_spec, "spec")
 
         self.views = self._header + views
+        rendered = []
+        for view in views:
+            out = self._render_output(view)
+            if out is not None:
+                rendered.append(out)
+        self._view.extend(rendered)
 
     async def _execute(self, context: TContext, **kwargs) -> tuple[list[Any], TContext]:
         views = []
@@ -1079,6 +1084,10 @@ class ActorTask(ExecutableTask):
         layout = Column(Row(prompt, block, edit))
         return layout
 
+    async def prepare(self, context: TContext):
+        await self.actor.prepare(context)
+        self._prepared = True
+
     def editor(self, show_title=True):
         """
         Returns the editor for the tasks.
@@ -1151,6 +1160,8 @@ class Action(ExecutableTask):
         views, out_context = await super().execute(context, **kwargs)
         if self.render_outputs:
             self._view[:] = [self._render_output(out) for out in views]
+        if self.title:
+            views = [self._title] + views
         self.views = views
         self.status = "success"
         return views, out_context
@@ -1253,9 +1264,7 @@ class SQLQuery(Action):
             "metaset": await get_metaset([source], [self.table]),
             "table": self.table,
         }
-        out = SQLOutput(component=pipeline, spec=self.sql_expr)
-        title = Typography(f"### {self.title}", variant='h4', margin=(10, 10, 0, 10))
-        outputs = [title, out] if self.title else [out]
+        outputs = [SQLOutput(component=pipeline, spec=self.sql_expr)]
         if self.generate_caption:
             caption_out, _ = await AnalystAgent(llm=self.llm).respond(
                 [{"role": "user", "content": self.user_content}], context
