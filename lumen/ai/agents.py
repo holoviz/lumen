@@ -660,7 +660,7 @@ class SQLAgent(LumenBaseAgent):
         """Validate and potentially fix SQL query."""
         # Clean SQL
         try:
-            sql_query = clean_sql(sql_query, source.dialect)
+            sql_query = clean_sql(sql_query, source.dialect, prettify=True)
         except Exception as e:
             step.stream(f"\n\n❌ SQL cleaning failed: {e}")
 
@@ -686,7 +686,7 @@ class SQLAgent(LumenBaseAgent):
                     feedback, messages, context, spec=sql_query, language=f"sql.{source.dialect}",
                     discovery_context=discovery_context
                 )
-                sql_query = clean_sql(retry_result, source.dialect)
+                sql_query = clean_sql(retry_result, source.dialect, prettify=True)
         return sql_query
 
     async def _execute_query(
@@ -1042,7 +1042,7 @@ class SQLAgent(LumenBaseAgent):
             feedback, messages, context, view=view, spec=spec, language=language, **kwargs
         )
         if view is not None:
-            result = clean_sql(result, view.component.source.dialect)
+            result = clean_sql(result, view.component.source.dialect, prettify=True)
         return result
 
     async def respond(
