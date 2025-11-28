@@ -626,13 +626,14 @@ def clean_sql(sql_expr: str, dialect: str | None = None, prettify: bool = False)
     cleaned_sql = sql_expr.replace("```sql", "").replace("```", "")
     if dialect != 'bigquery':
         cleaned_sql = cleaned_sql.replace('`', '"')
+    clean_sql = cleaned_sql.strip().rstrip(";")
     if prettify:
-        sql_expr = sqlglot.transpile(
+        clean_sql = sqlglot.transpile(
             sql_expr,
             read=dialect,
             pretty=True
         )[0]
-    return cleaned_sql.strip().rstrip(";")
+    return clean_sql
 
 
 def report_error(exc: Exception, step: ChatStep, language: str = "python", context: str = "", status: str = "failed"):
