@@ -76,7 +76,11 @@ async def test_sql_agent(llm, duckdb_source, test_messages):
     out, out_context = await agent.respond(test_messages, context)
     assert len(out) == 1
     assert isinstance(out[0], SQLOutput)
-    assert out[0].spec == "SELECT SUM(A) as A_sum FROM test_sql"
+    assert out[0].spec == (
+        "SELECT\n"
+        "  SUM(A) AS A_sum\n"
+        "FROM test_sql"
+    )
     assert set(out_context) == {"data", "pipeline", "sql", "table", "source"}
 
 async def test_vegalite_agent(llm, duckdb_source, test_messages):

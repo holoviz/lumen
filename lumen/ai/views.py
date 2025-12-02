@@ -243,11 +243,12 @@ class VegaLiteOutput(LumenOutput):
 
     export_formats = ("yaml", "png", "jpeg", "pdf", "svg", "html")
 
-    def export(self, fmt: str) -> str | bytes:
+    def export(self, fmt: str) -> StringIO | BytesIO:
         ret = super().export(fmt)
         if ret is not None:
             return ret
-        out = self.component.get_panel().export(fmt, scale=2)
+        kwargs = {"scale": 2} if fmt in ("png", "jpeg", "pdf") else {}
+        out = self.component.get_panel().export(fmt, **kwargs)
         return BytesIO(out) if isinstance(out, bytes) else StringIO(out)
 
     @pn.cache

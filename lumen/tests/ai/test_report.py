@@ -92,11 +92,14 @@ async def test_action_execute_renders_outputs():
 
     assert action.views == outs
     assert len(outs) == 2
-    out = outs[1]
-    assert isinstance(out, Markdown)
+    out1, out2 = outs
+    assert isinstance(out1, Typography)
+    assert out1.object == "### A1"
+    assert isinstance(out1, Markdown)
+    assert out2.object == "**Hello**"
 
     assert len(action._view) == 1
-    assert action._view[0] is out
+    assert action._view[0] is out2
 
 async def test_action_execute_updates_status():
     action = HelloAction(title="A1")
@@ -142,7 +145,6 @@ async def test_taskgroup_sequences_actions():
     assert isinstance(v1, Column)
     assert len(v1.objects) == 1
     assert v1.objects[0].object == "A done"
-
     assert isinstance(v2, Column)
     assert len(v2.objects) == 1
     assert v2.objects[0].object == "B done"
