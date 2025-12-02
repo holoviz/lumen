@@ -711,6 +711,9 @@ class Planner(Coordinator):
         with self._add_step(
             title="Gathering context for planning...", user="Assistant", steps_layout=self.steps_layout
         ) as step:
+            # Need this to find the steps layout
+            self.steps_layout = self.interface.objects[-1].object
+
             # Collect all output contexts for proper merging
             collected_contexts = []
 
