@@ -188,7 +188,11 @@ async def sql_plan(llm, tiny_source):
 async def test_plan_execute(sql_plan):
     assert sql_plan.status == "success"
     assert "sql" in sql_plan.out_context
-    assert sql_plan.out_context["sql"] == "SELECT SUM(value) as value_sum FROM tiny"
+    assert sql_plan.out_context["sql"] == (
+        "SELECT\n"
+        "  SUM(value) AS value_sum\n"
+        "FROM tiny"
+    )
     assert "pipeline" in sql_plan.out_context
     pd.testing.assert_frame_equal(
         sql_plan.out_context["pipeline"].data,
@@ -200,7 +204,11 @@ async def test_plan_execute(sql_plan):
     assert isinstance(v1, Typography)
     assert v1.object == "### Aggregate"
     assert isinstance(v2, SQLOutput)
-    assert v2.spec == "SELECT SUM(value) as value_sum FROM tiny"
+    assert v2.spec == (
+        "SELECT\n"
+        "  SUM(value) AS value_sum\n"
+        "FROM tiny"
+    )
     assert isinstance(v3, Typography)
     assert v3.object == "### Analyze"
     assert isinstance(v4, ChatMessage)
@@ -228,15 +236,23 @@ async def test_plan_edit(sql_plan):
 
 async def test_plan_revise(sql_plan):
     sql_plan.llm.set_responses([
-        RetrySpec(chain_of_thought="Select first row", edits=[ReplaceLine(line_no=1, line="SELECT value as value_sum FROM tiny LIMIT 1")]),
+        RetrySpec(chain_of_thought="Select first row", edits=[
+            ReplaceLine(line_no=2, line="value AS value_sum"),
+            ReplaceLine(line_no=3, line="FROM tiny LIMIT 1")
+        ]),
         lambda: f"Result: {sql_plan[0].out_context['pipeline'].data.iloc[0, 0]}"
     ])
 
     await sql_plan[0].revise(
-        "LIMIT 1", sql_plan[0].actor, sql_plan.context, sql_plan.views[1], config={'llm': sql_plan.llm}
+        "Update to limit to 1 row", sql_plan[0].actor, sql_plan.context, sql_plan.views[1], config={'llm': sql_plan.llm}
     )
 
-    await async_wait_until(lambda: sql_plan.out_context["sql"] == "SELECT value as value_sum FROM tiny LIMIT 1")
+    await async_wait_until(lambda: sql_plan.out_context["sql"] == (
+        "SELECT\n"
+        "  value AS value_sum\n"
+        "FROM tiny\n"
+        "LIMIT 1"
+    ))
     assert sql_plan.status == "success"
     assert "pipeline" in sql_plan.out_context
     pd.testing.assert_frame_equal(
