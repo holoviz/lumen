@@ -676,9 +676,8 @@ class Planner(Coordinator):
             self.planner_tools = self._initialize_tools_for_prompt(planner_tools_input, **init_params)
 
             # Prepare planner_tools
-            context = params.get('context', self.context)
             for tool in self.planner_tools:
-                state.execute(partial(tool.prepare, context))
+                state.execute(partial(tool.prepare, self.context))
 
     async def _check_follow_up_question(self, messages: list[Message], context: TContext) -> bool:
         """Check if the user's query is a follow-up question about the previous dataset."""
