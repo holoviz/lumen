@@ -487,6 +487,16 @@ class Coordinator(Viewer, VectorLookupToolUser):
             agents = {normalized_name(agent): agent for agent in self.agents}
             tools = {normalized_name(tool): tool for tool in self._tools["main"]}
 
+            self._todos_title = Typography(
+                "📋 Building checklist...", css_classes=["todos-title"], margin=0,
+                styles={"font-weight": "normal", "font-size": "1.1em"}
+            )
+            todos = Typography(
+                css_classes=["todos"], margin=0, styles={"font-weight": "normal"}
+            )
+            todos_layout = Column(self._todos_title, todos, stylesheets=[".markdown { padding-inline: unset; }"])
+            self.steps_layout = Card(header=todos_layout, collapsed=not self.verbose, elevation=2)
+            self.interface.stream(self.steps_layout)
             agents, tools, pre_plan_output = await self._pre_plan(
                 messages, context, agents, tools
             )
@@ -709,11 +719,8 @@ class Planner(Coordinator):
         )
 
         with self._add_step(
-            title="Gathering context for planning...", user="Assistant", steps_layout=self.steps_layout
+            title="Gathering context for planning...", steps_layout=self.steps_layout
         ) as step:
-            # Need this to find the steps layout
-            self.steps_layout = self.interface.objects[-1].object
-
             # Collect all output contexts for proper merging
             collected_contexts = []
 
@@ -1010,22 +1017,10 @@ class Planner(Coordinator):
         previous_plans, previous_actors = [], []
         attempts = 0
         plan = None
-
-        todos_title = Typography(
-            "📋 Building checklist...", css_classes=["todos-title"], margin=0,
-            styles={"font-weight": "normal", "font-size": "1.1em"}
-        )
-        todos = Typography(
-            css_classes=["todos"], margin=0, styles={"font-weight": "normal"}
-        )
-        todos_layout = Column(todos_title, todos, stylesheets=[".markdown { padding-inline: unset; }"])
-
         with self._add_step(
-            title="Planning how to solve user query...", user="Planner",
-            layout_params={"header": todos_layout, "collapsed": not self.verbose, "elevation": 2}
+            title="Planning how to solve user query...", user="Planner", steps_layout=self.steps_layout
         ) as istep:
             await asyncio.sleep(0.1)
-            self.steps_layout = self.interface.objects[-1].object
             while not planned:
                 if attempts > 0:
                     log_debug(f"\033[91m!! Attempt {attempts}\033[0m")
@@ -1036,12 +1031,12 @@ class Planner(Coordinator):
                         plan_model, istep, is_follow_up=pre_plan_output["is_follow_up"]
                     )
                 except asyncio.CancelledError as e:
-                    todos_title.object = istep.failed_title = 'Planning was cancelled, please try again.'
+                    self._todos_title.object = istep.failed_title = 'Planning was cancelled, please try again.'
                     traceback.print_exception(e)
                     raise e
                 except Exception as e:
                     istep.failed_title = "Internal execution error during planning stage."
-                    todos_title.object = (
+                    self._todos_title.object = (
                         "Planner could not settle on a plan of action to perform the requested query. "
                         "Please restate your request."
                     )
@@ -1059,7 +1054,7 @@ class Planner(Coordinator):
                     planned = True
                 if attempts > 5:
                     istep.failed_title = "Planning failed to come up with viable plan, please restate the problem and try again."
-                    todos_title.object = "❌ Planning failed"
+                    self._todos_title.object = "❌ Planning failed"
                     e = RuntimeError("Planner failed to come up with viable plan after 5 attempts.")
                     traceback.print_exception(e)
                     raise e
