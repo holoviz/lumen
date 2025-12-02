@@ -27,7 +27,7 @@ Create a high-level roadmap for answering the user's query. This roadmap will gu
 
 {% block context %}
 Available Schema Context:
-{{ memory["metaset"].compact_context }}
+{{ memory["metaset"].compact_context() }}
 
 📊 Available Data:
 {%- set tables_list = memory.get('visible_slugs', []) | list %}

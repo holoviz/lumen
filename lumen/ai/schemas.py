@@ -120,9 +120,12 @@ class Metaset:
     def _generate_context(
         self,
         include_columns: bool = False,
-        truncate: bool = False
+        truncate: bool = False,
+        n: int | None = None
     ) -> str:
         table_slugs = self.schemas.keys() if self.has_schemas else self.catalog.keys()
+        if n is not None:
+            table_slugs = list(table_slugs)[:n]
 
         tables_data = {}
         for table_slug in table_slugs:
@@ -141,20 +144,17 @@ class Metaset:
             sort_keys=False
         )
 
-    @property
-    def table_context(self) -> str:
-        return self._generate_context(include_columns=False, truncate=False)
+    def table_context(self, n: int | None = None) -> str:
+        return self._generate_context(include_columns=False, truncate=False, n=n)
 
-    @property
-    def full_context(self) -> str:
-        return self._generate_context(include_columns=True, truncate=False)
+    def full_context(self, n: int | None = None) -> str:
+        return self._generate_context(include_columns=True, truncate=False, n=n)
 
-    @property
-    def compact_context(self) -> str:
-        return self._generate_context(include_columns=True, truncate=True)
+    def compact_context(self, n: int | None = None) -> str:
+        return self._generate_context(include_columns=True, truncate=True, n=n)
 
     def __str__(self) -> str:
-        return self.table_context
+        return self.table_context()
 
 
 async def get_metaset(

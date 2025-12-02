@@ -52,7 +52,7 @@ Write a SQL query for the user's data transformation request, focusing on intent
 {%- endif %}
 
 ### Data summary
-{{ memory["metaset"].compact_context }}
+{{ memory["metaset"].compact_context() }}
 
 {%- if 'sql' in memory %}
 Previous: `{{ memory['sql'] }}`

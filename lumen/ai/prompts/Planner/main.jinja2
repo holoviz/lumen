@@ -89,15 +89,7 @@ Documents available:
 
 {%- if memory.get('metaset') %}
 Data sources (sorted by relevance):
-{%- set catalog_items = memory['metaset'].catalog.items() | list %}
-{%- set sorted_items = catalog_items | sort(attribute='1.similarity', reverse=True) %}
-{%- for table_slug, entry in sorted_items[:5] %}
-- {{ table_slug.split(source_table_sep)[-1] }} (similarity: {{ "%.2f" | format(entry.similarity) }})
-  {%- if entry.description %} - {{ entry.description[:80] }}{% endif %}
-{%- endfor %}
-{%- if sorted_items | length > 5 %}
-- (showing top 5 of {{ sorted_items | length }} tables by relevance)
-{%- endif %}
+{{ memory['metaset'].table_context(n=5) }}
 {%- elif memory.get('visible_slugs') %}
 Data sources:
 {%- set tables_list = memory['visible_slugs'] | list %}
