@@ -22,7 +22,9 @@ from pydantic import BaseModel
 from .actor import Actor
 from .agents import Agent, AnalysisAgent, ChatAgent
 from .config import PROMPTS_DIR, MissingContextError
-from .context import ContextError, TContext
+from .context import (
+    LWW, ContextError, TContext, merge_contexts,
+)
 from .llm import LlamaCpp, Llm, Message
 from .models import (
     RawPlan, Reasoning, ThinkingYesNo, make_agent_model, make_plan_model,
@@ -643,7 +645,7 @@ class Planner(Coordinator):
     and then executes it.
     """
 
-    planner_tools = param.List(default=[], doc="""
+    planner_tools = param.List(default=[TableLookup], doc="""
         List of tools to use to provide context for the planner prior
         to making a plan.""")
 
@@ -661,9 +663,22 @@ class Planner(Coordinator):
     )
 
     def __init__(self, **params):
-        if 'planner_tools' in params:
-            params["planner_tools"] = self._initialize_tools_for_prompt(params["planner_tools"], **params)
+        # Extract planner_tools before super().__init__ to prevent premature setting
+        planner_tools_input = params.pop('planner_tools', self.param.planner_tools.default)
+
+        # Initialize coordinator first so self.vector_store is available
         super().__init__(**params)
+
+        # Now initialize planner_tools with access to self.vector_store
+        if planner_tools_input:
+            # Pass vector_store explicitly to ensure sharing
+            init_params = {**params, 'vector_store': self.vector_store}
+            self.planner_tools = self._initialize_tools_for_prompt(planner_tools_input, **init_params)
+
+            # Prepare planner_tools
+            context = params.get('context', self.context)
+            for tool in self.planner_tools:
+                state.execute(partial(tool.prepare, context))
 
     async def _check_follow_up_question(self, messages: list[Message], context: TContext) -> bool:
         """Check if the user's query is a follow-up question about the previous dataset."""
@@ -697,6 +712,9 @@ class Planner(Coordinator):
         with self._add_step(
             title="Gathering context for planning...", user="Assistant", steps_layout=self.steps_layout
         ) as step:
+            # Collect all output contexts for proper merging
+            collected_contexts = []
+
             for tool in self.planner_tools:
                 is_relevant = await self._check_tool_relevance(
                     tool, "", self, f"Gather context for planning to answer {user_query}",
@@ -715,10 +733,20 @@ class Planner(Coordinator):
                     title=f"Gathering context with {tool_name}",
                     steps_layout=self.steps_layout,
                 )
-                await task.execute(context)
-                if task.status != "error":
+                outputs, out_context = await task.execute(context)
+                if task.status == "error":
                     step.stream(f"\n\n✗ Failed to gather context from {tool_name}")
                     continue
+
+                # Collect the output context
+                collected_contexts.append(out_context)
+                step.stream(f"\n\n✓ Collected {', '.join(f'`{k}`' for k in out_context)} from {tool_name}")
+
+            # Merge all collected contexts using LWW (last-write-wins) strategy
+            if collected_contexts:
+                merged = merge_contexts(LWW, collected_contexts)
+                context.update(merged)
+                step.stream(f"\n\nMerged context keys: {', '.join(f'`{k}`' for k in merged)}")
 
     async def _pre_plan(
         self,

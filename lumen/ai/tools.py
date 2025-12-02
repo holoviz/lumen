@@ -954,8 +954,7 @@ class TableLookup(VectorLookupTool):
                 if table_slug in catalog:
                     catalog[table_slug].similarity = 1
 
-        metaset = Metaset(
-            catalog=catalog, query=query)
+        metaset = Metaset(catalog=catalog, query=query)
         return {"metaset": metaset}
 
     def _format_context(self, outputs: TableLookupOutputs) -> str:
