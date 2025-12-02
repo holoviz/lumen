@@ -91,8 +91,8 @@ async def test_action_execute_renders_outputs():
     outs, ctx = await action.execute()
 
     assert action.views == outs
-    assert len(outs) == 1
-    out = outs[0]
+    assert len(outs) == 2
+    out = outs[1]
     assert isinstance(out, Markdown)
 
     assert len(action._view) == 1
@@ -137,16 +137,15 @@ async def test_taskgroup_sequences_actions():
     assert isinstance(out3, Markdown) and out3.object == "B done"
     assert outs == tg.views
 
-    assert len(tg._view) == 3
-    v1, v2, v3 = tg._view
-    assert isinstance(v1, Typography)
-    assert v1.object == "### Seq"
+    assert len(tg._view) == 2
+    v1, v2 = tg._view
+    assert isinstance(v1, Column)
+    assert len(v1.objects) == 1
+    assert v1.objects[0].object == "A done"
+
     assert isinstance(v2, Column)
     assert len(v2.objects) == 1
-    assert v2.objects[0].object == "A done"
-    assert isinstance(v3, Column)
-    assert len(v3.objects) == 1
-    assert v3.objects[0].object == "B done"
+    assert v2.objects[0].object == "B done"
 
 async def test_taskgroup_status():
     tg = TaskGroup(A(), B(), title="Seq")
@@ -208,15 +207,13 @@ async def test_taskgroup_continue_on_error():
     assert out1.object == "### Error"
     assert isinstance(out2, Markdown) and out2.object == "B done"
 
-    assert len(tg._view) == 3
-    v1, v2, v3 = tg._view
-    assert isinstance(v1, Typography)
-    assert v1.object == "### Error"
+    assert len(tg._view) == 2
+    v1, v2 = tg._view
+    assert isinstance(v1, Column)
+    assert len(v1) == 0
     assert isinstance(v2, Column)
-    assert len(v2) == 0
-    assert isinstance(v3, Column)
-    assert len(v3) == 1
-    assert v3[0].object == "B done"
+    assert len(v2) == 1
+    assert v2[0].object == "B done"
 
 async def test_taskgroup_abort_on_error():
     order = []
@@ -234,13 +231,12 @@ async def test_taskgroup_abort_on_error():
     assert isinstance(outs[0], Typography)
     assert outs[0].object == "### Error"
 
-    assert len(tg._view) == 3
-    v1, v2, v3 = tg._view
-    assert v1 is outs[0]
+    assert len(tg._view) == 2
+    v1, v2 = tg._view
+    assert isinstance(v1, Column)
+    assert len(v1) == 0
     assert isinstance(v2, Column)
     assert len(v2) == 0
-    assert isinstance(v3, Column)
-    assert len(v3) == 0
 
 async def test_taskgroup_context_invalidate():
 
