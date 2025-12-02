@@ -496,7 +496,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
             )
             todos_layout = Column(self._todos_title, todos, stylesheets=[".markdown { padding-inline: unset; }"])
             self.steps_layout = Card(header=todos_layout, collapsed=not self.verbose, elevation=2)
-            self.interface.stream(self.steps_layout)
+            self.interface.stream(self.steps_layout, user="Planner")
             agents, tools, pre_plan_output = await self._pre_plan(
                 messages, context, agents, tools
             )
