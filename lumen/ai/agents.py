@@ -385,7 +385,6 @@ class ListAgent(Agent):
                 min_width=350,
                 widths={self._column_name: "90%"},
                 disabled=True,
-                page_size=10,
                 pagination="remote",
                 header_filters=header_filters,
                 sizing_mode="stretch_width",
