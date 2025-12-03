@@ -43,7 +43,7 @@ Goal: Minimal follow-ups that directly address the gap in understanding.
 {%- if error_context %}Original Error: {{ error_context }}{% endif %}
 
 ## Data summary
-{{ memory["metaset"].compact_context }}
+{{ memory["metaset"].compact_context() }}
 
 ## Discovery Results
 {% for query_type, result in discovery_results %}

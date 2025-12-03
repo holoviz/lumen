@@ -199,7 +199,7 @@ class UI(Viewer):
         params["log_level"] = params.get("log_level", self.param["log_level"].default).upper()
         super().__init__(**params)
         self._configure_context(data)
-        self._configure_interface()
+        self._configure_interface(interface)
         self._configure_coordinator()
         self._configure_session()
         self._render_page()
@@ -351,7 +351,7 @@ class UI(Viewer):
         if self._split[0][0] is not self.interface:
             self._split[0][0] = self.interface
 
-    def _configure_interface(self):
+    def _configure_interface(self, interface):
         def on_undo(instance, _):
             if not self._logs:
                 return
@@ -409,7 +409,6 @@ class UI(Viewer):
                     self.interface.send(msg, respond=bool(user_prompt))
                     chat_input.value_input = ""
 
-        interface = self.interface
         if interface is None:
             interface = ChatInterface(
                 callback=self._chat_invoke,
@@ -421,6 +420,7 @@ class UI(Viewer):
                 sizing_mode="stretch_both"
             )
         else:
+            interface = self.interface
             interface.callback = self._chat_invoke
             interface.on_submit = on_submit
         interface.button_properties = {

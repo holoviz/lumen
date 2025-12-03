@@ -14,7 +14,8 @@ from panel_material_ui import Card, ChatMessage, Typography
 from lumen.ai.agents import AnalystAgent, ChatAgent, SQLAgent
 from lumen.ai.coordinator import Plan, Planner
 from lumen.ai.models import (
-    Reasoning, ReplaceLine, RetrySpec, SqlQuery, make_plan_model,
+    Reasoning, ReplaceLine, RetrySpec, SqlQuery, ThinkingYesNo,
+    make_plan_model,
 )
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
@@ -56,6 +57,7 @@ async def test_planner_empty_plan(llm):
     plan_model = make_plan_model(["ChatAgent"], [])
 
     llm.set_responses([
+        ThinkingYesNo(chain_of_thought="Just use ChatAgent", yes=False),
         Reasoning(chain_of_thought="Just use ChatAgent"),
         plan_model(title="Hello!", steps=[])
     ])
@@ -82,6 +84,7 @@ async def test_planner_simple_plan(llm):
     (StepModel,) = get_args(PlanModel.__annotations__['steps'])
 
     llm.set_responses([
+        ThinkingYesNo(chain_of_thought="Just use ChatAgent", yes=False),
         Reasoning(chain_of_thought="Just use ChatAgent"),
         PlanModel(title="Hello!", steps=[
             StepModel(
@@ -99,8 +102,8 @@ async def test_planner_simple_plan(llm):
     assert len(planner.interface) == 1
     steps_layout = planner.interface[0].object
     isinstance(steps_layout, Card)
-    assert len(steps_layout) == 1
-    reasoning_step = steps_layout[0]
+    assert len(steps_layout) == 2
+    reasoning_step = steps_layout[1]
     isinstance(reasoning_step, Card)
     assert reasoning_step.title == "Plan with 1 steps created"
     assert len(reasoning_step) == 1
@@ -125,6 +128,7 @@ async def test_planner_error(llm):
     (StepModel,) = get_args(PlanModel.__annotations__['steps'])
 
     llm.set_responses([
+        ThinkingYesNo(chain_of_thought="Just use ChatAgent", yes=False),
         Reasoning(chain_of_thought="Just use ChatAgent"),
         lambda: PlanModel(
             title="Hello!", steps=[
@@ -146,8 +150,8 @@ async def test_planner_error(llm):
     assert len(planner.interface) == 1
     steps_layout = planner.interface[0].object
     isinstance(steps_layout, Card)
-    assert len(steps_layout) == 1
-    reasoning_step = steps_layout[0]
+    assert len(steps_layout) == 2
+    reasoning_step = steps_layout[1]
     isinstance(reasoning_step, Card)
     assert reasoning_step.title == "Internal execution error during planning stage."
     title, todos = steps_layout.header

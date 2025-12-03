@@ -878,7 +878,6 @@ class TableLookup(VectorLookupTool):
 
     async def _gather_info(self, messages: list[dict[str, str]], context: TContext) -> TableLookupOutputs:
         """Gather relevant information about the tables based on the user query."""
-
         query = messages[-1]["content"]
 
         # Count total number of tables available across all sources
@@ -954,8 +953,7 @@ class TableLookup(VectorLookupTool):
                 if table_slug in catalog:
                     catalog[table_slug].similarity = 1
 
-        metaset = Metaset(
-            catalog=catalog, query=query)
+        metaset = Metaset(catalog=catalog, query=query)
         return {"metaset": metaset}
 
     def _format_context(self, outputs: TableLookupOutputs) -> str:

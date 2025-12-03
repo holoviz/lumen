@@ -411,6 +411,8 @@ class TableListInputs(ContextModel):
 
     visible_slugs: NotRequired[set[str]]
 
+    metaset: NotRequired[Metaset]
+
 
 class TableListAgent(ListAgent):
     """
@@ -447,8 +449,20 @@ class TableListAgent(ListAgent):
         if not visible_slugs:
             return {}
 
+        # If metaset is available, sort by relevance (similarity score)
+        metaset = context.get('metaset')
+        if metaset:
+            # Get tables sorted by relevance from metaset
+            sorted_slugs = [
+                slug for slug in metaset.catalog.keys()
+                if slug in visible_slugs
+            ]
+        else:
+            # Fallback to alphabetical sort
+            sorted_slugs = sorted(visible_slugs)
+
         tables_by_source = {}
-        for slug in visible_slugs:
+        for slug in sorted_slugs:
             if SOURCE_TABLE_SEPARATOR in slug:
                 source_name, table_name = slug.split(SOURCE_TABLE_SEPARATOR, 1)
             else:
@@ -459,10 +473,6 @@ class TableListAgent(ListAgent):
             if source_name not in tables_by_source:
                 tables_by_source[source_name] = []
             tables_by_source[source_name].append(table_name)
-
-        # Sort tables within each source
-        for source in tables_by_source:
-            tables_by_source[source].sort()
 
         return tables_by_source
 
