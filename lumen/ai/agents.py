@@ -1992,7 +1992,7 @@ class AnalysisOutputs(ContextModel):
 
     pipeline: NotRequired[Pipeline]
 
-    view: Any
+    view: NotRequired[Any]
 
 
 class AnalysisAgent(LumenBaseAgent):
@@ -2087,7 +2087,9 @@ class AnalysisAgent(LumenBaseAgent):
                 if isinstance(view, View):
                     view_type = view.view_type
                     out_context["view"] = dict(spec, type=view_type)
+                    out_context["pipeline"] = view
                 elif isinstance(view, Pipeline):
+                    out_context["view"] = view
                     out_context["pipeline"] = view
                 # Ensure data reflects processed pipeline
                 if "pipeline" in out_context:
