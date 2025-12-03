@@ -398,7 +398,6 @@ class AnalysisOutput(LumenOutput):
         super().__init__(**params)
         controls = self.analysis.controls(self.context)
         if controls is not None or not self.analysis.autorun:
-            controls = Column() if controls is None else controls
             if self.analysis._run_button:
                 run_button = self.analysis._run_button
                 run_button.param.watch(self._rerun, 'clicks')
@@ -407,7 +406,7 @@ class AnalysisOutput(LumenOutput):
                     icon='play_circle_outline', label='Run', on_click=self._rerun,
                     button_type='success', margin=(10, 0, 0, 10)
                 )
-            self.editor = Column(controls, run_button)
+            self.editor = Column(controls, run_button) if controls else run_button
         self._rendered = True
 
     async def _rerun(self, event):

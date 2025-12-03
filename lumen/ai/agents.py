@@ -2108,9 +2108,9 @@ class AnalysisAgent(LumenBaseAgent):
             self.interface.stream("Failed to find an analysis that applies to this data.")
         else:
             out = self._output_type(
-                component=view, title=step_title, analysis=analysis, pipeline=out_context.get("pipeline"), context=context
+                component=view, title=step_title, analysis=analysis, pipeline=context.get("pipeline"), context=context
             )
-        return [] if view is None else [out], out_context
+        return [] if view is None and analysis_callable.autorun else [out], out_context
 
 
 class ValidationInputs(ContextModel):
