@@ -1384,9 +1384,9 @@ class ExplorerUI(UI):
                             styles={"font-weight": "normal", "font-size": "1.1em"}
                         )
                     ]
-                    partial_plan = plan
-                    plan = parent.plan.merge(plan)
-                    partial_plan.cleanup()
+                partial_plan = plan
+                plan = parent.plan.merge(plan)
+                partial_plan.cleanup()
             watcher = None
 
         # Execute plan
