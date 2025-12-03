@@ -391,9 +391,6 @@ class AnalysisOutput(LumenOutput):
     pipeline = param.ClassSelector(class_=Pipeline)
 
     def __init__(self, **params):
-        if not params['analysis'].autorun:
-            params['active'] = 0
-
         # Set title based on analysis name if not provided
         if 'title' not in params or params['title'] is None:
             params['title'] = type(params['analysis']).__name__
