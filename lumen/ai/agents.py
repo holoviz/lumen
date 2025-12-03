@@ -1990,6 +1990,8 @@ class AnalysisOutputs(ContextModel):
 
     analysis: Callable
 
+    pipeline: NotRequired[Pipeline]
+
     view: Any
 
 
@@ -2012,6 +2014,9 @@ class AnalysisAgent(LumenBaseAgent):
             "main": {"template": PROMPTS_DIR / "AnalysisAgent" / "main.jinja2"},
         }
     )
+
+    input_schema = AnalysisInputs
+    output_schema = AnalysisOutputs
 
     _output_type = AnalysisOutput
 

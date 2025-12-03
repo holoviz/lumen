@@ -766,6 +766,7 @@ class UI(Viewer):
                         instruction=contents,
                         title=contents
                     ),
+                    history=[{"role": "user", "content": contents}],
                     context=context,
                     coordinator=self._coordinator,
                     title=contents,
@@ -1374,17 +1375,18 @@ class ExplorerUI(UI):
         else:
             exploration = parent
             if parent.plan is not None:
-                plan.steps_layout.header[:] = [
-                    Typography(
-                        "🔀 Combined tasks with previous checklist",
-                        css_classes=["todos-title"],
-                        margin=0,
-                        styles={"font-weight": "normal", "font-size": "1.1em"}
-                    )
-                ]
-                partial_plan = plan
-                plan = parent.plan.merge(plan)
-                partial_plan.cleanup()
+                if plan.steps_layout:
+                    plan.steps_layout.header[:] = [
+                        Typography(
+                            "🔀 Combined tasks with previous checklist",
+                            css_classes=["todos-title"],
+                            margin=0,
+                            styles={"font-weight": "normal", "font-size": "1.1em"}
+                        )
+                    ]
+                    partial_plan = plan
+                    plan = parent.plan.merge(plan)
+                    partial_plan.cleanup()
             watcher = None
 
         # Execute plan
