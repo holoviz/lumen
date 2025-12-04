@@ -13,6 +13,7 @@ import requests
 from jsonschema import Draft7Validator, ValidationError
 from panel.config import config
 from panel.layout import Row
+from panel.pane import panel as as_panel
 from panel.param import ParamMethod
 from panel.viewable import Viewable, Viewer
 from panel.widgets import CodeEditor
@@ -25,10 +26,10 @@ from ..config import dump_yaml, load_yaml
 from ..downloads import Download
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
-from ..views.base import Panel, Table
+from ..views.base import Panel, Table, View
 from .analysis import Analysis
 from .config import VEGA_ZOOMABLE_MAP_ITEMS
-from .utils import describe_data
+from .utils import describe_data, get_data
 
 
 class LumenOutput(Viewer):
@@ -409,12 +410,25 @@ class AnalysisOutput(LumenOutput):
             self.editor = Column(controls, run_button) if controls else run_button
         self._rendered = True
 
+    async def render_context(self):
+        out_context = {}
+        view = self.component
+        if isinstance(view, View):
+            out_context["view"] = dict(object=self._spec_dict, type=view.view_type)
+        elif isinstance(view, Pipeline):
+            out_context["pipeline"] = out_context["view"] = pipeline = view
+            data = await get_data(pipeline)
+            if len(data) > 0:
+                out_context["data"] = await describe_data(data)
+        return out_context
+
     async def _rerun(self, event):
         with self.view.param.update(loading=True):
             if asyncio.iscoroutinefunction(self.analysis.__call__):
                 view = await self.analysis(self.pipeline, self.context)
             else:
                 view = await asyncio.to_thread(self.analysis, self.pipeline, self.context)
+            view = as_panel(view)
             if isinstance(view, Viewable):
                 view = Panel(object=view, pipeline=self.pipeline)
             self.component = view

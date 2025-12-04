@@ -5,7 +5,7 @@ import traceback
 from collections.abc import Callable
 from functools import partial
 from typing import (
-    Annotated, Any, ClassVar, Literal, NotRequired,
+    Annotated, Any, ClassVar, NotRequired,
 )
 
 import pandas as pd
@@ -14,10 +14,11 @@ import param
 import requests
 
 from panel.chat import ChatInterface
+from panel.pane import panel as as_panel
 from panel.viewable import Viewable, Viewer
 from panel_material_ui import Button, Tabs
 from panel_material_ui.chat import ChatMessage, ChatStep
-from pydantic import BaseModel, create_model
+from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
 from ..config import dump_yaml, load_yaml
@@ -27,9 +28,7 @@ from ..sources.base import BaseSQLSource, Source
 from ..sources.duckdb import DuckDBSource
 from ..state import state
 from ..transforms.sql import SQLLimit
-from ..views import (
-    Panel, VegaLiteView, View, hvPlotUIView,
-)
+from ..views import Panel, VegaLiteView, hvPlotUIView
 from .actor import ContextProvider
 from .config import (
     LUMEN_CACHE_DIR, PROMPTS_DIR, SOURCE_TABLE_SEPARATOR,
@@ -43,7 +42,8 @@ from .llm import Llm, Message, OpenAI
 from .models import (
     DbtslQueryParams, DistinctQuery, PartialBaseModel,
     QueryCompletionValidation, RetrySpec, SampleQuery, VegaLiteSpec,
-    VegaLiteSpecUpdate, make_discovery_model, make_sql_model,
+    VegaLiteSpecUpdate, make_analysis_model, make_discovery_model,
+    make_sql_model,
 )
 from .schemas import DbtslMetaset, Metaset, get_metaset
 from .services import DbtslMixin
@@ -740,7 +740,7 @@ class SQLAgent(LumenBaseAgent):
         sql: str,
         step_title: str | None,
         raise_if_empty: bool = False
-    ) -> tuple[LumenOutput, SQLOutputs]:
+    ) -> SQLOutput:
         """Finalize execution for final step."""
 
         df = await get_data(pipeline)
@@ -750,13 +750,7 @@ class SQLAgent(LumenBaseAgent):
         view = self._output_type(
             component=pipeline, title=step_title, spec=sql
         )
-        return view, {
-            "data": await describe_data(df),
-            "sql": sql,
-            "pipeline": pipeline,
-            "table": pipeline.table,
-            "source": pipeline.source
-        }
+        return view
 
     def _merge_sources(
         self, sources: dict[tuple[str, str], BaseSQLSource], tables: list[tuple[str, str]]
@@ -784,7 +778,7 @@ class SQLAgent(LumenBaseAgent):
         discovery_context: str | None = None,
         raise_if_empty: bool = False,
         output_title: str | None = None
-    ) -> tuple[LumenOutput, SQLOutputs]:
+    ) -> SQLOutput:
         """
         Helper method that generates, validates, and executes final SQL queries.
 
@@ -860,7 +854,7 @@ class SQLAgent(LumenBaseAgent):
                 is_final=True, should_materialize=True, step=step
             )
 
-            view, out_context = await self._finalize_execution(
+            view = await self._finalize_execution(
                 pipeline,
                 validated_sql,
                 output_title,
@@ -873,7 +867,7 @@ class SQLAgent(LumenBaseAgent):
                     success_title=success_message
                 )
 
-        return view, out_context
+        return view
 
     async def _select_discoveries(
         self,
@@ -992,7 +986,7 @@ class SQLAgent(LumenBaseAgent):
         sources: dict[tuple[str, str], Source],
         error_context: str,
         step_title: str | None = None,
-    ) -> tuple[LumenOutput, SQLOutputs]:
+    ) -> SQLOutput:
         """Run adaptive exploration: initial discoveries → sufficiency check → optional follow-ups → final answer."""
         # Step 1: LLM selects initial discoveries
         with self._add_step(title="Selecting initial discoveries", steps_layout=self._steps_layout) as step:
@@ -1076,7 +1070,7 @@ class SQLAgent(LumenBaseAgent):
             return [], {}
         try:
             # Try one-shot approach first
-            out, out_context = await self._render_execute_query(
+            out = await self._render_execute_query(
                 messages,
                 context,
                 sources=sources,
@@ -1091,9 +1085,10 @@ class SQLAgent(LumenBaseAgent):
                 # If exploration is disabled, re-raise the error instead of falling back
                 raise e
             # Fall back to exploration mode if enabled
-            out, out_context = await self._explore_tables(
+            out = await self._explore_tables(
                 messages, context, sources, str(e), step_title
             )
+        out_context = await out.render_context()
         return [out], out_context
 
 
@@ -2011,7 +2006,10 @@ class AnalysisAgent(LumenBaseAgent):
 
     prompts = param.Dict(
         default={
-            "main": {"template": PROMPTS_DIR / "AnalysisAgent" / "main.jinja2"},
+            "main": {
+                "template": PROMPTS_DIR / "AnalysisAgent" / "main.jinja2",
+                "response_model": make_analysis_model
+            },
         }
     )
 
@@ -2040,14 +2038,12 @@ class AnalysisAgent(LumenBaseAgent):
 
         if len(analyses) > 1:
             with self._add_step(title="Choosing the most relevant analysis...", steps_layout=self._steps_layout) as step:
-                type_ = Literal[tuple(analyses)]
-                analysis_model = create_model(
-                    "Analysis", correct_name=(type_, FieldInfo(description="The name of the analysis that is most appropriate given the user query."))
-                )
+                analysis_model = self._get_model("main", analyses=list(analyses))
                 system_prompt = await self._render_prompt(
                     "main",
                     messages,
                     analyses=analyses,
+                    context=context,
                     data=context.get("data"),
                 )
                 model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
@@ -2059,7 +2055,7 @@ class AnalysisAgent(LumenBaseAgent):
                         response_model=analysis_model,
                         allow_partial=False,
                     )
-                ).correct_name
+                ).analysis
                 step.stream(f"Selected {analysis_name}")
                 step.success_title = f"Selected {analysis_name}"
         else:
@@ -2081,24 +2077,10 @@ class AnalysisAgent(LumenBaseAgent):
                     view = await analysis_callable(pipeline, context)
                 else:
                     view = await asyncio.to_thread(analysis_callable, pipeline, context)
+                view = as_panel(view)
                 if isinstance(view, Viewable):
                     view = Panel(object=view, pipeline=context.get("pipeline"))
-                spec = view.to_spec()
-                if isinstance(view, View):
-                    view_type = view.view_type
-                    out_context["view"] = dict(spec, type=view_type)
-                    out_context["pipeline"] = view
-                elif isinstance(view, Pipeline):
-                    out_context["view"] = view
-                    out_context["pipeline"] = view
-                # Ensure data reflects processed pipeline
-                if "pipeline" in out_context:
-                    pipeline = out_context["pipeline"]
-                    data = await get_data(pipeline)
-                    if len(data) > 0:
-                        out_context["data"] = await describe_data(data)
-                yaml_spec = dump_yaml(spec)
-                step.stream(f"Generated view\n```yaml\n{yaml_spec}\n```")
+                step.stream(f"Generated view of type {type(view).__name__}")
                 step.success_title = "Generated view"
             else:
                 step.success_title = "Configure the analysis"
@@ -2106,11 +2088,13 @@ class AnalysisAgent(LumenBaseAgent):
         analysis = out_context["analysis"]
         if view is None and analysis.autorun:
             self.interface.stream("Failed to find an analysis that applies to this data.")
-        else:
-            out = self._output_type(
-                component=view, title=step_title, analysis=analysis, pipeline=context.get("pipeline"), context=context
-            )
-        return [] if view is None and analysis_callable.autorun else [out], out_context
+            return [], {}
+
+        out = self._output_type(
+            component=view, title=step_title, analysis=analysis, pipeline=context.get("pipeline"), context=context
+        )
+        out_context = await out.render_context()
+        return [out], out_context
 
 
 class ValidationInputs(ContextModel):
