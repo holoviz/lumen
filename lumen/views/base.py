@@ -1267,11 +1267,21 @@ class VegaLiteView(View):
 
     def _get_params(self) -> dict[str, Any]:
         df = self.get_data()
-        encoded = dict(self.spec, data={'values': df})
+        spec_data = self.spec.get('data', {})
+
+        if 'url' in spec_data or 'inline' in spec_data:
+            # If data already has url/inline data, make pipeline data available as named dataset
+            # Don't inject into primary data, use datasets instead
+            datasets = self.spec.get('datasets', {})
+            datasets[self.pipeline.table] = df
+            encoded = dict(self.spec, datasets=datasets)
+        else:
+            encoded = dict(self.spec, data={'values': df, **spec_data})
         return dict(object=encoded, **self.kwargs)
 
     def get_panel(self) -> pn.pane.Vega:
-        return pn.pane.Vega(**self._normalize_params(self._get_params()))
+        spec = self._normalize_params(self._get_params())
+        return pn.pane.Vega(**spec)
 
 
 class AltairView(View):
