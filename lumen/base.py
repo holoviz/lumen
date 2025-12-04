@@ -224,27 +224,33 @@ class Component(Parameterized):
     def _serialize_container(self, value, objects, refs, depth, include_name=True):
         if isinstance(value, dict):
             value = {k: self._serialize_container(
-                v, objects, refs, depth, include_name=include_name
+                v, objects, refs, depth+1, include_name=include_name
             ) for k, v in value.items()}
         elif isinstance(value, list):
             value = [
                 self._serialize_container(
-                    v, objects, refs, depth, include_name=include_name
+                    v, objects, refs, depth+1, include_name=include_name
                 ) for v in value
             ]
         elif isinstance(value, Parameterized):
             return self._serialize_parameterized(
                 value, objects, refs, depth, include_name=include_name
             )
+        elif isinstance(value, type):
+            type_spec = f'{value.__module__}.{value.__name__}'
+            value = {'type': type_spec, 'instance': False}
         return value
 
     @bothmethod
     def _serialize_parameterized(self, obj, objects=None, refs=None, depth=0, include_name=True):
         obj_type = type(obj)
+        pipeline = getattr(self, 'pipeline', None)
         if obj is None:
             return None
         elif objects is None:
-            objects = {'pipeline': self.pipeline, obj.name: obj}
+            objects = {obj.name: obj}
+            if pipeline is not None:
+                objects['pipeline'] = pipeline
         else:
             objects[obj.name] = obj
 
@@ -264,6 +270,10 @@ class Component(Parameterized):
                 continue
             elif p == 'design' or (not include_name and p == 'name'):
                 continue
+            elif pipeline is not None and value is pipeline.data:
+                value = '$data'
+                params[p] = value
+                continue
 
             if value is pobj.default:
                 continue
@@ -271,7 +281,10 @@ class Component(Parameterized):
             try:
                 equal = is_equal(value, pobj.default)
             except Exception:
-                equal = False
+                try:
+                    equal = value == pobj.default
+                except Exception:
+                    equal = False
 
             if equal:
                 continue
