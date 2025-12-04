@@ -808,6 +808,10 @@ class HoloViews(View):
         super().__init__(**params)
         self._data_stream = Pipe()
 
+    @classmethod
+    def _resolve_object(cls, spec, objects=None, unresolved=None, depth=0):
+        return cls._materialize_object(spec, objects, unresolved, depth)
+
     def _rematerialize(self):
         spec = self._serialize_parameterized(self.object)
         return self._resolve_object(spec, {'pipeline': self.pipeline})
