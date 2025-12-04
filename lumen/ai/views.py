@@ -201,8 +201,10 @@ class LumenOutput(Viewer):
     async def render(self):
         if self.component is None:
             yield Alert(
-                "No component to render. Please complete the Config tab.",
-                alert_type="warning",
+                margin=5,
+                severity="warning",
+                sizing_mode="stretch_width",
+                title="Run the analysis."
             )
             return
 
@@ -226,8 +228,10 @@ class LumenOutput(Viewer):
         except Exception as e:
             traceback.print_exc()
             yield Alert(
-                f"**{type(e).__name__}**:{e}\n\nPlease press undo, edit the YAML, or continue chatting.",
-                alert_type="danger",
+                title=f"**{type(e).__name__}**:{e}\n\nPlease press undo, edit the YAML, or continue chatting.",
+                margin=5,
+                severity="error",
+                sizing_mode="stretch_width"
             )
 
     def __panel__(self):
