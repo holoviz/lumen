@@ -31,28 +31,14 @@ Write a SQL query for the user's data transformation request, focusing on intent
 {%- endblock -%}
 
 {%- block context -%}
-{%- if memory.get('visible_slugs') -%}
-### Visible Tables (by Source)
-{%- set ns = namespace(grouped={}) -%}
-{%- for slug in memory['visible_slugs'] -%}
-  {%- set parts = slug.split(source_table_sep, 1) -%}
-  {%- set source = parts[0] -%}
-  {%- set table = parts[1] if parts | length > 1 else '' -%}
-  {%- if source not in ns.grouped -%}
-    {% set _ = ns.grouped.update({source: [table]}) -%}
-  {%- else -%}
-    {%- set current = ns.grouped[source] -%}
-    {%- set _ = current.append(table) -%}
-  {%- endif -%}
-{%- endfor -%}
-{%- for source, tables in ns.grouped.items() %}
-- {{ source }}
-  - {{ tables | join("\n  - ") }}
-{%- endfor %}
-{%- endif %}
-
 ### Data summary
-{{ memory["metaset"].compact_context() }}
+{{ memory["metaset"].compact_context(5) }}
+
+{%- set other_tables = memory["metaset"].table_context(10, offset=5) -%}
+{%- if other_tables.strip() %}
+### Other Tables
+{{ other_tables }}
+{%- endif %}
 
 {%- if 'sql' in memory %}
 Previous: `{{ memory['sql'] }}`

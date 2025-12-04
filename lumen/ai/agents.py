@@ -656,6 +656,18 @@ class SQLAgent(LumenBaseAgent):
     input_schema = SQLInputs
     output_schema = SQLOutputs
 
+    async def _gather_prompt_context(self, prompt_name: str, messages: list, context: TContext, **kwargs):
+        """Pre-compute metaset context for template rendering."""
+        prompt_context = await super()._gather_prompt_context(prompt_name, messages, context, **kwargs)
+
+        # Ensure schemas are loaded for top tables before rendering
+        if "metaset" in context:
+            metaset = context["metaset"]
+            top_tables = metaset.get_top_tables(n=5)
+            await metaset.ensure_schemas(top_tables)
+
+        return prompt_context
+
     async def _validate_sql(
         self,
         context: TContext,

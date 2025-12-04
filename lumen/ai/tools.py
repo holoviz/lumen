@@ -902,8 +902,10 @@ class TableLookup(VectorLookupTool):
         for result in results:
             source_name = result["metadata"]["source"]
             table_name = result["metadata"]["table_name"]
+            source_obj = None
             for source in context.get("sources", []):
                 if source.name == source_name:
+                    source_obj = source
                     sql = source.get_sql_expr(source.normalize_table(table_name))
                     break
             table_slug = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
@@ -935,9 +937,10 @@ class TableLookup(VectorLookupTool):
             catalog_entry = TableCatalogEntry(
                 table_slug=table_slug,
                 similarity=similarity_score,
+                columns=columns,
+                source=source_obj,
                 description=table_description,
                 sql_expr=sql,
-                columns=columns,
                 metadata=context["tables_metadata"].get(table_slug, {}).copy()
             )
             catalog[table_slug] = catalog_entry

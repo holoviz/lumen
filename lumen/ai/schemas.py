@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import asyncio
+
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from ..sources import Source
 from .config import SOURCE_TABLE_SEPARATOR
 from .utils import get_schema, log_debug, truncate_string
+
+if TYPE_CHECKING:
+    from ..sources import Source
 
 
 @dataclass
@@ -22,6 +26,7 @@ class TableCatalogEntry:
     table_slug: str
     similarity: float
     columns: list[Column]
+    source: Source | None = None
     description: str | None = None
     sql_expr: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -43,6 +48,53 @@ class Metaset:
     @property
     def has_schemas(self) -> bool:
         return self.schemas is not None and len(self.schemas) > 0
+
+    async def get_schema(self, table_slug: str) -> dict[str, Any] | None:
+        """
+        Lazily fetch and cache schema for a specific table.
+
+        Parameters
+        ----------
+        table_slug : str
+            The table slug to fetch schema for.
+
+        Returns
+        -------
+        dict[str, Any] | None
+            The schema for the table, or None if not found.
+        """
+        if self.schemas is None:
+            self.schemas = {}
+
+        if table_slug in self.schemas:
+            return self.schemas[table_slug]
+
+        entry = self.catalog.get(table_slug)
+        if not entry or not entry.source:
+            return None
+
+        # Parse table name from slug
+        if SOURCE_TABLE_SEPARATOR in table_slug:
+            _, table_name = table_slug.split(SOURCE_TABLE_SEPARATOR, 1)
+        else:
+            table_name = table_slug
+
+        # Fetch and cache
+        schema = await get_schema(entry.source, table_name, include_count=True)
+        self.schemas[table_slug] = schema
+        return schema
+
+    async def ensure_schemas(self, table_slugs: list[str] | None = None) -> None:
+        """
+        Ensure schemas are populated for given tables (or all tables in catalog).
+
+        Parameters
+        ----------
+        table_slugs : list[str] | None
+            The table slugs to ensure schemas for. If None, all tables in catalog.
+        """
+        slugs = table_slugs or list(self.catalog.keys())
+        await asyncio.gather(*[self.get_schema(slug) for slug in slugs])
 
     def _build_table_data(
         self,
@@ -121,14 +173,13 @@ class Metaset:
         self,
         include_columns: bool = False,
         truncate: bool = False,
-        n: int | None = None
+        n: int | None = None,
+        offset: int = 0
     ) -> str:
-        table_slugs = self.schemas.keys() if self.has_schemas else self.catalog.keys()
-        if n is not None:
-            table_slugs = list(table_slugs)[:n]
+        sorted_slugs = self.get_top_tables(n, offset)
 
         tables_data = {}
-        for table_slug in table_slugs:
+        for table_slug in sorted_slugs:
             catalog_entry = self.catalog.get(table_slug)
             if not catalog_entry:
                 continue
@@ -144,14 +195,35 @@ class Metaset:
             sort_keys=False
         )
 
-    def table_context(self, n: int | None = None) -> str:
-        return self._generate_context(include_columns=False, truncate=False, n=n)
+    def get_top_tables(self, n: int | None = None, offset: int = 0) -> list[str]:
+        """Get top n table slugs sorted by similarity.
 
-    def full_context(self, n: int | None = None) -> str:
-        return self._generate_context(include_columns=True, truncate=False, n=n)
+        Parameters
+        ----------
+        n : int | None
+            Number of tables to return. If None, returns all.
+        offset : int
+            Number of tables to skip from the start.
+        """
+        sorted_slugs = sorted(
+            self.catalog.keys(),
+            key=lambda s: self.catalog[s].similarity,
+            reverse=True
+        )
+        if offset:
+            sorted_slugs = sorted_slugs[offset:]
+        if n is not None:
+            sorted_slugs = sorted_slugs[:n]
+        return sorted_slugs
 
-    def compact_context(self, n: int | None = None) -> str:
-        return self._generate_context(include_columns=True, truncate=True, n=n)
+    def table_context(self, n: int | None = None, offset: int = 0) -> str:
+        return self._generate_context(include_columns=False, truncate=False, n=n, offset=offset)
+
+    def full_context(self, n: int | None = None, offset: int = 0) -> str:
+        return self._generate_context(include_columns=True, truncate=False, n=n, offset=offset)
+
+    def compact_context(self, n: int | None = None, offset: int = 0) -> str:
+        return self._generate_context(include_columns=True, truncate=True, n=n, offset=offset)
 
     def __str__(self) -> str:
         return self.table_context()
@@ -206,6 +278,8 @@ async def get_metaset(
 
         if prev and table_slug in prev.catalog:
             catalog_entry = prev.catalog[table_slug]
+            # Update source reference in case it changed
+            catalog_entry.source = source
         else:
             try:
                 metadata = source.get_metadata(table_name)
@@ -216,8 +290,6 @@ async def get_metaset(
             catalog_entry = TableCatalogEntry(
                 table_slug=table_slug,
                 similarity=1,
-                sql_expr=source.get_sql_expr(source.normalize_table(table_name)),
-                description=metadata.get("description"),
                 columns=[
                     Column(
                         name=col_name,
@@ -226,6 +298,9 @@ async def get_metaset(
                     )
                     for col_name, col_values in metadata.get("columns", {}).items()
                 ],
+                source=source,
+                sql_expr=source.get_sql_expr(source.normalize_table(table_name)),
+                description=metadata.get("description"),
             )
         catalog_data[table_slug] = catalog_entry
 
