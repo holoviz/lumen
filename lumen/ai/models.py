@@ -331,50 +331,6 @@ def make_agent_model(agent_names: list[str], primary: bool = False):
     )
 
 
-def make_iterative_selection_model(table_slugs):
-    """
-    Creates a model for table selection in the coordinator.
-    This is separate from the SQLAgent's table selection model to focus on context gathering
-    rather than query execution.
-    """
-    table_model = create_model(
-        "IterativeTableSelection",
-        chain_of_thought=(str, FieldInfo(
-            description="""
-            Consider which tables would provide the most relevant context for understanding the user query,
-            and be specific about what columns are most relevant to the query. Please be concise.
-            """
-        )),
-        is_done=(bool, FieldInfo(
-            description="""
-            Indicate whether you have sufficient context about the available data structures.
-            Set to True if you understand enough about the data model to proceed with the query.
-            Set to False if you need to examine additional tables to better understand the domain.
-            Do not reach for perfection; if there are promising tables, but you are not 100% sure,
-            still mark as done.
-            """
-        )),
-        requires_join=(bool, FieldInfo(
-            description="""
-            Indicate whether a join is necessary to answer the user query.
-            Set to True if a join is necessary to answer the query.
-            Set to False if no join is necessary.
-            """
-        )),
-        selected_slugs=(list[Literal[tuple(table_slugs)]], FieldInfo(
-            description="""
-            If is_done and a join is necessary, return a list of table names that will be used in the join.
-            If is_done and no join is necessary, return a list of a single table name.
-            If not is_done return a list of table names that you believe would provide
-            the most relevant context for understanding the user query that wasn't already seen before.
-            Focus on tables that contain key entities, relationships, or metrics mentioned in the query.
-            """
-        )),
-        __base__=PartialBaseModel
-    )
-    return table_model
-
-
 class DbtslQueryParams(BaseModel):
     """
     Model for dbtsl.client.query() parameters.
