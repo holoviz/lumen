@@ -1368,7 +1368,7 @@ class ExplorerUI(UI):
         parent = prev["view"]
 
         # Check if we are adding to existing exploration or creating a new one
-        new_exploration = any("pipeline" in step.actor.output_schema.__annotations__ for step in plan)
+        new_exploration = any("pipeline" in step.actor.output_schema.__required_keys__ for step in plan)
         if new_exploration:
             exploration = await self._add_exploration(plan, parent)
             watcher = plan.param.watch(partial(self._add_views, exploration), "views")
