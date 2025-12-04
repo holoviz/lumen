@@ -419,7 +419,6 @@ class UI(Viewer):
             )
         else:
             interface = self.interface
-            interface._widget.enable_upload = False
             interface.callback = self._chat_invoke
             interface.on_submit = on_submit
             interface.input_params["enable_upload"] = False
