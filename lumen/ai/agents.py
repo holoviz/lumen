@@ -607,7 +607,7 @@ class SQLAgent(LumenBaseAgent):
         default=[
             "Use for displaying, examining, or querying data resulting in a data pipeline",
             "Use for calculations that require data (e.g., 'calculate average', 'sum by category')",
-            "Commonly used with AnalystAgent to analyze query results",
+            "Do not sample or show limited rows of the data, unless explicitly requested",
             "NOT for non-data questions or technical programming help",
             "NOT useful if the user is using the same data for plotting",
         ]

@@ -46,7 +46,7 @@ class YesNo(BaseModel):
 class ThinkingYesNo(BaseModel):
 
     chain_of_thought: str = Field(
-        description="Explain your reasoning as to why you will be answering yes or no.")
+        description="Briefly explain your reasoning as to why you will be answering yes or no.")
 
     yes: bool = Field(description="True if yes, otherwise False.")
 
