@@ -4,16 +4,13 @@ import pandas as pd
 import panel as pn
 import pytest
 
-from panel.layout import Column
-from panel.pane import Markdown
-from panel.widgets import Checkbox
-
 from lumen.panel import DownloadButton
+from lumen.pipeline import Pipeline
 from lumen.sources.base import FileSource
 from lumen.state import state
 from lumen.variables.base import Variables
 from lumen.views.base import (
-    Panel, View, hvOverlayView, hvPlotView,
+    Panel, VegaLiteView, View, hvOverlayView, hvPlotView,
 )
 
 
@@ -324,3 +321,23 @@ def test_view_list_param_function_roundtrip(set_root):
     view = View.from_spec(original_spec)
     assert isinstance(view, hvOverlayView)
     assert view.to_spec() == original_spec
+
+
+def test_vega_datasets(set_root):
+    source = FileSource(tables={'test': 'sources/test.csv'})
+    pipeline = Pipeline(source=source, table="test")
+
+    spec = {
+        "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+        "width": 700,
+        "height": 400,
+        "title": {"text": "US States Map"},
+        "data": {"url": "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json", "format": {"type": "topojson", "feature": "states"}},
+        "projection": {"type": "albersUsa"},
+        "mark": "geoshape",
+        "encoding": {"color": {"value": "#ccc"}, "tooltip": {"field": "properties.name", "type": "nominal"}},
+    }
+    final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
+    print(final_spec)
+    assert final_spec["data"]["url"] == "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"
+    pd.testing.assert_frame_equal(final_spec["datasets"]["test"], pipeline.data)
