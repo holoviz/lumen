@@ -324,6 +324,7 @@ def test_view_list_param_function_roundtrip(set_root):
 
 
 def test_vega_datasets(set_root):
+    set_root(str(Path(__file__).parent.parent))
     source = FileSource(tables={'test': 'sources/test.csv'})
     pipeline = Pipeline(source=source, table="test")
 
