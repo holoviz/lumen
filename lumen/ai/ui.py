@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import traceback
 
 from functools import partial
 from io import StringIO
@@ -29,6 +30,8 @@ from panel_material_ui import (
 )
 from panel_splitjs import HSplit, MultiSplit, VSplit
 
+from lumen.config import load_yaml
+
 from ..pipeline import Pipeline
 from ..sources import Source
 from ..sources.duckdb import DuckDBSource
@@ -43,8 +46,8 @@ from .config import (
 )
 from .context import TContext
 from .controls import (
-    RetryControls, SourceCatalog, SourceControls, TableExplorer,
-    TableSourceCard,
+    AnnotationControls, RetryControls, SourceCatalog, SourceControls,
+    TableExplorer, TableSourceCard,
 )
 from .coordinator import Coordinator, Plan, Planner
 from .export import (
@@ -1270,10 +1273,24 @@ class ExplorerUI(UI):
                 await task.revise(
                     event.new, task.actor, exploration.context, view, {'interface': self.interface}
                 )
-            except Exception:
-                pass
-        revise_controls = RetryControls(layout_kwargs={"styles": {"margin-left": "auto"}})
+            except Exception as e:
+                traceback.print_exc()
+                self.interface.stream(f"An error occurred while revising the output: {e}", user="Assistant")
+        async def annotate(event):
+            try:
+                await task.actor.annotate(
+                    event.new, list(task.history), exploration.context, {"spec": load_yaml(view.spec)}
+                )
+            except Exception as e:
+                traceback.print_exc()
+                self.interface.stream(f"An error occurred while annotating the output: {e}", user="Assistant")
+        revise_controls = RetryControls()
         revise_controls.param.watch(revise, "instruction")
+        controls = [revise_controls]
+        if isinstance(task, ActorTask) and hasattr(task.actor, "annotate"):
+            annotate_controls = AnnotationControls()
+            annotate_controls.param.watch(annotate, "instruction")
+            controls.append(annotate_controls)
 
         @hold()
         def pop_out(event):
@@ -1296,12 +1313,12 @@ class ExplorerUI(UI):
 
         pop_button = IconButton(
             description="Pop-out", icon="open_in_new", icon_size="1.1em", size="small",
-            margin=(5, 0, 0, 0), on_click=pop_out
+            margin=(5, 0, 0, 0), on_click=pop_out, styles={"margin-left": "auto"}
         )
 
         actions = Row(
             export_menu,
-            revise_controls,
+            *controls,
             pop_button,
             sizing_mode="stretch_width", margin=(0, 10)
         )

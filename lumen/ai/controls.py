@@ -746,7 +746,7 @@ class RevisionControls(Viewer):
 
     instruction = param.String(doc="Instruction to LLM to revise output")
 
-    layout_kwargs = param.Dict()
+    layout_kwargs = param.Dict(default={})
 
     toggle_kwargs = {}
 
@@ -760,7 +760,7 @@ class RevisionControls(Viewer):
             margin=10,
             size="small"
         )
-        popup = Popup(self._text_input, open=self.param.active)
+        popup = Popup(self._text_input, open=self.param.active, anchor_origin={"horizontal": "right", "vertical": "center"}, hide_backdrop=True, styles={"z-index": '1300'})
         icon = ToggleIcon.from_param(
             self.param.active,
             active_icon="cancel",
