@@ -414,14 +414,15 @@ class UI(Viewer):
                 on_submit=on_submit,
                 show_button_tooltips=True,
                 show_button_name=False,
+                sizing_mode="stretch_both",
                 input_params={"enable_upload": False},
-                sizing_mode="stretch_both"
             )
         else:
             interface = self.interface
+            interface._widget.enable_upload = False
             interface.callback = self._chat_invoke
             interface.on_submit = on_submit
-            interface.input_params = {"enable_upload": False}
+            interface.input_params["enable_upload"] = False
         interface.button_properties = {
             "undo": {"callback": on_undo},
             "rerun": {"callback": on_rerun},
@@ -554,7 +555,7 @@ class UI(Viewer):
                     self._info_button
                 ),
                 self._cta,
-                self.interface._widget,
+                self.interface.active_widget,
                 max_width=850,
                 styles={'margin': 'auto'},
                 sx={'p': '0 20px 20px 20px'}
