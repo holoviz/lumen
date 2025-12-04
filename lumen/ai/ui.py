@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import datetime as dt
 import traceback
 
 from functools import partial
@@ -50,9 +49,7 @@ from .controls import (
     TableExplorer, TableSourceCard,
 )
 from .coordinator import Coordinator, Plan, Planner
-from .export import (
-    export_notebook, make_md_cell, make_preamble, render_cells, write_notebook,
-)
+from .export import export_notebook
 from .llm import Llm, Message, OpenAI
 from .llm_dialog import LLMConfigDialog
 from .logs import ChatLogs
@@ -517,31 +514,8 @@ class UI(Viewer):
         self._settings_menu.param.watch(self._toggle_sql_planning, 'toggled')
         self._settings_menu.param.watch(self._toggle_validation_agent, 'toggled')
         self._coordinator.verbose = self._settings_menu.param.toggled.rx().rx.pipe(lambda toggled: 0 in toggled)
-        self._notebook_export = FileDownload(
-            callback=self._export_notebook,
-            color="light",
-            description="Export Notebook",
-            icon_size="1.8em",
-            filename=f"{self.title.replace(' ', '_')}.ipynb", # TODO
-            label=" ",
-            margin=(15, 0, 10, 5),
-            sx={"p": "6px 0", "minWidth": "32px"},
-            styles={'z-index': '1000'},
-            variant="text"
-        )
-        self._exports = Row(
-            self._notebook_export, *(
-                Button(
-                    label=label,
-                    on_click=lambda _, e=e: e(self.interface),
-                    stylesheets=['.bk-btn { padding: 4.5px 6px;']
-                )
-                for label, e in self.export_functions.items()
-            )
-        )
         return [
             HSpacer(),
-            self._exports,
             self._settings_menu,
             Divider(
                 orientation="vertical", height=30, margin=(17, 5, 17, 5),
@@ -566,6 +540,10 @@ class UI(Viewer):
             sx={"p": "6px 0", "minWidth": "32px"},
         )
 
+        self._cta = Typography(
+            f"{prefix_text} ask any question, or select a quick action below."
+        )
+
         self._splash = MuiColumn(
             Paper(
                 Row(
@@ -576,14 +554,13 @@ class UI(Viewer):
                     ),
                     self._info_button
                 ),
-                Typography(
-                    f"{prefix_text} ask any question, or select a quick action below."
-                ),
+                self._cta,
                 self.interface._widget,
                 max_width=850,
                 styles={'margin': 'auto'},
                 sx={'p': '0 20px 20px 20px'}
             ),
+            margin=(0, 5, 0, 0),
             sx={'display': 'flex', 'align-items': 'center'},
             height_policy='max'
         )
@@ -620,6 +597,17 @@ class UI(Viewer):
         self._sources_dialog_content = Dialog(
             self._source_accordion, close_on_click=True, show_close_button=True,
             sizing_mode='stretch_width', width_option='lg', title="Manage Data"
+        )
+
+        self._notebook_export = FileDownload(
+            callback=self._export_notebook,
+            description="Export Notebook",
+            icon_size="1.8em",
+            filename=f"{self.title.replace(' ', '_')}.ipynb", # TODO
+            label=" ",
+            sx={"p": "6px 0", "minWidth": "32px", "& .MuiButton-icon": {"ml": 0, "mr": 0}},
+            styles={'z-index': '1000', 'margin-left': 'auto'},
+            variant="text"
         )
 
         # Create LLM configuration dialog
@@ -690,6 +678,13 @@ class UI(Viewer):
         await self._source_catalog.sync()
         await self._coordinator.sync(self.context)
 
+        num_sources = len(self.context.get("sources", []))
+        if num_sources == 0:
+            prefix_text = "Add your dataset to begin, then"
+        else:
+            prefix_text = f"{num_sources} source{'s' if num_sources > 1 else ''} connected;"
+        self._cta.object = f"{prefix_text} ask any question, or select a quick action below."
+
     def _open_llm_dialog(self, event=None):
         """Open the LLM configuration dialog when the LLM chip is clicked."""
         self._llm_dialog.open = True
@@ -716,10 +711,6 @@ class UI(Viewer):
     def _open_info_dialog(self, event=None):
         """Open the info dialog when the info button is clicked."""
         self._info_dialog.open = True
-
-    def _export_notebook(self):
-        nb = export_notebook(self.interface.objects, preamble=self.notebook_preamble)
-        return StringIO(nb)
 
     def _add_suggestions_to_footer(
         self,
@@ -769,6 +760,7 @@ class UI(Viewer):
                         instruction=contents,
                         title=contents
                     ),
+                    history=[{"role": "user", "content": contents}],
                     context=context,
                     coordinator=self._coordinator,
                     title=contents,
@@ -826,13 +818,13 @@ class UI(Viewer):
 
         self.interface.param.watch(hide_suggestions, "objects")
 
-    async def _add_analysis_suggestions(self, plan: Plan, outputs: list[Any], context: TContext):
-        pipeline = context["pipeline"]
-        current_analysis = context.get("analysis")
+    async def _add_analysis_suggestions(self, plan: Plan):
+        pipeline = plan.out_context["pipeline"]
+        current_analysis = plan.out_context.get("analysis")
 
         # Clear current_analysis unless the last message is the same AnalysisOutput
-        if current_analysis and outputs:
-            if not any(out.analysis is current_analysis for out in outputs if isinstance(out, AnalysisOutput)):
+        if current_analysis and plan.views:
+            if not any(out.analysis is current_analysis for out in plan.views if isinstance(out, AnalysisOutput)):
                 current_analysis = None
 
         allow_consecutive = getattr(current_analysis, '_consecutive_calls', True)
@@ -846,7 +838,7 @@ class UI(Viewer):
             [f"Apply {analysis.__name__}" for analysis in applicable_analyses],
             append_demo=False,
             analysis=True,
-            context=context,
+            context=plan.out_context,
             hide_after_use=False,
             num_objects=len(self.interface.objects),
         )
@@ -948,32 +940,22 @@ class ExplorerUI(UI):
 
     _exploration = param.Dict()
 
+    def _export_notebook(self):
+        nb = export_notebook(self._exploration['view'].plan.views, preamble=self.notebook_preamble)
+        return StringIO(nb)
+
     def _render_header(self) -> list[Viewable]:
         header = super()._render_header()
-        self._exports.visible = False
-        self._global_notebook_export = FileDownload(
-            callback=self._global_export_notebook,
-            color="light",
-            description="Export Notebook",
-            icon_size="1.8em",
-            filename=f"{self.title.replace(' ', '_')}.ipynb",
-            label=" ",
-            margin=(14, 0, 10, 5),
-            styles={'z-index': '1000'},
-            sx={"p": "6px 0", "minWidth": "32px"},
-            variant="text"
-        )
         self._report_toggle = ToggleIcon(
             icon="chat",
             active_icon="summarize",
             color="light",
             description="Toggle Report Mode",
             value=False,
-            margin=(13, 0, 10, 0),
-            visible=self.interface.param["objects"].rx().rx.len() > 0
+            margin=(13, 0, 10, 0)
         )
         self._report_toggle.param.watch(self._toggle_report_mode, ['value'])
-        return header
+        return header[:-1] + [self._report_toggle] + header[-1:]
 
     def _render_contextbar(self) -> list[Viewable]:
         self._explorations = MenuList(
@@ -1003,6 +985,7 @@ class ExplorerUI(UI):
             sizing_mode='stretch_width',
         )
         self._explorer = TableExplorer(context=self.context)
+        self._explorer.param.watch(self._add_exploration_from_explorer, "add_exploration")
         self._home.view = MuiColumn(self._explorations_intro, self._explorer)
 
         # Menus
@@ -1014,20 +997,51 @@ class ExplorerUI(UI):
         self._breadcrumbs.param.watch(self._sync_active, 'value')
 
         # Main Area
+        self._notebook_export.disabled = self.param._exploration.rx()['view'].rx.is_(self._home)
         self._output = Paper(
-            self._breadcrumbs, self._home, elevation=2, margin=(5, 10, 5, 5),
-            height_policy='max', sizing_mode="stretch_both"
+            Row(self._breadcrumbs, self._notebook_export, sizing_mode="stretch_width"),
+            self._home,
+            elevation=2,
+            margin=(5, 10, 5, 5),
+            height_policy='max',
+            sizing_mode="stretch_both"
         )
         self._split = HSplit(
             Column(self._splash),
             self._output,
             collapsed=1,
             expanded_sizes=(40, 60),
+            show_buttons=True,
             sizing_mode='stretch_both',
             stylesheets=[".gutter-horizontal > .divider { background: unset }"]
         )
         self._main[:] = [self._split]
         return main
+
+    async def _add_exploration_from_explorer(self, event: param.parameterized.Event):
+        sql_out = self._explorer.create_sql_output()
+        if sql_out is None:
+            return
+
+        table = self._explorer.table_slug.split(SOURCE_TABLE_SEPARATOR)[0]
+        prev = self._explorations.value
+        sql_agent = next(agent for agent in self._coordinator.agents if isinstance(agent, SQLAgent))
+        sql_task = ActorTask(sql_agent, title=f"Load {table}")
+        plan = Plan(sql_task, title=f"Explore {table}")
+        exploration = await self._add_exploration(plan, self._home)
+
+        with hold():
+            self._transition_to_chat()
+            self.interface.send(f"Add exploration for the `{table}` table", respond=False)
+            out_context = await sql_out.render_context()
+            watcher = plan.param.watch(partial(self._add_views, exploration), "views")
+            try:
+                sql_task.param.update(
+                    views=[sql_out], out_context=out_context, status="success"
+                )
+            finally:
+                plan.param.unwatch(watcher)
+                await self._postprocess_exploration(plan, exploration, prev, is_new=True)
 
     def _configure_session(self):
         self._home = self._last_synced = Exploration(
@@ -1080,12 +1094,10 @@ class ExplorerUI(UI):
     def _toggle_report_mode(self, event):
         """Toggle between regular and report mode."""
         if event.new:
-            self._exports[0] = self._global_notebook_export
             self._main[:] = [Report(
                 *(exploration['view'].plan for exploration in self._explorations.items[1:])
             )]
         else:
-            self._exports[0] = self._notebook_export
             self._main[:] = [self._split]
 
     def _toggle_sql_planning(self, event: param.Event):
@@ -1117,25 +1129,11 @@ class ExplorerUI(UI):
         for c in self._explorations.items[1:]:
             c['view'].context.clear()
 
-    def _global_export_notebook(self):
-        cells, extensions = [], []
-        for item in self._explorations.items:
-            exploration = item['view']
-            title = exploration.title
-            header = make_md_cell(f'## {title}')
-            cells.append(header)
-            msg_cells, msg_exts = render_cells(exploration.conversation)
-            cells += msg_cells
-            for ext in msg_exts:
-                if ext not in extensions:
-                    extensions.append(ext)
-        now = dt.datetime.now()
-        title = f'# Lumen.ai - Chat Logs {now}'
-        preamble = make_preamble(self.notebook_preamble, extensions=extensions, title=title)
-        return StringIO(write_notebook(preamble+cells))
-
     async def _update_conversation(self, event=None):
         exploration = self._explorations.value['view']
+        if exploration is self._home:
+            self._split[0][0] = self._splash
+            self._split.collapsed = 1
         self._output[1:] = [exploration]
 
         if event is not None:
@@ -1156,10 +1154,6 @@ class ExplorerUI(UI):
 
         with hold():
             self._set_conversation(exploration.conversation)
-            self._notebook_export.param.update(
-                filename = f"{exploration.title.replace(' ', '_')}.ipynb"
-            )
-            self._exports.visible = True
             self.interface._chat_log.scroll_to_latest()
         self._last_synced = exploration
 
@@ -1199,7 +1193,6 @@ class ExplorerUI(UI):
             parent.conversation = self._snapshot_messages(new=True)
         conversation = list(self.interface.objects)
 
-        # Create new exploration
         tabs = Tabs(
             ('Overview', "Waiting on data..."),
             dynamic=True,
@@ -1216,7 +1209,6 @@ class ExplorerUI(UI):
             view=output
         )
 
-        # Update the UI
         view_item = {
             'label': plan.title,
             'view': exploration,
@@ -1253,7 +1245,7 @@ class ExplorerUI(UI):
                     "icon": FORMAT_ICONS.get(fmt, "insert_drive_file")
                 } for fmt in view.export_formats
             ],
-            on_click=lambda _: file_download.transfer()
+            on_click=lambda _: file_download._transfer()
         )
         def download_export(item):
             fmt = item["format"]
@@ -1384,34 +1376,37 @@ class ExplorerUI(UI):
         parent = prev["view"]
 
         # Check if we are adding to existing exploration or creating a new one
-        new_exploration = any("pipeline" in step.actor.output_schema.__annotations__ for step in plan)
+        new_exploration = any("pipeline" in step.actor.output_schema.__required_keys__ for step in plan)
         if new_exploration:
             exploration = await self._add_exploration(plan, parent)
             watcher = plan.param.watch(partial(self._add_views, exploration), "views")
         else:
             exploration = parent
             if parent.plan is not None:
-                plan.steps_layout.header[:] = [
-                    Typography(
-                        "🔀 Combined tasks with previous checklist",
-                        css_classes=["todos-title"],
-                        margin=0,
-                        styles={"font-weight": "normal", "font-size": "1.1em"}
-                    )
-                ]
+                if plan.steps_layout:
+                    plan.steps_layout.header[:] = [
+                        Typography(
+                            "🔀 Combined tasks with previous checklist",
+                            css_classes=["todos-title"],
+                            margin=0,
+                            styles={"font-weight": "normal", "font-size": "1.1em"}
+                        )
+                    ]
                 partial_plan = plan
                 plan = parent.plan.merge(plan)
                 partial_plan.cleanup()
             watcher = None
 
-        # Execute plan
         with plan.param.update(interface=self.interface):
-            outputs, out_context = await plan.execute()
+            await plan.execute()
 
-        # Clean up and render output
         if watcher:
             plan.param.unwatch(watcher)
-        if "__error__" in out_context:
+
+        await self._postprocess_exploration(plan, exploration, prev, is_new=new_exploration)
+
+    async def _postprocess_exploration(self, plan: Plan, exploration: Exploration, prev: dict, is_new: bool = False):
+        if "__error__" in plan.out_context:
             # On error we have to sync the conversation, unwatch the plan,
             # and remove the exploration if it was newly created
             rerun_button = Button(
@@ -1422,21 +1417,21 @@ class ExplorerUI(UI):
             last_message = self.interface.objects[-1]
             footer_objects = last_message.footer_objects or []
             last_message.footer_objects = footer_objects + [rerun_button]
-            parent.conversation = exploration.conversation
-            del out_context['__error__']
-            if new_exploration:
+            exploration.parent.conversation = exploration.conversation
+            del plan.out_context['__error__']
+            if is_new:
                 with hold():
                     self._explorations.param.update(
                         items=self._explorations.items[:-1],
                         value=prev
                     )
                     await self._update_conversation()
-                    if parent is self._home:
+                    if exploration.parent is self._home:
                         self._split.collapsed = 1
         else:
-            if "pipeline" in out_context:
-                await self._add_analysis_suggestions(plan, outputs, out_context)
-            if new_exploration:
+            if "pipeline" in plan.out_context:
+                await self._add_analysis_suggestions(plan)
+            if is_new:
                 plan.param.watch(partial(self._update_views, exploration), "views")
 
     @wrap_logfire(span_name="Chat Invoke")

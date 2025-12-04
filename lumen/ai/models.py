@@ -46,7 +46,7 @@ class YesNo(BaseModel):
 class ThinkingYesNo(BaseModel):
 
     chain_of_thought: str = Field(
-        description="Explain your reasoning as to why you will be answering yes or no.")
+        description="Briefly explain your reasoning as to why you will be answering yes or no.")
 
     yes: bool = Field(description="True if yes, otherwise False.")
 
@@ -457,4 +457,13 @@ def make_refined_query_model(item_type_name: str = "items"):
             """
         )),
         __base__=PartialBaseModel
+    )
+
+
+def make_analysis_model(analyses: list[str]):
+    return create_model(
+        "Analysis",
+        analysis=(Literal[tuple(analyses)], FieldInfo(
+            description="The name of the analysis that is most appropriate given the user query."
+        ))
     )

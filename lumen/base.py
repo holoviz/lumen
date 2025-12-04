@@ -15,7 +15,7 @@ import pandas as pd
 import panel as pn
 import param  # type: ignore
 
-from panel.io.cache import _container_hash, _hash_funcs
+from panel.io.cache import _container_hash, _hash_funcs, is_equal
 from panel.util import classproperty
 from panel.viewable import Child, Children
 from panel.widgets.base import WidgetBase
@@ -220,31 +220,37 @@ class Component(Parameterized):
                 expr = getattr(expr, op['fn'])(*op['args'], **op['kwargs'])
         return expr
 
-    @classmethod
-    def _serialize_container(cls, value, objects, refs, depth, include_name=True):
+    @bothmethod
+    def _serialize_container(self, value, objects, refs, depth, include_name=True):
         if isinstance(value, dict):
-            value = {k: cls._serialize_container(
-                v, objects, refs, depth, include_name=include_name
+            value = {k: self._serialize_container(
+                v, objects, refs, depth+1, include_name=include_name
             ) for k, v in value.items()}
         elif isinstance(value, list):
             value = [
-                cls._serialize_container(
-                    v, objects, refs, depth, include_name=include_name
+                self._serialize_container(
+                    v, objects, refs, depth+1, include_name=include_name
                 ) for v in value
             ]
         elif isinstance(value, Parameterized):
-            return cls._serialize_parameterized(
-                cls, value, objects, refs, depth, include_name=include_name
+            return self._serialize_parameterized(
+                value, objects, refs, depth, include_name=include_name
             )
+        elif isinstance(value, type):
+            type_spec = f'{value.__module__}.{value.__name__}'
+            value = {'type': type_spec, 'instance': False}
         return value
 
     @bothmethod
     def _serialize_parameterized(self, obj, objects=None, refs=None, depth=0, include_name=True):
         obj_type = type(obj)
+        pipeline = getattr(self, 'pipeline', None)
         if obj is None:
             return None
         elif objects is None:
-            objects = {'pipeline': self.pipeline, obj.name: obj}
+            objects = {obj.name: obj}
+            if pipeline is not None:
+                objects['pipeline'] = pipeline
         else:
             objects[obj.name] = obj
 
@@ -264,13 +270,22 @@ class Component(Parameterized):
                 continue
             elif p == 'design' or (not include_name and p == 'name'):
                 continue
+            elif pipeline is not None and value is pipeline.data:
+                value = '$data'
+                params[p] = value
+                continue
 
             if value is pobj.default:
                 continue
+
             try:
-                equal = value == pobj.default
+                equal = is_equal(value, pobj.default)
             except Exception:
-                equal = False
+                try:
+                    equal = value == pobj.default
+                except Exception:
+                    equal = False
+
             if equal:
                 continue
             elif isinstance(pobj, Child):
@@ -280,7 +295,7 @@ class Component(Parameterized):
                     self._serialize_parameterized(child, objects=objects, refs=refs, depth=depth+1, include_name=include_name)
                     for child in value
                 ]
-            elif isinstance(value, (list, dict)):
+            elif isinstance(value, (list, dict, Parameterized)):
                 value = self._serialize_container(value, objects, refs, depth, include_name=include_name)
             elif isinstance(value, type):
                 value = {'type': f"{value.__module__}.{value.__name__}", 'instance': False}
@@ -309,6 +324,7 @@ class Component(Parameterized):
 
         if unresolved is None:
             unresolved = []
+
         spec = dict(spec)
         spec_type = spec.pop('type')
         ptype = resolve_module_reference(spec_type, obj_type)

@@ -450,3 +450,11 @@ def detect_file_encoding(file_obj: Path | str | io.BytesIO | io.StringIO | bytes
     except ImportError:
         # Simple fallback without chardet
         return 'latin-1'  # Can decode any byte sequence
+
+def _set_backend_opts(element, cur_opts, compat_opts):
+    """Utility to make it possible to serialize hvPlot generated plots"""
+    from hvplot.utilities import hvplot_extension
+    element = element.opts(**cur_opts, backend='bokeh')
+    if hvplot_extension.compatibility and compat_opts:
+        element = element.opts(**compat_opts, backend=hvplot_extension.compatibility)
+    return element
