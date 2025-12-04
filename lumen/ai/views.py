@@ -411,7 +411,7 @@ class AnalysisOutput(LumenOutput):
         self._rendered = True
 
     async def render_context(self):
-        out_context = {}
+        out_context = {"analysis": self.analysis}
         view = self.component
         if isinstance(view, View):
             out_context["view"] = dict(object=self._spec_dict, type=view.view_type)

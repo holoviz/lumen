@@ -1030,7 +1030,6 @@ class SQLAgent(LumenBaseAgent):
             output_title=step_title
         )
 
-
     async def revise(
         self,
         feedback: str,
@@ -1090,7 +1089,6 @@ class SQLAgent(LumenBaseAgent):
             )
         out_context = await out.render_context()
         return [out], out_context
-
 
 
 class DbtslOutputs(SQLOutputs):
@@ -2060,19 +2058,18 @@ class AnalysisAgent(LumenBaseAgent):
                 step.success_title = f"Selected {analysis_name}"
         else:
             analysis_name = next(iter(analyses))
+        analysis = analyses[analysis_name]
 
         view = None
-        out_context = {}
         with self._add_step(title=step_title or "Creating view...", steps_layout=self._steps_layout) as step:
             await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
-            analysis_callable = analyses[analysis_name].instance(agents=self.agents, interface=self.interface)
+            analysis_callable = analysis.instance(agents=self.agents, interface=self.interface)
 
-            out_context["analysis"] = analysis_callable
             data = await get_data(pipeline)
-            for field in analysis_callable._field_params:
+            for field in analysis._field_params:
                 analysis_callable.param[field].objects = list(data.columns)
 
-            if analysis_callable.autorun:
+            if analysis.autorun:
                 if asyncio.iscoroutinefunction(analysis_callable.__call__):
                     view = await analysis_callable(pipeline, context)
                 else:
@@ -2085,13 +2082,13 @@ class AnalysisAgent(LumenBaseAgent):
             else:
                 step.success_title = "Configure the analysis"
 
-        analysis = out_context["analysis"]
         if view is None and analysis.autorun:
             self.interface.stream("Failed to find an analysis that applies to this data.")
             return [], {}
 
         out = self._output_type(
-            component=view, title=step_title, analysis=analysis, pipeline=context.get("pipeline"), context=context
+            component=view, title=step_title, analysis=analysis_callable,
+            pipeline=context.get("pipeline"), context=context
         )
         out_context = await out.render_context()
         return [out], out_context
