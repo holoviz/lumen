@@ -45,23 +45,7 @@ Legends appear when you map data to `color`, `size`, or `shape` in encoding.
 
 **Data types**: Match type to your data - quantitative for continuous, ordinal for ordered categories, nominal for unordered, temporal for dates
 
-**Dynamic filtering**: Use window transforms to avoid hardcoding values when filtering for min/max or endpoints:
-
-This calculates min/max dynamically per group, making visualizations adapt to any date range automatically
-
-# CHOROPLETH MAPS
-
-For geographic maps with shaded regions:
-
-**Required components**:
-- Geographic data source (TopoJSON/GeoJSON): `data: {url: "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json", format: {type: topojson, feature: states}}`
-- Join your data using `lookup` transform: Match geographic property (e.g., `properties.name`) to your data's key field
-- Use `mark: geoshape` and set `projection: {type: albersUsa}` for US maps
-
-**Critical details**:
-- Lookup field must match geographic data structure (typically `properties.name` for US states in TopoJSON)
-- Reference geographic properties in tooltips: `field: "properties.name"` not just `field: "State"`
-- Color encoding maps your data field: `color: {field: YourDataField, type: quantitative}`
+**Dynamic filtering**: Use window transforms to avoid hardcoding values when filtering for min/max or endpoints.
 {% endblock %}
 
 {% block examples %}
