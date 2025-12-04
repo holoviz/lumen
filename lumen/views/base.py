@@ -1152,7 +1152,7 @@ class Table(View):
     See https://panel.holoviz.org/reference/widgets/Tabulator.html
     """
 
-    page_size = param.Integer(default=20, bounds=(1, None), doc="""
+    page_size = param.Integer(default=None, doc="""
         Number of rows to render per page, if pagination is enabled.""")
 
     view_type = 'table'

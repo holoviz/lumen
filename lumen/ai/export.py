@@ -9,9 +9,9 @@ from typing import Any
 import nbformat
 import yaml
 
-from panel import Column
-from panel.chat import ChatMessage, ChatStep
+from panel.pane import Markdown
 from panel.pane.image import ImageBase
+from panel.viewable import Viewable
 
 from ..config import config
 from ..pipeline import Pipeline
@@ -73,12 +73,8 @@ def serialize_avatar(avatar: str | BytesIO, size: int = 45) -> str:
     else:
         return f'<span class="text-avatar" style="width: {size}px; height: {size}px; display: inline-flex; align-items: center; justify-content: center; background-color: #f0f0f0; border-radius: 50%;">{str(avatar)[:2].upper()}</span>'
 
-def format_markdown(msg: ChatMessage):
-    avatar_html = serialize_avatar(msg.avatar)
-    header = f'<div style="display: flex; flex-direction: row; font-weight: bold; font-size: 2em;">{avatar_html}<span style="margin-left: 0.5em">{msg.user}</span></div>'
-    prefix = '\n' if msg.user == 'User' else '\n> '
-    content = prefix.join(msg.serialize().split('\n'))
-    return [nbformat.v4.new_markdown_cell(source=f'{header}\n{prefix}{content}')]
+def format_markdown(md: Markdown):
+    return [nbformat.v4.new_markdown_cell(source=md.object)]
 
 def format_output(output: LumenOutput):
     ext = None
@@ -105,33 +101,23 @@ def format_output(output: LumenOutput):
         ])
     return nbformat.v4.new_code_cell(source='\n'.join(code)), ext
 
-def render_cells(messages: list[ChatMessage]) -> tuple[Any, list[str]]:
+def render_cells(outputs: list[Viewable]) -> tuple[Any, list[str]]:
     cells, extensions = [], []
-    for msg in messages:
-        if msg.user in ("Help", " "):
-            continue
-        elif isinstance(msg.object, str):
-            cells += format_markdown(msg)
-        elif isinstance(msg.object, LumenOutput):
-            cell, ext = format_output(msg.object)
+    for out in outputs:
+        if isinstance(out, Markdown):
+            cells += format_markdown(out)
+        elif isinstance(out, LumenOutput):
+            cell, ext = format_output(out)
             cells.append(cell)
             if ext and ext not in extensions:
                 extensions.append(ext)
-        elif isinstance(msg.object, Column):
-            for obj in msg.object:
-                if isinstance(obj, ChatStep):
-                    continue
-                cell, ext = format_output(obj.object)
-                cells.append(cell)
-                if ext and ext not in extensions:
-                    extensions.append(ext)
     return cells, extensions
 
 def write_notebook(cells):
     nb = nbformat.v4.new_notebook(cells=cells)
     return nbformat.v4.writes(nb)
 
-def export_notebook(messages: list[ChatMessage], preamble: str = ""):
-    cells, extensions = render_cells(messages)
+def export_notebook(outputs: list[Viewable], preamble: str = ""):
+    cells, extensions = render_cells(outputs)
     cells = make_preamble(preamble, extensions=extensions) + cells
     return write_notebook(cells)

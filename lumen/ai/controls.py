@@ -15,19 +15,17 @@ from panel.layout import Column, HSpacer, Row
 from panel.pane.markup import HTML, Markdown
 from panel.viewable import Viewer
 from panel.widgets import FileDropper, Tabulator, Tqdm
-from panel_gwalker import GraphicWalker
 from panel_material_ui import (
     Button, Card, ChatAreaInput, CheckBoxGroup, Column as MuiColumn,
-    IconButton, MultiChoice, Popup, Select, Switch, Tabs, TextInput,
-    ToggleIcon, Typography,
+    IconButton, Popup, Select, Switch, Tabs, TextInput, ToggleIcon, Typography,
 )
 
 from ..pipeline import Pipeline
 from ..sources.duckdb import DuckDBSource
-from ..transforms.sql import SQLLimit
 from ..util import detect_file_encoding
 from .config import SOURCE_TABLE_SEPARATOR
 from .context import TContext
+from .views import SQLOutput
 
 TABLE_EXTENSIONS = ("csv", "parquet", "parq", "json", "xlsx", "geojson", "wkt", "zip")
 
@@ -1126,28 +1124,30 @@ class TableExplorer(Viewer):
     interrogate the data via a chat interface.
     """
 
+    add_exploration = param.Event(label='Explore table(s)')
+
+    table_slug = param.Selector(label="Select table(s) to preview")
+
     context = param.Dict(default={})
 
     def __init__(self, **params):
         self._initialized = False
         super().__init__(**params)
-        self._table_select = MultiChoice(
-            label="Select table(s) to preview", sizing_mode='stretch_width',
-            max_height=200, max_items=5, margin=0
+        self._table_select = Select.from_param(
+            self.param.table_slug, sizing_mode='stretch_width',
+            max_height=200, margin=0
         )
-        self._explore_button = Button(
-            name='Explore table(s)', icon='add_chart', button_type='primary', icon_size="2em",
-            disabled=self._table_select.param.value.rx().rx.not_(), on_click=self._update_explorers,
+        self._explore_button = Button.from_param(
+            self.param.add_exploration,
+            icon='add_chart', color='primary', icon_size="2em",
+            disabled=self._table_select.param.value.rx().rx.not_(),
             margin=(0, 0, 0, 10), width=200, align='end'
         )
         self._input_row = Row(self._table_select, self._explore_button, margin=(0, 10, 0, 10))
-        self._source_map = {}
-        self._tabs = Tabs(dynamic=True, sizing_mode='stretch_both')
-        self._layout = Column(
-            self._input_row, self._tabs, sizing_mode='stretch_both',
-        )
+        self.source_map = {}
+        self._layout = self._input_row
 
-    @param.depends("context", watch=True, on_init=True)
+    @param.depends("context", watch=True)
     async def sync(self, context: TContext | None = None):
         init = not self._initialized
         self._initialized = True
@@ -1158,7 +1158,7 @@ class TableExplorer(Viewer):
             sources = [context["source"]]
         else:
             return
-        selected = list(self._table_select.value)
+        selected = [self.table_slug] if self.table_slug else []
         deduplicate = len(sources) > 1
         new = {}
 
@@ -1169,17 +1169,31 @@ class TableExplorer(Viewer):
                 if deduplicate:
                     table = f'{source.name}{SOURCE_TABLE_SEPARATOR}{table}'
 
-                if (table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)[-1] not in self._source_map and
-                    not init and not len(selected) > self._table_select.max_items and state.loaded):
+                if (table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)[-1] not in self.source_map and
+                    not init and state.loaded):
                     selected.append(table)
                 new[table] = source
 
-        self._source_map.clear()
-        self._source_map.update(new)
-        selected = selected if len(selected) == 1 else []
-        self._table_select.param.update(options=list(self._source_map), value=selected)
-        self._input_row.visible = bool(self._source_map)
+        self.source_map.clear()
+        self.source_map.update(new)
+        selected = selected[-1] if len(selected) == 1 else None
+        self._table_select.param.update(options=list(self.source_map), value=selected)
+        self._input_row.visible = bool(self.source_map)
         self._initialized = True
+
+    def create_sql_output(self) -> SQLOutput | None:
+        if not self.table_slug:
+            return
+        source = self.source_map[self.table_slug]
+        if SOURCE_TABLE_SEPARATOR in self.table_slug:
+            _, table = self.table_slug.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
+        else:
+            table = self.table_slug
+        new_table = f"select_{table}"
+        sql_expr = f"SELECT * FROM \"{table}\""
+        new_source = source.create_sql_expr_source({new_table: sql_expr, table: source.get_sql_expr(table)})
+        pipeline = Pipeline(source=new_source, table=new_table)
+        return SQLOutput(spec=sql_expr, component=pipeline)
 
     def _explore_table_if_single(self, event):
         """
@@ -1190,29 +1204,6 @@ class TableExplorer(Viewer):
         """
         if len(self._table_select.options) == 1:
             self._explore_button.param.trigger("value")
-
-    def _update_explorers(self, event):
-        if not event.new:
-            return
-
-        with self._explore_button.param.update(loading=True):
-            explorers = []
-            for table in self._table_select.value:
-                source = self._source_map[table]
-                if SOURCE_TABLE_SEPARATOR in table:
-                    _, table = table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
-                pipeline = Pipeline(
-                    source=source, table=table, sql_transforms=[SQLLimit(limit=100_000, read=source.dialect)]
-                )
-                table_label = f"{table[:25]}..." if len(table) > 25 else table
-                walker = GraphicWalker(
-                    pipeline.param.data, sizing_mode='stretch_both', min_height=800,
-                    kernel_computation=True, name=table_label, tab='data'
-                )
-                explorers.append(walker)
-
-            self._tabs.objects = explorers
-            self._table_select.value = []
 
     def __panel__(self):
         return self._layout

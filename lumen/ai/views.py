@@ -111,11 +111,11 @@ class LumenOutput(Viewer):
         self._rendered = False
         self._last_output = {}
 
-    def export(self, fmt: str) -> str | bytes:
+    def export(self, fmt: str) -> StringIO | BytesIO:
         if fmt not in self.export_formats:
             raise ValueError(f"Unknown export format {fmt!r} for {self.__class__.__name__}")
         if fmt == "yaml":
-            return self.spec
+            return StringIO(self.spec)
 
     @classmethod
     def _serialize_component(cls, component: Component, spec_dict: dict[str, Any] | None = None) -> str:
@@ -447,9 +447,9 @@ class SQLOutput(LumenOutput):
     export_formats = ("sql", "csv", "xlsx")
 
     def export(self, fmt: str) -> str | bytes:
-        ret = super().export(fmt)
-        if ret is not None:
-            return ret
+        super().export(fmt)
+        if fmt == 'sql':
+            return StringIO(self.spec)
         sio = StringIO()
         self.component.data.to_csv(sio)
         sio.seek(0)

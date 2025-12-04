@@ -12,7 +12,6 @@ from panel_material_ui import AutocompleteInput, TextInput
 from ..base import Component
 from .actor import TContext
 from .config import SOURCE_TABLE_SEPARATOR
-from .controls import SourceControls
 from .utils import get_data
 
 if TYPE_CHECKING:
@@ -90,6 +89,8 @@ class Join(Analysis):
         self.table_name = event.new
 
     def controls(self, context: TContext):
+        from .controls import SourceControls
+
         self._source_controls = SourceControls(
             multiple=True, replace_controls=False, context=context
         )
