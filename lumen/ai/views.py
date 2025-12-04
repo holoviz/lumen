@@ -13,6 +13,7 @@ import requests
 from jsonschema import Draft7Validator, ValidationError
 from panel.config import config
 from panel.layout import Row
+from panel.pane import panel as as_panel
 from panel.param import ParamMethod
 from panel.viewable import Viewable, Viewer
 from panel.widgets import CodeEditor
@@ -25,10 +26,10 @@ from ..config import dump_yaml, load_yaml
 from ..downloads import Download
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
-from ..views.base import Panel, Table
+from ..views.base import Panel, Table, View
 from .analysis import Analysis
 from .config import VEGA_ZOOMABLE_MAP_ITEMS
-from .utils import describe_data
+from .utils import describe_data, get_data
 
 
 class LumenOutput(Viewer):
@@ -200,8 +201,10 @@ class LumenOutput(Viewer):
     async def render(self):
         if self.component is None:
             yield Alert(
-                "No component to render. Please complete the Config tab.",
-                alert_type="warning",
+                margin=5,
+                severity="warning",
+                sizing_mode="stretch_width",
+                title="Run the analysis."
             )
             return
 
@@ -225,8 +228,10 @@ class LumenOutput(Viewer):
         except Exception as e:
             traceback.print_exc()
             yield Alert(
-                f"**{type(e).__name__}**:{e}\n\nPlease press undo, edit the YAML, or continue chatting.",
-                alert_type="danger",
+                title=f"**{type(e).__name__}**:{e}\n\nPlease press undo, edit the YAML, or continue chatting.",
+                margin=5,
+                severity="error",
+                sizing_mode="stretch_width"
             )
 
     def __panel__(self):
@@ -391,9 +396,6 @@ class AnalysisOutput(LumenOutput):
     pipeline = param.ClassSelector(class_=Pipeline)
 
     def __init__(self, **params):
-        if not params['analysis'].autorun:
-            params['active'] = 0
-
         # Set title based on analysis name if not provided
         if 'title' not in params or params['title'] is None:
             params['title'] = type(params['analysis']).__name__
@@ -401,7 +403,6 @@ class AnalysisOutput(LumenOutput):
         super().__init__(**params)
         controls = self.analysis.controls(self.context)
         if controls is not None or not self.analysis.autorun:
-            controls = Column() if controls is None else controls
             if self.analysis._run_button:
                 run_button = self.analysis._run_button
                 run_button.param.watch(self._rerun, 'clicks')
@@ -410,8 +411,20 @@ class AnalysisOutput(LumenOutput):
                     icon='play_circle_outline', label='Run', on_click=self._rerun,
                     button_type='success', margin=(10, 0, 0, 10)
                 )
-            self.editor = Column(controls, run_button)
+            self.editor = Column(controls, run_button) if controls else run_button
         self._rendered = True
+
+    async def render_context(self):
+        out_context = {"analysis": self.analysis}
+        view = self.component
+        if isinstance(view, View):
+            out_context["view"] = dict(object=self._spec_dict, type=view.view_type)
+        elif isinstance(view, Pipeline):
+            out_context["pipeline"] = out_context["view"] = pipeline = view
+            data = await get_data(pipeline)
+            if len(data) > 0:
+                out_context["data"] = await describe_data(data)
+        return out_context
 
     async def _rerun(self, event):
         with self.view.param.update(loading=True):
@@ -419,6 +432,7 @@ class AnalysisOutput(LumenOutput):
                 view = await self.analysis(self.pipeline, self.context)
             else:
                 view = await asyncio.to_thread(self.analysis, self.pipeline, self.context)
+            view = as_panel(view)
             if isinstance(view, Viewable):
                 view = Panel(object=view, pipeline=self.pipeline)
             self.component = view

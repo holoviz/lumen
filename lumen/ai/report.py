@@ -1042,7 +1042,7 @@ class ActorTask(ExecutableTask):
             if p not in out_context
         ]
         if unprovided:
-            raise RuntimeError(f"{self.actor.__class__.__name__} failed to provide declared context.")
+            raise RuntimeError(f"{self.actor.__class__.__name__} failed to provide declared context: {', '.join(unprovided)}.")
         contexts = [self.context, out_context] if self.context else [out_context]
         return outputs, merge_contexts(LWW, contexts)
 

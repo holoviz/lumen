@@ -10,16 +10,22 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
+from panel.pane import Markdown
+
 from lumen.ai.agents import (
-    AnalystAgent, ChatAgent, SQLAgent, VegaLiteAgent,
+    AnalysisAgent, AnalystAgent, ChatAgent, SQLAgent, VegaLiteAgent,
 )
+from lumen.ai.analysis import Analysis
 from lumen.ai.llm import Llm
-from lumen.ai.models import SqlQuery, VegaLiteSpec, VegaLiteSpecUpdate
+from lumen.ai.models import (
+    SqlQuery, VegaLiteSpec, VegaLiteSpecUpdate, make_analysis_model,
+)
 from lumen.ai.schemas import get_metaset
-from lumen.ai.views import SQLOutput, VegaLiteOutput
+from lumen.ai.views import AnalysisOutput, SQLOutput, VegaLiteOutput
 from lumen.config import dump_yaml
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
+from lumen.views import Panel
 
 root = str(Path(__file__).parent.parent / "sources")
 
@@ -46,7 +52,7 @@ async def test_chat_agent(llm, test_messages):
     ])
 
     out, out_context = await agent.respond(test_messages, {})
-    assert out[0].object == "Test Response" 
+    assert out[0].object == "Test Response"
 
 async def test_analyst_agent(llm, duckdb_source, test_messages):
     agent = AnalystAgent(llm=llm)
@@ -126,3 +132,35 @@ async def test_vegalite_agent(llm, duckdb_source, test_messages):
     assert len(out) == 1
     assert isinstance(out[0], VegaLiteOutput)
     assert out[0].spec == "$schema: https://vega.github.io/schema/vega-lite/v5.json\ndata:\n  values:\n  - A: 1\n    B: 2\n    C: 3\n    D: '2023-01-01T00:00:00Z'\n  - A: 4\n    B: 5\n    C: 6\n    D: '2023-01-02T00:00:00Z'\nencoding:\n  x:\n    field: A\n    type: quantitative\n  y:\n    field: B\n    type: quantitative\nheight: container\nmark: bar\nwidth: container\n"
+
+
+async def test_analysis_agent(llm, duckdb_source, test_messages):
+
+    class TestAnalysis(Analysis):
+
+        def __call__(self, pipeline, context):
+            return f"Test Analysis"
+
+    agent = AnalysisAgent(
+        analyses=[TestAnalysis.instance(name='foo'), TestAnalysis.instance(name='bar')],
+        llm=llm
+    )
+    context = {
+        "source": duckdb_source,
+        "pipeline": Pipeline(source=duckdb_source, table="test_sql")
+    }
+
+    model = make_analysis_model([analysis.name for analysis in agent.analyses])
+    llm.set_responses([
+        model(analysis="bar")
+    ])
+    out, out_context = await agent.respond(test_messages, context)
+
+    assert len(out) == 1
+    assert isinstance(out[0], AnalysisOutput)
+    assert isinstance(out[0].component, Panel)
+    assert isinstance(out[0].component.object, Markdown)
+
+    assert "view" in out_context
+    assert out_context["view"]["type"] == "panel"
+    assert out_context["view"]["object"]["object"] == "Test Analysis"

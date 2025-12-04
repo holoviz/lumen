@@ -458,3 +458,12 @@ def make_refined_query_model(item_type_name: str = "items"):
         )),
         __base__=PartialBaseModel
     )
+
+
+def make_analysis_model(analyses: list[str]):
+    return create_model(
+        "Analysis",
+        analysis=(Literal[tuple(analyses)], FieldInfo(
+            description="The name of the analysis that is most appropriate given the user query."
+        ))
+    )

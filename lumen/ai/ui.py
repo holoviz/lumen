@@ -766,6 +766,7 @@ class UI(Viewer):
                         instruction=contents,
                         title=contents
                     ),
+                    history=[{"role": "user", "content": contents}],
                     context=context,
                     coordinator=self._coordinator,
                     title=contents,
@@ -1367,21 +1368,22 @@ class ExplorerUI(UI):
         parent = prev["view"]
 
         # Check if we are adding to existing exploration or creating a new one
-        new_exploration = any("pipeline" in step.actor.output_schema.__annotations__ for step in plan)
+        new_exploration = any("pipeline" in step.actor.output_schema.__required_keys__ for step in plan)
         if new_exploration:
             exploration = await self._add_exploration(plan, parent)
             watcher = plan.param.watch(partial(self._add_views, exploration), "views")
         else:
             exploration = parent
             if parent.plan is not None:
-                plan.steps_layout.header[:] = [
-                    Typography(
-                        "🔀 Combined tasks with previous checklist",
-                        css_classes=["todos-title"],
-                        margin=0,
-                        styles={"font-weight": "normal", "font-size": "1.1em"}
-                    )
-                ]
+                if plan.steps_layout:
+                    plan.steps_layout.header[:] = [
+                        Typography(
+                            "🔀 Combined tasks with previous checklist",
+                            css_classes=["todos-title"],
+                            margin=0,
+                            styles={"font-weight": "normal", "font-size": "1.1em"}
+                        )
+                    ]
                 partial_plan = plan
                 plan = parent.plan.merge(plan)
                 partial_plan.cleanup()
