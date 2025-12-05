@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import traceback
 
 from copy import deepcopy
 from io import BytesIO, StringIO
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import panel as pn
 import param
@@ -18,7 +20,8 @@ from panel.param import ParamMethod
 from panel.viewable import Viewable, Viewer
 from panel.widgets import CodeEditor
 from panel_material_ui import (
-    Alert, Button, Checkbox, CircularProgress, Column, IconButton,
+    Alert, Button, Checkbox, CircularProgress, Column, FileDownload,
+    IconButton, MenuButton,
 )
 
 from ..base import Component
@@ -28,8 +31,14 @@ from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
 from ..views.base import Panel, Table, View
 from .analysis import Analysis
-from .config import VEGA_ZOOMABLE_MAP_ITEMS
+from .config import FORMAT_ICONS, FORMAT_LABELS, VEGA_ZOOMABLE_MAP_ITEMS
+from .controls import AnnotationControls, RetryControls
 from .utils import describe_data, get_data
+
+if TYPE_CHECKING:
+    from panel.chat.feed import ChatFeed
+
+    from .report import Task
 
 
 class LumenOutput(Viewer):
@@ -48,6 +57,8 @@ class LumenOutput(Viewer):
 
     language = "yaml"
 
+    _controls = [RetryControls]
+
     def __init__(self, **params):
         try:
             spec, spec_dict = self._serialize_component(params["component"])
@@ -58,6 +69,13 @@ class LumenOutput(Viewer):
             params["spec"] = spec
         self._spec_dict = spec_dict
         super().__init__(**params)
+        self.editor = self._render_editor()
+        self.view = ParamMethod(self.render, inplace=True, sizing_mode='stretch_width')
+        self.view.loading = self.param.loading
+        self._rendered = False
+        self._last_output = {}
+
+    def _render_editor(self):
         self._editor = CodeEditor(
             value=self.param.spec.rx.or_(f'{self.title} output could not be serialized and may therefore not be edited.'),
             language=self.language,
@@ -101,15 +119,41 @@ class LumenOutput(Viewer):
             *([copy_icon, download_icon] + self.footer),
             margin=(0, 0, 5, 10)
         )
-        self.editor = Column(
+        return Column(
             self._editor,
             self._icons,
             sizing_mode="stretch_both"
         )
-        self.view = ParamMethod(self.render, inplace=True, sizing_mode='stretch_width')
-        self.view.loading = self.param.loading
-        self._rendered = False
-        self._last_output = {}
+
+    def render_controls(self, task: Task, interface: ChatFeed):
+        export_menu = MenuButton(
+            label="Export as...", variant='text', icon="file_download", margin=0,
+            items=[
+                {
+                    "label": FORMAT_LABELS.get(fmt, f"{fmt.upper()} (.{fmt})"),
+                    "format": fmt,
+                    "icon": FORMAT_ICONS.get(fmt, "insert_drive_file")
+                } for fmt in self.export_formats
+            ],
+            on_click=lambda _: file_download._transfer()
+        )
+
+        def download_export(item):
+            fmt = item["format"]
+            file_download.filename = f"{self.title}.{fmt}"
+            return self.export(fmt)
+
+        file_download = FileDownload(
+            auto=True, callback=param.bind(download_export, export_menu), filename=self.title, visible=False
+        )
+        export_menu.attached.append(file_download)
+
+        return Row(
+            export_menu,
+            *(control(interface=interface, task=task, view=self) for control in self._controls),
+            sizing_mode="stretch_width",
+            margin=(0, 10)
+        )
 
     def export(self, fmt: str) -> StringIO | BytesIO:
         if fmt not in self.export_formats:
@@ -247,6 +291,8 @@ class LumenOutput(Viewer):
 class VegaLiteOutput(LumenOutput):
 
     export_formats = ("yaml", "png", "jpeg", "pdf", "svg", "html")
+
+    _controls = [RetryControls, AnnotationControls]
 
     def export(self, fmt: str) -> StringIO | BytesIO:
         ret = super().export(fmt)
@@ -396,23 +442,25 @@ class AnalysisOutput(LumenOutput):
     pipeline = param.ClassSelector(class_=Pipeline)
 
     def __init__(self, **params):
-        # Set title based on analysis name if not provided
         if 'title' not in params or params['title'] is None:
             params['title'] = type(params['analysis']).__name__
-
         super().__init__(**params)
-        controls = self.analysis.controls(self.context)
-        if controls is not None or not self.analysis.autorun:
-            if self.analysis._run_button:
-                run_button = self.analysis._run_button
-                run_button.param.watch(self._rerun, 'clicks')
-            else:
-                self.analysis._run_button = run_button = Button(
-                    icon='play_circle_outline', label='Run', on_click=self._rerun,
-                    button_type='success', margin=(10, 0, 0, 10)
-                )
-            self.editor = Column(controls, run_button) if controls else run_button
         self._rendered = True
+
+    def _render_editor(self):
+        controls = self.analysis.controls(self.context)
+        if controls is None and self.analysis.autorun:
+            return super()._render_editor()
+
+        if self.analysis._run_button:
+            run_button = self.analysis._run_button
+            run_button.param.watch(self._rerun, 'clicks')
+        else:
+            self.analysis._run_button = run_button = Button(
+                icon='play_circle_outline', label='Run', on_click=self._rerun,
+                button_type='success', margin=(10, 0, 0, 10)
+            )
+        return Column(controls, run_button) if controls else run_button
 
     async def render_context(self):
         out_context = {"analysis": self.analysis}

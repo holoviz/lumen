@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import traceback
 
 from functools import partial
 from io import StringIO
@@ -23,13 +22,11 @@ from panel.viewable import (
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
     Accordion, Button, ChatFeed, ChatInterface, ChatMessage,
-    Column as MuiColumn, Dialog, Divider, FileDownload, IconButton, MenuButton,
-    MenuList, MenuToggle, NestedBreadcrumbs, Page, Paper, Row, Switch, Tabs,
-    ToggleIcon, Typography,
+    Column as MuiColumn, Dialog, Divider, FileDownload, IconButton, MenuList,
+    MenuToggle, NestedBreadcrumbs, Page, Paper, Row, Switch, Tabs, ToggleIcon,
+    Typography,
 )
 from panel_splitjs import HSplit, MultiSplit, VSplit
-
-from lumen.config import load_yaml
 
 from ..pipeline import Pipeline
 from ..sources import Source
@@ -40,13 +37,12 @@ from .agents import (
     SQLAgent, TableListAgent, ValidationAgent, VegaLiteAgent,
 )
 from .config import (
-    DEMO_MESSAGES, FORMAT_ICONS, FORMAT_LABELS, GETTING_STARTED_SUGGESTIONS,
-    PROVIDED_SOURCE_NAME, SOURCE_TABLE_SEPARATOR,
+    DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROVIDED_SOURCE_NAME,
+    SOURCE_TABLE_SEPARATOR,
 )
 from .context import TContext
 from .controls import (
-    AnnotationControls, RetryControls, SourceCatalog, SourceControls,
-    TableExplorer, TableSourceCard,
+    SourceCatalog, SourceControls, TableExplorer, TableSourceCard,
 )
 from .coordinator import Coordinator, Plan, Planner
 from .export import export_notebook
@@ -607,6 +603,7 @@ class UI(Viewer):
             icon_size="1.8em",
             filename=f"{self.title.replace(' ', '_')}.ipynb", # TODO
             label=" ",
+            margin=(5, 10, 0, 0),
             sx={"p": "6px 0", "minWidth": "32px", "& .MuiButton-icon": {"ml": 0, "mr": 0}},
             styles={'z-index': '1000', 'margin-left': 'auto'},
             variant="text"
@@ -1238,53 +1235,8 @@ class ExplorerUI(UI):
         if len(title) > 25:
             title = f"{title[:25]}..."
 
-        export_menu = MenuButton(
-            label="Export as...", variant='text', icon="file_download", margin=0,
-            items=[
-                {
-                    "label": FORMAT_LABELS.get(fmt, f"{fmt.upper()} (.{fmt})"),
-                    "format": fmt,
-                    "icon": FORMAT_ICONS.get(fmt, "insert_drive_file")
-                } for fmt in view.export_formats
-            ],
-            on_click=lambda _: file_download._transfer()
-        )
-        def download_export(item):
-            fmt = item["format"]
-            file_download.filename = f"{title}.{fmt}"
-            return view.export(fmt)
-        file_download = FileDownload(
-            auto=True, callback=param.bind(download_export, export_menu), filename=title, visible=False
-        )
-        export_menu.attached.append(file_download)
-
         tabs = exploration.view[0]
         position = len(tabs)
-
-        task = next(task for task in exploration.plan if view in task.views)
-        async def revise(event):
-            try:
-                await task.revise(
-                    event.new, task.actor, exploration.context, view, {'interface': self.interface}
-                )
-            except Exception as e:
-                traceback.print_exc()
-                self.interface.stream(f"An error occurred while revising the output: {e}", user="Assistant")
-        async def annotate(event):
-            try:
-                await task.actor.annotate(
-                    event.new, list(task.history), exploration.context, {"spec": load_yaml(view.spec)}
-                )
-            except Exception as e:
-                traceback.print_exc()
-                self.interface.stream(f"An error occurred while annotating the output: {e}", user="Assistant")
-        revise_controls = RetryControls()
-        revise_controls.param.watch(revise, "instruction")
-        controls = [revise_controls]
-        if isinstance(task, ActorTask) and hasattr(task.actor, "annotate"):
-            annotate_controls = AnnotationControls()
-            annotate_controls.param.watch(annotate, "instruction")
-            controls.append(annotate_controls)
 
         @hold()
         def pop_out(event):
@@ -1310,13 +1262,11 @@ class ExplorerUI(UI):
             margin=(5, 0, 0, 0), on_click=pop_out, styles={"margin-left": "auto"}
         )
 
-        actions = Row(
-            export_menu,
-            *controls,
-            pop_button,
-            sizing_mode="stretch_width", margin=(0, 10)
-        )
-        editor = Column(actions, view.editor)
+        task = next(task for task in exploration.plan if view in task.views)
+        controls = view.render_controls(task, self.interface)
+        controls.append(pop_button)
+
+        editor = Column(controls, view.editor)
         vsplit = VSplit(editor, view, sizes=(20, 80), expanded_sizes=(20, 80), sizing_mode="stretch_both")
         standalone = Column(
             Typography(title.upper(), variant="subtitle1", color="primary", sx={"border-bottom": "2px solid var(--mui-palette-primary-main)"}),

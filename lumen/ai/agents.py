@@ -1976,12 +1976,14 @@ class VegaLiteAgent(BaseViewAgent):
 
         # Merge and validate
         final_dict = spec.copy()
+
         try:
             final_dict["spec"] = self._deep_merge_dicts(final_dict["spec"], update_dict)
-            await self._extract_spec(context, {"yaml_spec": dump_yaml(final_dict["spec"])})
+            spec = await self._extract_spec(context, {"yaml_spec": dump_yaml(final_dict["spec"])})
         except Exception as e:
             log_debug(f"Skipping invalid annotation update due to error: {e}")
-        return final_dict
+            raise e
+        return dump_yaml(spec["spec"])
 
 
 class AnalysisInputs(ContextModel):
