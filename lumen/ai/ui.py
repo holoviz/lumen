@@ -428,11 +428,6 @@ class UI(Viewer):
         interface.disabled = False
         existing_actions = interface.active_widget.actions
         interface.active_widget.actions = {
-            'manage_data': {
-                'icon': 'cloud_upload',
-                'callback': self._open_sources_dialog,
-                'label': 'Manage Data'
-            },
             'manage_llm': {
                 'icon': 'auto_awesome',
                 'callback': self._open_llm_dialog,
@@ -510,10 +505,17 @@ class UI(Viewer):
         )
         self._settings_menu.param.watch(self._toggle_sql_planning, 'toggled')
         self._settings_menu.param.watch(self._toggle_validation_agent, 'toggled')
+        self._upload_button = IconButton(
+            icon="cloud_upload",
+            description="Manage Data Sources",
+            margin=(12, 5, 5, 0),
+            on_click=self._open_sources_dialog,
+        )
         self._coordinator.verbose = self._settings_menu.param.toggled.rx().rx.pipe(lambda toggled: 0 in toggled)
         return [
             HSpacer(),
             self._settings_menu,
+            self._upload_button,
             Divider(
                 orientation="vertical", height=30, margin=(17, 5, 17, 5),
                 sx={'border-color': 'white', 'border-width': '1px'}
