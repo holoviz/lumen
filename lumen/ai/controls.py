@@ -765,12 +765,13 @@ class RevisionControls(Viewer):
 
     def __init__(self, **params):
         super().__init__(**params)
-        self._text_input = TextInput(
-            placeholder="Enter feedback and press the <Enter> to retry.",
+        input_kwargs = dict(
             max_length=200,
             margin=10,
             size="small"
         )
+        input_kwargs.update(self.input_kwargs)
+        self._text_input = TextInput(input_kwargs)
         popup = Popup(
             self._text_input,
             open=self.param.active,

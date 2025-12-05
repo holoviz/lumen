@@ -518,7 +518,7 @@ class LumenBaseAgent(Agent):
 
     prompts = param.Dict(
         default={
-            "retry_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "LumenBaseAgent" / "retry_output.jinja2"},
+            "revise_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "LumenBaseAgent" / "revise_output.jinja2"},
         }
     )
 
@@ -550,7 +550,7 @@ class LumenBaseAgent(Agent):
         lines = spec.splitlines()
         numbered_text = "\n".join(f"{i:2d}: {line}" for i, line in enumerate(lines, 1))
         system = await self._render_prompt(
-            "retry_output",
+            "revise_output",
             messages,
             context,
             numbered_text=numbered_text,
@@ -559,7 +559,7 @@ class LumenBaseAgent(Agent):
             errors=errors,
             **kwargs
         )
-        retry_model = self._lookup_prompt_key("retry_output", "response_model")
+        retry_model = self._lookup_prompt_key("revise_output", "response_model")
         result = await self.llm.invoke(
             messages,
             system=system,
@@ -643,7 +643,7 @@ class SQLAgent(LumenBaseAgent):
                 "response_model": make_discovery_model,
                 "template": PROMPTS_DIR / "SQLAgent" / "check_sufficiency.jinja2",
             },
-            "retry_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "SQLAgent" / "retry_output.jinja2"},
+            "revise_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "SQLAgent" / "revise_output.jinja2"},
         }
     )
 
@@ -1133,7 +1133,7 @@ class DbtslAgent(LumenBaseAgent, DbtslMixin):
                 "response_model": DbtslQueryParams,
                 "template": PROMPTS_DIR / "DbtslAgent" / "main.jinja2",
             },
-            "retry_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "LumenBaseAgent" / "retry_output.jinja2"},
+            "revise_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "LumenBaseAgent" / "revise_output.jinja2"},
         }
     )
 
@@ -1515,7 +1515,7 @@ class VegaLiteAgent(BaseViewAgent):
             "main": {"response_model": VegaLiteSpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"},
             "interaction_polish": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "interaction_polish.jinja2"},
             "annotate_plot": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "annotate_plot.jinja2"},
-            "retry_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "retry_output.jinja2"},
+            "revise_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "revise_output.jinja2"},
         }
     )
 

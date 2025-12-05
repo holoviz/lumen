@@ -5,29 +5,9 @@ Add strategic visual annotations to highlight key insights in your data.
 
 # Critical: Shared Scales for Layered Annotations
 
-When adding annotation layers with `datum` values, you MUST define shared scales at the top level to prevent axis expansion to 0:
+When adding annotation layers with `datum` values, you MUST define shared scales at the top level. Without this, `datum` annotations cause axes to expand to include 0, compressing your data.
 
-```yaml
-encoding:
-  x:
-    type: quantitative
-    scale:
-      domain: [1950, 2030]  # Set appropriate range for your data
-  y:
-    type: quantitative
-    scale:
-      domain: [24, 30]
-layer:
-  - encoding:
-      x: {field: year}
-      y: {field: value}
-    mark: line
-  - encoding:
-      y: {datum: 27}  # Now respects the shared scale
-    mark: rule
-```
-
-Without top-level scale domains, `datum` annotations cause axes to include 0, compressing your data.
+Add a top-level `encoding` block with `scale.domain` for both axes before your `layer` array.
 
 # Annotation Patterns
 
@@ -62,13 +42,6 @@ Build off the following Vega-Lite yaml:
 ```yaml
 {{ vega_spec }}
 ```
-
-```
-{%- if memory.get('data') is not none %}
-Data Overview:
-{{ memory["data"] }}
-{%- endif -%}
-```
 {% endblock %}
 
 {% block examples %}
@@ -96,7 +69,7 @@ layer:
 - encoding:
     y: {datum: 26}
     y2: {datum: 28}
-  mark: {type: rect, color: '#cccccc', opacity: 0.01}
+  mark: {type: rect, color: '#cccccc', opacity: 0.3}
 # 2. Vertical highlight band
 - encoding:
     x: {datum: 1997}
