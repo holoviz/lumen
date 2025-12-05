@@ -18,9 +18,9 @@ Your response should contain ONLY the corrected code with no additional text.
 {% endblock %}
 
 {%- block context %}
-{% if memory.get("metaset") and memory["metaset"].compact_context() %}
+{% if memory.get("metaset") %}
 Available schema context:
-{{ memory["metaset"].compact_context() }}
+{{ memory["metaset"].compact_context(5) }}
 {% endif %}
 
 {% if language %}
