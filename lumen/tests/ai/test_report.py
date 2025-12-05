@@ -336,7 +336,7 @@ async def test_taskgroup_invalidate_partial():
     assert outs[0].object == "A"
 
 async def test_sql_query_action(tiny_source):
-    action = SQLQuery(source=tiny_source, sql_expr="SELECT category FROM tiny", table="foo", generate_caption=False)
+    action = SqlQuery(source=tiny_source, sql_expr="SELECT category FROM tiny", table="foo", generate_caption=False)
 
     outs, ctx = await action.execute()
 
