@@ -1554,15 +1554,24 @@ class VegaLiteAgent(BaseViewAgent):
         self._vector_store = DuckDBVectorStore(uri=str(uri), read_only=True)
         return self._vector_store
 
-    def _deep_merge_dicts(self, base_dict: dict[str, Any], update_dict: dict[str, Any]) -> dict[str, Any]:
+    def _deep_merge_dicts(self, base_dict: dict[str, Any], update_dict: dict[str, Any] | list) -> dict[str, Any]:
         """Deep merge two dictionaries, with update_dict taking precedence.
 
         Special handling:
+        - If update_dict is a list, treat it as a list of layers to append
         - If update_dict contains 'layer', append new annotation layers rather than merging
+        - Background marks (rect, area) are automatically prepended to render behind other layers
         - When merging layers, ensure each layer has both 'mark' and 'encoding'
         """
+        # Mark types that should be rendered as backgrounds
+        BACKGROUND_MARKS = {'rect', 'area'}
+
         if not update_dict:
             return base_dict
+
+        # Handle case where update_dict is a list of layers (e.g., annotation layers)
+        if isinstance(update_dict, list):
+            update_dict = {"layer": update_dict}
 
         result = base_dict.copy()
 
@@ -1571,28 +1580,38 @@ class VegaLiteAgent(BaseViewAgent):
             base_layers = result["layer"]
             update_layers = update_dict["layer"]
 
-            # Check if update layers are new annotations (have different mark types from base)
-            # If first update layer has a different mark type, treat as append operation
+            # Separate background and foreground layers from updates
+            background_updates = []
+            foreground_updates = []
+
+            for layer in update_layers:
+                mark_type = self._get_layer_mark_type(layer)
+                if mark_type in BACKGROUND_MARKS:
+                    background_updates.append(self._normalize_layer_mark(layer.copy()))
+                else:
+                    foreground_updates.append(layer)
+
+            # Check if remaining foreground updates are new annotations or layer updates
             is_append_operation = False
-            if update_layers and base_layers:
-                first_update_mark = self._get_layer_mark_type(update_layers[0])
+            if foreground_updates and base_layers:
+                first_update_mark = self._get_layer_mark_type(foreground_updates[0])
                 first_base_mark = self._get_layer_mark_type(base_layers[0])
 
-                # If marks are different, or if update has marks like 'rule', 'rect', 'text'
+                # If marks are different, or if update has marks like 'rule', 'text'
                 # which are typically annotations, treat as append
-                annotation_marks = {'rule', 'rect', 'text'}
+                annotation_marks = {'rule', 'text'}
                 if first_update_mark != first_base_mark or first_update_mark in annotation_marks:
                     is_append_operation = True
 
             if is_append_operation:
-                # Append all update layers as new annotation layers
-                # Normalize each layer to ensure proper mark structure
-                normalized_updates = [self._normalize_layer_mark(layer.copy()) for layer in update_layers]
-                result["layer"] = base_layers + normalized_updates
+                # Append foreground layers as new annotation layers
+                normalized_foreground = [self._normalize_layer_mark(layer.copy()) for layer in foreground_updates]
+                # Prepend backgrounds, keep base, append foregrounds
+                result["layer"] = background_updates + base_layers + normalized_foreground
             else:
                 # Original merge behavior for updating existing layers
                 merged_layers = []
-                for i, update_layer in enumerate(update_layers):
+                for i, update_layer in enumerate(foreground_updates):
                     if i < len(base_layers):
                         # Merge with corresponding base layer
                         base_layer = base_layers[i]
@@ -1608,8 +1627,9 @@ class VegaLiteAgent(BaseViewAgent):
                         merged_layers.append(self._normalize_layer_mark(update_layer.copy()))
 
                 # Keep any remaining base layers not updated
-                merged_layers.extend(base_layers[len(update_layers):])
-                result["layer"] = merged_layers
+                merged_layers.extend(base_layers[len(foreground_updates):])
+                # Prepend backgrounds to all merged layers
+                result["layer"] = background_updates + merged_layers
         else:
             # Standard recursive merge for non-layer properties
             for key, value in update_dict.items():
