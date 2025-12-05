@@ -191,10 +191,14 @@ class Plan(Section):
         for idx in reversed(range(failed_index)):
             task = self._tasks[idx]
             # Check if this task provides pipeline or other relevant context
-            if isinstance(task, TaskGroup):
-                for actor in task:
-                    if 'pipeline' in actor.output_schema.__annotations__:
+            if isinstance(task, ActorTask):
+                if 'pipeline' in task.output_schema.__annotations__:
+                    return idx
+            elif isinstance(task, TaskGroup):
+                for subtask in task:
+                    if isinstance(subtask, ActorTask) and 'pipeline' in subtask.output_schema.__annotations__:
                         return idx
+        return
 
     async def _retry_from_provider(
         self, provider_index: int, failed_index: int, error_message: str, context: TContext
@@ -229,11 +233,12 @@ class Plan(Section):
                 retry_step.stream(f"Retrying with feedback about: {error_message}")
 
                 # Update todos to show retry
-                todos = '\n'.join(
-                    f"- [{'x' if tidx < idx else '🔄' if tidx == idx else ' '}] {'<u>' + t.instruction + '</u>' if tidx == idx else t.instruction}"
-                    for tidx, t in enumerate(self)
-                )
-                self.steps_layout.headers[1].object = todos
+                if self.steps_layout is not None:
+                    todos = '\n'.join(
+                        f"- [{'x' if tidx < idx else '🔄' if tidx == idx else ' '}] {'<u>' + t.instruction + '</u>' if tidx == idx else t.instruction}"
+                        for tidx, t in enumerate(self)
+                    )
+                    self.steps_layout.header[1].object = todos
 
                 # Run with mutated history
                 kwargs = {"agents": self.agents} if 'agents' in task.param else {}
