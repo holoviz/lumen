@@ -911,9 +911,10 @@ def apply_changes(lines: list[str], edits: list[LineEdit]) -> str:
     for e in deletes:
         if not (1 <= e.line_no <= n):
             raise IndexError(f"delete line_no out of range: {e.line_no} (1..{n})")
+    # For inserts, only validate >= 1; out-of-range high values will append to end
     for e in inserts:
-        if not (1 <= e.line_no <= n+1):  # allow == n for append
-            raise IndexError(f"insert line_no out of range: {e.line_no} (1..{n+1})")
+        if e.line_no < 1:
+            raise IndexError(f"insert line_no must be >= 1, got {e.line_no}")
 
     out = lines[:]
 
@@ -929,7 +930,9 @@ def apply_changes(lines: list[str], edits: list[LineEdit]) -> str:
         enumerate(inserts), key=lambda pair: (pair[1].line_no, -pair[0])
     )
     for _, ins in inserts_sorted:
-        out.insert(ins.line_no-1, ins.line)
+        # Cap insert position at current list length (allows sequential line numbers for appending)
+        insert_pos = min(ins.line_no - 1, len(out))
+        out.insert(insert_pos, ins.line)
 
     return "\n".join(out)
 
