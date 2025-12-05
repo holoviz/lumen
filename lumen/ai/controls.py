@@ -771,7 +771,7 @@ class RevisionControls(Viewer):
             size="small"
         )
         input_kwargs.update(self.input_kwargs)
-        self._text_input = TextInput(input_kwargs)
+        self._text_input = TextInput(**input_kwargs)
         popup = Popup(
             self._text_input,
             open=self.param.active,
