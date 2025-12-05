@@ -18,6 +18,8 @@ If user asks to "make it look better", "professional", "publication-ready", or s
 6. **Add value labels**: with units via `transform.calculate`, positioned above/below bars
 7. **Add solid zero line**: if data spans positive/negative values
 8. **Clean tick labels**: use `labelExpr` to format ugly values (e.g., snake_case → Title Case)
+9. **Fix label angles**: rotate to 0, or -90 degrees, if they are crowded and categorical
+10. **Limit results for readability**: For bar/column charts with many categories (10+), limit to top 5-10 using `transform` with `window` rank + `filter`
 {% endblock %}
 
 {%- block examples -%}
@@ -111,8 +113,23 @@ mark: {type: bar, color: '#888888'}
 ```yaml
 encoding:
   x:
-    axis: {labelAngle: -45, title: null}  # null removes redundant title
+    axis: {labelAngle: -90, title: null}  # null removes redundant title
   y:
     axis: {format: '.1f', tickCount: 5}
+```
+
+## Limit to top N results (improves readability)
+For charts with many categories, show only top 5-10:
+```yaml
+transform:
+  - window:
+      - op: rank
+        as: rank
+    sort:
+      - field: value_field
+        order: descending
+  - filter: datum.rank <= 8
+title:
+  text: Top 8 Categories by Value
 ```
 {%- endblock -%}
