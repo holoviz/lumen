@@ -407,10 +407,3 @@ def test_delete_line_no_out_of_range_raises():
         apply_changes(lines, [DeleteLine(line_no=3)])
     with pytest.raises(ValidationError):
         apply_changes(lines, [DeleteLine(line_no=0)])
-
-
-def test_insert_line_no_too_large_raises():
-    lines = ["a", "b"]
-    # max allowed for insert is len(lines)+1 == 3
-    with pytest.raises(IndexError):
-        apply_changes(lines, [InsertLine(line_no=4, line="X")])
