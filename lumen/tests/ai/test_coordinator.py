@@ -248,7 +248,7 @@ async def test_plan_revise(sql_plan):
     ])
 
     await sql_plan[0].revise(
-        "Update to limit to 1 row", sql_plan[0].actor, sql_plan.context, sql_plan.views[1], config={'llm': sql_plan.llm}
+        "Update to limit to 1 row", sql_plan.context, sql_plan.views[1], config={'llm': sql_plan.llm}
     )
 
     await async_wait_until(lambda: sql_plan.out_context["sql"] == (
