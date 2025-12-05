@@ -15,8 +15,9 @@ from panel.pane import Markdown
 from typing_extensions import NotRequired
 
 from lumen.ai.actor import ContextModel
+from lumen.ai.models import SqlQuery
 from lumen.ai.report import (
-    Action, ActorTask, Report, Section, SQLQuery, TaskGroup, Typography,
+    Action, ActorTask, Report, Section, TaskGroup, Typography,
 )
 from lumen.ai.views import SQLOutput
 
@@ -333,18 +334,6 @@ async def test_taskgroup_invalidate_partial():
     assert len(outs) == 1
     assert isinstance(outs[0], Markdown)
     assert outs[0].object == "A"
-
-async def test_sql_query_action(tiny_source):
-    action = SQLQuery(source=tiny_source, sql_expr="SELECT category FROM tiny", table="foo", generate_caption=False)
-
-    outs, ctx = await action.execute()
-
-    assert len(outs) == 1
-    out = outs[0]
-    assert isinstance(out, SQLOutput)
-    assert out.spec == action.sql_expr
-    assert out.component.data.columns == ['category']
-    assert list(out.component.data.category) == ['A', 'B', 'A']
 
 async def test_report_to_notebook():
     report = Report(

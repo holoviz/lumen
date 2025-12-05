@@ -1,9 +1,13 @@
+from __future__ import annotations
+
 import asyncio
 import io
 import pathlib
 import re
+import traceback
 import zipfile
 
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 import aiohttp
@@ -20,12 +24,15 @@ from panel_material_ui import (
     IconButton, Popup, Select, Switch, Tabs, TextInput, ToggleIcon, Typography,
 )
 
+from ..config import load_yaml
 from ..pipeline import Pipeline
 from ..sources.duckdb import DuckDBSource
 from ..util import detect_file_encoding
 from .config import SOURCE_TABLE_SEPARATOR
 from .context import TContext
-from .views import SQLOutput
+
+if TYPE_CHECKING:
+    from .views import SQLOutput
 
 TABLE_EXTENSIONS = ("csv", "parquet", "parq", "json", "xlsx", "geojson", "wkt", "zip")
 
@@ -744,7 +751,13 @@ class RevisionControls(Viewer):
 
     instruction = param.String(doc="Instruction to LLM to revise output")
 
-    layout_kwargs = param.Dict()
+    interface = param.Parameter()
+
+    layout_kwargs = param.Dict(default={})
+
+    task = param.Parameter()
+
+    view = param.Parameter(doc="The View to revise")
 
     toggle_kwargs = {}
 
@@ -752,13 +765,19 @@ class RevisionControls(Viewer):
 
     def __init__(self, **params):
         super().__init__(**params)
-        self._text_input = TextInput(
-            placeholder="Enter feedback and press the <Enter> to retry.",
+        input_kwargs = dict(
             max_length=200,
             margin=10,
             size="small"
         )
-        popup = Popup(self._text_input, open=self.param.active)
+        input_kwargs.update(self.input_kwargs)
+        self._text_input = TextInput(**input_kwargs)
+        popup = Popup(
+            self._text_input,
+            open=self.param.active,
+            anchor_origin={"horizontal": "right", "vertical": "center"},
+            styles={"z-index": '1300'}
+        )
         icon = ToggleIcon.from_param(
             self.param.active,
             active_icon="cancel",
@@ -798,6 +817,18 @@ class RetryControls(RevisionControls):
 
     toggle_kwargs = {"icon": "auto_awesome", "description": "Prompt LLM to retry"}
 
+    @param.depends("instruction", watch=True)
+    async def _revise(self):
+        if not self.instruction:
+            return
+        try:
+            await self.task.revise(
+                self.instruction, self.task.out_context, self.view, {'interface': self.interface}
+            )
+        except Exception as e:
+            traceback.print_exc()
+            self.interface.stream(f"An error occurred while revising the output: {e}", user="Assistant")
+
 
 
 class AnnotationControls(RevisionControls):
@@ -811,6 +842,21 @@ class AnnotationControls(RevisionControls):
         "description": "Add annotations to highlight key insights",
         "icon": "chat-bubble",
     }
+
+    @param.depends("instruction", watch=True)
+    async def _annotate(self):
+        if not self.instruction:
+            return
+        try:
+            old = self.view.spec
+            with self.view.editor.param.update(loading=True):
+                self.view.spec = await self.task.actor.annotate(
+                    self.instruction, list(self.task.history), self.task.out_context, {"spec": load_yaml(self.view.spec)}
+                )
+        except Exception as e:
+            traceback.print_exc()
+            self.view.spec = old
+            self.interface.stream(f"An error occurred while attempting to annotate the output: {e}", user="Assistant")
 
 
 class TableSourceCard(Viewer):
@@ -1184,6 +1230,8 @@ class TableExplorer(Viewer):
     def create_sql_output(self) -> SQLOutput | None:
         if not self.table_slug:
             return
+        from .views import SQLOutput
+
         source = self.source_map[self.table_slug]
         if SOURCE_TABLE_SEPARATOR in self.table_slug:
             _, table = self.table_slug.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)

@@ -9,9 +9,7 @@ from collections.abc import Iterable, Iterator
 from contextlib import nullcontext
 from functools import partial
 from types import FunctionType
-from typing import (
-    Any, Self, TypedDict, final,
-)
+from typing import Any, Self, final
 
 import panel as pn
 import param
@@ -29,13 +27,10 @@ from panel_material_ui import (
     Typography,
 )
 
-from ..pipeline import Pipeline
-from ..sources.base import BaseSQLSource
 from ..views.base import Panel, View
 from .actor import (
     Actor, ContextProvider, NullStep, TContext,
 )
-from .agents import AnalystAgent, LumenBaseAgent
 from .config import MissingContextError
 from .context import (
     LWW, ContextError, ValidationIssue, collect_task_outputs,
@@ -46,13 +41,11 @@ from .export import (
     format_output, make_md_cell, make_preamble, write_notebook,
 )
 from .llm import Llm, Message
-from .schemas import Metaset, get_metaset
 from .tools import FunctionTool, Tool
 from .utils import (
-    describe_data, extract_block_source, get_block_names,
-    wrap_logfire_on_method,
+    extract_block_source, get_block_names, wrap_logfire_on_method,
 )
-from .views import LumenOutput, SQLOutput
+from .views import LumenOutput
 
 
 class Task(Viewer):
@@ -1116,22 +1109,21 @@ class ActorTask(ExecutableTask):
         )
 
     async def revise(
-        self, instruction: str, task: Task | Actor, context: TContext,
-        view: LumenOutput, config: dict[str, Any] | None = None
+        self, instruction: str, context: TContext, view: LumenOutput, config: dict[str, Any] | None = None
     ):
         config = config or {}
-        invalidation_keys = set(task.output_schema.__annotations__)
-        if isinstance(task, LumenBaseAgent):
+        invalidation_keys = set(self.actor.output_schema.__annotations__)
+        if hasattr(self.actor, 'revise'):
             with view.editor.param.update(loading=True):
                 messages = list(self.history)
                 task_config = dict(config)
                 if "llm" not in task_config:
-                    task_config["llm"] = task.llm or self.llm
+                    task_config["llm"] = self.actor.llm or self.llm
                 task_context = merge_contexts(self.input_schema, [self.context, context])
                 try:
                     old = view.spec
-                    with task.param.update(**task_config):
-                        view.spec = await task.revise(
+                    with self.actor.param.update(**task_config):
+                        view.spec = await self.actor.revise(
                             instruction, messages, task_context, view
                         )
                 except Exception as e:
@@ -1165,110 +1157,3 @@ class Action(ExecutableTask):
         self.views = views
         self.status = "success"
         return views, out_context
-
-
-class SQLQueryInputs(TypedDict):
-
-    source: BaseSQLSource
-
-
-class SQLQueryOutputs(TypedDict):
-    source: BaseSQLSource
-    pipeline: Pipeline
-    data: dict
-    metaset: Metaset
-    table: str
-
-
-class SQLQuery(Action):
-    """
-    An `SQLQuery` is an `Action` that executes a SQL expression on a Source
-    and generates an LumenOutput to be rendered.
-    """
-
-    generate_caption = param.Boolean(default=True, doc="""
-        Whether to generate a caption for the data.""")
-
-    source = param.ClassSelector(class_=BaseSQLSource, doc="""
-        The Source to execute the SQL expression on.""")
-
-    sql_expr = param.String(default="", doc="""
-        The SQL expression to use for the action.""")
-
-    table_params = param.List(default=[], doc="""
-        List of parameters to pass to the SQL expression.
-        Parameters are used with placeholders (?) in the SQL expression.""")
-
-    table = param.String(doc="""
-        The name of the table generated from the SQL expression.""")
-
-    user_content = param.String(default="Generate a short caption for the data", doc="""
-        Additional instructions to provide to the analyst agent, i.e. what to focus on.""")
-
-    inputs = SQLQueryInputs
-    outputs = SQLQueryOutputs
-
-    def _render_controls(self):
-        return [
-            TextInput.from_param(
-                self.param.table, sizing_mode="stretch_width", margin=(10, 0)
-            ),
-            TextAreaInput.from_param(
-                self.param.sql_expr, sizing_mode="stretch_width", margin=(10, 0)
-            ),
-        ]
-
-    def __repr__(self):
-        params = []
-        if self.sql_expr:
-            params.append(f"sql_expr='{self.sql_expr}'")
-        if self.table:
-            params.append(f"table='{self.table}'")
-        if self.title:
-            params.append(f"title='{self.title}'")
-        return f"{self.__class__.__name__}({', '.join(params)})"
-
-    async def _execute(self, context: TContext, **kwargs) -> tuple[list[Any], SQLQueryOutputs]:
-        """
-        Executes the action.
-
-        Arguments
-        ----------
-        **kwargs: dict
-            Additional keyword arguments to pass to the action.
-
-        Returns
-        -------
-        The outputs of the action.
-        """
-        source = self.source
-        if source is None:
-            if context is None or 'source' not in context:
-                raise ValueError(
-                    "SQLQuery could not resolve a source. Either provide "
-                    "an explicit source or ensure another action or actor "
-                    "provides a source."
-                )
-            source = context['source']
-        if not self.table:
-            raise ValueError("SQLQuery must declare a table name.")
-
-        # Pass table_params if provided
-        params = {self.table: self.table_params} if self.table_params else None
-        source = source.create_sql_expr_source({self.table: self.sql_expr}, params=params)
-        pipeline = Pipeline(source=source, table=self.table)
-        out_context = {
-            "source": source,
-            "pipeline": pipeline,
-            "data": await describe_data(pipeline.data),
-            "metaset": await get_metaset([source], [self.table]),
-            "table": self.table,
-        }
-        outputs = [SQLOutput(component=pipeline, spec=self.sql_expr)]
-        if self.generate_caption:
-            caption_out, _ = await AnalystAgent(llm=self.llm).respond(
-                [{"role": "user", "content": self.user_content}], context
-            )
-            caption = caption_out[0]
-            outputs.append(Typography(caption.object))
-        return outputs, out_context
