@@ -1191,7 +1191,7 @@ class TableExplorer(Viewer):
             table = self.table_slug
         new_table = f"select_{table}"
         sql_expr = f"SELECT * FROM \"{table}\""
-        new_source = source.create_sql_expr_source({new_table: sql_expr, table: source.get_sql_expr(table)})
+        new_source = source.create_sql_expr_source({new_table: sql_expr})
         pipeline = Pipeline(source=new_source, table=new_table)
         return SQLOutput(spec=sql_expr, component=pipeline)
 

@@ -229,9 +229,16 @@ class Tool(Actor, ContextProvider):
         """
         return True
 
+    async def prepare(self, context: TContext):
+        """
+        Prepare the tool with the initial context.
+        Called once when the tool is first initialized.
+        """
+
     async def sync(self, context: TContext):
         """
         Allows the tool to update when the provided context changes.
+        Subclasses should override this to handle context updates.
         """
 
 
@@ -648,6 +655,21 @@ class TableLookup(VectorLookupTool):
         self._raw_metadata = {}
         self._semaphore = asyncio.Semaphore(self.max_concurrent)
 
+    async def sync(self, context: TContext):
+        """
+        Sync the vector store with updated context.
+        Only processes new sources that haven't been added yet.
+        """
+        sources = context.get("sources", [])
+        if not sources:
+            log_debug("[TableLookup] sync called but no sources in context")
+            return
+
+        if "tables_metadata" not in context:
+            context["tables_metadata"] = {}
+
+        await self._update_vector_store(context)
+
     def _format_results_for_refinement(
         self, results: list[dict[str, Any]], context: TContext
     ) -> str:
@@ -744,8 +766,9 @@ class TableLookup(VectorLookupTool):
         sources = context.get("sources")
         if sources is None and "source" in context:
             sources = [context["source"]]
-        elif sources is None:
-            raise ValueError("Context does not contain a \"source\" or \"sources\".")
+        elif sources is None or len(sources) == 0:
+            log_debug("[TableLookup] _update_vector_store called but no sources available")
+            return
         self._ready = False
         await asyncio.sleep(0.5)  # allow main thread time to load UI first
         tasks = []
@@ -902,8 +925,10 @@ class TableLookup(VectorLookupTool):
         for result in results:
             source_name = result["metadata"]["source"]
             table_name = result["metadata"]["table_name"]
+            source_obj = None
             for source in context.get("sources", []):
                 if source.name == source_name:
+                    source_obj = source
                     sql = source.get_sql_expr(source.normalize_table(table_name))
                     break
             table_slug = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
@@ -935,9 +960,10 @@ class TableLookup(VectorLookupTool):
             catalog_entry = TableCatalogEntry(
                 table_slug=table_slug,
                 similarity=similarity_score,
+                columns=columns,
+                source=source_obj,
                 description=table_description,
                 sql_expr=sql,
-                columns=columns,
                 metadata=context["tables_metadata"].get(table_slug, {}).copy()
             )
             catalog[table_slug] = catalog_entry
