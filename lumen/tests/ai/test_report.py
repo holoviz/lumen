@@ -15,8 +15,9 @@ from panel.pane import Markdown
 from typing_extensions import NotRequired
 
 from lumen.ai.actor import ContextModel
+from lumen.ai.models import SqlQuery
 from lumen.ai.report import (
-    Action, ActorTask, Report, Section, SQLQuery, TaskGroup, Typography,
+    Action, ActorTask, Report, Section, TaskGroup, Typography,
 )
 from lumen.ai.views import SQLOutput
 
