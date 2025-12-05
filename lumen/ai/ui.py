@@ -1230,27 +1230,30 @@ class ExplorerUI(UI):
         self._last_synced = exploration
         return exploration
 
-    def _render_view(self, exploration: Exploration, view: LumenOutput) -> VSplit:
-        title = view.title or type(view).__name__.replace('Output', '')
-        if len(title) > 25:
-            title = f"{title[:25]}..."
-
+    def _render_pop_out(self, exploration: Exploration, view: VSplit, title: str):
+        title_view = Typography(
+            title.upper(),
+            color="primary",
+            sx={"border-bottom": "2px solid var(--mui-palette-primary-main)"},
+            variant="subtitle1"
+        )
+        standalone = Column(title_view, view)
         tabs = exploration.view[0]
         position = len(tabs)
 
         @hold()
         def pop_out(event):
-            if vsplit in tabs:
+            if view in tabs:
+                tabs.active = max(tabs.active-1, 0)
+                tabs.remove(view)
+                exploration.view.append(standalone)
                 pop_button.param.update(
                     description="Reattach",
                     icon="open_in_browser"
                 )
-                tabs.active = max(exploration.view[0].active-1, 0)
-                tabs.remove(vsplit)
-                exploration.view.append(standalone)
             else:
                 exploration.view.remove(standalone)
-                tabs.insert(position, (title, vsplit))
+                tabs.insert(position, (title, view))
                 tabs.active = position
                 pop_button.param.update(
                     description="Open in new pane",
@@ -1261,36 +1264,55 @@ class ExplorerUI(UI):
             description="Pop-out", icon="open_in_new", icon_size="1.1em", size="small",
             margin=(5, 0, 0, 0), on_click=pop_out, styles={"margin-left": "auto"}
         )
+        return pop_button
+
+    def _render_view(self, exploration: Exploration, view: LumenOutput) -> VSplit:
+        title = view.title or type(view).__name__.replace('Output', '')
+        if len(title) > 25:
+            title = f"{title[:25]}..."
 
         task = next(task for task in exploration.plan if view in task.views)
         controls = view.render_controls(task, self.interface)
-        controls.append(pop_button)
-
         editor = Column(controls, view.editor)
-        vsplit = VSplit(editor, view, sizes=(20, 80), expanded_sizes=(20, 80), sizing_mode="stretch_both")
-        standalone = Column(
-            Typography(title.upper(), variant="subtitle1", color="primary", sx={"border-bottom": "2px solid var(--mui-palette-primary-main)"}),
-            vsplit
+        vsplit = VSplit(
+            editor, view,
+            expanded_sizes=(20, 80),
+            sizes=(20, 80),
+            sizing_mode="stretch_both",
+            styles={"overflow": "auto"}
         )
+        controls.append(self._render_pop_out(exploration, vsplit, title))
         return (title, vsplit)
+
+    def _find_view_in_tabs(self, exploration: Exploration, out: LumenOutput):
+        tabs = exploration.view[0]
+        for i, tab in enumerate(tabs):
+            content = tab[1] if isinstance(tab, tuple) and len(tab) > 1 else tab
+            if isinstance(content, VSplit) and out.view in content:
+                return i
+        return None
+
+    def _find_view_in_popped_out(self, exploration: Exploration, out: LumenOutput):
+        for i, standalone in enumerate(exploration.view[1:], start=1):
+            if isinstance(standalone, Column) and len(standalone) > 1:
+                vsplit = standalone[1]
+                if isinstance(vsplit, VSplit) and out.view in vsplit:
+                    return i
+        return None
 
     def _add_views(self, exploration: Exploration, event: param.parameterized.Event):
         tabs = exploration.view[0]
-        outputs = [view for view in event.new if isinstance(view, LumenOutput) and view not in event.old]
         content = []
-        for out in outputs:
-            title, vsplit = self._render_view(exploration, out)
+        for view in event.new:
+            if not isinstance(view, LumenOutput) or view in event.old:
+                continue
+            if tabs and isinstance(view, SQLOutput) and not isinstance(tabs[0], GraphicWalker):
+                tabs[0] = ("Overview", view.render_explorer())
+            title, vsplit = self._render_view(exploration, view)
             content.append((title, vsplit))
-            if tabs and isinstance(out, SQLOutput) and not isinstance(tabs[0], GraphicWalker):
-                tabs[0] = ("Overview", GraphicWalker(
-                    out.component.param.data,
-                    kernel_computation=True,
-                    tab='data',
-                    sizing_mode='stretch_both'
-                ))
 
         tabs.extend(content)
-        tabs.active = len(tabs)-1
+        tabs.active = max(tabs.active, len(tabs)-1)
         if self._split.collapsed:
             self._split.param.update(
                 sizes=self._split.expanded_sizes,
@@ -1303,22 +1325,29 @@ class ExplorerUI(UI):
         idx = None
         tabs = exploration.view[0]
         content = list(zip(tabs._names, tabs, strict=False))
-        for out in old:
-            if out in current:
-                continue
-            matches = [
-                i for i, (_, vsplit) in enumerate(content)
-                if isinstance(vsplit, VSplit) and out.view in vsplit
-            ]
-            if matches:
-                idx = matches[0]
-                content.pop(idx)
+        popped_out_to_remove = []
 
-        for out in current:
-            if out in old:
-                idx = next(i for i, tab in enumerate(tabs[1:]) if out.view in tab) + 1
+        for view in old:
+            if view in current:
                 continue
-            title, vsplit = self._render_view(exploration, out)
+            tab_idx = self._find_view_in_tabs(exploration, view)
+            if tab_idx is not None:
+                idx = tab_idx
+                content.pop(tab_idx)
+            popped_idx = self._find_view_in_popped_out(exploration, view)
+            if popped_idx is not None:
+                popped_out_to_remove.append(popped_idx)
+
+        for popped_idx in sorted(popped_out_to_remove, reverse=True):
+            exploration.view.pop(popped_idx)
+
+        for view in current:
+            if view in old:
+                tab_idx = self._find_view_in_tabs(exploration, view)
+                if tab_idx is not None:
+                    idx = tab_idx
+                continue
+            title, vsplit = self._render_view(exploration, view)
             content.insert((idx or 0)+1, (title, vsplit))
         tabs[:] = content
         tabs.active = len(tabs)-1

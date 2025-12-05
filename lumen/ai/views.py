@@ -19,6 +19,7 @@ from panel.pane import panel as as_panel
 from panel.param import ParamMethod
 from panel.viewable import Viewable, Viewer
 from panel.widgets import CodeEditor
+from panel_gwalker import GraphicWalker
 from panel_material_ui import (
     Alert, Button, Checkbox, CircularProgress, Column, FileDownload,
     IconButton, MenuButton,
@@ -502,6 +503,14 @@ class SQLOutput(LumenOutput):
         self.component.data.to_csv(sio)
         sio.seek(0)
         return sio
+
+    def render_explorer(self):
+        return GraphicWalker(
+            self.component.param.data,
+            kernel_computation=True,
+            tab='data',
+            sizing_mode='stretch_both'
+        )
 
     async def render_context(self):
         return {
