@@ -532,9 +532,12 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
     async def sync(self, context: TContext | None):
         context = context or self.context
+        synced_tools = set()
         for tools in self._tools.values():
             for tool in tools:
-                await tool.sync(context)
+                if id(tool) not in synced_tools:
+                    await tool.sync(context)
+                    synced_tools.add(id(tool))
 
 
 class DependencyResolver(Coordinator):
@@ -679,15 +682,71 @@ class Planner(Coordinator):
         # Initialize coordinator first so self.vector_store is available
         super().__init__(**params)
 
-        # Now initialize planner_tools with access to self.vector_store
+        # Now initialize planner_tools, reusing instances from _tools["main"] where possible
         if planner_tools_input:
-            # Pass vector_store explicitly to ensure sharing
-            init_params = {**params, 'vector_store': self.vector_store}
-            self.planner_tools = self._initialize_tools_for_prompt(planner_tools_input, **init_params)
+            self.planner_tools = self._initialize_planner_tools(planner_tools_input, **params)
 
-            # Prepare planner_tools
+            # Prepare planner_tools (only those not already in _tools["main"])
+            main_tool_ids = {id(tool) for tool in self._tools.get("main", [])}
             for tool in self.planner_tools:
-                state.execute(partial(tool.prepare, self.context))
+                if id(tool) not in main_tool_ids:
+                    state.execute(partial(tool.prepare, self.context))
+
+    def _initialize_planner_tools(self, planner_tools_input: list, **params) -> list:
+        """
+        Initialize planner tools, reusing instances from _tools["main"] where possible.
+
+        This ensures that TableLookup and IterativeTableLookup share the same instances
+        between planner_tools and _tools["main"], so they share the same vector store
+        and state.
+        """
+        # Build a mapping of tool types to instances from _tools["main"]
+        main_tools_by_type = {}
+        for tool in self._tools.get("main", []):
+            tool_type = type(tool)
+            if tool_type not in main_tools_by_type:
+                main_tools_by_type[tool_type] = tool
+
+        instantiated_tools = []
+        for tool in planner_tools_input:
+            if isinstance(tool, Tool):
+                # Already instantiated - use as is
+                instantiated_tools.append(tool)
+            elif isinstance(tool, type):
+                # Check if we already have an instance of this type in _tools["main"]
+                if tool in main_tools_by_type:
+                    # Reuse the existing instance
+                    instantiated_tools.append(main_tools_by_type[tool])
+                else:
+                    # Initialize a new instance
+                    init_params = {**params, 'vector_store': self.vector_store}
+                    tool_kwargs = self._get_tool_kwargs(tool, instantiated_tools, **init_params)
+                    instantiated_tools.append(tool(**tool_kwargs))
+            else:
+                # Handle other cases (e.g., functions)
+                init_params = {**params, 'vector_store': self.vector_store}
+                new_tools = self._initialize_tools_for_prompt([tool], **init_params)
+                instantiated_tools.extend(new_tools)
+
+        return instantiated_tools
+
+    async def sync(self, context: TContext | None):
+        """Sync both main tools and planner tools."""
+        context = context or self.context
+        synced_tools = set()
+
+        # Sync main tools
+        for tools in self._tools.values():
+            for tool in tools:
+                if id(tool) not in synced_tools:
+                    await tool.sync(context)
+                    synced_tools.add(id(tool))
+
+        # Sync planner tools (skipping already synced ones)
+        for tool in self.planner_tools:
+            if id(tool) not in synced_tools:
+                await tool.sync(context)
+                synced_tools.add(id(tool))
 
     async def _check_follow_up_question(self, messages: list[Message], context: TContext) -> bool:
         """Check if the user's query is a follow-up question about the previous dataset."""
