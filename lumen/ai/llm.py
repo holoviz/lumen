@@ -214,7 +214,7 @@ class Llm(param.Parameterized):
             kwargs["stream"] = False
 
         if response_model is not None:
-            if allow_partial and isinstance(response_model, BaseModel):
+            if allow_partial and issubclass(response_model, BaseModel):
                 response_model = Partial[response_model]
             kwargs["response_model"] = response_model
         # check if any of the messages contain images

@@ -10,10 +10,12 @@ Available analyses include:
 {%- endblock -%}
 
 {% block context -%}
-Here are the columns of the current data:
-{% if data is mapping %}
-{{ data.stats.keys() | join(', ') }}
+{%- if memory.get('data') is not none %}
+Here is the current dataset:
+{% if memory.data|length == 0 %}
+The data is empty.
 {% else %}
-{{ data.columns | join(', ') }}
-{% endif -%}
+{{ memory['data'] }}
+{%- endif %}
+{%- endif -%}
 {%- endblock -%}

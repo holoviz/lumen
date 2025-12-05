@@ -142,13 +142,16 @@ def test_duckdb_filter(duckdb_source, table_column_value_type, dask, expected_fi
     pd.testing.assert_frame_equal(filtered, expected_filtered_df.reset_index(drop=True))
 
 
-@pytest.mark.flaky(reruns=3)
 def test_duckdb_transforms(duckdb_source, source_tables):
     df_test_sql = source_tables['test_sql']
     transforms = [SQLGroupBy(by=['B'], aggregates={'SUM': 'A'})]
     transformed = duckdb_source.get('test_sql', sql_transforms=transforms)
     expected = df_test_sql.groupby('B')['A'].sum().reset_index()
-    pd.testing.assert_frame_equal(transformed, expected)
+
+    pd.testing.assert_frame_equal(
+        transformed.sort_values("B").reset_index(drop=True),
+        expected.sort_values("B").reset_index(drop=True)
+    )
 
 
 @pytest.mark.flaky(reruns=3)
@@ -180,6 +183,7 @@ def test_duckdb_clear_cache(duckdb_source):
 def test_duckdb_source_ephemeral_roundtrips(duckdb_memory_source, mixed_df):
     source = DuckDBSource.from_spec(duckdb_memory_source.to_spec())
     df = source.get('mixed')
+    # .equals and pd.test will error on Arrow/NumPy dtype mismatches
     for col in df.columns:
         assert (df[col]==mixed_df[col]).all()
 

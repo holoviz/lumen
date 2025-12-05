@@ -1,3 +1,5 @@
+import asyncio
+
 from pathlib import Path
 
 import pytest
@@ -510,6 +512,7 @@ class VectorStoreTestKit:
 
         # Add the directory to the store
         ids = await empty_store.add_directory(dir_path, metadata={"version": 1}, upsert=True)
+        await asyncio.sleep(0.1)
         assert len(ids) > 0, "Should add at least one document"
 
         # Query for a specific term in the added documents
@@ -517,7 +520,7 @@ class VectorStoreTestKit:
 
         # Try upserting again
         same_ids = await empty_store.add_directory(dir_path, metadata={"version": 1}, upsert=True)
-        assert ids == same_ids, "Should return the same IDs when upserting identical content"
+        assert set(ids) == set(same_ids), "Should return the same IDs when upserting identical content"
 
         # Increment version
         new_ids = await empty_store.add_directory(dir_path, metadata={"version": 2}, upsert=True)

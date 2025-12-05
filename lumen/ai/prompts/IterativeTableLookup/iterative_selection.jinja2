@@ -24,13 +24,13 @@ Here are your previous thoughts:
 {% if available_slugs|length > 0 %}
 Here are the tables available for selection:
 {% for table_slug in available_slugs -%}
-{{ table_slug }} (Similarity: {{ vector_metadata_map[table_slug].similarity | round(3) }})
-{%- if vector_metadata_map[table_slug].description is defined and vector_metadata_map[table_slug].description -%}
-  Description: {{ vector_metadata_map[table_slug].description }}
+{{ table_slug }} (Similarity: {{ catalog[table_slug].similarity | round(3) }})
+{%- if catalog[table_slug].description is defined and catalog[table_slug].description -%}
+  Description: {{ catalog[table_slug].description }}
 {%- endif -%}
-{%- if vector_metadata_map[table_slug].columns is defined and vector_metadata_map[table_slug].columns|length > 0 %}
+{%- if catalog[table_slug].columns is defined and catalog[table_slug].columns|length > 0 %}
   Cols:
-  {% for col in vector_metadata_map[table_slug].columns -%}
+  {% for col in catalog[table_slug].columns -%}
   - {{ col.name }}{% if col.description %}: {{ col.description }}{% endif %}
   {% endfor -%}
 {% endif %}
@@ -44,7 +44,7 @@ You have already examined these tables and their schemas; there's no need to sel
 {{ table_slug }}
 {% if table_slug in selected_slugs %}
 ```json
-{{ sql_metadata_map[table_slug].schema }}
+{{ schemas[table_slug] }}
 ```
 {%- endif %}
 {%- endfor %}

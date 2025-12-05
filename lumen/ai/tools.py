@@ -1,36 +1,35 @@
 import asyncio
 import traceback
 
-from functools import partial
 from types import FunctionType
-from typing import Any
+from typing import Annotated, Any, TypedDict
 
 import param
 
 from panel.io import cache as pn_cache
-from panel.io.state import state
 from panel.pane import HoloViews as HoloViewsPanel, panel as as_panel
 from panel.viewable import Viewable
 
+from ..sources.base import Source
 from ..sources.duckdb import DuckDBSource
 from ..views.base import HoloViews, View
 from .actor import Actor, ContextProvider
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
+from .context import ContextModel, TContext
 from .embeddings import NumpyEmbeddings
 from .llm import Message
-from .memory import _Memory
 from .models import (
     ThinkingYesNo, make_iterative_selection_model, make_refined_query_model,
 )
 from .schemas import (
-    Column, DbtslMetadata, DbtslMetaset, SQLMetadata, SQLMetaset,
-    VectorMetadata, VectorMetaset, get_metaset,
+    Column, DbtslMetadata, DbtslMetaset, Metaset, TableCatalogEntry,
+    get_metaset,
 )
 from .services import DbtslMixin
 from .translate import function_to_model
 from .utils import (
-    get_schema, log_debug, process_enums, stream_details, truncate_string,
-    with_timeout,
+    get_schema, log_debug, parse_table_slug, process_enums, stream_details,
+    truncate_string, with_timeout,
 )
 from .vector_store import NumpyVectorStore, VectorStore
 
@@ -116,15 +115,14 @@ class ToolUser(Actor):
                 instantiated_tools.append(tool(**tool_kwargs))
         return instantiated_tools
 
-    async def _use_tools(self, prompt_name: str, messages: list[Message]) -> str:
+    async def _use_tools(self, prompt_name: str, messages: list[Message], context: TContext) -> str:
         tools_context = ""
         # TODO: INVESTIGATE WHY or self.tools is needed
         for tool in self._tools.get(prompt_name, []) or self.tools:
-            if all(requirement in self._memory for requirement in tool.requires):
-                with tool.param.update(memory=self.memory):
-                    tool_context = await tool.respond(messages)
-                    if tool_context:
-                        tools_context += f"\n{tool_context}"
+            if all(requirement in context for requirement in tool.input_schema.__required_keys__):
+                tool_context = await tool.respond(messages, context)
+                if tool_context:
+                    tools_context += f"\n{tool_context}"
         return tools_context
 
 
@@ -225,11 +223,28 @@ class Tool(Actor, ContextProvider):
     ])
 
     @classmethod
-    async def applies(cls, memory: _Memory) -> bool:
+    async def applies(cls, context: TContext) -> bool:
         """
         Additional checks to determine if the tool should be used.
         """
         return True
+
+    async def prepare(self, context: TContext):
+        """
+        Prepare the tool with the initial context.
+        Called once when the tool is first initialized.
+        """
+
+    async def sync(self, context: TContext):
+        """
+        Allows the tool to update when the provided context changes.
+        Subclasses should override this to handle context updates.
+        """
+
+
+
+class VectorLookupOutputs(ContextModel):
+    document_chunks: list[str]
 
 
 class VectorLookupTool(Tool):
@@ -238,13 +253,17 @@ class VectorLookupTool(Tool):
     chunks.
     """
 
-    # Class variable to track which sources are currently being processed
-    _sources_in_progress = {}
     enable_query_refinement = param.Boolean(default=True, doc="""
         Whether to enable query refinement for improving search results.""")
 
+    max_refinement_iterations = param.Integer(default=3, bounds=(1, 10), doc="""
+        Maximum number of refinement iterations to perform.""")
+
     min_similarity = param.Number(default=0.3, doc="""
         The minimum similarity to include a document.""")
+
+    min_refinement_improvement = param.Number(default=0.05, bounds=(0, 1), doc="""
+        Minimum improvement in similarity score required to keep refining.""")
 
     n = param.Integer(default=5, bounds=(1, None), doc="""
         The number of document results to return.""")
@@ -262,24 +281,28 @@ class VectorLookupTool(Tool):
     refinement_similarity_threshold = param.Number(default=0.3, bounds=(0, 1), doc="""
         Similarity threshold below which query refinement is triggered.""")
 
-    max_refinement_iterations = param.Integer(default=3, bounds=(1, 10), doc="""
-        Maximum number of refinement iterations to perform.""")
-
-    min_refinement_improvement = param.Number(default=0.05, bounds=(0, 1), doc="""
-        Minimum improvement in similarity score required to keep refining.""")
-
     vector_store = param.ClassSelector(class_=VectorStore, constant=True, doc="""
         Vector store object which is queried to provide additional context
         before responding.""")
 
     _item_type_name: str = None
 
+    # Class variable to track which sources are currently being processed
+    _sources_in_progress = {}
+
     __abstract = True
+
+    output_schema = VectorLookupOutputs
 
     def __init__(self, **params):
         if 'vector_store' not in params:
             params['vector_store'] = NumpyVectorStore(embeddings=NumpyEmbeddings())
         super().__init__(**params)
+
+    async def prepare(self, context: TContext):
+        if "tables_metadata" not in context:
+            context["tables_metadata"] = {}
+        await self._update_vector_store(context)
 
     def _handle_ready_task_done(self, task):
         """Properly handle exceptions from async ready tasks."""
@@ -291,7 +314,9 @@ class VectorLookupTool(Tool):
             log_debug(f"Error in ready task: {type(e).__name__} - {e!s}")
             traceback.print_exc()
 
-    def _format_results_for_refinement(self, results: list[dict[str, Any]]) -> str:
+    def _format_results_for_refinement(
+        self, results: list[dict[str, Any]], context: TContext
+    ) -> str:
         """
         Format search results for inclusion in the refinement prompt.
 
@@ -315,7 +340,8 @@ class VectorLookupTool(Tool):
     async def _refine_query(
         self,
         original_query: str,
-        results: list[dict[str, Any]]
+        results: list[dict[str, Any]],
+        context: TContext
     ) -> str:
         """
         Refines the search query based on initial search results.
@@ -332,7 +358,7 @@ class VectorLookupTool(Tool):
         str
             A refined search query
         """
-        results_description = self._format_results_for_refinement(results)
+        results_description = self._format_results_for_refinement(results, context)
 
         messages = [{"role": "user", "content": original_query}]
 
@@ -341,6 +367,7 @@ class VectorLookupTool(Tool):
             system_prompt = await self._render_prompt(
                 "refine_query",
                 messages,
+                context,
                 results=results,
                 results_description=results_description,
                 original_query=original_query,
@@ -362,7 +389,7 @@ class VectorLookupTool(Tool):
                 step.status = "failed"
             return original_query
 
-    async def _perform_search_with_refinement(self, query: str, **kwargs) -> list[dict[str, Any]]:
+    async def _perform_search_with_refinement(self, query: str, context: TContext, **kwargs) -> list[dict[str, Any]]:
         """
         Performs a vector search with optional query refinement.
 
@@ -411,7 +438,7 @@ class VectorLookupTool(Tool):
                 iteration += 1
                 step.stream(f"Processing refinement iteration {iteration}/{self.max_refinement_iterations}\n\n")
 
-                refined_query = await self._refine_query(current_query, results)
+                refined_query = await self._refine_query(current_query, results, context)
 
                 if refined_query == current_query:
                     step.stream("Refinement returned unchanged query, stopping iterations.")
@@ -454,7 +481,7 @@ class VectorLookupTool(Tool):
 
         return best_results
 
-    async def respond(self, messages: list[Message], **kwargs: Any) -> str:
+    async def respond(self, messages: list[Message], context: TContext, **kwargs: Any) -> tuple[list[Any], ]:
         """
         Respond to a user query using the vector store.
 
@@ -473,7 +500,7 @@ class VectorLookupTool(Tool):
         query = messages[-1]["content"]
 
         # Perform search with refinement
-        results = await self._perform_search_with_refinement(query)
+        results = await self._perform_search_with_refinement(query, context)
         closest_doc_chunks = [
             f"{result['text']} (Relevance: {result['similarity']:.1f} - "
             f"Metadata: {result['metadata']})"
@@ -486,7 +513,11 @@ class VectorLookupTool(Tool):
 
         message = "Please augment your response with the following context if relevant:\n"
         message += "\n".join(f"- {doc}" for doc in closest_doc_chunks)
-        return message
+        return [message], {"document_chunks": closest_doc_chunks}
+
+
+class VectorLookupInputs(ContextModel):
+    document_sources: dict[str, dict[str, str]]
 
 
 class DocumentLookup(VectorLookupTool):
@@ -499,23 +530,14 @@ class DocumentLookup(VectorLookupTool):
     purpose = param.String(default="""
         Looks up relevant documents based on the user query.""")
 
-    requires = param.List(default=["document_sources"], readonly=True, doc="""
-        List of context that this Tool requires to be run.""")
-
-    sync_sources = param.Boolean(default=True, doc="""
-        Whether to automatically sync newly added document sources to the vector store.""")
-
     # Override the item type name
     _item_type_name = "documents"
 
-    def __init__(self, **params):
-        super().__init__(**params)
-        if self.sync_sources:
-            self._memory.on_change('document_sources', self._update_vector_store)
-        if "document_sources" in self._memory:
-            state.execute(partial(self._update_vector_store, None, None, self._memory['document_sources']))
+    input_schema = VectorLookupInputs
 
-    def _format_results_for_refinement(self, results: list[dict[str, Any]]) -> str:
+    def _format_results_for_refinement(
+        self, results: list[dict[str, Any]], context: TContext
+    ) -> str:
         """
         Format document search results for inclusion in the refinement prompt.
 
@@ -543,10 +565,10 @@ class DocumentLookup(VectorLookupTool):
 
         return "\n".join(formatted_results)
 
-    async def _update_vector_store(self, _, __, sources):
+    async def _update_vector_store(self, context: TContext):
         # Build a list of document items for a single upsert operation
         items_to_upsert = []
-        for source in sources:
+        for source in context.get("sources"):
             metadata = source.get("metadata", {})
             metadata["type"] = self._item_type_name
             items_to_upsert.append({"text": source["text"], "metadata": metadata})
@@ -554,6 +576,16 @@ class DocumentLookup(VectorLookupTool):
         # Make a single upsert call with all documents
         if items_to_upsert:
             await self.vector_store.upsert(items_to_upsert)
+
+
+class TableLookupInputs(ContextModel):
+
+    sources: Annotated[list[Source], ("accumulate", "source")]
+
+
+class TableLookupOutputs(ContextModel):
+
+    metaset: Metaset
 
 
 class TableLookup(VectorLookupTool):
@@ -567,10 +599,6 @@ class TableLookup(VectorLookupTool):
         "Avoid if table discovery already performed for same request",
         "Not useful for data related queries",
     ])
-
-    # Class variable to track which sources are currently being processed
-    _sources_in_progress = {}
-    _progress_lock = asyncio.Lock()  # Lock for thread-safe access
 
     prompts = param.Dict(
         default={
@@ -591,12 +619,6 @@ class TableLookup(VectorLookupTool):
         Not to be used for finding tables for further analysis (e.g. SQL), because it does
         not provide a schema.""")
 
-    requires = param.List(default=["sources"], readonly=True, doc="""
-        List of context that this Tool requires to be run.""")
-
-    provides = param.List(default=["tables_metadata", "vector_metaset"], readonly=True, doc="""
-        List of context values this Tool provides to current working memory.""")
-
     include_metadata = param.Boolean(default=True, doc="""
         Whether to include table descriptions in the embeddings and responses.""")
 
@@ -616,26 +638,41 @@ class TableLookup(VectorLookupTool):
     n = param.Integer(default=10, bounds=(1, None), doc="""
         The number of document results to return.""")
 
-    sync_sources = param.Boolean(default=True, doc="""
-        Whether to automatically sync newly added data sources to the vector store.""")
-
-    _item_type_name = "tables"
-
     _ready = param.Boolean(default=False, allow_None=True, doc="""
         Whether the vector store is ready.""")
 
+    _item_type_name = "tables"
+
+    # Class variable to track which sources are currently being processed
+    _sources_in_progress = {}
+    _progress_lock = asyncio.Lock()  # Lock for thread-safe access
+
+    input_schema = TableLookupInputs
+    output_schema = TableLookupOutputs
+
     def __init__(self, **params):
         super().__init__(**params)
-        if "tables_metadata" not in self._memory:
-            self._memory["tables_metadata"] = {}  # used for storing table metadata for LLM
         self._raw_metadata = {}
         self._semaphore = asyncio.Semaphore(self.max_concurrent)
-        if self.sync_sources:
-            self._memory.on_change("sources", self._update_vector_store)
-        if "sources" in self._memory:
-            state.execute(partial(self._update_vector_store, None, None, self._memory["sources"]))
 
-    def _format_results_for_refinement(self, results: list[dict[str, Any]]) -> str:
+    async def sync(self, context: TContext):
+        """
+        Sync the vector store with updated context.
+        Only processes new sources that haven't been added yet.
+        """
+        sources = context.get("sources", [])
+        if not sources:
+            log_debug("[TableLookup] sync called but no sources in context")
+            return
+
+        if "tables_metadata" not in context:
+            context["tables_metadata"] = {}
+
+        await self._update_vector_store(context)
+
+    def _format_results_for_refinement(
+        self, results: list[dict[str, Any]], context: TContext
+    ) -> str:
         """
         Format table search results for inclusion in the refinement prompt.
 
@@ -649,7 +686,7 @@ class TableLookup(VectorLookupTool):
         str
             Formatted description of table results
         """
-        visible_slugs = self._memory.get('visible_slugs', set())
+        visible_slugs = context.get('visible_slugs', set())
         formatted_results = []
         for result in results:
             source_name = result['metadata'].get("source", "unknown")
@@ -660,13 +697,13 @@ class TableLookup(VectorLookupTool):
 
             text = result["text"]
             description = f"- {text} {table_slug} (Similarity: {result.get('similarity', 0):.3f})"
-            if tables_vector_data := self._memory["tables_metadata"].get(table_slug):
+            if tables_vector_data := context["tables_metadata"].get(table_slug):
                 if table_description := tables_vector_data.get("description"):
                     description += f"\n  Info: {table_description}"
             formatted_results.append(description)
         return "\n".join(formatted_results)
 
-    async def _enrich_metadata(self, source, table_name: str):
+    async def _enrich_metadata(self, source, table_name: str, context: TContext):
         """Fetch metadata for a table and return enriched entry for batch processing."""
         async with self._semaphore:
             source_metadata = self._raw_metadata[source.name]
@@ -687,8 +724,8 @@ class TableLookup(VectorLookupTool):
         # IMPORTANT: re-insert using table slug
         # we need to store a copy of tables_vector_data so it can be used to inject context into the LLM
         table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
-        self._memory["tables_metadata"][table_slug] = vector_info.copy()
-        self._memory["tables_metadata"][table_slug]["source_name"] = source.name  # need this to rebuild the slug
+        context["tables_metadata"][table_slug] = vector_info.copy()
+        context["tables_metadata"][table_slug]["source_name"] = source.name  # need this to rebuild the slug
 
         # Create column schema objects
         columns = []
@@ -725,7 +762,13 @@ class TableLookup(VectorLookupTool):
         # Return the entry instead of upserting directly
         return {"text": enriched_text, "metadata": vector_metadata}
 
-    async def _update_vector_store(self, _, __, sources):
+    async def _update_vector_store(self, context: TContext):
+        sources = context.get("sources")
+        if sources is None and "source" in context:
+            sources = [context["source"]]
+        elif sources is None or len(sources) == 0:
+            log_debug("[TableLookup] _update_vector_store called but no sources available")
+            return
         self._ready = False
         await asyncio.sleep(0.5)  # allow main thread time to load UI first
         tasks = []
@@ -737,7 +780,6 @@ class TableLookup(VectorLookupTool):
         async with self._progress_lock:
             if vector_store_id not in self._sources_in_progress:
                 self._sources_in_progress[vector_store_id] = set()
-
 
         log_debug(f"[TableLookup] Starting _update_vector_store for {len(sources)} sources")
 
@@ -767,7 +809,7 @@ class TableLookup(VectorLookupTool):
 
             if self.include_metadata:
                 for table in tables:
-                    task = asyncio.create_task(self._enrich_metadata(source, table))
+                    task = asyncio.create_task(self._enrich_metadata(source, table, context))
                     tasks.append(task)
             else:
                 await self.vector_store.upsert([
@@ -825,7 +867,7 @@ class TableLookup(VectorLookupTool):
                         ]
 
                 enriched_entries = await asyncio.wait_for(_gather_with_semaphore(), timeout=300)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 log_debug("[TableLookup] Timeout waiting for tasks to complete (5 minutes)")
                 self._ready = None  # Set to error state
                 return
@@ -839,7 +881,7 @@ class TableLookup(VectorLookupTool):
                         timeout=60
                     )
                     log_debug(f"[TableLookup] Successfully upserted {len(enriched_entries)} entries")
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     log_debug("[TableLookup] Timeout during upsert operation (60 seconds)")
                     self._ready = None  # Set to error state
                     return
@@ -857,13 +899,13 @@ class TableLookup(VectorLookupTool):
             if vector_store_id is not None and processed_sources:
                 self._cleanup_sources_in_progress(vector_store_id, processed_sources)
 
-    async def _gather_info(self, messages: list[dict[str, str]]) -> dict:
+    async def _gather_info(self, messages: list[dict[str, str]], context: TContext) -> TableLookupOutputs:
         """Gather relevant information about the tables based on the user query."""
         query = messages[-1]["content"]
 
         # Count total number of tables available across all sources
         total_tables = 0
-        for source in self._memory.get("sources", []):
+        for source in context.get("sources", []):
             total_tables += len(source.get_tables())
 
         # Skip query refinement if there are fewer than 5 tables
@@ -874,33 +916,35 @@ class TableLookup(VectorLookupTool):
                 filters["type"] = self._item_type_name
             results = await self.vector_store.query(query, top_k=self.n, filters=filters)
         else:
-            results = await self._perform_search_with_refinement(query)
+            results = await self._perform_search_with_refinement(query, context)
 
-        any_matches = any(result['similarity'] >= self.min_similarity for result in results)
+        any_matches = any(result["similarity"] >= self.min_similarity for result in results)
         same_table = len([result["metadata"]["table_name"] for result in results])
 
-        vector_metadata_map = {}
+        catalog = {}
         for result in results:
-            source_name = result['metadata']["source"]
-            table_name = result['metadata']["table_name"]
-            for source in self._memory.get("sources", []):
+            source_name = result["metadata"]["source"]
+            table_name = result["metadata"]["table_name"]
+            source_obj = None
+            for source in context.get("sources", []):
                 if source.name == source_name:
+                    source_obj = source
                     sql = source.get_sql_expr(source.normalize_table(table_name))
                     break
             table_slug = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
-            similarity_score = result['similarity']
+            similarity_score = result["similarity"]
             # Filter by visible_slugs if specified
-            visible_slugs = self._memory.get('visible_slugs', set())
+            visible_slugs = context.get("visible_slugs", set())
             if visible_slugs and table_slug not in visible_slugs:
                 continue
 
-            if any_matches and result['similarity'] < self.min_similarity and not same_table:
+            if any_matches and result["similarity"] < self.min_similarity and not same_table:
                 continue
 
             columns = []
             table_description = None
 
-            if table_metadata := self._memory["tables_metadata"].get(table_slug):
+            if table_metadata := context["tables_metadata"].get(table_slug):
                 table_description = table_metadata.get("description")
                 column_metadata = table_metadata.get("columns", {})
 
@@ -913,44 +957,51 @@ class TableLookup(VectorLookupTool):
                     )
                     columns.append(column_schema)
 
-            vector_metadata = VectorMetadata(
+            catalog_entry = TableCatalogEntry(
                 table_slug=table_slug,
                 similarity=similarity_score,
-                description=table_description,
-                base_sql=sql,
                 columns=columns,
-                metadata=self._memory["tables_metadata"].get(table_slug, {}).copy()
+                source=source_obj,
+                description=table_description,
+                sql_expr=sql,
+                metadata=context["tables_metadata"].get(table_slug, {}).copy()
             )
-            vector_metadata_map[table_slug] = vector_metadata
+            catalog[table_slug] = catalog_entry
 
         # If query contains an exact table name, mark it as max similarity
-        visible_slugs = self._memory.get('visible_slugs', set())
-        tables_to_check = self._memory["tables_metadata"]
+        visible_slugs = context.get("visible_slugs", set())
+        tables_to_check = context["tables_metadata"]
         if visible_slugs:
             tables_to_check = {slug: data for slug, data in tables_to_check.items() if slug in visible_slugs}
 
         for table_slug in tables_to_check:
             if table_slug.split(SOURCE_TABLE_SEPARATOR)[-1].lower() in query.lower():
-                if table_slug in vector_metadata_map:
-                    vector_metadata_map[table_slug].similarity = 1
+                if table_slug in catalog:
+                    catalog[table_slug].similarity = 1
 
-        self._memory["vector_metaset"] = VectorMetaset(
-            vector_metadata_map=vector_metadata_map, query=query)
-        return vector_metadata_map
+        metaset = Metaset(catalog=catalog, query=query)
+        return {"metaset": metaset}
 
-    def _format_context(self) -> str:
+    def _format_context(self, outputs: TableLookupOutputs) -> str:
         """Generate formatted text representation from schema objects."""
         # Get schema objects from memory
-        vector_metaset = self._memory.get("vector_metaset")
-        return str(vector_metaset)
+        metaset = outputs.get("metaset")
+        return str(metaset)
 
-    async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
+    async def respond(
+        self, messages: list[Message], context: TContext, **kwargs: dict[str, Any]
+    ) -> tuple[list[Any], TableLookupOutputs]:
         """
         Fetches tables based on the user query and returns formatted context.
         """
         # Run the process to build schema objects
-        await self._gather_info(messages)
-        return self._format_context()
+        out_model = await self._gather_info(messages, context)
+        return [self._format_context(out_model)], out_model
+
+
+class IterativeTableLookupOutputs(ContextModel):
+
+    metaset: Metaset
 
 
 class IterativeTableLookup(TableLookup):
@@ -969,15 +1020,6 @@ class IterativeTableLookup(TableLookup):
 
     purpose = param.String(default="""
         Looks up the most relevant tables and provides SQL schemas of those tables.""")
-
-    provides = param.List(default=["tables_metadata", "vector_metaset", "sql_metaset"], readonly=True, doc="""
-        List of context values this Tool provides to current working memory.""")
-
-    # Override sync_sources to False by default to prevent duplicate processing
-    # when used together with TableLookup
-    sync_sources = param.Boolean(default=False, doc="""
-        Whether to automatically sync newly added data sources to the vector store.
-        Default is False to prevent duplicate processing when used with TableLookup.""")
 
     max_selection_iterations = param.Integer(default=3, doc="""
         Maximum number of iterations for the iterative table selection process.""")
@@ -1000,40 +1042,34 @@ class IterativeTableLookup(TableLookup):
         },
     )
 
-    def __init__(self, **params):
-        super().__init__(**params)
-        self._memory.on_change('visible_slugs', self._update_sql_metaset_for_visible_tables)
+    output_schema = IterativeTableLookupOutputs
 
-    async def _update_sql_metaset_for_visible_tables(self, key, old_slugs, new_slugs):
+    async def sync(self, context: TContext):
         """
-        Update sql_metaset when visible_slugs changes.
+        Update metaset when visible_slugs changes.
         This ensures SQL operations only work with visible tables by regenerating
-        the sql_metaset using get_metaset.
+        the metaset using get_metaset.
         """
-        if new_slugs is None:
-            new_slugs = set()
+        slugs = context.get("visible_slugs", set())
 
-        # If no visible slugs or no sources, clear sql_metaset
-        if not new_slugs or not self._memory.get("sources"):
-            if "sql_metaset" in self._memory:
-                del self._memory["sql_metaset"]
+        # If no visible slugs or no sources, clear metaset
+        if not slugs or not context.get("sources"):
+            context.pop("metaset", None)
             return
 
-        # Only update if we have an existing sql_metaset to work with
-        if "sql_metaset" not in self._memory:
+        if "metaset" not in context:
             return
 
         try:
-            sources = self._memory["sources"]
-            visible_tables = list(new_slugs)
-            if visible_tables:
-                new_sql_metaset = await get_metaset(sources, visible_tables)
-                self._memory["sql_metaset"] = new_sql_metaset
-                log_debug(f"[IterativeTableLookup] Updated sql_metaset with {len(visible_tables)} visible tables")
+            sources = context["sources"]
+            visible_tables = list(slugs)
+            new_metaset = await get_metaset(sources, visible_tables, prev=context.get("metaset"))
+            context["metaset"] = new_metaset
+            log_debug(f"[IterativeTableLookup] Updated metaset with {len(visible_tables)} visible tables")
         except Exception as e:
-            log_debug(f"[IterativeTableLookup] Error updating sql_metaset: {e}")
+            log_debug(f"[IterativeTableLookup] Error updating metaset: {e}")
 
-    async def _gather_info(self, messages: list[dict[str, str]]) -> dict:
+    async def _gather_info(self, messages: list[dict[str, str]], context: TContext) -> IterativeTableLookupOutputs:
         """
         Performs an iterative table selection process to gather context.
         This function:
@@ -1042,22 +1078,35 @@ class IterativeTableLookup(TableLookup):
         3. Gets complete schemas for these tables
         4. Repeats until the LLM is satisfied with the context
         """
-        vector_metadata_map = await super()._gather_info(messages)
-        vector_metaset = self._memory.get("vector_metaset")
+        out_model = await super()._gather_info(messages, context)
+        metaset = out_model["metaset"]
+        catalog = metaset.catalog
 
-        sql_metadata_map = {}
-        examined_slugs = set(sql_metadata_map.keys())
+        schemas = {}
+        examined_slugs = set(schemas.keys())
         # Filter to only include visible tables
-        all_slugs = list(vector_metadata_map.keys())
-        visible_slugs = self._memory.get('visible_slugs', set())
+        all_slugs = list(catalog.keys())
+        visible_slugs = context.get('visible_slugs', set())
         if visible_slugs:
             all_slugs = [slug for slug in all_slugs if slug in visible_slugs]
+
+        if len(all_slugs) == 1:
+            table_slug = all_slugs[0]
+            source_obj, table_name = parse_table_slug(table_slug, context["sources"])
+            schema = await get_schema(source_obj, table_name, reduce_enums=False)
+            return {
+                "metaset": Metaset(
+                    catalog=catalog,
+                    schemas={table_slug: schema},
+                    query=metaset.query,
+                )
+            }
 
         failed_slugs = []
         selected_slugs = []
         chain_of_thought = ""
         max_iterations = self.max_selection_iterations
-        sources = {source.name: source for source in self._memory["sources"]}
+        sources = {source.name: source for source in context["sources"]}
 
         for iteration in range(1, max_iterations + 1):
             with self._add_step(
@@ -1078,12 +1127,12 @@ class IterativeTableLookup(TableLookup):
                 if iteration == 1:
                     # For the first iteration, select tables based on similarity
                     # If any tables have a similarity score above the threshold, select up to 5 of those tables
-                    any_matches = any(schema.similarity > self.table_similarity_threshold for schema in vector_metadata_map.values())
-                    limited_tables = len(vector_metadata_map) <= 5
+                    any_matches = any(schema.similarity > self.table_similarity_threshold for schema in catalog.values())
+                    limited_tables = len(catalog) <= 5
                     if any_matches or len(all_slugs) == 1 or limited_tables:
                         selected_slugs = sorted(
-                            vector_metadata_map.keys(),
-                            key=lambda x: vector_metadata_map[x].similarity,
+                            catalog.keys(),
+                            key=lambda x: catalog[x].similarity,
                             reverse=True
                         )[:5]
                         step.stream("Selected tables based on similarity threshold.\n\n")
@@ -1097,14 +1146,15 @@ class IterativeTableLookup(TableLookup):
                         system = await self._render_prompt(
                             "iterative_selection",
                             messages,
+                            context,
                             chain_of_thought=chain_of_thought,
                             current_query=messages[-1]["content"],
                             available_slugs=available_slugs,
                             examined_slugs=examined_slugs,
                             selected_slugs=selected_slugs,
                             failed_slugs=failed_slugs,
-                            sql_metadata_map=sql_metadata_map,
-                            vector_metadata_map=vector_metadata_map,
+                            schemas=schemas,
+                            catalog=catalog,
                             iteration=iteration,
                             max_iterations=max_iterations,
                         )
@@ -1141,10 +1191,10 @@ class IterativeTableLookup(TableLookup):
 
                 step.stream("\n\nFetching detailed schema information for tables\n")
                 for table_slug in selected_slugs:
-                    stream_details(str(vector_metaset.vector_metadata_map[table_slug]), step, title="Table details", auto=False)
+                    stream_details(str(metaset.catalog[table_slug]), step, title="Table details", auto=False)
                     try:
                         view_definition = truncate_string(
-                            self._memory["tables_metadata"].get(table_slug, {}).get("view_definition", ""),
+                            context["tables_metadata"].get(table_slug, {}).get("view_definition", ""),
                             max_length=300
                         )
 
@@ -1161,11 +1211,7 @@ class IterativeTableLookup(TableLookup):
                         else:
                             schema = await get_schema(source_obj, table_name, reduce_enums=False)
 
-                        sql_metadata = SQLMetadata(
-                            table_slug=table_slug,
-                            schema=schema,
-                        )
-                        sql_metadata_map[table_slug] = sql_metadata
+                        schemas[table_slug] = schema
 
                         examined_slugs.add(table_slug)
                         stream_details(f"```yaml\n{schema}\n```", step, title="Schema")
@@ -1178,29 +1224,30 @@ class IterativeTableLookup(TableLookup):
                     # based on similarity search alone, if we have selected tables, we're done!!
                     break
 
-        # Filter sql_metadata_map to match satisfied_slugs
-        sql_metadata_map = {table_slug: schema_data for table_slug, schema_data in sql_metadata_map.items()}
-
-        # Create SQLMetaset object using the vector schema and SQL data
-        sql_metaset = SQLMetaset(
-            vector_metaset=vector_metaset,
-            sql_metadata_map=sql_metadata_map,
+        metaset = Metaset(
+            catalog=catalog,
+            schemas=schemas,
+            query=metaset.query,
         )
-        self._memory["sql_metaset"] = sql_metaset
-        return sql_metadata_map
+        return {"metaset": metaset}
 
-    def _format_context(self) -> str:
+    def _format_context(self, outputs: IterativeTableLookupOutputs) -> str:
         """Generate formatted text representation from schema objects."""
-        sql_metaset = self._memory.get("sql_metaset")
-        return str(sql_metaset)
+        metaset = outputs.get("metaset")
+        return str(metaset)
 
-    @classmethod
-    async def applies(cls, memory: _Memory) -> bool:
-        visible_slugs = memory.get('visible_slugs', set())
-        is_necessary = len(visible_slugs) > 1
-        if not is_necessary:
-            memory["sql_metaset"] = await get_metaset(sources=memory["sources"], tables=visible_slugs)
-        return is_necessary
+    async def respond(
+        self, messages: list[Message], context: TContext, **kwargs: dict[str, Any]
+    ) -> tuple[list[Any], IterativeTableLookupOutputs]:
+        """
+        Fetches tables based on the user query and returns formatted context.
+        """
+        out_model = await self._gather_info(messages, context)
+        return [self._format_context(out_model)], out_model
+
+
+class DbtslLookupOutputs(ContextModel):
+    dbtsl_metaset: DbtslMetaset
 
 
 class DbtslLookup(VectorLookupTool, DbtslMixin):
@@ -1240,21 +1287,16 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
         Useful for quickly gathering information about dbt semantic layers and their metrics to plan the steps.
         Not useful for looking up what datasets are available. Likely useful for all queries.""")
 
-    requires = param.List(default=["source"], readonly=True, doc="""
-        List of context that this Tool requires to be run.""")
-
-    provides = param.List(default=["dbtsl_metaset"], readonly=True, doc="""
-        List of context values this Tool provides to current working memory.""")
-
     _item_type_name = "metrics"
+
+    output_schema = DbtslLookupOutputs
 
     def __init__(self, environment_id: int, **params):
         params["environment_id"] = environment_id
         super().__init__(**params)
         self._metric_objs = {}
-        state.execute(partial(self._update_vector_store, None, None))
 
-    async def _update_vector_store(self, _, __):
+    async def _update_vector_store(self, context: TContext):
         """
         Updates the vector store with metrics from the dbt semantic layer client.
 
@@ -1284,7 +1326,9 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
         if items_to_upsert:
             await self.vector_store.upsert(items_to_upsert)
 
-    async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
+    async def respond(
+        self, messages: list[Message], context: TContext, **kwargs: dict[str, Any]
+    ) -> tuple[list[Any], TContext]:
         """
         Fetches metrics based on the user query, populates the DbtslMetaset,
         and returns formatted context.
@@ -1294,14 +1338,14 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
         # Search for relevant metrics
         with self._add_step(title="dbt Semantic Layer Search") as search_step:
             search_step.stream(f"Searching for metrics relevant to: '{query}'")
-            results = await self._perform_search_with_refinement(query)
+            results = await self._perform_search_with_refinement(query, context)
             closest_metrics = [r for r in results if r['similarity'] >= self.min_similarity]
 
             if not closest_metrics:
                 search_step.stream("\n⚠️ No metrics found with sufficient relevance to the query.")
                 search_step.status = "failed"
-                self._memory.pop("dbtsl_metaset", None)
-                return ""
+                context.pop("dbtsl_metaset", None)
+                return [], context
 
             metrics_info = [f"- {r['metadata'].get('name')}" for r in closest_metrics]
             stream_details("\n".join(metrics_info), search_step, title=f"Found {len(closest_metrics)} relevant chunks", auto=False)
@@ -1389,11 +1433,11 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
                         step.status = "failed"
 
         if not can_answer_query:
-            self._memory.pop("dbtsl_metaset", None)
-            return ""
+            context.pop("dbtsl_metaset", None)
+            return [], context
 
-        self._memory["dbtsl_metaset"] = metaset
-        return str(metaset)
+        context["dbtsl_metaset"] = metaset
+        return [str(metaset)], context
 
     @pn_cache
     async def _fetch_dimension_values(self, client, metric_name, dim, num_cols, step):
@@ -1471,8 +1515,14 @@ class FunctionTool(Tool):
         )
         self._model = model
 
-    async def respond(self, messages: list[Message], **kwargs: dict[str, Any]) -> str:
-        prompt = await self._render_prompt("main", messages)
+    @property
+    def inputs(self):
+        return TypedDict(f"{self.function.__name__}Inputs", {f: Any for f in self.requires})
+
+    async def respond(
+        self, messages: list[Message], context: TContext, **kwargs: dict[str, Any]
+    ) -> tuple[list[Any], ContextModel]:
+        prompt = await self._render_prompt("main", messages, context)
         kwargs = {}
         if any(field not in self.requires for field in self._model.model_fields):
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
@@ -1484,25 +1534,26 @@ class FunctionTool(Tool):
                 allow_partial=False,
                 max_retries=3,
             )
-        arguments = dict(kwargs, **{k: self._memory[k] for k in self.requires})
+        arguments = dict(kwargs, **{k: context[k] for k in self.requires})
         if param.parameterized.iscoroutinefunction(self.function):
             result = await self.function(**arguments)
         else:
             result = self.function(**arguments)
         if isinstance(result, (View, Viewable)):
-            return result
+            return [result], {}
         elif self.render_output:
             p = as_panel(result)
             if isinstance(p, HoloViewsPanel):
-                return HoloViews(object=p.object)
-            return p
+                p = HoloViews(object=p.object)
+            return [p], {}
+        out_model = {}
         if self.provides:
             if len(self.provides) == 1 and not isinstance(result, dict):
-                self._memory[self.provides[0]] = result
+                out_model[self.provides[0]] = result
             else:
-                self._memory.update({result[key] for key in self.provides})
-        return self.formatter.format(
+                out_model.update({result[key] for key in self.provides})
+        return [self.formatter.format(
             function=self.function.__name__,
             arguments=', '.join(f'{k}={v!r}' for k, v in arguments.items()),
             output=result
-        )
+        )], out_model

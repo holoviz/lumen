@@ -5,7 +5,7 @@
 
 Review the discovery results and determine if they provide enough context to fix the original SQL error.
 
-## Evaluation Criteria:
+## Evaluation Criteria
 
 ✅ SUFFICIENT if discoveries reveal:
 - Column names that fix "column not found" errors
@@ -25,7 +25,7 @@ Review the discovery results and determine if they provide enough context to fix
 
 ⚠️ CRITICAL: If original query failed due to filter values (e.g., WHERE clause returned empty), schema information alone is NEVER sufficient. You must see the actual distinct values for those filter columns.
 
-## Follow-up Strategy:
+## Follow-up Strategy
 If insufficient, specify targeted follow-ups:
 - More distinct values: Use OFFSET to see different value ranges
 - Pattern refinement: Try different patterns or search terms
@@ -39,13 +39,15 @@ If insufficient, specify targeted follow-ups:
 Goal: Minimal follow-ups that directly address the gap in understanding.
 {%- endblock %}
 
-{% block context %}
-Original Error: {{ error_context }}
+{%- block context %}
+{%- if error_context %}Original Error: {{ error_context }}{% endif %}
 
-Discovery Results:
+## Data summary
+{{ memory["metaset"].compact_context(5) }}
+
+## Discovery Results
 {% for query_type, result in discovery_results %}
 {{ query_type }}: {{ result }}
-
 {% endfor %}
 
 Your task: Determine if these discoveries provide enough context to fix the original error, or if specific follow-ups are needed.

@@ -1,9 +1,9 @@
-{% extends 'LumenBaseAgent/retry_output.jinja2' %}
+{% extends 'LumenBaseAgent/revise_output.jinja2' %}
 
 {% block instructions %}
 {{ super() }}
 
-{% if discovery_context %}
+{% if discovery_context is defined and discovery_context %}
 ## Discovery Results:
 {{ discovery_context }}
 {% endif %}
