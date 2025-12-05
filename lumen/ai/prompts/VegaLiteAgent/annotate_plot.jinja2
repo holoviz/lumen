@@ -62,6 +62,13 @@ Build off the following Vega-Lite yaml:
 ```yaml
 {{ vega_spec }}
 ```
+
+```
+{%- if memory.get('data') is not none %}
+Data Overview:
+{{ memory["data"] }}
+{%- endif -%}
+```
 {% endblock %}
 
 {% block examples %}
@@ -89,7 +96,7 @@ layer:
 - encoding:
     y: {datum: 26}
     y2: {datum: 28}
-  mark: {type: rect, color: '#cccccc', opacity: 0.3}
+  mark: {type: rect, color: '#cccccc', opacity: 0.01}
 # 2. Vertical highlight band
 - encoding:
     x: {datum: 1997}
