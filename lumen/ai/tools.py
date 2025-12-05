@@ -760,7 +760,7 @@ class TableLookup(VectorLookupTool):
                 enriched_text += f"\n- {key}: {value}"
 
         # Return the entry instead of upserting directly
-        return {"text": enriched_text, "metadata": vector_metadata}
+        return {"text": enriched_text, "metadata": vector_metadata, "chunk_size": None}
 
     async def _update_vector_store(self, context: TContext):
         sources = context.get("sources")
