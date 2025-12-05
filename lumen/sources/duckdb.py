@@ -123,7 +123,12 @@ class DuckDBSource(BaseSQLSource):
             for table_name, sql_expr in sql_based_tables.items():
                 table_alias = self.normalize_table(table_name)
                 # Skip non-string expressions (e.g., dicts)
-                if not isinstance(sql_expr, str):
+                # Prevent recursive view creation
+                equivalent_sql_exprs = (
+                    self.sql_expr.format(table=f'"{table_name}"'),
+                    self.sql_expr.format(table=table_name),
+                )
+                if not isinstance(sql_expr, str) or sql_expr in equivalent_sql_exprs:
                     processed_tables[table_alias] = sql_expr
                     continue
 
@@ -377,7 +382,14 @@ class DuckDBSource(BaseSQLSource):
             return source
 
         for table, sql_expr in tables.copy().items():
-            if sql_expr == self.sql_expr.format(table=f'"{table}"'):
+            equivalent_sql_exprs = (
+                self.sql_expr.format(table=f'"{table_name}"'),
+                self.sql_expr.format(table=table_name),
+            )
+            if table in self.tables:
+                # do not need to re-materialize existing
+                continue
+            elif sql_expr in equivalent_sql_exprs:
                 continue
             table_expr = f'CREATE OR REPLACE TEMP TABLE "{table}" AS ({sql_expr})'
             cursor = self._connection.cursor()
