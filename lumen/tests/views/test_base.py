@@ -339,6 +339,5 @@ def test_vega_datasets(set_root):
         "encoding": {"color": {"value": "#ccc"}, "tooltip": {"field": "properties.name", "type": "nominal"}},
     }
     final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
-    print(final_spec)
     assert final_spec["data"]["url"] == "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"
     pd.testing.assert_frame_equal(final_spec["datasets"]["test"], pipeline.data)
