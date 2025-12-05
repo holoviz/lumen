@@ -14,6 +14,7 @@ Add a top-level `encoding` block with `scale.domain` for both axes before your `
 **Reference lines** (horizontal/vertical rules):
 - Position with `y: {datum: value}` or `x: {datum: value}`
 - Style: `opacity: 0.5`, muted colors, `strokeDash: [4, 4]`
+- For solid baseline/zero lines: `color: '#333333', size: 2` (no strokeDash)
 
 **Shaded bands** (rect marks):
 - Horizontal: `y: {datum: 26}, y2: {datum: 28}`
@@ -28,6 +29,10 @@ Add a top-level `encoding` block with `scale.domain` for both axes before your `
 **Point markers**: Mark specific coordinates with `type: point, filled: true`
 
 **Arrow annotations**: Combine rule + triangle-down point
+
+**Value labels with conditional positioning**:
+- Do NOT use `expr` in `dy` - it doesn't work reliably
+- Instead, use separate filtered layers for positive/negative values with fixed `dy`
 
 # Mark Properties Reference
 
@@ -130,7 +135,43 @@ Reference line with label:
   mark: {type: text, align: left, dx: 5, dy: -5, fontSize: 10, color: '#666'}
 ```
 
-Filtered value labels:
+Value labels with units (use transform + calculate):
+```yaml
+- transform:
+    - calculate: "format(datum.value, '+.2f') + '°C'"
+      as: label
+  encoding:
+    x: {field: category, type: nominal}
+    y: {field: value, type: quantitative}
+    text: {field: label, type: nominal}
+  mark: {type: text, fontSize: 14, dy: -10}
+```
+
+Conditional label positioning (separate layers, NOT expr in dy):
+```yaml
+# Labels above bars (positive values)
+- transform:
+    - filter: "datum.value > 0"
+    - calculate: "format(datum.value, '+.2f') + ' units'"
+      as: label
+  encoding:
+    x: {field: category, type: nominal}
+    y: {field: value, type: quantitative}
+    text: {field: label, type: nominal}
+  mark: {type: text, fontSize: 14, fontWeight: bold, dy: -15}
+# Labels below bars (negative values)
+- transform:
+    - filter: "datum.value < 0"
+    - calculate: "format(datum.value, '.2f') + ' units'"
+      as: label
+  encoding:
+    x: {field: category, type: nominal}
+    y: {field: value, type: quantitative}
+    text: {field: label, type: nominal}
+  mark: {type: text, fontSize: 14, fontWeight: bold, dy: 25}
+```
+
+Filtered value labels (specific points only):
 ```yaml
 - transform: [{filter: "datum.year == 2022"}]
   encoding:
