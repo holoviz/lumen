@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
 import functools
 import html
 import inspect
@@ -905,8 +906,6 @@ def generate_diff(old_text: str, new_text: str, filename: str = "spec") -> str:
     str
         A unified diff string showing the changes
     """
-    import difflib
-
     old_lines = old_text.splitlines(keepends=True)
     new_lines = new_text.splitlines(keepends=True)
 
