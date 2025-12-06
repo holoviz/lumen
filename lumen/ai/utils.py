@@ -887,6 +887,45 @@ async def with_timeout(coro, timeout_seconds=10, default_value=None, error_messa
             log_debug(error_message)
         return default_value
 
+def generate_diff(old_text: str, new_text: str, filename: str = "spec") -> str:
+    """
+    Generate a unified diff between old and new text.
+
+    Parameters
+    ----------
+    old_text : str
+        The original text
+    new_text : str
+        The modified text
+    filename : str
+        The filename to use in the diff header
+
+    Returns
+    -------
+    str
+        A unified diff string showing the changes
+    """
+    import difflib
+
+    old_lines = old_text.splitlines(keepends=True)
+    new_lines = new_text.splitlines(keepends=True)
+
+    # Ensure last lines have newlines for proper diff formatting
+    if old_lines and not old_lines[-1].endswith('\n'):
+        old_lines[-1] += '\n'
+    if new_lines and not new_lines[-1].endswith('\n'):
+        new_lines[-1] += '\n'
+
+    diff = difflib.unified_diff(
+        old_lines,
+        new_lines,
+        fromfile=f"a/{filename}",
+        tofile=f"b/{filename}",
+        lineterm='\n'
+    )
+    return ''.join(diff)
+
+
 def apply_changes(lines: list[str], edits: list[LineEdit]) -> str:
     """
     Apply a Patch to a list of lines (no trailing newline characters in elements).
