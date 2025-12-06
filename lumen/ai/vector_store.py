@@ -59,7 +59,7 @@ class VectorStore(LLMUser):
     )
 
     chunk_size = param.Integer(
-        default=None, doc="Maximum size of text chunks to split documents into."
+        default=1024, doc="Maximum size of text chunks to split documents into."
     )
 
     chunk_tokenizer = param.String(
