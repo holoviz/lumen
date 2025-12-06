@@ -50,9 +50,9 @@ from .services import DbtslMixin
 from .tools import ToolUser
 from .translate import param_to_pydantic
 from .utils import (
-    apply_changes, clean_sql, describe_data, get_data, get_pipeline,
-    get_root_exception, get_schema, load_json, log_debug, parse_table_slug,
-    report_error, retry_llm_output, stream_details,
+    apply_changes, clean_sql, describe_data, generate_diff, get_data,
+    get_pipeline, get_root_exception, get_schema, load_json, log_debug,
+    parse_table_slug, report_error, retry_llm_output, stream_details,
 )
 from .vector_store import DuckDBVectorStore
 from .views import (
@@ -547,6 +547,7 @@ class LumenBaseAgent(Agent):
             language = view.language
         if spec is None:
             raise ValueError("Must provide previous spec to revise.")
+        old_spec = spec
         lines = spec.splitlines()
         numbered_text = "\n".join(f"{i:2d}: {line}" for i, line in enumerate(lines, 1))
         system = await self._render_prompt(
@@ -566,12 +567,21 @@ class LumenBaseAgent(Agent):
             response_model=retry_model,
             model_spec="edit"
         )
-        spec = load_yaml(apply_changes(lines, result.edits))
+        new_spec_raw = apply_changes(lines, result.edits)
+        spec = load_yaml(new_spec_raw)
         if view is not None:
             view.validate_spec(spec)
         if isinstance(spec, str):
-            return spec
-        yaml_spec = dump_yaml(spec)
+            yaml_spec = spec
+        else:
+            yaml_spec = dump_yaml(spec)
+
+        # Generate and stream diff to show changes made
+        if self.interface is not None:
+            diff = generate_diff(old_spec, yaml_spec, filename=language or "spec")
+            if diff:
+                self.interface.stream(f"**Changes applied:**\n```diff\n{diff}```", user="Assistant")
+
         return yaml_spec
 
 
@@ -1951,7 +1961,7 @@ class VegaLiteAgent(BaseViewAgent):
         messages: list[Message],
         context: TContext,
         spec: dict
-    ) -> dict:
+    ) -> str:
         """
         Apply annotations based on user request.
 
@@ -1968,7 +1978,7 @@ class VegaLiteAgent(BaseViewAgent):
 
         Returns
         -------
-        dict
+        str
             Updated specification with annotations
         """
         # Add user's annotation request to messages context

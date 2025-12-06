@@ -30,6 +30,7 @@ from ..sources.duckdb import DuckDBSource
 from ..util import detect_file_encoding
 from .config import SOURCE_TABLE_SEPARATOR
 from .context import TContext
+from .utils import generate_diff
 
 if TYPE_CHECKING:
     from .views import SQLOutput
@@ -827,7 +828,7 @@ class RetryControls(RevisionControls):
             )
         except Exception as e:
             traceback.print_exc()
-            self.interface.stream(f"An error occurred while revising the output: {e}", user="Assistant")
+            self.interface.stream(f"**Error during revision:**\n```\n{e}\n```", user="Assistant")
 
 
 
@@ -848,15 +849,21 @@ class AnnotationControls(RevisionControls):
         if not self.instruction:
             return
         try:
-            old = self.view.spec
+            old_spec = self.view.spec
             with self.view.editor.param.update(loading=True):
-                self.view.spec = await self.task.actor.annotate(
+                new_spec = await self.task.actor.annotate(
                     self.instruction, list(self.task.history), self.task.out_context, {"spec": load_yaml(self.view.spec)}
                 )
+                self.view.spec = new_spec
+
+            # Generate and stream diff to show changes made
+            diff = generate_diff(old_spec, new_spec, filename="vega-lite")
+            if diff:
+                self.interface.stream(f"**Annotations applied:**\n```diff\n{diff}```", user="Assistant")
         except Exception as e:
             traceback.print_exc()
-            self.view.spec = old
-            self.interface.stream(f"An error occurred while attempting to annotate the output: {e}", user="Assistant")
+            self.view.spec = old_spec
+            self.interface.stream(f"**Error during annotation:**\n```\n{e}\n```", user="Assistant")
 
 
 class TableSourceCard(Viewer):
