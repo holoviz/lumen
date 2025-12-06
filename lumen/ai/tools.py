@@ -1320,7 +1320,7 @@ class DbtslLookup(VectorLookupTool, DbtslMixin):
                 "metric_type": str(metric.type.value) if metric.type else "UNKNOWN",
             }
 
-            items_to_upsert.append({"text": enriched_text, "metadata": vector_metadata})
+            items_to_upsert.append({"text": enriched_text, "metadata": vector_metadata, "chunk_size": None})
 
         # Make a single upsert call with all metrics
         if items_to_upsert:
