@@ -12,11 +12,10 @@ from panel.tests.util import async_wait_until
 from panel_material_ui import Card, ChatMessage, Typography
 
 from lumen.ai.agents import AnalystAgent, ChatAgent, SQLAgent
+from lumen.ai.agents.sql import SqlQuery
 from lumen.ai.coordinator import Plan, Planner
-from lumen.ai.models import (
-    Reasoning, ReplaceLine, RetrySpec, SqlQuery, ThinkingYesNo,
-    make_plan_model,
-)
+from lumen.ai.coordinator.planner import Reasoning, make_plan_model
+from lumen.ai.models import ReplaceLine, RetrySpec, ThinkingYesNo
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
 from lumen.ai.tools import IterativeTableLookup, TableLookup
