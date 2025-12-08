@@ -6,7 +6,7 @@ from ...config import dump_yaml, load_yaml
 from ..config import PROMPTS_DIR
 from ..context import TContext
 from ..llm import Message
-from ..shared.models import RetrySpec
+from ..models import RetrySpec
 from ..utils import apply_changes, retry_llm_output
 from ..views import LumenOutput
 from .base import Agent

@@ -8,20 +8,19 @@ import param
 from pydantic import create_model
 from pydantic.fields import FieldInfo
 
-from ..shared.models import PartialBaseModel
-from ..sources.base import Source
-from ..sources.duckdb import DuckDBSource
-from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
-from .context import ContextModel, TContext
-from .llm import Message
-from .schemas import (
+from ...sources.base import Source
+from ...sources.duckdb import DuckDBSource
+from ..config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
+from ..context import ContextModel, TContext
+from ..llm import Message
+from ..models import PartialBaseModel
+from ..schemas import (
     Column, Metaset, TableCatalogEntry, get_metaset,
 )
-from .utils import (
+from ..utils import (
     get_schema, log_debug, parse_table_slug, stream_details, truncate_string,
 )
-from .vector_lookup import make_refined_query_model
-from .vector_lookup_tool import VectorLookupTool
+from .vector_lookup import VectorLookupTool, make_refined_query_model
 
 
 def make_iterative_selection_model(table_slugs):

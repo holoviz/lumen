@@ -10,21 +10,20 @@ import param
 
 from panel.io.state import state
 from panel_material_ui import ChatStep
-from pydantic import (
-    BaseModel, Field, FieldInfo, create_model,
-)
+from pydantic import BaseModel, Field, create_model
+from pydantic.fields import FieldInfo
 
-from ...shared.models import ThinkingYesNo
-from .agents import Agent
-from .base import Coordinator, Plan
-from .config import PROMPTS_DIR
-from .context import (
+from ..agents import Agent
+from ..config import PROMPTS_DIR
+from ..context import (
     LWW, ContextError, TContext, merge_contexts,
 )
-from .llm import Message
-from .report import ActorTask
-from .tools import TableLookup, Tool
-from .utils import log_debug, wrap_logfire
+from ..llm import Message
+from ..models import ThinkingYesNo
+from ..report import ActorTask
+from ..tools import TableLookup, Tool
+from ..utils import log_debug, wrap_logfire
+from .base import Coordinator, Plan
 
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
@@ -82,6 +81,7 @@ def make_plan_model(agents: list[str], tools: list[str]) -> type[RawPlan]:
         )
     )
     return plan
+
 
 class Planner(Coordinator):
     """

@@ -16,7 +16,7 @@ from ..config import (
 )
 from ..context import TContext
 from ..llm import Message, OpenAI
-from ..shared.models import EscapeBaseModel, RetrySpec
+from ..models import EscapeBaseModel, RetrySpec
 from ..utils import (
     get_schema, load_json, log_debug, retry_llm_output,
 )

@@ -6,15 +6,14 @@ import param
 
 from panel.io import cache as pn_cache
 
-from .config import PROMPTS_DIR
-from .context import ContextModel, TContext
-from .llm import Message
-from .schemas import DbtslMetadata, DbtslMetaset
-from .services import DbtslMixin
-from .shared.models import ThinkingYesNo
-from .tools.vector_lookup import VectorLookupTool
-from .utils import process_enums, stream_details, with_timeout
-from .vector_lookup import make_refined_query_model
+from ..config import PROMPTS_DIR
+from ..context import ContextModel, TContext
+from ..llm import Message
+from ..models import ThinkingYesNo
+from ..schemas import DbtslMetadata, DbtslMetaset
+from ..services import DbtslMixin
+from ..utils import process_enums, stream_details, with_timeout
+from .vector_lookup import VectorLookupTool, make_refined_query_model
 
 
 class DbtslLookupOutputs(ContextModel):

@@ -9,7 +9,7 @@ from pydantic import Field
 from ..config import PROMPTS_DIR
 from ..context import ContextModel, TContext
 from ..llm import Message
-from ..shared.models import PartialBaseModel
+from ..models import PartialBaseModel
 from .base import Agent
 
 

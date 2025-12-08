@@ -18,17 +18,17 @@ from panel_material_ui import (
     Card, ChatInterface, ChatStep, Column, Tabs, Typography,
 )
 
-from .actor import Actor
-from .agents import Agent, AnalysisAgent, ChatAgent
-from .config import PROMPTS_DIR, MissingContextError
-from .context import TContext
-from .llm import LlamaCpp, Llm, Message
-from .models import ThinkingYesNo
-from .report import ActorTask, Section, TaskGroup
-from .tools import (
+from ..actor import Actor
+from ..agents import Agent, AnalysisAgent, ChatAgent
+from ..config import PROMPTS_DIR, MissingContextError
+from ..context import TContext
+from ..llm import LlamaCpp, Llm, Message
+from ..models import ThinkingYesNo
+from ..report import ActorTask, Section, TaskGroup
+from ..tools import (
     IterativeTableLookup, TableLookup, Tool, VectorLookupToolUser,
 )
-from .utils import (
+from ..utils import (
     fuse_messages, get_root_exception, log_debug, mutate_user_message,
     normalized_name, wrap_logfire,
 )

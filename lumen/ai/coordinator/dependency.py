@@ -6,19 +6,20 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import param
 
-from .agents import Agent
+from ..agents import Agent
+from ..config import PROMPTS_DIR
+from ..context import TContext
+from ..llm import Message
+from ..report import ActorTask
+from ..tools import Tool
+from ..utils import log_debug
 from .base import Coordinator, Plan
-from .config import PROMPTS_DIR
-from .context import TContext
-from .llm import Message
-from .report import ActorTask
-from .tools import Tool
-from .utils import log_debug
 
 if TYPE_CHECKING:
     pass
 
-from pydantic import FieldInfo, create_model
+from pydantic import create_model
+from pydantic.fields import FieldInfo
 
 
 def make_agent_model(agent_names: list[str], primary: bool = False):

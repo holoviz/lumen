@@ -8,9 +8,8 @@ from typing import (
 import param
 
 from panel_material_ui.chat import ChatStep
-from pydantic import (
-    BaseModel, Field, FieldInfo, create_model,
-)
+from pydantic import BaseModel, Field, create_model
+from pydantic.fields import FieldInfo
 from pydantic.json_schema import SkipJsonSchema
 
 from ...pipeline import Pipeline
@@ -20,8 +19,8 @@ from ...transforms.sql import SQLLimit
 from ..config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from ..context import ContextModel, TContext
 from ..llm import Message
+from ..models import PartialBaseModel, RetrySpec
 from ..schemas import Metaset
-from ..shared.models import PartialBaseModel, RetrySpec
 from ..utils import (
     clean_sql, describe_data, get_data, get_pipeline, parse_table_slug,
     stream_details,

@@ -7,12 +7,12 @@ import param
 from panel.pane import HoloViews as HoloViewsPanel, panel as as_panel
 from panel.viewable import Viewable
 
-from ..views.base import HoloViews, View
-from .actor import Actor, ContextProvider
-from .config import PROMPTS_DIR
-from .context import ContextModel, TContext
-from .llm import Message
-from .translate import function_to_model
+from ...views.base import HoloViews, View
+from ..actor import Actor, ContextProvider
+from ..config import PROMPTS_DIR
+from ..context import ContextModel, TContext
+from ..llm import Message
+from ..translate import function_to_model
 
 
 class Tool(Actor, ContextProvider):

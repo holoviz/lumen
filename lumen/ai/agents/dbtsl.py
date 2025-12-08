@@ -13,9 +13,9 @@ from ...transforms.sql import SQLLimit
 from ..config import PROMPTS_DIR, RetriesExceededError
 from ..context import TContext
 from ..llm import Message
+from ..models import RetrySpec
 from ..schemas import DbtslMetaset, get_metaset
 from ..services import DbtslMixin
-from ..shared.models import RetrySpec
 from ..utils import (
     describe_data, get_data, get_pipeline, report_error, retry_llm_output,
     stream_details,

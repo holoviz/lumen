@@ -3,9 +3,9 @@ from typing import Any
 
 import param
 
-from .context import TContext
-from .tools.vector_lookup import VectorLookupInputs, VectorLookupTool
-from .utils import truncate_string
+from ..context import TContext
+from ..tools.vector_lookup import VectorLookupInputs, VectorLookupTool
+from ..utils import truncate_string
 
 
 class DocumentLookup(VectorLookupTool):
