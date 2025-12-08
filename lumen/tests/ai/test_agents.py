@@ -15,11 +15,11 @@ from panel.pane import Markdown
 from lumen.ai.agents import (
     AnalysisAgent, AnalystAgent, ChatAgent, SQLAgent, VegaLiteAgent,
 )
+from lumen.ai.agents.analysis import make_analysis_model
+from lumen.ai.agents.sql import SqlQuery
+from lumen.ai.agents.vega_lite import VegaLiteSpec, VegaLiteSpecUpdate
 from lumen.ai.analysis import Analysis
 from lumen.ai.llm import Llm
-from lumen.ai.models import (
-    SqlQuery, VegaLiteSpec, VegaLiteSpecUpdate, make_analysis_model,
-)
 from lumen.ai.schemas import get_metaset
 from lumen.ai.views import AnalysisOutput, SQLOutput, VegaLiteOutput
 from lumen.config import dump_yaml
