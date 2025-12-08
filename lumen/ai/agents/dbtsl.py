@@ -69,7 +69,6 @@ class DbtslQueryParams(BaseModel):
     )
 
 
-
 class DbtslOutputs(SQLOutputs):
 
     dbtsl_metaset: DbtslMetaset
