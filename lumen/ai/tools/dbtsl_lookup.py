@@ -11,9 +11,10 @@ from .context import ContextModel, TContext
 from .llm import Message
 from .schemas import DbtslMetadata, DbtslMetaset
 from .services import DbtslMixin
-from .shared.models import ThinkingYesNo, make_refined_query_model
+from .shared.models import ThinkingYesNo
 from .tools.vector_lookup import VectorLookupTool
 from .utils import process_enums, stream_details, with_timeout
+from .vector_lookup import make_refined_query_model
 
 
 class DbtslLookupOutputs(ContextModel):

@@ -1,23 +1,31 @@
 import asyncio
 
 from collections.abc import Callable
-from typing import Any, NotRequired
+from typing import Any, Literal, NotRequired
 
 import param
 
 from panel.pane import panel as as_panel
 from panel.viewable import Viewable
+from pydantic import FieldInfo, create_model
 
 from ...pipeline import Pipeline
 from ...views import Panel
 from ..config import PROMPTS_DIR
 from ..context import ContextModel, TContext
 from ..llm import Message
-from ..shared.models import make_analysis_model
 from ..utils import get_data, log_debug
 from ..views import AnalysisOutput
 from .lumen import BaseLumenAgent
 
+
+def make_analysis_model(analyses: list[str]):
+    return create_model(
+        "Analysis",
+        analysis=(Literal[tuple(analyses)], FieldInfo(
+            description="The name of the analysis that is most appropriate given the user query."
+        ))
+    )
 
 class AnalysisInputs(ContextModel):
 

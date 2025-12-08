@@ -6,6 +6,8 @@ from typing import Any
 
 import param
 
+from pydantic import BaseModel, Field
+
 from ...sources.base import BaseSQLSource, Source
 from ...transforms.sql import SQLLimit
 from ..config import PROMPTS_DIR, RetriesExceededError
@@ -13,7 +15,7 @@ from ..context import TContext
 from ..llm import Message
 from ..schemas import DbtslMetaset, get_metaset
 from ..services import DbtslMixin
-from ..shared.models import DbtslQueryParams, RetrySpec
+from ..shared.models import RetrySpec
 from ..utils import (
     describe_data, get_data, get_pipeline, report_error, retry_llm_output,
     stream_details,
@@ -21,6 +23,51 @@ from ..utils import (
 from ..views import LumenOutput
 from .lumen import BaseLumenAgent
 from .sql import SQLOutputs
+
+
+class DbtslQueryParams(BaseModel):
+    """
+    Model for dbtsl.client.query() parameters.
+    """
+
+    chain_of_thought: str = Field(
+        description="""You are a world-class dbt Semantic Layer expert. Think step by step about
+        what metrics are needed, what dimensions to group by, what time granularity
+        to use, and any filters that should be applied; if filters are applied, include those
+        filtered dimensions in group_by. If there are errors, mention how you'll address the errors.
+        """
+    )
+
+    expr_slug: str = Field(
+        description="""Give the query a concise, but descriptive, slug that includes the metrics
+        and dimensions used, e.g. monthly_revenue_by_region. The slug must be unique."""
+    )
+
+    where: list[str] = Field(
+        default_factory=list,
+        description="A list of conditions to filter the results; dimensions referenced here must also be in group_by, e.g. ['metric_time__month >= date_trunc('month', '2024-09-30'::date)']"
+    )
+
+    group_by: list[str] = Field(
+        default_factory=list,
+        description="A list of dimensions to group by, e.g. ['metric_time__month'], must include dimensions from where."
+    )
+
+    limit: int = Field(
+        default=None,
+        description="The maximum number of rows to return."
+    )
+
+    metrics: list[str] = Field(
+        default_factory=list,
+        description="A list of metrics to include in the query, e.g. ['revenue']"
+    )
+
+    order_by: list[str] = Field(
+        default_factory=list,
+        description="A list of columns or expressions to order the results by, e.g. ['metric_time__month']"
+    )
+
 
 
 class DbtslOutputs(SQLOutputs):

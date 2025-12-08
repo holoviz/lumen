@@ -4,6 +4,8 @@ from typing import Any
 import param
 import requests
 
+from pydantic import BaseModel, Field
+
 from ...config import dump_yaml, load_yaml
 from ...pipeline import Pipeline
 from ...views import VegaLiteView
@@ -14,13 +16,38 @@ from ..config import (
 )
 from ..context import TContext
 from ..llm import Message, OpenAI
-from ..shared.models import RetrySpec, VegaLiteSpec, VegaLiteSpecUpdate
+from ..shared.models import EscapeBaseModel, RetrySpec
 from ..utils import (
     get_schema, load_json, log_debug, retry_llm_output,
 )
 from ..vector_store import DuckDBVectorStore
 from ..views import LumenOutput, VegaLiteOutput
 from .view import BaseViewAgent
+
+
+class VegaLiteSpec(EscapeBaseModel):
+
+    chain_of_thought: str = Field(
+        description="""Explain your design choices based on visualization theory:
+        - What story does this data tell?
+        - Which visual encodings (position, color, size) best reveal patterns?
+        - Should color highlight specific insights or remain neutral?
+        - What makes this plot engaging and useful for the user?
+        Then describe the basic plot structure."""
+    )
+    yaml_spec: str = Field(
+        description="A basic vega-lite YAML specification with core plot elements only (data, mark, basic x/y encoding)."
+    )
+
+
+class VegaLiteSpecUpdate(BaseModel):
+    chain_of_thought: str = Field(
+        description="Explain what changes you're making to the Vega-Lite spec and why."
+    )
+    yaml_update: str = Field(
+        description="""Partial YAML with ONLY modified properties (unchanged values omitted).
+        Respect your step's scope; don't override previous steps."""
+    )
 
 
 class VegaLiteAgent(BaseViewAgent):

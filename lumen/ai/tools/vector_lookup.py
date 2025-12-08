@@ -4,14 +4,40 @@ from typing import Any
 
 import param
 
+from pydantic import Field, create_model
+
+from ..shared.models import PartialBaseModel
 from .base import Tool, ToolUser
 from .config import PROMPTS_DIR
 from .context import ContextModel, TContext
 from .embeddings import NumpyEmbeddings
 from .llm import Message
-from .models import make_refined_query_model
 from .utils import log_debug, stream_details
 from .vector_store import NumpyVectorStore, VectorStore
+
+
+def make_refined_query_model(item_type_name: str = "items"):
+    """
+    Creates a model for refining search queries in vector lookup tools.
+    """
+    return create_model(
+        "RefinedQuery",
+        chain_of_thought=(str, Field(
+            description=f"""
+            Analyze the current search results for {item_type_name}. Consider whether the terms used
+            in the query match the terms that might be found in {item_type_name} names and descriptions.
+            Think about more specific or alternative terms that might yield better results.
+            """
+        )),
+        refined_search_query=(str, Field(
+            description=f"""
+            A refined search query that would help find more relevant {item_type_name}.
+            This should be a focused query with specific terms, entities, or concepts
+            that might appear in relevant {item_type_name}.
+            """
+        )),
+        __base__=PartialBaseModel
+    )
 
 
 class VectorLookupInputs(ContextModel):

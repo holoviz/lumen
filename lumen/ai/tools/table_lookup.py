@@ -1,10 +1,13 @@
 import asyncio
 import traceback
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import param
 
+from pydantic import FieldInfo, create_model
+
+from ..shared.models import PartialBaseModel
 from ..sources.base import Source
 from ..sources.duckdb import DuckDBSource
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
@@ -13,22 +16,74 @@ from .llm import Message
 from .schemas import (
     Column, Metaset, TableCatalogEntry, get_metaset,
 )
-from .shared.models import (
-    make_iterative_selection_model, make_refined_query_model,
-)
 from .utils import (
     get_schema, log_debug, parse_table_slug, stream_details, truncate_string,
 )
+from .vector_lookup import make_refined_query_model
 from .vector_lookup_tool import VectorLookupTool
 
 
-class TableLookupInputs(ContextModel):
+def make_iterative_selection_model(table_slugs):
+    """
+    Creates a model for table selection in the coordinator.
+    This is separate from the SQLAgent's table selection model to focus on context gathering
+    rather than query execution.
+    """
+    table_model = create_model(
+        "IterativeTableSelection",
+        chain_of_thought=(
+            str,
+            FieldInfo(
+                description="""
+            Consider which tables would provide the most relevant context for understanding the user query,
+            and be specific about what columns are most relevant to the query. Please be concise.
+            """
+            ),
+        ),
+        is_done=(
+            bool,
+            FieldInfo(
+                description="""
+            Indicate whether you have sufficient context about the available data structures.
+            Set to True if you understand enough about the data model to proceed with the query.
+            Set to False if you need to examine additional tables to better understand the domain.
+            Do not reach for perfection; if there are promising tables, but you are not 100% sure,
+            still mark as done.
+            """
+            ),
+        ),
+        requires_join=(
+            bool,
+            FieldInfo(
+                description="""
+            Indicate whether a join is necessary to answer the user query.
+            Set to True if a join is necessary to answer the query.
+            Set to False if no join is necessary.
+            """
+            ),
+        ),
+        selected_slugs=(
+            list[Literal[tuple(table_slugs)]],
+            FieldInfo(
+                description="""
+            If is_done and a join is necessary, return a list of table names that will be used in the join.
+            If is_done and no join is necessary, return a list of a single table name.
+            If not is_done return a list of table names that you believe would provide
+            the most relevant context for understanding the user query that wasn't already seen before.
+            Focus on tables that contain key entities, relationships, or metrics mentioned in the query.
+            """
+            ),
+        ),
+        __base__=PartialBaseModel,
+    )
+    return table_model
 
+
+class TableLookupInputs(ContextModel):
     sources: Annotated[list[Source], ("accumulate", "source")]
 
 
 class TableLookupOutputs(ContextModel):
-
     metaset: Metaset
 
 
@@ -38,11 +93,13 @@ class TableLookup(VectorLookupTool):
     and responds with relevant tables for user queries.
     """
 
-    conditions = param.List(default=[
-        "Best paired with ChatAgent for general conversation about data",
-        "Avoid if table discovery already performed for same request",
-        "Not useful for data related queries",
-    ])
+    conditions = param.List(
+        default=[
+            "Best paired with ChatAgent for general conversation about data",
+            "Avoid if table discovery already performed for same request",
+            "Not useful for data related queries",
+        ]
+    )
 
     prompts = param.Dict(
         default={
@@ -51,39 +108,64 @@ class TableLookup(VectorLookupTool):
                 "response_model": make_refined_query_model,
             },
         },
-        doc="Dictionary of available prompts for the tool."
+        doc="Dictionary of available prompts for the tool.",
     )
 
     exclusions = param.List(default=["dbtsl_metaset"])
 
     not_with = param.List(default=["IterativeTableLookup"])
 
-    purpose = param.String(default="""
+    purpose = param.String(
+        default="""
         Discovers relevant tables using vector search, providing context for other agents.
         Not to be used for finding tables for further analysis (e.g. SQL), because it does
-        not provide a schema.""")
+        not provide a schema."""
+    )
 
-    include_metadata = param.Boolean(default=True, doc="""
-        Whether to include table descriptions in the embeddings and responses.""")
+    include_metadata = param.Boolean(
+        default=True,
+        doc="""
+        Whether to include table descriptions in the embeddings and responses.""",
+    )
 
-    include_columns = param.Boolean(default=True, doc="""
-        Whether to include column names and descriptions in the embeddings.""")
+    include_columns = param.Boolean(
+        default=True,
+        doc="""
+        Whether to include column names and descriptions in the embeddings.""",
+    )
 
-    include_misc = param.Boolean(default=False, doc="""
+    include_misc = param.Boolean(
+        default=False,
+        doc="""
         Whether to include miscellaneous metadata in the embeddings,
-        besides table and column descriptions.""")
+        besides table and column descriptions.""",
+    )
 
-    max_concurrent = param.Integer(default=1, doc="""
-        Maximum number of concurrent metadata fetch operations.""")
+    max_concurrent = param.Integer(
+        default=1,
+        doc="""
+        Maximum number of concurrent metadata fetch operations.""",
+    )
 
-    min_similarity = param.Number(default=0.05, doc="""
-        The minimum similarity to include a document.""")
+    min_similarity = param.Number(
+        default=0.05,
+        doc="""
+        The minimum similarity to include a document.""",
+    )
 
-    n = param.Integer(default=10, bounds=(1, None), doc="""
-        The number of document results to return.""")
+    n = param.Integer(
+        default=10,
+        bounds=(1, None),
+        doc="""
+        The number of document results to return.""",
+    )
 
-    _ready = param.Boolean(default=False, allow_None=True, doc="""
-        Whether the vector store is ready.""")
+    _ready = param.Boolean(
+        default=False,
+        allow_None=True,
+        doc="""
+        Whether the vector store is ready.""",
+    )
 
     _item_type_name = "tables"
 
@@ -114,9 +196,7 @@ class TableLookup(VectorLookupTool):
 
         await self._update_vector_store(context)
 
-    def _format_results_for_refinement(
-        self, results: list[dict[str, Any]], context: TContext
-    ) -> str:
+    def _format_results_for_refinement(self, results: list[dict[str, Any]], context: TContext) -> str:
         """
         Format table search results for inclusion in the refinement prompt.
 
@@ -130,11 +210,11 @@ class TableLookup(VectorLookupTool):
         str
             Formatted description of table results
         """
-        visible_slugs = context.get('visible_slugs', set())
+        visible_slugs = context.get("visible_slugs", set())
         formatted_results = []
         for result in results:
-            source_name = result['metadata'].get("source", "unknown")
-            table_name = result['metadata'].get("table_name", "unknown")
+            source_name = result["metadata"].get("source", "unknown")
+            table_name = result["metadata"].get("table_name", "unknown")
             table_slug = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
             if visible_slugs and table_slug not in visible_slugs:
                 continue
@@ -155,10 +235,7 @@ class TableLookup(VectorLookupTool):
                 source_metadata = await source_metadata
                 self._raw_metadata[source.name] = source_metadata
 
-        table_name_key = next((
-            key for key in (table_name.upper(), table_name.lower(), table_name)
-            if key in source_metadata), None
-        )
+        table_name_key = next((key for key in (table_name.upper(), table_name.lower(), table_name) if key in source_metadata), None)
 
         if not table_name_key:
             return None
@@ -173,22 +250,18 @@ class TableLookup(VectorLookupTool):
 
         # Create column schema objects
         columns = []
-        if self.include_columns and (vector_columns := vector_info.get('columns', {})):
+        if self.include_columns and (vector_columns := vector_info.get("columns", {})):
             for col_name, col_info in vector_columns.items():
                 col_desc = col_info.pop("description", "")
-                column = Column(
-                    name=col_name,
-                    description=col_desc,
-                    metadata=col_info.copy() if isinstance(col_info, dict) else {}
-                )
+                column = Column(name=col_name, description=col_desc, metadata=col_info.copy() if isinstance(col_info, dict) else {})
                 columns.append(column)
 
         vector_metadata = {"source": source.name, "table_name": table_name, "type": self._item_type_name}
         # the following is for the embeddings/vector store use only (i.e. filter from 1000s of tables)
         enriched_text = f"Table: {table_name}"
-        if description := vector_info.pop('description', ''):
+        if description := vector_info.pop("description", ""):
             enriched_text += f"\nInfo: {description}"
-        if self.include_columns and (vector_columns := vector_info.pop('columns', {})):
+        if self.include_columns and (vector_columns := vector_info.pop("columns", {})):
             enriched_text += "\nCols:"
             for col_name, col_info in vector_columns.items():
                 col_text = f"\n- {col_name}"
@@ -243,9 +316,7 @@ class TableLookup(VectorLookupTool):
                 if isinstance(source, DuckDBSource):
                     self._raw_metadata[source.name] = source.get_metadata()
                 else:
-                    metadata_task = asyncio.create_task(
-                        asyncio.to_thread(source.get_metadata)
-                    )
+                    metadata_task = asyncio.create_task(asyncio.to_thread(source.get_metadata))
                     self._raw_metadata[source.name] = metadata_task
                     tasks.append(metadata_task)
 
@@ -256,10 +327,9 @@ class TableLookup(VectorLookupTool):
                     task = asyncio.create_task(self._enrich_metadata(source, table, context))
                     tasks.append(task)
             else:
-                await self.vector_store.upsert([
-                    {"text": table_name, "metadata": {"source": source.name, "table_name": table_name, "type": "table"}}
-                    for table_name in tables
-                ])
+                await self.vector_store.upsert(
+                    [{"text": table_name, "metadata": {"source": source.name, "table_name": table_name, "type": "table"}} for table_name in tables]
+                )
 
         if tasks:
             # Pass the processed_sources to _mark_ready_when_done so it can clean up after tasks complete
@@ -272,6 +342,7 @@ class TableLookup(VectorLookupTool):
 
     def _cleanup_sources_in_progress(self, vector_store_id, processed_sources):
         """Clean up the sources_in_progress tracking after tasks are completed."""
+
         async def _async_cleanup():
             async with self._progress_lock:
                 try:
@@ -303,12 +374,10 @@ class TableLookup(VectorLookupTool):
             log_debug(f"[TableLookup] Waiting for {len(tasks)} tasks to complete")
             # Add timeout to prevent indefinite waiting (5 minutes)
             try:
+
                 async def _gather_with_semaphore():
                     async with asyncio.Semaphore(self.max_concurrent):
-                        return [
-                            result for result in await asyncio.gather(*tasks, return_exceptions=True)
-                            if isinstance(result, dict) and "text" in result
-                        ]
+                        return [result for result in await asyncio.gather(*tasks, return_exceptions=True) if isinstance(result, dict) and "text" in result]
 
                 enriched_entries = await asyncio.wait_for(_gather_with_semaphore(), timeout=300)
             except TimeoutError:
@@ -320,10 +389,7 @@ class TableLookup(VectorLookupTool):
                 log_debug(f"[TableLookup] Upserting {len(enriched_entries)} enriched entries")
                 # Add timeout to the upsert operation to prevent deadlock
                 try:
-                    await asyncio.wait_for(
-                        self.vector_store.upsert(enriched_entries),
-                        timeout=60
-                    )
+                    await asyncio.wait_for(self.vector_store.upsert(enriched_entries), timeout=60)
                     log_debug(f"[TableLookup] Successfully upserted {len(enriched_entries)} entries")
                 except TimeoutError:
                     log_debug("[TableLookup] Timeout during upsert operation (60 seconds)")
@@ -394,11 +460,7 @@ class TableLookup(VectorLookupTool):
 
                 for col_name, col_info in column_metadata.items():
                     col_desc = col_info.pop("description", "")
-                    column_schema = Column(
-                        name=col_name,
-                        description=col_desc,
-                        metadata=col_info.copy() if isinstance(col_info, dict) else {}
-                    )
+                    column_schema = Column(name=col_name, description=col_desc, metadata=col_info.copy() if isinstance(col_info, dict) else {})
                     columns.append(column_schema)
 
             catalog_entry = TableCatalogEntry(
@@ -408,7 +470,7 @@ class TableLookup(VectorLookupTool):
                 source=source_obj,
                 description=table_description,
                 sql_expr=sql,
-                metadata=context["tables_metadata"].get(table_slug, {}).copy()
+                metadata=context["tables_metadata"].get(table_slug, {}).copy(),
             )
             catalog[table_slug] = catalog_entry
 
@@ -432,9 +494,7 @@ class TableLookup(VectorLookupTool):
         metaset = outputs.get("metaset")
         return str(metaset)
 
-    async def respond(
-        self, messages: list[Message], context: TContext, **kwargs: dict[str, Any]
-    ) -> tuple[list[Any], TableLookupOutputs]:
+    async def respond(self, messages: list[Message], context: TContext, **kwargs: dict[str, Any]) -> tuple[list[Any], TableLookupOutputs]:
         """
         Fetches tables based on the user query and returns formatted context.
         """
@@ -444,7 +504,6 @@ class TableLookup(VectorLookupTool):
 
 
 class IterativeTableLookupOutputs(ContextModel):
-
     metaset: Metaset
 
 
@@ -454,24 +513,34 @@ class IterativeTableLookup(TableLookup):
     This tool uses an LLM to select tables in multiple passes, examining schemas in detail.
     """
 
-    conditions = param.List(default=[
-        "Useful for answering data queries",
-        "Avoid for follow-up questions when existing data is sufficient",
-        "Use only when existing information is insufficient for the current query",
-    ])
+    conditions = param.List(
+        default=[
+            "Useful for answering data queries",
+            "Avoid for follow-up questions when existing data is sufficient",
+            "Use only when existing information is insufficient for the current query",
+        ]
+    )
 
     not_with = param.List(default=["TableLookup"])
 
-    purpose = param.String(default="""
-        Looks up the most relevant tables and provides SQL schemas of those tables.""")
+    purpose = param.String(
+        default="""
+        Looks up the most relevant tables and provides SQL schemas of those tables."""
+    )
 
-    max_selection_iterations = param.Integer(default=3, doc="""
-        Maximum number of iterations for the iterative table selection process.""")
+    max_selection_iterations = param.Integer(
+        default=3,
+        doc="""
+        Maximum number of iterations for the iterative table selection process.""",
+    )
 
-    table_similarity_threshold = param.Number(default=0.5, doc="""
+    table_similarity_threshold = param.Number(
+        default=0.5,
+        doc="""
         If any tables have a similarity score above this threshold,
         those tables will be automatically selected and there will not be an
-        iterative table selection process.""")
+        iterative table selection process.""",
+    )
 
     prompts = param.Dict(
         default={
@@ -530,7 +599,7 @@ class IterativeTableLookup(TableLookup):
         examined_slugs = set(schemas.keys())
         # Filter to only include visible tables
         all_slugs = list(catalog.keys())
-        visible_slugs = context.get('visible_slugs', set())
+        visible_slugs = context.get("visible_slugs", set())
         if visible_slugs:
             all_slugs = [slug for slug in all_slugs if slug in visible_slugs]
 
@@ -556,12 +625,9 @@ class IterativeTableLookup(TableLookup):
             with self._add_step(
                 title=f"Iterative table selection {iteration} / {max_iterations}",
                 success_title=f"Selection iteration {iteration} / {max_iterations} completed",
-                steps_layout=self.steps_layout
+                steps_layout=self.steps_layout,
             ) as step:
-                available_slugs = [
-                    table_slug for table_slug in all_slugs
-                    if table_slug not in examined_slugs
-                ]
+                available_slugs = [table_slug for table_slug in all_slugs if table_slug not in examined_slugs]
                 log_debug(available_slugs, prefix=f"Available slugs for iteration {iteration}")
                 if not available_slugs:
                     step.stream("No more tables available to examine.")
@@ -574,11 +640,7 @@ class IterativeTableLookup(TableLookup):
                     any_matches = any(schema.similarity > self.table_similarity_threshold for schema in catalog.values())
                     limited_tables = len(catalog) <= 5
                     if any_matches or len(all_slugs) == 1 or limited_tables:
-                        selected_slugs = sorted(
-                            catalog.keys(),
-                            key=lambda x: catalog[x].similarity,
-                            reverse=True
-                        )[:5]
+                        selected_slugs = sorted(catalog.keys(), key=lambda x: catalog[x].similarity, reverse=True)[:5]
                         step.stream("Selected tables based on similarity threshold.\n\n")
                         fast_track = True
 
@@ -614,10 +676,7 @@ class IterativeTableLookup(TableLookup):
                         selected_slugs = output.selected_slugs or []
                         chain_of_thought = output.chain_of_thought
                         step.stream(chain_of_thought)
-                        stream_details(
-                            '\n\n'.join(f'`{slug}`' for slug in selected_slugs),
-                            step, title=f"Selected {len(selected_slugs)} tables", auto=False
-                        )
+                        stream_details("\n\n".join(f"`{slug}`" for slug in selected_slugs), step, title=f"Selected {len(selected_slugs)} tables", auto=False)
 
                         # Check if we're done with table selection (do not allow on 1st iteration)
                         if (output.is_done and iteration != 1) or not available_slugs:
@@ -637,10 +696,7 @@ class IterativeTableLookup(TableLookup):
                 for table_slug in selected_slugs:
                     stream_details(str(metaset.catalog[table_slug]), step, title="Table details", auto=False)
                     try:
-                        view_definition = truncate_string(
-                            context["tables_metadata"].get(table_slug, {}).get("view_definition", ""),
-                            max_length=300
-                        )
+                        view_definition = truncate_string(context["tables_metadata"].get(table_slug, {}).get("view_definition", ""), max_length=300)
 
                         if SOURCE_TABLE_SEPARATOR in table_slug:
                             source_name, table_name = table_slug.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
@@ -680,9 +736,7 @@ class IterativeTableLookup(TableLookup):
         metaset = outputs.get("metaset")
         return str(metaset)
 
-    async def respond(
-        self, messages: list[Message], context: TContext, **kwargs: dict[str, Any]
-    ) -> tuple[list[Any], IterativeTableLookupOutputs]:
+    async def respond(self, messages: list[Message], context: TContext, **kwargs: dict[str, Any]) -> tuple[list[Any], IterativeTableLookupOutputs]:
         """
         Fetches tables based on the user query and returns formatted context.
         """

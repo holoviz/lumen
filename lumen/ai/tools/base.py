@@ -50,8 +50,6 @@ class Tool(Actor, ContextProvider):
         """
 
 
-
-
 class FunctionTool(Tool):
     """
     FunctionTool wraps arbitrary functions and makes them available as a tool
@@ -143,6 +141,7 @@ class FunctionTool(Tool):
             arguments=', '.join(f'{k}={v!r}' for k, v in arguments.items()),
             output=result
         )], out_model
+
 
 class ToolUser(Actor):
     """

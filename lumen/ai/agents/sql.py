@@ -1,12 +1,17 @@
 
 import asyncio
 
-from typing import Annotated, Any, NotRequired
+from typing import (
+    Annotated, Any, Literal, NotRequired,
+)
 
 import param
 
 from panel_material_ui.chat import ChatStep
-from pydantic import BaseModel
+from pydantic import (
+    BaseModel, Field, FieldInfo, create_model,
+)
+from pydantic.json_schema import SkipJsonSchema
 
 from ...pipeline import Pipeline
 from ...sources.base import BaseSQLSource, Source
@@ -16,16 +21,119 @@ from ..config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from ..context import ContextModel, TContext
 from ..llm import Message
 from ..schemas import Metaset
-from ..shared.models import (
-    DistinctQuery, RetrySpec, SampleQuery, make_discovery_model,
-    make_sql_model,
-)
+from ..shared.models import PartialBaseModel, RetrySpec
 from ..utils import (
     clean_sql, describe_data, get_data, get_pipeline, parse_table_slug,
     stream_details,
 )
 from ..views import LumenOutput, SQLOutput
 from .lumen import BaseLumenAgent
+
+
+def make_source_table(sources: list[tuple[str, str]]):
+    class LiteralSourceTable(BaseModel):
+        source: Literal[tuple(set(src for src, _ in sources))]
+        table: Literal[tuple(set(table for _, table in sources))]
+    return LiteralSourceTable
+
+
+class SampleQuery(PartialBaseModel):
+    """See actual data content - reveals format issues and patterns."""
+
+    query: SkipJsonSchema[str] = Field(default="SELECT * FROM {slug[table]} LIMIT 5")
+
+
+class DistinctQuery(PartialBaseModel):
+    """Universal column analysis with optional pattern matching - handles join keys, categories, date ranges."""
+
+    query: SkipJsonSchema[str] = Field(default="SELECT DISTINCT {column} FROM {slug[table]} WHERE {column} ILIKE '%{pattern}%' LIMIT 10 OFFSET {offset}")
+    column: str = Field(description="Column to analyze unique values")
+    pattern: str = Field(default="", description="Optional pattern to search for (e.g., 'chin' for China/Chinese variations). Leave empty for all distinct values.")
+    offset: int = Field(default=0, description="Number of distinct values to skip (0 for initial, 10 for follow-up)")
+
+    def model_post_init(self, __context):
+        """Adjust query template based on whether pattern is provided."""
+        if not self.pattern.strip():
+            # No pattern - get all distinct values
+            self.query = "SELECT DISTINCT {column} FROM {slug[table]} LIMIT 10 OFFSET {offset}"
+        else:
+            # Pattern provided - use ILIKE for case-insensitive partial matching
+            self.query = "SELECT DISTINCT {column} FROM {slug[table]} WHERE {column} ILIKE '%{pattern}%' LIMIT 10 OFFSET {offset}"
+
+
+def make_discovery_model(sources: list[tuple[str, str]]):
+
+    SourceTable = make_source_table(sources)
+
+    SampleQueryLiteral = create_model(
+        "LiteralSampleQuery",
+        slug=(
+                SourceTable, FieldInfo(description="The source and table identifier(s) referenced in the SQL query.")
+        ),
+        __base__=SampleQuery
+    )
+
+    DistinctQueryLiteral = create_model(
+        "LiteralDistinctQuery",
+        slug=(
+                SourceTable, FieldInfo(description="The source and table identifier(s) referenced in the SQL query.")
+        ),
+        __base__=DistinctQuery
+    )
+
+    class DiscoveryQueries(PartialBaseModel):
+        """LLM selects 2-4 essential discoveries using the core toolkit."""
+
+        reasoning: str = Field(description="Brief discovery strategy")
+        queries: list[SampleQueryLiteral | DistinctQueryLiteral] = Field(
+            description="Choose 2-4 discovery queries from the Essential Three toolkit"
+        )
+
+    class DiscoverySufficiency(PartialBaseModel):
+        """Evaluate if discovery results provide enough context to fix the original error."""
+
+        reasoning: str = Field(description="Analyze discovery results - do they reveal the cause of the error?")
+
+        sufficient: bool = Field(description="True if discoveries provide enough context to fix the error")
+
+        follow_up_needed: list[SampleQueryLiteral | DistinctQueryLiteral] = Field(
+            default_factory=list,
+            description="If insufficient, specify 1-3 follow-up discoveries (e.g., OFFSET for more values)"
+        )
+
+    return DiscoveryQueries, DiscoverySufficiency
+
+
+class SqlQuery(PartialBaseModel):
+    """A single SQL query with its associated metadata."""
+
+    query: str = Field(description="""
+        One, correct, valid SQL query that answers the user's question;
+        should only be one query and do NOT add extraneous comments; no multiple semicolons""")
+
+    table_slug: str = Field(
+        description="""
+        Provide a unique, descriptive table slug for the SQL expression that clearly indicates the key transformations and source tables involved.
+        Include 1 or 2 elements of data lineage in the slug, such as the main transformation and original table names,
+        e.g. top_5_athletes_in_2020 or distinct_years_from_wx_table.
+        Ensure the slug does not duplicate any existing table names or slugs.
+        """
+    )
+
+
+def make_sql_model(sources: list[tuple[str, str]]):
+    if len(sources) == 1:
+        return SqlQuery
+
+    SourceTable = make_source_table(sources)
+    return create_model(
+        "SqlQueryWithSources",
+        tables=(
+            list[SourceTable], FieldInfo(description="The source and table identifier(s) referenced in the SQL query.")
+        ),
+        __base__=SqlQuery
+    )
+
 
 
 class SQLInputs(ContextModel):

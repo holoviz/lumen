@@ -4,12 +4,31 @@ from typing import Any, NotRequired
 import param
 
 from panel_material_ui import Button
+from pydantic import Field
 
 from ..config import PROMPTS_DIR
 from ..context import ContextModel, TContext
 from ..llm import Message
-from ..shared.models import QueryCompletionValidation
+from ..shared.models import PartialBaseModel
 from .base import Agent
+
+
+class QueryCompletionValidation(PartialBaseModel):
+    """Validation of whether the executed plan answered the user's query"""
+
+    chain_of_thought: str = Field(
+        description="Restate intent and results succinctly; then explain your reasoning as to why you will be answering yes or no.")
+
+    missing_elements: list[str] = Field(
+        default_factory=list,
+        description="List of specific elements from the user's query that weren't addressed"
+    )
+    suggestions: list[str] = Field(
+        default_factory=list,
+        description="Suggestions for additional steps that could complete the query if not fully answered"
+    )
+    correct: bool = Field(description="True if query correctly solves user request, otherwise False.")
+
 
 
 class ValidationInputs(ContextModel):

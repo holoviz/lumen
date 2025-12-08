@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import param
 
@@ -11,13 +11,35 @@ from .base import Coordinator, Plan
 from .config import PROMPTS_DIR
 from .context import TContext
 from .llm import Message
-from .models import make_agent_model
 from .report import ActorTask
 from .tools import Tool
 from .utils import log_debug
 
 if TYPE_CHECKING:
     pass
+
+from pydantic import FieldInfo, create_model
+
+
+def make_agent_model(agent_names: list[str], primary: bool = False):
+    if primary:
+        description = "The agent that will provide the output the user requested, e.g. a plot or a table. This should be the FINAL step in your chain of thought."
+    else:
+        description = "The most relevant agent to use."
+    return create_model(
+        "Agent",
+        chain_of_thought=(
+            str,
+            FieldInfo(
+                description="Describe what this agent should do."
+            ),
+        ),
+        agent_or_tool=(
+            Literal[tuple(agent_names)],
+            FieldInfo(default=..., description=description)
+        ),
+    )
+
 
 
 class DependencyResolver(Coordinator):
