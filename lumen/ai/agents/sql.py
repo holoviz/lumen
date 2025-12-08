@@ -27,7 +27,7 @@ from ..utils import (
     stream_details,
 )
 from ..views import LumenOutput, SQLOutput
-from .lumen import BaseLumenAgent
+from .base_lumen import BaseLumenAgent
 
 
 def make_source_table(sources: list[tuple[str, str]]):

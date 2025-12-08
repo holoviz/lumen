@@ -16,7 +16,7 @@ from ..context import ContextModel, TContext
 from ..llm import Message
 from ..utils import get_data, log_debug
 from ..views import AnalysisOutput
-from .lumen import BaseLumenAgent
+from .base_lumen import BaseLumenAgent
 
 
 def make_analysis_model(analyses: list[str]):

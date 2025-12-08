@@ -12,7 +12,7 @@ from ..context import TContext
 from ..shared.models import PartialBaseModel
 from ..translate import param_to_pydantic
 from ..utils import get_data
-from .view import BaseViewAgent
+from .base_view import BaseViewAgent
 
 
 class hvPlotAgent(BaseViewAgent):

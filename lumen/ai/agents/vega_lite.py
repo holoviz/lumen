@@ -22,7 +22,7 @@ from ..utils import (
 )
 from ..vector_store import DuckDBVectorStore
 from ..views import LumenOutput, VegaLiteOutput
-from .view import BaseViewAgent
+from .base_view import BaseViewAgent
 
 
 class VegaLiteSpec(EscapeBaseModel):

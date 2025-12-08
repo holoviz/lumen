@@ -30,7 +30,6 @@ class QueryCompletionValidation(PartialBaseModel):
     correct: bool = Field(description="True if query correctly solves user request, otherwise False.")
 
 
-
 class ValidationInputs(ContextModel):
 
     data: NotRequired[Any]

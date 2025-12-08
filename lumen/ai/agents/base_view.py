@@ -13,7 +13,7 @@ from ..schemas import Metaset
 from ..utils import (
     get_root_exception, get_schema, log_debug, report_error, retry_llm_output,
 )
-from .lumen import BaseLumenAgent
+from .base_lumen import BaseLumenAgent
 
 
 class ViewInputs(ContextModel):

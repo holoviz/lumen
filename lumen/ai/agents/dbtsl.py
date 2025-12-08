@@ -21,7 +21,7 @@ from ..utils import (
     stream_details,
 )
 from ..views import LumenOutput
-from .lumen import BaseLumenAgent
+from .base_lumen import BaseLumenAgent
 from .sql import SQLOutputs
 
 
