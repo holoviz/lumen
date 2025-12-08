@@ -566,12 +566,14 @@ class LumenBaseAgent(Agent):
             response_model=retry_model,
             model_spec="edit"
         )
-        spec = load_yaml(apply_changes(lines, result.edits))
+        new_spec_raw = apply_changes(lines, result.edits)
+        spec = load_yaml(new_spec_raw)
         if view is not None:
             view.validate_spec(spec)
         if isinstance(spec, str):
-            return spec
-        yaml_spec = dump_yaml(spec)
+            yaml_spec = spec
+        else:
+            yaml_spec = dump_yaml(spec)
         return yaml_spec
 
 
@@ -1951,7 +1953,7 @@ class VegaLiteAgent(BaseViewAgent):
         messages: list[Message],
         context: TContext,
         spec: dict
-    ) -> dict:
+    ) -> str:
         """
         Apply annotations based on user request.
 
@@ -1968,7 +1970,7 @@ class VegaLiteAgent(BaseViewAgent):
 
         Returns
         -------
-        dict
+        str
             Updated specification with annotations
         """
         # Add user's annotation request to messages context

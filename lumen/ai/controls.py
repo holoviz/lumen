@@ -4,7 +4,6 @@ import asyncio
 import io
 import pathlib
 import re
-import traceback
 import zipfile
 
 from typing import TYPE_CHECKING
@@ -30,6 +29,7 @@ from ..sources.duckdb import DuckDBSource
 from ..util import detect_file_encoding
 from .config import SOURCE_TABLE_SEPARATOR
 from .context import TContext
+from .utils import generate_diff
 
 if TYPE_CHECKING:
     from .views import SQLOutput
@@ -805,6 +805,18 @@ class RevisionControls(Viewer):
         self._text_input.value = ""
         self.param.update(active=False, instruction=instruction)
 
+    def _report_status(self, out: str, title='➕/➖ Applied Revisions'):  # noqa: RUF001
+        if not out:
+            return
+        md = Markdown(
+            out,
+            margin=0,
+            styles={"padding-inline": "0", "margin-left": "0", "padding": "0"},
+            stylesheets=[".codehilite { margin-top: 0; margin-bottom: 0; display: inline-block; } .codehilite pre { margin-top: -1.5em; }"],
+            sizing_mode="stretch_width"
+        )
+        self.interface.stream(Card(md, title=title), user="Assistant")
+
     def __panel__(self):
         return self._row
 
@@ -821,14 +833,36 @@ class RetryControls(RevisionControls):
     async def _revise(self):
         if not self.instruction:
             return
-        try:
-            await self.task.revise(
-                self.instruction, self.task.out_context, self.view, {'interface': self.interface}
-            )
-        except Exception as e:
-            traceback.print_exc()
-            self.interface.stream(f"An error occurred while revising the output: {e}", user="Assistant")
+        elif not hasattr(self.task.actor, 'revise'):
+            invalidation_keys = set(self.task.actor.output_schema.__annotations__)
+            self.task.invalidate(invalidation_keys, start=1)
+            root = self.task
+            while root.parent is not None:
+                root = root.parent
+            with root.param.update(interface=self.interface):
+                await root.execute()
+            return
 
+        old_spec = self.view.spec
+        messages = list(self.task.history)
+        try:
+            with self.task.actor.param.update(interface=self.interface), self.view.editor.param.update(loading=True):
+                new_spec = await self.task.actor.revise(
+                    self.instruction, messages, self.task.out_context, self.view
+                )
+        except Exception as e:
+            self._report_status(f"```\n{e}\n```", title="❌ Failed to generate revisions")
+            raise
+
+        diff = generate_diff(old_spec, new_spec, filename=self.view.language or "spec")
+        diff_md = f'```diff\n{diff}\n```'
+        try:
+            self.view.spec = new_spec
+        except Exception:
+            self.view.spec = old_spec
+            self._report_status(diff_md, title="❌ Failed to apply revisions")
+            raise
+        self._report_status(diff_md)
 
 
 class AnnotationControls(RevisionControls):
@@ -847,16 +881,26 @@ class AnnotationControls(RevisionControls):
     async def _annotate(self):
         if not self.instruction:
             return
+
+        old_spec = self.view.spec
         try:
-            old = self.view.spec
-            with self.view.editor.param.update(loading=True):
-                self.view.spec = await self.task.actor.annotate(
+            with self.task.actor.param.update(interface=self.interface), self.view.editor.param.update(loading=True):
+                new_spec = await self.task.actor.annotate(
                     self.instruction, list(self.task.history), self.task.out_context, {"spec": load_yaml(self.view.spec)}
                 )
         except Exception as e:
-            traceback.print_exc()
-            self.view.spec = old
-            self.interface.stream(f"An error occurred while attempting to annotate the output: {e}", user="Assistant")
+            self._report_status(f"```\n{e}\n```", title="❌ Failed to generate annotations")
+            raise
+
+        diff = generate_diff(old_spec, new_spec, filename=self.view.language or "spec")
+        diff_md = f'```diff\n{diff}\n```'
+        try:
+            self.view.spec = new_spec
+        except Exception:
+            self.view.spec = old_spec
+            self._report_status(diff_md, title="❌ Failed to apply annotations")
+            raise
+        self._report_status(diff_md)
 
 
 class TableSourceCard(Viewer):
