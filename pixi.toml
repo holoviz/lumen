@@ -99,10 +99,12 @@ mkdocs = "*"
 mkdocs-material = "*"
 mkdocstrings = "*"
 mkdocstrings-python = "*"
+mkdocs-gen-files = "*"
+mkdocs-literate-nav = "*"
 
 [feature.doc.tasks]
-docs-build = 'mkdocs build -d builtdocs'
-docs-serve = 'mkdocs serve'
+docs-build = { cmd = 'mkdocs build -d builtdocs', depends-on = ['install'] }
+docs-serve = { cmd = 'mkdocs serve', depends-on = ['install'] }
 
 # =============================================
 # ================== BUILD ====================

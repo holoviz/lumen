@@ -64,11 +64,16 @@ markdown_extensions:
 
 plugins:
   - search
+  - gen-files:
+      scripts:
+        - docs/gen_ref_pages.py
+  - literate-nav:
+      nav_file: SUMMARY.md
   - mkdocstrings:
       handlers:
         python:
           paths:
-            - lumen
+            - .
           options:
             docstring_style: numpy
             show_if_no_docstring: true
@@ -90,7 +95,7 @@ nav:
 
   - Configuration:
     - CLI: configuration/cli.md
-    - LLM Providers: configuration/llm_providers/
+    - LLM Providers: configuration/llm_providers.md
     - Data Sources: configuration/sources.md
     - Agents: configuration/agents.md
     - Tools: configuration/tools.md
@@ -100,6 +105,9 @@ nav:
   - Help:
     - FAQ: faq.md
     - Contributing: contributing.md
+
+  - Reference: reference/
+
 
 extra:
   social:
