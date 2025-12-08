@@ -5,7 +5,8 @@ from typing import Annotated, Any, Literal
 
 import param
 
-from pydantic import FieldInfo, create_model
+from pydantic import create_model
+from pydantic.fields import FieldInfo
 
 from ..shared.models import PartialBaseModel
 from ..sources.base import Source

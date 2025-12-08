@@ -7,7 +7,8 @@ import param
 
 from panel.pane import panel as as_panel
 from panel.viewable import Viewable
-from pydantic import FieldInfo, create_model
+from pydantic import create_model
+from pydantic.fields import FieldInfo
 
 from ...pipeline import Pipeline
 from ...views import Panel
