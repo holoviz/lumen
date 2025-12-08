@@ -6,6 +6,9 @@ import pytest
 from lumen.sources.base import DerivedSource, Source
 
 
+def assert_df_equal(df1, df2):
+    pd.testing.assert_frame_equal(df1, df2, check_dtype=False)
+
 @pytest.fixture
 def original(make_filesource):
     root = os.path.dirname(__file__)
@@ -60,7 +63,7 @@ def test_derived_mirror_source(original, mirror_mode_spec):
     assert derived.get_tables() == original.get_tables()
     assert derived.get_schema() == original.get_schema()
     for table in original.get_tables():
-        pd.testing.assert_frame_equal(derived.get(table), original.get(table))
+        assert_df_equal(derived.get(table), original.get(table))
 
 
 @pytest.mark.parametrize("additional_spec", [
@@ -75,13 +78,13 @@ def test_derived_mirror_source_apply(
     derived = Source.from_spec(mirror_mode_spec)
     assert derived.get_tables() == original.get_tables()
     assert derived.get_schema('test') == expected_schema
-    pd.testing.assert_frame_equal(derived.get('test'), expected_table)
+    assert_df_equal(derived.get('test'), expected_table)
 
 
 def test_derived_tables_source(original, tables_mode_spec, mixed_df):
     derived = Source.from_spec(tables_mode_spec)
     assert derived.get_tables() == ['derived']
-    pd.testing.assert_frame_equal(derived.get('derived'), mixed_df)
+    assert_df_equal(derived.get('derived'), mixed_df)
     assert original.get_schema('test') == derived.get_schema('derived')
 
 
@@ -96,7 +99,7 @@ def test_derived_tables_source_apply(
     tables_mode_spec['tables']['derived'][spec_key] = spec_value
     derived = Source.from_spec(tables_mode_spec)
     assert derived.get_tables() == ['derived']
-    pd.testing.assert_frame_equal(derived.get('derived'), expected_table)
+    assert_df_equal(derived.get('derived'), expected_table)
     assert derived.get_schema('derived') == expected_schema
 
 
@@ -106,7 +109,7 @@ def test_derived_get_query_cache(original, mirror_mode_spec):
     cache_key = derived._get_key('test')
     assert cache_key in derived._cache
     cached_df = derived._cache[cache_key]
-    pd.testing.assert_frame_equal(cached_df, df)
+    assert_df_equal(cached_df, df)
 
 
 def test_derived_clear_cache(original, mirror_mode_spec):

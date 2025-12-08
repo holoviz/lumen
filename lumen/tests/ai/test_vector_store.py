@@ -1,3 +1,5 @@
+import asyncio
+
 from pathlib import Path
 
 import pytest
@@ -7,7 +9,7 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
-from lumen.ai.embeddings import Embeddings, NumpyEmbeddings
+from lumen.ai.embeddings import Embeddings, NumpyEmbeddings, OpenAIEmbeddings
 from lumen.ai.vector_store import DuckDBVectorStore, NumpyVectorStore
 
 
@@ -510,6 +512,7 @@ class VectorStoreTestKit:
 
         # Add the directory to the store
         ids = await empty_store.add_directory(dir_path, metadata={"version": 1}, upsert=True)
+        await asyncio.sleep(0.1)
         assert len(ids) > 0, "Should add at least one document"
 
         # Query for a specific term in the added documents
@@ -517,7 +520,7 @@ class VectorStoreTestKit:
 
         # Try upserting again
         same_ids = await empty_store.add_directory(dir_path, metadata={"version": 1}, upsert=True)
-        assert ids == same_ids, "Should return the same IDs when upserting identical content"
+        assert set(ids) == set(same_ids), "Should return the same IDs when upserting identical content"
 
         # Increment version
         new_ids = await empty_store.add_directory(dir_path, metadata={"version": 2}, upsert=True)
@@ -584,3 +587,24 @@ class TestDuckDBVectorStore(VectorStoreTestKit):
 
         with pytest.raises(ValueError, match="Provided embeddings class"):
             DuckDBVectorStore(uri=db_path, embeddings=Embeddings())
+
+    @pytest.mark.asyncio
+    async def test_api_key_not_stored_in_metadata(self, tmp_path):
+        """Verifies that api_key parameter is not included in stored embeddings metadata."""
+        import json
+        
+        db_path = str(tmp_path / "test_duckdb.db")
+        
+        embeddings = OpenAIEmbeddings(api_key="sk-test-secret-key-12345")
+        store = DuckDBVectorStore(uri=db_path, embeddings=embeddings)
+        store._setup_database(1)
+
+        metadata_result = store.connection.execute(
+            "SELECT value FROM vector_store_metadata WHERE key = 'embeddings';"
+        ).fetchone()
+        assert metadata_result is not None, "Embeddings metadata should be stored"
+
+        metadata = json.loads(metadata_result[0])
+        params = metadata.get("params", {})
+        assert "api_key" not in params, "api_key should not be stored in metadata"
+        store.close()

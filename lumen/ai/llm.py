@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
 
 from functools import partial
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal, TypedDict
 
@@ -13,6 +15,7 @@ import param
 
 from instructor import Mode, patch
 from instructor.dsl.partial import Partial
+from instructor.processing.multimodal import Image
 from pydantic import BaseModel
 
 from .interceptor import Interceptor
@@ -24,6 +27,13 @@ class Message(TypedDict):
     role: Literal["system", "user", "assistant"]
     content: str
     name: str | None
+
+
+class ImageResponse(BaseModel):
+    # To easily analyze images, we need instructor patch activated,
+    # so we use a pass-thru dummy string basemodel
+    output: str
+
 
 BASE_MODES = list(Mode)
 
@@ -122,6 +132,36 @@ class Llm(param.Parameterized):
             messages = [{"role": "system", "content": system}] + messages
         return messages, input_kwargs
 
+    def _serialize_image_pane(self, image: pn.pane.image.ImageBase | Image) -> Image:
+        if isinstance(image, Image):
+            return image
+
+        image_object = image.object
+        if isinstance(image_object, bytes):
+            # convert bytes to base64 string
+            base64_str = base64.b64encode(image_object).decode('utf-8')
+            image = Image.from_raw_base64(base64_str)
+        elif isinstance(image_object, (Path, str)) and Path(image_object).is_file():
+            image = Image.from_path(image_object)
+        elif isinstance(image_object, str):
+            image = Image.from_url(image_object)
+        return image
+
+    def _check_for_image(self, messages: list[Message]) -> tuple[list[Message], bool]:
+        contains_image = False
+        for i, message in enumerate(messages):
+            content = message.get("content")
+            if isinstance(content, (Image, pn.pane.image.ImageBase)):
+                messages[i]["content"] = self._serialize_image_pane(content)
+                contains_image = True
+
+            elif isinstance(content, list):
+                for item in content:
+                    if isinstance(item, (Image, pn.pane.image.ImageBase)):
+                        messages[i]["content"] = self._serialize_image_pane(item)
+                        contains_image = True
+        return messages, contains_image
+
     @classmethod
     def warmup(cls, model_kwargs: dict | None):
         """
@@ -167,10 +207,19 @@ class Llm(param.Parameterized):
         kwargs = dict(self._client_kwargs)
         kwargs.update(input_kwargs)
 
+        messages, contains_image = self._check_for_image(messages)
+        if contains_image:
+            # Currently instructor does not support streaming with multimodal
+            # https://github.com/567-labs/instructor/issues/1872
+            kwargs["stream"] = False
+
         if response_model is not None:
-            if allow_partial:
+            if allow_partial and issubclass(response_model, BaseModel):
                 response_model = Partial[response_model]
             kwargs["response_model"] = response_model
+        # check if any of the messages contain images
+        elif response_model is None and contains_image:
+            kwargs["response_model"] = ImageResponse
 
         output = await self.run_client(model_spec, messages, **kwargs)
         if output is None or output == "":
@@ -261,6 +310,10 @@ class Llm(param.Parameterized):
             model_spec=model_spec,
             **kwargs,
         )
+        if isinstance(chunks, BaseModel):
+            yield getattr(chunks, field) if field is not None else chunks
+            return
+
         try:
             async for chunk in chunks:
                 if response_model is None:
@@ -432,6 +485,9 @@ class OpenAI(Llm, OpenAIMixin):
 
     temperature = param.Number(default=0.25, bounds=(0, None), constant=True)
 
+    timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
+        The timeout in seconds for OpenAI API calls.""")
+
     _supports_logfire = True
 
     @param.depends("logfire_tags", watch=True, on_init=True)
@@ -479,7 +535,7 @@ class OpenAI(Llm, OpenAIMixin):
             # must be called after instructor
             self.interceptor.patch_client_response(llm)
 
-        client_callable = partial(llm.chat.completions.create, model=model, **self._get_create_kwargs(response_model))
+        client_callable = partial(llm.chat.completions.create, model=model, timeout=self.timeout, **self._get_create_kwargs(response_model))
         return client_callable
 
 
@@ -507,6 +563,9 @@ class AzureOpenAI(Llm, AzureOpenAIMixin):
     ], constant=True, doc="Available models for selection dropdowns")
 
     temperature = param.Number(default=1, bounds=(0, None), constant=True)
+
+    timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
+        The timeout in seconds for Azure OpenAI API calls.""")
 
     @property
     def _client_kwargs(self):
@@ -541,7 +600,7 @@ class AzureOpenAI(Llm, AzureOpenAIMixin):
             # must be called after instructor
             self.interceptor.patch_client_response(llm)
 
-        client_callable = partial(llm.chat.completions.create, model=model, **self._get_create_kwargs(response_model))
+        client_callable = partial(llm.chat.completions.create, model=model, timeout=self.timeout, **self._get_create_kwargs(response_model))
         return client_callable
 
 
@@ -575,6 +634,9 @@ class MistralAI(Llm):
 
     temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
 
+    timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
+        The timeout in seconds for Mistral AI API calls.""")
+
     _supports_model_stream = False  # instructor doesn't work with Mistral's streaming
 
     @property
@@ -603,7 +665,7 @@ class MistralAI(Llm):
         if self.interceptor:
             self.interceptor.patch_client_response(llm)
 
-        client_callable = partial(llm.chat.completions.create, model=model, **self._get_create_kwargs(response_model))
+        client_callable = partial(llm.chat.completions.create, model=model, timeout_ms=self.timeout * 1000, **self._get_create_kwargs(response_model))
         return client_callable
 
     @classmethod
@@ -634,6 +696,9 @@ class AzureMistralAI(MistralAI):
         "mistral-small"
     ], constant=True, doc="Available models for selection dropdowns")
 
+    timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
+        The timeout in seconds for Mistral AI API calls.""")
+
     async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         from mistralai_azure import MistralAzure
 
@@ -661,11 +726,11 @@ class AzureMistralAI(MistralAI):
         if self.interceptor:
             self.interceptor.patch_client_response(llm)
 
-        client_callable = partial(llm.chat.completions.create, model=model, **self._get_create_kwargs(response_model))
+        client_callable = partial(llm.chat.completions.create, model=model, timeout_ms=self.timeout * 1000, **self._get_create_kwargs(response_model))
         return client_callable
 
 
-class AnthropicAI(Llm):
+class Anthropic(Llm):
     """
     A LLM implementation that calls Anthropic models such as Claude.
     """
@@ -694,6 +759,9 @@ class AnthropicAI(Llm):
 
     temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
 
+    timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
+        The timeout in seconds for Anthropic API calls.""")
+
     _supports_model_stream = True
 
     @property
@@ -702,7 +770,7 @@ class AnthropicAI(Llm):
 
     async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         if self.interceptor:
-            raise NotImplementedError("Interceptors are not supported for AnthropicAI.")
+            raise NotImplementedError("Interceptors are not supported for Anthropic.")
 
         from anthropic import AsyncAnthropic
 
@@ -714,9 +782,9 @@ class AnthropicAI(Llm):
 
         if response_model:
             client = instructor.from_anthropic(llm, mode=mode)
-            return partial(client.messages.create, model=model, **self._get_create_kwargs(response_model))
+            return partial(client.messages.create, model=model, timeout=self.timeout, **self._get_create_kwargs(response_model))
         else:
-            return partial(llm.messages.create, model=model, **self._get_create_kwargs(response_model))
+            return partial(llm.messages.create, model=model, timeout=self.timeout, **self._get_create_kwargs(response_model))
 
     @classmethod
     def _get_delta(cls, chunk: Any) -> str:
@@ -730,7 +798,7 @@ class AnthropicAI(Llm):
         return messages, input_kwargs
 
 
-class GoogleAI(Llm):
+class Google(Llm):
     """
     A LLM implementation that calls Google's Gemini models.
     """
@@ -757,6 +825,9 @@ class GoogleAI(Llm):
     ], constant=True, doc="Available models for selection dropdowns")
 
     temperature = param.Number(default=1, bounds=(0, 1), constant=True)
+
+    timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
+        The timeout in seconds for Google AI API calls.""")
 
     _supports_model_stream = True
 
@@ -794,7 +865,7 @@ class GoogleAI(Llm):
     async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
         """Override to handle Gemini-specific message format conversion."""
         try:
-            from google.genai.types import GenerateContentConfig
+            from google.genai.types import GenerateContentConfig, HttpOptions
         except ImportError as exc:
             raise ImportError(
                 "Please install the `google-generativeai` package to use Google AI models. "
@@ -804,12 +875,12 @@ class GoogleAI(Llm):
         client = await self.get_client(model_spec, **kwargs)
 
         if kwargs.get("response_model"):
-            config = GenerateContentConfig(temperature=self.temperature)
+            config = GenerateContentConfig(http_options=HttpOptions(timeout=self.timeout), temperature=self.temperature)
             return await client(messages=messages, config=config, **kwargs)
         else:
-            kwargs.pop("stream", None)
+            kwargs.pop("stream")
             system_instruction = next((message["content"] for message in messages if message["role"] == "system"), "Be helpful.")
-            config = GenerateContentConfig(temperature=self.temperature, system_instruction=system_instruction)
+            config = GenerateContentConfig(http_options=HttpOptions(timeout=self.timeout), temperature=self.temperature, system_instruction=system_instruction)
             prompt = messages.pop(-1)["content"]
             return await client(contents=[prompt], **kwargs)
 
@@ -1022,11 +1093,15 @@ class LiteLLM(Llm):
 
     temperature = param.Number(default=0.7, bounds=(0, 2), constant=True)
 
+    timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
+        The timeout in seconds for LiteLLM API calls.""")
+
     _supports_stream = True
     _supports_model_stream = True
 
     def __init__(self, **params):
         super().__init__(**params)
+        self._setup_router()
         # Configure caching if enabled
         if self.enable_caching:
             self._setup_caching()
@@ -1037,6 +1112,26 @@ class LiteLLM(Llm):
 
         from litellm import Cache
         litellm.cache = Cache()
+
+    def _setup_router(self):
+        """Initialize LiteLLM Router for load balancing."""
+        from litellm import Router
+
+        # Build model list from model_kwargs
+        model_list = []
+        for key, config in self.model_kwargs.items():
+            if isinstance(config, dict) and 'model' in config:
+                model_list.append({
+                    'model_name': key,
+                    'litellm_params': config
+                })
+
+        # Add fallback models to router settings if provided
+        router_kwargs = dict(self.router_settings)
+        if self.fallback_models:
+            router_kwargs['fallbacks'] = self.fallback_models
+
+        self.router = Router(model_list=model_list, timeout=self.timeout, **router_kwargs)
 
     @property
     def _client_kwargs(self):
@@ -1059,14 +1154,13 @@ class LiteLLM(Llm):
         For LiteLLM, we create a wrapper around litellm.acompletion that
         can be patched by instructor.
         """
-        import litellm
-
         model = self._get_model_string(model_spec)
         model_kwargs = self._get_model_kwargs(model_spec)
         model = model_kwargs.pop("model")
         mode = model_kwargs.pop("mode", self.mode)
 
-        llm = litellm.acompletion
+        # Use router if available, otherwise use litellm.acompletion directly
+        llm = self.router.acompletion
         if response_model:
             llm = instructor.from_litellm(llm, mode=mode)
             return partial(llm.chat.completions.create, model=model, **self._get_create_kwargs(response_model))

@@ -20,6 +20,27 @@ ChatMessage.default_avatars.update({
     "DBT": {"type": "icon", "icon": "analytics"}
 })
 
+FORMAT_ICONS = {
+    "csv":   "table_chart",
+    "xlsx":  "grid_on",
+    "sql":   "description",
+
+    "jpeg":  "image",
+    "png":   "image",
+    "svg":   "vector_square",
+    "pdf":   "picture_as_pdf",
+}
+
+FORMAT_LABELS = {
+    "csv": "CSV (.csv)",
+    "xlsx": "Excel (.xlsx)",
+    "sql": "SQL (.sql)",
+    "jpeg": "JPEG (.jpeg)",
+    "png": "PNG (.png)",
+    "svg": "SVG (.svg)",
+    "pdf": "PDF (.pdf)",
+}
+
 class LlmSetupError(Exception):
     """
     Raised when an error occurs during the setup of the LLM.
@@ -41,8 +62,8 @@ PROMPTS_DIR = THIS_DIR / "prompts"
 
 GETTING_STARTED_SUGGESTIONS = [
     ("search", "What data is available?"),
-    ("description", "Describe the dataset"),
-    ("bar_chart", "Can you visualize the data?"),
+    ("description", "Show me a dataset"),
+    ("bar_chart", "Visualize the data"),
 ]
 
 DEMO_MESSAGES = [

@@ -1,6 +1,6 @@
 # Use Google Gemini with Lumen AI
 
-Lumen AI ships with the {py:class}`lumen.ai.llm.GoogleAI` wrapper for Google Gemini LLM models. Lumen picks between different models to solve different tasks, by default it will use the following models:
+Lumen AI ships with the {py:class}`lumen.ai.llm.Google` wrapper for Google Gemini LLM models. Lumen picks between different models to solve different tasks, by default it will use the following models:
 
 - **`default`**: gemini-2.0-flash (Cost-optimized, low latency)
 - **`reasoning`**: gemini-2.5-flash-preview-05-20 (Thinking model, balanced price/performance)
@@ -48,12 +48,12 @@ lumen-ai serve <your-data-file-or-url> --provider gemini --api-key <your-gemini-
 
 ## Using Python
 
-In Python, simply import the LLM wrapper {py:class}`lumen.ai.llm.GoogleAI` and pass it to the {py:class}`lumen.ai.ui.ExplorerUI`:
+In Python, simply import the LLM wrapper {py:class}`lumen.ai.llm.Google` and pass it to the {py:class}`lumen.ai.ui.ExplorerUI`:
 
 ```python
 import lumen.ai as lmai
 
-gemini_llm = lmai.llm.GoogleAI(api_key='your-gemini-api-key')
+gemini_llm = lmai.llm.Google(api_key='your-gemini-api-key')
 
 ui = lmai.ui.ExplorerUI('<your-data-file-or-url>', llm=gemini_llm)
 ui.servable()
@@ -76,19 +76,19 @@ config = {
     "reasoning": {"model": "gemini-2.0-flash-thinking-exp"}
 }
 
-llm = lmai.llm.GoogleAI(model_kwargs=config)
+llm = lmai.llm.Google(model_kwargs=config)
 
 lmai.ui.ExplorerUI('<your-data-file-or-url>', llm=llm).servable()
 ```
 
 ## Additional Configuration Options
 
-The GoogleAI wrapper supports several additional configuration parameters:
+The Google wrapper supports several additional configuration parameters:
 
 ```python
 import lumen.ai as lmai
 
-llm = lmai.llm.GoogleAI(
+llm = lmai.llm.Google(
     api_key='your-gemini-api-key',
     temperature=1.0,  # Controls randomness (0-1)
     mode='GENAI_TOOLS',  # Instructor mode: 'GENAI_TOOLS' or 'GENAI_STRUCTURED_OUTPUTS'
@@ -101,13 +101,13 @@ ui.servable()
 
 ### Environment Variables
 
-The GoogleAI wrapper will automatically detect the `GEMINI_API_KEY` environment variable if it is set:
+The Google wrapper will automatically detect the `GEMINI_API_KEY` environment variable if it is set:
 
 ```python
 import lumen.ai as lmai
 
 # Will use GEMINI_API_KEY from environment
-llm = lmai.llm.GoogleAI()
+llm = lmai.llm.Google()
 
 ui = lmai.ui.ExplorerUI('<your-data-file-or-url>', llm=llm)
 ui.servable()

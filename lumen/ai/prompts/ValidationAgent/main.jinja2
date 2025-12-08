@@ -13,7 +13,7 @@ VALID = SQL implements the user's intent correctly
 - Accept reasonable interpretations; do not over-interpret `limit` (100,000 is default)
 {%- endblock %}
 
-{%- block examples -%}
+{%- block examples %}
 ## Examples
 User: "by region?"
 SQL: SELECT region, SUM(sales) FROM data GROUP BY region
@@ -40,10 +40,17 @@ SQL: SELECT state, SUM(amount) FROM data GROUP BY state
 {%- if executed_steps %}
 Steps: {% for step in executed_steps %}{{ step }}{% if not loop.last %}, {% endif %}{% endfor %}
 {% endif %}
-{%- if memory.get('sql') %}
-SQL: `{{ memory.sql }}`
+Current context contains the following keys: {{ ", ".join(memory) }}
+
+{% if memory.get('sql') %}
+SQL: `{{ memory['sql'] }}`
 {%- endif -%}
 {%- if memory.get('data') is not none %}
-Data Overview: {{ memory["data"] }}
+Data Overview:
+{{ memory["data"] }}
+{%- endif -%}
+{% if memory.get('view') %}
+Generated View:
+{{ memory["view"] }}
 {%- endif -%}
 {%- endblock -%}

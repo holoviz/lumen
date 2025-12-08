@@ -2,6 +2,7 @@ import asyncio
 import json
 
 import panel as pn
+import param
 import pytest
 
 try:
@@ -11,37 +12,108 @@ except ModuleNotFoundError:
 
 from panel.layout import Column
 from panel.pane import Markdown
+from typing_extensions import NotRequired
 
+from lumen.ai.actor import ContextModel
+from lumen.ai.models import SqlQuery
 from lumen.ai.report import (
-    Action, Report, Section, SQLQuery, TaskGroup, Typography,
+    Action, ActorTask, Report, Section, TaskGroup, Typography,
 )
-from lumen.ai.views import LumenOutput
-
-try:
-    from lumen.sources.duckdb import DuckDBSource
-except ImportError:
-    pass
-
-duckdb_available = pytest.mark.skipif(DuckDBSource is None, reason="Duckdb is not installed")
+from lumen.ai.views import SQLOutput
 
 
 class HelloAction(Action):
 
-    async def _execute(self, **kwargs):
-        return [Markdown("**Hello**")]
+    async def _execute(self, context, **kwargs):
+        return [Markdown("**Hello**")], {'text': 'Hello'}
+
+
+class A(Action):
+
+    order = param.List()
+
+    async def _execute(self, context, **kwargs):
+        self.order.append("A")
+        return [Markdown("A done")], {'text': 'A'}
+
+
+class B(Action):
+
+    order = param.List()
+
+    async def _execute(self, context, **kwargs):
+        self.order.append("B")
+        return [Markdown("B done")], {'text': 'B'}
+
+
+class AError(A):
+    async def _execute(self, context, **kwargs):
+        self.order.append("A")
+        raise Exception()
+
+
+class AInputs(ContextModel):
+
+    input: NotRequired[str]
+
+class AOutputs(ContextModel):
+
+    a: str
+
+class ASchema(Action):
+
+    input_schema = AInputs
+    output_schema = AOutputs
+
+    async def _execute(self, context, **kwargs):
+        return [], {'a': context.get("input", "A")}
+
+class BInputs(ContextModel):
+
+    a: str
+
+class BOutputs(ContextModel):
+
+    b: str
+
+class BSchema(Action):
+
+    input_schema = BInputs
+    output_schema = BOutputs
+
+    async def _execute(self, context, **kwargs):
+        a = context["a"]
+        return [Markdown(a)], {"b": a*2}
 
 
 async def test_action_execute_renders_outputs():
     action = HelloAction(title="A1")
-    outs = await action.execute()
 
-    assert action.outputs == outs
-    assert len(outs) == 1
-    out = outs[0]
-    assert isinstance(out, Markdown)
+    outs, ctx = await action.execute()
+
+    assert action.views == outs
+    assert len(outs) == 2
+    out1, out2 = outs
+    assert isinstance(out1, Typography)
+    assert out1.object == "### A1"
+    assert isinstance(out1, Markdown)
+    assert out2.object == "**Hello**"
 
     assert len(action._view) == 1
-    assert action._view[0] is out
+    assert action._view[0] is out2
+
+async def test_action_execute_updates_status():
+    action = HelloAction(title="A1")
+
+    running, status = [], []
+
+    action.param.watch(lambda e: status.append(e.new), "status")
+    action.param.watch(lambda e: running.append(e.new), "running")
+
+    outs, ctx = await action.execute()
+
+    assert status == ["running", "success"]
+    assert running == [True, False]
 
 async def test_action_reset():
     action = HelloAction(title="A1")
@@ -50,77 +122,64 @@ async def test_action_reset():
     action.reset()
 
     assert len(action._view) == 0
-    assert len(action.outputs) == 0
+    assert len(action.views) == 0
+    assert action.status == "idle"
 
 async def test_taskgroup_sequences_actions():
     order = []
 
-    class A(Action):
-        async def _execute(self, **kwargs):
-            order.append("A")
-            return [Markdown("A done")]
-
-    class B(Action):
-        async def _execute(self, **kwargs):
-            order.append("B")
-            return [Markdown("B done")]
-
-    tg = TaskGroup(A(), B(), title="Seq")
-    outs = await tg.execute()
+    tg = TaskGroup(A(order=order), B(order=order), title="Seq")
+    outs, ctx = await tg.execute()
 
     assert order == ["A", "B"]
 
-    assert len(tg.outputs) == 3
-    out1, out2, out3 = tg.outputs
+    assert len(tg.views) == 3
+    out1, out2, out3 = tg.views
     assert isinstance(out1, Typography)
     assert out1.object == "### Seq"
     assert isinstance(out2, Markdown) and out2.object == "A done"
     assert isinstance(out3, Markdown) and out3.object == "B done"
-    assert outs == tg.outputs
+    assert outs == tg.views
 
-    assert len(tg._view) == 3
-    v1, v2, v3 = tg._view
-    assert isinstance(v1, Typography)
-    assert v1.object == "### Seq"
+    assert len(tg._view) == 2
+    v1, v2 = tg._view
+    assert isinstance(v1, Column)
+    assert len(v1.objects) == 1
+    assert v1.objects[0].object == "A done"
     assert isinstance(v2, Column)
     assert len(v2.objects) == 1
-    assert v2.objects[0].object == "A done"
-    assert isinstance(v3, Column)
-    assert len(v3.objects) == 1
-    assert v3.objects[0].object == "B done"
+    assert v2.objects[0].object == "B done"
+
+async def test_taskgroup_status():
+    tg = TaskGroup(A(), B(), title="Seq")
+    outs, ctx = await tg.execute()
+
+    assert tg.status == "success"
+    assert tg[0].status == "success"
+    assert tg[1].status == "success"
 
 async def test_taskgroup_append_action():
     order = []
 
-    class A(Action):
-        async def _execute(self, **kwargs):
-            order.append("A")
-            return [Markdown("A done")]
-
-    class B(Action):
-        async def _execute(self, **kwargs):
-            order.append("B")
-            return [Markdown("B done")]
-
-    tg = TaskGroup(A(), title="Seq")
+    tg = TaskGroup(A(order=order), title="Seq")
 
     await tg.execute()
 
     assert order == ["A"]
 
-    tg.append(B())
+    tg.append(B(order=order))
 
-    outs = await tg.execute()
+    outs, ctx = await tg.execute()
 
     assert order == ["A", "B"]
 
-    assert len(tg.outputs) == 3
-    out1, out2, out3 = tg.outputs
+    assert len(tg.views) == 3
+    out1, out2, out3 = tg.views
     assert isinstance(out1, Typography)
     assert out1.object == "### Seq"
     assert isinstance(out2, Markdown) and out2.object == "A done"
     assert isinstance(out3, Markdown) and out3.object == "B done"
-    assert outs == tg.outputs
+    assert outs == tg.views
 
     assert len(tg._view) == 3
     v1, v2, v3 = tg._view
@@ -136,88 +195,145 @@ async def test_taskgroup_append_action():
 async def test_taskgroup_continue_on_error():
     order = []
 
-    class A(Action):
-        async def _execute(self, **kwargs):
-            order.append("A")
-            raise Exception()
+    tg = TaskGroup(AError(order=order), B(order=order), title="Error", abort_on_error=False)
 
-    class B(Action):
-        async def _execute(self, **kwargs):
-            order.append("B")
-            return [Markdown("B done")]
-
-    tg = TaskGroup(A(), B(), title="Error", abort_on_error=False)
-
-    outs = await tg.execute()
+    outs, ctx = await tg.execute()
 
     assert order == ["A", "B"]
 
+    assert tg.status == "error"
+    assert tg[0].status == "error"
+    assert tg[1].status == "success"
     assert len(outs) == 2
     out1, out2 = outs
     assert isinstance(out1, Typography)
     assert out1.object == "### Error"
     assert isinstance(out2, Markdown) and out2.object == "B done"
 
-    assert len(tg._view) == 3
-    v1, v2, v3 = tg._view
-    assert isinstance(v1, Typography)
-    assert v1.object == "### Error"
+    assert len(tg._view) == 2
+    v1, v2 = tg._view
+    assert isinstance(v1, Column)
+    assert len(v1) == 0
     assert isinstance(v2, Column)
-    assert len(v2.objects) == 0
-    assert isinstance(v3, Column)
-    assert len(v3.objects) == 1
-    assert v3.objects[0].object == "B done"
+    assert len(v2) == 1
+    assert v2[0].object == "B done"
 
 async def test_taskgroup_abort_on_error():
     order = []
 
-    class A(Action):
-        async def _execute(self, **kwargs):
-            order.append("A")
-            raise Exception()
+    tg = TaskGroup(AError(order=order), B(order=order), title="Error", abort_on_error=True)
 
-    class B(Action):
-        async def _execute(self, **kwargs):
-            order.append("B")
-            return [Markdown("B done")]
-
-    tg = TaskGroup(A(), B(), title="Error", abort_on_error=True)
-
-    outs = await tg.execute()
+    outs, ctx = await tg.execute()
 
     assert order == ["A"]
 
+    assert tg.status == "error"
+    assert tg[0].status == "error"
+    assert tg[1].status == "idle"
     assert len(outs) == 1
-    out = outs[0]
-    assert isinstance(out, Typography)
-    assert out.object == "### Error"
+    assert isinstance(outs[0], Typography)
+    assert outs[0].object == "### Error"
 
-    assert len(tg._view) == 1
-    assert outs == list(tg._view)
+    assert len(tg._view) == 2
+    v1, v2 = tg._view
+    assert isinstance(v1, Column)
+    assert len(v1) == 0
+    assert isinstance(v2, Column)
+    assert len(v2) == 0
 
-@duckdb_available
-async def test_sql_query_action():
-    source = DuckDBSource(tables={
-    'tiny': """
-        SELECT * FROM (
-          VALUES (1,'A',10.5),
-                 (2,'B',20.0),
-                 (3,'A', 7.5)
-        ) AS t(id, category, value)
-    """
-    })
+async def test_taskgroup_context_invalidate():
 
-    action = SQLQuery(source=source, sql_expr="SELECT category FROM tiny", table="foo", generate_caption=False)
+    tg = TaskGroup(ASchema(), BSchema())
 
-    outs = await action.execute()
+    await tg.execute()
 
+    tg[0].out_context = {"a": "B"}
+
+    await asyncio.sleep(0.1)
+
+    assert tg.status == "success"
+    assert tg[0].status == "success"
+    assert tg[1].status == "success"
+
+    assert tg.out_context["a"] == "B"
+    assert tg.out_context["b"] == "BB"
+    assert len(tg.views) == 1
+    assert isinstance(tg.views[0], Markdown)
+    assert tg.views[0].object == "B"
+
+async def test_taskgroup_invalidate():
+
+    tg = TaskGroup(ASchema(), BSchema())
+
+    outs, ctx = await tg.execute()
+
+    assert ctx["a"] == "A"
+    assert ctx["b"] == "AA"
     assert len(outs) == 1
-    out = outs[0]
-    assert isinstance(out, LumenOutput)
-    assert out.spec == action.sql_expr
-    assert out.component.data.columns == ['category']
-    assert list(out.component.data.category) == ['A', 'B', 'A']
+    assert isinstance(outs[0], Markdown)
+    assert outs[0].object == "A"
 
+    is_invalidated, keys = tg.invalidate(["input"])
+
+    assert tg.status == "idle"
+    assert tg[0].status == "idle"
+    assert tg[1].status == "idle"
+
+    assert is_invalidated
+    assert keys == {"input", "a", "b"}
+    assert len(tg.views) == 0
+
+    outs, ctx = await tg.execute({"input": "B"})
+
+    assert ctx["a"] == "B"
+    assert ctx["b"] == "BB"
+    assert len(outs) == 1
+    assert isinstance(outs[0], Markdown)
+    assert outs[0].object == "B"
+
+async def test_taskgroup_invalidate_partial():
+
+    class BInputs(ContextModel):
+
+        a: str
+        m: int
+
+    class BOutputs(ContextModel):
+
+        b: str
+
+    class B(Action):
+
+        input_schema = BInputs
+        output_schema = BOutputs
+
+        async def _execute(self, context, **kwargs):
+            a = context["a"]
+            return [Markdown(a)], {"b": a*context["m"]}
+
+    tg = TaskGroup(ASchema(), B())
+
+    outs, ctx = await tg.execute({"m": 2})
+
+    assert ctx["a"] == "A"
+    assert ctx["b"] == "AA"
+    assert len(outs) == 1
+    assert isinstance(outs[0], Markdown)
+    assert outs[0].object == "A"
+
+    tg.invalidate(["m"])
+
+    assert tg.status == "idle"
+    assert tg[0].status == "success"
+    assert tg[1].status == "idle"
+
+    outs, ctx = await tg.execute({"m": 3})
+
+    assert ctx["a"] == "A"
+    assert ctx["b"] == "AAA"
+    assert len(outs) == 1
+    assert isinstance(outs[0], Markdown)
+    assert outs[0].object == "A"
 
 async def test_report_to_notebook():
     report = Report(
@@ -232,7 +348,7 @@ async def test_report_to_notebook():
 
     await report.execute()
 
-    assert len(report.outputs) == 2
+    assert len(report.views) == 2
 
     nb_string = report.to_notebook()
 

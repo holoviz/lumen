@@ -11,12 +11,12 @@ If the SQL has CTEs, briefly explain each CTE, mentioning its alias; otherwise, 
 
 Then, analyze the data and deliver precise, actionable insights in clear, non-technical language.
 
-- Distill complexity into straightforward, meaningful takeaways, while maintaining depth and precision.
 - Do not always take results at face value; identify and question anomalies—highlighting potential outliers or
 unexpected results.
-- Avoid generic summaries—instead, emphasize specific patterns, column interactions, and a couple actionable insights.
-- Break up long prose into shorter, digestible chunks.
-- Sparingly bold phrases of the most critical insights.
+- Front-load content and results
+- Break up long blocks of prose
+- Use **bold text** to emphasize relevant points
+- Avoid boilerplate
 - Do not do additional calculations, e.g. cite numbers that are not explicitly in the current dataset.
 
 Keep your response under three paragraphs top, unless elaboration is requested.
@@ -92,7 +92,7 @@ collection issue or seasonal effect that requires validation before making strat
 Here was the plan that was executed:
 {% if memory.get('reasoning') %}
 """
-{{ memory.reasoning }}
+{{ memory['reasoning'] }}
 """
 {% endif %}
 
@@ -102,14 +102,18 @@ Here is the current dataset:
 The data is empty. Critique the SQL query and suggest what other columns or values should be used instead. Then prompt
 the user to click the rerun button below if they'd like to try again.
 {% else %}
-{{ memory.data }}
+{{ memory['data'] }}
 {%- endif %}
 {%- endif -%}
 
 {% if memory.get('sql') %}
 Here is the current SQL query:
 ```sql
-{{ memory.sql }}
+{{ memory['sql'] }}
 ```
 {%- endif -%}
 {%- endblock -%}
+
+{% block footer %}
+Be very concise. Grammar may be sacrificed for brevity.
+{% endblock %}

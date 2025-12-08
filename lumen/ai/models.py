@@ -1,7 +1,9 @@
-from typing import Literal
+from typing import Annotated, Literal
 
 from instructor.dsl.partial import PartialLiteralMixin
-from pydantic import BaseModel, Field, create_model
+from pydantic import (
+    BaseModel, Field, create_model, model_validator,
+)
 from pydantic.fields import FieldInfo
 from pydantic.json_schema import SkipJsonSchema
 
@@ -44,25 +46,30 @@ class YesNo(BaseModel):
 class ThinkingYesNo(BaseModel):
 
     chain_of_thought: str = Field(
-        description="Explain your reasoning as to why you will be answering yes or no.")
+        description="Briefly explain your reasoning as to why you will be answering yes or no.")
 
     yes: bool = Field(description="True if yes, otherwise False.")
 
 
 # Essential Discovery Toolkit
 
+def make_source_table(sources: list[tuple[str, str]]):
+    class LiteralSourceTable(BaseModel):
+        source: Literal[tuple(set(src for src, _ in sources))]
+        table: Literal[tuple(set(table for _, table in sources))]
+    return LiteralSourceTable
+
+
 class SampleQuery(PartialBaseModel):
     """See actual data content - reveals format issues and patterns."""
 
-    query: SkipJsonSchema[str] = Field(default="SELECT * FROM {table} LIMIT 5")
-    table: str = Field(description="Table to sample")
+    query: SkipJsonSchema[str] = Field(default="SELECT * FROM {slug[table]} LIMIT 5")
 
 
 class DistinctQuery(PartialBaseModel):
     """Universal column analysis with optional pattern matching - handles join keys, categories, date ranges."""
 
-    query: SkipJsonSchema[str] = Field(default="SELECT DISTINCT {column} FROM {table} WHERE {column} ILIKE '%{pattern}%' LIMIT 10 OFFSET {offset}")
-    table: str = Field(description="Table to query")
+    query: SkipJsonSchema[str] = Field(default="SELECT DISTINCT {column} FROM {slug[table]} WHERE {column} ILIKE '%{pattern}%' LIMIT 10 OFFSET {offset}")
     column: str = Field(description="Column to analyze unique values")
     pattern: str = Field(default="", description="Optional pattern to search for (e.g., 'chin' for China/Chinese variations). Leave empty for all distinct values.")
     offset: int = Field(default=0, description="Number of distinct values to skip (0 for initial, 10 for follow-up)")
@@ -71,32 +78,53 @@ class DistinctQuery(PartialBaseModel):
         """Adjust query template based on whether pattern is provided."""
         if not self.pattern.strip():
             # No pattern - get all distinct values
-            self.query = "SELECT DISTINCT {column} FROM {table} LIMIT 10 OFFSET {offset}"
+            self.query = "SELECT DISTINCT {column} FROM {slug[table]} LIMIT 10 OFFSET {offset}"
         else:
             # Pattern provided - use ILIKE for case-insensitive partial matching
-            self.query = "SELECT DISTINCT {column} FROM {table} WHERE {column} ILIKE '%{pattern}%' LIMIT 10 OFFSET {offset}"
+            self.query = "SELECT DISTINCT {column} FROM {slug[table]} WHERE {column} ILIKE '%{pattern}%' LIMIT 10 OFFSET {offset}"
 
 
-class DiscoveryQueries(PartialBaseModel):
-    """LLM selects 2-4 essential discoveries using the core toolkit."""
+def make_discovery_model(sources: list[tuple[str, str]]):
 
-    reasoning: str = Field(description="Brief discovery strategy")
-    queries: list[SampleQuery | DistinctQuery] = Field(
-        description="Choose 2-4 discovery queries from the Essential Three toolkit"
+    SourceTable = make_source_table(sources)
+
+    SampleQueryLiteral = create_model(
+        "LiteralSampleQuery",
+        slug=(
+                SourceTable, FieldInfo(description="The source and table identifier(s) referenced in the SQL query.")
+        ),
+        __base__=SampleQuery
     )
 
-
-class DiscoverySufficiency(PartialBaseModel):
-    """Evaluate if discovery results provide enough context to fix the original error."""
-
-    reasoning: str = Field(description="Analyze discovery results - do they reveal the cause of the error?")
-
-    sufficient: bool = Field(description="True if discoveries provide enough context to fix the error")
-
-    follow_up_needed: list[SampleQuery | DistinctQuery] = Field(
-        default_factory=list,
-        description="If insufficient, specify 1-3 follow-up discoveries (e.g., OFFSET for more values)"
+    DistinctQueryLiteral = create_model(
+        "LiteralDistinctQuery",
+        slug=(
+                SourceTable, FieldInfo(description="The source and table identifier(s) referenced in the SQL query.")
+        ),
+        __base__=DistinctQuery
     )
+
+    class DiscoveryQueries(PartialBaseModel):
+        """LLM selects 2-4 essential discoveries using the core toolkit."""
+
+        reasoning: str = Field(description="Brief discovery strategy")
+        queries: list[SampleQueryLiteral | DistinctQueryLiteral] = Field(
+            description="Choose 2-4 discovery queries from the Essential Three toolkit"
+        )
+
+    class DiscoverySufficiency(PartialBaseModel):
+        """Evaluate if discovery results provide enough context to fix the original error."""
+
+        reasoning: str = Field(description="Analyze discovery results - do they reveal the cause of the error?")
+
+        sufficient: bool = Field(description="True if discoveries provide enough context to fix the error")
+
+        follow_up_needed: list[SampleQueryLiteral | DistinctQueryLiteral] = Field(
+            default_factory=list,
+            description="If insufficient, specify 1-3 follow-up discoveries (e.g., OFFSET for more values)"
+        )
+
+    return DiscoveryQueries, DiscoverySufficiency
 
 
 class SqlQuery(PartialBaseModel):
@@ -106,9 +134,9 @@ class SqlQuery(PartialBaseModel):
         One, correct, valid SQL query that answers the user's question;
         should only be one query and do NOT add extraneous comments; no multiple semicolons""")
 
-    expr_slug: str = Field(
+    table_slug: str = Field(
         description="""
-        Provide a unique, descriptive slug for the SQL expression that clearly indicates the key transformations and source tables involved.
+        Provide a unique, descriptive table slug for the SQL expression that clearly indicates the key transformations and source tables involved.
         Include 1 or 2 elements of data lineage in the slug, such as the main transformation and original table names,
         e.g. top_5_athletes_in_2020 or distinct_years_from_wx_table.
         Ensure the slug does not duplicate any existing table names or slugs.
@@ -116,20 +144,18 @@ class SqlQuery(PartialBaseModel):
     )
 
 
-class SqlQueries(PartialBaseModel):
-    """Multiple SQL queries to execute in sequence."""
-
-    queries: list[SqlQuery] = Field(
-        default_factory=list,
-        description="""List of SQL queries to execute."""
-    )
-
-
-def make_sql_model(is_final: bool = False):
-    if is_final:
+def make_sql_model(sources: list[tuple[str, str]]):
+    if len(sources) == 1:
         return SqlQuery
-    else:
-        return SqlQueries
+
+    SourceTable = make_source_table(sources)
+    return create_model(
+        "SqlQueryWithSources",
+        tables=(
+            list[SourceTable], FieldInfo(description="The source and table identifier(s) referenced in the SQL query.")
+        ),
+        __base__=SqlQuery
+    )
 
 
 class VegaLiteSpec(EscapeBaseModel):
@@ -156,17 +182,10 @@ class VegaLiteSpecUpdate(BaseModel):
         Respect your step's scope; don't override previous steps."""
     )
 
-class LineChange(BaseModel):
-    line_no: int = Field(description="The line number in the original text that needs to be changed.")
-    replacement: str = Field(description="""
-        The new line that replaces the original line, and if applicable, ensuring the indentation matches the original.
-        To remove a line set this to an empty string."""
-    )
-
 
 class RawStep(BaseModel):
     actor: str
-    instruction: str
+    instruction: str = Field(description="Concise instruction defining the specific subtask. Never generate instructions to create synthetic data.")
     title: str
 
 
@@ -190,11 +209,48 @@ class Reasoning(BaseModel):
         """
     )
 
+
+class InsertLine(BaseModel):
+    op: Literal["insert"] = "insert"
+    line_no: int = Field(ge=1, description=(
+        "Insert BEFORE this 1-based line number. "
+        "Use line_no == len(lines) to append at the end."
+    ))
+    line: str = Field(min_length=1, description="Content for the new line (must be non-empty).")
+
+class ReplaceLine(BaseModel):
+    op: Literal["replace"] = "replace"
+    line_no: int = Field(ge=1, description="The 1-based line number to replace.")
+    line: str = Field(description="The new content for the line (empty string is allowed).")
+
+class DeleteLine(BaseModel):
+    op: Literal["delete"] = "delete"
+    line_no: int = Field(ge=1, description="The 1-based line number to delete.")
+
+LineEdit = Annotated[
+    InsertLine | ReplaceLine | DeleteLine,
+    Field(discriminator="op")
+]
+
 class RetrySpec(BaseModel):
     """Represents a revision of text with its content and changes."""
 
     chain_of_thought: str = Field(description="In a sentence or two, explain the plan to revise the text based on the feedback provided.")
-    lines_changes: list[LineChange] = Field(description="A list of changes made to the lines in the original text based on the chain_of_thought.")
+    edits: list[LineEdit] = Field(description="A list of line edits based on the chain_of_thought.")
+
+    @model_validator(mode="after")
+    def validate_indices_nonconflicting(self) -> "RetrySpec":
+        # Disallow more than one delete/replace on the same original index.
+        seen_replace_or_delete: set[int] = set()
+        for e in self.edits:
+            if e.op in ("replace", "delete"):
+                if e.line_no in seen_replace_or_delete:
+                    raise ValueError(
+                        f"Multiple {e.op}/delete edits targeting the same line_no={e.line_no} "
+                        "are ambiguous. Combine them or split into separate patches."
+                    )
+                seen_replace_or_delete.add(e.line_no)
+        return self
 
 
 def make_plan_model(agents: list[str], tools: list[str]) -> type[RawPlan]:
@@ -401,4 +457,13 @@ def make_refined_query_model(item_type_name: str = "items"):
             """
         )),
         __base__=PartialBaseModel
+    )
+
+
+def make_analysis_model(analyses: list[str]):
+    return create_model(
+        "Analysis",
+        analysis=(Literal[tuple(analyses)], FieldInfo(
+            description="The name of the analysis that is most appropriate given the user query."
+        ))
     )
