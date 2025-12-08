@@ -202,16 +202,6 @@ class SQLFormat(SQLTransform):
     This transform allows for replacing placeholders in SQL queries using
     either Python string format-style placeholders {name} or sqlglot-style
     placeholders :name.
-
-    Parameters
-    ----------
-    sql_expr : str
-        The SQL expression template with placeholders to be formatted.
-    parameters : dict
-        Dictionary of parameter names and values to replace in the SQL template.
-    py_format : bool
-        Whether to convert Python format-style placeholders {name} to sqlglot
-        placeholders :name before parsing. Default is True.
     """
 
     parameters = param.Dict(default={}, doc="""

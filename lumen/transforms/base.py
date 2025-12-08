@@ -287,7 +287,7 @@ class HistoryTransform(Transform):
 
         Parameters
         ----------
-        data : DataFrame
+        table : DataFrame
             The queried table as a DataFrame.
 
         Returns
