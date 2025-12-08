@@ -247,9 +247,11 @@ async def test_plan_revise(sql_plan):
         lambda: f"Result: {sql_plan[0].out_context['pipeline'].data.iloc[0, 0]}"
     ])
 
-    await sql_plan[0].revise(
-        "Update to limit to 1 row", sql_plan.context, sql_plan.views[1], config={'llm': sql_plan.llm}
-    )
+    sql_task = sql_plan[0]
+    with sql_task.actor.param.update(llm=sql_plan.llm):
+        sql_plan.views[1].spec = await sql_task.actor.revise(
+            "Update to limit to 1 row", sql_task.history, sql_task.out_context, sql_plan.views[1]
+        )
 
     await async_wait_until(lambda: sql_plan.out_context["sql"] == (
         "SELECT\n"

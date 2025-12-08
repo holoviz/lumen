@@ -1108,35 +1108,6 @@ class ActorTask(ExecutableTask):
             )
         )
 
-    async def revise(
-        self, instruction: str, context: TContext, view: LumenOutput, config: dict[str, Any] | None = None
-    ):
-        config = config or {}
-        invalidation_keys = set(self.actor.output_schema.__annotations__)
-        if hasattr(self.actor, 'revise'):
-            with view.editor.param.update(loading=True):
-                messages = list(self.history)
-                task_config = dict(config)
-                if "llm" not in task_config:
-                    task_config["llm"] = self.actor.llm or self.llm
-                task_context = merge_contexts(self.input_schema, [self.context, context])
-                try:
-                    old = view.spec
-                    with self.actor.param.update(**task_config):
-                        view.spec = await self.actor.revise(
-                            instruction, messages, task_context, view
-                        )
-                except Exception as e:
-                    view.spec = old
-                    raise e
-        else:
-            self.invalidate(invalidation_keys, start=1)
-            root = self
-            while root.parent is not None:
-                root = root.parent
-            with root.param.update(config):
-                await root.execute()
-
 
 class Action(ExecutableTask):
     """
