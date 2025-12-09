@@ -504,17 +504,10 @@ class UI(Viewer):
         )
         self._settings_menu.param.watch(self._toggle_sql_planning, 'toggled')
         self._settings_menu.param.watch(self._toggle_validation_agent, 'toggled')
-        self._upload_button = IconButton(
-            icon="cloud_upload",
-            description="Manage Data Sources",
-            margin=(12, 5, 5, 0),
-            on_click=self._open_sources_dialog,
-        )
         self._coordinator.verbose = self._settings_menu.param.toggled.rx().rx.pipe(lambda toggled: 0 in toggled)
         return [
             HSpacer(),
             self._settings_menu,
-            self._upload_button,
             Divider(
                 orientation="vertical", height=30, margin=(17, 5, 17, 5),
                 sx={'border-color': 'white', 'border-width': '1px'}
@@ -623,13 +616,20 @@ class UI(Viewer):
     def _render_contextbar(self) -> list[Viewable]:
         return []
 
+    def _render_sidebar(self) -> list[Viewable]:
+        return []
+
     def _render_page(self):
         self._page = Page(
             contextbar_open=False,
             contextbar=self._render_contextbar(),
             header=self._render_header(),
             main=self._render_main(),
-            title=self.title
+            sidebar=self._render_sidebar(),
+            title=self.title,
+            sidebar_width=65,
+            sidebar_resizable=False,
+            sx={"&.mui-light .sidebar": {"bgcolor": "var(--mui-palette-grey-50)"}}
         )
 
     @param.depends('context', on_init=True, watch=True)
@@ -943,18 +943,39 @@ class ExplorerUI(UI):
         nb = export_notebook(self._exploration['view'].plan.views, preamble=self.notebook_preamble)
         return StringIO(nb)
 
-    def _render_header(self) -> list[Viewable]:
-        header = super()._render_header()
-        self._report_toggle = ToggleIcon(
-            icon="chat",
-            active_icon="summarize",
-            color="light",
-            description="Toggle Report Mode",
-            value=False,
-            margin=(13, 0, 10, 0)
-        )
-        self._report_toggle.param.watch(self._toggle_report_mode, ['value'])
-        return header[:-1] + [self._report_toggle] + header[-1:]
+    def _update_item(self, menu, item, **updates):
+        new_item = dict(item, **updates)
+        items = menu.items
+        index = items.index(item)
+        menu.items = items[:index] + [new_item] + items[index+1:]
+
+    @hold()
+    def _handle_sidebar_event(self, item):
+        if item["id"] == "home":
+            self._exploration = self._explorations.items[0]
+        elif item["id"] == "exploration":
+            self._toggle_report_mode(False)
+            self._update_item(self._sidebar_menu, item, active=True, icon="forum")
+            self._update_item(self._sidebar_menu, self._sidebar_menu.items[3], active=False, icon="description_outlined")
+            self._update_home()
+        elif item["id"] == "report":
+            self._toggle_report_mode(True)
+            self._update_item(self._sidebar_menu, self._sidebar_menu.items[2], active=False, icon="forum_outlined")
+            self._update_item(self._sidebar_menu, item, active=True, icon="description")
+            self._update_home()
+        elif item["id"] == "data":
+            self._open_sources_dialog()
+        elif item["id"] == "llm":
+            self._open_llm_dialog()
+
+    @param.depends("_exploration", watch=True)
+    def _update_home(self):
+        is_home = self._exploration["view"] is self._home
+        if not hasattr(self, '_page'):
+            return
+        home, _, exploration, report = self._sidebar_menu.items[:4]
+        self._update_item(self._sidebar_menu, home, active=is_home, icon="home" if is_home and not report["active"] else "home_outlined")
+        self._update_item(self._sidebar_menu, exploration, active=True, icon="forum_outlined" if report["active"] else "forum")
 
     def _render_contextbar(self) -> list[Viewable]:
         self._explorations = MenuList(
@@ -973,6 +994,38 @@ class ExplorerUI(UI):
         )
         self._reorder_switch.param.watch(self._toggle_reorder, 'value')
         return [self._reorder_switch, self._explorations]
+
+    def _render_sidebar(self) -> list[Viewable]:
+        self._sidebar_collapse = collapse = ToggleIcon(
+            value=True, active_icon="chevron_right", icon="chevron_left", styles={"margin-top": "auto", "margin-left": "auto"}, margin=5
+        )
+        self._sidebar_menu = menu = MenuList(
+            items=[
+                {"label": "Home", "icon": "home", "id": "home", "active": True},
+                None,
+                {"label": "Exploration", "icon": "forum", "id": "exploration", "active": True},
+                {"label": "Report", "icon": "description_outlined", "id": "report", "active": False},
+                None,
+                {"label": "Manage Data", "icon": "drive_folder_upload_outlined", "id": "data"},
+                {"label": "Configure LLM", "icon": "psychology_outlined", "id": "llm"},
+            ],
+            collapsed=collapse,
+            highlight=False,
+            margin=0,
+            on_click=self._handle_sidebar_event,
+            sx={
+                "& .MuiButtonBase-root.MuiListItemButton-root, & .MuiButtonBase-root.MuiListItemButton-root.collapsed": {"p": 2},
+                ".MuiListItemIcon-root > .MuiIcon-root": {
+                    "color": "var(--mui-palette-primary-dark)",
+                    "fontSize": "28px"
+                }
+            }
+        )
+        return [menu, collapse]
+
+    def _render_page(self):
+        super()._render_page()
+        self._page.sidebar_width = self._sidebar_collapse.rx().rx.where(61, 183)
 
     def _render_main(self) -> list[Viewable]:
         main = super()._render_main()
@@ -1090,9 +1143,9 @@ class ExplorerUI(UI):
             items.append(item)
         self._explorations.items = items
 
-    def _toggle_report_mode(self, event):
+    def _toggle_report_mode(self, active: bool):
         """Toggle between regular and report mode."""
-        if event.new:
+        if active:
             self._main[:] = [Report(
                 *(exploration['view'].plan for exploration in self._explorations.items[1:])
             )]
