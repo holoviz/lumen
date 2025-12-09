@@ -950,7 +950,7 @@ class ExplorerUI(UI):
             new_item = dict(item)
             active = not item["active"]
             self._toggle_report_mode(active)
-            new_item.update(active=active, icon="summarize" if active else "chat")
+            new_item.update(active=active, icon="summarize_outlined" if active else "chat_outlined")
             items = self._sidebar_menu.items
             index = items.index(item)
             self._sidebar_menu.items = items[:index] + [new_item] + items[index+1:]
@@ -983,8 +983,8 @@ class ExplorerUI(UI):
         )
         self._sidebar_menu = menu = MenuList(
             items=[
-                {"label": "Home", "icon": "home", "id": "home"},
-                {"label": "Report View", "icon": "chat", "id": "report", "active": False},
+                {"label": "Home", "icon": "home_outlined", "id": "home"},
+                {"label": "Report View", "icon": "chat_outlined", "id": "report", "active": False},
                 None,
                 {"label": "Manage Data", "icon": "cloud_upload_outlined", "id": "data"},
                 {"label": "Configure LLM", "icon": "settings_suggest_outlined", "id": "llm"},
@@ -994,7 +994,7 @@ class ExplorerUI(UI):
             margin=(10, 0, 0, 0),
             on_click=self._handle_sidebar_event,
             sx={
-                "& .MuiButtonBase-root.MuiListItemButton-root.collapsed": {"pl": 2, "pr": 2},
+                "& .MuiButtonBase-root.MuiListItemButton-root.collapsed": {"p": 2},
                 ".MuiListItemIcon-root > .MuiIcon-root": {
                     "color": "var(--mui-palette-primary-main)",
                     "fontSize": "32px",
