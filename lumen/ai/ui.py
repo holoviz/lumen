@@ -627,7 +627,7 @@ class UI(Viewer):
             main=self._render_main(),
             sidebar=self._render_sidebar(),
             title=self.title,
-            sidebar_width=48,
+            sidebar_width=75,
             sidebar_resizable=False,
             sx={"&.mui-light .sidebar": {"bgcolor": "var(--mui-palette-grey-50)"}}
         )
@@ -946,23 +946,18 @@ class ExplorerUI(UI):
     def _handle_sidebar_event(self, item):
         if item["id"] == "home":
             self._exploration = self._explorations.items[0]
+        elif item["id"] == "report":
+            new_item = dict(item)
+            active = not item["active"]
+            self._toggle_report_mode(active)
+            new_item.update(active=active, icon="summarize" if active else "chat")
+            items = self._sidebar_menu.items
+            index = items.index(item)
+            self._sidebar_menu.items = items[:index] + [new_item] + items[index+1:]
         elif item["id"] == "data":
             self._open_sources_dialog()
         elif item["id"] == "llm":
             self._open_llm_dialog()
-
-    def _render_header(self) -> list[Viewable]:
-        header = super()._render_header()
-        self._report_toggle = ToggleIcon(
-            icon="chat",
-            active_icon="summarize",
-            color="light",
-            description="Toggle Report Mode",
-            value=False,
-            margin=(13, 0, 10, 0)
-        )
-        self._report_toggle.param.watch(self._toggle_report_mode, ['value'])
-        return header[:-1] + [self._report_toggle] + header[-1:]
 
     def _render_contextbar(self) -> list[Viewable]:
         self._explorations = MenuList(
@@ -984,19 +979,22 @@ class ExplorerUI(UI):
 
     def _render_sidebar(self) -> list[Viewable]:
         self._sidebar_collapse = collapse = ToggleIcon(
-            value=True, active_icon="chevron_right", icon="chevron_left", styles={"margin-top": "auto", "margin-left": "auto"}, margin=(0, 0, 5, 5)
+            value=True, active_icon="chevron_right", icon="chevron_left", styles={"margin-top": "auto", "margin-left": "auto"}, margin=5
         )
-        menu = MenuList(
+        self._sidebar_menu = menu = MenuList(
             items=[
                 {"label": "Home", "icon": "home", "id": "home"},
-                {"label": "Manage Data", "icon": "cloud_upload", "id": "data"},
-                {"label": "Configure LLM", "icon": "settings_suggest", "id": "llm"}
+                {"label": "Report View", "icon": "chat", "id": "report", "active": False},
+                None,
+                {"label": "Manage Data", "icon": "cloud_upload_outlined", "id": "data"},
+                {"label": "Configure LLM", "icon": "settings_suggest_outlined", "id": "llm"},
             ],
             collapsed=collapse,
             highlight=False,
-            margin=0,
+            margin=(10, 0, 0, 0),
             on_click=self._handle_sidebar_event,
             sx={
+                "& .MuiButtonBase-root.MuiListItemButton-root.collapsed": {"pl": 2, "pr": 2},
                 ".MuiListItemIcon-root > .MuiIcon-root": {
                     "color": "var(--mui-palette-primary-main)",
                     "fontSize": "32px",
@@ -1008,7 +1006,7 @@ class ExplorerUI(UI):
 
     def _render_page(self):
         super()._render_page()
-        self._page.sidebar_width = self._sidebar_collapse.rx().rx.where(48, 172)
+        self._page.sidebar_width = self._sidebar_collapse.rx().rx.where(65, 175)
 
     def _render_main(self) -> list[Viewable]:
         main = super()._render_main()
@@ -1126,9 +1124,9 @@ class ExplorerUI(UI):
             items.append(item)
         self._explorations.items = items
 
-    def _toggle_report_mode(self, event):
+    def _toggle_report_mode(self, active: bool):
         """Toggle between regular and report mode."""
-        if event.new:
+        if active:
             self._main[:] = [Report(
                 *(exploration['view'].plan for exploration in self._explorations.items[1:])
             )]
