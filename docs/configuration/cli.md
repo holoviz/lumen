@@ -52,15 +52,22 @@ lumen-ai serve --model-kwargs '{"default": {"model": "gpt-4o"}}'
 **Model types:**
 
 - `default` — General-purpose model for most tasks
-- `sql` — Used for SQL query generation
-- `vega_lite` — Used for visualization generation
+- `sql` — Used by SQLAgent for SQL query generation
+- `vega_lite` — Used by VegaLiteAgent for visualization generation
 - `reasoning` — Used for complex reasoning tasks
-- `chat` — Used for chat interactions
+- `chat` — Used by ChatAgent for chat interactions
+- `analysis` — Used by AnalysisAgent for data analysis
 
 **Example with multiple model types:**
 
 ```bash
 lumen-ai serve --model-kwargs '{"default": {"model": "gpt-4o-mini"}, "sql": {"model": "gpt-4o"}, "vega_lite": {"model": "gpt-4o"}, "reasoning": {"model": "gpt-5"}}'
+```
+
+You can also set temperature and other parameters per model type:
+
+```bash
+lumen-ai serve --model-kwargs '{"default": {"model": "gpt-4o-mini", "temperature": 0.3}, "sql": {"model": "gpt-4o", "temperature": 0.1}}'
 ```
 
 The JSON must be valid and properly escaped. See [LLM Providers](../configuration/llm_providers.md) for provider-specific examples.

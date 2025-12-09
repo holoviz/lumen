@@ -1,97 +1,38 @@
 # Agents
 
-Agents are specialized task performers in Lumen AI. Each agent handles a specific role—from querying data to creating visualizations to analyzing results. The system comes with built-in agents you can use immediately, and you can create custom agents for specialized workflows.
+**Agents are specialized workers that answer different types of questions.**
 
-## Built-in agents
+SQLAgent writes queries. VegaLiteAgent creates charts. ChatAgent answers questions. Each agent has a specific job.
 
-Lumen AI includes eight default agents that handle common data exploration tasks:
+Most users never customize agents. The eight default agents handle typical data exploration needs.
 
-**TableListAgent**
+## Skip to
 
-- Lists available tables in your datasets
-- Responds to questions about data structure and schema
-- Helps users understand what data is available
+- [See which agents exist](#default-agents) - What each agent does
+- [Add custom agents](#add-a-custom-agent) - Extend Lumen with new capabilities  
+- [Remove agents](#use-specific-agents-only) - Use only some agents
+- [Configure agent models](#use-different-models-per-agent) - Control which LLM each agent uses
 
-**ChatAgent**
+## Default agents
 
-- Engages in general conversation and technical discussion
-- Answers questions about programming and APIs
-- Provides information about data without querying
+Lumen includes eight agents automatically. You don't need to configure anything.
 
-**DocumentListAgent**
+| Agent | What it does |
+|-------|-------------|
+| **SQLAgent** | Writes and runs SQL queries |
+| **VegaLiteAgent** | Creates charts and visualizations |
+| **AnalystAgent** | Explains query results and finds insights |
+| **ChatAgent** | Answers questions and provides guidance |
+| **TableListAgent** | Lists available tables and columns |
+| **DocumentListAgent** | Manages uploaded documents |
+| **SourceAgent** | Handles data uploads |
+| **ValidationAgent** | Checks if results answer the question |
 
-- Manages and lists uploaded documents
-- Provides context about document sources
-- Helps users navigate document collections
+These agents work together automatically. The coordinator picks which agents to use for each question.
 
-**AnalystAgent**
+## Use specific agents only
 
-- Analyzes query results and explains findings
-- Generates insights from data
-- Breaks down complex results into understandable points
-
-**SourceAgent**
-
-- Handles data source uploads and connections
-- Manages multiple datasets
-- Allows adding or replacing data sources
-
-**SQLAgent**
-
-- Generates SQL queries from natural language questions
-- Executes queries against databases
-- Ensures valid, optimized SQL
-
-**VegaLiteAgent**
-
-- Creates interactive visualizations (charts, plots, maps)
-- Generates Vega-Lite specifications from queries
-- Enables visual data exploration
-
-**ValidationAgent**
-
-- Validates query results for correctness
-- Checks for data anomalies
-- Catches potential errors before presenting results
-
-## Using agents
-
-### Use default agents
-
-By default, all eight agents are included automatically. Just create an ExplorerUI instance:
-
-```python
-import lumen.ai as lmai
-
-ui = lmai.ExplorerUI(data='penguins.csv')
-ui.servable()
-```
-
-The coordinator will route queries to the appropriate agent based on what the user asks.
-
-### Add custom agents
-
-Pass additional agents using the `agents` parameter:
-
-```python
-import lumen.ai as lmai
-
-class CustomSummarizerAgent(lmai.agents.Agent):
-    purpose = "Summarizes query results"
-    # ... agent implementation ...
-
-ui = lmai.ExplorerUI(
-    data='penguins.csv',
-    agents=[CustomSummarizerAgent()]
-)
-ui.servable()
-```
-
-Your custom agents work alongside the default agents. All agents are available to the coordinator.
-
-### Replace default agents
-
-Override which agents are included using `default_agents`:
+Include only the agents you need:
 
 ```python
 import lumen.ai as lmai
@@ -104,357 +45,345 @@ ui = lmai.ExplorerUI(
 ui.servable()
 ```
 
-Only the agents you specify are used. TableListAgent, AnalystAgent, and others are not included.
+**Why limit agents?**
 
-### Combine custom and default agents
+- Faster planning (fewer options to consider)
+- Lower costs (fewer agents = fewer LLM calls during planning)
+- Simpler behavior (predictable agent selection)
 
-Use both together by setting `default_agents` AND `agents`:
+Most users should keep all default agents. Only customize if you have specific needs.
+
+## Add a custom agent
+
+Add your own agent for specialized tasks:
 
 ```python
 import lumen.ai as lmai
-from lumen.ai.agents import ChatAgent, SQLAgent, VegaLiteAgent
 
-class CustomReportAgent(lmai.agents.Agent):
-    purpose = "Generates formatted reports"
-    # ... agent implementation ...
+class SummaryAgent(lmai.agents.Agent):
+    purpose = "Creates executive summaries of data"
+    
+    # Define what this agent needs to run
+    input_schema = ...  # Pydantic model
+    output_schema = ... # Pydantic model
+    
+    async def respond(self, messages, context, **kwargs):
+        # Your logic here
+        return outputs, context
 
 ui = lmai.ExplorerUI(
     data='penguins.csv',
-    default_agents=[ChatAgent, SQLAgent, VegaLiteAgent],
-    agents=[CustomReportAgent()]
+    agents=[SummaryAgent()]  # Adds to default agents
 )
 ui.servable()
 ```
 
-The UI will have the three default agents plus your custom agent.
+See [Creating custom agents](#creating-custom-agents) below for complete examples.
 
-### Disable specific agents
+## Use different models per agent
 
-To use all defaults except one, filter them:
-
-```python
-import lumen.ai as lmai
-from lumen.ai.agents import (
-    TableListAgent, ChatAgent, DocumentListAgent, AnalystAgent,
-    SourceAgent, SQLAgent, VegaLiteAgent
-)
-
-# All defaults except ValidationAgent
-ui = lmai.ExplorerUI(
-    data='penguins.csv',
-    default_agents=[
-        TableListAgent, ChatAgent, DocumentListAgent, AnalystAgent,
-        SourceAgent, SQLAgent, VegaLiteAgent
-    ]
-)
-ui.servable()
-```
-
-### Customize agent models
-
-Different agents can use different LLM models. Configure which model each agent uses:
+Configure which LLM model each agent uses:
 
 ```python
 import lumen.ai as lmai
 
 model_config = {
-    "default": {"model": "gpt-4o-mini"},
-    "sql": {"model": "gpt-4o"},          # SQLAgent uses gpt-4o
-    "vega_lite": {"model": "gpt-4o"},    # VegaLiteAgent uses gpt-4o
-    "chat": {"model": "gpt-4o-mini"},    # ChatAgent uses cheaper model
+    "default": {"model": "gpt-4o-mini"},  # Cheap model for most agents
+    "sql": {"model": "gpt-4o"},           # Powerful model for SQL
+    "vega_lite": {"model": "gpt-4o"},     # Powerful model for charts
+    "analyst": {"model": "gpt-4o"},       # Powerful model for analysis
 }
 
 llm = lmai.llm.OpenAI(model_kwargs=model_config)
 
-ui = lmai.ExplorerUI(
-    data='penguins.csv',
-    llm=llm
-)
+ui = lmai.ExplorerUI(data='penguins.csv', llm=llm)
 ui.servable()
 ```
 
-Agents automatically select the right model based on their task. See [LLM Providers](llm_providers.md) for full configuration details.
+**Model types match agent names:**
 
-### Analyze available agents
+- SQLAgent uses the `"sql"` model
+- VegaLiteAgent uses the `"vega_lite"` model  
+- ChatAgent uses the `"chat"` model
+- AnalystAgent uses the `"analyst"` model
 
-Check which agents are included in your UI:
-
-```python
-import lumen.ai as lmai
-
-ui = lmai.ExplorerUI(data='penguins.csv')
-
-for agent in ui._coordinator.agents:
-    print(f"Agent: {agent.name}")
-    print(f"Purpose: {agent.purpose}")
-    print(f"Requires: {agent.requires}")
-    print(f"Provides: {agent.provides}")
-    print()
-```
+See [LLM Providers](llm_providers.md#model-types) for complete details.
 
 ## Creating custom agents
 
-Once you're comfortable with the built-in agents, you can create custom agents for specialized tasks.
+Custom agents let you add specialized capabilities to Lumen.
 
-### What are custom agents?
+### When to create a custom agent
 
-Custom agents extend Lumen AI's capabilities by handling domain-specific tasks. They follow the same structure as built-in agents but implement your own logic.
+Create a custom agent when:
 
-Each agent declares what context it needs (`requires`), what it provides (`provides`), and when it should be used (`purpose`, `conditions`).
+- You need domain-specific analysis (financial metrics, scientific calculations)
+- You want to integrate external APIs or services
+- You need specialized data transformations
+- Built-in agents don't match your workflow
 
-### Core concepts
+Don't create a custom agent when:
 
-**`requires`**
+- You can solve it with custom analyses (simpler approach)
+- You can use tools instead (tools don't require async/await)
+- A built-in agent already handles it
 
-List of context values the agent needs from memory to operate. For example, `requires=["source"]` means the agent requires a data source.
-
-**`provides`**
-
-List of context values the agent adds or updates in memory. For example, `provides=["summary"]` means the agent creates a summary.
-
-**`purpose`**
-
-A clear description of what the agent does. The coordinator uses this to decide when to invoke the agent.
-
-**`conditions`**
-
-Specific criteria that determine when the agent should be invoked. While `purpose` describes what the agent does, conditions specify the precise situations requiring the agent.
-
-### Agent structure
-
-All agents inherit from the `Agent` base class:
+### Basic custom agent structure
 
 ```python
 import lumen.ai as lmai
-from lumen.ai.llm import Message
+from lumen.ai.context import ContextModel
+from pydantic import Field
 
-class CustomAgent(lmai.agents.Agent):
+# Define what the agent needs
+class MyInputs(ContextModel):
+    data: dict = Field(description="The data to process")
+
+# Define what the agent provides
+class MyOutputs(ContextModel):
+    summary: str = Field(description="Summary of findings")
+
+class MyAgent(lmai.agents.Agent):
+    purpose = "Summarizes data in executive format"
     
-    purpose = "Describes what this agent does"
-    
-    requires = ["context_key"]     # What memory this needs
-    provides = ["output_key"]      # What memory this creates
+    input_schema = MyInputs
+    output_schema = MyOutputs
     
     prompts = {
         "main": {
-            "template": "Your prompt template here",
+            "template": "Summarize this data: {{ context.data }}"
         }
     }
     
-    async def respond(self, messages: list[Message], **kwargs):
-        # Implement agent logic here
-        pass
+    async def respond(self, messages, context, **kwargs):
+        # Render prompt
+        system = await self._render_prompt("main", messages, context)
+        
+        # Get LLM response
+        summary = await self._stream(messages, system)
+        
+        # Return outputs
+        return {"summary": summary}, context
 ```
 
-### Build your first custom agent
+### Complete working example
 
-**Step 1: Define purpose and responsibilities**
-
-Describe what the agent does:
-
-```python
-purpose = "Summarizes documents and generates concise summaries"
-```
-
-**Step 2: Declare context**
-
-Specify what the agent needs and what it creates:
-
-```python
-requires = ["documents"]   # Agent needs documents in memory
-provides = ["summary"]      # Agent will create a summary
-```
-
-**Step 3: Write the prompt**
-
-Create a template to guide the LLM:
-
-```python
-prompts = {
-    "main": {
-        "template": "Summarize these documents:\n{document_texts}"
-    }
-}
-```
-
-**Step 4: Implement respond**
-
-Fetch data, render the prompt, call the LLM:
-
-```python
-async def respond(self, messages: list[Message], **kwargs):
-    # Get data from memory
-    documents = self._memory["documents"]
-    
-    # Prepare data for prompt
-    document_texts = "\n".join(documents)
-    
-    # Render prompt with context
-    system = await self._render_prompt("main", messages, document_texts=document_texts)
-    
-    # Stream response from LLM
-    summary = await self._stream(messages, system)
-    
-    # Store result in memory
-    self._memory["summary"] = summary
-    
-    return summary
-```
-
-**Step 5: Register the agent**
-
-Add your agent to ExplorerUI:
+This agent calculates statistical metrics:
 
 ```python
 import lumen.ai as lmai
+from lumen.ai.context import ContextModel
+from pydantic import Field
+import pandas as pd
 
+class StatsInputs(ContextModel):
+    pipeline: object = Field(description="Data pipeline")
+
+class StatsOutputs(ContextModel):
+    statistics: str = Field(description="Statistical summary")
+
+class StatisticsAgent(lmai.agents.Agent):
+    purpose = "Calculates descriptive statistics for numerical columns"
+    
+    input_schema = StatsInputs
+    output_schema = StatsOutputs
+    
+    prompts = {
+        "main": {
+            "template": """
+Analyze these statistics and explain key findings:
+
+{{ stats }}
+
+Focus on:
+
+- Notable values (very high/low)
+- Spread and variability  
+- Potential outliers
+"""
+        }
+    }
+    
+    async def respond(self, messages, context, **kwargs):
+        # Get data
+        pipeline = context['pipeline']
+        df = pipeline.data
+        
+        # Calculate stats
+        stats = df.describe().to_string()
+        
+        # Get LLM interpretation
+        system = await self._render_prompt("main", messages, context, stats=stats)
+        interpretation = await self._stream(messages, system)
+        
+        # Return results
+        return {"statistics": interpretation}, context
+
+# Use the agent
 ui = lmai.ExplorerUI(
     data='penguins.csv',
-    agents=[CustomSummarizerAgent()]
+    agents=[StatisticsAgent()]
 )
 ui.servable()
 ```
 
-### Example: Document Summarizer
+Now you can ask "What are the statistics for this dataset?" and the agent will run.
 
-Here's a complete custom agent:
+### Agent components explained
 
-```python
-import lumen.ai as lmai
-from lumen.ai.llm import Message
+**`purpose`** - One-sentence description of what the agent does. The coordinator uses this to decide when to invoke the agent.
 
-class DocumentSummarizerAgent(lmai.agents.Agent):
-    """Summarizes uploaded documents into concise overviews."""
-    
-    purpose = "Reads documents and generates concise, actionable summaries"
-    
-    requires = ["documents"]
-    provides = ["summary"]
-    
-    prompts = {
-        "main": {
-            "template": """Analyze and summarize these documents in 3-4 bullet points:
+**`input_schema`** - Pydantic model defining what data the agent needs from memory. The agent can only run when these requirements are met.
 
-{document_texts}
+**`output_schema`** - Pydantic model defining what data the agent adds to memory. Other agents can use these outputs.
 
-Focus on key insights and actionable information."""
-        }
-    }
-    
-    async def respond(self, messages: list[Message], **kwargs):
-        documents = self._memory.get("documents", [])
-        
-        if not documents:
-            return "No documents available to summarize."
-        
-        # Combine document contents
-        document_texts = ""
-        for doc in documents:
-            content = doc.get("content", "")
-            document_texts += f"--- {doc.get('name', 'Document')} ---\n{content}\n\n"
-        
-        # Render and invoke LLM
-        system = await self._render_prompt(
-            "main", 
-            messages, 
-            document_texts=document_texts
-        )
-        summary = await self._stream(messages, system)
-        
-        # Store in memory
-        self._memory["summary"] = summary
-        
-        return summary
-```
+**`prompts`** - Dictionary of prompt templates. Most agents only need a "main" prompt.
 
-### Control when agents are invoked
+**`respond()`** - The async method that does the work. Must return `(outputs_dict, updated_context)`.
 
-Use `conditions` to specify precise situations:
+### Control when agents are used
+
+Use `conditions` to specify when the agent should run:
 
 ```python
-class AnalysisAgent(lmai.agents.Agent):
-    
-    purpose = "Analyzes data query results"
+class ReportAgent(lmai.agents.Agent):
+    purpose = "Creates PDF reports"
     
     conditions = [
-        "Use only after SQL queries have been executed",
-        "Use when user asks for interpretation of results",
-        "NOT for data exploration queries"
+        "Use when user explicitly asks for a report or PDF",
+        "Use after data analysis is complete",
+        "NOT for simple questions or queries"
     ]
     
-    requires = ["sql_results", "source"]
-    provides = ["analysis"]
+    input_schema = MyInputs
+    output_schema = MyOutputs
 ```
 
-### Prevent conflicts
+The coordinator reads these conditions when deciding which agent to use.
 
-Use `not_with` to prevent agents from being invoked together:
+### Prevent agent conflicts
+
+Use `not_with` to prevent agents from being used together:
 
 ```python
-class AIAgent(lmai.agents.Agent):
+class FastSummaryAgent(lmai.agents.Agent):
+    purpose = "Quick data summaries"
     
-    purpose = "Provides AI-generated recommendations"
-    
-    not_with = ["UserApprovalAgent"]
+    not_with = ["DetailedAnalysisAgent"]  # Don't use both in same plan
 ```
 
-### Use different models for different tasks
+### Common patterns
 
-Specify which LLM model to use:
+**Agent that calls an API:**
 
 ```python
-prompts = {
-    "main": {
-        "template": "Your template",
-        "llm_spec": "reasoning"  # Uses reasoning model from model_kwargs
-    }
-}
+class WeatherAgent(lmai.agents.Agent):
+    purpose = "Fetches current weather data"
+    
+    async def respond(self, messages, context, **kwargs):
+        # Call external API
+        import httpx
+        async with httpx.AsyncClient() as client:
+            response = await client.get("https://api.weather.gov/...")
+            weather_data = response.json()
+        
+        # Format for user
+        summary = f"Current temperature: {weather_data['temp']}°F"
+        
+        return {"weather": summary}, context
 ```
 
-This lets you use cheaper models for simple tasks and more capable models for complex reasoning.
-
-### Access memory
-
-Agents read and write to global memory:
+**Agent that processes files:**
 
 ```python
-async def respond(self, messages: list[Message], **kwargs):
-    # Read from memory
-    source = self._memory.get("source")
-    table = self._memory.get("table")
+class PDFAgent(lmai.agents.Agent):
+    purpose = "Extracts text from PDF documents"
     
-    # Write to memory
-    self._memory["my_output"] = result
-    
-    # Check if key exists
-    if "sql_results" in self._memory:
-        results = self._memory["sql_results"]
+    async def respond(self, messages, context, **kwargs):
+        documents = context['documents']
+        
+        extracted_text = []
+        for doc in documents:
+            if doc['type'] == 'pdf':
+                # Extract text from PDF
+                text = extract_pdf_text(doc['content'])
+                extracted_text.append(text)
+        
+        return {"pdf_text": extracted_text}, context
 ```
 
-### Stream responses
-
-Show progress for long operations:
+**Agent that uses external tools:**
 
 ```python
-async def respond(self, messages: list[Message], **kwargs):
-    result = await self._stream(messages, system_prompt)
-    return result
+class DataQualityAgent(lmai.agents.Agent):
+    purpose = "Checks data quality using Great Expectations"
+    
+    async def respond(self, messages, context, **kwargs):
+        import great_expectations as gx
+        
+        df = context['pipeline'].data
+        
+        # Run validations
+        results = run_quality_checks(df)
+        
+        # Summarize findings
+        system = await self._render_prompt("main", messages, context, results=results)
+        summary = await self._stream(messages, system)
+        
+        return {"quality_report": summary}, context
 ```
 
-### Best practices
+## Common issues
 
-**Start simple.** Begin with a single focused task. Expand complexity later.
+### "Agent has unmet requirements"
 
-**Write clear purpose statements.** Help the coordinator understand when to invoke the agent.
+**What happened:** The agent's `input_schema` requires data that doesn't exist in memory.
 
-**Declare requirements explicitly.** List all memory keys your agent needs. Incomplete declarations cause silent failures.
+**How to fix:**
 
-**Use prompts effectively.** Keep prompts concise and structured. Use templates for consistency.
+1. Check what the agent needs in its `input_schema`
+2. Make sure another agent provides that data first
+3. Or adjust the `input_schema` to not require it
 
-**Test with your LLM.** Different models behave differently. Test with the same model configuration as production.
+### Agent never gets invoked
 
-**Store results in memory.** Always save outputs so other agents can access them.
+**What happened:** The coordinator doesn't think the agent is relevant.
 
-**Handle missing context gracefully.** Check for required memory keys and provide helpful messages if they're missing.
+**How to fix:**
 
-**Avoid circular dependencies.** Don't create agents that require outputs from agents requiring this agent's outputs.
+1. Make the `purpose` more specific and clear
+2. Add `conditions` that describe when to use it
+3. Check that `input_schema` requirements can be satisfied
+4. Enable `verbose=True` to see why it wasn't selected
+
+### Agent fails with "KeyError"
+
+**What happened:** The agent tried to access memory that doesn't exist.
+
+**How to fix:**
+
+```python
+# Bad - assumes 'data' exists
+data = context['data']
+
+# Good - checks first
+data = context.get('data')
+if data is None:
+    return {"error": "No data available"}, context
+```
+
+Always use `.get()` for optional keys in context.
+
+## Best practices
+
+**Keep agents focused.** One agent should do one thing well. Don't create a "do everything" agent.
+
+**Write clear purposes.** The coordinator uses `purpose` to decide when to invoke agents. Make it specific and actionable.
+
+**Test with real queries.** Different LLM models behave differently. Test your agent with your actual LLM.
+
+**Handle missing data gracefully.** Always check for required data before using it. Provide helpful error messages.
+
+**Use tools for simple functions.** If your agent doesn't need async/await or complex prompting, use a tool instead.
+
+**Don't duplicate built-ins.** Check if a built-in agent already does what you need before creating a custom one.

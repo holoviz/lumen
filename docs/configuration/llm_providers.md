@@ -1,296 +1,257 @@
 # LLM Providers
 
-Lumen AI supports a wide range of LLM providers and models. Configure your preferred provider either in the cloud or locally.
+**Configure which AI model powers Lumen.**
 
-## Supported providers
-
-- **OpenAI** — GPT-5, GPT-4o, GPT-4o-mini
-- **Anthropic** — Claude 4-5 Sonnet, Claude 4-5 Haiku
-- **Google Gemini** — Gemini Pro, Gemini Ultra, Gemini Flash
-- **Mistral** — Mistral Large, Mistral 8x7B, Mistral 7B
-- **Azure OpenAI** — OpenAI models hosted on Azure
-- **Ollama** — Run open-source models locally
-- **Llama.cpp** — Lightweight local model inference
-- **LiteLLM** — Proxy to multiple providers
-- **OpenAI-compatible endpoints** — Any OpenAI-compatible API
+Lumen works with OpenAI, Anthropic, Google, local models, and more.
 
 ## Quick start
 
-Set your provider's API key as an environment variable, then launch:
+Set your API key and launch:
 
 ```bash
-export OPENAI_API_KEY="your-key-here"
-lumen-ai serve
+export OPENAI_API_KEY="sk-..."
+lumen-ai serve penguins.csv
 ```
 
-The provider is auto-detected. Alternatively, specify it explicitly:
+Lumen auto-detects the provider from your environment variables.
 
-```bash
-lumen-ai serve --provider openai
-```
+## Supported providers
 
-## Configure models for agents
+- OpenAI (GPT-4o, GPT-4o-mini)
+- Anthropic (Claude 4-5 Sonnet, Claude 4-5 Haiku)
+- Google Gemini
+- Mistral AI
+- Azure OpenAI
+- Ollama (local models)
+- Llama.cpp (local models)
 
-Lumen AI uses different models for different tasks to optimize performance and cost. Specify different models for different agent types using `model_kwargs`.
+## Use different models per agent
 
-### Model types
-
-Agents automatically determine which model to use based on their task:
-
-- `default` — General-purpose tasks
-- `sql` — SQL query generation and database operations
-- `vega_lite` — Visualization generation
-- `reasoning` — Complex reasoning tasks
-- `chat` — Chat interactions
-- `analysis` — Data analysis
-
-### Basic configuration
-
-Configure different models for specific tasks:
-
-```bash
-lumen-ai serve --model-kwargs '{"default": {"model": "gpt-4o-mini"}, "sql": {"model": "gpt-4o"}, "vega_lite": {"model": "gpt-4o"}}'
-```
-
-In Python:
+Agents automatically use different models based on their task. Configure models by agent type:
 
 ```python
 import lumen.ai as lmai
 
-config = {
-    "default": {"model": "gpt-4o-mini"},
-    "sql": {"model": "gpt-4o"},
-    "vega_lite": {"model": "gpt-4o"},
-    "reasoning": {"model": "gpt-5"}
+model_config = {
+    "default": {"model": "gpt-4o-mini"},  # Cheap model for most agents
+    "sql": {"model": "gpt-4o"},           # Powerful model for SQL
+    "vega_lite": {"model": "gpt-4o"},     # Powerful model for charts
+    "analyst": {"model": "gpt-4o"},       # Powerful model for analysis
 }
 
-llm = lmai.llm.OpenAI(model_kwargs=config)
+llm = lmai.llm.OpenAI(model_kwargs=model_config)
 ui = lmai.ExplorerUI(data='penguins.csv', llm=llm)
 ui.servable()
 ```
 
-### Advanced configuration
+**How model types work:**
 
-Configure temperature and other parameters per model type:
+Agent names map to model types:
+
+- SQLAgent → `"sql"`
+- VegaLiteAgent → `"vega_lite"`
+- ChatAgent → `"chat"`
+- AnalystAgent → `"analyst"`
+
+Use `"default"` as fallback for any agent without specific configuration.
+
+## Configure temperature
+
+Control randomness in responses:
 
 ```python
-config = {
+model_config = {
     "default": {
         "model": "gpt-4o-mini",
-        "temperature": 0.3,
+        "temperature": 0.3,  # Moderate
     },
     "sql": {
         "model": "gpt-4o",
-        "temperature": 0.1,  # Lower for deterministic SQL
+        "temperature": 0.1,  # Low = deterministic SQL
     },
-    "vega_lite": {
-        "model": "gpt-4o",
-        "temperature": 0.2,  # Moderate for creative visualizations
-    },
-    "reasoning": {
-        "model": "gpt-5",
-        "temperature": 0.4,  # Higher for complex reasoning
+    "chat": {
+        "model": "gpt-4o-mini",
+        "temperature": 0.4,  # Higher = natural conversation
     },
 }
-
-llm = lmai.llm.OpenAI(model_kwargs=config)
 ```
 
-## Provider-specific configuration
+Lower temperature (0.1-0.3) for precise tasks. Higher temperature (0.4-0.7) for creative tasks.
+
+## Model recommendations
+
+**Use powerful models for:**
+
+- `sql` - SQL generation requires strong reasoning
+- `vega_lite` - Visualizations need design understanding  
+- `analyst` - Analysis needs statistical knowledge
+
+**Use efficient models for:**
+
+- `chat` - Simple conversations
+- `table_list` - Listing tables
+- `document_list` - Managing documents
+
+**Example balanced configuration:**
+
+```python
+model_config = {
+    "default": {"model": "gpt-4o-mini"},      # Fallback
+    "sql": {"model": "gpt-4o"},               # Critical
+    "vega_lite": {"model": "gpt-4o"},         # Critical
+    "analyst": {"model": "gpt-4o"},           # Critical
+    "edit": {"model": "gpt-4o"},              # Error fixing
+    # Everything else uses default (gpt-4o-mini)
+}
+```
+
+## Provider setup
 
 ### OpenAI
 
-**Environment variable:**
-
 ```bash
-export OPENAI_API_KEY="your-openai-api-key"
+export OPENAI_API_KEY="sk-..."
+lumen-ai serve
 ```
 
-**Python:**
+Or in Python:
 
 ```python
-import lumen.ai as lmai
-
-llm = lmai.llm.OpenAI(api_key='your-openai-api-key')
+llm = lmai.llm.OpenAI(api_key='sk-...')
 ui = lmai.ExplorerUI(data='penguins.csv', llm=llm)
-ui.servable()
 ```
-
-**Default models:**
-
-- `default`: gpt-4o-mini
-- `sql`: gpt-4o
-- `vega_lite`: gpt-4o
-- `reasoning`: gpt-5
 
 ### Anthropic
 
-**Environment variable:**
-
 ```bash
-export ANTHROPIC_API_KEY="your-anthropic-api-key"
+export ANTHROPIC_API_KEY="sk-ant-..."
+lumen-ai serve
 ```
 
-**Python:**
+Or in Python:
 
 ```python
-import lumen.ai as lmai
-
-llm = lmai.llm.AnthropicAI(api_key='your-anthropic-api-key')
-ui = lmai.ExplorerUI(data='penguins.csv', llm=llm)
-ui.servable()
+llm = lmai.llm.AnthropicAI(api_key='sk-ant-...')
 ```
 
 ### Google Gemini
 
-**Environment variable:**
-
 ```bash
-export GOOGLE_API_KEY="your-google-api-key"
+export GOOGLE_API_KEY="..."
+lumen-ai serve
 ```
 
-**Python:**
+Or in Python:
 
 ```python
-import lumen.ai as lmai
-
-llm = lmai.llm.GoogleAI(api_key='your-google-api-key')
-ui = lmai.ExplorerUI(data='penguins.csv', llm=llm)
-ui.servable()
+llm = lmai.llm.GoogleAI(api_key='...')
 ```
 
 ### Mistral
 
-**Environment variable:**
-
 ```bash
-export MISTRAL_API_KEY="your-mistral-api-key"
+export MISTRAL_API_KEY="..."
+lumen-ai serve
 ```
 
-**Python:**
+Or in Python:
 
 ```python
-import lumen.ai as lmai
-
-llm = lmai.llm.MistralAI(api_key='your-mistral-api-key')
-ui = lmai.ExplorerUI(data='penguins.csv', llm=llm)
-ui.servable()
+llm = lmai.llm.MistralAI(api_key='...')
 ```
 
 ### Azure OpenAI
 
-**Environment variable:**
-
 ```bash
-export AZUREAI_ENDPOINT_KEY="your-azure-endpoint-key"
+export AZUREAI_ENDPOINT_KEY="..."
+lumen-ai serve --provider azure-openai
 ```
 
-**Python:**
+Or in Python:
 
 ```python
-import lumen.ai as lmai
-
-llm = lmai.llm.AzureOpenAI(api_key='your-azure-api-key')
-ui = lmai.ExplorerUI(data='penguins.csv', llm=llm)
-ui.servable()
+llm = lmai.llm.AzureOpenAI(api_key='...')
 ```
 
-### Ollama (Local)
+### Ollama (local)
 
-Run open-source models locally with Ollama.
-
-**Install and run Ollama:**
+Install Ollama and pull a model:
 
 ```bash
-# Install from https://ollama.ai
-# Pull a model
 ollama pull llama2
-
-# Ollama runs on localhost:11434 by default
 ```
 
-**Python:**
+Then:
 
 ```python
-import lumen.ai as lmai
-
 llm = lmai.llm.Ollama(model='llama2')
 ui = lmai.ExplorerUI(data='penguins.csv', llm=llm)
-ui.servable()
 ```
 
-### Llama.cpp (Local)
+Ollama runs on `localhost:11434` by default.
 
-**Load from HuggingFace:**
+### Llama.cpp (local)
 
 ```bash
-lumen-ai serve --provider llama-cpp --llm-model-url 'https://huggingface.co/RE/PO/blob/main/FILE.gguf'
+lumen-ai serve --provider llama-cpp --llm-model-url 'https://huggingface.co/REPO/MODEL.gguf'
 ```
 
-**Python:**
+Or in Python:
 
 ```python
-import lumen.ai as lmai
-
-llm = lmai.llm.LlamaCpp(
-    repo='model-repo/model-name',
-    model_file='model.gguf'
-)
+llm = lmai.llm.LlamaCpp(repo='model-repo', model_file='model.gguf')
 ui = lmai.ExplorerUI(data='penguins.csv', llm=llm)
-ui.servable()
 ```
 
 ### OpenAI-compatible endpoints
 
-Use any API compatible with OpenAI's interface:
-
-```bash
-lumen-ai serve --provider openai --provider-endpoint https://your-endpoint.com/v1
-```
-
-**Python:**
+Any API with OpenAI's format:
 
 ```python
-import lumen.ai as lmai
-
 llm = lmai.llm.OpenAI(
-    api_key='your-api-key',
+    api_key='...',
     endpoint='https://your-endpoint.com/v1'
 )
-ui = lmai.ExplorerUI(data='penguins.csv', llm=llm)
-ui.servable()
 ```
 
-## Agent-specific model recommendations
+## All model types
 
-Choose models based on the agent's task:
+| Model type | Agent | Use |
+|------------|-------|-----|
+| `default` | Fallback | Any agent without specific config |
+| `sql` | SQLAgent | SQL queries |
+| `vega_lite` | VegaLiteAgent | Charts |
+| `chat` | ChatAgent | Conversation |
+| `analyst` | AnalystAgent | Data analysis |
+| `analysis` | AnalysisAgent | Custom analyses |
+| `table_list` | TableListAgent | List tables |
+| `document_list` | DocumentListAgent | List documents |
+| `source` | SourceAgent | Data uploads |
+| `validation` | ValidationAgent | Validate results |
+| `edit` | (any agent) | Fix errors |
 
-**SQL Agent** — Generates SQL queries
+## Troubleshooting
 
-- Recommended: Capable models (gpt-4o, claude-4-5-sonnet)
-- Why: SQL requires strong logical reasoning and syntax knowledge
-- Temperature: 0.1 (low, deterministic)
+**"API key not found":**
 
-**VegaLiteAgent** — Creates visualizations
+Set your API key as an environment variable or pass it directly in Python.
 
-- Recommended: Creative, capable models (gpt-4o, claude-4-5-sonnet)
-- Why: Requires design principles and JSON structure understanding
-- Temperature: 0.2 (moderate)
+**Wrong model used:**
 
-**ChatAgent** — General conversation
+Check model type names match agent names. SQLAgent uses `"sql"`, not `"SQLAgent"`.
 
-- Recommended: Cost-effective models (gpt-4o-mini, claude-4-5-haiku)
-- Why: Simple interactions don't need advanced reasoning
-- Temperature: 0.3 (moderate, natural conversation)
+**High costs:**
 
-**AnalysisAgent** — Data analysis
+Use cheaper models for `default` and non-critical agents. Only use powerful models for `sql`, `vega_lite`, and `analyst`.
 
-- Recommended: Advanced models (gpt-4o, claude-4-5-sonnet)
-- Why: Requires statistical and domain knowledge
-- Temperature: 0.2 (moderate)
+**Slow responses:**
 
-**DbtslAgent** — Business metric queries
+Local models (Ollama, Llama.cpp) are slower than cloud APIs. Use cloud providers for production.
 
-- Recommended: SQL-capable models (gpt-4o, claude-4-5-sonnet)
-- Why: Requires semantic modeling understanding
-- Temperature: 0.1 (low, deterministic)
+## Best practices
+
+- Use powerful models (`gpt-4o`) for SQL, visualization, and analysis
+- Use efficient models (`gpt-4o-mini`) for chat and simple tasks
+- Set lower temperature (0.1) for SQL and data tasks
+- Set moderate temperature (0.3-0.4) for conversational tasks
+- Test with your production model before deploying

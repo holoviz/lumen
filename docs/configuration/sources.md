@@ -1,81 +1,160 @@
-# Sources
+# Data Sources
 
-Connect to and query data from various sources. Lumen AI supports local files, cloud databases, and data warehouses.
+**Connect Lumen to files, databases, or data warehouses.**
 
-## Supported sources
+Most users start with files. Advanced users connect to databases.
 
-- **Local and remote files** — CSV, Parquet, JSON
-- **DuckDB** — Local SQL queries with file support
-- **Snowflake** — Cloud data warehouse
-- **BigQuery** — Google's data warehouse
-- **Prometheus** — Time-series metrics database
-- **Intake** — Generic data catalog
+## Quick start
 
-!!! info
-    When you use `lumen-ai serve` with file paths or URLs, Lumen automatically uses DuckDB as the backend. You don't need to explicitly configure it.
+### Load a file
 
-## DuckDB
+```bash
+lumen-ai serve penguins.csv
+```
 
-Query local and remote files with SQL support.
+Works with CSV, Parquet, JSON, and URLs. No configuration needed.
 
-### Local files
+### Load multiple files
+
+```bash
+lumen-ai serve penguins.csv earthquakes.parquet
+```
+
+Or in Python:
 
 ```python
 import lumen.ai as lmai
-from lumen.sources.duckdb import DuckDBSource
 
-source = DuckDBSource(
-    tables=['penguins.csv', 'earthquakes.parquet']
+ui = lmai.ExplorerUI(data=['penguins.csv', 'earthquakes.parquet'])
+ui.servable()
+```
+
+### Upload in the UI
+
+Start without data:
+
+```bash
+lumen-ai serve
+```
+
+Click **Manage Data** (cloud icon) to upload CSV, Parquet, or JSON files.
+
+## Supported sources
+
+| Source | Use for |
+|--------|---------|
+| **Files** | CSV, Parquet, JSON (local or URL) |
+| **DuckDB** | Local SQL queries on files |
+| **Snowflake** | Cloud data warehouse |
+| **BigQuery** | Google's data warehouse |
+| **PostgreSQL** | PostgreSQL databases |
+| **Intake** | Data catalogs |
+
+## Connect to databases
+
+### Snowflake
+
+```python
+from lumen.sources.duckdb import DuckDBSource
+from lumen.sources.snowflake import SnowflakeSource
+import lumen.ai as lmai
+
+source = SnowflakeSource(
+    account='your-account',
+    user='your-username',
+    authenticator='externalbrowser',  # SSO login
+    database='your-database',
+    schema='your-schema',
 )
+
 ui = lmai.ExplorerUI(source=source)
 ui.servable()
 ```
 
-### Remote files
+**Authentication options:**
+
+- `authenticator='externalbrowser'` - SSO (recommended)
+- `authenticator='snowflake'` - Username/password (needs `password=`)
+- `authenticator='oauth'` - OAuth token (needs `token=`)
+- Private key authentication (needs `private_key=`)
+
+**Select specific tables:**
 
 ```python
-source = DuckDBSource(
-    tables=[
-        'https://datasets.holoviz.org/penguins/v1/penguins.csv',
-        'https://earthquake.usgs.gov/fdsnws/event/1/query?format=csv'
-    ]
+source = SnowflakeSource(
+    account='your-account',
+    database='your-database',
+    tables=['CUSTOMERS', 'ORDERS']  # Only these tables
 )
 ```
 
-### Custom SQL expressions
+### BigQuery
 
 ```python
-# Use dictionary for custom table names
+from lumen.sources.bigquery import BigQuerySource
+
+source = BigQuerySource(
+    project_id='your-project-id',
+    tables=['dataset.table1', 'dataset.table2']
+)
+
+ui = lmai.ExplorerUI(source=source)
+ui.servable()
+```
+
+**Authentication:**
+
+```bash
+gcloud auth application-default login
+```
+
+Or use a service account:
+
+```bash
+export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account.json"
+```
+
+**Select all tables in a dataset:**
+
+```python
+source = BigQuerySource(
+    project_id='your-project-id',
+    datasets=['dataset1']  # All tables in dataset1
+)
+```
+
+### PostgreSQL
+
+```python
+from lumen.sources.sql import PostgresSource
+
+source = PostgresSource(
+    connection_string='postgresql://user:password@localhost:5432/database'
+)
+```
+
+## Advanced file configuration
+
+### DuckDB for complex file queries
+
+DuckDB lets you run SQL on files directly:
+
+```python
+from lumen.sources.duckdb import DuckDBSource
+
 source = DuckDBSource(
     tables={
         'penguins': 'penguins.csv',
-        'recent_earthquakes': "read_csv('https://earthquake.usgs.gov/fdsnws/event/1/query?format=csv')",
+        'earthquakes': "read_csv('https://earthquake.usgs.gov/query?format=csv')",
     }
 )
 ```
 
-### Non-standard file extensions
-
-For files with non-standard extensions like `.parq`, wrap them with `read_parquet()`:
+**Load remote files:**
 
 ```python
 source = DuckDBSource(
-    tables={
-        'penguins': "read_parquet('data/penguins.parq')",
-        'earthquakes': 'earthquakes.csv',
-    }
-)
-```
-
-See [DuckDB parquet documentation](https://duckdb.org/docs/data/parquet/overview.html) for available methods.
-
-### Initialization statements
-
-Run SQL statements when connecting:
-
-```python
-source = DuckDBSource(
-    tables=['flights.db'],
+    tables=['https://datasets.holoviz.org/penguins/v1/penguins.csv'],
     initializers=[
         'INSTALL httpfs;',
         'LOAD httpfs;'
@@ -83,173 +162,86 @@ source = DuckDBSource(
 )
 ```
 
-## Snowflake
-
-Connect to your Snowflake data warehouse.
-
-### Basic connection
+**Non-standard extensions:**
 
 ```python
-import lumen.ai as lmai
+source = DuckDBSource(
+    tables={
+        'data': "read_parquet('file.parq')",  # Wrap non-standard extensions
+    }
+)
+```
+
+### Multiple sources
+
+Load data from different sources:
+
+```python
+snowflake = SnowflakeSource(account='...', database='...')
+bigquery = BigQuerySource(project_id='...')
+
+ui = lmai.ExplorerUI(data=[snowflake, bigquery])
+ui.servable()
+```
+
+Lumen can query across all sources.
+
+## Common patterns
+
+### Mix files and databases
+
+```python
+from lumen.sources.duckdb import DuckDBSource
 from lumen.sources.snowflake import SnowflakeSource
 
-source = SnowflakeSource(
-    account='your-account',
-    user='your-username',
-    authenticator='externalbrowser',
-    database='your-database',
-    schema='your-schema',
-)
-ui = lmai.ExplorerUI(source=source)
+local_data = DuckDBSource(tables=['local.csv'])
+cloud_data = SnowflakeSource(account='...', database='...')
+
+ui = lmai.ExplorerUI(data=[local_data, cloud_data])
 ui.servable()
 ```
 
-### Authentication methods
-
-**External browser (SSO):**
+### Custom table names
 
 ```python
-source = SnowflakeSource(
-    account='your-account',
-    authenticator='externalbrowser',
-    database='your-database',
-)
-```
-
-**Username and password:**
-
-```python
-source = SnowflakeSource(
-    account='your-account',
-    authenticator='snowflake',
-    user='your-username',
-    password='your-password',
-    database='your-database',
-)
-```
-
-**OAuth:**
-
-```python
-source = SnowflakeSource(
-    account='your-account',
-    authenticator='oauth',
-    token='your-oauth-token',
-    database='your-database',
-)
-```
-
-**Private key:**
-
-```python
-source = SnowflakeSource(
-    account='your-account',
-    user='your-username',
-    private_key='/path/to/private/key.p8',
-    database='your-database',
-)
-```
-
-### Selecting tables
-
-Specify tables as a list:
-
-```python
-source = SnowflakeSource(
-    account='your-account',
-    user='your-username',
-    database='your-database',
-    tables=['table1', 'table2'],
-)
-```
-
-Or with custom names:
-
-```python
-source = SnowflakeSource(
-    account='your-account',
-    user='your-username',
-    database='your-database',
+source = DuckDBSource(
     tables={
-        'customers': 'CUSTOMERS',
-        'orders': 'ORDERS',
+        'customers': 'customer_data.csv',
+        'orders': 'order_history.parquet',
     }
 )
 ```
 
-## BigQuery
+Now ask questions using "customers" and "orders" instead of file names.
 
-Connect to your Google BigQuery project.
+### Initialize databases
 
-### Basic connection
-
-```python
-import lumen.ai as lmai
-from lumen.sources.bigquery import BigQuerySource
-
-source = BigQuerySource(
-    project_id='your-project-id',
-    tables=['dataset.table1', 'dataset.table2']
-)
-ui = lmai.ExplorerUI(source=source)
-ui.servable()
-```
-
-### Authentication
-
-BigQuery uses Google's default authentication. Set up your credentials:
-
-```bash
-gcloud auth login
-gcloud auth application-default login
-```
-
-Or provide a service account JSON file:
-
-```bash
-export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account.json"
-```
-
-### Specifying datasets and tables
-
-By dataset:
+Run setup SQL when connecting:
 
 ```python
-source = BigQuerySource(
-    project_id='your-project-id',
-    datasets=['dataset1', 'dataset2']
+source = DuckDBSource(
+    tables=['data.csv'],
+    initializers=[
+        'INSTALL httpfs;',
+        'LOAD httpfs;',
+        'SET memory_limit="8GB";'
+    ]
 )
 ```
 
-By table name:
+## Troubleshooting
 
-```python
-source = BigQuerySource(
-    project_id='your-project-id',
-    tables=['dataset1.table1', 'dataset2.table2']
-)
-```
+**"Table not found"**: Check table names match exactly (case-sensitive for some databases).
 
-With custom names:
+**"Connection failed"**: Verify credentials and network access to the database.
 
-```python
-source = BigQuerySource(
-    project_id='your-project-id',
-    tables={
-        'customers': 'dataset.customers_table',
-        'orders': 'dataset.orders_table'
-    }
-)
-```
+**"File not found"**: Use absolute paths or URLs. Relative paths are relative to where you run `lumen-ai serve`.
 
-## Upload data
+**Slow queries**: DuckDB is fast for files. If queries are slow, the database connection or query is the bottleneck, not Lumen.
 
-Upload files directly in the UI without specifying sources:
+## Best practices
 
-```bash
-lumen-ai serve
-```
-
-Click the **Manage Data** button (cloud upload icon) to upload CSV, Parquet, or JSON files.
-
-Or drag and drop files into the upload area.
+- **Start with files** for testing and development
+- **Use URLs** for shared datasets that don't change often
+- **Connect databases** for production data that updates frequently
+- **Limit tables** when possible (faster planning and lower costs)

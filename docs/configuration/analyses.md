@@ -1,293 +1,133 @@
 # Analyses
 
-Analyses let you define fixed, domain-specific calculations and visualizations that the LLM can invoke when appropriate. Instead of asking the LLM to generate queries every time, you specify analyses once—wind calculations, statistical tests, custom visualizations—and let the AnalysisAgent automatically apply them when the user's data matches.
+**Analyses are functions that run deterministically with code instead of LLM generation.**
 
-## What are analyses?
+Like tools or hooks, analyses give you control over specific calculations. Use them when you need reliable, repeatable results—financial metrics, scientific formulas, or statistical tests that must be calculated exactly the same way every time.
 
-Analyses are reusable, pre-built computations tailored to specific domains or use cases. Each analysis:
-
-- Declares which columns it requires
-- Checks if those columns exist in the current dataset
-- Performs custom calculations or transformations
-- Returns interactive visualizations or data tables
-
-When a user asks a question, the AnalysisAgent checks available analyses, matches their required columns against the current data, and invokes the relevant ones.
-
-## Using analyses
-
-### Enable the AnalysisAgent
-
-Include `AnalysisAgent` in your UI and provide custom analyses:
+## Quick example
 
 ```python
 import lumen.ai as lmai
+from lumen.views import Table
+
+class SummaryStats(lmai.Analysis):
+    """Calculate summary statistics."""
+    
+    columns = ["value"]  # Required columns
+    
+    def __call__(self, pipeline):
+        df = pipeline.data
+        stats = df.describe()
+        return Table(data=stats)
+
+ui = lmai.ExplorerUI(
+    data='data.csv',
+    analyses=[SummaryStats()]
+)
+ui.servable()
+```
+
+When the data has a "value" column, users can ask "Show me summary statistics" and Lumen runs your analysis.
+
+## When to use analyses
+
+**Use analyses for:**
+
+- Domain-specific calculations (wind speed from components, ROI formulas)
+- Statistical tests (t-tests, ANOVA, correlation)
+- Custom visualizations (domain-specific charts)
+- Repeated calculations across datasets
+
+**Don't use analyses for:**
+
+- One-off queries (just ask in chat)
+- Simple aggregations (SQL handles these)
+- Generic operations (built-in agents cover common tasks)
+
+## Basic structure
+
+```python
+import lumen.ai as lmai
+from lumen.views import hvPlotView
 
 class MyAnalysis(lmai.Analysis):
-    columns = ["time", "value"]
+    """What this analysis does."""
+    
+    columns = ["col1", "col2"]  # Required columns
     
     def __call__(self, pipeline):
-        # Perform analysis and return result
-        return pipeline
-
-ui = lmai.ExplorerUI(
-    data='penguins.csv',
-    agents=[lmai.agents.AnalysisAgent(analyses=[MyAnalysis()])]
-)
-ui.servable()
-```
-
-### Use multiple analyses
-
-Pass multiple analyses to the agent:
-
-```python
-analyses_list = [
-    WindAnalysis(),
-    TemperatureAnalysis(),
-    StatisticalTestAnalysis(),
-]
-
-ui = lmai.ExplorerUI(
-    data='weather_data.csv',
-    agents=[lmai.agents.AnalysisAgent(analyses=analyses_list)]
-)
-ui.servable()
-```
-
-### Automatic invocation
-
-The AnalysisAgent automatically invokes analyses when:
-
-1. User's query is relevant to the analysis
-2. All required columns exist in the current dataset
-3. The analysis hasn't been run recently
-
-No explicit user request needed—the agent decides intelligently.
-
-## Creating custom analyses
-
-### Core concepts
-
-**`columns`**
-
-List of column names required for the analysis. If any are missing, the analysis is skipped.
-
-```python
-columns = ["time", "value"]  # Analysis requires both columns
-```
-
-**`__call__(pipeline)`**
-
-Method that performs the analysis. Receives a data pipeline and returns a visualization or result.
-
-```python
-def __call__(self, pipeline):
-    # Access data, perform calculations, return view
-    return view
-```
-
-**`applies(pipeline)`**
-
-Class method that checks if the analysis applies. Checks column existence by default.
-
-```python
-@classmethod
-async def applies(cls, pipeline) -> bool:
-    # Return True if analysis should be available
-    return await super().applies(pipeline)
-```
-
-### Analysis structure
-
-Create custom analyses by subclassing `lmai.Analysis`:
-
-```python
-import lumen.ai as lmai
-from lumen.views import Table, hvPlotView
-
-class CustomAnalysis(lmai.Analysis):
-    """Description of what this analysis does."""
-    
-    columns = ["column1", "column2"]  # Required columns
-    autorun = True  # Run automatically when columns are available
-    
-    def __call__(self, pipeline):
-        # Perform calculations
-        # Return visualization or component
-        return Table(pipeline=pipeline)
-```
-
-### Build your first analysis
-
-**Step 1: Define required columns**
-
-Specify which columns the analysis needs:
-
-```python
-columns = ["species", "body_mass_g"]
-```
-
-**Step 2: Import visualization tools**
-
-Use Lumen's view components to create outputs:
-
-```python
-from lumen.views import Table, hvPlotView, hvOverlayView
-from lumen.layout import Layout
-from lumen.transforms import Transform
-import numpy as np
-```
-
-**Step 3: Create transforms if needed**
-
-Preprocess data with custom transforms:
-
-```python
-class BodyMassAnalysis(Transform):
-    """Calculate BMI categories."""
-    
-    def apply(self, df):
-        df["mass_category"] = pd.cut(
-            df["body_mass_g"],
-            bins=[0, 3500, 4500, 6500],
-            labels=["Light", "Medium", "Heavy"]
+        # Your calculation logic
+        df = pipeline.data
+        result = df["col1"] * df["col2"]
+        
+        # Return a view
+        return hvPlotView(
+            data=result,
+            kind="line"
         )
-        return df
 ```
 
-**Step 4: Implement `__call__`**
-
-Chain transforms and create views:
-
-```python
-def __call__(self, pipeline):
-    # Apply custom transform
-    analyzed_pipeline = pipeline.chain(
-        transforms=[BodyMassAnalysis()]
-    )
-    
-    # Create visualizations
-    view1 = hvPlotView(
-        pipeline=analyzed_pipeline,
-        x="species",
-        y="body_mass_g",
-        kind="box"
-    )
-    
-    view2 = Table(pipeline=analyzed_pipeline)
-    
-    # Return layout with multiple views
-    return Layout(
-        views=[view1, view2],
-        layout=[[0], [1]]
-    )
-```
-
-### Example: Wind Analysis
-
-Here's a complete meteorology analysis:
+## Complete example: Wind analysis
 
 ```python
 import numpy as np
-import pandas as pd
 import lumen.ai as lmai
-from lumen.layout import Layout
 from lumen.transforms import Transform
-from lumen.views import hvPlotView, hvOverlayView, Table
+from lumen.views import hvPlotView
+from lumen.layout import Layout
 
-class WindSpeedDirection(Transform):
-    """Calculate wind speed and direction from u,v components."""
-    
-    u_component = param.String(default="u")
-    v_component = param.String(default="v")
+class WindCalculation(Transform):
+    """Convert u,v components to speed and direction."""
     
     def apply(self, df):
-        # Calculate wind speed from components
-        df["wind_speed"] = np.sqrt(
-            df[self.u_component] ** 2 + df[self.v_component] ** 2
-        )
-        
-        # Calculate wind direction (degrees from north)
-        df["wind_direction"] = np.degrees(
-            np.arctan2(df[self.v_component], df[self.u_component])
-        )
-        df["wind_direction"] = (df["wind_direction"] + 360) % 360
-        
+        df["wind_speed"] = np.sqrt(df["u"]**2 + df["v"]**2)
+        df["wind_direction"] = np.degrees(np.arctan2(df["v"], df["u"]))
         return df
 
 class WindAnalysis(lmai.Analysis):
-    """Analyzes wind patterns from u,v components."""
+    """Analyze wind patterns from u,v components."""
     
     columns = ["time", "u", "v"]
-    autorun = True
     
     def __call__(self, pipeline):
-        # Apply wind calculations
-        wind_pipeline = pipeline.chain(
-            transforms=[WindSpeedDirection()]
-        )
+        # Apply calculation
+        wind_pipeline = pipeline.chain(transforms=[WindCalculation()])
         
-        # Create wind speed time series
-        wind_speed_view = hvPlotView(
+        # Create speed chart
+        speed_chart = hvPlotView(
             pipeline=wind_pipeline,
             x="time",
             y="wind_speed",
             title="Wind Speed"
         )
         
-        # Overlay wind direction
-        wind_direction_view = hvPlotView(
+        # Create direction chart
+        direction_chart = hvPlotView(
             pipeline=wind_pipeline,
             x="time",
             y="wind_direction",
             title="Wind Direction"
         )
         
-        # Data table
-        wind_table = Table(pipeline=wind_pipeline)
-        
-        # Combine views
-        return Layout(
-            views=[
-                hvOverlayView(
-                    layers=[wind_speed_view, wind_direction_view]
-                ),
-                wind_table
-            ],
-            layout=[[0], [1]]
-        )
-```
+        return Layout(views=[speed_chart, direction_chart], layout=[[0], [1]])
 
-Usage:
-
-```python
-import lumen.ai as lmai
-
-# Create sample data
-uv_df = pd.DataFrame({
-    "time": pd.date_range('2024-11-11', '2024-11-22'),
-    "u": np.random.rand(12),
-    "v": np.random.rand(12)
-})
-
-source = lmai.memory["source"] = DuckDBSource.from_df({"uv_df": uv_df})
-
-# Use analysis
+# Use it
 ui = lmai.ExplorerUI(
-    agents=[lmai.agents.AnalysisAgent(analyses=[WindAnalysis()])]
+    data='weather.csv',
+    analyses=[WindAnalysis()]
 )
 ui.servable()
 ```
 
-### Control when analyses run
+Now users can ask "Analyze wind patterns" and get both charts automatically.
 
-Use `autorun` to control automatic execution:
+## Control when analyses run
 
 ```python
 class ExpensiveAnalysis(lmai.Analysis):
-    """Complex analysis that shouldn't run automatically."""
+    """Complex calculation."""
     
-    columns = ["col1", "col2"]
+    columns = ["data"]
     autorun = False  # Only run when explicitly requested
     
     def __call__(self, pipeline):
@@ -295,42 +135,152 @@ class ExpensiveAnalysis(lmai.Analysis):
         return result
 ```
 
-### Add interactive controls
+Set `autorun = False` for analyses that:
 
-Analyses can have configurable parameters:
+- Take a long time to compute
+- Should only run on explicit request
+- Have expensive operations
+
+## Add configurable parameters
 
 ```python
-class ParameterizedAnalysis(lmai.Analysis):
+import param
+from lumen.views import hvPlotView
+
+class ThresholdAnalysis(lmai.Analysis):
     
-    columns = ["time", "value"]
-    
-    threshold = param.Number(default=50)  # User-configurable
-    method = param.Selector(default="mean", objects=["mean", "median"])
-    
-    def controls(self):
-        """Return UI controls for parameters."""
-        import panel as pn
-        return pn.Param(self.param, parameters=["threshold", "method"])
+    columns = ["value"]
+    threshold = param.Number(default=50)  # User can adjust
     
     def __call__(self, pipeline):
-        # Use self.threshold and self.method
+        df = pipeline.data
+        filtered = df[df["value"] > self.threshold]
+        
+        return hvPlotView(
+            data=filtered,
+            y="value",
+            kind="hist"
+        )
+```
+
+## Multiple analyses
+
+```python
+ui = lmai.ExplorerUI(
+    data='data.csv',
+    analyses=[
+        WindAnalysis(),
+        TemperatureAnalysis(),
+        PressureAnalysis(),
+    ]
+)
+ui.servable()
+```
+
+Lumen automatically picks the right analysis based on:
+
+- Available columns in current data
+- User's question
+- Analysis descriptions
+
+## Common patterns
+
+### Statistical analysis
+
+```python
+class CorrelationAnalysis(lmai.Analysis):
+    """Show correlation between variables."""
+    
+    columns = ["x", "y"]
+    
+    def __call__(self, pipeline):
+        df = pipeline.data
+        correlation = df["x"].corr(df["y"])
+        
+        return hvPlotView(
+            pipeline=pipeline,
+            x="x",
+            y="y",
+            kind="scatter",
+            title=f"Correlation: {correlation:.2f}"
+        )
+```
+
+### Financial calculations
+
+```python
+class ROIAnalysis(lmai.Analysis):
+    """Calculate return on investment."""
+    
+    columns = ["revenue", "cost"]
+    
+    def __call__(self, pipeline):
+        df = pipeline.data
+        df["roi"] = ((df["revenue"] - df["cost"]) / df["cost"]) * 100
+        
+        return hvPlotView(
+            pipeline=pipeline.chain(transforms=[]),
+            y="roi",
+            kind="hist",
+            title="ROI Distribution"
+        )
+```
+
+### Data quality checks
+
+```python
+class QualityCheck(lmai.Analysis):
+    """Check for missing and duplicate data."""
+    
+    columns = []  # Works with any columns
+    
+    def __call__(self, pipeline):
+        df = pipeline.data
+        
+        report = {
+            "total_rows": len(df),
+            "missing_values": df.isnull().sum().sum(),
+            "duplicates": df.duplicated().sum(),
+        }
+        
+        return Table(data=pd.DataFrame([report]))
+```
+
+## Troubleshooting
+
+**Analysis never runs:**
+
+Check that required columns exist in your data with exact names (case-sensitive).
+
+**Analysis fails silently:**
+
+Add error handling:
+
+```python
+def __call__(self, pipeline):
+    try:
+        # Your logic
         return result
+    except Exception as e:
+        print(f"Analysis failed: {e}")
+        return Table(data=pd.DataFrame([{"error": str(e)}]))
+```
+
+**Can't find analysis columns:**
+
+Print available columns during development:
+
+```python
+def __call__(self, pipeline):
+    print("Available columns:", pipeline.data.columns.tolist())
+    # Your logic
 ```
 
 ## Best practices
 
-**One analysis, one purpose.** Each analysis should solve a specific problem. Create multiple analyses for different tasks rather than one omnibus analysis.
-
-**Declare columns precisely.** List exactly which columns are required. Incomplete declarations cause analyses to skip silently.
-
-**Test with real data.** Verify your analysis works with the actual data distributions you'll encounter.
-
-**Cache expensive operations.** If an analysis is computationally expensive, check if results can be reused.
-
-**Keep transforms simple.** Complex transforms make analyses harder to debug. Keep each transform focused.
-
-**Return informative visualizations.** Don't just return data—add context with titles, labels, and annotations.
-
-**Handle edge cases.** Check for empty data, null values, and outliers. Provide graceful error messages.
-
-**Document requirements clearly.** Explain what columns are needed and what the analysis computes in docstrings.
+- Keep analyses focused on one calculation
+- Declare required columns explicitly
+- Return informative visualizations with titles
+- Handle missing data gracefully
+- Test with real data distributions
+- Document what the analysis does in docstrings

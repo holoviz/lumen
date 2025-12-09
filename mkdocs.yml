@@ -52,6 +52,9 @@ markdown_extensions:
       permalink: true
   - pymdownx.highlight:
       anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.superfences
   - pymdownx.tasklist:
       custom_checkbox: true
   - pymdownx.inlinehilite
@@ -82,11 +85,11 @@ plugins:
 
 watch:
   - docs
-  - lumen
 
 nav:
   - Home: index.md
   - Installation: installation.md
+  - FAQ: faq.md
 
   - Getting Started:
     - Launching Lumen: getting_started/launching_lumen.md
@@ -95,19 +98,17 @@ nav:
 
   - Configuration:
     - CLI: configuration/cli.md
-    - LLM Providers: configuration/llm_providers.md
+    - Prompts: configuration/prompts.md
     - Data Sources: configuration/sources.md
+    - LLM Providers: configuration/llm_providers.md
     - Agents: configuration/agents.md
     - Tools: configuration/tools.md
     - Analyses: configuration/analyses.md
-    - Prompts: configuration/prompts.md
+    - Coordinator: configuration/coordinators.md
 
-  - Help:
-    - FAQ: faq.md
+  - Reference:
+    - API: reference/
     - Contributing: contributing.md
-
-  - Reference: reference/
-
 
 extra:
   social:

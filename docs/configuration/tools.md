@@ -1,77 +1,42 @@
 # Tools
 
-Tools extend agents' capabilities by enabling them to access external data, perform specialized tasks, and interact with their environment. Tools can query databases, search documents, look up tables, or perform domain-specific computations.
+**Tools let agents access external data and perform specialized tasks.**
+
+Most users don't need custom tools. Built-in tools handle common needs.
 
 ## Built-in tools
 
-Lumen AI includes several built-in tools for common data exploration tasks:
+Lumen includes tools automatically:
 
-**DocumentLookup**
+- **TableLookup** - Finds relevant tables in your data
+- **DocumentLookup** - Searches uploaded documents
+- **IterativeTableLookup** - Advanced table discovery
+- **DbtslLookup** - Queries dbt Semantic Layer metrics
 
-- Searches uploaded documents using vector embeddings
-- Finds relevant document chunks based on user queries
-- Provides document context to agents
+You don't need to configure these. Agents use them when needed.
 
-**TableLookup**
+## Create a simple tool
 
-- Discovers relevant tables in your datasets
-- Searches by table names and descriptions
-- Provides context about available tables
-
-**IterativeTableLookup**
-
-- Advanced version of TableLookup
-- Performs iterative selection of tables and schemas
-- Provides complete SQL schemas for selected tables
-- Best for complex data queries
-
-**DbtslLookup**
-
-- Integrates with dbt Semantic Layer
-- Searches for relevant metrics and dimensions
-- Queries business metrics for analysis
-
-## Using tools
-
-### Add tools to agents
-
-Pass tools to ExplorerUI so agents can use them:
-
-```python
-import lumen.ai as lmai
-from lumen.ai.tools import DocumentLookup, TableLookup
-
-ui = lmai.ExplorerUI(
-    data='penguins.csv',
-    tools=[DocumentLookup(), TableLookup()]
-)
-ui.servable()
-```
-
-Agents automatically decide when to use available tools based on the query.
-
-### Use function-based tools
-
-Turn any Python function into a tool by adding it to the tools list:
+Turn any function into a tool:
 
 ```python
 import lumen.ai as lmai
 
-def calculate_average(data: list[float]) -> float:
+def calculate_average(numbers: list[float]) -> float:
     """
     Calculate the average of a list of numbers.
     
     Parameters
     ----------
-    data : list[float]
-        List of numbers to average
+    numbers : list[float]
+        Numbers to average
         
     Returns
     -------
     float
-        The average value
+        The average
     """
-    return sum(data) / len(data)
+    return sum(numbers) / len(numbers)
 
 ui = lmai.ExplorerUI(
     data='penguins.csv',
@@ -80,164 +45,56 @@ ui = lmai.ExplorerUI(
 ui.servable()
 ```
 
-The LLM uses the function's docstring and type hints to understand when and how to call it.
+The LLM uses your docstring and type hints to understand when to call it.
 
-### Control tool behavior with FunctionTool
+## Tool that accesses memory
 
-For more control, wrap functions with `FunctionTool`:
+Tools can read data from memory:
 
 ```python
-import lumen.ai as lmai
 from lumen.ai.tools import FunctionTool
 
-def apply_filter(table) -> str:
+def filter_penguins(table) -> dict:
     """
-    Applies a filter to the current table.
+    Filter penguins by bill length.
     
     Parameters
     ----------
     table : pd.DataFrame
-        The data table
-        
-    Returns
-    -------
-    str
-        Confirmation message
-    """
-    filtered = table[table['species'] == 'Adelie']
-    return f"Filtered to {len(filtered)} Adelie penguins"
-
-tool = FunctionTool(
-    function=apply_filter,
-    requires=["table"],              # Function needs 'table' from memory
-    provides=[],                     # Function doesn't provide anything to memory
-    purpose="Filters the table to show only Adelie penguins"
-)
-
-ui = lmai.ExplorerUI(
-    data='penguins.csv',
-    tools=[tool]
-)
-ui.servable()
-```
-
-## Creating custom tools
-
-Create custom tools for domain-specific tasks and specialized queries.
-
-### Core concepts
-
-**`requires`**
-
-List of memory keys the tool needs. These are automatically injected as arguments:
-
-```python
-requires = ["table", "sql"]  # Tool will receive table and sql from memory
-```
-
-**`provides`**
-
-List of memory keys the tool updates or creates:
-
-```python
-provides = ["summary"]  # Tool updates or creates the 'summary' key in memory
-```
-
-**`purpose`**
-
-Clear description of what the tool does. Helps the LLM decide when to use it:
-
-```python
-purpose = "Filters data based on a specific column value"
-```
-
-**`formatter`**
-
-Controls how the tool output is displayed. Default: `"{function}({arguments}) returned: {output}"`
-
-```python
-formatter = "Executed {function} with {arguments}, result: {output}"
-```
-
-### Simple function tool
-
-Create a tool from a simple function:
-
-```python
-import lumen.ai as lmai
-
-def summarize_data(data: list) -> str:
-    """
-    Summarize a list of data points.
-    
-    Returns the count and average.
-    """
-    if not data:
-        return "No data available"
-    return f"Count: {len(data)}, Average: {sum(data) / len(data):.2f}"
-
-ui = lmai.ExplorerUI(
-    data='penguins.csv',
-    tools=[summarize_data]
-)
-ui.servable()
-```
-
-### Tool that accesses memory
-
-Create tools that read from and write to memory:
-
-```python
-import lumen.ai as lmai
-from lumen.ai.tools import FunctionTool
-
-def apply_proprietary_algorithm(table) -> dict:
-    """
-    Applies a proprietary algorithm to filter the table.
-    
-    Parameters
-    ----------
-    table : pd.DataFrame
-        The input data table
+        The penguin data
         
     Returns
     -------
     dict
-        Mapping of results to memory
+        Filtered data and summary
     """
-    # Process the data
     filtered = table[table['bill_length_mm'] > 40]
     return {
         "filtered_table": filtered,
-        "summary": f"Found {len(filtered)} records matching criteria"
+        "summary": f"Found {len(filtered)} penguins with bill length > 40mm"
     }
 
 tool = FunctionTool(
-    function=apply_proprietary_algorithm,
-    requires=["table"],
-    provides=["filtered_table", "summary"],
-    purpose="Filters penguins by bill length using proprietary algorithm"
+    function=filter_penguins,
+    requires=["table"],              # Needs table from memory
+    provides=["filtered_table", "summary"],  # Adds these to memory
+    purpose="Filter penguins by bill length"
 )
 
 ui = lmai.ExplorerUI(
     data='penguins.csv',
     tools=[tool]
 )
-ui.servable()
 ```
 
-### Tool that wraps external APIs
+## Tool that calls an API
 
-Wrap external APIs or libraries as tools:
+Wrap external services:
 
 ```python
-import lumen.ai as lmai
-from lumen.ai.tools import FunctionTool
-import requests
-
 def fetch_weather(location: str) -> str:
     """
-    Fetch current weather for a location.
+    Get current weather for a location.
     
     Parameters
     ----------
@@ -247,93 +104,116 @@ def fetch_weather(location: str) -> str:
     Returns
     -------
     str
-        Weather information
+        Weather description
     """
-    # In production, use a real weather API
-    return f"Weather for {location}: Sunny, 72°F"
-
-tool = FunctionTool(
-    function=fetch_weather,
-    purpose="Retrieves current weather information for any location"
-)
+    import requests
+    response = requests.get(f"https://api.weather.gov/...")
+    return f"Weather: {response.json()['temp']}°F"
 
 ui = lmai.ExplorerUI(
     data='penguins.csv',
-    tools=[tool]
+    tools=[fetch_weather]
 )
-ui.servable()
 ```
 
-### Complete example: Data validation tool
-
-Here's a complete tool that validates data and stores results:
+## Complete example: Data validation
 
 ```python
 import pandas as pd
-import lumen.ai as lmai
 from lumen.ai.tools import FunctionTool
 
-def validate_data_quality(table: pd.DataFrame) -> dict:
+def validate_quality(table: pd.DataFrame) -> dict:
     """
-    Validates data quality and generates a report.
-    
-    Checks for missing values, duplicates, and data type consistency.
+    Check data quality and report issues.
     
     Parameters
     ----------
     table : pd.DataFrame
-        The data table to validate
+        Data to validate
         
     Returns
     -------
     dict
-        Validation report with metrics
+        Validation report
     """
-    report = {
-        "total_rows": len(table),
-        "total_columns": len(table.columns),
-        "missing_values": table.isnull().sum().to_dict(),
-        "duplicate_rows": table.duplicated().sum(),
-        "memory_usage_mb": table.memory_usage(deep=True).sum() / 1024**2
-    }
+    missing = table.isnull().sum().sum()
+    duplicates = table.duplicated().sum()
     
-    # Check for issues
     issues = []
-    if any(table.isnull().sum() > 0):
-        issues.append("⚠️ Missing values detected")
-    if report["duplicate_rows"] > 0:
-        issues.append("⚠️ Duplicate rows found")
+    if missing > 0:
+        issues.append(f"{missing} missing values")
+    if duplicates > 0:
+        issues.append(f"{duplicates} duplicate rows")
     
-    report["issues"] = issues
-    report["status"] = "✓ Data looks good" if not issues else "⚠️ Issues found"
-    
-    return report
+    return {
+        "total_rows": len(table),
+        "issues": issues,
+        "status": "✓ Clean" if not issues else "⚠️ Issues found"
+    }
 
 tool = FunctionTool(
-    function=validate_data_quality,
+    function=validate_quality,
     requires=["table"],
     provides=["data_quality_report"],
-    purpose="Validates data quality and generates a report of issues",
-    formatter="Data quality validation complete: {output[status]}"
+    purpose="Validate data quality and report issues"
 )
+```
+
+## Tool components
+
+**`requires`** - Memory keys the tool needs:
+
+```python
+requires=["table", "sql"]  # Tool receives these from memory
+```
+
+**`provides`** - Memory keys the tool creates:
+
+```python
+provides=["summary", "report"]  # Tool adds these to memory
+```
+
+**`purpose`** - Description for the LLM:
+
+```python
+purpose="Validates data quality and finds issues"
+```
+
+## Multiple tools
+
+Combine tools for complex workflows:
+
+```python
+from lumen.ai.tools import DocumentLookup
+
+def get_stats(table) -> dict:
+    """Calculate summary statistics."""
+    return {
+        "min": table['bill_length_mm'].min(),
+        "max": table['bill_length_mm'].max(),
+        "mean": table['bill_length_mm'].mean(),
+    }
+
+def filter_species(table, species: str):
+    """Filter by species name."""
+    return table[table['species'] == species]
 
 ui = lmai.ExplorerUI(
     data='penguins.csv',
-    tools=[tool]
+    tools=[get_stats, filter_species, DocumentLookup()]
 )
-ui.servable()
 ```
 
-### Guidelines for custom tools
+## Best practices
 
-**Write clear docstrings.** The LLM uses your docstring to understand when and how to use the tool:
+**Write clear docstrings:**
 
 ```python
 def my_tool(data: list) -> str:
     """
-    Meaningful description of what the tool does.
+    One-line summary of what it does.
     
-    Be specific about inputs and outputs.
+    Detailed explanation if needed.
     
     Parameters
     ----------
@@ -343,101 +223,90 @@ def my_tool(data: list) -> str:
     Returns
     -------
     str
-        What the return value contains
+        What gets returned
     """
 ```
 
-**Use explicit type hints.** Type hints help the LLM provide correct arguments:
+**Use type hints:**
 
 ```python
-def process_data(data: list[float], threshold: int) -> dict:
-    """Process numeric data against a threshold."""
+def process(numbers: list[float], threshold: int) -> dict:
+    """Type hints help the LLM call correctly."""
 ```
 
-**Name parameters descriptively.** Avoid generic names like `x` or `val`:
+**Name parameters clearly:**
 
 ```python
-# ✓ Good
+# Good
 def calculate_average(numbers: list[float]) -> float:
 
-# ✗ Avoid
+# Bad
 def calculate(x: list[float]) -> float:
 ```
 
-**Keep tools focused.** One tool should do one thing well:
+**Keep tools focused:**
 
 ```python
-# ✓ Good - single responsibility
+# Good - one task
 def validate_email(email: str) -> bool:
 
-# ✗ Avoid - too many responsibilities
+# Bad - too many tasks
 def validate_and_process_user_data(data: dict):
 ```
 
-**Handle errors gracefully.** Return meaningful messages, not exceptions:
+**Handle errors gracefully:**
 
 ```python
-def process_data(data: list) -> str:
-    """Process data and return results."""
+def process(data: list) -> str:
     if not data:
-        return "No data provided - nothing to process"
+        return "No data provided"
     
     try:
         result = sum(data) / len(data)
         return f"Average: {result:.2f}"
     except Exception as e:
-        return f"Error processing data: {e}"
+        return f"Error: {e}"
 ```
 
-**Test with actual LLM.** Different models call tools differently. Test with your configured LLM:
+## When to use tools vs agents
+
+Use tools when:
+
+- The task is a simple function call
+- You don't need async/await
+- You're wrapping an external API
+- The logic is straightforward
+
+Use agents when:
+
+- You need complex prompting
+- The task requires multiple LLM calls
+- You need async operations
+- The logic is sophisticated
+
+## Troubleshooting
+
+**Tool never gets called:**
+
+Check that `purpose` is clear and specific. The LLM uses this to decide when to invoke the tool.
+
+**"Missing required argument":**
+
+Ensure `requires` lists the correct memory keys, and those keys exist when the tool runs.
+
+**Tool fails silently:**
+
+Add error handling and return error messages instead of raising exceptions:
 
 ```python
-# Test your tool works as expected
-tool_instance = my_tool_function
-result = tool_instance(test_data)
-print(result)
+def my_tool(data):
+    try:
+        # Your logic
+        return result
+    except Exception as e:
+        return f"Error: {e}"
 ```
 
-**Document side effects.** If your tool modifies memory or has side effects, document it:
+**Tool returns unexpected data:**
 
-```python
-def export_results(table, filename: str) -> str:
-    """
-    Export table to CSV file.
-    
-    Side effects: Creates a file on disk.
-    """
-```
-
-### Combine multiple tools
-
-Use multiple tools together to create powerful workflows:
-
-```python
-import lumen.ai as lmai
-from lumen.ai.tools import FunctionTool, DocumentLookup
-
-def get_aggregates(table) -> dict:
-    """Get summary statistics."""
-    return {
-        "min": table['bill_length_mm'].min(),
-        "max": table['bill_length_mm'].max(),
-        "mean": table['bill_length_mm'].mean(),
-    }
-
-def apply_filter(table, species: str):
-    """Filter by species."""
-    return table[table['species'] == species]
-
-ui = lmai.ExplorerUI(
-    data='penguins.csv',
-    tools=[
-        FunctionTool(get_aggregates, requires=["table"]),
-        FunctionTool(apply_filter, requires=["table"]),
-        DocumentLookup()
-    ]
-)
-ui.servable()
-```
-
-Now agents can use all three tools in combination to answer complex questions about your data.
+Check type hints match what you're actually returning. The LLM relies on type hints to understand the output.

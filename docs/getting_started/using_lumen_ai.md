@@ -97,12 +97,15 @@ ui = lmai.ExplorerUI(
 ui.servable()
 ```
 
-See [Agents](../configuration/agents.md), [LLM Providers](../configuration/llm_providers.md), and [Prompts](../configuration/prompts.md) configuration guides for all available options.
+See [Prompts](../configuration/prompts.md), [Data Sources](../configuration/sources.md), and [LLM Providers](../configuration/llm_providers.md) configuration guides for all available options.
 
 ## Next steps
 
 Learn more about configuration and advanced use cases:
 
-- [Agents](../configuration/agents.md) — Use and customize agents
+- [Prompts](../configuration/prompts.md) — Customize agent behavior
+- [Data Sources](../configuration/sources.md) — Connect to databases and files
 - [LLM Providers](../configuration/llm_providers.md) — Configure your LLM
-- [Prompts](../configuration/prompts.md) — Customize agent prompts
+- [Agents](../configuration/agents.md) — Use and customize agents
+- [Tools](../configuration/tools.md) — Extend capabilities with custom tools
+- [Analyses](../configuration/analyses.md) — Add domain-specific analyses

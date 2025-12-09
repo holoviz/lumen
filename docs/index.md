@@ -42,7 +42,7 @@ panel serve app.py
 ```
 
 !!! tip
-    You may need to specify an API key for your chosen LLM provider, e.g. `export OPENAI_API_KEY=your_key_here` for OpenAI. See [LLM Providers](configuration/llm_providers/) for details.
+    You may need to specify an API key for your chosen LLM provider, e.g. `export OPENAI_API_KEY=your_key_here` for OpenAI. See [LLM Providers](configuration/llm_providers.md) for details.
 
 ## How It Works
 
