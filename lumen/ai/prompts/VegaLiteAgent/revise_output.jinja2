@@ -1,0 +1,135 @@
+{% extends 'BaseLumenAgent/revise_output.jinja2' %}
+
+{% block instructions %}
+{{ super() }}
+
+- Do NOT modify the data field
+- For overlays: data at top level, encoding in layer
+
+# Publication-Ready Requests
+
+If user asks to "make it look better", "professional", "publication-ready", or similar, apply these changes:
+
+1. **Increase font sizes**: title 24-26pt, subtitle 19-21pt, axis labels 19-21pt, axis titles 21-24pt
+2. **Remove chart border**: `config.view.stroke: null`
+3. **Clean up gridlines**: disable x-axis grid, keep subtle y-axis grid (`#cccccc`)
+4. **Add padding**: `config.axis.titlePadding: 15`, `config.title.subtitlePadding: 10`
+5. **Use semantic colors**: map meaning to color (e.g., warm=red, cool=blue) with explicit `scale.domain` and `scale.range`
+6. **Add value labels**: with units via `transform.calculate`, positioned above/below bars
+7. **Add solid zero line**: if data spans positive/negative values
+8. **Clean tick labels**: use `labelExpr` to format ugly values (e.g., snake_case → Title Case)
+9. **Fix label angles**: rotate to 0, or -90 degrees, if they are crowded and categorical
+10. **Limit results for readability**: For bar/column charts with many categories (10+), limit to top 5-10 using `transform` with `window` rank + `filter`
+{% endblock %}
+
+{%- block examples -%}
+# EXAMPLES
+{% if doc_examples is defined and doc_examples %}
+{% for example in doc_examples %}
+{{ example }}
+{% endfor %}
+{% endif %}
+
+## Publication-ready config
+```yaml
+config:
+  axis:
+    labelFontSize: 21
+    titleFontSize: 24
+    titlePadding: 15
+  axisX:
+    grid: false
+  axisY:
+    gridColor: '#cccccc'
+  title:
+    fontSize: 30
+    subtitleFontSize: 21
+    subtitlePadding: 10
+  view:
+    stroke: null
+```
+
+## Semantic colors
+```yaml
+encoding:
+  color:
+    field: category
+    scale:
+      domain: ['el_nino', 'la_nina']
+      range: ['#d62728', '#1f77b4']  # red=warm, blue=cool
+    legend: null
+    type: nominal
+```
+
+## Transform tick labels (snake_case → Display)
+```yaml
+encoding:
+  x:
+    axis:
+      labelExpr: "datum.value == 'el_nino' ? 'El Niño' : datum.value == 'la_nina' ? 'La Niña' : datum.value"
+    field: category
+    type: nominal
+```
+
+## Value labels with conditional positioning
+Do NOT use `expr` in `dy` - use separate filtered layers:
+```yaml
+# Positive values (labels above)
+- transform:
+    - filter: "datum.value > 0"
+    - calculate: "format(datum.value, '+.2f') + '°C'"
+      as: label
+  encoding:
+    x: {field: category, type: nominal}
+    y: {field: value, type: quantitative}
+    text: {field: label, type: nominal}
+    color: {field: category, scale: {domain: ['a', 'b'], range: ['#d62728', '#1f77b4']}, legend: null}
+  mark: {type: text, fontSize: 21, fontWeight: bold, dy: -15}
+# Negative values (labels below)
+- transform:
+    - filter: "datum.value < 0"
+    - calculate: "format(datum.value, '.2f') + '°C'"
+      as: label
+  encoding:
+    x: {field: category, type: nominal}
+    y: {field: value, type: quantitative}
+    text: {field: label, type: nominal}
+    color: {field: category, scale: {domain: ['a', 'b'], range: ['#d62728', '#1f77b4']}, legend: null}
+  mark: {type: text, fontSize: 21, fontWeight: bold, dy: 25}
+```
+
+## Solid zero line
+```yaml
+- encoding: {y: {datum: 0}}
+  mark: {type: rule, color: '#333333', size: 2}
+```
+
+## Static color (remove color encoding, add to mark)
+```yaml
+mark: {type: bar, color: '#888888'}
+```
+
+## Axis formatting
+```yaml
+encoding:
+  x:
+    axis: {labelAngle: -90, title: null}  # null removes redundant title
+  y:
+    axis: {format: '.1f', tickCount: 5}
+```
+
+## Limit to top N results (improves readability)
+For charts with many categories, show only top 5-10:
+```yaml
+transform:
+  - window:
+      - op: rank
+        as: rank
+    sort:
+      - field: value_field
+        order: descending
+  - filter: datum.rank <= 8
+title:
+  text: Top 8 Categories by Value
+```
+{%- endblock -%}

@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import panel as pn
 import param
 
 from panel.chat import ChatFeed
 from panel.viewable import Viewable
+from panel_material_ui import AutocompleteInput, TextInput
 
 from ..base import Component
+from .actor import TContext
 from .config import SOURCE_TABLE_SEPARATOR
-from .controls import SourceControls
-from .memory import _Memory, memory
 from .utils import get_data
+
+if TYPE_CHECKING:
+    from ..pipeline import Pipeline
 
 
 class Analysis(param.ParameterizedFunction):
@@ -33,10 +38,6 @@ class Analysis(param.ParameterizedFunction):
     interface = param.ClassSelector(class_=ChatFeed, doc="""
         The ChatInterface instance that will be used to stream messages.""")
 
-    memory = param.ClassSelector(class_=_Memory, default=None, doc="""
-        Local memory which will be used to provide the agent context.
-        If None the global memory will be used.""")
-
     message = param.String(default="", doc="The message to display on interface when the analysis is run.")
 
     _run_button = param.Parameter(default=None)
@@ -47,10 +48,6 @@ class Analysis(param.ParameterizedFunction):
     _callable_by_llm = True
 
     _field_params = []
-
-    @property
-    def _memory(self):
-        return memory if self.memory is None else self.memory
 
     @classmethod
     async def applies(cls, pipeline) -> bool:
@@ -63,12 +60,12 @@ class Analysis(param.ParameterizedFunction):
                 applies &= col in data.columns
         return applies
 
-    def controls(self):
+    def controls(self, context: TContext):
         config_options = [p for p in self.param if p not in Analysis.param]
         if config_options:
-            return pn.Param(self.param, parameters=config_options)
+            return pn.Param(self.param, parameters=config_options, margin=0, show_name=False)
 
-    def __call__(self, pipeline) -> Component | Viewable:
+    def __call__(self, pipeline: Pipeline, context: TContext) -> Component | Viewable:
         return pipeline
 
 
@@ -80,7 +77,7 @@ class Join(Analysis):
 
     index_col = param.String(doc="The column to join on in the left table.")
 
-    context = param.String(doc="Additional context to provide to the LLM.")
+    guidance = param.String(doc="Additional context to provide to the LLM.")
 
     _callable_by_llm = False
 
@@ -91,24 +88,26 @@ class Join(Analysis):
     def _update_table_name(self, event):
         self.table_name = event.new
 
-    def controls(self):
+    def controls(self, context: TContext):
+        from .controls import SourceControls
+
         self._source_controls = SourceControls(
-            multiple=True, replace_controls=False, memory=self._memory
+            multiple=True, replace_controls=False, context=context
         )
         self._run_button = self._source_controls._add_button
         self._source_controls.param.watch(self._update_table_name, "_last_table")
 
-        source = self._memory.get("source")
-        table = self._memory.get("table")
+        source = self.context.get("source")
+        table = self.context.get("table")
         self._previous_source = source
         self._previous_table = table
         columns = list(source.get_schema(table).keys())
-        index_col = pn.widgets.AutocompleteInput.from_param(
-            self.param.index_col, options=columns, name="Join on",
+        index_col = AutocompleteInput.from_param(
+            self.param.index_col, options=columns, label="Join on",
             placeholder="Start typing column name", search_strategy="includes",
             case_sensitive=False, restrict=False
         )
-        context = pn.widgets.TextInput.from_param(self.param.context, name="Context")
+        context = TextInput.from_param(self.param.guidance)
         controls = pn.FlexBox(
             index_col,
             context,
@@ -116,7 +115,7 @@ class Join(Analysis):
         )
         return controls
 
-    async def __call__(self, pipeline):
+    async def __call__(self, pipeline: Pipeline, context: TContext) -> Component | Viewable:
         if self.table_name:
             agent = next(agent for agent in self.agents if type(agent).__name__ == "SQLAgent")
             content = (
@@ -128,10 +127,10 @@ class Join(Analysis):
                 content += f" left join on {self.index_col}"
             else:
                 content += " based on the closest matching columns"
-            if self.context:
-                content += f"\nadditional context:\n{self.context!r}"
+            if self.guidance:
+                content += f"\nadditional context:\n{self.guidance!r}"
             await agent.answer(messages=[{"role": "user", "content": content}])
-            pipeline = self._memory["pipeline"]
+            pipeline = context["pipeline"]
 
         self.message = f"Joined {self._previous_table} with {self.table_name}."
         return pipeline

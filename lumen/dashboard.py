@@ -14,7 +14,6 @@ from typing import (
 
 import panel as pn
 import param  # type: ignore
-import yaml
 
 from panel.io.resources import CSS_URLS
 from panel.template.base import BasicTemplate
@@ -24,6 +23,7 @@ from .auth import Auth
 from .base import Component, MultiTypeComponent
 from .config import (
     _DEFAULT_LAYOUT, _LAYOUTS, _TEMPLATES, _THEMES, Template, config,
+    dump_yaml, load_yaml,
 )
 from .filters.base import ConstantFilter, Filter, WidgetFilter  # noqa
 from .layout import Layout
@@ -32,7 +32,7 @@ from .pipeline import Pipeline
 from .sources.base import RESTSource, Source  # noqa
 from .state import state
 from .transforms.base import Transform
-from .util import catch_and_notify, expand_spec, resolve_module_reference
+from .util import catch_and_notify, resolve_module_reference
 from .validation import (
     ValidationError, match_suggestion_message, validate_callback,
 )
@@ -41,11 +41,6 @@ from .views.base import Download, View
 
 if TYPE_CHECKING:
     from bokeh.server.contexts import BokehSessionContext
-
-
-def load_yaml(yaml_spec: str, **kwargs) -> dict[str, Any]:
-    expanded = expand_spec(yaml_spec, config.template_vars, **kwargs)
-    return yaml.load(expanded, Loader=yaml.Loader)
 
 
 class Config(Component):
@@ -548,7 +543,7 @@ class Dashboard(Component, Viewer):
             load_vars = True
         if isinstance(specification, dict):
             state.spec = self.validate(specification)
-            self._yaml = yaml.dump(specification)
+            self._yaml = dump_yaml(specification)
             self._yaml_file = 'local'
             root = params.pop('root', os.getcwd())
         else:

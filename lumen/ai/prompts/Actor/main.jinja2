@@ -25,16 +25,19 @@ The current date time is {{ current_datetime.strftime('%b %d, %Y %I:%M %p') }}
 {%- endblock %}
 
 {%- block errors -%}
-{%- if last_output is defined %}
+{%- if last_output is defined and last_output %}
 Note, your last output did not work as intended:
 ```
 {{ last_output }}
 ```
-{%- endif %}
+{% endif %}
 {%- if errors is defined and errors %}
 Your task is to expertly address these errors so they do not occur again:
 ```
 {{ errors }}
 ```
 {%- endif %}
+{%- endblock -%}
+
+{% block footer -%}
 {%- endblock -%}

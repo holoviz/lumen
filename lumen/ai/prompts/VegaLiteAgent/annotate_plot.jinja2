@@ -3,23 +3,43 @@
 {% block instructions %}
 Add strategic visual annotations to highlight key insights in your data.
 
+# Critical: Shared Scales for Layered Annotations
+
+When adding annotation layers with `datum` values, you MUST define shared scales at the top level. Without this, `datum` annotations cause axes to expand to include 0, compressing your data.
+
+Add a top-level `encoding` block with `scale.domain` for both axes before your `layer` array.
+
 # Annotation Patterns
 
-**Reference lines**: Horizontal/vertical rules for meaningful thresholds
-- Use for goals, benchmarks, or natural breakpoints (e.g., "5,000+ turbines = major wind state")
+**Reference lines** (horizontal/vertical rules):
 - Position with `y: {datum: value}` or `x: {datum: value}`
-- Use subtle styling: `opacity: 0.5`, muted colors, thin lines
-- Anchor labels to the line, not floating positions
+- Style: `opacity: 0.5`, muted colors, `strokeDash: [4, 4]`
+- For solid baseline/zero lines: `color: '#333333', size: 2` (no strokeDash)
 
-**Value labels**: Text on specific data points
-- Use only for outliers or endpoints that need emphasis
-- Apply `transform` with `filter` to select points
-- Don't label every bar - let the axis provide that information
+**Shaded bands** (rect marks):
+- Horizontal: `y: {datum: 26}, y2: {datum: 28}`
+- Vertical: `x: {datum: 1997}, x2: {datum: 1998}`
+- Place early in layer array to render behind data
 
-**Conditional highlights**: Emphasize data meeting criteria
-- Layer filtered data with distinct color
-- Use `transform: [{filter: "datum.field > threshold"}]`
-- Make sure the threshold is meaningful, not arbitrary
+**Text annotations**:
+- Data coordinates: `x: {datum: 2015}, y: {datum: 29}`
+- Pixel coordinates: `x: {value: 0}, y: {value: 0}` (for corners)
+- Offset with `dx`/`dy` (pixels), align with `align`/`baseline`
+
+**Point markers**: Mark specific coordinates with `type: point, filled: true`
+
+**Arrow annotations**: Combine rule + triangle-down point
+
+**Value labels with conditional positioning**:
+- Do NOT use `expr` in `dy` - it doesn't work reliably
+- Instead, use separate filtered layers for positive/negative values with fixed `dy`
+
+# Mark Properties Reference
+
+Text: `type, fontSize, color, align (left|center|right), baseline (top|middle|bottom), dx, dy, fontWeight`
+Rule: `type, color, size, strokeDash, opacity`
+Rect: `type, color, opacity`
+Point: `type, color, size, filled, shape`
 {% endblock %}
 
 {% block context %}
@@ -30,53 +50,143 @@ Build off the following Vega-Lite yaml:
 {% endblock %}
 
 {% block examples %}
-# EXAMPLES
+# EXAMPLE: Comprehensive Annotations
 
-Reference line with subtle styling:
+This example shows multiple annotation types with proper shared scales:
+
 ```yaml
+$schema: https://vega.github.io/schema/vega-lite/v6.json
+data:
+  name: my_data
+height: container
+width: container
+encoding:
+  x:
+    type: quantitative
+    scale:
+      domain: [1950, 2030]
+  y:
+    type: quantitative
+    scale:
+      domain: [24, 30]
 layer:
-  - mark: bar
-    encoding:
-      x: {field: category, type: ordinal}
-      y: {field: value, type: quantitative}
-  - mark: {type: rule, color: '#666666', size: 1, strokeDash: [4,4], opacity: 0.5}
-    encoding:
-      y: {datum: 5000}
-  - mark: {type: text, align: left, dx: 5, dy: -5, fontSize: 10, color: '#666666'}
-    encoding:
-      text: {value: "5,000"}
-      y: {datum: 5000}
-      x: {datum: 0}
+# 1. Shaded band (render first = behind)
+- encoding:
+    y: {datum: 26}
+    y2: {datum: 28}
+  mark: {type: rect, color: '#cccccc', opacity: 0.3}
+# 2. Vertical highlight band
+- encoding:
+    x: {datum: 1997}
+    x2: {datum: 1998}
+  mark: {type: rect, color: '#ffcccc', opacity: 0.4}
+# 3. Band label
+- encoding:
+    text: {value: 'El Niño'}
+    x: {datum: 1997.5}
+    y: {datum: 26}
+  mark: {type: text, fontSize: 9, color: '#cc0000', baseline: bottom, dy: -5}
+# 4. Main data layer
+- encoding:
+    x: {field: year, axis: {title: Year}}
+    y: {field: value, axis: {title: Value}}
+  mark: {type: line, point: true}
+# 5. Horizontal reference line
+- encoding:
+    y: {datum: 27}
+  mark: {type: rule, color: orange, strokeDash: [2, 2], size: 2}
+# 6. Reference line label
+- encoding:
+    text: {value: 'Mean: 27'}
+    x: {value: 0}
+    y: {datum: 27}
+  mark: {type: text, align: left, baseline: bottom, dx: 5, dy: -3, fontSize: 9, color: orange}
+# 7. Vertical reference line
+- encoding:
+    x: {datum: 2024}
+  mark: {type: rule, color: '#666666', opacity: 0.5, strokeDash: [4, 4]}
+# 8. Point annotation
+- encoding:
+    x: {datum: 2015}
+    y: {datum: 29}
+  mark: {type: point, size: 80, color: red, filled: true}
+# 9. Point label
+- encoding:
+    text: {value: 'Peak'}
+    x: {datum: 2015}
+    y: {datum: 29}
+  mark: {type: text, align: left, dx: 10, dy: -5, fontSize: 10, color: red}
+# 10. Corner annotation (pixel coords)
+- encoding:
+    text: {value: '↑ Trend note'}
+    x: {value: 0}
+    y: {value: 0}
+  mark: {type: text, align: left, baseline: top, dx: 10, dy: 10, fontSize: 12, fontWeight: bold, color: '#cc0000'}
+title: Chart with Annotations
 ```
 
-Value labels with filter:
+# Minimal Patterns
+
+Reference line with label:
 ```yaml
-layer:
-  - mark: line
-    encoding:
-      x: {field: year, type: ordinal}
-      y: {field: value, type: quantitative}
-  - mark: {type: text, align: left, dx: 5, fontSize: 11}
-    transform:
-      - filter: "datum.year == 2022"  # Only label final point
-    encoding:
-      x: {field: year, type: ordinal}
-      y: {field: value, type: quantitative}
-      text: {field: value, type: quantitative, format: ".0f"}
+- encoding: {y: {datum: 5000}}
+  mark: {type: rule, color: '#666', strokeDash: [4, 4], opacity: 0.5}
+- encoding: {text: {value: 'Target'}, y: {datum: 5000}, x: {value: 0}}
+  mark: {type: text, align: left, dx: 5, dy: -5, fontSize: 10, color: '#666'}
 ```
 
-Conditional highlighting:
+Value labels with units (use transform + calculate):
 ```yaml
-layer:
-  - mark: bar
-    encoding:
-      x: {field: category, type: nominal}
-      y: {field: value, type: quantitative}
-  - mark: {type: bar, color: "#e74c3c"}
-    transform:
-      - filter: "datum.value > 500"
-    encoding:
-      x: {field: category, type: nominal}
-      y: {field: value, type: quantitative}
+- transform:
+    - calculate: "format(datum.value, '+.2f') + '°C'"
+      as: label
+  encoding:
+    x: {field: category, type: nominal}
+    y: {field: value, type: quantitative}
+    text: {field: label, type: nominal}
+  mark: {type: text, fontSize: 14, dy: -10}
+```
+
+Conditional label positioning (separate layers, NOT expr in dy):
+```yaml
+# Labels above bars (positive values)
+- transform:
+    - filter: "datum.value > 0"
+    - calculate: "format(datum.value, '+.2f') + ' units'"
+      as: label
+  encoding:
+    x: {field: category, type: nominal}
+    y: {field: value, type: quantitative}
+    text: {field: label, type: nominal}
+  mark: {type: text, fontSize: 14, fontWeight: bold, dy: -15}
+# Labels below bars (negative values)
+- transform:
+    - filter: "datum.value < 0"
+    - calculate: "format(datum.value, '.2f') + ' units'"
+      as: label
+  encoding:
+    x: {field: category, type: nominal}
+    y: {field: value, type: quantitative}
+    text: {field: label, type: nominal}
+  mark: {type: text, fontSize: 14, fontWeight: bold, dy: 25}
+```
+
+Filtered value labels (specific points only):
+```yaml
+- transform: [{filter: "datum.year == 2022"}]
+  encoding:
+    x: {field: year}
+    y: {field: value}
+    text: {field: value, format: ".0f"}
+  mark: {type: text, dy: -10, fontSize: 11}
+```
+
+Conditional highlight:
+```yaml
+- transform: [{filter: "datum.value > 500"}]
+  encoding:
+    x: {field: category, type: nominal}
+    y: {field: value, type: quantitative}
+  mark: {type: bar, color: '#e74c3c'}
 ```
 {% endblock %}

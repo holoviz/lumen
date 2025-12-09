@@ -35,19 +35,17 @@ CRITICAL: When query fails because a filter value doesn't exist, use pattern mat
 Choose discoveries that directly address the error - be focused and efficient!
 {%- endblock %}
 
-{% block context %}
-Original Error: {{ error_context }}
+{%- block context %}
+{%- if error_context %}Original Error: {{ error_context }}{% endif -%}
 
-Available Tables:
-{% set tables_list = memory.get('visible_slugs', []) | list %}
-{% for table in tables_list[:10] %}
-- {{ table }}
-{% endfor %}
-{% if tables_list | length > 10 %}
-- ... and {{ tables_list | length - 10 }} more tables
-{% endif %}
+## Data summary
+{{ memory["metaset"].compact_context(5) }}
 
-{{ memory["sql_metaset"].compact_context }}
+{%- set other_tables = memory["metaset"].table_context(10, offset=5) -%}
+{%- if other_tables.strip() != '{}' %}
+## Other Tables
+{{ other_tables }}
+{%- endif %}
 
 Your task: Select 2-4 discoveries that will help understand and fix this specific error.
 {% endblock %}

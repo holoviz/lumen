@@ -93,7 +93,6 @@ class DuckDBSource(BaseSQLSource):
             processed_tables = {}
             self._file_based_tables = {}
             sql_based_tables = {}
-
             # First pass: separate file paths from SQL expressions
             for table_name, table_expr in self.tables.items():
                 if isinstance(table_expr, str) and self._is_file_path(table_expr):
@@ -124,7 +123,12 @@ class DuckDBSource(BaseSQLSource):
             for table_name, sql_expr in sql_based_tables.items():
                 table_alias = self.normalize_table(table_name)
                 # Skip non-string expressions (e.g., dicts)
-                if not isinstance(sql_expr, str):
+                # Prevent recursive view creation
+                equivalent_sql_exprs = (
+                    self.sql_expr.format(table=f'"{table_name}"'),
+                    self.sql_expr.format(table=table_name),
+                )
+                if not isinstance(sql_expr, str) or sql_expr in equivalent_sql_exprs:
                     processed_tables[table_alias] = sql_expr
                     continue
 
@@ -245,6 +249,8 @@ class DuckDBSource(BaseSQLSource):
             # For dictionary case, process each SQL expression
             processed_tables = {}
             for table_name, sql_expr in self.tables.items():
+                if table_name in self._file_based_tables:
+                    sql_expr = self._file_based_tables[table_name]
                 processed_tables[table_name] = self._process_sql_paths(sql_expr)
             spec['tables'] = processed_tables
 
@@ -356,7 +362,14 @@ class DuckDBSource(BaseSQLSource):
             params = {}
 
         source_params = dict(self.param.values(), **kwargs)
-        source_params['tables'] = tables
+        preserved_tables = {}
+        for table_name, sql_expr in tables.items():
+            if table_name in self._file_based_tables:
+                preserved_tables[table_name] = self._file_based_tables[table_name]
+            else:
+                preserved_tables[table_name] = sql_expr
+        source_params['tables'] = preserved_tables
+
         if params:
             source_params['table_params'] = params
         # Reuse connection unless it has changed
@@ -369,7 +382,14 @@ class DuckDBSource(BaseSQLSource):
             return source
 
         for table, sql_expr in tables.copy().items():
-            if sql_expr == self.sql_expr.format(table=f'"{table}"'):
+            equivalent_sql_exprs = (
+                self.sql_expr.format(table=f'"{table_name}"'),
+                self.sql_expr.format(table=table_name),
+            )
+            if table in self.tables:
+                # do not need to re-materialize existing
+                continue
+            elif sql_expr in equivalent_sql_exprs:
                 continue
             table_expr = f'CREATE OR REPLACE TEMP TABLE "{table}" AS ({sql_expr})'
             cursor = self._connection.cursor()

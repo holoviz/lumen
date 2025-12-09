@@ -44,6 +44,8 @@ Legends appear when you map data to `color`, `size`, or `shape` in encoding.
 **Informative titles**: Main title states what's shown, subtitle reveals the key insight or pattern
 
 **Data types**: Match type to your data - quantitative for continuous, ordinal for ordered categories, nominal for unordered, temporal for dates
+
+**Dynamic filtering**: Use window transforms to avoid hardcoding values when filtering for min/max or endpoints.
 {% endblock %}
 
 {% block examples %}
@@ -54,7 +56,7 @@ Legends appear when you map data to `color`, `size`, or `shape` in encoding.
 {% endfor %}
 {% endif %}
 
-Simple time series:
+Simple time series with endpoint labels:
 ```yaml
 title:
   anchor: start
@@ -72,6 +74,22 @@ layer:
     encoding:
       x: {field: year, type: quantitative}
       y: {field: avg_capacity, type: quantitative}
+  - mark:
+      type: text
+      align: left
+      dx: 5
+      dy: -5
+    encoding:
+      x: {field: year, type: quantitative}
+      y: {field: avg_capacity, type: quantitative}
+      text: {field: avg_capacity, type: quantitative}
+      color: {value: black}
+    transform:
+      - window:
+        - {op: min, field: year, as: minYear}
+        - {op: max, field: year, as: maxYear}
+        frame: [null, null]
+      - filter: datum.year === datum.minYear || datum.year === datum.maxYear
 ```
 
 Ranked bar chart with highlighting:
@@ -129,93 +147,43 @@ layer:
           orient: "right"
 ```
 
-Dual-axis chart with legend (multiple series):
+Choropleth map (US states):
 ```yaml
 title:
-  text: "Growth Metrics Over Time"
+  text: "Student Distribution by State"
+  subtitle: "Higher concentrations in midwest and coastal regions"
+width: 700
+height: 400
 data:
-  name: <TABLE_NAME>
-layer:
-  - transform:
-    - calculate: "'Revenue'"
-      as: metric_name
-    mark:
-      type: line
-      point: true
-    encoding:
-      x:
-        field: year
-        type: quantitative
-      y:
-        field: revenue
-        type: quantitative
-        axis:
-          title: "Revenue ($M)"
-      color:
-        field: metric_name
-        type: nominal
-        scale:
-          domain: ["Revenue", "Profit"]
-          range: ['#1f77b4', '#ff7f0e']
-        legend:
-          title: "Metric"
-          orient: "top-right"
-  - transform:
-    - calculate: "'Profit'"
-      as: metric_name
-    mark:
-      type: line
-      point: true
-    encoding:
-      x:
-        field: year
-        type: quantitative
-      y:
-        field: profit
-        type: quantitative
-        axis:
-          title: "Profit ($M)"
-      color:
-        field: metric_name
-        type: nominal
-        scale:
-          domain: ["Revenue", "Profit"]
-          range: ['#1f77b4', '#ff7f0e']
-        legend:
-          title: "Metric"
-          orient: "top-right"
-```
-
-Top 10 bar chart with transform:
-```yaml
-title:
-  text: "Top 10 Cities by Average Fare"
-  subtitle: "Showing highest-cost destinations"
-data:
-  name: <TABLE_NAME>
+  url: "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"
+  format:
+    type: topojson
+    feature: states
 transform:
-  - window:
-      - op: row_number
-        as: row_number
-  - filter: datum.row_number <= 10
-layer:
-  - mark: bar
-    encoding:
-      y:
-        field: city
-        type: nominal
-        sort: "-x"
-      x:
-        field: avg_fare
-        type: quantitative
+  - lookup: "properties.name"
+    from:
+      data:
+        name: <TABLE_NAME>
+      key: State
+      fields: [Total_Students]
+mark: geoshape
+projection:
+  type: albersUsa
+encoding:
+  color:
+    field: Total_Students
+    type: quantitative
+    scale:
+      scheme: blues
+    legend:
+      title: "Total Students"
+  tooltip:
+    - field: "properties.name"
+      type: nominal
+      title: "State"
+    - field: Total_Students
+      type: quantitative
+      format: ","
+      title: "Total Students"
 ```
-{% endblock %}
-
-{% block errors %}
-{{ super() }}
-
-{% if errors is defined and errors %}
-For extra context, here are the data and columns available:
-{{ columns_context }}
-{% endif %}
 {% endblock %}
