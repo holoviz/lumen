@@ -504,17 +504,10 @@ class UI(Viewer):
         )
         self._settings_menu.param.watch(self._toggle_sql_planning, 'toggled')
         self._settings_menu.param.watch(self._toggle_validation_agent, 'toggled')
-        self._upload_button = IconButton(
-            icon="cloud_upload",
-            description="Manage Data Sources",
-            margin=(12, 5, 5, 0),
-            on_click=self._open_sources_dialog,
-        )
         self._coordinator.verbose = self._settings_menu.param.toggled.rx().rx.pipe(lambda toggled: 0 in toggled)
         return [
             HSpacer(),
             self._settings_menu,
-            self._upload_button,
             Divider(
                 orientation="vertical", height=30, margin=(17, 5, 17, 5),
                 sx={'border-color': 'white', 'border-width': '1px'}
@@ -623,13 +616,20 @@ class UI(Viewer):
     def _render_contextbar(self) -> list[Viewable]:
         return []
 
+    def _render_sidebar(self) -> list[Viewable]:
+        return []
+
     def _render_page(self):
         self._page = Page(
             contextbar_open=False,
             contextbar=self._render_contextbar(),
             header=self._render_header(),
             main=self._render_main(),
-            title=self.title
+            sidebar=self._render_sidebar(),
+            title=self.title,
+            sidebar_width=48,
+            sidebar_resizable=False,
+            sx={"&.mui-light .sidebar": {"bgcolor": "var(--mui-palette-grey-50)"}}
         )
 
     @param.depends('context', on_init=True, watch=True)
@@ -943,6 +943,14 @@ class ExplorerUI(UI):
         nb = export_notebook(self._exploration['view'].plan.views, preamble=self.notebook_preamble)
         return StringIO(nb)
 
+    def _handle_sidebar_event(self, item):
+        if item["id"] == "home":
+            self._exploration = self._explorations.items[0]
+        elif item["id"] == "data":
+            self._open_sources_dialog()
+        elif item["id"] == "llm":
+            self._open_llm_dialog()
+
     def _render_header(self) -> list[Viewable]:
         header = super()._render_header()
         self._report_toggle = ToggleIcon(
@@ -973,6 +981,34 @@ class ExplorerUI(UI):
         )
         self._reorder_switch.param.watch(self._toggle_reorder, 'value')
         return [self._reorder_switch, self._explorations]
+
+    def _render_sidebar(self) -> list[Viewable]:
+        self._sidebar_collapse = collapse = ToggleIcon(
+            value=True, active_icon="chevron_right", icon="chevron_left", styles={"margin-top": "auto", "margin-left": "auto"}, margin=(0, 0, 5, 5)
+        )
+        menu = MenuList(
+            items=[
+                {"label": "Home", "icon": "home", "id": "home"},
+                {"label": "Manage Data", "icon": "cloud_upload", "id": "data"},
+                {"label": "Configure LLM", "icon": "settings_suggest", "id": "llm"}
+            ],
+            collapsed=collapse,
+            highlight=False,
+            margin=0,
+            on_click=self._handle_sidebar_event,
+            sx={
+                ".MuiListItemIcon-root > .MuiIcon-root": {
+                    "color": "var(--mui-palette-primary-main)",
+                    "fontSize": "32px",
+                    "&:hover": {"color": "var(--mui-palette-primary-dark)"}
+                }
+            }
+        )
+        return [menu, collapse]
+
+    def _render_page(self):
+        super()._render_page()
+        self._page.sidebar_width = self._sidebar_collapse.rx().rx.where(48, 172)
 
     def _render_main(self) -> list[Viewable]:
         main = super()._render_main()
