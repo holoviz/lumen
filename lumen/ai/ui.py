@@ -627,7 +627,7 @@ class UI(Viewer):
             main=self._render_main(),
             sidebar=self._render_sidebar(),
             title=self.title,
-            sidebar_width=75,
+            sidebar_width=65,
             sidebar_resizable=False,
             sx={"&.mui-light .sidebar": {"bgcolor": "var(--mui-palette-grey-50)"}}
         )
@@ -943,21 +943,39 @@ class ExplorerUI(UI):
         nb = export_notebook(self._exploration['view'].plan.views, preamble=self.notebook_preamble)
         return StringIO(nb)
 
+    def _update_item(self, menu, item, **updates):
+        new_item = dict(item, **updates)
+        items = menu.items
+        index = items.index(item)
+        menu.items = items[:index] + [new_item] + items[index+1:]
+
+    @hold()
     def _handle_sidebar_event(self, item):
         if item["id"] == "home":
             self._exploration = self._explorations.items[0]
+        elif item["id"] == "exploration":
+            self._toggle_report_mode(False)
+            self._update_item(self._sidebar_menu, item, active=True, icon="forum")
+            self._update_item(self._sidebar_menu, self._sidebar_menu.items[3], active=False, icon="description_outlined")
+            self._update_home()
         elif item["id"] == "report":
-            new_item = dict(item)
-            active = not item["active"]
-            self._toggle_report_mode(active)
-            new_item.update(active=active, icon="summarize_outlined" if active else "chat_outlined")
-            items = self._sidebar_menu.items
-            index = items.index(item)
-            self._sidebar_menu.items = items[:index] + [new_item] + items[index+1:]
+            self._toggle_report_mode(True)
+            self._update_item(self._sidebar_menu, self._sidebar_menu.items[2], active=False, icon="forum_outlined")
+            self._update_item(self._sidebar_menu, item, active=True, icon="description")
+            self._update_home()
         elif item["id"] == "data":
             self._open_sources_dialog()
         elif item["id"] == "llm":
             self._open_llm_dialog()
+
+    @param.depends("_exploration", watch=True)
+    def _update_home(self):
+        is_home = self._exploration["view"] is self._home
+        if not hasattr(self, '_page'):
+            return
+        home, _, exploration, report = self._sidebar_menu.items[:4]
+        self._update_item(self._sidebar_menu, home, active=is_home, icon="home" if is_home else "home_outlined")
+        self._update_item(self._sidebar_menu, exploration, active=True, icon="forum_outlined" if report["active"] else "forum")
 
     def _render_contextbar(self) -> list[Viewable]:
         self._explorations = MenuList(
@@ -983,22 +1001,23 @@ class ExplorerUI(UI):
         )
         self._sidebar_menu = menu = MenuList(
             items=[
-                {"label": "Home", "icon": "home_outlined", "id": "home"},
-                {"label": "Report View", "icon": "chat_outlined", "id": "report", "active": False},
+                {"label": "Home", "icon": "home", "id": "home", "active": True},
                 None,
-                {"label": "Manage Data", "icon": "cloud_upload_outlined", "id": "data"},
-                {"label": "Configure LLM", "icon": "settings_suggest_outlined", "id": "llm"},
+                {"label": "Exploration", "icon": "forum", "id": "exploration", "active": True},
+                {"label": "Report", "icon": "description_outlined", "id": "report", "active": False},
+                None,
+                {"label": "Manage Data", "icon": "drive_folder_upload_outlined", "id": "data"},
+                {"label": "Configure LLM", "icon": "psychology_outlined", "id": "llm"},
             ],
             collapsed=collapse,
             highlight=False,
-            margin=(10, 0, 0, 0),
+            margin=0,
             on_click=self._handle_sidebar_event,
             sx={
-                "& .MuiButtonBase-root.MuiListItemButton-root.collapsed": {"p": 2},
+                "& .MuiButtonBase-root.MuiListItemButton-root, & .MuiButtonBase-root.MuiListItemButton-root.collapsed": {"p": 2},
                 ".MuiListItemIcon-root > .MuiIcon-root": {
-                    "color": "var(--mui-palette-primary-main)",
-                    "fontSize": "32px",
-                    "&:hover": {"color": "var(--mui-palette-primary-dark)"}
+                    "color": "var(--mui-palette-primary-dark)",
+                    "fontSize": "28px"
                 }
             }
         )
@@ -1006,7 +1025,7 @@ class ExplorerUI(UI):
 
     def _render_page(self):
         super()._render_page()
-        self._page.sidebar_width = self._sidebar_collapse.rx().rx.where(65, 175)
+        self._page.sidebar_width = self._sidebar_collapse.rx().rx.where(61, 183)
 
     def _render_main(self) -> list[Viewable]:
         main = super()._render_main()
