@@ -974,7 +974,7 @@ class ExplorerUI(UI):
         if not hasattr(self, '_page'):
             return
         home, _, exploration, report = self._sidebar_menu.items[:4]
-        self._update_item(self._sidebar_menu, home, active=is_home, icon="home" if is_home else "home_outlined")
+        self._update_item(self._sidebar_menu, home, active=is_home, icon="home" if is_home and not report["active"] else "home_outlined")
         self._update_item(self._sidebar_menu, exploration, active=True, icon="forum_outlined" if report["active"] else "forum")
 
     def _render_contextbar(self) -> list[Viewable]:
