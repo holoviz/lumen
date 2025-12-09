@@ -23,7 +23,7 @@ from panel_gwalker import GraphicWalker
 from panel_material_ui import (
     Accordion, Button, ChatFeed, ChatInterface, ChatMessage,
     Column as MuiColumn, Dialog, Divider, FileDownload, IconButton, MenuList,
-    MenuToggle, NestedBreadcrumbs, Page, Paper, Row, Switch, Tabs, ToggleIcon,
+    MenuToggle, NestedBreadcrumbs, Page, Paper, Row, Tabs, ToggleIcon,
     Typography,
 )
 from panel_splitjs import HSplit, MultiSplit, VSplit
@@ -602,6 +602,15 @@ class UI(Viewer):
             variant="text"
         )
 
+        self._explorations = MenuList(
+            items=[self._exploration], value=self.param._exploration, show_children=False,
+            dense=True, label='Explorations', margin=0, sizing_mode='stretch_width',
+            sx={"dark": {}, "light": {"bgcolor": "var(--mui-palette-grey-100)"}},
+        )
+        self._explorations.param.watch(self._cleanup_explorations, 'items')
+        self._explorations.param.watch(self._update_conversation, 'active')
+        self._explorations.param.watch(self._sync_active, 'value')
+
         # Create LLM configuration dialog
         self._llm_dialog = LLMConfigDialog(
             llm=self.llm,
@@ -977,24 +986,6 @@ class ExplorerUI(UI):
         self._update_item(self._sidebar_menu, home, active=is_home, icon="home" if is_home and not report["active"] else "home_outlined")
         self._update_item(self._sidebar_menu, exploration, active=True, icon="forum_outlined" if report["active"] else "forum")
 
-    def _render_contextbar(self) -> list[Viewable]:
-        self._explorations = MenuList(
-            items=[self._exploration], value=self.param._exploration, show_children=False,
-            dense=True, label='Explorations', margin=(-50, 0, 0, 0), sizing_mode='stretch_width'
-        )
-        self._explorations.on_action('up', self._move_up)
-        self._explorations.on_action('down', self._move_down)
-        self._explorations.on_action('remove', self._delete_exploration)
-        self._explorations.param.watch(self._cleanup_explorations, 'items')
-        self._explorations.param.watch(self._update_conversation, 'active')
-        self._explorations.param.watch(self._sync_active, 'value')
-        self._reorder_switch = Switch(
-            label='Edit', styles={'margin-left': 'auto', 'z-index': '999'},
-            disabled=self._explorations.param.items.rx.len()<2
-        )
-        self._reorder_switch.param.watch(self._toggle_reorder, 'value')
-        return [self._reorder_switch, self._explorations]
-
     def _render_sidebar(self) -> list[Viewable]:
         self._sidebar_collapse = collapse = ToggleIcon(
             value=True, active_icon="chevron_right", icon="chevron_left", styles={"margin-top": "auto", "margin-left": "auto"}, margin=5
@@ -1146,9 +1137,20 @@ class ExplorerUI(UI):
     def _toggle_report_mode(self, active: bool):
         """Toggle between regular and report mode."""
         if active:
-            self._main[:] = [Report(
-                *(exploration['view'].plan for exploration in self._explorations.items[1:])
-            )]
+            self._main[:] = [
+                Row(
+                    MuiColumn(
+                        self._explorations,
+                        sizing_mode="stretch_height",
+                        sx={"light": {"bgcolor": "var(--mui-palette-grey-100)"}, "dark": {}},
+                        styles={"border-right": "1px solid var(--mui-palette-divider)"},
+                        width=200,
+                    ),
+                    Report(
+                        *(exploration['view'].plan for exploration in self._explorations.items[1:])
+                    )
+                )
+            ]
         else:
             self._main[:] = [self._split]
 
