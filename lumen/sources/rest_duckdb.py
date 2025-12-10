@@ -26,24 +26,6 @@ class RESTDuckDBSource(DuckDBSource):
     This source allows defining URL templates with dynamic query parameters
     that can be updated at runtime, enabling LLM agents to modify API calls
     on the fly.
-
-    Parameters
-    ----------
-    materialize : bool, default True
-        Whether to materialize REST tables as temp tables on initialization.
-        When True, REST tables are immediately fetched and stored as temp tables,
-        allowing them to be referenced in SQL expressions.
-    cache : bool, default False
-        Whether to cache HTTP responses using DuckDB's cache_httpfs extension.
-        When True, repeated requests to the same URL return cached results.
-
-    REST table configurations are specified as dictionaries with:
-    - 'url': Base URL of the REST endpoint
-    - 'url_params': Dict of query parameters (including 'format' if the API supports it)
-    - 'required_params': Optional list of parameter names that must be provided
-    - 'read_fn': Optional override for the DuckDB read function ('json', 'csv', 'parquet').
-                 If not specified, auto-detects from url_params['format'] or URL extension.
-    - 'read_options': Optional dict of DuckDB read_* function options
     """
 
     cache_httpfs = param.Boolean(
@@ -63,6 +45,20 @@ class RESTDuckDBSource(DuckDBSource):
     )
 
     source_type: ClassVar[str] = 'rest_duckdb'
+
+    tables = param.Dict(
+        default={},
+        doc="""
+        REST table configurations are specified as dictionaries with:
+        - 'url': Base URL of the REST endpoint
+        - 'url_params': Dict of query parameters (including 'format' if the API supports it)
+        - 'required_params': Optional list of parameter names that must be provided
+        - 'read_fn': Optional override for the DuckDB read function ('json', 'csv', 'parquet').
+                    If not specified, auto-detects from url_params['format'] or URL extension.
+        - 'read_options': Optional dict of DuckDB read_* function options
+        Alternatively, a table can be a SQL expression string as in the base DuckDBSource.
+        """
+    )
 
     # Map format to DuckDB read function (using auto variants where available)
     _format_to_reader: ClassVar[dict[str, str]] = {
@@ -98,7 +94,21 @@ class RESTDuckDBSource(DuckDBSource):
 
     def get_sql_expr(self, table: str) -> str:
         if self._is_rest_table(table):
-            read_fn = self._format_to_reader[self.data_format]
+            table_params = self.tables[table]
+            # Use table-specific read_fn, or fall back to format-based lookup
+            read_fn = table_params.get('read_fn')
+            if read_fn:
+                # Allow 'json' or 'read_json_auto' style
+                read_fn = self._format_to_reader.get(read_fn, read_fn)
+            else:
+                data_format = table_params.get('url_params', {}).get('format', self.data_format)
+                read_fn = self._format_to_reader.get(data_format, self._format_to_reader['json'])
+
+            # Handle read_options
+            read_options = table_params.get('read_options', {})
+            if read_options:
+                options_str = ', '.join(f"{k}={v!r}" for k, v in read_options.items())
+                return f"SELECT * FROM {read_fn}(?, {options_str})"
             return f"SELECT * FROM {read_fn}(?)"
         return super().get_sql_expr(table)
 
@@ -109,6 +119,13 @@ class RESTDuckDBSource(DuckDBSource):
 
         table_params = self.tables[table].copy()
         url_params = {**table_params.get("url_params", {}), **(url_params or {})}
+        required_params = table_params.get("required_params", [])
+        missing_params = [p for p in required_params if p not in url_params or url_params[p] is None]
+        if missing_params:
+            raise ValueError(
+                f"Missing required parameters for table '{table}': {missing_params}"
+            )
+
         last_exc = None
         url = self.render_table_url(table, url_params=url_params)
         data_format = url_params.get("format", self.data_format)

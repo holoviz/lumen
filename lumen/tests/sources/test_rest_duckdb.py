@@ -337,6 +337,99 @@ class TestDataValidation:
         assert pd.api.types.is_numeric_dtype(df['precip_in'])
 
 
+class TestRequiredParams:
+    """Test required_params validation."""
+
+    def test_required_params_missing_raises_error(self):
+        """Test that missing required params raises ValueError."""
+        config = {
+            'uri': ':memory:',
+            'tables': {
+                'daily': {
+                    'url': 'https://mesonet.agron.iastate.edu/cgi-bin/request/daily.py',
+                    'url_params': {
+                        'stations': 'ABR',
+                        'network': 'SD_ASOS',
+                        'format': 'csv'
+                    },
+                    'required_params': ['stations', 'sts', 'ets'],
+                },
+            }
+        }
+        source = RESTDuckDBSource(**config)
+
+        with pytest.raises(ValueError, match="Missing required parameters.*sts.*ets"):
+            source.get('daily')
+
+    def test_required_params_provided_via_url_params_arg(self):
+        """Test that required params can be provided via url_params argument."""
+        config = {
+            'uri': ':memory:',
+            'tables': {
+                'daily': {
+                    'url': 'https://mesonet.agron.iastate.edu/cgi-bin/request/daily.py',
+                    'url_params': {
+                        'network': 'SD_ASOS',
+                        'format': 'csv'
+                    },
+                    'required_params': ['stations', 'sts', 'ets'],
+                },
+            }
+        }
+        source = RESTDuckDBSource(**config)
+        df = source.get('daily', url_params={
+            'stations': 'ABR',
+            'sts': '2025-12-08',
+            'ets': '2025-12-09',
+        })
+
+        assert isinstance(df, pd.DataFrame)
+        assert not df.empty
+
+
+class TestReadFnAndReadOptions:
+    """Test read_fn and read_options configuration."""
+
+    def test_read_fn_and_read_options_in_sql_expr(self):
+        """Test that read_fn and read_options are included in the SQL expression."""
+        config = {
+            'uri': ':memory:',
+            'tables': {
+                'data': {
+                    'url': 'https://example.com/data.csv',
+                    'url_params': {},
+                    'read_fn': 'csv',
+                    'read_options': {
+                        'header': True,
+                        'delim': ',',
+                    },
+                },
+            }
+        }
+        source = RESTDuckDBSource(**config)
+        sql_expr = source.get_sql_expr('data')
+
+        assert 'read_csv_auto' in sql_expr
+        assert 'header=True' in sql_expr
+        assert "delim=','" in sql_expr
+
+    def test_read_fn_falls_back_to_url_params_format(self):
+        """Test that read_fn falls back to url_params['format']."""
+        config = {
+            'uri': ':memory:',
+            'tables': {
+                'data': {
+                    'url': 'https://example.com/data',
+                    'url_params': {'format': 'csv'},
+                },
+            }
+        }
+        source = RESTDuckDBSource(**config)
+        sql_expr = source.get_sql_expr('data')
+
+        assert 'read_csv_auto' in sql_expr
+
+
 class TestMixedTableTypes:
     """Test mixing REST tables with regular CSV tables."""
 
