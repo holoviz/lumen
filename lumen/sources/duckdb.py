@@ -362,13 +362,11 @@ class DuckDBSource(BaseSQLSource):
             params = {}
 
         source_params = dict(self.param.values(), **kwargs)
-        preserved_tables = {}
-        for table_name, sql_expr in tables.items():
-            if table_name in self._file_based_tables:
-                preserved_tables[table_name] = self._file_based_tables[table_name]
-            else:
-                preserved_tables[table_name] = sql_expr
-        source_params['tables'] = preserved_tables
+        # Start with ALL existing tables (upsert behavior)
+        all_tables = dict(self.tables) if isinstance(self.tables, dict) else {}
+        # Update with new tables (overwrites if exists, adds if new)
+        all_tables.update(tables)
+        source_params['tables'] = all_tables
 
         if params:
             source_params['table_params'] = params
@@ -383,8 +381,8 @@ class DuckDBSource(BaseSQLSource):
 
         for table, sql_expr in tables.copy().items():
             equivalent_sql_exprs = (
-                self.sql_expr.format(table=f'"{table_name}"'),
-                self.sql_expr.format(table=table_name),
+                self.sql_expr.format(table=f'"{table}"'),
+                self.sql_expr.format(table=table),
             )
             if table in self.tables:
                 # do not need to re-materialize existing
@@ -416,9 +414,11 @@ class DuckDBSource(BaseSQLSource):
             finally:
                 cursor.close()
 
-        # keep references of the original file-based tables so views can be recreated
-        source.tables.update(**{table: self._file_based_tables[table] for table in self._file_based_tables if table not in tables})
-        source._file_based_tables.update(self._file_based_tables)
+        # Preserve file-based metadata for tables that weren't overwritten
+        source._file_based_tables = {
+            k: v for k, v in self._file_based_tables.items()
+            if k not in tables
+        }
         return source
 
     def execute(self, sql_query: str, params: list | dict | None = None, *args, **kwargs):
