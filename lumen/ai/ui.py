@@ -455,6 +455,10 @@ class UI(Viewer):
         # Set the accordion to "Add Sources" tab to show the uploaded files
         self._source_accordion.active = [0]
 
+    def _handle_upload_successful(self, event):
+        """Handle successful file upload by switching to View Sources tab."""
+        self._source_accordion.active = [1]
+
     def _configure_coordinator(self):
         # TODO: Look into this
         SourceAgent.source_controls = self.source_controls
@@ -562,8 +566,8 @@ class UI(Viewer):
             margin=(0, 10, 10, 10), sizing_mode="stretch_width", toggle=True, active=[0],
             sx={".MuiAccordion-region > .MuiAccordionDetails-root": {"p": 0}}, title_variant="h4"
         )
-        # Set reference to accordion in source controls so it can switch tabs
-        self._source_controls._parent_accordion = self._source_accordion
+        # Watch for successful uploads to switch tabs
+        self._source_controls.param.watch(self._handle_upload_successful, 'upload_successful')
         self._sources_dialog_content = Dialog(
             self._source_accordion, close_on_click=True, show_close_button=True,
             sizing_mode='stretch_width', width_option='lg', title="Manage Data"

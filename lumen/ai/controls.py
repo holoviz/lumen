@@ -158,6 +158,8 @@ class SourceControls(Viewer):
 
     replace_controls = param.Boolean(default=False, doc="Replace controls on add")
 
+    upload_successful = param.Event(doc="Triggered when files are successfully uploaded and processed")
+
     outputs = param.Dict(default={})
 
     table_upload_callbacks = {}
@@ -676,9 +678,6 @@ class SourceControls(Viewer):
         if len(all_media_controls) == 0:
             return
 
-        # Set parent accordion to View Sources tab after processing
-        parent_accordion = getattr(self, '_parent_accordion', None)
-
         with self.menu.param.update(loading=True):
             source = None
             n_tables = 0
@@ -749,9 +748,9 @@ class SourceControls(Viewer):
 
         self._count += 1
 
-        # After processing, switch to View Sources tab
-        if parent_accordion is not None and (n_tables + n_docs) > 0:
-            parent_accordion.active = [1]
+        # Trigger event to notify parent that upload was successful
+        if (n_tables + n_docs) > 0:
+            self.param.trigger('upload_successful')
 
     def __panel__(self):
         return self.menu
