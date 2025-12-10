@@ -17,10 +17,11 @@ from panel.io import state
 from panel.layout import Column, HSpacer, Row
 from panel.pane.markup import HTML, Markdown
 from panel.viewable import Viewer
-from panel.widgets import FileDropper, Tabulator, Tqdm
+from panel.widgets import FileDropper, Tabulator
 from panel_material_ui import (
     Button, Card, ChatAreaInput, CheckBoxGroup, Column as MuiColumn,
-    IconButton, Popup, Select, Switch, Tabs, TextInput, ToggleIcon, Typography,
+    IconButton, LinearProgress, Popup, Select, Switch, Tabs, TextInput,
+    ToggleIcon, Typography,
 )
 
 from ..config import load_yaml
@@ -224,9 +225,10 @@ class SourceControls(Viewer):
         self._message_placeholder = HTML("", visible=False, margin=(0, 10, 10, 10))
 
         # Progress bar for downloads
-        self._progress_bar = Tqdm(
+        self._progress_description = Typography(styles={"margin-left": "auto", "margin-right": "auto"}, visible=False)
+        self._progress_bar = LinearProgress(
             visible=False,
-            margin=(0, 10, 0, 10),
+            margin=(0, 10, 5, 10),
             sizing_mode="stretch_width"
         )
 
@@ -238,6 +240,7 @@ class SourceControls(Viewer):
             self._error_placeholder,
             self._message_placeholder,
             self._progress_bar,
+            self._progress_description,
             sizing_mode="stretch_width",
         )
 
@@ -295,36 +298,38 @@ class SourceControls(Viewer):
 
     def _setup_progress_bar(self, content_length: str) -> int:
         """Setup progress bar based on content length"""
+        self._progress_description.visible = True
         if content_length:
             total_size = int(content_length)
-            self._progress_bar.max = max(total_size, 1)  # Ensure minimum of 1
-            self._progress_bar.visible = True
-            self._progress_bar.value = 0
+            self._progress_bar.param.update(
+                visible=True,
+                value=0,
+                variant="determinate"
+            )
             return total_size
         else:
             # Unknown size, use large number for indeterminate progress
-            self._progress_bar.max = DownloadConfig.UNKNOWN_SIZE_MAX
+            self._progress_bar.variant = "indeterminate"
             self._progress_bar.visible = True
-            self._progress_bar.value = 0
             return 0
 
     def _update_download_progress(self, filename: str, downloaded_size: int, total_size: int, chunk_count: int):
         """Update progress bar if it's time for an update"""
         if chunk_count % DownloadConfig.PROGRESS_UPDATE_INTERVAL == 0:
             if total_size > 0:
+                progress = total_size / downloaded_size
                 # Only set value if downloaded size is reasonable compared to max
-                if downloaded_size <= self._progress_bar.max:
-                    self._progress_bar.value = downloaded_size
+                if progress < 100:
+                    self._progress_bar.value = progress
                     progress_desc = f"Downloading {filename}: {self._format_bytes(downloaded_size)}/{self._format_bytes(total_size)}"
                 else:
                     # Don't update value if it would exceed max (compressed content case)
                     progress_desc = f"Downloading {filename}: {self._format_bytes(downloaded_size)}"
             else:
                 # Unknown size - just show downloaded amount and update progress
-                self._progress_bar.value = min(downloaded_size, self._progress_bar.max)
                 progress_desc = f"Downloading {filename}: {self._format_bytes(downloaded_size)}"
 
-            self._progress_bar.desc = progress_desc
+            self._progress_description.object = progress_desc
 
     def _format_bytes(self, bytes_size):
         """Convert bytes to human readable format"""
@@ -443,10 +448,12 @@ class SourceControls(Viewer):
                     content = downloaded_data.read()
 
                     self._progress_bar.visible = False
+                    self._progress_description.visible = False
                     return filename, content, None
 
         except (TimeoutError, aiohttp.ClientError, asyncio.CancelledError, Exception) as e:
             self._progress_bar.visible = False
+            self._progress_description.visible = False
             return None, None, self._format_download_error(e)
 
     def _handle_urls(self, event):
@@ -506,6 +513,7 @@ class SourceControls(Viewer):
         except asyncio.CancelledError:
             # Clean up and re-raise
             self._progress_bar.visible = False
+            self._progress_description.visible = False
             raise
 
         # Add downloaded files as individual tabs to the main input tabs
@@ -723,9 +731,6 @@ class SourceControls(Viewer):
                 # Clear uploaded files from view
                 self._upload_tabs.clear()
                 self._media_controls.clear()
-                # Also clear downloaded file tabs (anything beyond the first 2 tabs)
-                while len(self._input_tabs) > 2:
-                    self._input_tabs.pop()
                 self._downloaded_media_controls.clear()
                 self._add_button.visible = False
                 self._file_input.value = {}
