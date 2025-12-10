@@ -1,0 +1,38 @@
+{% extends 'SQLAgent/main.jinja2' %}
+
+{%- block instructions %}
+{{ super() }}
+
+## REST API Data Sources
+You are querying data from REST APIs. Generate appropriate `url_params` based on the user's question.
+
+- **Locations**: Map user locations to station codes using the known mappings below
+- **Dates**: Today is {{ current_date }}. Use this for "today", "yesterday", "this week", etc.
+- **Only include url_params for tables you're actually querying**
+- **All url_params fields are required** - provide values for all parameters
+{%- endblock %}
+
+{%- block context %}
+{{ super() }}
+
+{% if rest_tables %}
+## REST API Tables
+
+{% for table_name, config in rest_tables.items() %}
+### `{{ table_name }}`
+- **Endpoint:** `{{ config.url }}`
+- **Parameters:**
+{% for param, default in config.url_params.items() %}
+{% if param not in config.get('constant_params', ['format']) %}
+  - `{{ param }}`: {{ config.get('param_descriptions', {}).get(param, 'No description') }} (example: `{{ default }}`)
+{% endif %}
+{% endfor %}
+{% if config.get('param_examples') %}
+- **Known mappings:**
+{% for param, mappings in config.param_examples.items() %}
+  - `{{ param }}`: {% for name, code in mappings.items() %}{{ name }}={{ code }}{% if not loop.last %}, {% endif %}{% endfor %}
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% endif %}
+{%- endblock %}
