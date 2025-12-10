@@ -14,6 +14,8 @@ import sqlglot
 
 from duckdb import InvalidInputException
 
+from lumen.sources.base import cached
+
 from .duckdb import DuckDBSource
 
 
@@ -70,12 +72,29 @@ class RESTDuckDBSource(DuckDBSource):
         'ndjson': 'read_ndjson_auto',
     }
 
-    _created_views = param.Dict(default={}, doc="Internal dict of created views for REST tables.")
+    _cached_rest_tables = param.Dict(default={}, doc="Internal dict for REST tables to their last used table_params.")
 
     def _is_rest_table(self, table: str) -> bool:
         if table not in self.tables:
             raise ValueError(f"Table '{table}' not found in source tables.")
         return isinstance(self.tables[table], dict) and 'url' in self.tables[table]
+
+    def _ensure_sql_expr_materialized(self, sql_expr: str, url_params: dict | None = None) -> None:
+        if not isinstance(sql_expr, str):
+            # Not a SQL expression, skip
+            return
+
+        table_objs = sqlglot.parse_one(sql_expr).find_all(sqlglot.exp.Table)
+        tables = {table_obj.name for table_obj in table_objs if self._is_rest_table(table_obj.name)}
+        for table in tables:
+            if not self._is_rest_table(table):
+                return
+            table_params = self.tables[table]
+            if self._cached_rest_tables.get(table) != table_params:
+                url_params = {**table_params.get("url_params", {}), **(url_params or {})}
+                df = self.get(table, url_params=url_params)
+                self._connection.from_df(df).to_view(table)
+                self._cached_rest_tables[table] = table_params
 
     def get_sql_expr(self, table: str) -> str:
         if self._is_rest_table(table):
@@ -83,13 +102,13 @@ class RESTDuckDBSource(DuckDBSource):
             return f"SELECT * FROM {read_fn}(?)"
         return super().get_sql_expr(table)
 
+    @cached
     def get(self, table: str, url_params: dict[str, Any] | None = None, **query):
         if not self._is_rest_table(table):
             return super().get(table, **query)
 
-        table_params = self.tables[table]
+        table_params = self.tables[table].copy()
         url_params = {**table_params.get("url_params", {}), **(url_params or {})}
-
         last_exc = None
         url = self.render_table_url(table, url_params=url_params)
         data_format = url_params.get("format", self.data_format)
@@ -146,23 +165,16 @@ class RESTDuckDBSource(DuckDBSource):
 
     def execute(self, sql_query: str, params: list | dict | None = None, url_params: dict[str, Any] | None = None, *args, **kwargs):
         # First ensure all REST tables in the query are materialized
-        table_objs = sqlglot.parse_one(sql_query).find_all(sqlglot.exp.Table)
-        rest_tables = {table_obj.name for table_obj in table_objs if self._is_rest_table(table_obj.name)}
-        for table in rest_tables:
-            # if the table params have changed, recreate the view
-            if self._created_views.get(table) != self.tables[table]:
-                self._connection.from_df(self.get(table, url_params=url_params)).to_view(table)
-                self._created_views[table] = {**self.tables[table], **(url_params or {})}
+        self._ensure_sql_expr_materialized(sql_query, url_params=url_params)
         return super().execute(sql_query, *args, params=params, **kwargs)
 
     def to_spec(self) -> dict[str, Any]:
         spec = super().to_spec()
-        spec.pop("_created_views", None)
+        spec.pop("_cached_rest_tables", None)
         return spec
 
-    def create_sql_expr_source(self, tables, materialize = True, params = None, url_params: dict[str, Any] | None = None, **kwargs) -> RESTDuckDBSource:
+    def create_sql_expr_source(self, tables: dict, materialize: bool = True, params: dict | None = None, **kwargs) -> RESTDuckDBSource:
+        for sql_expr in tables.values():
+            self._ensure_sql_expr_materialized(sql_expr)
         source = super().create_sql_expr_source(tables, materialize, params, **kwargs)
-        # TODO: investigate whether we should ALWAYS copy every tables, not just REST tables
-        # keep references of the original rest tables so views can be recreated
-        source.tables.update(**{table: self.tables[table] for table in self.tables if self._is_rest_table(table)})
         return source
