@@ -743,10 +743,8 @@ def test_detour_roundtrip(sample_csv_files):
         assert len(limited_df) == 1
         assert limited_df.iloc[[0]].equals(df.iloc[[0]])
 
-        # Serialize and deserialize - need to use absolute paths
+        # Serialize and deserialize
         spec = new_source.to_spec()
-        spec['tables']['customers'] = files['customers']
-        spec['tables']['orders'] = files['orders']
         
         read_source = DuckDBSource.from_spec(spec)
         read_df = read_source.get("limited_customers")
