@@ -141,11 +141,12 @@ class LumenOutput(Viewer):
 
         def download_export(item):
             fmt = item["format"]
-            file_download.filename = f"{self.title}.{fmt}"
+            file_download.filename = f"{self.title or 'output'}.{fmt}"
             return self.export(fmt)
 
         file_download = FileDownload(
-            auto=True, callback=param.bind(download_export, export_menu), filename=self.title, visible=False
+            auto=True, callback=param.bind(download_export, export_menu),
+            filename=self.title or 'output', visible=False
         )
         export_menu.attached.append(file_download)
 
