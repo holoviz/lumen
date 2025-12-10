@@ -436,6 +436,24 @@ class UI(Viewer):
         }
         self._configure_logs(interface)
         self.interface = interface
+        # Watch for drag-and-drop file uploads and open manage data dialog
+        interface.active_widget.param.watch(self._handle_file_drop, 'value_uploaded')
+
+    def _handle_file_drop(self, event):
+        """Handle drag-and-drop file uploads by opening the manage data dialog."""
+        if not event.new:  # No files uploaded
+            return
+
+        # Transfer files to the source controls
+        self._source_controls.downloaded_files = {
+            key: value["value"] for key, value in event.new.items()
+        }
+
+        # Open the manage data dialog
+        self._sources_dialog_content.open = True
+
+        # Set the accordion to "Add Sources" tab to show the uploaded files
+        self._source_accordion.active = [0]
 
     def _configure_coordinator(self):
         # TODO: Look into this
@@ -544,6 +562,8 @@ class UI(Viewer):
             margin=(0, 10, 10, 10), sizing_mode="stretch_width", toggle=True, active=[0],
             sx={".MuiAccordion-region > .MuiAccordionDetails-root": {"p": 0}}, title_variant="h4"
         )
+        # Set reference to accordion in source controls so it can switch tabs
+        self._source_controls._parent_accordion = self._source_accordion
         self._sources_dialog_content = Dialog(
             self._source_accordion, close_on_click=True, show_close_button=True,
             sizing_mode='stretch_width', width_option='lg', title="Manage Data"

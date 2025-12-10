@@ -676,6 +676,9 @@ class SourceControls(Viewer):
         if len(all_media_controls) == 0:
             return
 
+        # Set parent accordion to View Sources tab after processing
+        parent_accordion = getattr(self, '_parent_accordion', None)
+
         with self.menu.param.update(loading=True):
             source = None
             n_tables = 0
@@ -745,6 +748,10 @@ class SourceControls(Viewer):
             self._error_placeholder.object = self._error_placeholder.object.strip()
 
         self._count += 1
+
+        # After processing, switch to View Sources tab
+        if parent_accordion is not None and (n_tables + n_docs) > 0:
+            parent_accordion.active = [1]
 
     def __panel__(self):
         return self.menu
