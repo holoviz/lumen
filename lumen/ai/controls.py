@@ -317,7 +317,7 @@ class SourceControls(Viewer):
         """Update progress bar if it's time for an update"""
         if chunk_count % DownloadConfig.PROGRESS_UPDATE_INTERVAL == 0:
             if total_size > 0:
-                progress = total_size / downloaded_size
+                progress = min((total_size / downloaded_size) * 100, 100)
                 # Only set value if downloaded size is reasonable compared to max
                 if progress < 100:
                     self._progress_bar.value = progress
