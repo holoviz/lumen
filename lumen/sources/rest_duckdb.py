@@ -138,11 +138,6 @@ class RESTDuckDBSource(DuckDBSource):
         -------
         str
             Full URL with current query parameters
-
-        Raises
-        ------
-        ValueError
-            If table is not a REST table or if neither table nor config is provided
         """
         if not self._is_rest_table(table):
             raise ValueError(f"Table '{table}' is not a REST table.")
