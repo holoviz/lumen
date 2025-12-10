@@ -189,7 +189,7 @@ class SourceControls(Viewer):
             self.param.download_url,
             placeholder=self.param.input_placeholder,
             rows=4,
-            margin=(10, 10, 0, 10),
+            margin=10,
             sizing_mode="stretch_width",
             disabled=self.param.disabled,
             enable_upload=False
