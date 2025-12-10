@@ -1074,3 +1074,84 @@ def test_create_sql_expr_source_upserts_existing_tables(sample_csv_files):
 
     finally:
         os.chdir(original_cwd)
+
+
+def test_create_sql_expr_source_new_connection_only_new_tables(sample_csv_files):
+    """Test that create_sql_expr_source with new connection only includes new tables."""
+    files = sample_csv_files
+    original_cwd = os.getcwd()
+
+    try:
+        os.chdir(files['dir'])
+
+        # Create initial source with multiple tables
+        source = DuckDBSource(
+            uri=':memory:',
+            tables={
+                'customers': 'customers.csv',
+                'orders': 'orders.csv',
+                'existing_view': 'SELECT * FROM customers WHERE id > 1'
+            }
+        )
+
+        # Verify initial state
+        assert set(source.get_tables()) == {'customers', 'orders', 'existing_view'}
+
+        # Create new source with a DIFFERENT URI - should NOT preserve old tables
+        new_tables = {
+            'products': files['customers']  # Reusing customers.csv as "products"
+        }
+
+        new_source = source.create_sql_expr_source(new_tables, uri=':memory:')
+
+        # Should ONLY have the new table, not the old ones
+        assert set(new_source.get_tables()) == {'products'}
+
+        # Old tables should NOT be accessible
+        assert 'customers' not in new_source.get_tables()
+        assert 'orders' not in new_source.get_tables()
+        assert 'existing_view' not in new_source.get_tables()
+
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_create_sql_expr_source_new_connection_includes_file_dependencies(sample_csv_files):
+    """Test that new connection includes file-based tables referenced in SQL."""
+    files = sample_csv_files
+    original_cwd = os.getcwd()
+
+    try:
+        os.chdir(files['dir'])
+
+        # Create initial source with file-based tables
+        source = DuckDBSource(
+            uri=':memory:',
+            tables={
+                'customers': 'customers.csv',
+                'orders': 'orders.csv',
+            }
+        )
+
+        # Create new source with new connection that REFERENCES file-based tables
+        new_tables = {
+            'summary': 'SELECT c.name, COUNT(o.id) as order_count FROM customers c LEFT JOIN orders o ON c.id = o.customer_id GROUP BY c.name'
+        }
+
+        new_source = source.create_sql_expr_source(new_tables, uri=':memory:')
+
+        # Should have the new table AND the file-based dependencies
+        expected_tables = {'summary', 'customers', 'orders'}
+        assert set(new_source.get_tables()) == expected_tables
+
+        # The summary query should actually work (dependencies are present)
+        result = new_source.get('summary')
+        assert len(result) == 3  # 3 customers
+        assert 'order_count' in result.columns
+
+        # File-based tables should be accessible
+        assert len(new_source.get('customers')) == 3
+        assert len(new_source.get('orders')) == 3
+
+    finally:
+        os.chdir(original_cwd)

@@ -10,6 +10,7 @@ import duckdb
 import numpy.core.multiarray  # noqa: F401
 import pandas as pd
 import param
+import sqlglot
 
 from ..config import config
 from ..serializers import Serializer
@@ -362,10 +363,31 @@ class DuckDBSource(BaseSQLSource):
             params = {}
 
         source_params = dict(self.param.values(), **kwargs)
-        # Start with ALL existing tables (upsert behavior)
-        all_tables = dict(self.tables) if isinstance(self.tables, dict) else {}
-        # Update with new tables (overwrites if exists, adds if new)
-        all_tables.update(tables)
+
+        # Only preserve existing tables if reusing the connection
+        # If uri or initializers changed, start fresh with only new tables
+        if 'uri' not in kwargs and 'initializers' not in kwargs:
+            # Reuse connection - start with ALL existing tables (upsert behavior)
+            all_tables = dict(self.tables) if isinstance(self.tables, dict) else {}
+            # Update with new tables (overwrites if exists, adds if new)
+            all_tables.update(tables)
+        else:
+            # New connection - only use the new tables, but include file-based dependencies
+            all_tables = dict(tables)
+            # Analyze SQL expressions to find table dependencies
+            for sql_expr in tables.values():
+                if not isinstance(sql_expr, str):
+                    continue
+                try:
+                    parsed = sqlglot.parse_one(sql_expr, dialect='duckdb')
+                except Exception:
+                    continue  # If parsing fails, continue without dependencies
+                # Find all table references in the SQL
+                # Add file-based tables that are referenced but not already included
+                for table_obj in parsed.find_all(sqlglot.exp.Table):
+                    table = table_obj.name
+                    if table in self._file_based_tables and table not in all_tables:
+                        all_tables[table] = self._file_based_tables[table]
         source_params['tables'] = all_tables
 
         if params:
@@ -380,6 +402,10 @@ class DuckDBSource(BaseSQLSource):
             return source
 
         for table, sql_expr in tables.copy().items():
+            # Skip file paths - they're already handled by __init__
+            if self._is_file_path(sql_expr):
+                continue
+
             equivalent_sql_exprs = (
                 self.sql_expr.format(table=f'"{table}"'),
                 self.sql_expr.format(table=table),
