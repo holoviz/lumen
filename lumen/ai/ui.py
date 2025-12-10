@@ -939,6 +939,8 @@ class ExplorerUI(UI):
         is_home = self._exploration["view"] is self._home
         if not hasattr(self, '_page'):
             return
+        if not is_home:
+            self._transition_to_chat()
         home, _, exploration, report = self._sidebar_menu.items[:4]
         self._sidebar_menu.update_item(home, active=is_home, icon="home" if is_home and not report["active"] else "home_outlined")
         self._sidebar_menu.update_item(exploration, active=True, icon="forum_outlined" if report["active"] else "forum")
@@ -1119,7 +1121,6 @@ class ExplorerUI(UI):
         exploration = self._explorations.value['view']
         if exploration is self._home:
             self._split[0][0] = self._splash
-            self._split.collapsed = 1
         self._output[1:] = [exploration]
 
         if event is not None:
