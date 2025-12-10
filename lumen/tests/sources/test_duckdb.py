@@ -1155,3 +1155,68 @@ def test_create_sql_expr_source_new_connection_includes_file_dependencies(sample
 
     finally:
         os.chdir(original_cwd)
+
+
+def test_create_sql_expr_source_with_list_tables():
+    """Test that create_sql_expr_source works when self.tables is a list."""
+    # Create an in-memory source with actual data
+    df = pd.DataFrame({
+        'A': [0, 1, 2, 3, 4],
+        'B': [0, 0, 1, 1, 1],
+        'C': ['foo1', 'foo2', 'foo3', 'foo4', 'foo5']
+    })
+    
+    # Use from_df which creates dict-based tables, then manually convert to list
+    source = DuckDBSource.from_df({'test_table': df})
+    # Simulate a list-based source (though unusual in practice)
+    source.tables = ['test_table']  # Override with list
+    
+    # Verify it's a list
+    assert isinstance(source.tables, list)
+    
+    # Create new source with SQL expressions
+    new_tables = {
+        'filtered': 'SELECT * FROM test_table WHERE A > 2'
+    }
+    
+    new_source = source.create_sql_expr_source(new_tables)
+    
+    # Should only have the new table (list-based tables don't get preserved)
+    assert 'filtered' in new_source.get_tables()
+    assert isinstance(new_source.tables, dict)
+    assert 'filtered' in new_source.tables
+    
+    # The new table should work
+    result = new_source.get('filtered')
+    assert len(result) == 2  # A values 3 and 4
+    assert all(result['A'] > 2)
+
+
+def test_create_sql_expr_source_reuse_connection_with_list_tables():
+    """Test that reusing connection with list tables just uses new tables."""
+    # Create an in-memory source with actual data
+    df = pd.DataFrame({
+        'A': [0, 1, 2, 3, 4],
+        'B': [0, 0, 1, 1, 1],
+        'C': ['foo1', 'foo2', 'foo3', 'foo4', 'foo5']
+    })
+    
+    source = DuckDBSource.from_df({'test_table': df})
+    # Simulate a list-based source
+    source.tables = ['test_table']  # Override with list
+    
+    # Create new source reusing connection
+    new_tables = {
+        'filtered': 'SELECT * FROM test_table WHERE A > 2'
+    }
+    
+    # No uri or initializers provided - reusing connection
+    new_source = source.create_sql_expr_source(new_tables)
+    
+    # Should only have the new tables (since original was a list, not dict)
+    assert set(new_source.get_tables()) == {'filtered'}
+    
+    # But the connection is reused, so we can still query the original table
+    # via the connection even if it's not in new_source.tables
+    result = new_source.execute('SELECT * FROM test_table')
+    assert len(result) == 5  # Original table still exists in the connection

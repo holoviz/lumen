@@ -366,11 +366,14 @@ class DuckDBSource(BaseSQLSource):
 
         # Only preserve existing tables if reusing the connection
         # If uri or initializers changed, start fresh with only new tables
+        all_tables = tables
         if 'uri' not in kwargs and 'initializers' not in kwargs:
             # Reuse connection - start with ALL existing tables (upsert behavior)
-            all_tables = dict(self.tables) if isinstance(self.tables, dict) else {}
-            # Update with new tables (overwrites if exists, adds if new)
-            all_tables.update(tables)
+            # Only applies when self.tables is a dict (list-based tables don't have SQL expressions)
+            if isinstance(self.tables, dict):
+                all_tables = dict(self.tables)
+                # Update with new tables (overwrites if exists, adds if new)
+                all_tables.update(tables)
         else:
             # New connection - only use the new tables, but include file-based dependencies
             all_tables = dict(tables)
