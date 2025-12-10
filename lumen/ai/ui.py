@@ -13,7 +13,7 @@ from panel.chat.feed import PLACEHOLDER_SVG
 from panel.config import config, panel_extension
 from panel.io.document import hold
 from panel.io.state import state
-from panel.layout import Column, FlexBox, HSpacer
+from panel.layout import Column, FlexBox
 from panel.pane import SVG, Markdown
 from panel.util import edit_readonly
 from panel.viewable import (
@@ -22,8 +22,8 @@ from panel.viewable import (
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
     Accordion, Button, ChatFeed, ChatInterface, ChatMessage,
-    Column as MuiColumn, Dialog, Divider, FileDownload, IconButton, MenuList,
-    MenuToggle, NestedBreadcrumbs, Page, Paper, Row, Switch, Tabs, ToggleIcon,
+    Column as MuiColumn, Dialog, FileDownload, IconButton, MenuList,
+    NestedBreadcrumbs, Page, Paper, Popup, Row, Switch, Tabs, ToggleIcon,
     Typography,
 )
 from panel_splitjs import HSplit, MultiSplit, VSplit
@@ -79,7 +79,7 @@ If unsatisfied with the results hover over the <span class="material-icons-outli
 Click the toggle, or drag the right edge, to expand the results area and...
 
 🌐 Explore data with [Graphic Walker](https://docs.kanaries.net/graphic-walker) - filter, sort, download  
-💾 Navigate, reorder and delete explorations in the contextbar  
+💾 Switch to report mode to see all the results and export them  
 📤 Export your session as a reproducible notebook  
 """  # noqa: W291
 
@@ -471,48 +471,7 @@ class UI(Viewer):
         ), None)
 
     def _render_header(self) -> list[Viewable]:
-        self._settings_menu = MenuToggle(
-            items=[
-                {
-                    'label': 'Chain of Thought',
-                    'icon': 'toggle_off',
-                    'active_icon': 'toggle_on',
-                    'toggled': False
-                },
-                {
-                    'label': 'SQL Planning',
-                    'icon': 'toggle_off',
-                    'active_icon': 'toggle_on',
-                    'toggled': True
-                },
-                {
-                    'label': 'Validation Step',
-                    'icon': 'toggle_off',
-                    'active_icon': 'toggle_on',
-                    'toggled': True
-                }
-            ],
-            align="center",
-            color="light",
-            description="Setings",
-            icon="settings",
-            size="large",
-            margin=(0, 5, 0, 5),
-            persistent=True,
-            sx={'.MuiButton-startIcon': {'mr': 0}},
-            variant='text'
-        )
-        self._settings_menu.param.watch(self._toggle_sql_planning, 'toggled')
-        self._settings_menu.param.watch(self._toggle_validation_agent, 'toggled')
-        self._coordinator.verbose = self._settings_menu.param.toggled.rx().rx.pipe(lambda toggled: 0 in toggled)
-        return [
-            HSpacer(),
-            self._settings_menu,
-            Divider(
-                orientation="vertical", height=30, margin=(17, 5, 17, 5),
-                sx={'border-color': 'white', 'border-width': '1px'}
-            )
-        ]
+        return []
 
     def _render_main(self) -> list[Viewable]:
         num_sources = len(self.context.get("sources", []))
@@ -601,6 +560,16 @@ class UI(Viewer):
             styles={'z-index': '1000', 'margin-left': 'auto'},
             variant="text"
         )
+
+        self._explorations = MenuList(
+            items=[self._exploration], value=self.param._exploration, show_children=False,
+            dense=True, label='Explorations', margin=0, sizing_mode='stretch_width',
+            sx={".mui-light .MuiBox-root": {"backgroundColor": "var(--mui-palette-grey-100)"}},
+        )
+        self._explorations.param.watch(self._cleanup_explorations, 'items')
+        self._explorations.param.watch(self._update_conversation, 'active')
+        self._explorations.param.watch(self._sync_active, 'value')
+        self._explorations.on_action('remove', self._delete_exploration)
 
         # Create LLM configuration dialog
         self._llm_dialog = LLMConfigDialog(
@@ -943,30 +912,27 @@ class ExplorerUI(UI):
         nb = export_notebook(self._exploration['view'].plan.views, preamble=self.notebook_preamble)
         return StringIO(nb)
 
-    def _update_item(self, menu, item, **updates):
-        new_item = dict(item, **updates)
-        items = menu.items
-        index = items.index(item)
-        menu.items = items[:index] + [new_item] + items[index+1:]
-
     @hold()
     def _handle_sidebar_event(self, item):
         if item["id"] == "home":
+            self._toggle_report_mode(False)
             self._exploration = self._explorations.items[0]
         elif item["id"] == "exploration":
             self._toggle_report_mode(False)
-            self._update_item(self._sidebar_menu, item, active=True, icon="forum")
-            self._update_item(self._sidebar_menu, self._sidebar_menu.items[3], active=False, icon="description_outlined")
+            self._sidebar_menu.update_item(item, active=True, icon="forum")
+            self._sidebar_menu.update_item(self._sidebar_menu.items[3], active=False, icon="description_outlined")
             self._update_home()
         elif item["id"] == "report":
             self._toggle_report_mode(True)
-            self._update_item(self._sidebar_menu, self._sidebar_menu.items[2], active=False, icon="forum_outlined")
-            self._update_item(self._sidebar_menu, item, active=True, icon="description")
+            self._sidebar_menu.update_item(self._sidebar_menu.items[2], active=False, icon="forum_outlined")
+            self._sidebar_menu.update_item(item, active=True, icon="description")
             self._update_home()
         elif item["id"] == "data":
             self._open_sources_dialog()
         elif item["id"] == "llm":
             self._open_llm_dialog()
+        elif item["id"] == "settings":
+            self._settings_popup.open = True
 
     @param.depends("_exploration", watch=True)
     def _update_home(self):
@@ -974,28 +940,34 @@ class ExplorerUI(UI):
         if not hasattr(self, '_page'):
             return
         home, _, exploration, report = self._sidebar_menu.items[:4]
-        self._update_item(self._sidebar_menu, home, active=is_home, icon="home" if is_home and not report["active"] else "home_outlined")
-        self._update_item(self._sidebar_menu, exploration, active=True, icon="forum_outlined" if report["active"] else "forum")
-
-    def _render_contextbar(self) -> list[Viewable]:
-        self._explorations = MenuList(
-            items=[self._exploration], value=self.param._exploration, show_children=False,
-            dense=True, label='Explorations', margin=(-50, 0, 0, 0), sizing_mode='stretch_width'
-        )
-        self._explorations.on_action('up', self._move_up)
-        self._explorations.on_action('down', self._move_down)
-        self._explorations.on_action('remove', self._delete_exploration)
-        self._explorations.param.watch(self._cleanup_explorations, 'items')
-        self._explorations.param.watch(self._update_conversation, 'active')
-        self._explorations.param.watch(self._sync_active, 'value')
-        self._reorder_switch = Switch(
-            label='Edit', styles={'margin-left': 'auto', 'z-index': '999'},
-            disabled=self._explorations.param.items.rx.len()<2
-        )
-        self._reorder_switch.param.watch(self._toggle_reorder, 'value')
-        return [self._reorder_switch, self._explorations]
+        self._sidebar_menu.update_item(home, active=is_home, icon="home" if is_home and not report["active"] else "home_outlined")
+        self._sidebar_menu.update_item(exploration, active=True, icon="forum_outlined" if report["active"] else "forum")
 
     def _render_sidebar(self) -> list[Viewable]:
+        switches = []
+        cot = Switch(label='Chain of Thought')
+        switches.append(cot)
+        sql_agent = next(
+            (agent for agent in self._coordinator.agents if isinstance(agent, SQLAgent)),
+            None
+        )
+        if sql_agent:
+            sql_planning = Switch(label='SQL Planning')
+            sql_agent.planning_enabled = sql_planning
+            switches.append(sql_planning)
+        validation = Switch(label='Validation Step')
+        switches.append(validation)
+        self._coordinator.param.update(
+            verbose=cot,
+            validation_enabled=validation
+        )
+
+        self._settings_popup = Popup(
+            *switches,
+            anchor_origin={"horizontal": "right", "vertical": "bottom"},
+            styles={"z-index": '1300'},
+            theme_config={"light": {"palette": {"background": {"paper": "var(--mui-palette-grey-50)"}}}, "dark": {}}
+        )
         self._sidebar_collapse = collapse = ToggleIcon(
             value=True, active_icon="chevron_right", icon="chevron_left", styles={"margin-top": "auto", "margin-left": "auto"}, margin=5
         )
@@ -1008,7 +980,9 @@ class ExplorerUI(UI):
                 None,
                 {"label": "Manage Data", "icon": "drive_folder_upload_outlined", "id": "data"},
                 {"label": "Configure LLM", "icon": "psychology_outlined", "id": "llm"},
+                {"label": "Settings", "icon": "settings_outlined", "id": "settings"}
             ],
+            attached=[self._settings_popup],
             collapsed=collapse,
             highlight=False,
             margin=0,
@@ -1021,6 +995,7 @@ class ExplorerUI(UI):
                 }
             }
         )
+
         return [menu, collapse]
 
     def _render_page(self):
@@ -1110,66 +1085,25 @@ class ExplorerUI(UI):
         if event.new is not self._exploration:
             self._exploration = event.new
 
-    def _move_up(self, item):
-        items = list(self._explorations.items)
-        index = items.index(item)
-        if index <= 1:
-            return
-        items.pop(index)
-        items.insert(index-1, item)
-        self._explorations.items = items
-
-    def _move_down(self, item):
-        items = list(self._explorations.items)
-        index = items.index(item)
-        items.pop(index)
-        items.insert(index+1, item)
-        self._explorations.items = items
-
-    def _toggle_reorder(self, event):
-        items = self._explorations.items[:1]
-        reorder_actions = [
-            {'action': 'up', 'label': 'Move Up', 'inline': True, 'icon': 'keyboard_arrow_up'},
-            {'action': 'down', 'label': 'Move Down', 'inline': True, 'icon': 'keyboard_arrow_down'}
-        ]
-        for item in self._explorations.items[1:]:
-            item = dict(item)
-            if event.new:
-                item['actions'] = item['actions'] + reorder_actions
-            else:
-                item['actions'] = [
-                    action for action in item['actions'] if action['label'] not in ('Move Up', 'Move Down')
-                ]
-            items.append(item)
-        self._explorations.items = items
-
     def _toggle_report_mode(self, active: bool):
         """Toggle between regular and report mode."""
         if active:
-            self._main[:] = [Report(
-                *(exploration['view'].plan for exploration in self._explorations.items[1:])
-            )]
+            self._main[:] = [
+                Row(
+                    Paper(
+                        self._explorations,
+                        sizing_mode="stretch_height",
+                        sx={"borderRadius": 0},
+                        theme_config={"light": {"palette": {"background": {"paper": "var(--mui-palette-grey-100)"}}}, "dark": {}},
+                        width=200,
+                    ),
+                    Report(
+                        *(exploration['view'].plan for exploration in self._explorations.items[1:])
+                    )
+                )
+            ]
         else:
             self._main[:] = [self._split]
-
-    def _toggle_sql_planning(self, event: param.Event):
-        """Toggle SQL planning mode for SQLAgent."""
-        planning_enabled = 1 in event.new
-
-        # Update the SQLAgent directly if it exists
-        sql_agent = next(
-            (agent for agent in self._coordinator.agents if isinstance(agent, SQLAgent)),
-            None
-        )
-        if sql_agent:
-            sql_agent.planning_enabled = planning_enabled
-
-    def _toggle_validation_agent(self, event: param.Event):
-        """Toggle ValidationAgent usage."""
-        validation_enabled = 2 in event.new
-
-        # Update the coordinator's validation agent setting
-        self._coordinator.validation_enabled = validation_enabled
 
     def _delete_exploration(self, item):
         self._explorations.items = [it for it in self._explorations.items if it is not item]
