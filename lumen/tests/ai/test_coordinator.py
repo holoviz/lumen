@@ -12,7 +12,7 @@ from panel.tests.util import async_wait_until
 from panel_material_ui import Card, ChatMessage, Typography
 
 from lumen.ai.agents import AnalystAgent, ChatAgent, SQLAgent
-from lumen.ai.agents.sql import SqlQuery
+from lumen.ai.agents.sql import SQLQuery
 from lumen.ai.coordinator import Plan, Planner
 from lumen.ai.coordinator.planner import Reasoning, make_plan_model
 from lumen.ai.models import ReplaceLine, RetrySpec, ThinkingYesNo
@@ -173,7 +173,7 @@ async def sql_plan(llm, tiny_source):
     }
 
     llm.set_responses([
-        SqlQuery(query="SELECT SUM(value) as value_sum FROM tiny", table_slug="tiny_agg"),
+        SQLQuery(query="SELECT SUM(value) as value_sum FROM tiny", table_slug="tiny_agg"),
         lambda: f"Result: {plan[0].out_context['pipeline'].data.iloc[0, 0]}"
     ])
 

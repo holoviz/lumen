@@ -89,9 +89,9 @@ class DuckDBSource(BaseSQLSource):
                     cursor.execute(init)
 
         # Process tables to handle automatic file detection
+        self._file_based_tables = {}
         if isinstance(self.tables, dict):
             processed_tables = {}
-            self._file_based_tables = {}
             sql_based_tables = {}
             # First pass: separate file paths from SQL expressions
             for table_name, table_expr in self.tables.items():
