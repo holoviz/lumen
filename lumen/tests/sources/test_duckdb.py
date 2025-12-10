@@ -719,21 +719,44 @@ def test_detour_roundtrip(sample_csv_files):
     preserves the original SQL file-based tables so that it can
     be re-serialized without error.
     """
-    source = DuckDBSource(tables=sample_csv_files)
-    df = source.get("customers")
-    new_source = source.create_sql_expr_source(
-        tables={"limited_customers": 'SELECT * FROM customers LIMIT 1'}
-    )
-    limited_df = new_source.get("limited_customers")
-    assert len(limited_df) == 1
-    assert limited_df.iloc[[0]].equals(df.iloc[[0]])
+    files = sample_csv_files
+    original_cwd = os.getcwd()
+    
+    try:
+        os.chdir(files['dir'])
+        
+        # Create source with file-based tables
+        source = DuckDBSource(
+            uri=':memory:',
+            tables={
+                'customers': 'customers.csv',
+                'orders': 'orders.csv'
+            }
+        )
+        df = source.get("customers")
+        
+        # Create a derived source with a new SQL expression
+        new_source = source.create_sql_expr_source(
+            tables={"limited_customers": 'SELECT * FROM customers LIMIT 1'}
+        )
+        limited_df = new_source.get("limited_customers")
+        assert len(limited_df) == 1
+        assert limited_df.iloc[[0]].equals(df.iloc[[0]])
 
-    read_source = source.from_spec(new_source.to_spec())
-    read_df = read_source.get("limited_customers")
-    assert len(read_df) == 1
-    assert read_df.iloc[[0]].equals(df.iloc[[0]])
-    assert read_source.tables["limited_customers"] == 'SELECT * FROM customers LIMIT 1'
-    assert "customers" in read_source.tables
+        # Serialize and deserialize - need to use absolute paths
+        spec = new_source.to_spec()
+        spec['tables']['customers'] = files['customers']
+        spec['tables']['orders'] = files['orders']
+        
+        read_source = DuckDBSource.from_spec(spec)
+        read_df = read_source.get("limited_customers")
+        assert len(read_df) == 1
+        assert read_df.iloc[[0]].equals(df.iloc[[0]])
+        assert read_source.tables["limited_customers"] == 'SELECT * FROM customers LIMIT 1'
+        assert "customers" in read_source.tables
+        assert "orders" in read_source.tables
+    finally:
+        os.chdir(original_cwd)
 
 
 def test_table_params_basic(sample_csv_files):
@@ -958,5 +981,96 @@ def test_table_params_serialization(sample_csv_files):
         pd.testing.assert_frame_equal(original_result, restored_result)
         assert len(restored_result) == 1
         assert restored_result.iloc[0]['id'] == 2
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_create_sql_expr_source_preserves_all_existing_tables(sample_csv_files):
+    """Test that create_sql_expr_source preserves ALL existing tables (upsert behavior)."""
+    files = sample_csv_files
+    original_cwd = os.getcwd()
+
+    try:
+        os.chdir(files['dir'])
+
+        # Create initial source with multiple tables
+        source = DuckDBSource(
+            uri=':memory:',
+            tables={
+                'customers': 'customers.csv',
+                'orders': 'orders.csv',
+                'existing_view': 'SELECT * FROM customers WHERE id > 1'
+            }
+        )
+
+        # Verify initial state
+        assert set(source.get_tables()) == {'customers', 'orders', 'existing_view'}
+
+        # Create new source with additional tables - should preserve ALL existing ones
+        new_tables = {
+            'new_table': 'SELECT * FROM orders WHERE total > 200'
+        }
+
+        new_source = source.create_sql_expr_source(new_tables)
+
+        # ALL tables should be present: original + new
+        expected_tables = {'customers', 'orders', 'existing_view', 'new_table'}
+        assert set(new_source.get_tables()) == expected_tables
+
+        # Verify all tables are accessible and work correctly
+        assert len(new_source.get('customers')) == 3
+        assert len(new_source.get('orders')) == 3
+        assert len(new_source.get('existing_view')) == 2  # id > 1
+        assert len(new_source.get('new_table')) == 2  # total > 200
+
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_create_sql_expr_source_upserts_existing_tables(sample_csv_files):
+    """Test that create_sql_expr_source overwrites tables with same name (upsert behavior)."""
+    files = sample_csv_files
+    original_cwd = os.getcwd()
+
+    try:
+        os.chdir(files['dir'])
+
+        # Create initial source
+        source = DuckDBSource(
+            uri=':memory:',
+            tables={
+                'customers': 'customers.csv',
+                'orders': 'orders.csv',
+                'filtered_customers': 'SELECT * FROM customers WHERE id = 1'  # Original: just Alice
+            }
+        )
+
+        # Verify initial state
+        initial_result = source.get('filtered_customers')
+        assert len(initial_result) == 1
+        assert initial_result.iloc[0]['name'] == 'Alice'
+
+        # Create new source that OVERWRITES filtered_customers but keeps others
+        new_tables = {
+            'filtered_customers': 'SELECT * FROM customers WHERE id > 1',  # New: Bob and Charlie
+            'new_table': 'SELECT * FROM orders WHERE total > 200'
+        }
+
+        new_source = source.create_sql_expr_source(new_tables)
+
+        # Should have all tables
+        expected_tables = {'customers', 'orders', 'filtered_customers', 'new_table'}
+        assert set(new_source.get_tables()) == expected_tables
+
+        # filtered_customers should have NEW definition (id > 1, not id = 1)
+        updated_result = new_source.get('filtered_customers')
+        assert len(updated_result) == 2
+        assert set(updated_result['name']) == {'Bob', 'Charlie'}
+
+        # Original tables should still work
+        assert len(new_source.get('customers')) == 3
+        assert len(new_source.get('orders')) == 3
+        assert len(new_source.get('new_table')) == 2
+
     finally:
         os.chdir(original_cwd)
