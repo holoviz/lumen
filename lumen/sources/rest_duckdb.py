@@ -127,8 +127,6 @@ class RESTDuckDBSource(DuckDBSource):
         """
         Get the current full URL for a REST table.
 
-        Can be called with either table OR config (for internal use).
-
         Parameters
         ----------
         table : str
