@@ -1,5 +1,7 @@
 # Building a Weather Data Explorer
 
+<img width="1505" height="1185" alt="image" src="https://github.com/user-attachments/assets/7e1cd684-14d2-4d4c-b409-db82e286f43d" />
+
 Build a domain-specific data exploration application using Lumen AI. This tutorial creates a weather data explorer that analyzes atmospheric soundings and displays Skew-T diagrams.
 
 **Time**: 15-20 minutes
