@@ -1,39 +1,49 @@
-# Build your first dashboard
+# Build dashboard with spec
 
-!!! important
-    This tutorial is meant to get you hands-on building a Lumen dashboard. Don't worry about understanding everything just yet—your only goal is to follow the steps as directed.
+Build a complete Lumen dashboard in under 15 minutes using YAML specifications.
 
-You will build a simple Lumen dashboard and deploy it in your browser. The result will look like this:
+!!! info "Why learn specs when AI exists?"
+    **Lumen AI generates these specs automatically** through conversation. So why learn to write them manually?
+    
+    - **Customize AI outputs** - Edit and enhance what the AI creates
+    - **Reproducibility** - AI-generated dashboards are saved as specs you can version control
+    - **Understanding** - Know how Lumen works under the hood
+    - **Advanced features** - Some features aren't yet available through AI
+    
+    **Historically**, users wrote these specs by hand before LLMs. Now AI does the heavy lifting, but understanding specs lets you fine-tune results.
+    
+    **Choose your approach:**
+    
+    - Prefer AI assistance? → [Use Lumen AI](../getting_started/using_lumen_ai.md) instead
+    - Want to understand the system? → Continue with this tutorial
+    - AI generated something, want to customize it? → This tutorial will help
 
-![Build dashboard final result](../../assets/build_app_07.png)
+!!! tip "What you'll learn"
+    - Create a YAML specification from scratch
+    - Load data from a remote source
+    - Add interactive filters
+    - Create multiple visualizations
+    - Customize layout and styling
 
-## 1. Create a YAML file
+## Final result
 
-Open your favorite text editor and create an empty file called `penguins.yaml`.
+By the end of this tutorial, you'll have built this dashboard:
 
-## 2. Add a data source
+![Build dashboard final result](../assets/build_app_07.png)
 
-The first thing you need is a source of data. Add the text below to create a remote FileSource. This tells Lumen to fetch the [Palmer Penguins dataset](https://allisonhorst.github.io/palmerpenguins/):
+---
 
-```yaml
-sources:
-  penguin_source:
-    type: file
-    tables:
-      penguin_table: https://datasets.holoviz.org/penguins/v1/penguins.csv
-```
+## Step 1: Create a YAML file
 
-Save the file, then open a terminal and navigate to the file's location.
+Open your text editor and create a file called `penguins.yaml`.
 
-Launch the dashboard with:
+**Time: 30 seconds**
 
-```bash
-lumen serve penguins.yaml --show --autoreload
-```
+---
 
-The `--autoreload` flag automatically updates the dashboard when you modify the YAML file.
+## Step 2: Add a data source
 
-Your browser should now display something like this:
+Load the Palmer Penguins dataset from a remote URL:
 
 === "YAML"
 
@@ -45,15 +55,35 @@ Your browser should now display something like this:
           penguin_table: https://datasets.holoviz.org/penguins/v1/penguins.csv
     ```
 
-=== "Preview"
+=== "What this does"
 
-    ![Data source added](../../assets/build_app_00.png)
+    - Creates a source named `penguin_source`
+    - Uses the `file` type to load CSV data
+    - Names the table `penguin_table`
+    - Points to a remote dataset URL
 
-So far you have an empty dashboard because you haven't specified a view yet. Let's add one!
+Save the file, then open a terminal and navigate to its location.
 
-## 3. Specify a table view
+Launch the dashboard:
 
-The simplest view to add is a table showing the raw data. This gives you a preview of what you're working with and shows available fields.
+```bash
+lumen serve penguins.yaml --show --autoreload
+```
+
+!!! note "About --autoreload"
+    The `--autoreload` flag automatically refreshes your browser when you save changes to the YAML file.
+
+Your browser opens, but the dashboard is empty—you haven't added any views yet:
+
+![Data source added](../assets/build_app_00.png)
+
+**Time: 2 minutes**
+
+---
+
+## Step 3: Add a table view
+
+Display the raw data in a table to preview available columns:
 
 === "YAML"
 
@@ -74,11 +104,17 @@ The simplest view to add is a table showing the raw data. This gives you a previ
 
 === "Preview"
 
-    ![Table view added](../../assets/build_app_01.png)
+    ![Table view added](../assets/build_app_01.png)
 
-## 4. Create a plot view
+The table shows all columns in the dataset. You'll use these column names later for plots.
 
-The table shows the raw data, but to see patterns you need visualization. Add a plot view by replacing the `table` type with `hvplot`:
+**Time: 3 minutes**
+
+---
+
+## Step 4: Create a plot
+
+Replace the table with an interactive plot:
 
 === "YAML"
 
@@ -99,11 +135,17 @@ The table shows the raw data, but to see patterns you need visualization. Add a 
 
 === "Preview"
 
-    ![hvPlot view added](../../assets/build_app_02.png)
+    ![hvPlot view added](../assets/build_app_02.png)
 
-## 5. Make a scatter plot
+This default plot shows too much information at once. Let's make it more specific.
 
-This plot includes too much data at once. Instead, create a scatter plot with specific axes and colors:
+**Time: 4 minutes**
+
+---
+
+## Step 5: Configure a scatter plot
+
+Create a scatter plot with specific axes and colors:
 
 === "YAML"
 
@@ -128,11 +170,17 @@ This plot includes too much data at once. Instead, create a scatter plot with sp
 
 === "Preview"
 
-    ![Scatter plot created](../../assets/build_app_03.png)
+    ![Scatter plot created](../assets/build_app_03.png)
 
-## 6. Manipulate the data
+Now you can see the relationship between bill length and depth, colored by species.
 
-Add two filter widgets for 'sex' and 'island', and use a transform to select only the columns you need:
+**Time: 6 minutes**
+
+---
+
+## Step 6: Add filters and transforms
+
+Add interactive filters and select specific columns:
 
 === "YAML"
 
@@ -169,11 +217,18 @@ Add two filter widgets for 'sex' and 'island', and use a transform to select onl
 
 === "Preview"
 
-    ![Filters and transforms added](../../assets/build_app_04.png)
+    ![Filters and transforms added](../assets/build_app_04.png)
 
-## 7. Add multiple view types
+!!! success "Interactive filtering"
+    Users can now filter by sex and island using the widgets in the sidebar!
 
-Expand your dashboard with a histogram and a table:
+**Time: 8 minutes**
+
+---
+
+## Step 7: Add multiple views
+
+Expand your dashboard with a histogram and table:
 
 === "YAML"
 
@@ -215,11 +270,17 @@ Expand your dashboard with a histogram and a table:
 
 === "Preview"
 
-    ![Multiple views added](../../assets/build_app_05.png)
+    ![Multiple views added](../assets/build_app_05.png)
 
-## 8. Customize layout and appearance
+The dashboard now shows three different views of the same filtered data.
 
-The default layout cuts off plots and doesn't resize responsively. Improve this with `sizing_mode` and custom layout settings:
+**Time: 10 minutes**
+
+---
+
+## Step 8: Improve the layout
+
+Make the dashboard responsive and set proper sizing:
 
 === "YAML"
 
@@ -269,11 +330,22 @@ The default layout cuts off plots and doesn't resize responsively. Improve this 
 
 === "Preview"
 
-    ![Layout customized](../../assets/build_app_06.png)
+    ![Layout customized](../assets/build_app_06.png)
 
-## 9. Add a title and theme
+=== "What changed"
 
-Finish by giving your dashboard a descriptive title and dark theme:
+    - `layout: [[0], [1, 2]]` - Scatter on top row, histogram and table on bottom row
+    - `sizing_mode: stretch_width` - Views expand to fill available width
+    - `responsive: true` - Plots resize when browser window changes
+    - Individual `height` settings control each view's height
+
+**Time: 12 minutes**
+
+---
+
+## Step 9: Add title and theme
+
+Finish with a descriptive title and dark theme:
 
 === "YAML"
 
@@ -328,8 +400,41 @@ Finish by giving your dashboard a descriptive title and dark theme:
 
 === "Preview"
 
-    ![Final dashboard](../../assets/build_app_07.png)
+    ![Final dashboard](../assets/build_app_07.png)
+
+🎉 **Congratulations!** You've built a complete interactive dashboard.
+
+**Total time: 15 minutes**
+
+---
+
+## What you learned
+
+In this tutorial, you:
+
+- ✅ Created a YAML specification file
+- ✅ Loaded data from a remote source
+- ✅ Added interactive filter widgets
+- ✅ Created multiple visualization types
+- ✅ Configured responsive layouts
+- ✅ Applied themes and styling
 
 ## Next steps
 
-Congratulations! You've created your first Lumen dashboard. To generalize these steps and build your own dashboards, review the [core concepts](core_concepts.md) and explore the other topics in this section.
+Now that you've built your first dashboard, deepen your understanding:
+
+1. **[Core Concepts](../configuration/spec/concepts.md)** - Understand the YAML structure and how Lumen works
+2. **[Loading Data](../configuration/spec/sources.md)** - Load data from different sources (files, databases, APIs)
+3. **[Transforming Data](../configuration/spec/pipelines.md)** - Learn all available filters and transforms
+4. **[Visualizing Data](../configuration/spec/views.md)** - Explore different visualization types
+
+**Want more?** Browse the [complete spec documentation](../configuration/spec/index.md) for advanced features.
+
+## Try these challenges
+
+Apply what you learned:
+
+- 📊 Replace the histogram with a box plot (`kind: box`)
+- 🎨 Color the scatter plot by a different field
+- 🔍 Add a filter for the `year` column
+- 📥 Enable data downloads (see [Downloads guide](../configuration/spec/downloads.md))

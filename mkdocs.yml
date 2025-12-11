@@ -97,6 +97,7 @@ nav:
 
   - Tutorials:
     - Weather Data Explorer: tutorials/weather_sounding.md
+    - Build Dashboard with Spec: tutorials/build_dashboard_with_spec.md
 
   - Configuration:
     - CLI: configuration/cli.md
@@ -108,24 +109,17 @@ nav:
     - Analyses: configuration/analyses.md
     - Coordinator: configuration/coordinators.md
     - Specs:
-      - Index: configuration/spec/index.md
-      - Build a Dashboard: configuration/spec/build_dashboard.md
-      - Core Concepts: configuration/spec/core_concepts.md
-      - Pipelines: configuration/spec/pipelines.md
-      - Architecture: configuration/spec/lumen_architecture.md
-      - Caching: configuration/spec/cache.md
-      - Files: configuration/spec/files.md
-      - Branching Pipelines: configuration/spec/branch_pipeline.md
-      - Python Pipelines: configuration/spec/pipeline_python.md
-      - Python Dashboards: configuration/spec/dashboard_python.md
-      - Deployment: configuration/spec/deploy.md
-      - Views: configuration/spec/views.md
-      - Validate Specs: configuration/spec/validate.md
-      - Download Data: configuration/spec/download_data.md
-      - Authentication: configuration/spec/auth.md
-      - Callbacks: configuration/spec/callbacks.md
-      - Local Components: configuration/spec/local_components.md
-      - Variables & References: configuration/spec/variables_and_references.md
+      - Overview: configuration/spec/index.md
+      - Core Concepts: configuration/spec/concepts.md
+      - Loading Data: configuration/spec/sources.md
+      - Transforming Data: configuration/spec/pipelines.md
+      - Visualizing Data: configuration/spec/views.md
+      - Variables & References: configuration/spec/variables.md
+      - Custom Components: configuration/spec/customization.md
+      - Python API: configuration/spec/python-api.md
+      - Data Downloads: configuration/spec/downloads.md
+      - Authentication: configuration/spec/authentication.md
+      - Deployment: configuration/spec/deployment.md
 
   - Reference:
     - API: reference/api/

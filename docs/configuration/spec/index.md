@@ -1,30 +1,161 @@
-# Lumen Specifications
+# Lumen YAML Specifications
 
-Learn how to build data dashboards using Lumen's YAML-based specification system.
+Build powerful data dashboards using YAML configuration files—no Python coding required.
 
-## What are Lumen Specs?
+!!! info "About Lumen specs and Lumen AI"
+    **Lumen AI runs on Lumen specs under the hood.** When you use Lumen AI to create dashboards, it generates these YAML specifications automatically. Reports created with Lumen AI are fully reproducible using the generated specs.
+    
+    **Historically, users wrote these specs manually** before LLMs became capable. Now, Lumen AI can generate them for you through natural language conversation. However, understanding specs is still valuable for:
+    
+    - **Customizing AI-generated dashboards** beyond what the AI created
+    - **Building dashboards programmatically** without the AI interface
+    - **Version control and reproducibility** of your dashboard configurations
+    - **Advanced features** not yet supported by the AI
+    
+    **Choose your approach:**
+    
+    - Want AI to build it for you? → [Use Lumen AI](../../getting_started/using_lumen_ai.md)
+    - Want to learn the underlying system? → Continue reading this guide
+    - Want to customize an AI-generated dashboard? → Learn specs, then edit the YAML
 
-Lumen specifications (specs) provide a declarative way to build data dashboards using YAML configuration files. Instead of writing Python code, you define your dashboard's structure, data sources, transformations, and visualizations in a simple YAML format.
+## What are Lumen specs?
 
-## Why Use Specs?
+Lumen specifications let you build interactive data dashboards by writing YAML configuration instead of code. Define your data sources, transformations, and visualizations declaratively, then deploy with a single command.
 
-- **Declarative approach**: Define what you want, not how to build it
-- **No coding required**: Build powerful dashboards with YAML configuration
-- **Version control friendly**: Track changes to your dashboard configuration
-- **Reproducible**: Share and deploy dashboard definitions easily
-- **Flexible**: Combine with Python when you need custom behavior
+## Why use specs?
 
-## What's in This Section?
+| Benefit | Description |
+|---------|-------------|
+| **No coding required** | Build dashboards using simple YAML syntax |
+| **Fast iteration** | Edit YAML, refresh browser—see changes instantly |
+| **Version control friendly** | Track dashboard changes like any text file |
+| **Reproducible** | Share exact dashboard configuration with others |
+| **Extensible** | Add Python when you need custom behavior |
+| **AI-transparent** | Understand and modify what Lumen AI generates |
 
-This section covers everything you need to know about building dashboards with Lumen specs:
+## Quick navigation
 
-- **Fundamentals**: Core concepts, architecture, and how to build your first dashboard
-- **Data operations**: Loading files, caching data, and building transformation pipelines
-- **Visualization**: Creating views, configuring dashboards, and deployment
-- **Advanced features**: Authentication, callbacks, custom components, and variable references
+Choose your path based on experience level:
 
-## Getting Started
+### 🎯 New to Lumen specs?
 
-New to Lumen specs? Start with [Build a Dashboard](build_dashboard.md) to create your first dashboard, then explore [Core Concepts](core_concepts.md) to understand how Lumen works.
+Start with the tutorial to build your first dashboard in 15 minutes:
 
-Already familiar with the basics? Jump directly to specific topics using the navigation.
+**[Build Dashboard with Spec](../../tutorials/build_dashboard_with_spec.md)** - Complete hands-on tutorial
+
+Then understand the concepts:
+
+1. **[Core Concepts](concepts.md)** - Understand how Lumen specs work
+2. **[Loading Data](sources.md)** - Connect to your data sources
+
+### 💪 Building dashboards?
+
+Guides for common dashboard tasks:
+
+| Task | Guide |
+|------|-------|
+| Load data from files | [Loading Data](sources.md) |
+| Filter and transform data | [Transforming Data](pipelines.md) |
+| Create plots and tables | [Visualizing Data](views.md) |
+| Use variables and references | [Variables & References](variables.md) |
+| Enable data downloads | [Data Downloads](downloads.md) |
+
+### 🚀 Advanced features?
+
+Extend Lumen with custom functionality:
+
+- **[Custom Components](customization.md)** - Build custom sources, transforms, filters, and views
+- **[Python API](python-api.md)** - Build dashboards programmatically
+- **[Authentication](authentication.md)** - Secure your dashboards
+
+### 🛠️ Ready to deploy?
+
+Launch your dashboard:
+
+- **[Deployment](deployment.md)** - Serve dashboards and validate configurations
+
+## How Lumen works
+
+Lumen follows a simple three-stage workflow:
+
+```
+┌──────────┐     ┌───────────┐     ┌────────┐
+│ Sources  │ ──> │ Pipelines │ ──> │ Views  │
+└──────────┘     └───────────┘     └────────┘
+    │                 │                  │
+    │                 │                  │
+Load data      Filter/transform     Visualize
+```
+
+1. **Sources** load data from files, databases, or APIs
+2. **Pipelines** filter and transform the data
+3. **Views** display the results as plots, tables, or other visualizations
+
+## Example dashboard
+
+Here's a complete dashboard specification:
+
+```yaml
+config:
+  title: Sales Dashboard
+  theme: dark
+
+sources:
+  sales_data:
+    type: file
+    tables:
+      sales: data/sales.csv
+
+pipelines:
+  filtered_sales:
+    source: sales_data
+    table: sales
+    filters:
+      - type: widget
+        field: region
+      - type: widget
+        field: product
+
+layouts:
+  - title: Sales Overview
+    pipeline: filtered_sales
+    views:
+      - type: hvplot
+        kind: line
+        x: date
+        y: revenue
+      - type: table
+        page_size: 20
+```
+
+Deploy with one command:
+
+```bash
+lumen serve dashboard.yaml --show
+```
+
+## YAML vs Python
+
+Lumen offers two approaches to building dashboards:
+
+| Aspect | YAML | Python |
+|--------|------|--------|
+| **Syntax** | Simple configuration | Python code |
+| **Learning curve** | Beginner-friendly | Requires Python knowledge |
+| **Flexibility** | Good for common patterns | Full programmatic control |
+| **Best for** | Standard dashboards | Complex custom applications |
+| **Documentation** | This guide | [Python API Guide](python-api.md) |
+
+Most users start with YAML and add Python only when needed.
+
+## Getting help
+
+- **Stuck?** Check the [Deployment guide](deployment.md) for validation and troubleshooting
+- **Need examples?** Each guide includes working code samples
+- **Want to extend?** See the [Customization guide](customization.md)
+
+## Next steps
+
+**New to specs?** Start with the [Build Dashboard with Spec tutorial](../../tutorials/build_dashboard_with_spec.md) to create your first dashboard in 15 minutes.
+
+**Returning users?** Jump to the guide that matches your current task using the navigation above.

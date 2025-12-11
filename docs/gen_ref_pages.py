@@ -32,10 +32,5 @@ for path in sorted(src.rglob("*.py")):
 
     mkdocs_gen_files.set_edit_path(full_doc_path, path)
 
-# Generate index page for API section
-with mkdocs_gen_files.open("reference/api/index.md", "w") as index_file:
-    index_file.write("# API Reference\n\n")
-    index_file.write("This section contains the API reference for all Lumen modules.\n")
-
 with mkdocs_gen_files.open("reference/api/SUMMARY.md", "w") as nav_file:
     nav_file.writelines(nav.build_literate_nav())
