@@ -1,4 +1,4 @@
-# Deploying and validating dashboards
+# :material-rocket: Deploying and validating dashboards
 
 Deploy dashboards as standalone applications and validate configurations.
 
@@ -463,60 +463,6 @@ Check with:
 ```bash
 curl http://localhost:5006/health
 ```
-
-## Troubleshooting deployment
-
-### Port already in use
-
-**Problem**: `OSError: [Errno 48] Address already in use`
-
-**Solution**: Use a different port or kill the existing process:
-
-```bash
-# Find process
-lsof -i :5006
-
-# Kill it
-kill -9 <PID>
-
-# Or use different port
-lumen serve dashboard.yaml --port 5007
-```
-
-### Can't access from other machines
-
-**Problem**: Dashboard only accessible from localhost
-
-**Solution**: Bind to all interfaces and allow WebSocket origin:
-
-```bash
-lumen serve dashboard.yaml \
-  --address 0.0.0.0 \
-  --allow-websocket-origin=*
-```
-
-### Data not loading in production
-
-**Problem**: Dashboard works locally but not in production
-
-**Solutions**:
-
-- Check file paths are absolute or relative to correct location
-- Verify data files are deployed with application
-- Check file permissions
-- Review logs for specific errors
-
-### Performance issues
-
-**Problem**: Dashboard is slow in production
-
-**Solutions**:
-
-1. Enable caching at source level
-2. Use `--num-procs` for multiple workers
-3. Optimize data queries
-4. Use database sources for large datasets
-5. Enable browser caching for static assets
 
 ## Best practices
 

@@ -1,9 +1,9 @@
-# Launching Lumen
+# :material-play-circle: Launching Lumen
 
 Start Lumen AI from the command line or Python. Choose the method that fits your workflow.
 
-!!! tip
-    Before launching, make sure you've installed Lumen and configured an LLM provider. See the [Installation guide](../installation.md).
+!!! tip "Before launching"
+    Make sure you've installed Lumen and configured an LLM provider. See the [Installation guide](../installation.md).
 
 ## Launch from the command line
 
@@ -17,59 +17,50 @@ This opens the chat interface at `localhost:5006`.
 
 ### Pre-load a dataset
 
-Start with data already loaded by passing a file path or URL:
+Start with data already loaded:
 
-```bash
+``` bash title="Single file"
 lumen-ai serve penguins.csv
 ```
 
-Load from the web:
-
-```bash
+``` bash title="From URL"
 lumen-ai serve https://datasets.holoviz.org/penguins/v1/penguins.csv
 ```
 
-Load multiple files:
-
-```bash
-lumen-ai serve penguins.csv penguins.parquet
+``` bash title="Multiple files"
+lumen-ai serve penguins.csv orders.parquet
 ```
 
-Use wildcards:
-
-```bash
-lumen-ai serve *.csv
+``` bash title="Using wildcards"
+lumen-ai serve data/*.csv
 ```
 
 ### Configure the LLM
 
-You can configure the LLM at startup using CLI flags.
+Configure the LLM at startup using CLI flags:
 
-**Specify a provider:**
-
-```bash
+``` bash title="Specify provider"
 lumen-ai serve --provider openai
 ```
 
-**Specify a model:**
-
-```bash
+``` bash title="Specify model"
 lumen-ai serve --model-kwargs '{"default": {"model": "gpt-4o"}}'
 ```
 
-**Adjust temperature** (controls randomness; higher = more creative):
-
-```bash
-lumen-ai serve --temperature 0.5
+``` bash title="Adjust temperature"
+lumen-ai serve --temperature 0.5  # (1)!
 ```
 
-**Combine options:**
+1. Controls randomness; higher = more creative (0.0-2.0)
 
-```bash
-lumen-ai serve penguins.csv --provider openai --model-kwargs '{"default": {"model": "gpt-4o"}}' --temperature 0.7
+``` bash title="Combine options"
+lumen-ai serve penguins.csv \
+  --provider openai \
+  --model-kwargs '{"default": {"model": "gpt-4o"}}' \
+  --temperature 0.7
 ```
 
-For a complete list of CLI options, run:
+For a complete list of CLI options:
 
 ```bash
 lumen-ai serve --help
@@ -79,54 +70,80 @@ lumen-ai serve --help
 
 For more control, use the Python API:
 
-```python
+``` py title="Minimal Python app"
 import lumen.ai as lmai
 
 ui = lmai.ExplorerUI()
 ui.servable()
 ```
 
-Save this as `app.py`, then launch it:
+Save as `app.py`, then launch:
 
 ```bash
 panel serve app.py
 ```
 
-You can pass configuration options to `ExplorerUI`:
+### Pre-load data
 
-```python
+``` py title="Load data in Python"
 import lumen.ai as lmai
+
+ui = lmai.ExplorerUI(data='penguins.csv')
+ui.servable()
+```
+
+### Configure the LLM
+
+``` py title="Configure LLM in Python" hl_lines="4-8 11"
+import lumen.ai as lmai
+
+# Configure your LLM
+llm = lmai.llm.OpenAI(
+    model_kwargs={
+        'default': {'model': 'gpt-4o-mini'},
+        'sql': {'model': 'gpt-4o'}
+    },
+    temperature=0.7
+)
+
+ui = lmai.ExplorerUI(data='penguins.csv', llm=llm)
+ui.servable()
+```
+
+See [LLM Providers](../configuration/llm_providers.md) for advanced LLM configuration.
+
+### Add custom components
+
+``` py title="Custom agents and analyses" hl_lines="4-6 11-13"
+import lumen.ai as lmai
+from lumen.ai.agents import AnalysisAgent
+
+# Create custom analysis
+analysis_agent = AnalysisAgent(analyses=[MyAnalysis])
 
 ui = lmai.ExplorerUI(
     data='penguins.csv',
-    provider='openai',
-    model_kwargs={'default': {'model': 'gpt-4o'}},
-    temperature=0.7,
+    agents=[analysis_agent, MyCustomAgent()],
+    tools=[my_custom_tool],
+    suggestions=[
+        ("search", "What data is available?"),
+        ("bar_chart", "Show me a visualization"),
+    ]
 )
 ui.servable()
 ```
 
-Common configuration options include:
+## Common CLI flags
 
-**Specify a provider:**
-
-```bash
-provider='openai'
-```
-
-**Specify a model:**
-
-```bash
-model_kwargs={'default': {'model': 'gpt-4o'}}
-```
-
-**Adjust temperature:**
-
-```bash
-temperature=0.5
-```
-
-See [LLM Providers](../configuration/llm_providers.md) for advanced setup.
+| Flag | Purpose | Example |
+|------|---------|---------|
+| `--provider` | Specify LLM provider | `--provider anthropic` |
+| `--model-kwargs` | Configure models | `--model-kwargs '{"default": {"model": "claude-sonnet-4-5"}}'` |
+| `--temperature` | Control randomness | `--temperature 0.5` |
+| `--port` | Custom port | `--port 8080` |
+| `--address` | Network address | `--address 0.0.0.0` |
+| `--show` | Auto-open browser | `--show` |
+| `--log-level` | Debug verbosity | `--log-level DEBUG` |
 
 ## Next steps
 

@@ -1,4 +1,4 @@
-# Securing dashboards with authentication
+# :material-shield-lock: Securing dashboards with authentication
 
 Restrict dashboard access to authorized users.
 

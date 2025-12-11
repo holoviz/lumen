@@ -1,4 +1,4 @@
-# Lumen YAML Specifications
+# :material-file-code: Lumen YAML Specifications
 
 Build powerful data dashboards using YAML configuration files—no Python coding required.
 
@@ -150,7 +150,7 @@ Most users start with YAML and add Python only when needed.
 
 ## Getting help
 
-- **Stuck?** Check the [Deployment guide](deployment.md) for validation and troubleshooting
+- **Stuck?** Check the [Deployment guide](deployment.md) for validation
 - **Need examples?** Each guide includes working code samples
 - **Want to extend?** See the [Customization guide](customization.md)
 

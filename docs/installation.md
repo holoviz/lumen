@@ -1,6 +1,9 @@
-# Installation
+# :material-download: Installation
 
-Lumen works with Python 3.10+ on Linux, Windows, and Mac.
+Lumen works with Python 3.11+ on Linux, Windows, and Mac.
+
+!!! tip "Already installed?"
+    Jump to the [Quick Start](quick_start.md) to start chatting with your data.
 
 ## Bring Your Own LLM
 
@@ -44,7 +47,7 @@ Lumen works with any LLM provider. No vendor lock-in.
 === "Azure OpenAI"
 
     ```bash
-    pip install 'lumen[ai-azure]'
+    pip install 'lumen[ai-openai]'
     export AZURE_OPENAI_API_KEY=your-key
     export AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
     export AZURE_OPENAI_API_VERSION=2024-02-15-preview
@@ -81,5 +84,9 @@ Lumen works with any LLM provider. No vendor lock-in.
 ## Verify Installation
 
 ```bash
-lumen --version
+lumen-ai --version
 ```
+
+## Next Steps
+
+Ready to start? Head to the [Quick Start](quick_start.md) guide to chat with your first dataset.

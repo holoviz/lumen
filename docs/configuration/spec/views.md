@@ -1,4 +1,4 @@
-# Visualizing data with views
+# :material-chart-scatter-plot: Visualizing data with views
 
 Views display your data as plots, tables, indicators, and other visual components.
 
@@ -683,49 +683,6 @@ layouts:
         x: date
         y: revenue
 ```
-
-## Troubleshooting
-
-### Views not displaying
-
-**Problem**: Blank space where view should appear
-
-**Solutions**:
-- Check that source/pipeline has data (`pipeline.data` in Python)
-- Verify column names are correct (case-sensitive)
-- Look for errors in browser console
-- Try simple table view first to confirm data loads
-
-### Plot shows wrong data
-
-**Problem**: Plot displays unexpected values
-
-**Solutions**:
-- Verify x/y column names match data
-- Check data types (numeric columns for plots)
-- Preview data in table view first
-- Check for null values causing issues
-
-### Layout looks wrong
-
-**Problem**: Views overlap or don't arrange as expected
-
-**Solutions**:
-- Use explicit `layout` parameter for grid arrangement
-- Set appropriate `height` for each view
-- Use `sizing_mode: stretch_width` for responsive behavior
-- Check that view indices in `layout` match view order
-
-### Performance issues
-
-**Problem**: Dashboard is slow or unresponsive
-
-**Solutions**:
-1. Reduce data volume at source or with filters
-2. Use pagination for large tables
-3. Limit number of views per layout
-4. Use simpler plot types for large datasets
-5. Enable caching at source level
 
 ## Next steps
 

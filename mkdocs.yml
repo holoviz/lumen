@@ -58,18 +58,27 @@ markdown_extensions:
   - pymdownx.tasklist:
       custom_checkbox: true
   - pymdownx.inlinehilite
-  - pymdownx.snippets
   - admonition
   - pymdownx.snippets:
       url_download: true
+      base_path: 
+        - .
   - pymdownx.tabbed:
       alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - attr_list
+  - md_in_html
+  - abbr
+  - def_list
 
 plugins:
   - search
-  - gen-files:
-      scripts:
-        - docs/gen_ref_pages.py
+  - typeset
+  # - gen-files:
+  #     scripts:
+        # - docs/gen_ref_pages.py
   - literate-nav
   - mkdocstrings:
       handlers:
@@ -88,25 +97,43 @@ watch:
 nav:
   - Home: index.md
   - Installation: installation.md
+  - Quick Start: quick_start.md
   - FAQ: faq.md
 
   - Getting Started:
+    - getting_started/index.md
     - Launching Lumen: getting_started/launching_lumen.md
     - Navigating the UI: getting_started/navigating_the_ui.md
     - Using Lumen AI: getting_started/using_lumen_ai.md
 
-  - Tutorials:
-    - Weather Data Explorer: tutorials/weather_sounding.md
-    - Build Dashboard with Spec: tutorials/build_dashboard_with_spec.md
+  - Examples:
+    - Tutorials:
+      - Overview: examples/tutorials/index.md
+      - Weather Data AI Explorer: examples/tutorials/weather_data_ai_explorer.md
+      - Penguins Dashboard Spec: examples/tutorials/penguins_dashboard_spec.md
+    - Gallery:
+      - Overview: examples/gallery/index.md
+      - Penguins: examples/gallery/penguins.md
+      - London Bike Points: examples/gallery/bikes.md
+      - Seattle Weather: examples/gallery/seattle.md
+      - NYC Taxi: examples/gallery/nyc_taxi.md
+      - Precipitation: examples/gallery/precip.md
+      - Earthquakes: examples/gallery/earthquakes.md
+      - Wind Turbines: examples/gallery/windturbines.md
 
   - Configuration:
+    - configuration/index.md
     - CLI: configuration/cli.md
     - Prompts: configuration/prompts.md
     - Data Sources: configuration/sources.md
     - LLM Providers: configuration/llm_providers.md
+    - UI: configuration/ui.md
+    - Analyses: configuration/analyses.md
+    - Context: configuration/context.md
     - Agents: configuration/agents.md
     - Tools: configuration/tools.md
-    - Analyses: configuration/analyses.md
+    - Vector Stores: configuration/vector_stores.md
+    - Embeddings: configuration/embeddings.md
     - Coordinator: configuration/coordinators.md
     - Specs:
       - Overview: configuration/spec/index.md
@@ -122,7 +149,8 @@ nav:
       - Deployment: configuration/spec/deployment.md
 
   - Reference:
-    - API: reference/api/
+    - reference/index.md
+    # - API: reference/api/
     - Contributing: reference/contributing.md
 
 extra:

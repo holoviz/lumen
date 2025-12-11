@@ -1,4 +1,4 @@
-# Loading data with sources
+# :material-file-upload: Loading data with sources
 
 Sources load data into your dashboard from files, databases, or APIs.
 
@@ -413,52 +413,6 @@ sources:
         category: [A, B, C]
         year: [2020, 2021, 2022]
 ```
-
-## Troubleshooting
-
-### File not found
-
-**Problem**: `FileNotFoundError` when loading local files
-
-**Solution**: Check file paths are correct relative to your YAML file, or use absolute paths:
-
-```yaml
-# Relative (recommended)
-tables:
-  data: data/sales.csv
-  
-# Absolute (if needed)
-tables:
-  data: /home/user/project/data/sales.csv
-```
-
-### URL not accessible
-
-**Problem**: Remote files fail to load
-
-**Solution**: 
-- Verify the URL is publicly accessible
-- Check for network/firewall issues
-- Ensure the file format is supported
-
-### Memory issues with large files
-
-**Problem**: Dashboard runs out of memory
-
-**Solutions**:
-1. Enable caching to use disk storage
-2. Use Parquet format (more efficient than CSV)
-3. Use `cache_per_query: true` to cache filtered subsets
-4. Consider using a database source instead
-
-### Slow initial load
-
-**Problem**: First dashboard load is very slow
-
-**Solutions**:
-1. Enable caching with `cache_dir`
-2. Use pre-caching for expected queries
-3. Download large files locally instead of loading remotely
 
 ## Next steps
 

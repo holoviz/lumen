@@ -1,4 +1,4 @@
-# Tools
+# :material-tools: Tools
 
 **Tools let agents access external data and perform specialized tasks.**
 
@@ -8,9 +8,9 @@ Most users don't need custom tools. Built-in tools handle common needs.
 
 Lumen includes tools automatically:
 
-- **TableLookup** - Finds relevant tables in your data
-- **DocumentLookup** - Searches uploaded documents
-- **IterativeTableLookup** - Advanced table discovery
+- **TableLookup** - Finds relevant tables in your data (see [Vector Stores](vector_stores.md#table-discovery))
+- **DocumentLookup** - Searches uploaded documents (see [Vector Stores](vector_stores.md#document-search))
+- **IterativeTableLookup** - Advanced table discovery with embeddings (see [Embeddings](embeddings.md#when-embeddings-are-used))
 - **DbtslLookup** - Queries dbt Semantic Layer metrics
 
 You don't need to configure these. Agents use them when needed.
@@ -19,7 +19,7 @@ You don't need to configure these. Agents use them when needed.
 
 Turn any function into a tool:
 
-```python
+``` py title="Simple function tool"
 import lumen.ai as lmai
 
 def calculate_average(numbers: list[float]) -> float:
@@ -40,18 +40,18 @@ def calculate_average(numbers: list[float]) -> float:
 
 ui = lmai.ExplorerUI(
     data='penguins.csv',
-    tools=[calculate_average]
+    tools=[calculate_average]  # (1)!
 )
 ui.servable()
 ```
 
-The LLM uses your docstring and type hints to understand when to call it.
+1. Function automatically becomes a tool - the LLM uses your docstring and type hints
 
-## Tool that accesses memory
+## Tool that accesses context
 
-Tools can read data from memory:
+Tools can read data from context (memory):
 
-```python
+``` py title="Tool with context access" hl_lines="26-28"
 from lumen.ai.tools import FunctionTool
 
 def filter_penguins(table) -> dict:
@@ -76,8 +76,8 @@ def filter_penguins(table) -> dict:
 
 tool = FunctionTool(
     function=filter_penguins,
-    requires=["table"],              # Needs table from memory
-    provides=["filtered_table", "summary"],  # Adds these to memory
+    requires=["table"],              # (1)!
+    provides=["filtered_table", "summary"],  # (2)!
     purpose="Filter penguins by bill length"
 )
 
@@ -85,13 +85,17 @@ ui = lmai.ExplorerUI(
     data='penguins.csv',
     tools=[tool]
 )
+ui.servable()
 ```
+
+1. Tool reads `table` from context
+2. Tool adds `filtered_table` and `summary` to context
 
 ## Tool that calls an API
 
 Wrap external services:
 
-```python
+``` py title="API tool"
 def fetch_weather(location: str) -> str:
     """
     Get current weather for a location.
@@ -114,11 +118,12 @@ ui = lmai.ExplorerUI(
     data='penguins.csv',
     tools=[fetch_weather]
 )
+ui.servable()
 ```
 
 ## Complete example: Data validation
 
-```python
+``` py title="Data quality tool" linenums="1"
 import pandas as pd
 from lumen.ai.tools import FunctionTool
 
@@ -157,25 +162,31 @@ tool = FunctionTool(
     provides=["data_quality_report"],
     purpose="Validate data quality and report issues"
 )
+
+ui = lmai.ExplorerUI(
+    data='penguins.csv',
+    tools=[tool]
+)
+ui.servable()
 ```
 
 ## Tool components
 
-**`requires`** - Memory keys the tool needs:
+**`requires`** - Context keys the tool needs:
 
-```python
-requires=["table", "sql"]  # Tool receives these from memory
+``` py
+requires=["table", "sql"]  # Tool receives these from context
 ```
 
-**`provides`** - Memory keys the tool creates:
+**`provides`** - Context keys the tool creates:
 
-```python
-provides=["summary", "report"]  # Tool adds these to memory
+``` py
+provides=["summary", "report"]  # Tool adds these to context
 ```
 
 **`purpose`** - Description for the LLM:
 
-```python
+``` py
 purpose="Validates data quality and finds issues"
 ```
 
@@ -183,32 +194,57 @@ purpose="Validates data quality and finds issues"
 
 Combine tools for complex workflows:
 
-```python
-from lumen.ai.tools import DocumentLookup
+=== "With built-in tools"
 
-def get_stats(table) -> dict:
-    """Calculate summary statistics."""
-    return {
-        "min": table['bill_length_mm'].min(),
-        "max": table['bill_length_mm'].max(),
-        "mean": table['bill_length_mm'].mean(),
-    }
+    ``` py title="Mix custom and built-in tools"
+    from lumen.ai.tools import DocumentLookup
 
-def filter_species(table, species: str):
-    """Filter by species name."""
-    return table[table['species'] == species]
+    def get_stats(table) -> dict:
+        """Calculate summary statistics."""
+        return {
+            "min": table['bill_length_mm'].min(),
+            "max": table['bill_length_mm'].max(),
+            "mean": table['bill_length_mm'].mean(),
+        }
 
-ui = lmai.ExplorerUI(
-    data='penguins.csv',
-    tools=[get_stats, filter_species, DocumentLookup()]
-)
-```
+    def filter_species(table, species: str) -> dict:
+        """Filter by species name."""
+        filtered = table[table['species'] == species]
+        return {
+            "filtered": filtered,
+            "count": len(filtered)
+        }
+
+    ui = lmai.ExplorerUI(
+        data='penguins.csv',
+        tools=[get_stats, filter_species, DocumentLookup()]
+    )
+    ui.servable()
+    ```
+
+=== "Only custom tools"
+
+    ``` py title="Multiple custom tools"
+    def tool_a(data: list) -> dict:
+        """Process data."""
+        return {"result_a": processed}
+
+    def tool_b(data: list) -> dict:
+        """Analyze data."""
+        return {"result_b": analyzed}
+
+    ui = lmai.ExplorerUI(
+        data='penguins.csv',
+        tools=[tool_a, tool_b]
+    )
+    ui.servable()
+    ```
 
 ## Best practices
 
-**Write clear docstrings:**
+### Write clear docstrings
 
-```python
+``` py title="Good docstring format"
 def my_tool(data: list) -> str:
     """
     One-line summary of what it does.
@@ -227,16 +263,16 @@ def my_tool(data: list) -> str:
     """
 ```
 
-**Use type hints:**
+### Use type hints
 
-```python
+``` py title="Type hints help the LLM"
 def process(numbers: list[float], threshold: int) -> dict:
     """Type hints help the LLM call correctly."""
 ```
 
-**Name parameters clearly:**
+### Name parameters clearly
 
-```python
+``` py
 # Good
 def calculate_average(numbers: list[float]) -> float:
 
@@ -244,9 +280,9 @@ def calculate_average(numbers: list[float]) -> float:
 def calculate(x: list[float]) -> float:
 ```
 
-**Keep tools focused:**
+### Keep tools focused
 
-```python
+``` py
 # Good - one task
 def validate_email(email: str) -> bool:
 
@@ -254,59 +290,127 @@ def validate_email(email: str) -> bool:
 def validate_and_process_user_data(data: dict):
 ```
 
-**Handle errors gracefully:**
+### Return structured data when using provides
 
-```python
-def process(data: list) -> str:
-    if not data:
-        return "No data provided"
-    
-    try:
-        result = sum(data) / len(data)
-        return f"Average: {result:.2f}"
-    except Exception as e:
-        return f"Error: {e}"
-```
+!!! warning "Match provides with return keys"
+
+    When using `provides`, your function must return a dict with those keys:
+
+    ``` py hl_lines="3 7-10"
+    tool = FunctionTool(
+        function=my_function,
+        provides=["result", "metadata"]  # These keys must be in return dict
+    )
+
+    def my_function(data):
+        return {
+            "result": processed_data,
+            "metadata": {"count": 10}
+        }  # ✅ Has both "result" and "metadata"
+    ```
+
+### Handle errors gracefully
+
+=== "Return error dict"
+
+    ``` py title="Structured error handling"
+    def process(data: list) -> dict:
+        if not data:
+            return {"error": "No data provided"}
+        
+        try:
+            result = sum(data) / len(data)
+            return {"average": result}
+        except Exception as e:
+            return {"error": str(e)}
+    ```
+
+=== "Return error string"
+
+    ``` py title="Simple error handling"
+    def process(data: list) -> str:
+        if not data:
+            return "Error: No data provided"
+        
+        try:
+            result = sum(data) / len(data)
+            return f"Average: {result:.2f}"
+        except Exception as e:
+            return f"Error: {e}"
+    ```
 
 ## When to use tools vs agents
 
-Use tools when:
-
-- The task is a simple function call
-- You don't need async/await
-- You're wrapping an external API
-- The logic is straightforward
-
-Use agents when:
-
-- You need complex prompting
-- The task requires multiple LLM calls
-- You need async operations
-- The logic is sophisticated
+| Use tools when | Use agents when |
+|----------------|-----------------|
+| Simple function call | Complex prompting needed |
+| No async/await needed | Multiple LLM calls required |
+| Wrapping external API | Multi-step reasoning needed |
+| Straightforward logic | Sophisticated error handling |
 
 ## Troubleshooting
 
-**Tool never gets called:**
+### Tool never gets called
 
-Check that `purpose` is clear and specific. The LLM uses this to decide when to invoke the tool.
+The coordinator doesn't think the tool is relevant. Make the `purpose` clear and specific:
 
-**"Missing required argument":**
+``` py
+# Bad
+purpose = "Does stuff with data"
 
-Ensure `requires` lists the correct memory keys, and those keys exist when the tool runs.
+# Good
+purpose = "Validates email addresses and returns True if valid"
+```
 
-**Tool fails silently:**
+### Missing required argument
+
+Tool expects a context key that doesn't exist. Ensure `requires` lists correct keys:
+
+``` py
+tool = FunctionTool(
+    function=my_function,
+    requires=["table"],  # Must exist in context
+)
+```
+
+### Tool fails silently
 
 Add error handling and return error messages instead of raising exceptions:
 
-```python
+``` py
 def my_tool(data):
     try:
         # Your logic
         return result
     except Exception as e:
-        return f"Error: {e}"
+        return {"error": str(e)}
 ```
 
-**Tool returns unexpected data:**
+### KeyError when using provides
 
-Check type hints match what you're actually returning. The LLM relies on type hints to understand the output.
+!!! failure "Common mistake with provides"
+
+    Your function must return a dict with all keys listed in `provides`:
+
+    ``` py hl_lines="2 5 8 11-14"
+    # Wrong - returns a string but provides expects dict keys
+    provides=["summary", "count"]
+
+    def bad_tool(data):
+        return "Summary text"  # ❌
+
+    # Correct - returns dict with expected keys
+    provides=["summary", "count"]
+
+    def good_tool(data):
+        return {
+            "summary": "Summary text",
+            "count": len(data)
+        }  # ✅
+    ```
+
+## See also
+
+- [Vector Stores](vector_stores.md) - Configure document search and table discovery tools
+- [Embeddings](embeddings.md) - Configure semantic search for tools
+- [Agents](agents.md) - When to use agents instead of tools

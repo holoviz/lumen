@@ -1,128 +1,111 @@
-# Chat with Your Data
+# :material-chat: Chat with Your Data
 
-Lumen is an open-source, fully extensible Python framework for building AI-powered data exploration and reporting tools. Ask questions about your data—Lumen's specialized agents query your data, create visualizations, and produce shareable reports. No coding needed, but infinitely customizable.
+**Ask questions. Get answers, visualizations, and reports. No coding required.**
 
-## What Makes Lumen Different
+Lumen is an open-source Python framework for building AI-powered data tools.
 
-| Feature | Lumen | Other Tools |
-|---------|-------|-----------|
-| **Your LLM** | Use any LLM (yours or cloud) | Locked to one provider |
-| **Your data** | Any source: local, DB, API, lake | Limited connectors |
-| **Extend it** | Build agents, tools, visualizations | Limited customization |
-| **Open source** | 100% open, no telemetry | Often proprietary |
-| **Declarative** | YAML + Python, easily reproducible | Often code-only |
+Natural language queries automatically generate database queries, create visualizations, and build dashboards. Bring your own LLM—OpenAI, Anthropic, local models, or build your own. Infinitely extensible with pure Python.
 
-## Get Started in 30 Seconds
+=== "CSV File"
 
-Using one of the methods below, start Lumen with a sample dataset, open [https://localhost:5006](https://localhost:5006), and start asking questions!
+    ```bash
+    lumen serve your_data.csv
+    ```
 
-**Command line:**
+=== "Snowflake"
 
-```bash
-pip install 'lumen[ai-openai]'  # or see Installation guide for other LLMs
-lumen-ai serve https://datasets.holoviz.org/penguins/v1/penguins.csv
-```
+    ```python
+    from lumen.sources.snowflake import SnowflakeSource
+    import lumen.ai as lmai
+
+    source = SnowflakeSource(
+        account='your-account',
+        database='your-database',
+        authenticator='externalbrowser'  # SSO login
+    )
+
+    ui = lmai.ExplorerUI(data=source)
+    ui.servable()
+    ```
 
 ---
 
-**Python:**
+## Why Lumen?
 
-Create `app.py`:
+**Stop waiting for data teams. Ask questions in plain English.**
 
-```python
-from lumen.ai import ExplorerUI
-ui = ExplorerUI(data='https://datasets.holoviz.org/penguins/v1/penguins.csv')
-ui.servable()
-```
+You have questions about your data. Your data team is backlogged three sprints. You could learn SQL, but by the time you do, the question will have changed.
 
-Then run:
+Lumen eliminates this bottleneck:
 
-```bash
-panel serve app.py
-```
+| Who | Benefit |
+|----|---------|
+| **Data analysts** | Skip boilerplate code and focus on insights |
+| **Developers** | Build data apps in hours instead of weeks |
+| **Data teams** | Enable self-service without losing control |
+| **Researchers** | Share reproducible analysis without teaching syntax |
 
-!!! tip
-    You may need to specify an API key for your chosen LLM provider, e.g. `export OPENAI_API_KEY=your_key_here` for OpenAI. See [LLM Providers](configuration/llm_providers.md) for details.
+**No vendor lock-in.** Use OpenAI, Anthropic, local Llama, or your own model. Self-host anywhere.
 
-## How It Works
+**Connect to anything.** PostgreSQL, Snowflake, DuckDB, CSV files, APIs—if it has data, Lumen can query it.
 
-You don't need to write SQL or Python; just ask a question, e.g.
+**Infinitely extensible.** Pure Python + YAML configs. Build custom agents, tools, and visualizations when you need them.
 
-→ **Which islands have the most penguins? Plot as a horizontal bar chart.**
+---
 
-Lumen creates a plan:
+## What Makes It Different?
 
-```markdown
-- [ ] Query the penguin dataset to aggregate the total number of penguins by island. Provide the pipeline and with the aggregated data.
-- [ ] Using the aggregated penguin count by island, create a horizontal bar chart showing islands on the y-axis and penguin counts on the x-axis.
-```
+**Declarative + AI-powered + Bring your own LLM**
 
-From the plan, Lumen generates SQL to query the data:
+| Traditional BI | Code-First | Lumen |
+|----------------|------------|--------|
+| Inflexible, expensive | Too much boilerplate | YAML specs for speed |
+| Vendor lock-in | Manual UI building | AI generates queries & viz |
+| No customization | Full control | Python extensions when needed |
 
-```sql
-SELECT "island", COUNT(*) AS "penguin_count" FROM penguins GROUP BY "island" ORDER BY "penguin_count" DESC
-```
-
-| island    | penguin_count |
-|-----------|--------------|
-| Biscoe    | 168          |
-| Dream     | 124          |
-| Torgersen | 52           |
-
-Then Lumen creates a Vega-Lite spec to visualize the results:
-
-```yaml
-$schema: https://vega.github.io/schema/vega-lite/v5.json
-  data:
-    name: penguin_count_by_island
-  height: container
-  layer:
-  - encoding:
-      color:
-        value: '#4682b4'
-      x:
-        axis:
-          title: Penguin Count
-        field: penguin_count
-        type: quantitative
-      y:
-        axis:
-          title: Island
-        field: island
-        sort: -x
-        type: nominal
-    mark: bar
-  title:
-    anchor: start
-    fontSize: 20
-    subtitle: Biscoe island has the highest penguin count, followed by Dream and Torgersen
-    subtitleColor: '#666666'
-    subtitleFontSize: 16
-    text: Penguin Counts by Island
-  width: container
-```
-
-<iframe 
-  src="assets/penguin_counts_by_island.html" 
-  width="640" 
-  height="620"
-  style="border:none;"
-></iframe>
+Write YAML for common patterns. Drop into Python for custom logic. AI handles the tedious parts.
 
 ---
 
 ## What's Next?
 
-- **[Installation](installation.md)** — Install Lumen with your preferred LLM provider
-- **[Launching Lumen](getting_started/launching_lumen.md)** — Start from command line or Python
-- **[Navigating the UI](getting_started/navigating_the_ui.md)** — Learn the interface and features
-- **[Using Lumen AI](getting_started/using_lumen_ai.md)** — Ask questions and explore your data
+**Start with these guides:**
+
+<div class="grid cards" markdown>
+
+-   :material-rocket: **[Quick Start](quick_start.md)**  
+    Get up and running in 30 seconds
+
+-   :material-download: **[Installation](installation.md)**  
+    Install with your preferred LLM provider
+
+-   :material-play-circle: **[Launching Lumen](getting_started/launching_lumen.md)**  
+    Command line and Python usage
+
+-   :material-mouse: **[Navigating the UI](getting_started/navigating_the_ui.md)**  
+    Chat interface and dashboard builder
+
+-   :material-brain: **[Using Lumen AI](getting_started/using_lumen_ai.md)**  
+    Master natural language queries
+
+-   :material-school: **[Examples](examples/tutorials/index.md)**  
+    Step-by-step tutorials and gallery
+
+</div>
 
 ---
 
 ## Community & Support
 
-- **Questions?** [Discourse](https://discourse.holoviz.org/c/lumen/)
-- **Chat with us** [Discord](https://discord.com/invite/rb6gPXbdAr)
-- **Found a bug?** [GitHub Issues](https://github.com/holoviz/lumen/issues)
-- **Want to contribute?** [Contributing guide](reference/contributing.md)
+Questions? Join our community:
+
+- **Forum:** [Discourse](https://discourse.holoviz.org/c/lumen/)
+- **Chat:** [Discord](https://discord.com/invite/rb6gPXbdAr)
+- **Bugs:** [GitHub Issues](https://github.com/holoviz/lumen/issues)
+- **Contributing:** [Guide](reference/contributing.md)
+
+*[LLM]: Large Language Model
+*[API]: Application Programming Interface
+*[SQL]: Structured Query Language
+*[YAML]: YAML Ain't Markup Language
+*[CSV]: Comma-Separated Values

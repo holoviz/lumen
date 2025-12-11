@@ -1,4 +1,4 @@
-# Core concepts
+# :material-lightbulb: Core concepts
 
 Understand how Lumen works to build your own dashboards effectively.
 

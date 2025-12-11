@@ -1,73 +1,54 @@
-# Data Sources
+# :material-database: Data Sources
 
-**Connect Lumen to files, databases, or data warehouses.**
-
-Most users start with files. Advanced users connect to databases.
+Connect Lumen to files, databases, or data warehouses.
 
 ## Quick start
 
-### Load a file
-
-```bash
+``` bash title="Load a file"
 lumen-ai serve penguins.csv
 ```
 
-Works with CSV, Parquet, JSON, and URLs. No configuration needed.
+Works with CSV, Parquet, JSON, and URLs.
 
-### Load multiple files
-
-```bash
+``` bash title="Multiple files"
 lumen-ai serve penguins.csv earthquakes.parquet
 ```
 
-Or in Python:
-
-```python
+``` py title="In Python"
 import lumen.ai as lmai
 
 ui = lmai.ExplorerUI(data=['penguins.csv', 'earthquakes.parquet'])
 ui.servable()
 ```
 
-### Upload in the UI
-
-Start without data:
-
-```bash
-lumen-ai serve
-```
-
-Click **Manage Data** (cloud icon) to upload CSV, Parquet, or JSON files.
-
 ## Supported sources
 
 | Source | Use for |
 |--------|---------|
-| **Files** | CSV, Parquet, JSON (local or URL) |
-| **DuckDB** | Local SQL queries on files |
-| **Snowflake** | Cloud data warehouse |
-| **BigQuery** | Google's data warehouse |
-| **PostgreSQL** | PostgreSQL databases |
-| **Intake** | Data catalogs |
+| Files | CSV, Parquet, JSON (local or URL) |
+| DuckDB | Local SQL queries on files |
+| Snowflake | Cloud data warehouse |
+| BigQuery | Google's data warehouse |
+| PostgreSQL | PostgreSQL via SQLAlchemy |
+| MySQL | MySQL via SQLAlchemy |
+| SQLite | SQLite via SQLAlchemy |
+| Intake | Data catalogs |
 
-## Connect to databases
+## Database connections
 
 ### Snowflake
 
-```python
-from lumen.sources.duckdb import DuckDBSource
+``` py title="Snowflake with SSO"
 from lumen.sources.snowflake import SnowflakeSource
 import lumen.ai as lmai
 
 source = SnowflakeSource(
     account='your-account',
-    user='your-username',
-    authenticator='externalbrowser',  # SSO login
     database='your-database',
-    schema='your-schema',
+    authenticator='externalbrowser',  # SSO
 )
 
-ui = lmai.ExplorerUI(source=source)
+ui = lmai.ExplorerUI(data=source)
 ui.servable()
 ```
 
@@ -76,21 +57,20 @@ ui.servable()
 - `authenticator='externalbrowser'` - SSO (recommended)
 - `authenticator='snowflake'` - Username/password (needs `password=`)
 - `authenticator='oauth'` - OAuth token (needs `token=`)
-- Private key authentication (needs `private_key=`)
 
 **Select specific tables:**
 
-```python
+``` py hl_lines="4"
 source = SnowflakeSource(
     account='your-account',
     database='your-database',
-    tables=['CUSTOMERS', 'ORDERS']  # Only these tables
+    tables=['CUSTOMERS', 'ORDERS']
 )
 ```
 
 ### BigQuery
 
-```python
+``` py title="BigQuery connection"
 from lumen.sources.bigquery import BigQuerySource
 
 source = BigQuerySource(
@@ -98,150 +78,139 @@ source = BigQuerySource(
     tables=['dataset.table1', 'dataset.table2']
 )
 
-ui = lmai.ExplorerUI(source=source)
+ui = lmai.ExplorerUI(data=source)
 ui.servable()
 ```
 
 **Authentication:**
 
-```bash
+``` bash
 gcloud auth application-default login
 ```
 
-Or use a service account:
+Or set service account:
 
-```bash
+``` bash
 export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account.json"
-```
-
-**Select all tables in a dataset:**
-
-```python
-source = BigQuerySource(
-    project_id='your-project-id',
-    datasets=['dataset1']  # All tables in dataset1
-)
 ```
 
 ### PostgreSQL
 
-```python
-from lumen.sources.sql import PostgresSource
+``` py title="PostgreSQL via SQLAlchemy"
+from lumen.sources.sqlalchemy import SQLAlchemySource
 
-source = PostgresSource(
-    connection_string='postgresql://user:password@localhost:5432/database'
+source = SQLAlchemySource(
+    url='postgresql://user:password@localhost:5432/database'
+)
+
+ui = lmai.ExplorerUI(data=source)
+ui.servable()
+```
+
+Or use individual parameters:
+
+``` py
+source = SQLAlchemySource(
+    drivername='postgresql+psycopg2',
+    username='user',
+    password='password',
+    host='localhost',
+    port=5432,
+    database='mydb'
 )
 ```
 
-## Advanced file configuration
+### MySQL
 
-### DuckDB for complex file queries
+``` py title="MySQL connection"
+from lumen.sources.sqlalchemy import SQLAlchemySource
 
-DuckDB lets you run SQL on files directly:
+source = SQLAlchemySource(
+    url='mysql+pymysql://user:password@localhost:3306/database'
+)
+```
 
-```python
+### SQLite
+
+``` py title="SQLite file"
+from lumen.sources.sqlalchemy import SQLAlchemySource
+
+source = SQLAlchemySource(url='sqlite:///data.db')
+```
+
+## Advanced file handling
+
+### DuckDB for SQL on files
+
+Run SQL directly on CSV/Parquet files:
+
+``` py title="SQL on files"
 from lumen.sources.duckdb import DuckDBSource
 
 source = DuckDBSource(
     tables={
         'penguins': 'penguins.csv',
-        'earthquakes': "read_csv('https://earthquake.usgs.gov/query?format=csv')",
+        'quakes': "read_csv('https://earthquake.usgs.gov/data.csv')",
     }
 )
 ```
 
 **Load remote files:**
 
-```python
+``` py title="Remote files with DuckDB" hl_lines="3-6"
 source = DuckDBSource(
     tables=['https://datasets.holoviz.org/penguins/v1/penguins.csv'],
     initializers=[
         'INSTALL httpfs;',
         'LOAD httpfs;'
-    ]
+    ]  # (1)!
 )
 ```
 
-**Non-standard extensions:**
-
-```python
-source = DuckDBSource(
-    tables={
-        'data': "read_parquet('file.parq')",  # Wrap non-standard extensions
-    }
-)
-```
+1. Required for HTTP/S3 access
 
 ### Multiple sources
 
-Load data from different sources:
-
-```python
-snowflake = SnowflakeSource(account='...', database='...')
-bigquery = BigQuerySource(project_id='...')
-
-ui = lmai.ExplorerUI(data=[snowflake, bigquery])
-ui.servable()
-```
-
-Lumen can query across all sources.
-
-## Common patterns
-
-### Mix files and databases
-
-```python
-from lumen.sources.duckdb import DuckDBSource
+``` py title="Mix sources"
 from lumen.sources.snowflake import SnowflakeSource
+from lumen.sources.duckdb import DuckDBSource
 
-local_data = DuckDBSource(tables=['local.csv'])
-cloud_data = SnowflakeSource(account='...', database='...')
+snowflake = SnowflakeSource(account='...', database='...')
+local = DuckDBSource(tables=['local.csv'])
 
-ui = lmai.ExplorerUI(data=[local_data, cloud_data])
+ui = lmai.ExplorerUI(data=[snowflake, local])
 ui.servable()
 ```
 
 ### Custom table names
 
-```python
+``` py title="Rename tables" hl_lines="3-4"
 source = DuckDBSource(
     tables={
-        'customers': 'customer_data.csv',
+        'customers': 'customer_data.csv',  # (1)!
         'orders': 'order_history.parquet',
     }
 )
 ```
 
-Now ask questions using "customers" and "orders" instead of file names.
-
-### Initialize databases
-
-Run setup SQL when connecting:
-
-```python
-source = DuckDBSource(
-    tables=['data.csv'],
-    initializers=[
-        'INSTALL httpfs;',
-        'LOAD httpfs;',
-        'SET memory_limit="8GB";'
-    ]
-)
-```
+1. Use 'customers' instead of 'customer_data.csv' in queries
 
 ## Troubleshooting
 
-**"Table not found"**: Check table names match exactly (case-sensitive for some databases).
+**"Table not found"** - Table names are case-sensitive. Check exact names.
 
-**"Connection failed"**: Verify credentials and network access to the database.
+**"Connection failed"** - Verify credentials and network access.
 
-**"File not found"**: Use absolute paths or URLs. Relative paths are relative to where you run `lumen-ai serve`.
+**"File not found"** - Use absolute paths or URLs. Relative paths are relative to where you run the command.
 
-**Slow queries**: DuckDB is fast for files. If queries are slow, the database connection or query is the bottleneck, not Lumen.
+**Slow queries** - If using DuckDB on files, it's fast. Slowness usually comes from the database or network, not Lumen.
 
 ## Best practices
 
-- **Start with files** for testing and development
-- **Use URLs** for shared datasets that don't change often
-- **Connect databases** for production data that updates frequently
-- **Limit tables** when possible (faster planning and lower costs)
+**Start with files** for development. Move to databases for production.
+
+**Use URLs** for shared datasets that don't change often.
+
+**Limit tables** when possible - faster planning and lower LLM costs.
+
+**Name tables clearly** - Use meaningful names instead of generic file names.

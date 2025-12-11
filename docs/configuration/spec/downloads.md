@@ -1,4 +1,4 @@
-# Enabling data downloads
+# :material-download: Enabling data downloads
 
 Let users export dashboard data in various formats.
 
@@ -241,35 +241,6 @@ pn.Column(
     lm.views.Table(pipeline=pipeline)
 )
 ```
-
-## Troubleshooting
-
-### Download button not appearing
-
-**Problem**: Button doesn't show
-
-**Solutions**:
-- Verify `download:` parameter is at correct level (layout or view)
-- Check format is supported (`csv`, `xlsx`, `json`)
-- Ensure pipeline/source has data
-
-### Downloaded file is empty
-
-**Problem**: File downloads but contains no data
-
-**Solutions**:
-- Check that pipeline has data: `pipeline.data`
-- Verify filters aren't excluding all rows
-- Look for errors in browser console
-
-### Wrong data in download
-
-**Problem**: Downloaded data doesn't match displayed data
-
-**Solutions**:
-- Ensure download is connected to correct pipeline/source
-- Check that table and download use same pipeline
-- Verify no additional filters on table view
 
 ## Next steps
 

@@ -1,4 +1,4 @@
-# Transforming data with pipelines
+# :material-pipe: Transforming data with pipelines
 
 Pipelines filter and transform data before visualization.
 
@@ -832,46 +832,6 @@ layouts:
         pipeline: by_product
         kind: bar
 ```
-
-## Troubleshooting
-
-### Filters not appearing
-
-**Problem**: Filter widgets don't show in sidebar
-
-**Solutions**:
-- Verify pipeline is connected to layout via `pipeline:` parameter
-- Check field names match actual column names (case-sensitive)
-- Ensure source loads data correctly first
-
-### Transforms not applying
-
-**Problem**: Data looks unchanged after adding transforms
-
-**Solutions**:
-- Check transform order (they apply sequentially)
-- Verify column names exist in the data
-- Preview `pipeline.data` to see actual result
-- Check for errors in browser console
-
-### Performance issues
-
-**Problem**: Dashboard is slow when filtering
-
-**Solutions**:
-1. Enable caching at the source level
-2. Use SQL-based sources for large datasets
-3. Reduce data volume with column selection
-4. Use `auto_update=False` for manual updates
-
-### Chain not working
-
-**Problem**: Chained pipeline doesn't inherit filters
-
-**Solutions**:
-- Verify `pipeline:` parameter references correct pipeline name
-- Check that referenced pipeline exists and is defined first
-- Ensure pipeline names don't have typos
 
 ## Next steps
 

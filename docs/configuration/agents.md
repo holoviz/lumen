@@ -1,4 +1,4 @@
-# Agents
+# :material-robot: Agents
 
 **Agents are specialized workers that answer different types of questions.**
 
@@ -34,7 +34,7 @@ These agents work together automatically. The coordinator picks which agents to 
 
 Include only the agents you need:
 
-```python
+``` py title="Limit to specific agents"
 import lumen.ai as lmai
 from lumen.ai.agents import ChatAgent, SQLAgent, VegaLiteAgent
 
@@ -57,26 +57,35 @@ Most users should keep all default agents. Only customize if you have specific n
 
 Add your own agent for specialized tasks:
 
-```python
+``` py title="Minimal custom agent"
 import lumen.ai as lmai
+from lumen.ai.context import ContextModel
+from pydantic import Field
+
+class MyInputs(ContextModel):
+    data: dict = Field(description="The data to process")
+
+class MyOutputs(ContextModel):
+    summary: str = Field(description="Summary result")
 
 class SummaryAgent(lmai.agents.Agent):
     purpose = "Creates executive summaries of data"
     
-    # Define what this agent needs to run
-    input_schema = ...  # Pydantic model
-    output_schema = ... # Pydantic model
+    input_schema = MyInputs
+    output_schema = MyOutputs
     
     async def respond(self, messages, context, **kwargs):
         # Your logic here
-        return outputs, context
+        return [outputs], context
 
 ui = lmai.ExplorerUI(
     data='penguins.csv',
-    agents=[SummaryAgent()]  # Adds to default agents
+    agents=[SummaryAgent()]  # (1)!
 )
 ui.servable()
 ```
+
+1. Adds your agent alongside the default agents
 
 See [Creating custom agents](#creating-custom-agents) below for complete examples.
 
@@ -84,7 +93,7 @@ See [Creating custom agents](#creating-custom-agents) below for complete example
 
 Configure which LLM model each agent uses:
 
-```python
+``` py title="Different models per agent" hl_lines="4-7"
 import lumen.ai as lmai
 
 model_config = {
@@ -104,10 +113,12 @@ ui.servable()
 
 - SQLAgent uses the `"sql"` model
 - VegaLiteAgent uses the `"vega_lite"` model  
-- ChatAgent uses the `"chat"` model
 - AnalystAgent uses the `"analyst"` model
+- ChatAgent uses the `"chat"` model (falls back to `"default"` if not specified)
 
-See [LLM Providers](llm_providers.md#all-model-types) for complete details.
+Agent class names are converted to model keys automatically (e.g., `SQLAgent` → `"sql"`, `VegaLiteAgent` → `"vega_lite"`).
+
+See [LLM Providers](llm_providers.md) for complete details.
 
 ## Creating custom agents
 
@@ -130,14 +141,14 @@ Don't create a custom agent when:
 
 ### Basic custom agent structure
 
-```python
+``` py title="Custom agent structure" hl_lines="14-16"
 import lumen.ai as lmai
 from lumen.ai.context import ContextModel
 from pydantic import Field
 
 # Define what the agent needs
 class MyInputs(ContextModel):
-    data: dict = Field(description="The data to process")
+    pipeline: object = Field(description="Data pipeline to process")
 
 # Define what the agent provides
 class MyOutputs(ContextModel):
@@ -146,12 +157,12 @@ class MyOutputs(ContextModel):
 class MyAgent(lmai.agents.Agent):
     purpose = "Summarizes data in executive format"
     
-    input_schema = MyInputs
-    output_schema = MyOutputs
+    input_schema = MyInputs  # (1)!
+    output_schema = MyOutputs  # (2)!
     
     prompts = {
         "main": {
-            "template": "Summarize this data: {{ context.data }}"
+            "template": "Summarize this data: {{ memory['data'] }}"
         }
     }
     
@@ -160,17 +171,20 @@ class MyAgent(lmai.agents.Agent):
         system = await self._render_prompt("main", messages, context)
         
         # Get LLM response
-        summary = await self._stream(messages, system)
+        response = await self.llm.invoke(messages, system=system)
         
-        # Return outputs
-        return {"summary": summary}, context
+        # Return outputs and updated context
+        return [response], {"summary": str(response)}
 ```
+
+1. Agent requires `pipeline` in context to run
+2. Agent adds `summary` to context after running
 
 ### Complete working example
 
 This agent calculates statistical metrics:
 
-```python
+``` py title="Statistics agent" linenums="1"
 import lumen.ai as lmai
 from lumen.ai.context import ContextModel
 from pydantic import Field
@@ -214,10 +228,10 @@ Focus on:
         
         # Get LLM interpretation
         system = await self._render_prompt("main", messages, context, stats=stats)
-        interpretation = await self._stream(messages, system)
+        interpretation = await self.llm.invoke(messages, system=system)
         
         # Return results
-        return {"statistics": interpretation}, context
+        return [interpretation], {"statistics": str(interpretation)}
 
 # Use the agent
 ui = lmai.ExplorerUI(
@@ -233,27 +247,29 @@ Now you can ask "What are the statistics for this dataset?" and the agent will r
 
 **`purpose`** - One-sentence description of what the agent does. The coordinator uses this to decide when to invoke the agent.
 
-**`input_schema`** - Pydantic model defining what data the agent needs from memory. The agent can only run when these requirements are met.
+**`input_schema`** - TypedDict defining what data the agent needs from context. The agent can only run when these requirements are met.
 
-**`output_schema`** - Pydantic model defining what data the agent adds to memory. Other agents can use these outputs.
+**`output_schema`** - TypedDict defining what data the agent adds to context. Other agents can use these outputs.
 
 **`prompts`** - Dictionary of prompt templates. Most agents only need a "main" prompt.
 
-**`respond()`** - The async method that does the work. Must return `(outputs_dict, updated_context)`.
+**`respond()`** - The async method that does the work. Must return `(outputs_list, updated_context_dict)`.
 
 ### Control when agents are used
 
 Use `conditions` to specify when the agent should run:
 
-```python
+``` py title="Agent with conditions" hl_lines="5-9"
+import param
+
 class ReportAgent(lmai.agents.Agent):
     purpose = "Creates PDF reports"
     
-    conditions = [
+    conditions = param.List(default=[
         "Use when user explicitly asks for a report or PDF",
         "Use after data analysis is complete",
         "NOT for simple questions or queries"
-    ]
+    ])
     
     input_schema = MyInputs
     output_schema = MyOutputs
@@ -265,114 +281,117 @@ The coordinator reads these conditions when deciding which agent to use.
 
 Use `not_with` to prevent agents from being used together:
 
-```python
+``` py title="Prevent conflicting agents" hl_lines="5"
 class FastSummaryAgent(lmai.agents.Agent):
     purpose = "Quick data summaries"
     
-    not_with = ["DetailedAnalysisAgent"]  # Don't use both in same plan
+    not_with = param.List(default=["DetailedAnalysisAgent"])
 ```
 
 ### Common patterns
 
-**Agent that calls an API:**
+=== "API Integration"
 
-```python
-class WeatherAgent(lmai.agents.Agent):
-    purpose = "Fetches current weather data"
-    
-    async def respond(self, messages, context, **kwargs):
-        # Call external API
-        import httpx
-        async with httpx.AsyncClient() as client:
-            response = await client.get("https://api.weather.gov/...")
-            weather_data = response.json()
-        
-        # Format for user
-        summary = f"Current temperature: {weather_data['temp']}°F"
-        
-        return {"weather": summary}, context
-```
+    ``` py title="Call external APIs"
+    import httpx
 
-**Agent that processes files:**
+    class WeatherAgent(lmai.agents.Agent):
+        purpose = "Fetches current weather data"
+        
+        async def respond(self, messages, context, **kwargs):
+            async with httpx.AsyncClient() as client:
+                response = await client.get("https://api.weather.gov/...")
+                weather_data = response.json()
+            
+            summary = f"Current temperature: {weather_data['temp']}°F"
+            return [summary], {"weather": summary}
+    ```
 
-```python
-class PDFAgent(lmai.agents.Agent):
-    purpose = "Extracts text from PDF documents"
-    
-    async def respond(self, messages, context, **kwargs):
-        documents = context['documents']
-        
-        extracted_text = []
-        for doc in documents:
-            if doc['type'] == 'pdf':
-                # Extract text from PDF
-                text = extract_pdf_text(doc['content'])
-                extracted_text.append(text)
-        
-        return {"pdf_text": extracted_text}, context
-```
+=== "File Processing"
 
-**Agent that uses external tools:**
+    ``` py title="Extract PDF text"
+    class PDFAgent(lmai.agents.Agent):
+        purpose = "Extracts text from PDF documents"
+        
+        async def respond(self, messages, context, **kwargs):
+            documents = context.get('documents', [])
+            
+            extracted_text = []
+            for doc in documents:
+                if doc['type'] == 'pdf':
+                    text = extract_pdf_text(doc['content'])
+                    extracted_text.append(text)
+            
+            return [extracted_text], {"pdf_text": extracted_text}
+    ```
 
-```python
-class DataQualityAgent(lmai.agents.Agent):
-    purpose = "Checks data quality using Great Expectations"
-    
-    async def respond(self, messages, context, **kwargs):
-        import great_expectations as gx
+=== "External Library"
+
+    ``` py title="Data quality checks"
+    import great_expectations as gx
+
+    class DataQualityAgent(lmai.agents.Agent):
+        purpose = "Checks data quality using Great Expectations"
         
-        df = context['pipeline'].data
-        
-        # Run validations
-        results = run_quality_checks(df)
-        
-        # Summarize findings
-        system = await self._render_prompt("main", messages, context, results=results)
-        summary = await self._stream(messages, system)
-        
-        return {"quality_report": summary}, context
-```
+        async def respond(self, messages, context, **kwargs):
+            df = context['pipeline'].data
+            
+            # Run validations
+            results = run_quality_checks(df)
+            
+            # Summarize findings
+            system = await self._render_prompt(
+                "main", messages, context, results=results
+            )
+            summary = await self.llm.invoke(messages, system=system)
+            
+            return [summary], {"quality_report": str(summary)}
+    ```
 
 ## Common issues
 
 ### "Agent has unmet requirements"
 
-**What happened:** The agent's `input_schema` requires data that doesn't exist in memory.
+The agent's `input_schema` requires data that doesn't exist in context.
 
 **How to fix:**
 
-1. Check what the agent needs in its `input_schema`
-2. Make sure another agent provides that data first
-3. Or adjust the `input_schema` to not require it
+``` py title="Make fields optional"
+from typing import NotRequired
+
+class MyInputs(ContextModel):
+    pipeline: object  # Required
+    analysis: NotRequired[str]  # Optional
+```
+
+Or ensure another agent provides the required data first.
 
 ### Agent never gets invoked
 
-**What happened:** The coordinator doesn't think the agent is relevant.
+The coordinator doesn't think the agent is relevant.
 
 **How to fix:**
 
 1. Make the `purpose` more specific and clear
 2. Add `conditions` that describe when to use it
 3. Check that `input_schema` requirements can be satisfied
-4. Enable `verbose=True` to see why it wasn't selected
+4. Enable `log_level='DEBUG'` in the UI to see coordinator decisions
 
 ### Agent fails with "KeyError"
 
-**What happened:** The agent tried to access memory that doesn't exist.
+The agent tried to access context data that doesn't exist.
 
-**How to fix:**
+!!! warning "Always check before accessing context"
 
-```python
-# Bad - assumes 'data' exists
-data = context['data']
+    ``` py hl_lines="2 5-7"
+    # Bad - assumes 'data' exists
+    data = context['data']  # ❌ KeyError if missing
 
-# Good - checks first
-data = context.get('data')
-if data is None:
-    return {"error": "No data available"}, context
-```
-
-Always use `.get()` for optional keys in context.
+    # Good - checks first
+    data = context.get('data')  # ✅ Returns None if missing
+    if data is None:
+        return [{"error": "No data available"}], context
+    ```
 
 ## Best practices
 

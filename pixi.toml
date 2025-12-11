@@ -105,6 +105,7 @@ mkdocs-literate-nav = "*"
 [feature.doc.tasks]
 docs-build = { cmd = 'mkdocs build -d builtdocs', depends-on = ['install'] }
 docs-serve = { cmd = 'mkdocs serve', depends-on = ['install'] }
+docs-clean = { cmd = 'mkdocs build --clean', depends-on = ['install'] }
 
 # =============================================
 # ================== BUILD ====================

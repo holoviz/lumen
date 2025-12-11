@@ -1,4 +1,4 @@
-# Dynamic configuration with variables
+# :material-variable: Dynamic configuration with variables
 
 Variables make dashboards dynamic by parameterizing configuration values.
 
@@ -624,56 +624,6 @@ variables:
     start: 2020
     end: 2025
 ```
-
-## Troubleshooting
-
-### Variable not updating
-
-**Problem**: Dashboard doesn't reflect variable changes
-
-**Solutions**:
-- Check reference uses `$` not `{{}}` for dynamic updates
-- Verify variable name matches exactly (case-sensitive)
-- Ensure variable is in `variables` section
-- Check browser console for errors
-
-### Template variable not found
-
-**Problem**: `{{env("VAR")}}` fails with "variable not found"
-
-**Solutions**:
-- Set environment variable before running
-- Provide default: `{{env("VAR", "default")}}`
-- Check variable name spelling
-- On Windows, use `set VAR=value` instead of `export`
-
-### Circular references
-
-**Problem**: Variables reference each other in a loop
-
-**Solution**: Restructure to avoid circles:
-
-```yaml
-# ❌ Bad - circular
-variables:
-  a: $variables.b
-  b: $variables.a
-
-# ✅ Good - linear dependency
-variables:
-  base: 100
-  derived: $variables.base * 2
-```
-
-### Source reference empty
-
-**Problem**: `$source.table.column` returns no values
-
-**Solutions**:
-- Verify source loads data successfully
-- Check table and column names are correct
-- Ensure column has non-null values
-- Preview source data first
 
 ## Next steps
 

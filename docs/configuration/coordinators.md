@@ -1,18 +1,12 @@
-# Coordinators
+# :material-sitemap: Coordinators
 
 **Coordinators decide which agents answer your questions and in what order.**
 
 Most users never need to change the coordinator. The default works well for typical data exploration.
 
-## Skip to
-
-- [Change coordinators](#change-coordinators) - Switch to a different coordinator
-- [Adjust planning](#adjust-planning-behavior) - Control how plans are created
-- [Troubleshooting](#common-issues) - Fix planning problems
-
 ## Should you customize the coordinator?
 
-**No, probably not.** The default Planner handles most cases well.
+**Probably not.** The default Planner handles most cases well.
 
 Consider customizing only if:
 
@@ -24,9 +18,9 @@ Consider customizing only if:
 
 ### Use DependencyResolver for faster planning
 
-The DependencyResolver skips comprehensive planning and jumps straight to execution. This makes simple queries faster.
+The DependencyResolver skips comprehensive planning and jumps straight to execution:
 
-```python
+``` py title="Use DependencyResolver"
 import lumen.ai as lmai
 from lumen.ai.coordinator import DependencyResolver
 
@@ -55,7 +49,7 @@ ui.servable()
 
 See exactly how Lumen creates and executes plans:
 
-```python
+``` py title="Enable verbose mode" hl_lines="3"
 ui = lmai.ExplorerUI(
     data='penguins.csv',
     coordinator_params={'verbose': True}
@@ -63,36 +57,13 @@ ui = lmai.ExplorerUI(
 ui.servable()
 ```
 
-This shows:
-
-- Which agents are considered
-- Why each agent is selected
-- What data flows between steps
-
-Useful for understanding Lumen's decisions or debugging unexpected behavior.
-
-### Include more conversation history
-
-By default, Lumen remembers your last 3 messages when planning. Increase this if you're having multi-turn conversations:
-
-```python
-ui = lmai.ExplorerUI(
-    data='penguins.csv',
-    coordinator_params={'history': 5}  # Remember last 5 exchanges
-)
-ui.servable()
-```
-
-**Trade-offs:**
-
-- More history = better context for follow-up questions
-- More history = higher LLM costs (more tokens)
+This shows which agents are considered, why each is selected, and what data flows between steps.
 
 ### Disable automatic validation
 
 Skip the validation step to get results faster:
 
-```python
+``` py title="Disable validation" hl_lines="3"
 ui = lmai.ExplorerUI(
     data='penguins.csv',
     coordinator_params={'validation_enabled': False}
@@ -100,20 +71,17 @@ ui = lmai.ExplorerUI(
 ui.servable()
 ```
 
-Only disable validation if:
-
-- You trust the results without verification
-- Speed matters more than accuracy
-- You're iterating rapidly during development
+!!! warning "Only disable validation if you trust the results"
+    Validation catches errors and confirms queries were answered correctly. Only disable during rapid development iteration.
 
 ### Control pre-planning data lookup
 
-The Planner looks up table information before creating a plan. Disable this if you already have data loaded:
+The Planner looks up table information before creating a plan. Disable this if you already know what data is available:
 
-```python
+``` py title="Skip table lookup" hl_lines="3"
 ui = lmai.ExplorerUI(
     data='penguins.csv',
-    coordinator_params={'planner_tools': []}  # Skip table lookup
+    coordinator_params={'planner_tools': []}
 )
 ui.servable()
 ```
@@ -122,15 +90,20 @@ ui.servable()
 
 ### Planner creates a complete plan upfront
 
-The Planner is Lumen's default coordinator. It works like this:
+The Planner is Lumen's default coordinator:
 
-1. **Gathers context** - Looks up available tables and their columns
-2. **Creates a plan** - Decides which agents to use and in what order
-3. **Shows the plan** - Displays a checklist of steps
-4. **Executes steps** - Runs agents one by one
-5. **Validates results** - Checks if the query was fully answered
+``` mermaid
+graph TB
+    A[User Query] --> B[Gather Context]
+    B --> C[Create Plan]
+    C --> D[Show Checklist]
+    D --> E[Execute Step 1]
+    E --> F[Execute Step 2]
+    F --> G[Execute Step N]
+    G --> H[Validate Results]
+```
 
-**Example:** You ask "Show me average bill length by species as a bar chart"
+**Example:** "Show me average bill length by species as a bar chart"
 
 The Planner creates this checklist:
 ```
@@ -147,18 +120,19 @@ Then executes each step in order, checking them off as it goes.
 
 The DependencyResolver picks the final agent first, then figures out what it needs:
 
-1. **Picks the goal agent** - "VegaLiteAgent creates charts"
-2. **Checks requirements** - "VegaLiteAgent needs data"
-3. **Finds providers** - "SQLAgent provides data"
-4. **Repeats** - "SQLAgent needs table info"
-5. **Executes forward** - Runs agents in dependency order
+``` mermaid
+graph BT
+    A[TableLookup] --> B[SQLAgent]
+    B --> C[VegaLiteAgent]
+    C --> D[Goal Achieved]
+```
 
 **Same example:** "Show me average bill length by species as a bar chart"
 
 DependencyResolver thinks:
 ```
-Goal: VegaLiteAgent (needs data)
-  ↑ SQLAgent (needs table info)
+Goal: VegaLiteAgent (needs pipeline)
+  ↑ SQLAgent (needs metaset)
     ↑ TableLookup (no dependencies)
 
 Execution: TableLookup → SQLAgent → VegaLiteAgent
@@ -170,7 +144,7 @@ No planning phase, just direct execution.
 
 ### "Planner failed to come up with viable plan"
 
-**What happened:** The planner couldn't create a valid plan after multiple attempts.
+The planner couldn't create a valid plan after multiple attempts.
 
 **How to fix:**
 
@@ -181,7 +155,7 @@ No planning phase, just direct execution.
 
 ### Plans include too many steps
 
-**What happened:** The planner is being overly cautious.
+The planner is being overly cautious.
 
 **How to fix:**
 
@@ -191,34 +165,32 @@ No planning phase, just direct execution.
 
 ### Planning takes too long
 
-**What happened:** The Planner is gathering too much context upfront.
+The Planner is gathering too much context upfront.
 
 **How to fix:**
 
 1. Switch to DependencyResolver
 2. Disable pre-planning lookup: `coordinator_params={'planner_tools': []}`
-3. Reduce history: `coordinator_params={'history': 1}`
 
 ### Agents run in wrong order
 
-**What happened:** Dependencies weren't resolved correctly.
+Dependencies weren't resolved correctly.
 
 **How to fix:**
 
-1. Make sure you're using the latest version of Lumen
-2. Enable verbose mode to see the dependency chain
-3. Report the issue on GitHub with a reproducible example
+1. Enable verbose mode to see the dependency chain
+2. Report the issue on GitHub with a reproducible example
 
 ## Coordinator comparison
 
 | Feature | Planner (default) | DependencyResolver |
 |---------|------------------|-------------------|
-| **Planning speed** | Slower (full plan first) | Faster (no planning) |
+| **Planning speed** | Slower (creates plan first) | Faster (no planning phase) |
 | **Best for** | Complex queries | Simple queries |
 | **Shows plan** | Yes, with checklist | No, executes directly |
 | **Validation** | Automatic | Not included |
 | **LLM calls** | More (comprehensive) | Fewer (minimal) |
-| **Recommended** | Most cases | Speed-critical simple queries |
+| **Recommended for** | Most use cases | Speed-critical simple queries |
 
 ## When to create a custom coordinator
 

@@ -1,109 +1,127 @@
-# Command-Line Interface
+# :material-console: Command-Line Interface
 
-Configure Lumen AI when launching from the command line using the `lumen-ai serve` command.
+Launch Lumen AI from the command line with `lumen-ai serve`.
 
 ## Basic usage
 
-```bash
+``` bash
 lumen-ai serve
 ```
 
-This starts the server at `localhost:5006`.
+Starts the server at `localhost:5006`.
 
-## Configuration options
+## Load data
 
-### Provider
-
-Specify which LLM provider to use. If not specified, the provider is auto-detected from environment variables.
-
-```bash
-lumen-ai serve --provider openai
+``` bash title="Single file"
+lumen-ai serve penguins.csv
 ```
+
+``` bash title="Multiple files"
+lumen-ai serve customers.csv orders.csv
+```
+
+``` bash title="From URL"
+lumen-ai serve https://datasets.holoviz.org/penguins/v1/penguins.csv
+```
+
+``` bash title="With wildcards"
+lumen-ai serve data/*.csv
+```
+
+## Configure LLM
+
+### Choose provider
+
+``` bash title="Specify provider"
+lumen-ai serve --provider anthropic
+```
+
+If not specified, Lumen auto-detects from environment variables.
 
 **Supported providers:**
 
-- `openai` — Requires `OPENAI_API_KEY`
-- `google` — Requires `GOOGLE_API_KEY`
-- `anthropic` — Requires `ANTHROPIC_API_KEY`
-- `mistral` — Requires `MISTRAL_API_KEY`
-- `azure-openai` — Requires `AZUREAI_ENDPOINT_KEY`
-- `azure-mistral` — Requires `AZUREAI_ENDPOINT_KEY`
-- `ai-navigator`
-- `ollama`
-- `llama-cpp`
-- `litellm`
+- `openai` - Requires `OPENAI_API_KEY`
+- `anthropic` - Requires `ANTHROPIC_API_KEY`
+- `google` - Requires `GEMINI_API_KEY`
+- `mistral` - Requires `MISTRAL_API_KEY`
+- `azure-openai` - Requires `AZUREAI_ENDPOINT_KEY`
+- `ollama` - Local models
+- `llama-cpp` - Local models
+- `litellm` - Multi-provider
 
-### Temperature
+### Set API key
 
-Control randomness in LLM responses. Higher values produce more creative, less deterministic results (range: typically 0.0–2.0):
-
-```bash
-lumen-ai serve --temperature 0.5
+``` bash title="Pass API key directly"
+lumen-ai serve --provider openai --api-key sk-...
 ```
 
-### Model kwargs
+Or use environment variables:
 
-Pass configuration options to your LLM as a JSON string. Models are indexed by type, allowing you to specify different models for different tasks.
-
-```bash
-lumen-ai serve --model-kwargs '{"default": {"model": "gpt-4o"}}'
-```
-
-**Model types:**
-
-- `default` — General-purpose model for most tasks
-- `sql` — Used by SQLAgent for SQL query generation
-- `vega_lite` — Used by VegaLiteAgent for visualization generation
-- `reasoning` — Used for complex reasoning tasks
-- `chat` — Used by ChatAgent for chat interactions
-- `analysis` — Used by AnalysisAgent for data analysis
-
-**Example with multiple model types:**
-
-```bash
-lumen-ai serve --model-kwargs '{"default": {"model": "gpt-4o-mini"}, "sql": {"model": "gpt-4o"}, "vega_lite": {"model": "gpt-4o"}, "reasoning": {"model": "gpt-5"}}'
-```
-
-You can also set temperature and other parameters per model type:
-
-```bash
-lumen-ai serve --model-kwargs '{"default": {"model": "gpt-4o-mini", "temperature": 0.3}, "sql": {"model": "gpt-4o", "temperature": 0.1}}'
-```
-
-The JSON must be valid and properly escaped. See [LLM Providers](../configuration/llm_providers.md) for provider-specific examples.
-
-## Load data at startup
-
-Pre-load datasets when launching:
-
-```bash
-lumen-ai serve penguins.csv
-lumen-ai serve https://datasets.holoviz.org/penguins/v1/penguins.csv
-lumen-ai serve *.csv
-lumen-ai serve penguins.csv penguins.parquet
-```
-
-## Combine options
-
-```bash
-lumen-ai serve penguins.csv --provider openai --model-kwargs '{"default": {"model": "gpt-4o"}}' --temperature 0.7
-```
-
-## Environment variables
-
-Set your LLM provider API key as an environment variable to avoid passing it via CLI:
-
-```bash
-export OPENAI_API_KEY="your-key-here"
+``` bash
+export OPENAI_API_KEY="sk-..."
 lumen-ai serve
 ```
 
-The provider will be auto-detected from the available environment variables.
+### Configure models
+
+Use different models for different tasks:
+
+``` bash title="Multiple models"
+lumen-ai serve --model-kwargs '{
+  "default": {"model": "gpt-4o-mini"},
+  "sql": {"model": "gpt-4o"}
+}'
+```
+
+!!! warning "Escape JSON properly"
+    The JSON string must be properly quoted. Use single quotes around the entire JSON, double quotes inside.
+
+### Adjust temperature
+
+``` bash title="Control randomness"
+lumen-ai serve --temperature 0.5
+```
+
+Lower (0.1) = deterministic. Higher (0.7) = creative. Range: 0.0-2.0
+
+## Select agents
+
+``` bash title="Use specific agents"
+lumen-ai serve --agents SQLAgent ChatAgent VegaLiteAgent
+```
+
+Agent names are case-insensitive. The "Agent" suffix is optional: `sql` = `sqlagent` = `SQLAgent`
+
+## Common flags
+
+| Flag | Purpose | Example |
+|------|---------|---------|
+| `--provider` | LLM provider | `--provider anthropic` |
+| `--api-key` | API key | `--api-key sk-...` |
+| `--model-kwargs` | Model config | `--model-kwargs '{"sql": {"model": "gpt-4o"}}'` |
+| `--temperature` | Randomness | `--temperature 0.5` |
+| `--agents` | Active agents | `--agents SQLAgent ChatAgent` |
+| `--port` | Server port | `--port 8080` |
+| `--address` | Network address | `--address 0.0.0.0` |
+| `--show` | Auto-open browser | `--show` |
+| `--log-level` | Verbosity | `--log-level DEBUG` |
+
+## Full example
+
+``` bash title="Complete configuration"
+lumen-ai serve penguins.csv \
+  --provider openai \
+  --model-kwargs '{"default": {"model": "gpt-4o-mini"}, "sql": {"model": "gpt-4o"}}' \
+  --temperature 0.5 \
+  --agents SQLAgent ChatAgent VegaLiteAgent \
+  --port 8080 \
+  --show
+```
 
 ## View all options
 
-For a complete list of all available flags (including Panel server options):
-
-```bash
+``` bash
 lumen-ai serve --help
 ```
+
+Shows all available flags including Panel server options.

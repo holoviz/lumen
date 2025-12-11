@@ -1,4 +1,4 @@
-# Contributing to Lumen
+# :material-hand-heart: Contributing to Lumen
 
 We welcome contributions from the community! Here's how to help.
 

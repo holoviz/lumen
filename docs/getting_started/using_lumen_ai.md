@@ -1,4 +1,4 @@
-# Using Lumen AI
+# :material-brain: Using Lumen AI
 
 Once you're set up and exploring, here's how to get the most out of Lumen AI.
 
@@ -37,75 +37,93 @@ You can ask the AI to perform several steps in one message. This helps you build
 
 ## Understand the AI's reasoning
 
-If you want to see how the AI arrived at an answer, click on the chat steps' cards to expand them and view the LLM's reasoning (Chain of Thought).
+If you want to see how the AI arrived at an answer, enable **Chain of Thought** in the Settings menu (⚙️ icon in the left sidebar). This will show the LLM's reasoning steps in expandable cards within the chat.
 
 ## Refine results
 
 If results aren't what you expected, you have several options:
 
-**Retry with feedback** — Click the retry button and provide feedback. Lumen will send your previous messages, the last output, and your feedback to a larger, more capable model to regenerate the response.
+**Rerun the query** — Click the **Rerun** button to re-execute the last query. This is useful if there was a temporary error or if you want to see if the AI produces different results.
 
-**Continue the conversation** — Send a new message to refine or adjust the results. This sends a fresh request to the LLM.
+**Continue the conversation** — Send a new message to refine or adjust the results. For example: "Can you make that chart show only the top 5 items?" or "Add a trend line to the visualization."
 
-**Manually edit** — Directly edit the SQL query or Lumen specification to get the desired output. This works if you're comfortable with SQL or Lumen syntax.
+**Manually edit** — Directly edit the SQL query or visualization specification in the editor panel. This works if you're comfortable with SQL or need precise control over the output.
 
-Use manual editing for small tweaks (like changing chart sort order), and send a new message for bigger changes to the underlying query.
+Use manual editing for small tweaks (like changing chart colors or sort order), and send a new message for bigger changes to the underlying query or analysis approach.
 
 ## Explorations
 
-Each new computed result creates a new "Exploration" tab. Click the Explorations panel (right sidebar) to navigate between them and compare different analyses.
+Each new computed result creates a new "Exploration" tab. Click the Explorations panel (accessible via the breadcrumbs at the top) to navigate between them and compare different analyses.
 
 ## Export results
 
 Export your session as a Jupyter notebook so you can reproduce, share, or build on your work.
 
-**Export all explorations:**
-Click **Export Notebook** at the top of the screen to download a notebook containing all your questions, queries, and visualizations.
+**Export current exploration:**
+Click **Export Notebook** at the top-right of the screen to download a notebook containing the current exploration's questions, queries, and visualizations.
 
-**Export one exploration:**
-Click the exploration-specific download button (visible in the top-right when viewing that exploration) to export only that analysis.
+**Export all explorations:**
+Switch to **Report** mode (via the left sidebar) to see all explorations in a consolidated view, then click **Export Notebook** to download everything as a single notebook.
 
 The notebook includes:
-- Markdown cells with your inputs and outputs from agents like ChatAgent and AnalystAgent
-- Code cells with Lumen specifications used to generate visualizations and tables
+- Markdown cells with your questions and AI responses
+- Code cells with SQL queries and Lumen specifications
+- Visualizations as executable code
 
 ## Advanced options
 
 ### Command-line configuration
 
-Pass additional options to the `serve` command:
+Pass additional options when launching Lumen AI:
 
-```bash
-lumen-ai serve --agents TableListAgent ChatAgent --help
+``` bash title="Specify agents"
+lumen-ai serve data.csv --agents SQLAgent VegaLiteAgent ChatAgent
+```
+
+``` bash title="Configure temperature"
+lumen-ai serve data.csv --temperature 0.8
+```
+
+``` bash title="Use specific provider"
+lumen-ai serve data.csv --provider anthropic --api-key your_key_here
 ```
 
 Run `lumen-ai serve --help` to see all available options.
 
-Agent names are case-insensitive and the suffix "agent" can be dropped (e.g., `ChatAgent` can be specified as `chatagent` or `chat`).
+!!! note "Agent names are flexible"
+    Agent names are case-insensitive and the "Agent" suffix is optional: `SQLAgent` = `sqlagent` = `sql`
 
 ### Python API configuration
 
-For fine-grained control, use the Python API to configure agents, tools, and other settings:
+For fine-grained control, use the Python API:
 
-```python
+``` py title="Advanced Python configuration" hl_lines="4 6 7"
 import lumen.ai as lmai
 
 ui = lmai.ExplorerUI(
     data='data.csv',
-    # ... other configuration options
+    llm=lmai.llm.Anthropic(),  # (1)!
+    default_agents=[lmai.agents.SQLAgent, lmai.agents.ChatAgent],
+    log_level='INFO',
 )
 ui.servable()
 ```
 
-See [Prompts](../configuration/prompts.md), [Data Sources](../configuration/sources.md), and [LLM Providers](../configuration/llm_providers.md) configuration guides for all available options.
+1. Use Anthropic instead of default OpenAI
 
-## Next steps
-
-Learn more about configuration and advanced use cases:
+See the configuration guides for all available options:
 
 - [Prompts](../configuration/prompts.md) — Customize agent behavior
-- [Data Sources](../configuration/sources.md) — Connect to databases and files
+- [Sources](../configuration/sources.md) — Connect to databases and files
 - [LLM Providers](../configuration/llm_providers.md) — Configure your LLM
 - [Agents](../configuration/agents.md) — Use and customize agents
 - [Tools](../configuration/tools.md) — Extend capabilities with custom tools
 - [Analyses](../configuration/analyses.md) — Add domain-specific analyses
+
+## Next steps
+
+Now that you know the basics, dive deeper into specific topics:
+
+- [**Agents**](../configuration/agents.md) — Learn about the different agent types and how to customize them
+- [**Prompts**](../configuration/prompts.md) — Fine-tune how agents respond
+- [**Context**](../configuration/context.md) — Understand how agents share data

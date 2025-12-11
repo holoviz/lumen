@@ -1,4 +1,4 @@
-# Building dashboards with Python
+# :material-language-python: Building dashboards with Python
 
 Build Lumen dashboards programmatically using Python instead of YAML.
 

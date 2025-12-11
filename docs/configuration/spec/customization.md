@@ -1,4 +1,4 @@
-# Extending Lumen with custom components
+# :material-puzzle: Extending Lumen with custom components
 
 Build custom components and callbacks to extend Lumen's functionality.
 
@@ -655,47 +655,6 @@ def safe_callback(pipeline):
         # Dashboard continues running
 ```
 
-## Troubleshooting
-
-### Component not found
-
-**Problem**: `Unknown type 'mycomponent'`
-
-**Solutions**:
-- Check filename is correct (`transforms.py`, `views.py`, etc.)
-- Verify `transform_type` or `view_type` matches YAML
-- Ensure file is in same directory as YAML
-- Check for Python syntax errors in component file
-
-### Import errors
-
-**Problem**: `ImportError` or `ModuleNotFoundError`
-
-**Solutions**:
-- Install required packages
-- Check module path is correct
-- Verify `__init__.py` exists in package directories
-- Check Python path includes your modules
-
-### Callback not firing
-
-**Problem**: Callback function doesn't execute
-
-**Solutions**:
-- Verify function is importable: `import callbacks; callbacks.my_function`
-- Check function signature matches hook requirements
-- Look for errors in terminal/logs
-- Ensure function name in YAML matches actual function
-
-### Parameters not working
-
-**Problem**: Component parameters don't affect behavior
-
-**Solutions**:
-- Check parameter names match between YAML and Python
-- Verify parameters are used in `apply()` or `get_panel()` methods
-- Check parameter types match declarations
-- Use `_field_params` for column-name parameters
 
 ## Next steps
 
