@@ -16,7 +16,7 @@ from lumen.ai.agents import (
     AnalysisAgent, AnalystAgent, ChatAgent, SQLAgent, VegaLiteAgent,
 )
 from lumen.ai.agents.analysis import make_analysis_model
-from lumen.ai.agents.sql import SqlQuery
+from lumen.ai.agents.sql import SQLQuery
 from lumen.ai.agents.vega_lite import VegaLiteSpec, VegaLiteSpecUpdate
 from lumen.ai.analysis import Analysis
 from lumen.ai.llm import Llm
@@ -77,7 +77,7 @@ async def test_sql_agent(llm, duckdb_source, test_messages):
         "metaset": await get_metaset([duckdb_source], ["test_sql"]),
     }
     llm.set_responses([
-        SqlQuery(query="SELECT SUM(A) as A_sum FROM test_sql", table_slug="test_sql_agg"),
+        SQLQuery(query="SELECT SUM(A) as A_sum FROM test_sql", table_slug="test_sql_agg"),
     ])
     out, out_context = await agent.respond(test_messages, context)
     assert len(out) == 1

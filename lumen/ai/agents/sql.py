@@ -102,7 +102,7 @@ def make_discovery_model(sources: list[tuple[str, str]]):
     return DiscoveryQueries, DiscoverySufficiency
 
 
-class SqlQuery(PartialBaseModel):
+class SQLQuery(PartialBaseModel):
     """A single SQL query with its associated metadata."""
 
     query: str = Field(description="""
@@ -121,15 +121,15 @@ class SqlQuery(PartialBaseModel):
 
 def make_sql_model(sources: list[tuple[str, str]]):
     if len(sources) == 1:
-        return SqlQuery
+        return SQLQuery
 
     SourceTable = make_source_table(sources)
     return create_model(
-        "SqlQueryWithSources",
+        "SQLQueryWithSources",
         tables=(
             list[SourceTable], FieldInfo(description="The source and table identifier(s) referenced in the SQL query.")
         ),
-        __base__=SqlQuery
+        __base__=SQLQuery
     )
 
 
