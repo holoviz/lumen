@@ -70,8 +70,7 @@ plugins:
   - gen-files:
       scripts:
         - docs/gen_ref_pages.py
-  - literate-nav:
-      nav_file: SUMMARY.md
+  - literate-nav
   - mkdocstrings:
       handlers:
         python:
@@ -108,10 +107,29 @@ nav:
     - Tools: configuration/tools.md
     - Analyses: configuration/analyses.md
     - Coordinator: configuration/coordinators.md
+    - Specs:
+      - Index: configuration/spec/index.md
+      - Build a Dashboard: configuration/spec/build_dashboard.md
+      - Core Concepts: configuration/spec/core_concepts.md
+      - Pipelines: configuration/spec/pipelines.md
+      - Architecture: configuration/spec/lumen_architecture.md
+      - Caching: configuration/spec/cache.md
+      - Files: configuration/spec/files.md
+      - Branching Pipelines: configuration/spec/branch_pipeline.md
+      - Python Pipelines: configuration/spec/pipeline_python.md
+      - Python Dashboards: configuration/spec/dashboard_python.md
+      - Deployment: configuration/spec/deploy.md
+      - Views: configuration/spec/views.md
+      - Validate Specs: configuration/spec/validate.md
+      - Download Data: configuration/spec/download_data.md
+      - Authentication: configuration/spec/auth.md
+      - Callbacks: configuration/spec/callbacks.md
+      - Local Components: configuration/spec/local_components.md
+      - Variables & References: configuration/spec/variables_and_references.md
 
   - Reference:
-    - API: reference/
-    - Contributing: contributing.md
+    - API: reference/api/
+    - Contributing: reference/contributing.md
 
 extra:
   social:
@@ -125,10 +143,6 @@ extra:
       link: https://twitter.com/holoviz_org
     - icon: fontawesome/brands/python
       link: https://pypi.org/project/lumen/
-  
-  version:
-    provider: mike
-    default: latest
 
 extra_css:
   - assets/extra.css

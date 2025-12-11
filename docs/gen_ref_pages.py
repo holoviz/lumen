@@ -17,7 +17,7 @@ for path in sorted(src.rglob("*.py")):
 
     module_path = path.with_suffix("")
     doc_path = path.relative_to(src).with_suffix(".md")
-    full_doc_path = Path("reference", doc_path)
+    full_doc_path = Path("reference/api", doc_path)
 
     # Skip the top-level "lumen" in navigation by using parts[1:]
     parts = tuple(module_path.parts)
@@ -32,5 +32,10 @@ for path in sorted(src.rglob("*.py")):
 
     mkdocs_gen_files.set_edit_path(full_doc_path, path)
 
-with mkdocs_gen_files.open("reference/SUMMARY.md", "w") as nav_file:
+# Generate index page for API section
+with mkdocs_gen_files.open("reference/api/index.md", "w") as index_file:
+    index_file.write("# API Reference\n\n")
+    index_file.write("This section contains the API reference for all Lumen modules.\n")
+
+with mkdocs_gen_files.open("reference/api/SUMMARY.md", "w") as nav_file:
     nav_file.writelines(nav.build_literate_nav())

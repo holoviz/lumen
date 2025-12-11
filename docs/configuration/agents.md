@@ -107,7 +107,7 @@ ui.servable()
 - ChatAgent uses the `"chat"` model
 - AnalystAgent uses the `"analyst"` model
 
-See [LLM Providers](llm_providers.md#model-types) for complete details.
+See [LLM Providers](llm_providers.md#all-model-types) for complete details.
 
 ## Creating custom agents
 

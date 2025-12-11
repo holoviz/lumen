@@ -379,5 +379,3 @@ Extend this example:
 - **Integrate forecasts**: Combine observations with model predictions using [multiple data sources](../configuration/sources.md)
 - **Add validation**: Include quality control for meteorological data
 - **Customize agents**: Learn more about [agent configuration](../configuration/agents.md) and [prompts](../configuration/prompts.md)
-
-For complete API documentation, see the [API Reference](../reference/).

@@ -210,4 +210,4 @@ Yes, SQL queries are cached automatically.
 
 **Can I contribute?**
 
-Yes! Bug reports, documentation, features, custom agents. See [Contributing](contributing.md).
+Yes! Bug reports, documentation, features, custom agents. See [Contributing](reference/contributing.md).

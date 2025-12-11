@@ -230,4 +230,4 @@ Only create a custom coordinator if:
 - You're building a specialized application with unique workflows
 - You've exhausted all configuration options
 
-See the [Contributing guide](../contributing.md) if you think Lumen needs a new coordinator type.
+See the [Contributing guide](../reference/contributing.md) if you think Lumen needs a new coordinator type.

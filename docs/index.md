@@ -125,4 +125,4 @@ $schema: https://vega.github.io/schema/vega-lite/v5.json
 - **Questions?** [Discourse](https://discourse.holoviz.org/c/lumen/)
 - **Chat with us** [Discord](https://discord.com/invite/rb6gPXbdAr)
 - **Found a bug?** [GitHub Issues](https://github.com/holoviz/lumen/issues)
-- **Want to contribute?** [Contributing guide](contributing.md)
+- **Want to contribute?** [Contributing guide](reference/contributing.md)
