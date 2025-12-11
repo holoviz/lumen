@@ -719,21 +719,42 @@ def test_detour_roundtrip(sample_csv_files):
     preserves the original SQL file-based tables so that it can
     be re-serialized without error.
     """
-    source = DuckDBSource(tables=sample_csv_files)
-    df = source.get("customers")
-    new_source = source.create_sql_expr_source(
-        tables={"limited_customers": 'SELECT * FROM customers LIMIT 1'}
-    )
-    limited_df = new_source.get("limited_customers")
-    assert len(limited_df) == 1
-    assert limited_df.iloc[[0]].equals(df.iloc[[0]])
+    files = sample_csv_files
+    original_cwd = os.getcwd()
+    
+    try:
+        os.chdir(files['dir'])
+        
+        # Create source with file-based tables
+        source = DuckDBSource(
+            uri=':memory:',
+            tables={
+                'customers': 'customers.csv',
+                'orders': 'orders.csv'
+            }
+        )
+        df = source.get("customers")
+        
+        # Create a derived source with a new SQL expression
+        new_source = source.create_sql_expr_source(
+            tables={"limited_customers": 'SELECT * FROM customers LIMIT 1'}
+        )
+        limited_df = new_source.get("limited_customers")
+        assert len(limited_df) == 1
+        assert limited_df.iloc[[0]].equals(df.iloc[[0]])
 
-    read_source = source.from_spec(new_source.to_spec())
-    read_df = read_source.get("limited_customers")
-    assert len(read_df) == 1
-    assert read_df.iloc[[0]].equals(df.iloc[[0]])
-    assert read_source.tables["limited_customers"] == 'SELECT * FROM customers LIMIT 1'
-    assert "customers" in read_source.tables
+        # Serialize and deserialize
+        spec = new_source.to_spec()
+        
+        read_source = DuckDBSource.from_spec(spec)
+        read_df = read_source.get("limited_customers")
+        assert len(read_df) == 1
+        assert read_df.iloc[[0]].equals(df.iloc[[0]])
+        assert read_source.tables["limited_customers"] == 'SELECT * FROM customers LIMIT 1'
+        assert "customers" in read_source.tables
+        assert "orders" in read_source.tables
+    finally:
+        os.chdir(original_cwd)
 
 
 def test_table_params_basic(sample_csv_files):
@@ -960,3 +981,240 @@ def test_table_params_serialization(sample_csv_files):
         assert restored_result.iloc[0]['id'] == 2
     finally:
         os.chdir(original_cwd)
+
+
+def test_create_sql_expr_source_preserves_all_existing_tables(sample_csv_files):
+    """Test that create_sql_expr_source preserves ALL existing tables (upsert behavior)."""
+    files = sample_csv_files
+    original_cwd = os.getcwd()
+
+    try:
+        os.chdir(files['dir'])
+
+        # Create initial source with multiple tables
+        source = DuckDBSource(
+            uri=':memory:',
+            tables={
+                'customers': 'customers.csv',
+                'orders': 'orders.csv',
+                'existing_view': 'SELECT * FROM customers WHERE id > 1'
+            }
+        )
+
+        # Verify initial state
+        assert set(source.get_tables()) == {'customers', 'orders', 'existing_view'}
+
+        # Create new source with additional tables - should preserve ALL existing ones
+        new_tables = {
+            'new_table': 'SELECT * FROM orders WHERE total > 200'
+        }
+
+        new_source = source.create_sql_expr_source(new_tables)
+
+        # ALL tables should be present: original + new
+        expected_tables = {'customers', 'orders', 'existing_view', 'new_table'}
+        assert set(new_source.get_tables()) == expected_tables
+
+        # Verify all tables are accessible and work correctly
+        assert len(new_source.get('customers')) == 3
+        assert len(new_source.get('orders')) == 3
+        assert len(new_source.get('existing_view')) == 2  # id > 1
+        assert len(new_source.get('new_table')) == 2  # total > 200
+
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_create_sql_expr_source_upserts_existing_tables(sample_csv_files):
+    """Test that create_sql_expr_source overwrites tables with same name (upsert behavior)."""
+    files = sample_csv_files
+    original_cwd = os.getcwd()
+
+    try:
+        os.chdir(files['dir'])
+
+        # Create initial source
+        source = DuckDBSource(
+            uri=':memory:',
+            tables={
+                'customers': 'customers.csv',
+                'orders': 'orders.csv',
+                'filtered_customers': 'SELECT * FROM customers WHERE id = 1'  # Original: just Alice
+            }
+        )
+
+        # Verify initial state
+        initial_result = source.get('filtered_customers')
+        assert len(initial_result) == 1
+        assert initial_result.iloc[0]['name'] == 'Alice'
+
+        # Create new source that OVERWRITES filtered_customers but keeps others
+        new_tables = {
+            'filtered_customers': 'SELECT * FROM customers WHERE id > 1',  # New: Bob and Charlie
+            'new_table': 'SELECT * FROM orders WHERE total > 200'
+        }
+
+        new_source = source.create_sql_expr_source(new_tables)
+
+        # Should have all tables
+        expected_tables = {'customers', 'orders', 'filtered_customers', 'new_table'}
+        assert set(new_source.get_tables()) == expected_tables
+
+        # filtered_customers should have NEW definition (id > 1, not id = 1)
+        updated_result = new_source.get('filtered_customers')
+        assert len(updated_result) == 2
+        assert set(updated_result['name']) == {'Bob', 'Charlie'}
+
+        # Original tables should still work
+        assert len(new_source.get('customers')) == 3
+        assert len(new_source.get('orders')) == 3
+        assert len(new_source.get('new_table')) == 2
+
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_create_sql_expr_source_new_connection_only_new_tables(sample_csv_files):
+    """Test that create_sql_expr_source with new connection only includes new tables."""
+    files = sample_csv_files
+    original_cwd = os.getcwd()
+
+    try:
+        os.chdir(files['dir'])
+
+        # Create initial source with multiple tables
+        source = DuckDBSource(
+            uri=':memory:',
+            tables={
+                'customers': 'customers.csv',
+                'orders': 'orders.csv',
+                'existing_view': 'SELECT * FROM customers WHERE id > 1'
+            }
+        )
+
+        # Verify initial state
+        assert set(source.get_tables()) == {'customers', 'orders', 'existing_view'}
+
+        # Create new source with a DIFFERENT URI - should NOT preserve old tables
+        new_tables = {
+            'products': files['customers']  # Reusing customers.csv as "products"
+        }
+
+        new_source = source.create_sql_expr_source(new_tables, uri=':memory:')
+
+        # Should ONLY have the new table, not the old ones
+        assert set(new_source.get_tables()) == {'products'}
+
+        # Old tables should NOT be accessible
+        assert 'customers' not in new_source.get_tables()
+        assert 'orders' not in new_source.get_tables()
+        assert 'existing_view' not in new_source.get_tables()
+
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_create_sql_expr_source_new_connection_includes_file_dependencies(sample_csv_files):
+    """Test that new connection includes file-based tables referenced in SQL."""
+    files = sample_csv_files
+    original_cwd = os.getcwd()
+
+    try:
+        os.chdir(files['dir'])
+
+        # Create initial source with file-based tables
+        source = DuckDBSource(
+            uri=':memory:',
+            tables={
+                'customers': 'customers.csv',
+                'orders': 'orders.csv',
+            }
+        )
+
+        # Create new source with new connection that REFERENCES file-based tables
+        new_tables = {
+            'summary': 'SELECT c.name, COUNT(o.id) as order_count FROM customers c LEFT JOIN orders o ON c.id = o.customer_id GROUP BY c.name'
+        }
+
+        new_source = source.create_sql_expr_source(new_tables, uri=':memory:')
+
+        # Should have the new table AND the file-based dependencies
+        expected_tables = {'summary', 'customers', 'orders'}
+        assert set(new_source.get_tables()) == expected_tables
+
+        # The summary query should actually work (dependencies are present)
+        result = new_source.get('summary')
+        assert len(result) == 3  # 3 customers
+        assert 'order_count' in result.columns
+
+        # File-based tables should be accessible
+        assert len(new_source.get('customers')) == 3
+        assert len(new_source.get('orders')) == 3
+
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_create_sql_expr_source_with_list_tables():
+    """Test that create_sql_expr_source works when self.tables is a list."""
+    # Create an in-memory source with actual data
+    df = pd.DataFrame({
+        'A': [0, 1, 2, 3, 4],
+        'B': [0, 0, 1, 1, 1],
+        'C': ['foo1', 'foo2', 'foo3', 'foo4', 'foo5']
+    })
+    
+    # Use from_df which creates dict-based tables, then manually convert to list
+    source = DuckDBSource.from_df({'test_table': df})
+    # Simulate a list-based source (though unusual in practice)
+    source.tables = ['test_table']  # Override with list
+    
+    # Verify it's a list
+    assert isinstance(source.tables, list)
+    
+    # Create new source with SQL expressions
+    new_tables = {
+        'filtered': 'SELECT * FROM test_table WHERE A > 2'
+    }
+    
+    new_source = source.create_sql_expr_source(new_tables)
+    
+    # Should only have the new table (list-based tables don't get preserved)
+    assert 'filtered' in new_source.get_tables()
+    assert isinstance(new_source.tables, dict)
+    assert 'filtered' in new_source.tables
+    
+    # The new table should work
+    result = new_source.get('filtered')
+    assert len(result) == 2  # A values 3 and 4
+    assert all(result['A'] > 2)
+
+
+def test_create_sql_expr_source_reuse_connection_with_list_tables():
+    """Test that reusing connection with list tables just uses new tables."""
+    # Create an in-memory source with actual data
+    df = pd.DataFrame({
+        'A': [0, 1, 2, 3, 4],
+        'B': [0, 0, 1, 1, 1],
+        'C': ['foo1', 'foo2', 'foo3', 'foo4', 'foo5']
+    })
+    
+    source = DuckDBSource.from_df({'test_table': df})
+    # Simulate a list-based source
+    source.tables = ['test_table']  # Override with list
+    
+    # Create new source reusing connection
+    new_tables = {
+        'filtered': 'SELECT * FROM test_table WHERE A > 2'
+    }
+    
+    # No uri or initializers provided - reusing connection
+    new_source = source.create_sql_expr_source(new_tables)
+    
+    # Should only have the new tables (since original was a list, not dict)
+    assert set(new_source.get_tables()) == {'filtered'}
+    
+    # But the connection is reused, so we can still query the original table
+    # via the connection even if it's not in new_source.tables
+    result = new_source.execute('SELECT * FROM test_table')
+    assert len(result) == 5  # Original table still exists in the connection
