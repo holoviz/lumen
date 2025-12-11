@@ -10,6 +10,7 @@ import duckdb
 import numpy.core.multiarray  # noqa: F401
 import pandas as pd
 import param
+import sqlglot
 
 from ..config import config
 from ..serializers import Serializer
@@ -362,13 +363,35 @@ class DuckDBSource(BaseSQLSource):
             params = {}
 
         source_params = dict(self.param.values(), **kwargs)
-        preserved_tables = {}
-        for table_name, sql_expr in tables.items():
-            if table_name in self._file_based_tables:
-                preserved_tables[table_name] = self._file_based_tables[table_name]
-            else:
-                preserved_tables[table_name] = sql_expr
-        source_params['tables'] = preserved_tables
+
+        # Only preserve existing tables if reusing the connection
+        # If uri or initializers changed, start fresh with only new tables
+        all_tables = tables
+        if 'uri' not in kwargs and 'initializers' not in kwargs:
+            # Reuse connection - start with ALL existing tables (upsert behavior)
+            # Only applies when self.tables is a dict (list-based tables don't have SQL expressions)
+            if isinstance(self.tables, dict):
+                all_tables = dict(self.tables)
+                # Update with new tables (overwrites if exists, adds if new)
+                all_tables.update(tables)
+        else:
+            # New connection - only use the new tables, but include file-based dependencies
+            all_tables = dict(tables)
+            # Analyze SQL expressions to find table dependencies
+            for sql_expr in tables.values():
+                if not isinstance(sql_expr, str):
+                    continue
+                try:
+                    parsed = sqlglot.parse_one(sql_expr, dialect='duckdb')
+                except Exception:
+                    continue  # If parsing fails, continue without dependencies
+                # Find all table references in the SQL
+                # Add file-based tables that are referenced but not already included
+                for table_obj in parsed.find_all(sqlglot.exp.Table):
+                    table = table_obj.name
+                    if table in self._file_based_tables and table not in all_tables:
+                        all_tables[table] = self._file_based_tables[table]
+        source_params['tables'] = all_tables
 
         if params:
             source_params['table_params'] = params
@@ -382,9 +405,13 @@ class DuckDBSource(BaseSQLSource):
             return source
 
         for table, sql_expr in tables.copy().items():
+            # Skip file paths - they're already handled by __init__
+            if self._is_file_path(sql_expr):
+                continue
+
             equivalent_sql_exprs = (
-                self.sql_expr.format(table=f'"{table_name}"'),
-                self.sql_expr.format(table=table_name),
+                self.sql_expr.format(table=f'"{table}"'),
+                self.sql_expr.format(table=table),
             )
             if table in self.tables:
                 # do not need to re-materialize existing
@@ -416,9 +443,11 @@ class DuckDBSource(BaseSQLSource):
             finally:
                 cursor.close()
 
-        # keep references of the original file-based tables so views can be recreated
-        source.tables.update(**{table: self._file_based_tables[table] for table in self._file_based_tables if table not in tables})
-        source._file_based_tables.update(self._file_based_tables)
+        # Preserve file-based metadata for tables that weren't overwritten
+        source._file_based_tables = {
+            k: v for k, v in self._file_based_tables.items()
+            if k not in tables
+        }
         return source
 
     def execute(self, sql_query: str, params: list | dict | None = None, *args, **kwargs):

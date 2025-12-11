@@ -158,6 +158,8 @@ class SourceControls(Viewer):
 
     replace_controls = param.Boolean(default=False, doc="Replace controls on add")
 
+    upload_successful = param.Event(doc="Triggered when files are successfully uploaded and processed")
+
     outputs = param.Dict(default={})
 
     table_upload_callbacks = {}
@@ -745,6 +747,10 @@ class SourceControls(Viewer):
             self._error_placeholder.object = self._error_placeholder.object.strip()
 
         self._count += 1
+
+        # Trigger event to notify parent that upload was successful
+        if (n_tables + n_docs) > 0:
+            self.param.trigger('upload_successful')
 
     def __panel__(self):
         return self.menu

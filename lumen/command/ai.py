@@ -104,6 +104,17 @@ class LumenAIServe(Serve):
     def invoke(self, args: argparse.Namespace) -> bool:
         """Override invoke to handle both sets of arguments"""
         provider = args.provider
+        llm_model_url = args.llm_model_url
+        if llm_model_url and provider and provider != "llama":
+            raise ValueError(
+                f"Cannot specify both --llm-model-url and --provider {provider!r}. "
+                f"Use --llm-model-url to load a model from HuggingFace."
+            )
+        elif llm_model_url:
+            provider = "llama"
+        elif not provider:
+            provider = LLMConfig.detect_provider()
+
         if provider is None:
             raise RuntimeError(
                 "It looks like a Language Model provider isn't set up yet.\n"
@@ -121,17 +132,6 @@ class LumenAIServe(Serve):
         agents = args.agents
         log_level = args.log_level
         logfire_tags = getattr(args, 'logfire_tags', None)
-
-        llm_model_url = args.llm_model_url
-        if llm_model_url and provider and provider != "llama":
-            raise ValueError(
-                f"Cannot specify both --llm-model-url and --provider {provider!r}. "
-                f"Use --llm-model-url to load a model from HuggingFace."
-            )
-        elif llm_model_url:
-            provider = "llama"
-        elif not provider:
-            provider = LLMConfig.detect_provider()
 
         try:
             provider_cls = getattr(lumen_llms, LLM_PROVIDERS[provider])
