@@ -96,6 +96,9 @@ nav:
     - Navigating the UI: getting_started/navigating_the_ui.md
     - Using Lumen AI: getting_started/using_lumen_ai.md
 
+  - Tutorials:
+    - Weather Data Explorer: tutorials/weather_sounding.md
+
   - Configuration:
     - CLI: configuration/cli.md
     - Prompts: configuration/prompts.md
