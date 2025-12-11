@@ -1,6 +1,6 @@
 # Chat with Your Data
 
-Lumen is an open-source AI agent framework for interactive data analysis. Ask questions about your data—Lumen generates SQL, runs it, and shows you charts. No coding needed.
+Lumen is an open-source, fully extensible Python framework for building AI-powered data exploration and reporting tools. Ask questions about your data—Lumen's specialized agents query your data, create visualizations, and produce shareable reports. No coding needed, but infinitely customizable.
 
 ## What Makes Lumen Different
 
@@ -108,6 +108,15 @@ $schema: https://vega.github.io/schema/vega-lite/v5.json
   height="620"
   style="border:none;"
 ></iframe>
+
+---
+
+## What's Next?
+
+- **[Installation](installation.md)** — Install Lumen with your preferred LLM provider
+- **[Launching Lumen](getting_started/launching_lumen.md)** — Start from command line or Python
+- **[Navigating the UI](getting_started/navigating_the_ui.md)** — Learn the interface and features
+- **[Using Lumen AI](getting_started/using_lumen_ai.md)** — Ask questions and explore your data
 
 ---
 
