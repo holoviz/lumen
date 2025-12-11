@@ -96,8 +96,8 @@ watch:
 
 nav:
   - Home: index.md
-  - Installation: installation.md
   - Quick Start: quick_start.md
+  - Installation: installation.md
   - FAQ: faq.md
 
   - Getting Started:
@@ -107,6 +107,7 @@ nav:
     - Using Lumen AI: getting_started/using_lumen_ai.md
 
   - Examples:
+    - examples/index.md
     - Tutorials:
       - Overview: examples/tutorials/index.md
       - Weather Data AI Explorer: examples/tutorials/weather_data_ai_explorer.md
@@ -127,14 +128,14 @@ nav:
     - Prompts: configuration/prompts.md
     - Data Sources: configuration/sources.md
     - LLM Providers: configuration/llm_providers.md
-    - UI: configuration/ui.md
     - Analyses: configuration/analyses.md
+    - UI: configuration/ui.md
     - Context: configuration/context.md
     - Agents: configuration/agents.md
     - Tools: configuration/tools.md
-    - Vector Stores: configuration/vector_stores.md
-    - Embeddings: configuration/embeddings.md
     - Coordinator: configuration/coordinators.md
+    - Embeddings: configuration/embeddings.md
+    - Vector Stores: configuration/vector_stores.md
     - Specs:
       - Overview: configuration/spec/index.md
       - Core Concepts: configuration/spec/concepts.md
@@ -150,7 +151,7 @@ nav:
 
   - Reference:
     - reference/index.md
-    # - API: reference/api/
+    - API: reference/api/
     - Contributing: reference/contributing.md
 
 extra:

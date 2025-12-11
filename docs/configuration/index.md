@@ -8,13 +8,17 @@ Configure every aspect of Lumen AI to match your needs.
 - **[Prompts](prompts.md)** - Customize AI system prompts and behavior
 - **[Data Sources](sources.md)** - Connect to files, databases, and warehouses
 - **[LLM Providers](llm_providers.md)** - Configure OpenAI, Anthropic, Ollama, and more
+- **[Analyses](analyses.md)** - Configure analysis pipelines
+- **[UI](ui.md)** - Customize the user interface
 
 ## Advanced Configuration
 
+- **[Context](context.md)** - Configure context management
 - **[Agents](agents.md)** - Create custom AI agents for specialized tasks
 - **[Tools](tools.md)** - Build custom tools for your agents
-- **[Analyses](analyses.md)** - Configure analysis pipelines
 - **[Coordinator](coordinators.md)** - Manage multi-agent workflows
+- **[Embeddings](embeddings.md)** - Configure embedding models for semantic search
+- **[Vector Stores](vector_stores.md)** - Set up vector databases for RAG and similarity search
 
 ## Dashboard Specifications
 

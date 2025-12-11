@@ -32,6 +32,8 @@ ui.servable()
 | PostgreSQL | PostgreSQL via SQLAlchemy |
 | MySQL | MySQL via SQLAlchemy |
 | SQLite | SQLite via SQLAlchemy |
+| Oracle | Oracle via SQLAlchemy |
+| MSSQL | Microsoft SQL Server via SQLAlchemy |
 | Intake | Data catalogs |
 
 ## Database connections

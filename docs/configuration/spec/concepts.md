@@ -3,7 +3,7 @@
 Understand how Lumen works to build your own dashboards effectively.
 
 !!! tip "Prerequisites"
-    Complete the [Build Dashboard with Spec tutorial](../../tutorials/build_dashboard_with_spec.md) before reading this guide. This page generalizes those concepts so you can apply them to your own data.
+    Complete the [Build Dashboard with Spec tutorial](../../examples/tutorials/penguins_dashboard_spec.md) before reading this guide. This page generalizes those concepts so you can apply them to your own data.
 
 ## How Lumen works
 

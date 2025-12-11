@@ -41,7 +41,7 @@ Choose your path based on experience level:
 
 Start with the tutorial to build your first dashboard in 15 minutes:
 
-**[Build Dashboard with Spec](../../tutorials/build_dashboard_with_spec.md)** - Complete hands-on tutorial
+**[Build Dashboard with Spec](../../examples/tutorials/penguins_dashboard_spec.md)** - Complete hands-on tutorial
 
 Then understand the concepts:
 
@@ -156,6 +156,6 @@ Most users start with YAML and add Python only when needed.
 
 ## Next steps
 
-**New to specs?** Start with the [Build Dashboard with Spec tutorial](../../tutorials/build_dashboard_with_spec.md) to create your first dashboard in 15 minutes.
+**New to specs?** Start with the [Build Dashboard with Spec tutorial](../../examples/tutorials/penguins_dashboard_spec.md) to create your first dashboard in 15 minutes.
 
 **Returning users?** Jump to the guide that matches your current task using the navigation above.

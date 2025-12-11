@@ -8,6 +8,7 @@ We welcome contributions from the community! Here's how to help.
 
 ### 🐛 Report Bugs
 Found an issue? [Open a GitHub issue](https://github.com/holoviz/lumen/issues):
+
 - Be specific about what failed
 - Include traceback/error message
 - Provide minimal reproducible example
@@ -15,6 +16,7 @@ Found an issue? [Open a GitHub issue](https://github.com/holoviz/lumen/issues):
 
 ### 📚 Improve Documentation
 Help others learn Lumen:
+
 - Fix typos and clarify language
 - Add examples and use cases
 - Improve existing guides
@@ -22,6 +24,7 @@ Help others learn Lumen:
 
 ### ✨ Suggest Features
 Have an idea? [Start a discussion](https://github.com/holoviz/lumen/discussions):
+
 - Explain the use case
 - Describe what you want to build
 - Vote on existing feature requests
@@ -82,6 +85,7 @@ pytest --cov=lumen tests/
 ```
 
 ### 5. Submit PR
+
 - Push to your fork
 - Open a Pull Request
 - Link any related issues

@@ -37,7 +37,19 @@ Install Lumen with your preferred LLM provider:
     lumen-ai serve https://datasets.holoviz.org/penguins/v1/penguins.csv --show
     ```
     
-    Open [https://localhost:5006](https://localhost:5006) and start chatting with your data.
+    If a browser tab doesn't automatically open, visit [https://localhost:5006](https://localhost:5006) and start chatting with your data.
+    
+    **Try these questions:**
+    
+    > "What datasets are available?"
+    
+    > "Show me a summary of the data"
+    
+    > "Which species has the largest average body mass? Show as a bar chart."
+    
+    > "Create a scatter plot of bill length vs flipper length, colored by island"
+    
+    > "Filter for penguins over 4kg and show me the distribution by species"
 
 === "Python"
 
@@ -53,6 +65,16 @@ Install Lumen with your preferred LLM provider:
     ```bash
     panel serve app.py
     ```
+    
+    **Then ask:**
+    
+    > "What's the correlation between bill length and body mass?"
+    
+    > "Group by island and show average measurements as a table"
+    
+    > "Create a histogram of flipper lengths with 20 bins"
+    
+    > "Are there any outliers in the body mass data?"
 
 ## How It Works
 
@@ -118,13 +140,13 @@ width: container
 **4. Renders the result:**
 
 <iframe 
-  src="assets/penguin_counts_by_island.html" 
+  src="../assets/penguin_counts_by_island.html" 
   width="100%" 
-  height="400"
+  height="600"
   style="border:none;"
 ></iframe>
 
-All of this happens automatically—you just asked a question.
+All of this happens automatically when you just ask a question!
 
 ## Try with Your Own Data
 
@@ -139,12 +161,6 @@ All of this happens automatically—you just asked a question.
     lumen serve postgresql://user:pass@localhost/mydb
     lumen serve mysql://user:pass@localhost/mydb
     lumen serve sqlite:///data.db
-    ```
-
-=== "Cloud Storage"
-    ```bash
-    lumen serve s3://bucket/data.parquet
-    lumen serve gcs://bucket/data.csv
     ```
 
 === "APIs & URLs"

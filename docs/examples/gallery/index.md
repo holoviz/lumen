@@ -14,7 +14,7 @@ Example dashboards built with Lumen YAML specifications.
     
     **Choose your approach:**
     
-    - Want AI to build it for you? → [Use Lumen AI](../getting_started/using_lumen_ai.md)
+    - Want AI to build it for you? → [Use Lumen AI](../../getting_started/using_lumen_ai.md)
     - Want to learn the underlying system? → Continue reading this gallery
     - Want to customize AI-generated dashboards? → Learn from these examples, then edit the YAML
 

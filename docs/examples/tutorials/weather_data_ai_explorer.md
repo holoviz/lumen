@@ -34,7 +34,7 @@ Analyses allow developers to create deterministic flows for specialized visualiz
 
 **Key concepts:**
 
-- **Custom analyses** extend Lumen AI by subclassing `lmai.analysis.Analysis` (see [Analyses configuration](../configuration/analyses.md))
+- **Custom analyses** extend Lumen AI by subclassing `lmai.analysis.Analysis` (see [Analyses configuration](../../configuration/analyses.md))
 - **Required columns** specify data requirements using the `columns` attribute
 - **Parameters** make analyses configurable using [Param](https://param.holoviz.org/)
 - **Autorun** determines if the analysis executes automatically when conditions are met
@@ -376,8 +376,8 @@ Your browser opens to the weather explorer. Try these interactions:
 
 Extend this example:
 
-- **Add calculations**: Implement CAPE, CIN, or lifted index (see [custom analyses](../configuration/analyses.md))
+- **Add calculations**: Implement CAPE, CIN, or lifted index (see [custom analyses](../../configuration/analyses.md))
 - **Create diagrams**: Build hodographs or time-height sections
-- **Integrate forecasts**: Combine observations with model predictions using [multiple data sources](../configuration/sources.md)
+- **Integrate forecasts**: Combine observations with model predictions using [multiple data sources](../../configuration/sources.md)
 - **Add validation**: Include quality control for meteorological data
-- **Customize agents**: Learn more about [agent configuration](../configuration/agents.md) and [prompts](../configuration/prompts.md)
+- **Customize agents**: Learn more about [agent configuration](../../configuration/agents.md) and [prompts](../../configuration/prompts.md)
