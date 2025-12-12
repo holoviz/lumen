@@ -178,7 +178,8 @@ class Metaset:
         truncate: bool = False,
         include_sql: bool = True,
         n: int | None = None,
-        offset: int = 0
+        offset: int = 0,
+        show_source: bool = False
     ) -> str:
         sorted_slugs = self.get_top_tables(n, offset)
 
@@ -197,9 +198,9 @@ class Metaset:
             if not catalog_entry:
                 continue
 
-            # If single source, use just the table name without source prefix
+            # If single source and not explicitly showing source, use just the table name
             display_slug = table_slug
-            if single_source and SOURCE_TABLE_SEPARATOR in table_slug:
+            if single_source and not show_source and SOURCE_TABLE_SEPARATOR in table_slug:
                 display_slug = table_slug.split(SOURCE_TABLE_SEPARATOR, 1)[1]
 
             tables_data[display_slug] = self._build_table_data(
@@ -242,18 +243,18 @@ class Metaset:
             sorted_slugs = sorted_slugs[:n]
         return sorted_slugs
 
-    def table_list(self, n: int | None = None, offset: int = 0) -> str:
+    def table_list(self, n: int | None = None, offset: int = 0, show_source: bool = False) -> str:
         """Generate minimal table listing for planning - no SQL expressions."""
-        return self._generate_context(include_columns=False, truncate=False, include_sql=False, n=n, offset=offset)
+        return self._generate_context(include_columns=False, truncate=False, include_sql=False, n=n, offset=offset, show_source=show_source)
 
-    def table_context(self, n: int | None = None, offset: int = 0) -> str:
-        return self._generate_context(include_columns=False, truncate=False, n=n, offset=offset)
+    def table_context(self, n: int | None = None, offset: int = 0, show_source: bool = True) -> str:
+        return self._generate_context(include_columns=False, truncate=False, n=n, offset=offset, show_source=show_source)
 
-    def full_context(self, n: int | None = None, offset: int = 0) -> str:
-        return self._generate_context(include_columns=True, truncate=False, n=n, offset=offset)
+    def full_context(self, n: int | None = None, offset: int = 0, show_source: bool = True) -> str:
+        return self._generate_context(include_columns=True, truncate=False, n=n, offset=offset, show_source=show_source)
 
-    def compact_context(self, n: int | None = None, offset: int = 0) -> str:
-        return self._generate_context(include_columns=True, truncate=True, n=n, offset=offset)
+    def compact_context(self, n: int | None = None, offset: int = 0, show_source: bool = True) -> str:
+        return self._generate_context(include_columns=True, truncate=True, n=n, offset=offset, show_source=show_source)
 
     def __str__(self) -> str:
         return self.table_context()
