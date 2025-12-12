@@ -317,10 +317,13 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 agent = agent()
             if isinstance(agent, AnalysisAgent):
                 analyses = "\n".join(
-                    f"- `{analysis.__name__}`: {dedent(analysis.__doc__ or '').strip()}" for analysis in agent.analyses if analysis._callable_by_llm
+                    f"\t- `{analysis.__name__}`: {dedent(analysis.__doc__ or '').strip()} (required cols: {', '.join(analysis.columns)})"
+                    for analysis in agent.analyses if analysis._callable_by_llm
                 )
-                agent.purpose = f"Available analyses include:\n\n{analyses}\nSelect this agent to perform one of these analyses."
-                self._analyses.extend(agent.analyses)
+                agent.conditions.append(
+                    f"The following analyses can be performed by AnalysisAgent:\n {analyses}\n"
+                    f"Instruct the required cols in your steps and do not rename these cols."
+                )
             # must use the same interface or else nothing shows
             if agent.llm is None:
                 agent.llm = llm
