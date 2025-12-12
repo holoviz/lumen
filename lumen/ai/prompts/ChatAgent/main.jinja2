@@ -1,5 +1,16 @@
 {% extends 'Agent/main.jinja2' %}
 
+{%- macro render_visible_slugs() %}
+Data sources:
+{%- set tables_list = memory['visible_slugs'] | list %}
+{%- for table in tables_list[:5] %}
+- {{ table.split(source_table_sep)[-1] }}
+{%- endfor %}
+{%- if tables_list | length > 5 %}
+- (showing first 5 of {{ tables_list | length }} tables)
+{%- endif %}
+{%- endmacro %}
+
 {%- block instructions %}
 ## Instructions
 Act as a helpful assistant for high-level data exploration, focusing on available datasets and, only if data is
@@ -25,17 +36,17 @@ Here was the plan that was executed:
 {% endif %}
 
 {%- if memory.get('metaset') %}
+{%- set table_list = memory['metaset'].table_list(n=5) %}
+{%- if table_list and table_list != '{}' %}
 Data sources (sorted by relevance):
-{{ memory['metaset'].table_context(n=5) }}
+{{ table_list }}
 {%- elif memory.get('visible_slugs') %}
-Data sources:
-{%- set tables_list = memory['visible_slugs'] | list %}
-{%- for table in tables_list[:5] %}
-- {{ table.split(source_table_sep)[-1] }}
-{%- endfor %}
-{%- if tables_list | length > 5 %}
-- (showing first 5 of {{ tables_list | length }} tables)
+{{ render_visible_slugs() }}
+{%- else %}
+No dataset has been loaded yet. Please ask the user to load a dataset or provide more context.
 {%- endif %}
+{%- elif memory.get('visible_slugs') %}
+{{ render_visible_slugs() }}
 {%- else %}
 No dataset has been loaded yet. Please ask the user to load a dataset or provide more context.
 {%- endif %}

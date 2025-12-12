@@ -101,13 +101,16 @@ class Metaset:
         table_slug: str,
         catalog_entry: TableCatalogEntry,
         include_columns: bool,
-        truncate: bool
+        truncate: bool,
+        include_sql: bool = True
     ) -> dict:
-        sql_expr = catalog_entry.sql_expr
-        if truncate and sql_expr:
-            sql_expr = truncate_string(sql_expr, max_length=200)
+        data = {}
 
-        data = {'read_with': sql_expr}
+        if include_sql:
+            sql_expr = catalog_entry.sql_expr
+            if truncate and sql_expr:
+                sql_expr = truncate_string(sql_expr, max_length=200)
+            data['read_with'] = sql_expr
 
         if catalog_entry.description:
             desc = catalog_entry.description
@@ -173,10 +176,20 @@ class Metaset:
         self,
         include_columns: bool = False,
         truncate: bool = False,
+        include_sql: bool = True,
         n: int | None = None,
         offset: int = 0
     ) -> str:
         sorted_slugs = self.get_top_tables(n, offset)
+
+        # Check if all tables come from a single source
+        unique_sources = set()
+        for slug in sorted_slugs:
+            if SOURCE_TABLE_SEPARATOR in slug:
+                source_name = slug.split(SOURCE_TABLE_SEPARATOR, 1)[0]
+                unique_sources.add(source_name)
+
+        single_source = len(unique_sources) == 1
 
         tables_data = {}
         for table_slug in sorted_slugs:
@@ -184,8 +197,21 @@ class Metaset:
             if not catalog_entry:
                 continue
 
-            tables_data[table_slug] = self._build_table_data(
-                table_slug, catalog_entry, include_columns, truncate
+            # If single source, use just the table name without source prefix
+            display_slug = table_slug
+            if single_source and SOURCE_TABLE_SEPARATOR in table_slug:
+                display_slug = table_slug.split(SOURCE_TABLE_SEPARATOR, 1)[1]
+
+            tables_data[display_slug] = self._build_table_data(
+                table_slug, catalog_entry, include_columns, truncate, include_sql
+            )
+
+        # If all tables have empty data, return a simple list
+        if all(not data for data in tables_data.values()):
+            return yaml.dump(
+                list(tables_data.keys()),
+                default_flow_style=False,
+                allow_unicode=True,
             )
 
         return yaml.dump(
@@ -215,6 +241,10 @@ class Metaset:
         if n is not None:
             sorted_slugs = sorted_slugs[:n]
         return sorted_slugs
+
+    def table_list(self, n: int | None = None, offset: int = 0) -> str:
+        """Generate minimal table listing for planning - no SQL expressions."""
+        return self._generate_context(include_columns=False, truncate=False, include_sql=False, n=n, offset=offset)
 
     def table_context(self, n: int | None = None, offset: int = 0) -> str:
         return self._generate_context(include_columns=False, truncate=False, n=n, offset=offset)
