@@ -279,9 +279,13 @@ class SQLAgent(BaseLumenAgent):
         table_defs = {table: source.tables[table] for table in tables if table in source.tables}
         table_defs[expr_slug] = sql_query
 
-        sql_expr_source = source.create_sql_expr_source(
-            table_defs, materialize=should_materialize
-        )
+        # Only pass materialize parameter for DuckDB sources
+        if isinstance(source, DuckDBSource):
+            sql_expr_source = source.create_sql_expr_source(
+                table_defs, materialize=should_materialize
+            )
+        else:
+            sql_expr_source = source.create_sql_expr_source(table_defs)
 
         if should_materialize:
             context["source"] = sql_expr_source
@@ -420,9 +424,12 @@ class SQLAgent(BaseLumenAgent):
                 step, discovery_context=discovery_context
             )
 
+            # Only materialize for DuckDB sources
+            should_materialize = isinstance(source, DuckDBSource)
+
             pipeline, sql_expr_source, summary = await self._execute_query(
                 source, context, expr_slug, validated_sql, tables=tables,
-                is_final=True, should_materialize=True, step=step
+                is_final=True, should_materialize=should_materialize, step=step
             )
 
             view = await self._finalize_execution(

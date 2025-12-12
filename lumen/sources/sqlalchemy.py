@@ -141,6 +141,11 @@ class SQLAlchemySource(BaseSQLSource):
 
         self._inspector_cache = None
 
+        # Auto-discover tables if not explicitly provided
+        if self.tables is None:
+            discovered_tables = self.get_tables()
+            self.tables = {table: f"SELECT * FROM {table}" for table in discovered_tables}
+
     @classmethod
     def _is_async_driver(cls, drivername: str) -> bool:
         """Check if the driver is asynchronous."""
@@ -230,6 +235,7 @@ class SQLAlchemySource(BaseSQLSource):
         """
         params_dict = dict(self.param.values(), **kwargs)
         params_dict.pop("name", None)
+
         params_dict['tables'] = tables
         if params is not None:
             params_dict['table_params'] = params

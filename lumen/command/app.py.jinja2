@@ -1,5 +1,9 @@
 import lumen.ai as lmai
 
+{# Import SQLAlchemySource if needed #}
+{%- if has_db_sources is defined and has_db_sources %}
+from lumen.sources.sqlalchemy import SQLAlchemySource
+{% endif %}
 {# Import specified agents #}
 {%- if agents is defined -%}
 {% for agent in agents %}
@@ -30,7 +34,22 @@ from lumen.ai.agents import {{ agent }}
 llm = lmai.llm.{{ llm_provider }}{{ "()" if args == [] else "(\n    "+', '.join(args)+"\n)" }}
 {% endif %}
 
-data = [{{ tables | join(', ') }}]
+# File-based data sources
+file_data = [{{ file_tables | join(', ') if file_tables is defined else '' }}]
+
+{%- if has_db_sources is defined and has_db_sources %}
+# Database sources
+db_sources = [
+{%- for url in db_urls %}
+    SQLAlchemySource(url={{ url }}),
+{%- endfor %}
+]
+
+# Combine all data sources
+data = file_data + db_sources
+{%- else %}
+data = file_data
+{%- endif %}
 {% set assistant_args = ['data=data'] -%}
 {%- if llm_provider is defined -%}
   {%- set assistant_args = assistant_args + ['llm=llm'] -%}

@@ -26,6 +26,12 @@ except ImportError as e:
 from ..ai import agents as lumen_agents, llm as lumen_llms  # Aliased here
 from ..ai.utils import parse_huggingface_url, render_template
 
+# Optional SQLAlchemy support
+try:
+    from sqlalchemy.engine.url import make_url
+except ImportError:
+    make_url = None
+
 CMD_DIR = THIS_DIR / ".." / "command"
 
 LLM_PROVIDERS = {
@@ -241,11 +247,48 @@ class AIHandler(CodeHandler):
         )
         super().__init__(filename="lumen_ai.py", source=source, **kwargs)
 
+    @staticmethod
+    def _is_sqlalchemy_url(table_str: str) -> bool:
+        """Check if a string is a valid SQLAlchemy URL"""
+        if make_url is None or "://" not in table_str:
+            return False
+
+        try:
+            make_url(table_str)
+            return True
+        except Exception:
+            return False
+
+    @classmethod
+    def _categorize_sources(cls, tables: list[str]) -> tuple[list[str], list[str]]:
+        """
+        Separate database URLs from file paths.
+
+        Returns
+        -------
+        tuple[list[str], list[str]]
+            (database_urls, file_paths)
+        """
+        db_urls = []
+        file_paths = []
+
+        for table in tables:
+            if cls._is_sqlalchemy_url(table):
+                db_urls.append(table)
+            else:
+                file_paths.append(table)
+        return db_urls, file_paths
+
     def _build_source_code(self, tables: list[str], **config) -> str:
         """Build source code with configuration"""
+        # Categorize sources into database URLs and file paths
+        db_urls, file_paths = self._categorize_sources(tables)
+
         context = {
             "llm_provider": LLM_PROVIDERS[config['provider']],
-            "tables": [repr(t) for t in tables],
+            "file_tables": [repr(t) for t in file_paths],
+            "db_urls": [repr(t) for t in db_urls],
+            "has_db_sources": len(db_urls) > 0,
             "api_key": config.get("api_key"),
             "endpoint": config.get("endpoint"),
             "mode": config.get("mode"),
@@ -260,6 +303,8 @@ class AIHandler(CodeHandler):
         source = render_template(
             CMD_DIR / "app.py.jinja2", relative_to=CMD_DIR, **context
         ).replace("\n\n", "\n").strip()
+
+        print("Generated source code:\n{source}\n")  # noqa: T201 for reusability
         return source
 
 
