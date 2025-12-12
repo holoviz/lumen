@@ -191,9 +191,6 @@ class SnowflakeSource(BaseSQLSource):
         """
         Converts a PEM encoded private key into a DER binary key.
 
-        Parameters
-        ----------
-
         Returns
         -------
         bytes or None

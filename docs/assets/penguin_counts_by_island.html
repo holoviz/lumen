@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <script src="https://cdn.jsdelivr.net/npm/vega@6.2.0"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vega-lite@6.1.0"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vega-embed@7.0.2"></script>
+</head>
+<body>
+  <div id="vis"/>
+  <script>
+    const spec = {
+  "data": {
+    "values": [
+      {"island": "Biscoe", "penguin_count": 168},
+      {"island": "Dream", "penguin_count": 124},
+      {"island": "Torgersen", "penguin_count": 52}
+    ]
+  },
+  "layer": [
+    {
+      "encoding": {
+        "color": {
+          "condition": {
+            "test": "datum.island === 'Biscoe'",
+            "value": "#1f77b4"
+          },
+          "value": "#aec7e8"
+        },
+        "tooltip": [
+          {"field": "island", "title": "Island", "type": "nominal"},
+          {
+            "field": "penguin_count",
+            "format": ",d",
+            "title": "Penguin Count",
+            "type": "quantitative"
+          }
+        ],
+        "x": {
+          "axis": {"title": "Number of Penguins"},
+          "field": "penguin_count",
+          "type": "quantitative"
+        },
+        "y": {
+          "axis": {"title": "Island"},
+          "field": "island",
+          "sort": "-x",
+          "type": "nominal"
+        }
+      },
+      "mark": "bar"
+    }
+  ],
+  "title": {
+    "anchor": "start",
+    "fontSize": 20,
+    "subtitle": "Biscoe Island has the highest penguin population",
+    "subtitleColor": "#666666",
+    "subtitleFontSize": 16,
+    "text": "Penguin Counts by Island"
+  },
+  "width": 500,
+  "height": 500,
+  "config": {}
+};
+    vegaEmbed("#vis", spec, {mode: "vega-lite"}).then(console.log).catch(console.warn);
+  </script>
+</body>
+</html>

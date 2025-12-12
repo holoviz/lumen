@@ -95,13 +95,17 @@ toolz = "*"
 # =================== DOCS ====================
 # =============================================
 [feature.doc.dependencies]
-nbsite = ">=0.8.4,<0.9.0"
+mkdocs = "*"
+mkdocs-material = "*"
+mkdocstrings = "*"
+mkdocstrings-python = "*"
+mkdocs-gen-files = "*"
+mkdocs-literate-nav = "*"
 
 [feature.doc.tasks]
-_docs-refs = 'python doc/generate_reference.py'
-_docs-generate = 'nbsite build --what=html --output=builtdocs --org holoviz --project-name lumen'
-[feature.doc.tasks.docs-build]
-depends-on = ['_docs-refs', '_docs-generate']
+docs-build = { cmd = 'mkdocs build -d builtdocs', depends-on = ['install'] }
+docs-serve = { cmd = 'mkdocs serve', depends-on = ['install'] }
+docs-clean = { cmd = 'mkdocs build --clean', depends-on = ['install'] }
 
 # =============================================
 # ================== BUILD ====================

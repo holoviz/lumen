@@ -627,13 +627,14 @@ class Component(Parameterized):
 
         Parameters
         ----------
-        context: Dict[str, Any]
-          Context contains the specification of all previously serialized components,
-          e.g. to allow resolving of references.
+        context : Dict[str, Any]
+            Context contains the specification of all previously serialized components,
+            e.g. to allow resolving of references.
 
         Returns
         -------
-        Declarative specification of this component.
+        dict
+            Declarative specification of this component.
         """
         spec = {}
         for p, value in self.param.values().items():

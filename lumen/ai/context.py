@@ -73,14 +73,14 @@ def _dedupe(seq: Iterable[Any], key: str | Callable[[Any], Any] | None) -> list[
     Parameters
     ----------
     seq: Iterable[Any]
-      The sequence to deduplicate.
+        The sequence to deduplicate.
     key: str | Callable[[Any], Any] | None
-      The key to deduplicate by.
+        The key to deduplicate by.
 
     Returns
     -------
     list[Any]
-    The deduplicated sequence.
+        The deduplicated sequence.
 
     Examples
     --------
@@ -125,20 +125,20 @@ def merge_contexts(
 ) -> dict[str, Any]:
     """
     Merge a list of context dicts according to the schema's Annotated metadata.
-      - Accumulated fields: extend/append from 'from_key' occurrences across contexts
-      - Regular fields: last-write-wins (LWW) unless overridden by lww_keys
+        - Accumulated fields: extend/append from 'from_key' occurrences across contexts
+        - Regular fields: last-write-wins (LWW) unless overridden by lww_keys
 
     Parameters
     ----------
     schema: type[TypedDict]
-      The schema to merge the contexts according to.
+        The schema to merge the contexts according to.
     contexts: list[Mapping[str, Any]]
-      The list of contexts to merge.
+        The list of contexts to merge.
 
     Returns
     -------
     dict[str, Any]
-      The merged context.
+        The merged context.
     """
     annotations: dict[str, Any] = get_type_hints(schema, include_extras=True)
     result: dict[str, Any] = {}
