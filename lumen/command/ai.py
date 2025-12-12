@@ -304,7 +304,7 @@ class AIHandler(CodeHandler):
             CMD_DIR / "app.py.jinja2", relative_to=CMD_DIR, **context
         ).replace("\n\n", "\n").strip()
 
-        print("Generated source code:\n{source}\n")  # noqa: T201 for reusability
+        print(f"Generated source code:\n{source}\n")  # noqa: T201 for reusability
         return source
 
 
