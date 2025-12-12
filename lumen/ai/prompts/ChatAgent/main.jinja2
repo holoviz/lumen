@@ -37,16 +37,8 @@ Here was the plan that was executed:
 
 {%- if memory.get('metaset') %}
 {%- set table_list = memory['metaset'].table_list(n=5) %}
-{%- if table_list.strip() != '[]' %}
 Data sources (sorted by relevance):
 {{ table_list }}
-{%- elif memory.get('visible_slugs') %}
-{{ render_visible_slugs() }}
-{%- else %}
-No dataset has been loaded yet. Please ask the user to load a dataset or provide more context.
-{%- endif %}
-{%- elif memory.get('visible_slugs') %}
-{{ render_visible_slugs() }}
 {%- else %}
 No dataset has been loaded yet. Please ask the user to load a dataset or provide more context.
 {%- endif %}
