@@ -52,6 +52,8 @@ class SkewTAnalysis(lmai.analysis.Analysis):
     """
     Creates a Skew-T log-P diagram from upper air sounding data.
     Shows temperature, dew point, and wind profiles.
+    
+    To include wind barbs, also include speed_kts and drct columns.
     """
 
     autorun = param.Boolean(default=True) # (1)!
@@ -147,8 +149,9 @@ Template overrides inject domain knowledge into agent system prompts. This custo
 
 - **Template overrides** inject specialized knowledge using the `template_overrides` attribute (see [Agents configuration](../configuration/agents.md))
 - **Global context** shares knowledge across all agents by setting overrides on the `Actor` base class
-- **Agent-specific overrides** customize individual agent types like `SQLAgent` or `AnalystAgent`
+- **Agent-specific overrides** customize individual agent types like `AnalystAgent`
 - **Jinja2 templates** use `{{ super() }}` to preserve original content while adding customizations
+- **Automatic column requirements** — the `columns` attribute on Analysis classes automatically informs upstream agents about required columns
 
 ### Share meteorological knowledge globally
 
@@ -168,23 +171,6 @@ lmai.actor.Actor.template_overrides = {"main": {"global": global_context}} # (2)
 1. `{{ super() }}` preserves the original template
 2. Apply to `Actor` base class to affect all agents
 
-### Guide the SQL agent
-
-The SQL agent needs to know which columns are required for specific visualizations. This footer ensures it queries for complete data when users request Skew-T diagrams.
-
-``` py title="weather_sounding.py"
-sql_footer = """
-To show a Skew-T diagram, you must have at least the following columns:
-- pressure_mb
-- tmpc
-- dwpc
-- speed_kts
-- drct
-- validUTC
-"""
-lmai.agents.SQLAgent.template_overrides = {"main": {"footer": sql_footer}}
-```
-
 ### Make the analyst speak like a meteorologist
 
 Specialized instructions make the analyst agent use proper meteorological terminology and explain concepts accurately, creating a more professional domain-specific assistant.
@@ -200,6 +186,9 @@ lmai.agents.AnalystAgent.template_overrides = {
     "main": {"instructions": analyst_instructions}
 }
 ```
+
+!!! note "Automatic column requirements"
+    The `columns` attribute on `SkewTAnalysis` (e.g., `["validUTC", "pressure_mb", "tmpc", "dwpc"]`) automatically tells upstream agents which columns are needed. For optional columns like `speed_kts` and `drct` (used for wind barbs), mention them in the docstring so agents know to include them when relevant.
 
 ## 4. Build the interface
 
@@ -267,6 +256,8 @@ class SkewTAnalysis(lmai.analysis.Analysis):
     """
     Creates a Skew-T log-P diagram from upper air sounding data.
     Shows temperature, dew point, and wind profiles.
+    
+    To include wind barbs, also include `speed_kts` and `drct` columns.
     """
 
     autorun = param.Boolean(default=True)
@@ -322,17 +313,6 @@ complete a difference calculation. Then use AnalystAgent to determine if the tem
 which indicates an inversion.
 """
 lmai.actor.Actor.template_overrides = {"main": {"global": global_context}}
-
-sql_footer = """
-To show a Skew-T diagram, you must have at least the following columns:
-- pressure_mb
-- tmpc
-- dwpc
-- speed_kts
-- drct
-- validUTC
-"""
-lmai.agents.SQLAgent.template_overrides = {"main": {"footer": sql_footer}}
 
 analyst_instructions = """
 {{ super() }}
