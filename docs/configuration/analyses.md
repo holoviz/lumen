@@ -21,19 +21,17 @@ class SummaryStats(lmai.Analysis):
         stats = df.describe()
         return pn.widgets.Tabulator(stats)
 
-# Must use AnalysisAgent to enable analyses
-analysis_agent = lmai.agents.AnalysisAgent(analyses=[SummaryStats])
-
+# Pass analyses directly to ExplorerUI
 ui = lmai.ExplorerUI(
     data='data.csv',
-    agents=[analysis_agent]
+    analyses=[SummaryStats]
 )
 ui.servable()
 ```
 
 1. Analysis only runs when data has a "value" column
 
-When the data has a "value" column, users can ask "Show me summary statistics" and Lumen runs your analysis.
+When the data has a "value" column, a suggestion button appears for the analysis. Users can click it or ask "Show me summary statistics" to run it.
 
 ## When to use analyses
 
@@ -124,12 +122,10 @@ class WindAnalysis(lmai.Analysis):
         # Return combined view
         return pn.Column(speed_plot, direction_plot)
 
-# Use with AnalysisAgent
-analysis_agent = lmai.agents.AnalysisAgent(analyses=[WindAnalysis])
-
+# Pass analyses directly to ExplorerUI
 ui = lmai.ExplorerUI(
     data='weather.csv',
-    agents=[analysis_agent]
+    analyses=[WindAnalysis]
 )
 ui.servable()
 ```
@@ -139,75 +135,16 @@ ui.servable()
 
 Now users can ask "Analyze wind patterns" and get both charts automatically.
 
-## Real-world example: Skew-T diagram
+## Real-world example: Weather data explorer
 
-This atmospheric science example creates meteorological diagrams:
+For a complete real-world example, see the [Weather Data AI Explorer tutorial](../examples/tutorials/weather_data_ai_explorer.md). It demonstrates:
 
-``` py title="Atmospheric sounding analysis" linenums="1"
-import param
-import panel as pn
-import matplotlib.pyplot as plt
-from metpy.plots import SkewT
-from metpy.units import units
-import lumen.ai as lmai
+- Building a `SkewTAnalysis` class that creates atmospheric Skew-T diagrams
+- Using template overrides to add meteorological domain knowledge
+- Combining analyses with custom agents for specialized applications
+- Creating configurable parameters for analysis customization
 
-class SkewTAnalysis(lmai.Analysis):
-    """
-    Creates a Skew-T log-P diagram from upper air sounding data.
-    Shows temperature, dew point, and wind profiles.
-    """
-    
-    autorun = param.Boolean(default=True)
-    
-    barbs_interval = param.Integer(default=3)  # (1)!
-    
-    columns = param.List(default=["validUTC", "pressure_mb", "tmpc", "dwpc"])
-    
-    def __call__(self, pipeline, *args, **kwargs):
-        df = pipeline.data.copy()
-        df["validUTC"] = pd.to_datetime(df["validUTC"])
-        latest_time = df["validUTC"].max()
-        sounding = df[df["validUTC"] == latest_time].copy()
-        
-        # Extract variables with units
-        pressure = sounding["pressure_mb"].values * units.hPa
-        temperature = sounding["tmpc"].values * units.degC
-        dewpoint = sounding["dwpc"].values * units.degC
-        
-        # Create Skew-T plot
-        fig = plt.figure(figsize=(7, 7))
-        skew = SkewT(fig, rotation=45)
-        skew.plot_dry_adiabats(alpha=0.25, color="orangered")
-        skew.plot_moist_adiabats(alpha=0.25, color="tab:green")
-        skew.plot_mixing_lines(alpha=0.25, color="tab:blue")
-        skew.plot(pressure, temperature, "r", linewidth=2)
-        skew.plot(pressure, dewpoint, "g", linewidth=2)
-        
-        # Add wind barbs if available
-        if "drct" in sounding.columns and "speed_kts" in sounding.columns:
-            wind_speed = sounding["speed_kts"].values * units.knots
-            wind_direction = sounding["drct"].values * units.degrees
-            u_wind, v_wind = mpcalc.wind_components(wind_speed, wind_direction)
-            skew.plot_barbs(
-                pressure[::self.barbs_interval],
-                u_wind[::self.barbs_interval],
-                v_wind[::self.barbs_interval]
-            )
-        
-        plt.title(f"Atmospheric Sounding\n{latest_time}", fontsize=14)
-        return pn.pane.Matplotlib(fig, sizing_mode="stretch_both")
-
-# Use it
-analysis_agent = lmai.agents.AnalysisAgent(analyses=[SkewTAnalysis])
-
-ui = lmai.ExplorerUI(
-    data='soundings.csv',
-    agents=[analysis_agent]
-)
-ui.servable()
-```
-
-1. Configurable parameter - users can adjust wind barb density
+The tutorial walks through building a domain-specific data exploration application from start to finish.
 
 ## Control when analyses run
 
@@ -247,36 +184,16 @@ class ThresholdAnalysis(lmai.Analysis):
 
 1. User can adjust the threshold value through UI controls
 
-## Enable analyses with AnalysisAgent
-
-!!! warning "Must use AnalysisAgent"
-    Analyses don't work automatically. You must explicitly add `AnalysisAgent` with your analyses:
-
-    ``` py hl_lines="2 5"
-    # Create AnalysisAgent with your analyses
-    analysis_agent = lmai.agents.AnalysisAgent(analyses=[MyAnalysis])
-
-    ui = lmai.ExplorerUI(
-        data='data.csv',
-        agents=[analysis_agent]  # (1)!
-    )
-    ui.servable()
-    ```
-
-    1. Adds AnalysisAgent alongside default agents
-
 ## Multiple analyses
 
 ``` py title="Multiple analyses"
-wind_agent = lmai.agents.AnalysisAgent(analyses=[
-    WindAnalysis(),
-    TemperatureAnalysis(),
-    PressureAnalysis(),
-])
-
 ui = lmai.ExplorerUI(
     data='data.csv',
-    agents=[wind_agent]
+    analyses=[
+        WindAnalysis,
+        TemperatureAnalysis,
+        PressureAnalysis,
+    ]
 )
 ui.servable()
 ```
@@ -401,20 +318,6 @@ columns = param.List(default=["value"])  # ❌ Won't match
 columns = param.List(default=["Value"])  # ✅ Matches
 ```
 
-### Forgot AnalysisAgent
-
-Analyses require AnalysisAgent to work:
-
-``` py hl_lines="2 5"
-# Create agent with your analyses
-analysis_agent = lmai.agents.AnalysisAgent(analyses=[MyAnalysis])
-
-ui = lmai.ExplorerUI(
-    data='data.csv',
-    agents=[analysis_agent]  # Don't forget this!
-)
-```
-
 ## Best practices
 
 **Keep analyses focused.** One analysis should perform one calculation or produce one type of output.
@@ -445,7 +348,10 @@ Domain knowledge:
 """
 lmai.actor.Actor.template_overrides = {"main": {"global": global_context}}
 
-ui = lmai.ExplorerUI(data='weather.csv', agents=[analysis_agent])
+ui = lmai.ExplorerUI(
+    data='weather.csv',
+    analyses=[MyAnalysis]
+)
 ui.servable()
 ```
 
@@ -474,12 +380,10 @@ lmai.agents.AnalystAgent.template_overrides = {
     "main": {"instructions": analyst_instructions}
 }
 
-# Create analysis
-analysis_agent = lmai.agents.AnalysisAgent(analyses=[SkewTAnalysis])
-
+# Pass analyses to ExplorerUI
 ui = lmai.ExplorerUI(
     data='soundings.csv',
-    agents=[analysis_agent],
+    analyses=[SkewTAnalysis],
     suggestions=[
         ("question_answer", "What is a Skew-T diagram?"),
         ("vertical_align_top", "Generate a Skew-T diagram."),
