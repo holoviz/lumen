@@ -322,7 +322,6 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 ), " " * 4)
                 agent.conditions.append(
                     f"The following analyses can be performed by AnalysisAgent:\n {analyses}\n"
-                    f"Instruct the required cols in your steps and do not rename these cols."
                 )
             # must use the same interface or else nothing shows
             if agent.llm is None:

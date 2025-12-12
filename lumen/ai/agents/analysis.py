@@ -52,6 +52,7 @@ class AnalysisAgent(BaseLumenAgent):
         default=[
             "Use for custom analysis, advanced analytics, or domain-specific methods",
             "Use when the user query matches one of the available analyses' name or description below.",
+            "Include the selected analysis' required cols in the instructions",
             "NOT for simple queries or basic visualizations",
         ]
     )
