@@ -1,4 +1,5 @@
 import asyncio
+import traceback
 
 from typing import (
     Annotated, Any, Literal, NotRequired,
@@ -630,14 +631,18 @@ class SQLAgent(BaseLumenAgent):
         metaset = context["metaset"]
         selected_slugs = list(metaset.catalog)
         visible_slugs = context.get('visible_slugs', [])
-        if visible_slugs:
+        if selected_slugs and visible_slugs:
+            # hide de-selected slugs
             selected_slugs = [slug for slug in selected_slugs if slug in visible_slugs]
+        elif not selected_slugs and visible_slugs:
+            # if no closest matches, use visible slugs
+            selected_slugs = list(visible_slugs)
         sources = {
             tuple(table_slug.split(SOURCE_TABLE_SEPARATOR)): parse_table_slug(table_slug, sources)[0]
             for table_slug in selected_slugs
         }
         if not sources:
-            return [], {}
+            raise ValueError("No valid SQL sources available for querying.")
         try:
             # Try one-shot approach first
             out = await self._render_execute_query(
@@ -652,6 +657,7 @@ class SQLAgent(BaseLumenAgent):
             )
         except Exception as e:
             if not self.exploration_enabled:
+                traceback.print_exc()
                 # If exploration is disabled, re-raise the error instead of falling back
                 raise e
             # Fall back to exploration mode if enabled
