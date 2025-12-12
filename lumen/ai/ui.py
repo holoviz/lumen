@@ -1364,13 +1364,18 @@ class ExplorerUI(UI):
         tabs[:] = content
         tabs.active = len(tabs)-1
 
-    async def _execute_plan(self, plan: Plan):
+    async def _execute_plan(self, plan: Plan, rerun: bool = False):
         prev = self._explorations.value
         parent = prev["view"]
 
         # Check if we are adding to existing exploration or creating a new one
         new_exploration = any("pipeline" in step.actor.output_schema.__required_keys__ for step in plan)
-        if new_exploration:
+
+        if rerun:
+            exploration = parent
+            plan.reset()
+            watcher = plan.param.watch(partial(self._add_views, exploration), "views")
+        elif new_exploration:
             exploration = await self._add_exploration(plan, parent)
             watcher = plan.param.watch(partial(self._add_views, exploration), "views")
         else:
@@ -1402,25 +1407,19 @@ class ExplorerUI(UI):
         if "__error__" in plan.out_context:
             # On error we have to sync the conversation, unwatch the plan,
             # and remove the exploration if it was newly created
+            replan_button = Button(
+                label="Replan", icon="alt_route", on_click=lambda _: self.interface._click_rerun(),
+                description="Replan and generate a new execution strategy"
+            )
             rerun_button = Button(
-                name="Rerun",
-                on_click=lambda event: self.interface._click_rerun(),
-                button_type="primary"
+                label="Rerun", icon="autorenew", on_click=lambda _: state.execute(partial(self._execute_plan, plan, rerun=True)),
+                description="Rerun with the same plan and context"
             )
             last_message = self.interface.objects[-1]
             footer_objects = last_message.footer_objects or []
-            last_message.footer_objects = footer_objects + [rerun_button]
+            last_message.footer_objects = footer_objects + [rerun_button, replan_button]
             exploration.parent.conversation = exploration.conversation
             del plan.out_context['__error__']
-            if is_new:
-                with hold():
-                    self._explorations.param.update(
-                        items=self._explorations.items[:-1],
-                        value=prev
-                    )
-                    await self._update_conversation()
-                    if exploration.parent is self._home:
-                        self._split.collapsed = 1
         else:
             if "pipeline" in plan.out_context:
                 await self._add_analysis_suggestions(plan)
