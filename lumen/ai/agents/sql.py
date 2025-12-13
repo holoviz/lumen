@@ -1,4 +1,5 @@
 import asyncio
+import traceback
 
 from typing import (
     Annotated, Any, Literal, NotRequired,
@@ -22,7 +23,7 @@ from ..models import PartialBaseModel, RetrySpec
 from ..schemas import Metaset
 from ..utils import (
     clean_sql, describe_data, get_data, get_pipeline, parse_table_slug,
-    stream_details,
+    retry_llm_output, stream_details,
 )
 from ..views import LumenOutput, SQLOutput
 from .base_lumen import BaseLumenAgent
@@ -348,7 +349,8 @@ class SQLAgent(BaseLumenAgent):
         success_message: str,
         discovery_context: str | None = None,
         raise_if_empty: bool = False,
-        output_title: str | None = None
+        output_title: str | None = None,
+        errors: list[str] | None = None,
     ) -> SQLOutput:
         """
         Helper method that generates, validates, and executes final SQL queries.
@@ -369,6 +371,8 @@ class SQLAgent(BaseLumenAgent):
             Whether to raise error if query returns empty results
         output_title : str, optional
             Title to use for the output
+        errors : list[str], optional
+            List of previous errors to include in prompt
 
         Returns
         -------
@@ -390,7 +394,7 @@ class SQLAgent(BaseLumenAgent):
                 sql_query_history={},
                 current_iteration=1,
                 sql_plan_context=None,
-                errors=None,
+                errors=errors,
                 discovery_context=discovery_context,
             )
 
@@ -630,17 +634,27 @@ class SQLAgent(BaseLumenAgent):
         metaset = context["metaset"]
         selected_slugs = list(metaset.catalog)
         visible_slugs = context.get('visible_slugs', [])
-        if visible_slugs:
+        if selected_slugs and visible_slugs:
+            # hide de-selected slugs
             selected_slugs = [slug for slug in selected_slugs if slug in visible_slugs]
+        elif not selected_slugs and visible_slugs:
+            # if no closest matches, use visible slugs
+            selected_slugs = list(visible_slugs)
         sources = {
             tuple(table_slug.split(SOURCE_TABLE_SEPARATOR)): parse_table_slug(table_slug, sources)[0]
             for table_slug in selected_slugs
         }
         if not sources:
-            return [], {}
+            raise ValueError("No valid SQL sources available for querying.")
         try:
-            # Try one-shot approach first
-            out = await self._render_execute_query(
+            if not self.exploration_enabled:
+                # Try retry-wrapped one-shot approach
+                execute_method = retry_llm_output(self._render_execute_query)
+            else:
+                # Try one-shot approach first
+                execute_method = self._render_execute_query
+
+            out = await execute_method(
                 messages,
                 context,
                 sources=sources,
@@ -652,6 +666,7 @@ class SQLAgent(BaseLumenAgent):
             )
         except Exception as e:
             if not self.exploration_enabled:
+                traceback.print_exc()
                 # If exploration is disabled, re-raise the error instead of falling back
                 raise e
             # Fall back to exploration mode if enabled
