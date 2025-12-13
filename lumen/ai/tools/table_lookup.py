@@ -148,7 +148,7 @@ class TableLookup(VectorLookupTool):
     )
 
     min_similarity = param.Number(
-        default=0.05,
+        default=0,
         doc="""
         The minimum similarity to include a document.""",
     )

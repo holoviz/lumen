@@ -50,13 +50,14 @@ class AnalysisAgent(BaseLumenAgent):
 
     conditions = param.List(
         default=[
-            "Use for custom analysis, advanced analytics, or domain-specific analysis methods",
-            "Use when built-in SQL/visualization agents are insufficient",
+            "Use for custom analysis, advanced analytics, or domain-specific methods",
+            "Use when the user query matches one of the available analyses' name or description below.",
+            "Include the selected analysis' required cols in the instructions",
             "NOT for simple queries or basic visualizations",
         ]
     )
 
-    purpose = param.String(default="Perform custom analyses on the data.")
+    purpose = param.String(default="Perform custom analyses that are reliable and repeatable.")
 
     prompts = param.Dict(
         default={

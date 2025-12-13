@@ -32,7 +32,18 @@ if TYPE_CHECKING:
 
 class RawStep(BaseModel):
     actor: str
-    instruction: str = Field(description="Concise instruction defining the specific subtask. Never generate instructions to create synthetic data.")
+    instruction: str = Field(description="""
+    Concise instruction capturing user intent at the right altitude.
+
+    Right altitude:
+    - ❌ Too low: implementation details (SQL syntax, chart specs, row limits)
+    - ❌ Too high: vague ("handle this", "process data")
+    - ✅ Just right: clear intent + relationship to context
+
+    Encode intent: add/modify/filter/compare/create — reference existing context when applicable.
+
+    Never include implementation details unless user explicitly specified them.
+    """)
     title: str
 
 

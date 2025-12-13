@@ -5,7 +5,7 @@ import re
 import traceback
 
 from functools import partial
-from textwrap import dedent
+from textwrap import dedent, indent
 from typing import TYPE_CHECKING, Any, Self
 
 import param
@@ -316,11 +316,13 @@ class Coordinator(Viewer, VectorLookupToolUser):
             if not isinstance(agent, Agent):
                 agent = agent()
             if isinstance(agent, AnalysisAgent):
-                analyses = "\n".join(
-                    f"- `{analysis.__name__}`: {dedent(analysis.__doc__ or '').strip()}" for analysis in agent.analyses if analysis._callable_by_llm
+                analyses = indent("\n".join(
+                    f"- `{analysis.__name__}`:\n{indent(dedent(analysis.__doc__ or '').strip(), " " * 4)} (required cols: {', '.join(analysis.columns)})"
+                    for analysis in agent.analyses if analysis._callable_by_llm
+                ), " " * 4)
+                agent.conditions.append(
+                    f"The following analyses can be performed by AnalysisAgent:\n {analyses}\n"
                 )
-                agent.purpose = f"Available analyses include:\n\n{analyses}\nSelect this agent to perform one of these analyses."
-                self._analyses.extend(agent.analyses)
             # must use the same interface or else nothing shows
             if agent.llm is None:
                 agent.llm = llm

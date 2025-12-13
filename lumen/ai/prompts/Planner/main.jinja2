@@ -88,17 +88,9 @@ Documents available:
 {% endif %}
 
 {%- if memory.get('metaset') %}
-Data sources (sorted by relevance):
-{{ memory['metaset'].table_context(n=5) }}
-{%- elif memory.get('visible_slugs') %}
+{%- set table_list = memory['metaset'].table_list(n=5) %}
 Data sources:
-{%- set tables_list = memory['visible_slugs'] | list %}
-{%- for table in tables_list[:5] %}
-- {{ table.split(source_table_sep)[-1] }}
-{%- endfor %}
-{%- if tables_list | length > 5 %}
-- (showing first 5 of {{ tables_list | length }} tables)
-{%- endif %}
+{{ table_list }}
 {% endif %}
 
 {%- if 'table' in memory %}
