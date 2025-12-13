@@ -230,6 +230,7 @@ class SQLAlchemySource(BaseSQLSource):
         """
         params_dict = dict(self.param.values(), **kwargs)
         params_dict.pop("name", None)
+
         params_dict['tables'] = tables
         if params is not None:
             params_dict['table_params'] = params
