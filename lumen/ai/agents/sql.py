@@ -23,7 +23,7 @@ from ..models import PartialBaseModel, RetrySpec
 from ..schemas import Metaset
 from ..utils import (
     clean_sql, describe_data, get_data, get_pipeline, parse_table_slug,
-    stream_details,
+    retry_llm_output, stream_details,
 )
 from ..views import LumenOutput, SQLOutput
 from .base_lumen import BaseLumenAgent
@@ -349,7 +349,8 @@ class SQLAgent(BaseLumenAgent):
         success_message: str,
         discovery_context: str | None = None,
         raise_if_empty: bool = False,
-        output_title: str | None = None
+        output_title: str | None = None,
+        errors: list[str] | None = None,
     ) -> SQLOutput:
         """
         Helper method that generates, validates, and executes final SQL queries.
@@ -370,6 +371,8 @@ class SQLAgent(BaseLumenAgent):
             Whether to raise error if query returns empty results
         output_title : str, optional
             Title to use for the output
+        errors : list[str], optional
+            List of previous errors to include in prompt
 
         Returns
         -------
@@ -391,7 +394,7 @@ class SQLAgent(BaseLumenAgent):
                 sql_query_history={},
                 current_iteration=1,
                 sql_plan_context=None,
-                errors=None,
+                errors=errors,
                 discovery_context=discovery_context,
             )
 
@@ -644,8 +647,14 @@ class SQLAgent(BaseLumenAgent):
         if not sources:
             raise ValueError("No valid SQL sources available for querying.")
         try:
-            # Try one-shot approach first
-            out = await self._render_execute_query(
+            if not self.exploration_enabled:
+                # Try retry-wrapped one-shot approach
+                execute_method = retry_llm_output(self._render_execute_query)
+            else:
+                # Try one-shot approach first
+                execute_method = self._render_execute_query
+
+            out = await execute_method(
                 messages,
                 context,
                 sources=sources,
