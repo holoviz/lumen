@@ -1425,7 +1425,7 @@ class ExplorerUI(UI):
             if not exploration.initialized:
                 error_type = plan.out_context.pop("__error_type__", Exception)
                 error = plan.out_context.pop("__error__", "Unknown error")
-                _, todos = plan.render_task_history(len(plan)-1, failed=True)
+                _, todos = plan.render_task_history(failed=True)
 
                 user_msg = ""
                 for msg in plan.history[::-1]:
