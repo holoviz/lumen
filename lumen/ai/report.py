@@ -401,7 +401,7 @@ class TaskGroup(Task):
             except Exception as e:
                 tb.print_exception(e)
                 self.status = "error"
-                new_context = {"__error__": str(e)}
+                new_context = {"__error__": str(e), "__error_type__": type(e)}
                 task.out_context = new_context
                 if self.abort_on_error:
                     if self.parent is not None:

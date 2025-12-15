@@ -19,7 +19,6 @@ from panel.util import edit_readonly
 from panel.viewable import (
     Child, Children, Viewable, Viewer,
 )
-from panel_gwalker import GraphicWalker
 from panel_material_ui import (
     Accordion, Button, ChatFeed, ChatInterface, ChatMessage,
     Column as MuiColumn, Dialog, FileDownload, IconButton, MenuList,
@@ -49,6 +48,7 @@ from .export import export_notebook
 from .llm import Llm, Message, OpenAI
 from .llm_dialog import LLMConfigDialog
 from .logs import ChatLogs
+from .models import ErrorDescription
 from .report import ActorTask, Report
 from .utils import log_debug, wrap_logfire
 from .vector_store import VectorStore
@@ -902,6 +902,8 @@ class Exploration(param.Parameterized):
 
     view = Child()
 
+    initialized = param.Boolean(default=False)
+
     def __panel__(self):
         return self.view
 
@@ -1205,7 +1207,7 @@ class ExplorerUI(UI):
         conversation = list(self.interface.objects)
 
         tabs = Tabs(
-            ('Overview', "Waiting on data..."),
+            ('Overview', Markdown("Waiting on data...", margin=(5, 20))),
             dynamic=True,
             sizing_mode='stretch_both',
             loading=plan.param.running
@@ -1318,8 +1320,9 @@ class ExplorerUI(UI):
         for view in event.new:
             if not isinstance(view, LumenOutput) or view in event.old:
                 continue
-            if tabs and isinstance(view, SQLOutput) and not isinstance(tabs[0], GraphicWalker):
+            if tabs and isinstance(view, SQLOutput) and not exploration.initialized:
                 tabs[0] = ("Overview", view.render_explorer())
+                exploration.initialized = True
             title, vsplit = self._render_view(exploration, view)
             content.append((title, vsplit))
 
@@ -1404,7 +1407,7 @@ class ExplorerUI(UI):
         await self._postprocess_exploration(plan, exploration, prev, is_new=new_exploration)
 
     async def _postprocess_exploration(self, plan: Plan, exploration: Exploration, prev: dict, is_new: bool = False):
-        if "__error__" in plan.out_context:
+        if "__error__" in plan.out_context or plan.status == "error":
             # On error we have to sync the conversation, unwatch the plan,
             # and remove the exploration if it was newly created
             replan_button = Button(
@@ -1419,7 +1422,24 @@ class ExplorerUI(UI):
             footer_objects = last_message.footer_objects or []
             last_message.footer_objects = footer_objects + [rerun_button, replan_button]
             exploration.parent.conversation = exploration.conversation
-            del plan.out_context['__error__']
+            if not exploration.initialized:
+                error_type = plan.out_context.pop("__error_type__", "Exception")
+                error = plan.out_context.pop("__error__", "Unknown error")
+                _, todos = plan.render_task_history(len(plan)-1, failed=True)
+
+                user_msg = ""
+                for msg in plan.history[::-1]:
+                    if msg.get("role") == "user":
+                        user_msg = msg.get("content")
+                response = await self.llm.invoke(
+                    [{"content": (
+                        f"User prompt:\n\n> {user_msg}\n"
+                        f"Planner checklist:\n\n{todos}",
+                        f"Error\n\n{error_type.__name__}: {error}\n\n"
+                    ), "role": "user"}],
+                    response_model=ErrorDescription
+                )
+                exploration.view[0][0].object = f"⚠️ Unable to complete your request\n\n{response.explanation}"
         else:
             if "pipeline" in plan.out_context:
                 await self._add_analysis_suggestions(plan)
