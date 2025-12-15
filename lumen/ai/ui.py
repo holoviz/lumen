@@ -1143,7 +1143,7 @@ class ExplorerUI(UI):
         for c in self._explorations.items[1:]:
             c['view'].context.clear()
 
-    async def _update_conversation(self, event=None):
+    async def _update_conversation(self, event=None, replan: bool = False):
         exploration = self._explorations.value['view']
         if exploration is self._home:
             self._split[0][0] = self._splash
@@ -1367,18 +1367,30 @@ class ExplorerUI(UI):
         tabs[:] = content
         tabs.active = len(tabs)-1
 
-    async def _execute_plan(self, plan: Plan, rerun: bool = False):
+    def _reset_error(self, plan: Plan, exploration: Exploration, replan: bool = False):
+        plan.reset(plan._current)
+        tabs = exploration.view[0]
+        if replan:
+            tabs[:] = [("Overview", Markdown("Waiting on data...", margin=(5, 20)))]
+            tabs.active = 0
+        elif len(tabs) > 1 and isinstance(tabs[-1], Markdown):
+            tabs.pop(-1)
+            tabs.active = len(tabs)-1
+        exploration.conversation[-1].footer_objects = []
+
+    async def _execute_plan(self, plan: Plan, rerun: bool = False, replan: bool = False):
         prev = self._explorations.value
         parent = prev["view"]
 
         # Check if we are adding to existing exploration or creating a new one
         new_exploration = any("pipeline" in step.actor.output_schema.__required_keys__ for step in plan)
 
+        partial_plan = None
         if rerun:
             exploration = parent
-            plan.reset()
+            self._reset_error(plan, exploration)
             watcher = plan.param.watch(partial(self._add_views, exploration), "views")
-        elif new_exploration:
+        elif new_exploration and not replan:
             exploration = await self._add_exploration(plan, parent)
             watcher = plan.param.watch(partial(self._add_views, exploration), "views")
         else:
@@ -1396,7 +1408,10 @@ class ExplorerUI(UI):
                 partial_plan = plan
                 plan = parent.plan.merge(plan)
                 partial_plan.cleanup()
-            watcher = None
+            if replan and new_exploration:
+                watcher = plan.param.watch(partial(self._add_views, exploration), "views")
+            else:
+                watcher = None
 
         with plan.param.update(interface=self.interface):
             await plan.execute()
@@ -1404,48 +1419,75 @@ class ExplorerUI(UI):
         if watcher:
             plan.param.unwatch(watcher)
 
-        await self._postprocess_exploration(plan, exploration, prev, is_new=new_exploration)
+        await self._postprocess_exploration(plan, exploration, prev, is_new=new_exploration, partial_plan=partial_plan)
 
-    async def _postprocess_exploration(self, plan: Plan, exploration: Exploration, prev: dict, is_new: bool = False):
-        if "__error__" in plan.out_context or plan.status == "error":
-            # On error we have to sync the conversation, unwatch the plan,
-            # and remove the exploration if it was newly created
-            replan_button = Button(
-                label="Replan", icon="alt_route", on_click=lambda _: self.interface._click_rerun(),
-                description="Replan and generate a new execution strategy"
-            )
-            rerun_button = Button(
-                label="Rerun", icon="autorenew", on_click=lambda _: state.execute(partial(self._execute_plan, plan, rerun=True)),
-                description="Rerun with the same plan and context"
-            )
-            last_message = self.interface.objects[-1]
-            footer_objects = last_message.footer_objects or []
-            last_message.footer_objects = footer_objects + [rerun_button, replan_button]
-            exploration.parent.conversation = exploration.conversation
-            if not exploration.initialized:
-                error_type = plan.out_context.pop("__error_type__", Exception)
-                error = plan.out_context.pop("__error__", "Unknown error")
-                _, todos = plan.render_task_history(failed=True)
+    async def _replan(self, plan: Plan, prev: dict, partial_plan: Plan | None = None):
+        exploration = self._exploration['view']
+        old_plan = plan if partial_plan is None else partial_plan
+        messages = old_plan.history
+        with hold():
+            plan.remove(list(old_plan))
+            self._reset_error(old_plan, exploration, replan=old_plan is plan)
 
-                user_msg = ""
-                for msg in plan.history[::-1]:
-                    if msg.get("role") == "user":
-                        user_msg = msg.get("content")
-                        break
-                response = await self.llm.invoke(
-                    [{"content": (
-                        f"User prompt:\n\n> {user_msg}\n"
-                        f"Planner checklist:\n\n{todos}"
-                        f"Error\n\n{error_type.__name__}: {error}\n\n"
-                    ), "role": "user"}],
-                    response_model=ErrorDescription
-                )
-                exploration.view[0][0].object = f"⚠️ Unable to complete your request\n\n{response.explanation}"
-        else:
+        self._idle.clear()
+        try:
+            new_plan = await self._coordinator.respond(messages, exploration.context)
+            if new_plan is not None:
+                await self._execute_plan(new_plan, replan=True)
+        finally:
+            self._exploration['view'].conversation = self.interface.objects
+            self._idle.set()
+
+    async def _postprocess_exploration(
+        self, plan: Plan, exploration: Exploration, prev: dict, is_new: bool = False, partial_plan: Plan | None = None
+    ):
+        if "__error__" not in plan.out_context and plan.status != "error":
             if "pipeline" in plan.out_context:
                 await self._add_analysis_suggestions(plan)
             if is_new:
                 plan.param.watch(partial(self._update_views, exploration), "views")
+            return
+
+        # On error we have to sync the conversation, unwatch the plan,
+        # and remove the exploration if it was newly created
+        replan_button = Button(
+            label="Replan", icon="alt_route", on_click=lambda _: state.execute(partial(self._replan, plan, prev, partial_plan)),
+            description="Replan and generate a new execution strategy"
+        )
+        rerun_button = Button(
+            label="Rerun", icon="autorenew", on_click=lambda _: state.execute(partial(self._execute_plan, plan, rerun=True)),
+            description="Rerun with the same plan and context"
+        )
+        last_message = self.interface.objects[-1]
+        footer_objects = last_message.footer_objects or []
+        last_message.footer_objects = footer_objects + [rerun_button, replan_button]
+        exploration.parent.conversation = exploration.conversation
+
+        error_type = plan.out_context.pop("__error_type__", Exception)
+        error = plan.out_context.pop("__error__", "Unknown error")
+        _, todos = plan.render_task_history(failed=True)
+
+        user_msg = ""
+        for msg in plan.history[::-1]:
+            if msg.get("role") == "user":
+                user_msg = msg.get("content")
+                break
+
+        response = await self.llm.invoke(
+            [{"content": (
+                f"User prompt:\n\n> {user_msg}\n"
+                f"Planner checklist:\n\n{todos}"
+                f"Error\n\n{error_type.__name__}: {error}\n\n"
+            ), "role": "user"}],
+            response_model=ErrorDescription
+        )
+        explanation = f"⚠️ Unable to complete your request\n\n{response.explanation}"
+        tabs = exploration.view[0]
+        if exploration.initialized:
+            tabs.append(("Error", Markdown(explanation, margin=(5, 20))))
+            tabs.active = len(tabs)-1
+        else:
+            tabs[0].object = explanation
 
     @wrap_logfire(span_name="Chat Invoke")
     async def _chat_invoke(
