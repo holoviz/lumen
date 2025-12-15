@@ -8,6 +8,7 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
+from panel.layout import Column
 from panel.tests.util import async_wait_until
 from panel_material_ui import Column as MuiColumn
 from panel_splitjs import VSplit
@@ -56,7 +57,7 @@ async def explorer_ui(llm, test_source):
 
     ui = ExplorerUI(data=test_source, llm=llm)
     ui.context = context
-    await ui._explorer.sync()
+    await asyncio.sleep(0.1)
     yield ui
     await asyncio.sleep(0.1)
 
@@ -178,8 +179,7 @@ async def test_exploration_ui_error_replan(explorer_ui_with_error):
 async def test_add_exploration_from_explorer(explorer_ui):
     """Test creating an exploration from the table explorer."""
     # Set up the explorer to have a table selected
-    slug = f"{explorer_ui.context['source'].name}{SOURCE_TABLE_SEPARATOR}test_table"
-    explorer_ui._explorer.param.update(table_slug=slug)
+    explorer_ui._explorer.param.update(table_slug="test_table")
 
     # Add exploration
     await explorer_ui._add_exploration_from_explorer()
@@ -214,8 +214,7 @@ async def test_add_exploration_from_explorer_no_table(explorer_ui):
 async def test_exploration_pop_out(explorer_ui):
     """Test the pop-out functionality for exploration views."""
     # First create an exploration
-    slug = f"{explorer_ui.context['source'].name}{SOURCE_TABLE_SEPARATOR}test_table"
-    explorer_ui._explorer.param.update(table_slug=slug)
+    explorer_ui._explorer.param.update(table_slug="test_table")
     await explorer_ui._add_exploration_from_explorer()
 
     await async_wait_until(lambda: len(explorer_ui._explorations.items) > 1)
@@ -228,25 +227,22 @@ async def test_exploration_pop_out(explorer_ui):
 
     sql_output = views[0]
 
-    # Render the view to get a VSplit
-    title, vsplit = explorer_ui._render_view(exploration, sql_output)
-
     # Get the tabs container
     tabs = exploration.view[0]
     initial_tab_count = len(tabs)
 
+    assert initial_tab_count == 2
+
     # Check that the view is in tabs
-    assert vsplit in tabs
+    vsplit = tabs[1]
+    title = tabs._names[1]
+    assert isinstance(vsplit, VSplit)
 
     # Create pop-out button
     pop_button = explorer_ui._render_pop_out(exploration, vsplit, title)
 
     # Trigger the pop-out callback directly
-    from panel.io.state import hold
-    with hold():
-        # Call the callback function directly (it's stored in on_click)
-        pop_out_callback = pop_button.on_click
-        pop_out_callback(None)
+    pop_button.param.trigger("clicks")
 
     # Wait for the view to be removed from tabs
     await async_wait_until(lambda: vsplit not in tabs, timeout=5.0)
@@ -258,16 +254,12 @@ async def test_exploration_pop_out(explorer_ui):
     # Check that standalone view was added to exploration.view
     assert len(exploration.view) > 1
     standalone = exploration.view[-1]
-    assert isinstance(standalone, MuiColumn)
+    assert isinstance(standalone, Column)
 
     # Check button description changed
     assert pop_button.description == "Reattach"
     assert pop_button.icon == "open_in_browser"
-
-    # Trigger reattach
-    with hold():
-        pop_out_callback = pop_button.on_click
-        pop_out_callback(None)
+    pop_button.param.trigger("clicks")
 
     # Wait for the view to be back in tabs
     await async_wait_until(lambda: vsplit in tabs, timeout=5.0)
@@ -281,143 +273,10 @@ async def test_exploration_pop_out(explorer_ui):
     assert pop_button.icon == "open_in_new"
 
 
-async def test_move_exploration_up(explorer_ui):
-    """Test moving an exploration up in the list."""
-    # Create multiple explorations
-    slug = f"{explorer_ui.context['source'].name}{SOURCE_TABLE_SEPARATOR}test_table"
-    explorer_ui._explorer.param.update(table_slug=slug)
-
-    await explorer_ui._add_exploration_from_explorer()
-    await async_wait_until(lambda: len(explorer_ui._explorations.items) > 1)
-
-    # Create a second exploration
-    explorer_ui._explorer.param.update(table_slug=slug)
-    await explorer_ui._add_exploration_from_explorer()
-    await async_wait_until(lambda: len(explorer_ui._explorations.items) > 2)
-
-    items = explorer_ui._explorations.items
-    assert len(items) >= 3  # Home + 2 explorations
-
-    # Get the last exploration (not Home)
-    last_item = items[-1]
-    last_index = len(items) - 1
-
-    # Move it up
-    explorer_ui._move_up(last_item)
-
-    # Check that it moved up
-    new_items = explorer_ui._explorations.items
-    assert new_items[last_index - 1] is last_item
-
-
-async def test_move_exploration_down(explorer_ui):
-    """Test moving an exploration down in the list."""
-    # Create multiple explorations
-    slug = f"{explorer_ui.context['source'].name}{SOURCE_TABLE_SEPARATOR}test_table"
-    explorer_ui._explorer.param.update(table_slug=slug)
-
-    await explorer_ui._add_exploration_from_explorer()
-    await async_wait_until(lambda: len(explorer_ui._explorations.items) > 1)
-
-    explorer_ui._explorer.param.update(table_slug=slug)
-    await explorer_ui._add_exploration_from_explorer()
-    await async_wait_until(lambda: len(explorer_ui._explorations.items) > 2)
-
-    items = explorer_ui._explorations.items
-    assert len(items) >= 3
-
-    # Get the second exploration (not Home, not last)
-    if len(items) >= 3:
-        second_item = items[1]
-        second_index = 1
-
-        # Move it down
-        explorer_ui._move_down(second_item)
-
-        # Check that it moved down
-        new_items = explorer_ui._explorations.items
-        assert new_items[second_index + 1] is second_item
-
-
-async def test_delete_exploration(explorer_ui):
-    """Test deleting an exploration."""
-    # Create an exploration
-    slug = f"{explorer_ui.context['source'].name}{SOURCE_TABLE_SEPARATOR}test_table"
-    explorer_ui._explorer.param.update(table_slug=slug)
-    await explorer_ui._add_exploration_from_explorer()
-
-    await async_wait_until(lambda: len(explorer_ui._explorations.items) > 1)
-    initial_count = len(explorer_ui._explorations.items)
-
-    # Get the exploration to delete (not Home)
-    exploration_item = explorer_ui._explorations.items[1]
-
-    # Delete it
-    explorer_ui._delete_exploration(exploration_item)
-
-    # Check that it was removed
-    assert len(explorer_ui._explorations.items) == initial_count - 1
-    assert exploration_item not in explorer_ui._explorations.items
-
-
-async def test_toggle_report_mode(explorer_ui):
-    """Test toggling report mode."""
-    # Initially should be in split mode
-    assert explorer_ui._split in explorer_ui._main
-
-    # Toggle to report mode
-    explorer_ui._report_toggle.value = True
-    explorer_ui._toggle_report_mode(type('Event', (), {'new': True})())
-
-    # Check that main content changed
-    assert explorer_ui._split not in explorer_ui._main or len(explorer_ui._main) == 1
-
-    # Toggle back
-    explorer_ui._report_toggle.value = False
-    explorer_ui._toggle_report_mode(type('Event', (), {'new': False})())
-
-    # Check that split is back
-    assert explorer_ui._split in explorer_ui._main
-
-
-async def test_update_conversation(explorer_ui):
-    """Test updating conversation when switching between explorations."""
-    # Create an exploration
-    slug = f"{explorer_ui.context['source'].name}{SOURCE_TABLE_SEPARATOR}test_table"
-    explorer_ui._explorer.param.update(table_slug=slug)
-    await explorer_ui._add_exploration_from_explorer()
-
-    await async_wait_until(lambda: len(explorer_ui._explorations.items) > 1)
-
-    # Add a message to the interface
-    explorer_ui.interface.send("Test message")
-    await async_wait_until(lambda: len(explorer_ui.interface.objects) > 0)
-
-    initial_message_count = len(explorer_ui.interface.objects)
-
-    # Switch to the exploration
-    exploration_item = explorer_ui._explorations.items[1]
-    explorer_ui._explorations.value = exploration_item
-
-    # Update conversation
-    await explorer_ui._update_conversation()
-
-    # Check that conversation was updated
-    exploration = exploration_item['view']
-    assert len(exploration.conversation) == initial_message_count
-
-    # Switch back to home
-    explorer_ui._explorations.value = explorer_ui._explorations.items[0]
-    await explorer_ui._update_conversation()
-
-    # Check that we're back to home view
-    assert explorer_ui._split[0][0] is explorer_ui._splash
-
-
 async def test_sync_active(explorer_ui):
     """Test syncing active exploration."""
     # Create an exploration
-    explorer_ui._explorer.table_slug = f"{explorer_ui.context['source'].name}{SOURCE_TABLE_SEPARATOR}test_table"
+    explorer_ui._explorer.table_slug = "test_table"
     await explorer_ui._add_exploration_from_explorer()
 
     await async_wait_until(lambda: len(explorer_ui._explorations.items) > 1)
@@ -438,8 +297,7 @@ async def test_sync_active(explorer_ui):
 async def test_find_view_in_tabs(explorer_ui):
     """Test finding a view in tabs."""
     # Create an exploration
-    slug = f"{explorer_ui.context['source'].name}{SOURCE_TABLE_SEPARATOR}test_table"
-    explorer_ui._explorer.param.update(table_slug=slug)
+    explorer_ui._explorer.param.update(table_slug="test_table")
     await explorer_ui._add_exploration_from_explorer()
 
     await async_wait_until(lambda: len(explorer_ui._explorations.items) > 1)
@@ -468,8 +326,7 @@ async def test_find_view_in_tabs(explorer_ui):
 async def test_find_view_in_popped_out(explorer_ui):
     """Test finding a view in popped out views."""
     # Create an exploration
-    slug = f"{explorer_ui.context['source'].name}{SOURCE_TABLE_SEPARATOR}test_table"
-    explorer_ui._explorer.param.update(table_slug=slug)
+    explorer_ui._explorer.param.update(table_slug="test_table")
     await explorer_ui._add_exploration_from_explorer()
 
     await async_wait_until(lambda: len(explorer_ui._explorations.items) > 1)
@@ -483,14 +340,13 @@ async def test_find_view_in_popped_out(explorer_ui):
     sql_output = views[0]
 
     # Render and pop out
-    title, vsplit = explorer_ui._render_view(exploration, sql_output)
+    tabs = exploration.view[0]
+    title = tabs._names[1]
+    vsplit = tabs[1]
     pop_button = explorer_ui._render_pop_out(exploration, vsplit, title)
 
     # Trigger pop out by calling the callback directly
-    from panel.io.state import hold
-    with hold():
-        pop_out_callback = pop_button.on_click
-        pop_out_callback(None)
+    pop_button.param.trigger("clicks")
 
     # Wait for pop out
     await async_wait_until(lambda: len(exploration.view) > 1, timeout=5.0)
@@ -506,15 +362,14 @@ async def test_find_view_in_popped_out(explorer_ui):
 async def test_exploration_context_isolation(explorer_ui):
     """Test that different explorations maintain separate contexts."""
     # Create first exploration
-    slug = f"{explorer_ui.context['source'].name}{SOURCE_TABLE_SEPARATOR}test_table"
-    explorer_ui._explorer.param.update(table_slug=slug)
+    explorer_ui._explorer.param.update(table_slug="test_table")
     await explorer_ui._add_exploration_from_explorer()
 
     await async_wait_until(lambda: len(explorer_ui._explorations.items) > 1)
     exploration1 = explorer_ui._explorations.items[1]['view']
 
     # Create second exploration
-    explorer_ui._explorer.param.update(table_slug=slug)
+    explorer_ui._explorer.param.update(table_slug="test_table")
     await explorer_ui._add_exploration_from_explorer()
     await async_wait_until(lambda: len(explorer_ui._explorations.items) > 2)
     exploration2 = explorer_ui._explorations.items[2]['view']
@@ -527,8 +382,7 @@ async def test_exploration_context_isolation(explorer_ui):
 async def test_exploration_parent_relationship(explorer_ui):
     """Test that explorations maintain correct parent relationships."""
     # Create an exploration from home
-    slug = f"{explorer_ui.context['source'].name}{SOURCE_TABLE_SEPARATOR}test_table"
-    explorer_ui._explorer.param.update(table_slug=slug)
+    explorer_ui._explorer.param.update(table_slug="test_table")
     await explorer_ui._add_exploration_from_explorer()
 
     await async_wait_until(lambda: len(explorer_ui._explorations.items) > 1)

@@ -1073,7 +1073,7 @@ class ExplorerUI(UI):
         self._main[:] = [self._split]
         return main
 
-    async def _add_exploration_from_explorer(self, event: param.parameterized.Event):
+    async def _add_exploration_from_explorer(self, event: param.parameterized.Event | None = None):
         sql_out = self._explorer.create_sql_output()
         if sql_out is None:
             return
