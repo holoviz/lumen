@@ -1423,7 +1423,7 @@ class ExplorerUI(UI):
             last_message.footer_objects = footer_objects + [rerun_button, replan_button]
             exploration.parent.conversation = exploration.conversation
             if not exploration.initialized:
-                error_type = plan.out_context.pop("__error_type__", "Exception")
+                error_type = plan.out_context.pop("__error_type__", Exception)
                 error = plan.out_context.pop("__error__", "Unknown error")
                 _, todos = plan.render_task_history(len(plan)-1, failed=True)
 
@@ -1431,10 +1431,11 @@ class ExplorerUI(UI):
                 for msg in plan.history[::-1]:
                     if msg.get("role") == "user":
                         user_msg = msg.get("content")
+                        break
                 response = await self.llm.invoke(
                     [{"content": (
                         f"User prompt:\n\n> {user_msg}\n"
-                        f"Planner checklist:\n\n{todos}",
+                        f"Planner checklist:\n\n{todos}"
                         f"Error\n\n{error_type.__name__}: {error}\n\n"
                     ), "role": "user"}],
                     response_model=ErrorDescription
