@@ -359,16 +359,9 @@ This adds the context to all agents' prompts, helping them understand your domai
 
 ## Per-agent customization with analyses
 
-Combine analyses with agent-specific template overrides:
+Combine analyses with agent-specific template overrides for domain-specific behavior:
 
 ``` py title="Domain-specific agent behavior" linenums="1"
-# Add meteorology context to SQLAgent
-sql_footer = """
-To show a Skew-T diagram, you must have these columns:
-- pressure_mb, tmpc, dwpc, speed_kts, drct, validUTC
-"""
-lmai.agents.SQLAgent.template_overrides = {"main": {"footer": sql_footer}}
-
 # Make AnalystAgent use meteorological terminology
 analyst_instructions = """
 {{ super() }}
@@ -392,4 +385,21 @@ ui = lmai.ExplorerUI(
 ui.servable()
 ```
 
-This creates a specialized meteorology assistant with domain-specific analyses and terminology.
+The `columns` attribute on your Analysis class automatically informs upstream agents about required columns—no need to manually configure SQLAgent. For optional columns that enhance the analysis, mention them in the docstring:
+
+``` py title="Optional columns in docstring"
+class SkewTAnalysis(lmai.Analysis):
+    """
+    Creates a Skew-T log-P diagram from upper air sounding data.
+    
+    To include wind barbs, also include speed_kts and drct columns.
+    """
+    
+    columns = ["validUTC", "pressure_mb", "tmpc", "dwpc"]  # Required
+    
+    def __call__(self, pipeline, *args, **kwargs):
+        # speed_kts and drct are optional - checked at runtime
+        if "drct" in df.columns and "speed_kts" in df.columns:
+            # Add wind barbs
+            ...
+```

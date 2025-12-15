@@ -28,6 +28,39 @@ lumen-ai serve https://datasets.holoviz.org/penguins/v1/penguins.csv
 lumen-ai serve data/*.csv
 ```
 
+### Database connections
+
+Connect to databases using SQLAlchemy URLs:
+
+``` bash title="SQLite database"
+lumen-ai serve sqlite:///path/to/database.db
+```
+
+``` bash title="PostgreSQL"
+lumen-ai serve postgresql://user:password@localhost:5432/mydb
+```
+
+``` bash title="MySQL"
+lumen-ai serve mysql+pymysql://user:password@localhost:3306/mydb
+```
+
+``` bash title="Multiple sources"
+lumen-ai serve data.csv postgresql://localhost/mydb
+```
+
+!!! info "Tables auto-discovered"
+    When connecting to a database, Lumen automatically discovers all available tables. No need to specify individual table names.
+
+**Supported databases:**
+
+- SQLite: `sqlite:///path/to/file.db`
+- PostgreSQL: `postgresql://user:pass@host:port/db`
+- MySQL: `mysql+pymysql://user:pass@host:port/db`
+- Oracle: `oracle://user:pass@host:port/db`
+- SQL Server: `mssql+pyodbc://user:pass@host:port/db`
+
+See [SQLAlchemy documentation](https://docs.sqlalchemy.org/en/20/core/engines.html#database-urls) for full URL syntax.
+
 ## Configure LLM
 
 ### Choose provider
