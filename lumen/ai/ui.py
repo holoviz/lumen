@@ -1413,13 +1413,13 @@ class ExplorerUI(UI):
             else:
                 watcher = None
 
-        with plan.param.update(interface=self.interface):
-            await plan.execute()
-
-        if watcher:
-            plan.param.unwatch(watcher)
-
-        await self._postprocess_exploration(plan, exploration, prev, is_new=new_exploration, partial_plan=partial_plan)
+        try:
+            with plan.param.update(interface=self.interface):
+                await plan.execute()
+        finally:
+            if watcher:
+                plan.param.unwatch(watcher)
+            await self._postprocess_exploration(plan, exploration, prev, is_new=new_exploration, partial_plan=partial_plan)
 
     async def _replan(self, plan: Plan, prev: dict, partial_plan: Plan | None = None):
         exploration = self._exploration['view']
@@ -1435,12 +1435,12 @@ class ExplorerUI(UI):
             if new_plan is not None:
                 await self._execute_plan(new_plan, replan=True)
         finally:
-            self._exploration['view'].conversation = self.interface.objects
             self._idle.set()
 
     async def _postprocess_exploration(
         self, plan: Plan, exploration: Exploration, prev: dict, is_new: bool = False, partial_plan: Plan | None = None
     ):
+        self._exploration['view'].conversation = self.interface.objects
         if "__error__" not in plan.out_context and plan.status != "error":
             if "pipeline" in plan.out_context:
                 await self._add_analysis_suggestions(plan)
@@ -1501,5 +1501,4 @@ class ExplorerUI(UI):
             if plan is not None:
                 await self._execute_plan(plan)
         finally:
-            self._exploration['view'].conversation = self.interface.objects
             self._idle.set()
