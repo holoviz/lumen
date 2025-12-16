@@ -48,6 +48,30 @@ llm = lmai.llm.OpenAI(
 )
 ```
 
+## How do I load data from an in-memory DataFrame?
+
+```python
+import lumen.ai as lmai
+from lumen.sources.duckdb import DuckDBSource
+
+df = pd.DataFrame({
+    'revenue': [1200, 2400, 3600, 4800],
+    'churned': [0, 1, 0, 1]
+})
+source = DuckDBSource.from_df(tables={"data": df})
+ui = lmai.ExplorerUI(data=source)
+ui.servable()
+```
+
+## I launched the UI, but it is only displaying a loading indicator, what am I missing?
+
+Make sure to call `.servable()` on the UI object to make it available in a server context:
+
+```python
+ui = lmai.ExplorerUI(data=source)
+ui.servable()
+```
+
 ## Can I add authentication?
 
 Yes. Lumen supports basic auth and OAuth through Panel. See [Panel's authentication docs](https://panel.holoviz.org/how_to/authentication/index.html).
