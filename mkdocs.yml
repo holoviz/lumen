@@ -75,10 +75,9 @@ markdown_extensions:
 
 plugins:
   - search
-  - typeset
-  # - gen-files:
-  #     scripts:
-        # - docs/gen_ref_pages.py
+  - gen-files:
+      scripts:
+        - docs/gen_ref_pages.py
   - literate-nav
   - mkdocstrings:
       handlers:

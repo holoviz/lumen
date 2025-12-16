@@ -62,6 +62,15 @@ pixi install
 pip install -e ".[all,dev]"
 ```
 
+#### Pixi Environments
+
+Lumen uses [pixi](https://pixi.sh) for development. Key environments:
+
+- `test-312` / `test-313`: Full test suite with AI and SQL dependencies
+- `test-core`: Minimal test environment
+- `docs`: Documentation building
+- `lint`: Code linting with pre-commit
+
 ### 3. Make Your Changes
 ```bash
 # Create a branch
@@ -74,14 +83,26 @@ git commit -m "Fix: clear description of change"
 
 ### 4. Run Tests
 ```bash
-# Run test suite
-pytest lumen/tests/
-
-# Run with coverage
-pytest --cov=lumen lumen/tests/
+# Run test suite with pixi
+pixi run -e test-312 test-unit
 ```
 
-### 5. Submit PR
+### 5. Lint Your Code
+```bash
+# Run linting
+pixi run -e lint lint
+```
+
+### 6. Build & Preview Docs
+```bash
+# Serve docs locally with live reload
+pixi run -e docs docs-serve
+
+# Build docs
+pixi run -e docs docs-build
+```
+
+### 7. Submit PR
 
 - Push to your fork
 - Open a Pull Request
