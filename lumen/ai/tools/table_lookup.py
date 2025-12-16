@@ -160,6 +160,13 @@ class TableLookup(VectorLookupTool):
         The number of document results to return.""",
     )
 
+    n_documents = param.Integer(
+        default=3,
+        bounds=(1, None),
+        doc="""
+        The number of document chunks to retrieve per table.""",
+    )
+
     _ready = param.Boolean(
         default=False,
         allow_None=True,
@@ -409,6 +416,73 @@ class TableLookup(VectorLookupTool):
             if vector_store_id is not None and processed_sources:
                 self._cleanup_sources_in_progress(vector_store_id, processed_sources)
 
+    async def _enrich_with_documents(self, query: str, catalog: dict[str, TableCatalogEntry], context: TContext) -> None:
+        """
+        Query the vector store for relevant document chunks and attach them to tables.
+
+        Only queries documents that are associated with tables in the catalog.
+
+        Parameters
+        ----------
+        query : str
+            The user's query
+        catalog : dict[str, TableCatalogEntry]
+            The catalog of tables to enrich
+        context : TContext
+            The context dictionary
+        """
+        # Collect all unique filenames from associated metadata across all tables in catalog
+        all_associated_filenames = set()
+        for catalog_entry in catalog.values():
+            docs = catalog_entry.metadata.get("docs", [])
+            all_associated_filenames.update(docs)
+
+        if not all_associated_filenames:
+            log_debug("[TableLookup] No associated metadata files found for tables in catalog")
+            return
+
+        # Query for documents using the same query, but filter by associated filenames
+        try:
+            # Query each filename separately to get relevant chunks from each document
+            all_doc_results = []
+            for filename in all_associated_filenames:
+                doc_results = await self.vector_store.query(
+                    query,
+                    top_k=self.n_documents,
+                    filters={"type": "document", "filename": filename}
+                )
+                all_doc_results.extend(doc_results)
+
+            if not all_doc_results:
+                log_debug("[TableLookup] No document chunks found for associated metadata")
+                return
+
+            # Attach document chunks to each table based on their associations
+            for table_slug, catalog_entry in catalog.items():
+                docs = catalog_entry.metadata.get("docs", [])
+
+                if not docs:
+                    continue
+
+                relevant_chunks = []
+                for doc_result in all_doc_results:
+                    doc_metadata = doc_result.get("metadata", {})
+                    doc_filename = doc_metadata.get("filename", "")
+
+                    # Only include if document is associated with this specific table
+                    if doc_filename in docs:
+                        chunk_text = doc_result["text"]
+                        similarity = doc_result.get("similarity", 0)
+                        relevant_chunks.append(f"{chunk_text} (Relevance: {similarity:.2f})")
+
+                if relevant_chunks:
+                    catalog_entry.metadata["docs"] = relevant_chunks
+                    log_debug(f"[TableLookup] Attached {len(relevant_chunks)} document chunks to {table_slug}")
+
+        except Exception as e:
+            log_debug(f"[TableLookup] Error enriching with documents: {e}")
+            traceback.print_exc()
+
     async def _gather_info(self, messages: list[dict[str, str]], context: TContext) -> TableLookupOutputs:
         """Gather relevant information about the tables based on the user query."""
         query = messages[-1]["content"]
@@ -484,6 +558,9 @@ class TableLookup(VectorLookupTool):
             if table_slug.split(SOURCE_TABLE_SEPARATOR)[-1].lower() in query.lower():
                 if table_slug in catalog:
                     catalog[table_slug].similarity = 1
+
+        # Enrich tables with relevant document chunks
+        await self._enrich_with_documents(query, catalog, context)
 
         metaset = Metaset(catalog=catalog, query=query)
         return {"metaset": metaset}
