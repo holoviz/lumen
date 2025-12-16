@@ -177,6 +177,7 @@ class Metaset:
         include_columns: bool = False,
         truncate: bool = False,
         include_sql: bool = True,
+        include_docs: bool = True,
         n: int | None = None,
         offset: int = 0,
         show_source: bool = False
@@ -193,6 +194,7 @@ class Metaset:
         single_source = len(unique_sources) == 1
 
         tables_data = {}
+
         for table_slug in sorted_slugs:
             catalog_entry = self.catalog.get(table_slug)
             if not catalog_entry:
@@ -203,9 +205,15 @@ class Metaset:
             if single_source and not show_source and SOURCE_TABLE_SEPARATOR in table_slug:
                 display_slug = table_slug.split(SOURCE_TABLE_SEPARATOR, 1)[1]
 
-            tables_data[display_slug] = self._build_table_data(
+            table_data = self._build_table_data(
                 table_slug, catalog_entry, include_columns, truncate, include_sql
             )
+
+            # Add document chunks if enabled
+            if include_docs and (docs := catalog_entry.metadata.get("docs")):
+                table_data["docs"] = docs
+
+            tables_data[display_slug] = table_data
 
         # If all tables have empty data, return a simple list
         if all(not data for data in tables_data.values()):
@@ -244,8 +252,8 @@ class Metaset:
         return sorted_slugs
 
     def table_list(self, n: int | None = None, offset: int = 0, show_source: bool = False) -> str:
-        """Generate minimal table listing for planning - no SQL expressions."""
-        return self._generate_context(include_columns=False, truncate=False, include_sql=False, n=n, offset=offset, show_source=show_source)
+        """Generate minimal table listing for planning - no SQL expressions, but includes document chunks if present."""
+        return self._generate_context(include_columns=False, truncate=False, include_sql=False, include_docs=True, n=n, offset=offset, show_source=show_source)
 
     def table_context(self, n: int | None = None, offset: int = 0, show_source: bool = True) -> str:
         return self._generate_context(include_columns=False, truncate=False, n=n, offset=offset, show_source=show_source)
