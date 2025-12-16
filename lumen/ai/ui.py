@@ -567,9 +567,9 @@ class UI(Viewer):
         # Set up actions for the ChatAreaInput speed dial
         self._source_catalog = SourceCatalog(context=self.context)
 
-        # Create separate upload and download controls
-        self._upload_controls = UploadControls(context=self.context)
-        self._download_controls = DownloadControls(context=self.context)
+        # Create separate upload and download controls with reference to catalog
+        self._upload_controls = UploadControls(context=self.context, source_catalog=self._source_catalog)
+        self._download_controls = DownloadControls(context=self.context, source_catalog=self._source_catalog)
 
         # Watch for output changes from both controls
         self._upload_controls.param.watch(self._sync_sources, 'outputs')
