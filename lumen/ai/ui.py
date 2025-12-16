@@ -706,6 +706,7 @@ class UI(Viewer):
 
         await self._explorer.sync()
         await self._coordinator.sync(self.context)
+        self._source_catalog.sync(self.context)
 
         num_sources = len(self.context.get("sources", []))
         if num_sources == 0:
