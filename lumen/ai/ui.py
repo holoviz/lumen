@@ -21,10 +21,9 @@ from panel.viewable import (
 )
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
-    Accordion, Button, ChatFeed, ChatInterface, ChatMessage,
-    Column as MuiColumn, Dialog, FileDownload, IconButton, MenuList,
-    NestedBreadcrumbs, Page, Paper, Popup, Row, Switch, Tabs, ToggleIcon,
-    Typography,
+    Button, ChatFeed, ChatInterface, ChatMessage, Column as MuiColumn, Dialog,
+    FileDownload, IconButton, MenuList, NestedBreadcrumbs, Page, Paper, Popup,
+    Row, Switch, Tabs, ToggleIcon, Typography,
 )
 from panel_splitjs import HSplit, MultiSplit, VSplit
 
@@ -33,8 +32,8 @@ from ..sources import Source
 from ..sources.duckdb import DuckDBSource
 from ..util import log
 from .agents import (
-    AnalysisAgent, AnalystAgent, ChatAgent, DocumentListAgent, SourceAgent,
-    SQLAgent, TableListAgent, ValidationAgent, VegaLiteAgent,
+    AnalysisAgent, AnalystAgent, ChatAgent, DocumentListAgent, SQLAgent,
+    TableListAgent, ValidationAgent, VegaLiteAgent,
 )
 from .config import (
     DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROVIDED_SOURCE_NAME,
@@ -42,7 +41,7 @@ from .config import (
 )
 from .context import TContext
 from .controls import (
-    SourceCatalog, SourceControls, TableExplorer, TableSourceCard,
+    DownloadControls, SourceCatalog, TableExplorer, UploadControls,
 )
 from .coordinator import Coordinator, Plan, Planner
 from .export import export_notebook
@@ -117,7 +116,7 @@ class UI(Viewer):
     )
 
     default_agents = param.List(default=[
-        TableListAgent, ChatAgent, DocumentListAgent, AnalystAgent, SourceAgent, SQLAgent, VegaLiteAgent, ValidationAgent
+        TableListAgent, ChatAgent, DocumentListAgent, AnalystAgent, SQLAgent, VegaLiteAgent, ValidationAgent
     ], doc="""List of default agents which will always be added.""")
 
     demo_inputs = param.List(default=DEMO_MESSAGES, doc="""
@@ -146,11 +145,6 @@ class UI(Viewer):
 
     notebook_preamble = param.String(default='', doc="""
         Preamble to add to exported notebook(s).""")
-
-    source_controls = param.ClassSelector(
-        class_=SourceControls, default=SourceControls,
-        instantiate=False, is_instance=False, doc="""
-        The source controls to use for managing data sources.""")
 
     suggestions = param.List(default=GETTING_STARTED_SUGGESTIONS, doc="""
         Initial list of suggestions of actions the user can take.""")
@@ -379,24 +373,22 @@ class UI(Viewer):
 
                 old_sources = self.context.get("sources", [])
                 if uploaded:
-                    # Process uploaded files through SourceControls if any exist
-                    source_controls = SourceControls(
-                        downloaded_files={key: value["value"] for key, value in uploaded.items()},
-                        context=self.context,
-                        replace_controls=False,
-                        show_input=False,
-                        clear_uploads=True  # Clear the uploads after processing
-                    )
-                    source_controls.param.trigger("add")
+                    # Process uploaded files through UploadControls if any exist
+                    upload_controls = UploadControls(context=self.context, clear_uploads=True)
+                    upload_controls._generate_file_cards({
+                        key: value["value"] for key, value in uploaded.items()
+                    })
+                    upload_controls.param.trigger("add")
                     chat_input.value_uploaded = {}
-                    source_cards = [
-                        TableSourceCard(source=source, name=source.name)
-                        for source in self.context.get("sources", []) if source not in old_sources
+                    new_sources = [
+                        source for source in self.context.get("sources", [])
+                        if source not in old_sources
                     ]
-                    if len(source_cards) > 1:
-                        source_view = Accordion(*source_cards, sizing_mode="stretch_width", name="TableSourceCard")
-                    else:
-                        source_view = source_cards[0]
+                    source_names = [f"**{src.name}**: {', '.join(src.get_tables())}" for src in new_sources]
+                    source_view = Markdown(
+                        "Added sources:\n" + "\n".join(f"- {name}" for name in source_names),
+                        sizing_mode="stretch_width"
+                    )
                     msg = Column(chat_input.value, source_view) if user_prompt else source_view
                 else:
                     msg = Markdown(user_prompt)
@@ -444,27 +436,43 @@ class UI(Viewer):
         if not event.new:  # No files uploaded
             return
 
-        # Transfer files to the source controls
-        self._source_controls.downloaded_files = {
+        # Generate file cards in the upload controls
+        self._upload_controls._generate_file_cards({
             key: value["value"] for key, value in event.new.items()
-        }
+        })
 
         # Open the manage data dialog
         self._sources_dialog_content.open = True
 
-        # Set the accordion to "Add Sources" tab to show the uploaded files
-        self._source_accordion.active = [0]
+        # Set the breadcrumbs to "Upload" to show the uploaded files
+        self._source_breadcrumbs.active = (0, 1,)
 
     def _handle_upload_successful(self, event):
-        """Handle successful file upload by switching to View Sources tab."""
-        self._source_accordion.active = [1]
+        """Handle successful file upload by switching to Source Catalog."""
+        active = self._source_breadcrumbs.active
+        # Navigate to Source Catalog under current selection (Upload or Download)
+        self._source_breadcrumbs.active = (0, active[0], 0)
+
+    def _update_source_content(self, event):
+        """Update the source dialog content based on breadcrumb selection."""
+        active = event.new
+        if len(active) == 1:
+            self._source_breadcrumbs.active = (0, 0)  # Default to Upload
+        elif len(active) == 2:
+            # Upload (0,) or Download (1,)
+            if active[1] == 0:
+                self._source_content[:] = [self._upload_controls]
+            else:
+                self._source_content[:] = [self._download_controls]
+        elif len(active) == 3:
+            # Upload > Source Catalog (0, 0) or Download > Source Catalog (1, 0)
+            self._source_content[:] = [self._source_catalog]
 
     def _configure_coordinator(self):
-        # TODO: Look into this
-        SourceAgent.source_controls = self.source_controls
-        SourceControls.table_upload_callbacks = self.table_upload_callbacks
-        self._source_controls = self.source_controls(context=self.context)
-        self._source_controls.param.watch(self._sync_sources, 'outputs')
+        # Set up table upload callbacks on all control classes
+        UploadControls.table_upload_callbacks = self.table_upload_callbacks
+        DownloadControls.table_upload_callbacks = self.table_upload_callbacks
+
         log.setLevel(self.log_level)
 
         agents = self.agents
@@ -477,7 +485,7 @@ class UI(Viewer):
         if self.analyses:
             agents.append(AnalysisAgent(analyses=self.analyses))
 
-        self._coordinator = coordinator = self.coordinator(
+        self._coordinator = self.coordinator(
             agents=agents,
             context=self.context,
             interface=self.interface,
@@ -488,9 +496,6 @@ class UI(Viewer):
             document_vector_store=self.document_vector_store,
             **self.coordinator_params
         )
-        self._source_agent = next((
-            agent for agent in coordinator.agents if isinstance(agent, SourceAgent)
-        ), None)
 
     def _render_header(self) -> list[Viewable]:
         return []
@@ -561,16 +566,48 @@ class UI(Viewer):
 
         # Set up actions for the ChatAreaInput speed dial
         self._source_catalog = SourceCatalog(context=self.context)
-        self._source_accordion = Accordion(
-            ("Add Sources", self._source_controls), ("View Sources", self._source_catalog),
-            margin=(0, 10, 10, 10), sizing_mode="stretch_width", toggle=True, active=[0],
-            sx={".MuiAccordion-region > .MuiAccordionDetails-root": {"p": 0}}, title_variant="h4"
+
+        # Create separate upload and download controls
+        self._upload_controls = UploadControls(context=self.context)
+        self._download_controls = DownloadControls(context=self.context)
+
+        # Watch for output changes from both controls
+        self._upload_controls.param.watch(self._sync_sources, 'outputs')
+        self._download_controls.param.watch(self._sync_sources, 'outputs')
+
+        # Watch for successful uploads to switch to Source Catalog
+        self._upload_controls.param.watch(self._handle_upload_successful, 'upload_successful')
+        self._download_controls.param.watch(self._handle_upload_successful, 'upload_successful')
+
+        # Content container that switches based on breadcrumb selection
+        self._source_content = MuiColumn(self._upload_controls, sizing_mode="stretch_width")
+
+        self._source_breadcrumbs = NestedBreadcrumbs(
+                items=[{
+                    'label': 'Manage Data', 'icon': 'folder', "selectable": False, 'items': [{
+                        "label": "Upload",
+                        "icon": "cloud_upload",
+                        "items": [
+                            {"label": "Source Catalog", "icon": "storage"}
+                        ]
+                    },
+                    {
+                        "label": "Download",
+                        "icon": "cloud_download",
+                        "items": [
+                            {"label": "Source Catalog", "icon": "storage"}
+                        ]
+                    }]
+                }],
+            active=(0, 0,),
+            margin=(0, 10, 10, 10),
         )
-        # Watch for successful uploads to switch tabs
-        self._source_controls.param.watch(self._handle_upload_successful, 'upload_successful')
+        self._source_breadcrumbs.param.watch(self._update_source_content, 'active')
+
         self._sources_dialog_content = Dialog(
-            self._source_accordion, close_on_click=True, show_close_button=True,
-            sizing_mode='stretch_width', width_option='lg', title="Manage Data"
+            MuiColumn(self._source_breadcrumbs, self._source_content, sizing_mode="stretch_width"),
+            close_on_click=True, show_close_button=True, width_option='lg', title="Manage Data",
+            sizing_mode='stretch_width',
         )
 
         self._notebook_export = FileDownload(
@@ -666,8 +703,8 @@ class UI(Viewer):
                 self.context["document_sources"] = new_docs
             else:
                 self.context["document_sources"].extend(new_docs)
+
         await self._explorer.sync()
-        await self._source_catalog.sync()
         await self._coordinator.sync(self.context)
 
         num_sources = len(self.context.get("sources", []))
