@@ -47,7 +47,7 @@ Have an idea? [Open a GitHub issue](https://github.com/holoviz/lumen/issues):
 ### 1. Fork & Clone
 ```bash
 # Visit and fork the repo on GitHub
-https://github.com/holoviz/lumen
+[https://github.com/holoviz/lumen](https://github.com/holoviz/lumen)
 # Then clone your fork
 git clone https://github.com/YOUR_USERNAME/lumen.git
 cd lumen
