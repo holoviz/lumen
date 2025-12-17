@@ -52,7 +52,7 @@ class Metaset:
     Contains:
     - catalog: Table discovery results (descriptions, columns, similarity)
     - schemas: Optional SQL schema data (types, enums, row counts)
-    - docs: Document chunks (already filtered by TableLookup based on disabled_docs)
+    - docs: Document chunks (already filtered by MetadataLookup based on disabled_docs)
     """
 
     query: str | None
@@ -69,7 +69,7 @@ class Metaset:
         return self.docs is not None and len(self.docs) > 0
 
     def get_docs(self) -> list[DocumentChunk]:
-        """Get document chunks (already filtered by TableLookup)."""
+        """Get document chunks (already filtered by MetadataLookup)."""
         return self.docs if self.docs else []
 
     async def get_schema(self, table_slug: str) -> dict[str, Any] | None:

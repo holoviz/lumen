@@ -1,6 +1,7 @@
 from .base import FunctionTool, Tool, ToolUser
 from .dbtsl_lookup import DbtslLookup
-from .table_lookup import IterativeTableLookup, TableLookup
+from .iterative_table_lookup import IterativeTableLookup
+from .metadata_lookup import MetadataLookup
 from .vector_lookup import VectorLookupTool, VectorLookupToolUser
 
 __all__ = [
@@ -9,7 +10,7 @@ __all__ = [
     "ToolUser",
     "VectorLookupTool",
     "VectorLookupToolUser",
-    "TableLookup",
+    "MetadataLookup",
     "IterativeTableLookup",
     "DbtslLookup",
 ]

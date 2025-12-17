@@ -175,7 +175,7 @@ class SQLAgent(BaseLumenAgent):
 
     exclusions = param.List(default=["dbtsl_metaset"])
 
-    not_with = param.List(default=["DbtslAgent", "TableLookup", "TableListAgent"])
+    not_with = param.List(default=["DbtslAgent", "MetadataLookup", "TableListAgent"])
 
     exploration_enabled = param.Boolean(default=True, doc="""
         Whether to enable SQL exploration mode. When False, only attempts oneshot SQL generation.""")

@@ -18,7 +18,7 @@ from lumen.ai.coordinator.planner import Reasoning, make_plan_model
 from lumen.ai.models import ReplaceLine, RetrySpec, ThinkingYesNo
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
-from lumen.ai.tools import IterativeTableLookup, TableLookup
+from lumen.ai.tools import IterativeTableLookup, MetadataLookup
 from lumen.ai.vector_store import NumpyVectorStore
 from lumen.ai.views import SQLOutput
 from lumen.config import SOURCE_TABLE_SEPARATOR
@@ -33,7 +33,7 @@ async def test_planner_instantiate_tools_shared_vector_store():
 
     assert len(planner._tools['main']) == 2
     tool1, tool2 = planner._tools['main']
-    assert isinstance(tool1, TableLookup)
+    assert isinstance(tool1, MetadataLookup)
     assert isinstance(tool2, IterativeTableLookup)
 
     assert tool1.vector_store is tool2.vector_store
@@ -45,7 +45,7 @@ async def test_planner_instantiate_tools_provided_vector_store():
 
     assert len(planner._tools['main']) == 2
     tool1, tool2 = planner._tools['main']
-    assert isinstance(tool1, TableLookup)
+    assert isinstance(tool1, MetadataLookup)
     assert isinstance(tool2, IterativeTableLookup)
 
     assert tool1.vector_store is vector_store

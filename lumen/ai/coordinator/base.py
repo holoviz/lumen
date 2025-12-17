@@ -26,7 +26,7 @@ from ..llm import LlamaCpp, Llm, Message
 from ..models import ThinkingYesNo
 from ..report import ActorTask, Section, TaskGroup
 from ..tools import (
-    IterativeTableLookup, TableLookup, Tool, VectorLookupToolUser,
+    IterativeTableLookup, MetadataLookup, Tool, VectorLookupToolUser,
 )
 from ..utils import (
     fuse_messages, get_root_exception, log_debug, mutate_user_message,
@@ -354,12 +354,12 @@ class Coordinator(Viewer, VectorLookupToolUser):
     def _process_tools(self, tools: list[type[Tool] | Tool] | None) -> list[type[Tool] | Tool]:
         tools = list(tools) if tools else []
 
-        # If none of the tools provide metaset, add tablelookup
+        # If none of the tools provide metaset, add MetadataLookup
         provides_metaset = any("metaset" in tool.output_schema.__annotations__ for tool in tools or [])
         if not provides_metaset:
             # Add both tools - they will share the same vector store through VectorLookupToolUser
             # Both need to be added as classes, not instances, for proper initialization
-            tools += [TableLookup, IterativeTableLookup]
+            tools += [MetadataLookup, IterativeTableLookup]
         return tools
 
     def _process_prompts(self, prompts: dict[str, dict[str, Any]], tools: list[type[Tool] | Tool]) -> dict[str, dict[str, Any]]:

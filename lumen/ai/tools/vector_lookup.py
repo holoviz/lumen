@@ -398,7 +398,7 @@ class VectorLookupToolUser(ToolUser):
             tool_item_type = getattr(tool, "_item_type_name", None)
             source_item_type = getattr(source_tool, "_item_type_name", None) if source_tool else None
 
-            # Only set vector_store if item types match (e.g., IterativeTableLookup and TableLookup both use "tables")
+            # Only set vector_store if item types match (e.g., IterativeTableLookup and MetadataLookup both use "tables")
             # or if either doesn't specify a type (None)
             if tool_item_type is None or source_item_type is None or tool_item_type == source_item_type:
                 kwargs["vector_store"] = vector_store
