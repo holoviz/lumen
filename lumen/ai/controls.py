@@ -422,19 +422,34 @@ class BaseSourceControls(Viewer):
         """
         try:
             content = self._extract_metadata_content(card.file_obj, card.extension)
-            filename = f"{card.filename}.{card.extension}"
+            base_filename = f"{card.filename}.{card.extension}"
 
-            # Store in SourceCatalog if available
+            # Handle duplicate filenames with counter suffix
+            filename = base_filename
             if self.source_catalog:
                 existing = [m["filename"] for m in self.source_catalog._available_metadata]
-                if filename not in existing:
-                    self.source_catalog._available_metadata.append({
-                        "filename": filename,
-                        "display_name": card.filename,
-                        "content": content
-                    })
-                    # Sync to vector store via SourceCatalog
-                    asyncio.create_task(self._sync_metadata(filename))  # noqa: RUF006
+                if filename in existing:
+                    # Find unique filename with counter suffix
+                    name_without_ext = card.filename
+                    ext = card.extension
+                    counter = 1
+                    while filename in existing:
+                        filename = f"{name_without_ext}_{counter}.{ext}"
+                        counter += 1
+
+                    # Inform user about the rename
+                    self._message_placeholder.param.update(
+                        object=f"Renamed duplicate: {base_filename} → {filename}",
+                        visible=True
+                    )
+
+                self.source_catalog._available_metadata.append({
+                    "filename": filename,
+                    "display_name": filename.rsplit('.', 1)[0],
+                    "content": content
+                })
+                # Sync to vector store via SourceCatalog
+                asyncio.create_task(self._sync_metadata(filename))  # noqa: RUF006
 
             self.param.trigger('outputs')
             return 1
@@ -1041,14 +1056,14 @@ class SourceCatalog(Viewer):
         └── Table (checkbox for visibility)
              └── metadata_file.md (checkbox for table association)
 
-        == Global Documents Tree ==
-        ☑ general_guidelines.md (always visible when checked)
-        ☐ old_standards.md (unchecked = disabled)
+        == Apply to All Tables ==
+        ☑ readme.md (UI shortcut to check/uncheck doc under ALL tables)
+        ☐ schema.md
 
-    Document visibility states:
-    - Global: In self.global_docs → Always included in LLM context
-    - Table-associated: In Source.metadata[table]["docs"] → Only when table matches
-    - Disabled: Unchecked in both trees → Completely hidden from LLM
+    Document visibility:
+    - Checked under table: Included when that table is relevant to query
+    - Checked in "Apply to All Tables": Associates with ALL tables at once
+    - Unchecked everywhere: Not included in LLM context
     """
 
     context = param.Dict(default={})
@@ -1067,8 +1082,6 @@ class SourceCatalog(Viewer):
             context["sources"] = [context["source"]]
         if "visible_slugs" not in context:
             context["visible_slugs"] = set()
-        if "disabled_docs" not in context:
-            context["disabled_docs"] = set()  # Initialize disabled_docs
 
         super().__init__(context=context, **params)
 
@@ -1086,7 +1099,7 @@ class SourceCatalog(Viewer):
         self._sources_tree.on_action("Delete", self._on_delete_source)
 
         # === Global Documents Tree ===
-        self._docs_title = Markdown("**Global Documents**", margin=(10, 10, 0, 10))
+        self._docs_title = Markdown("**Apply to All Tables**", margin=(10, 10, 0, 10))
         self._docs_tree = Tree(
             items=[],
             checkboxes=True,
@@ -1098,10 +1111,10 @@ class SourceCatalog(Viewer):
 
         # Combined layout
         self._layout = Column(
-            self._sources_title,
-            self._sources_tree,
             self._docs_title,
             self._docs_tree,
+            self._sources_title,
+            self._sources_tree,
             sizing_mode="stretch_width"
         )
 
@@ -1255,15 +1268,33 @@ class SourceCatalog(Viewer):
         """
         Compute which paths should be active in docs tree.
 
-        A document is "global" if it's checked in the global docs tree,
-        meaning it should ALWAYS be included in LLM context.
+        A doc is "globally checked" if it's associated with ALL tables.
         """
-        # Global docs are those NOT in disabled_docs
-        disabled_docs = self.context.get("disabled_docs", set())
+        sources = self.sources or self.context.get("sources", [])
+        if not sources:
+            return []
+
+        # Count total tables
+        total_tables = sum(len(source.get_tables()) for source in sources)
+        if total_tables == 0:
+            return []
 
         active = []
         for idx, meta in enumerate(self._available_metadata):
-            if meta["filename"] not in disabled_docs:
+            filename = meta["filename"]
+
+            # Count how many tables have this doc associated
+            association_count = 0
+            for source in sources:
+                if not source.metadata:
+                    continue
+                for table in source.get_tables():
+                    if table in source.metadata:
+                        if filename in source.metadata[table].get("docs", []):
+                            association_count += 1
+
+            # Checked if associated with ALL tables
+            if association_count == total_tables:
                 active.append((idx,))
 
         return active
@@ -1280,6 +1311,7 @@ class SourceCatalog(Viewer):
             return
 
         active_paths = set(event.new)
+
         for path, info in self._path_map.items():
             if info["table"] is None:
                 continue  # Skip source-level paths
@@ -1288,6 +1320,9 @@ class SourceCatalog(Viewer):
                 self._update_table_visibility(path, info, active_paths)
             else:
                 self._update_table_doc_association(path, info, active_paths)
+
+        # Re-sync the docs tree to reflect changes in doc associations
+        self._sync_docs_tree()
 
     def _update_table_visibility(self, path: tuple, info: dict, active_paths: set):
         """Update table visibility based on checkbox state."""
@@ -1319,13 +1354,9 @@ class SourceCatalog(Viewer):
         """
         Handle docs tree selection changes.
 
-        When a doc is checked in the global docs tree:
-        - Remove from disabled_docs (enable globally)
-        - Associate with ALL tables
-
-        When a doc is unchecked in the global docs tree:
-        - Add to disabled_docs (disable globally)
-        - Remove from ALL table associations
+        Global toggle is just a UI convenience:
+        - Check → Associate doc with ALL tables
+        - Uncheck → Remove doc from ALL tables
         """
         if self._suppress_docs_callback:
             return
@@ -1335,22 +1366,16 @@ class SourceCatalog(Viewer):
 
         for idx, filename in self._docs_path_map.items():
             is_active = idx in active_indices
-            self._update_doc_state(filename, is_active, sources)
+            if is_active:
+                self._associate_doc_with_all_tables(filename, sources)
+            else:
+                self._remove_doc_from_all_tables(filename, sources)
 
         # Re-sync the sources tree to reflect the updated associations
         self._sync_sources_tree_only()
 
-    def _update_doc_state(self, filename: str, is_active: bool, sources: list):
-        """Update document state (enabled/disabled and table associations)."""
-        if is_active:
-            self._enable_doc_globally(filename, sources)
-        else:
-            self._disable_doc_globally(filename, sources)
-
-    def _enable_doc_globally(self, filename: str, sources: list):
-        """Enable doc globally and associate with all tables."""
-        self.context["disabled_docs"].discard(filename)
-
+    def _associate_doc_with_all_tables(self, filename: str, sources: list):
+        """Associate doc with all tables."""
         for source in sources:
             self._ensure_source_metadata(source)
             for table in source.get_tables():
@@ -1358,10 +1383,8 @@ class SourceCatalog(Viewer):
                 if filename not in associations:
                     associations.append(filename)
 
-    def _disable_doc_globally(self, filename: str, sources: list):
-        """Disable doc globally and remove from all tables."""
-        self.context["disabled_docs"].add(filename)
-
+    def _remove_doc_from_all_tables(self, filename: str, sources: list):
+        """Remove doc from all tables."""
         for source in sources:
             if not source.metadata:
                 continue
@@ -1554,12 +1577,12 @@ class SourceCatalog(Viewer):
     def _sync_docs_tree(self):
         """Sync the global docs tree with available metadata."""
         if not self._available_metadata:
-            self._docs_title.object = "**Global Documents** *(no documents available)*"
+            self._docs_title.object = "**Apply to All Tables** *(no documents available)*"
             self._docs_tree.items = []
             self._docs_tree.visible = False
             return
 
-        self._docs_title.object = "**Global Documents**"
+        self._docs_title.object = "**Apply to All Tables**"
         self._docs_tree.visible = True
 
         docs_items = self._build_docs_items()

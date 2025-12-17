@@ -29,7 +29,6 @@ def context():
         "sources": [],
         "visible_slugs": set(),
         "tables_metadata": {},
-        "disabled_docs": set(),  # Initialize disabled_docs
     }
 
 
@@ -441,38 +440,14 @@ class TestUploadControlsMetadataProcessing:
 class TestSourceCatalogDocumentToggling:
     """Tests for document toggling functionality in SourceCatalog."""
 
-    async def test_global_toggle_updates_disabled_docs(self, source_catalog, context):
-        """Test that toggling in global tree updates disabled_docs."""
+    async def test_global_toggle_associates_with_all_tables(self, source_catalog, context):
+        """Test that checking global doc associates it with ALL tables."""
         # Setup: Add a document to available metadata
         source_catalog._available_metadata = [
             {"filename": "readme.md", "display_name": "readme", "content": "# Test"}
         ]
         
-        # Initialize disabled_docs
-        context["disabled_docs"] = set()
-        
-        # Sync to build trees
-        source_catalog.sync()
-        
-        # Simulate unchecking in global tree (empty active list)
-        mock_event = Mock()
-        mock_event.new = []  # No active items = all unchecked
-        
-        source_catalog._on_docs_active_change(mock_event)
-        
-        # Verify doc was added to disabled_docs
-        assert "readme.md" in context["disabled_docs"]
-        
-        # Simulate checking again
-        mock_event.new = [(0,)]  # First item checked
-        source_catalog._on_docs_active_change(mock_event)
-        
-        # Verify doc was removed from disabled_docs
-        assert "readme.md" not in context["disabled_docs"]
-
-    async def test_global_toggle_associates_with_all_tables(self, source_catalog, context):
-        """Test that checking global doc associates it with ALL tables."""
-        # Setup: Create sources with tables
+        # Setup: Create sources with tables  
         source1 = DuckDBSource(
             uri=":memory:",
             name="db1",
@@ -484,11 +459,6 @@ class TestSourceCatalogDocumentToggling:
             tables={"table_c": "SELECT 1"}
         )
         context["sources"] = [source1, source2]
-        context["disabled_docs"] = set()
-        
-        source_catalog._available_metadata = [
-            {"filename": "readme.md", "display_name": "readme", "content": "# Test"}
-        ]
         
         # Sync to build trees
         source_catalog.sync()
@@ -518,7 +488,6 @@ class TestSourceCatalogDocumentToggling:
             "table_b": {"docs": ["readme.md"]}
         }
         context["sources"] = [source]
-        context["disabled_docs"] = set()
         
         source_catalog._available_metadata = [
             {"filename": "readme.md", "display_name": "readme", "content": "# Test"}
@@ -537,8 +506,6 @@ class TestSourceCatalogDocumentToggling:
         # Verify doc was removed from ALL tables
         assert "readme.md" not in source.metadata["table_a"]["docs"]
         assert "readme.md" not in source.metadata["table_b"]["docs"]
-        # And added to disabled_docs
-        assert "readme.md" in context["disabled_docs"]
 
     async def test_individual_table_toggle(self, source_catalog, context):
         """Test that toggling under individual table only affects that table."""
@@ -553,7 +520,6 @@ class TestSourceCatalogDocumentToggling:
             "table_b": {"docs": ["readme.md"]}
         }
         context["sources"] = [source]
-        context["disabled_docs"] = set()
         
         source_catalog._available_metadata = [
             {"filename": "readme.md", "display_name": "readme", "content": "# Test"}
@@ -573,41 +539,51 @@ class TestSourceCatalogDocumentToggling:
         # Verify: removed from table_a, but still in table_b
         assert "readme.md" not in source.metadata["table_a"]["docs"]
         assert "readme.md" in source.metadata["table_b"]["docs"]
-        # disabled_docs should NOT be affected (still global)
-        assert "readme.md" not in context["disabled_docs"]
 
     async def test_mixed_global_and_table_associations(self, source_catalog, context):
-        """Test complex scenario with both global and table-specific associations."""
-        # Setup: Two docs - one global, one table-specific
+        """Test complex scenario with global doc and table-specific doc."""
+        # Setup
         source = DuckDBSource(
             uri=":memory:",
             name="db1",
             tables={"table_a": "SELECT 1", "table_b": "SELECT 1"}
         )
         context["sources"] = [source]
-        context["disabled_docs"] = {"disabled.md"}  # One doc disabled
         
         source_catalog._available_metadata = [
             {"filename": "global.md", "display_name": "global", "content": "# Global"},
-            {"filename": "disabled.md", "display_name": "disabled", "content": "# Disabled"}
+            {"filename": "specific.md", "display_name": "specific", "content": "# Specific"}
         ]
         
-        # Associate global.md with all tables (simulating checked in global tree)
+        # global.md associated with all tables, specific.md only with table_a
         source.metadata = {
-            "table_a": {"docs": ["global.md"]},
+            "table_a": {"docs": ["global.md", "specific.md"]},
             "table_b": {"docs": ["global.md"]}
         }
         
-        # Verify initial state
-        assert "global.md" not in context["disabled_docs"]
-        assert "disabled.md" in context["disabled_docs"]
-        assert source.metadata["table_a"]["docs"] == ["global.md"]
-        assert source.metadata["table_b"]["docs"] == ["global.md"]
+        # Sync to build trees
+        source_catalog.sync()
+        
+        # Verify global.md shows as checked in global tree (associated with ALL tables)
+        active_paths = source_catalog._compute_docs_active_paths()
+        global_idx = 0  # global.md is first
+        assert (global_idx,) in active_paths
+        
+        # specific.md should NOT show as checked (only associated with table_a)
+        specific_idx = 1
+        assert (specific_idx,) not in active_paths
 
-    async def test_disabled_docs_persists_across_syncs(self, source_catalog, context):
-        """Test that disabled_docs state is preserved during sync operations."""
+    async def test_doc_associations_persist_across_syncs(self, source_catalog, context):
+        """Test that doc associations are preserved during sync operations."""
         # Setup
-        context["disabled_docs"] = {"readme.md"}
+        source = DuckDBSource(
+            uri=":memory:",
+            name="db1",
+            tables={"table_a": "SELECT 1"}
+        )
+        source.metadata = {"table_a": {"docs": ["readme.md"]}}
+        context["sources"] = [source]
+        
         source_catalog._available_metadata = [
             {"filename": "readme.md", "display_name": "readme", "content": "# Test"}
         ]
@@ -615,19 +591,133 @@ class TestSourceCatalogDocumentToggling:
         # First sync
         source_catalog.sync()
         
-        # disabled_docs should be preserved
-        assert "readme.md" in context["disabled_docs"]
+        # Associations should be preserved
+        assert source.metadata["table_a"]["docs"] == ["readme.md"]
         
-        # Add a source
-        source = DuckDBSource(
+        # Add another source
+        source2 = DuckDBSource(
             uri=":memory:",
-            name="db1",
-            tables={"table_a": "SELECT 1"}
+            name="db2",
+            tables={"table_b": "SELECT 1"}
         )
-        context["sources"] = [source]
+        context["sources"].append(source2)
         
         # Second sync
         source_catalog.sync()
         
-        # disabled_docs should still be preserved
-        assert "readme.md" in context["disabled_docs"]
+        # Original associations should still be preserved
+        assert source.metadata["table_a"]["docs"] == ["readme.md"]
+
+    async def test_duplicate_filename_handling(self, upload_controls, source_catalog):
+        """Test that duplicate filenames are auto-renamed with counter suffix."""
+        # Add first readme.md
+        readme1_content = "# First README"
+        with patch.object(upload_controls, '_extract_metadata_content', return_value=readme1_content):
+            from lumen.ai.controls import UploadedFileRow
+            card1 = UploadedFileRow(
+                file_obj=io.BytesIO(readme1_content.encode()),
+                filename="readme",
+                extension="md",
+                file_type="metadata"
+            )
+            result1 = upload_controls._add_metadata_file(card1)
+            assert result1 == 1
+        
+        # Verify first file was added
+        assert len(source_catalog._available_metadata) == 1
+        assert source_catalog._available_metadata[0]["filename"] == "readme.md"
+        
+        # Add second readme.md (duplicate)
+        readme2_content = "# Second README"
+        with patch.object(upload_controls, '_extract_metadata_content', return_value=readme2_content):
+            card2 = UploadedFileRow(
+                file_obj=io.BytesIO(readme2_content.encode()),
+                filename="readme",
+                extension="md",
+                file_type="metadata"
+            )
+            result2 = upload_controls._add_metadata_file(card2)
+            assert result2 == 1
+        
+        # Verify second file was renamed
+        assert len(source_catalog._available_metadata) == 2
+        assert source_catalog._available_metadata[0]["filename"] == "readme.md"
+        assert source_catalog._available_metadata[1]["filename"] == "readme_1.md"
+        
+        # Add third readme.md (another duplicate)
+        readme3_content = "# Third README"
+        with patch.object(upload_controls, '_extract_metadata_content', return_value=readme3_content):
+            card3 = UploadedFileRow(
+                file_obj=io.BytesIO(readme3_content.encode()),
+                filename="readme",
+                extension="md",
+                file_type="metadata"
+            )
+            result3 = upload_controls._add_metadata_file(card3)
+            assert result3 == 1
+        
+        # Verify third file was renamed with counter 2
+        assert len(source_catalog._available_metadata) == 3
+        assert source_catalog._available_metadata[2]["filename"] == "readme_2.md"
+
+
+@pytest.mark.asyncio
+class TestDocumentListAgentIntegration:
+    """Tests for DocumentListAgent with metaset."""
+
+    async def test_document_list_agent_with_metaset(self):
+        """Test that DocumentListAgent works with metaset.docs."""
+        from lumen.ai.agents.document_list import DocumentListAgent
+        from lumen.ai.schemas import DocumentChunk, Metaset
+
+        # Create metaset with document chunks
+        metaset = Metaset(
+            query="test",
+            catalog={},
+            docs=[
+                DocumentChunk(filename="readme.md", text="chunk 1", similarity=0.9),
+                DocumentChunk(filename="readme.md", text="chunk 2", similarity=0.8),
+                DocumentChunk(filename="schema.md", text="chunk 3", similarity=0.7),
+            ]
+        )
+        
+        context = {"metaset": metaset}
+        
+        # Test applies
+        applies = await DocumentListAgent.applies(context)
+        assert applies is True  # More than 1 unique document
+        
+        # Test _get_items
+        agent = DocumentListAgent()
+        items = agent._get_items(context)
+        
+        # Should return unique, sorted filenames
+        assert items == {"Documents": ["readme.md", "schema.md"]}
+
+    async def test_document_list_agent_no_docs(self):
+        """Test that DocumentListAgent doesn't apply when no docs."""
+        from lumen.ai.agents.document_list import DocumentListAgent
+        from lumen.ai.schemas import Metaset
+
+        # Metaset without docs
+        metaset = Metaset(query="test", catalog={}, docs=None)
+        context = {"metaset": metaset}
+        
+        applies = await DocumentListAgent.applies(context)
+        assert applies is False
+
+    async def test_document_list_agent_single_doc(self):
+        """Test that DocumentListAgent doesn't apply for single doc."""
+        from lumen.ai.agents.document_list import DocumentListAgent
+        from lumen.ai.schemas import DocumentChunk, Metaset
+
+        # Metaset with only one unique document
+        metaset = Metaset(
+            query="test",
+            catalog={},
+            docs=[DocumentChunk(filename="readme.md", text="chunk", similarity=0.9)]
+        )
+        context = {"metaset": metaset}
+        
+        applies = await DocumentListAgent.applies(context)
+        assert applies is False  # Only 1 document, not worth listing

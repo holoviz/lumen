@@ -361,16 +361,16 @@ class MetadataLookup(VectorLookupTool):
         """
         Query the vector store for relevant document chunks.
 
-        Includes:
-        - Global docs (not in disabled_docs and not table-associated): Always
-        - Table-associated docs: Only if their table is in relevant_tables
+        Includes docs that are:
+        - NOT associated with any table: Always included
+        - Associated with tables: Only if their table is in relevant_tables
 
         Parameters
         ----------
         query : str
             The search query
         context : TContext
-            The context containing disabled_docs and sources
+            The context containing sources
         relevant_tables : set[str] | None
             Set of relevant table slugs. If None, includes all table-associated docs.
         """
@@ -379,9 +379,6 @@ class MetadataLookup(VectorLookupTool):
         # Get all document filenames from vector store
         all_doc_results = await doc_store.query(text="", top_k=1000, filters={"type": "document"})
         all_filenames = {r["metadata"]["filename"] for r in all_doc_results}
-
-        # Get disabled docs and table associations
-        disabled_docs = context.get("disabled_docs", set())
 
         # Collect table-associated docs
         table_associated_docs = {}  # filename -> set of table slugs
@@ -399,18 +396,14 @@ class MetadataLookup(VectorLookupTool):
         # Filter filenames
         included_filenames = set()
         for filename in all_filenames:
-            # Skip if disabled
-            if filename in disabled_docs:
-                continue
-
-            # Include if global (not table-associated)
+            # Include if NOT table-associated (global doc)
             if filename not in table_associated_docs:
                 included_filenames.add(filename)
             # Include if table-associated and table is relevant
             elif relevant_tables is None or any(tbl in relevant_tables for tbl in table_associated_docs[filename]):
                 included_filenames.add(filename)
 
-        log_debug(f"[_query_documents] query={query!r}, all={len(all_filenames)}, disabled={len(disabled_docs)}, table_assoc={len(table_associated_docs)}, included={len(included_filenames)}")
+        log_debug(f"[_query_documents] query={query!r}, all={len(all_filenames)}, table_assoc={len(table_associated_docs)}, included={len(included_filenames)}")
 
         if not included_filenames:
             return []

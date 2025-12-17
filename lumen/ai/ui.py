@@ -710,12 +710,6 @@ class UI(Viewer):
             self.context["source"] = context["source"]
         if "table" in context:
             self.context["table"] = context["table"]
-        if "document_sources" in context:
-            new_docs = context["document_sources"]
-            if "document_sources" not in self.context:
-                self.context["document_sources"] = new_docs
-            else:
-                self.context["document_sources"].extend(new_docs)
 
         # Guard against early calls during init when components don't exist yet
         if hasattr(self, '_explorer'):
