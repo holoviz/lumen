@@ -22,6 +22,18 @@ class Column:
 
 
 @dataclass
+class DocumentChunk:
+    """A chunk of document text with relevance metadata."""
+    filename: str
+    text: str
+    similarity: float
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __str__(self) -> str:
+        return f"{self.text} (from: {self.filename}, relevance: {self.similarity:.2f})"
+
+
+@dataclass
 class TableCatalogEntry:
     table_slug: str
     similarity: float
@@ -35,19 +47,30 @@ class TableCatalogEntry:
 @dataclass
 class Metaset:
     """
-    Schema container for table metadata with optional SQL enrichment.
+    Schema container for table metadata with optional SQL enrichment and documents.
 
-    Contains table catalog from discovery (descriptions, columns) and optionally
-    SQL schema data (types, enums, row counts).
+    Contains:
+    - catalog: Table discovery results (descriptions, columns, similarity)
+    - schemas: Optional SQL schema data (types, enums, row counts)
+    - docs: Document chunks (already filtered by TableLookup based on disabled_docs)
     """
 
     query: str | None
     catalog: dict[str, TableCatalogEntry]
     schemas: dict[str, dict[str, Any]] | None = None
+    docs: list[DocumentChunk] | None = None
 
     @property
     def has_schemas(self) -> bool:
         return self.schemas is not None and len(self.schemas) > 0
+
+    @property
+    def has_docs(self) -> bool:
+        return self.docs is not None and len(self.docs) > 0
+
+    def get_docs(self) -> list[DocumentChunk]:
+        """Get document chunks (already filtered by TableLookup)."""
+        return self.docs if self.docs else []
 
     async def get_schema(self, table_slug: str) -> dict[str, Any] | None:
         """
@@ -102,7 +125,7 @@ class Metaset:
         catalog_entry: TableCatalogEntry,
         include_columns: bool,
         truncate: bool,
-        include_sql: bool = True
+        include_sql: bool = True,
     ) -> dict:
         data = {}
 
@@ -180,7 +203,7 @@ class Metaset:
         include_docs: bool = True,
         n: int | None = None,
         offset: int = 0,
-        show_source: bool = False
+        show_source: bool = False,
     ) -> str:
         sorted_slugs = self.get_top_tables(n, offset)
 
@@ -188,47 +211,44 @@ class Metaset:
         unique_sources = set()
         for slug in sorted_slugs:
             if SOURCE_TABLE_SEPARATOR in slug:
-                source_name = slug.split(SOURCE_TABLE_SEPARATOR, 1)[0]
-                unique_sources.add(source_name)
-
+                unique_sources.add(slug.split(SOURCE_TABLE_SEPARATOR, 1)[0])
         single_source = len(unique_sources) == 1
 
+        # Build tables data
         tables_data = {}
-
         for table_slug in sorted_slugs:
-            catalog_entry = self.catalog.get(table_slug)
-            if not catalog_entry:
+            entry = self.catalog.get(table_slug)
+            if not entry:
                 continue
-
-            # If single source and not explicitly showing source, use just the table name
             display_slug = table_slug
             if single_source and not show_source and SOURCE_TABLE_SEPARATOR in table_slug:
                 display_slug = table_slug.split(SOURCE_TABLE_SEPARATOR, 1)[1]
-
-            table_data = self._build_table_data(
-                table_slug, catalog_entry, include_columns, truncate, include_sql
+            tables_data[display_slug] = self._build_table_data(
+                table_slug, entry, include_columns, truncate, include_sql
             )
 
-            # Add document chunks if enabled
-            if include_docs and (docs := catalog_entry.metadata.get("docs")):
-                table_data["docs"] = docs
+        # Build result
+        result = ""
+        if tables_data:
+            if all(not data for data in tables_data.values()):
+                result = yaml.dump(list(tables_data.keys()), default_flow_style=False, allow_unicode=True)
+            else:
+                result = yaml.dump(tables_data, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
-            tables_data[display_slug] = table_data
+        # Add docs section
+        if include_docs:
+            docs = self.get_docs()
+            if docs:
+                if result:
+                    result += "\n---\n\n"
+                result += "<documentation>\n"
+                for chunk in docs:
+                    text = truncate_string(chunk.text, 300) if truncate else truncate_string(chunk.text, 800)
+                    text = " ".join(text.split())
+                    result += f'<doc source="{chunk.filename}">\n{text}\n</doc>\n'
+                result += "</documentation>"
 
-        # If all tables have empty data, return a simple list
-        if all(not data for data in tables_data.values()):
-            return yaml.dump(
-                list(tables_data.keys()),
-                default_flow_style=False,
-                allow_unicode=True,
-            )
-
-        return yaml.dump(
-            tables_data,
-            default_flow_style=False,
-            allow_unicode=True,
-            sort_keys=False
-        )
+        return result or "No data sources or documentation available."
 
     def get_top_tables(self, n: int | None = None, offset: int = 0) -> list[str]:
         """Get top n table slugs sorted by similarity.
@@ -343,10 +363,14 @@ async def get_metaset(
             )
         catalog_data[table_slug] = catalog_entry
 
+    # Preserve docs from previous metaset if available
+    docs = prev.docs if prev else None
+
     return Metaset(
         query=None,
         catalog=catalog_data,
         schemas=schemas_data,
+        docs=docs,
     )
 
 

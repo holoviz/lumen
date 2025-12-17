@@ -32,6 +32,7 @@ from ..utils import (
     fuse_messages, get_root_exception, log_debug, mutate_user_message,
     normalized_name, wrap_logfire,
 )
+from ..vector_store import NumpyVectorStore
 
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
@@ -308,6 +309,13 @@ class Coordinator(Viewer, VectorLookupToolUser):
             interface = ChatInterface(
                 callback=self._chat_invoke, callback_exception="raise", load_buffer=5, show_button_tooltips=True, show_button_name=False, sizing_mode="stretch_both"
             )
+
+        # Create default vector stores if not provided
+        if vector_store is None:
+            vector_store = NumpyVectorStore()
+        # Use the same vector_store for documents if not explicitly provided
+        if document_vector_store is None:
+            document_vector_store = vector_store
 
         llm = llm or self.llm
         instantiated = []

@@ -194,6 +194,13 @@ class UI(Viewer):
         self._configure_session()
         self._render_page()
 
+        # Wire up vector stores to components after they are created
+        # Use document_vector_store if available, otherwise fall back to main vector_store
+        doc_store = self.document_vector_store or self._coordinator.vector_store
+        self._source_catalog.vector_store = doc_store
+        self._upload_controls.source_catalog.vector_store = doc_store
+        self._download_controls.source_catalog.vector_store = doc_store
+
     @classmethod
     def _resolve_data(
         cls, data: DataT | list[DataT] | dict[DataT] | None
@@ -445,13 +452,19 @@ class UI(Viewer):
         self._sources_dialog_content.open = True
 
         # Set the breadcrumbs to "Upload" to show the uploaded files
-        self._source_breadcrumbs.active = (0, 1,)
+        # (0, 0) means Manage Data > Upload
+        self._source_breadcrumbs.active = (0, 0)
 
     def _handle_upload_successful(self, event):
         """Handle successful file upload by switching to Source Catalog."""
         active = self._source_breadcrumbs.active
         # Navigate to Source Catalog under current selection (Upload or Download)
-        self._source_breadcrumbs.active = (0, active[0], 0)
+        # active is (0, 0) for Upload or (0, 1) for Download
+        # We want (0, 0, 0) for Upload > Source Catalog or (0, 1, 0) for Download > Source Catalog
+        if len(active) >= 2:
+            self._source_breadcrumbs.active = (0, active[1], 0)
+        else:
+            self._source_breadcrumbs.active = (0, 0, 0)
 
     def _update_source_content(self, event):
         """Update the source dialog content based on breadcrumb selection."""
@@ -704,16 +717,22 @@ class UI(Viewer):
             else:
                 self.context["document_sources"].extend(new_docs)
 
-        await self._explorer.sync()
-        await self._coordinator.sync(self.context)
-        self._source_catalog.sync(self.context)
+        # Guard against early calls during init when components don't exist yet
+        if hasattr(self, '_explorer'):
+            await self._explorer.sync()
+        # Only sync coordinator if we have sources and coordinator exists
+        if hasattr(self, '_coordinator') and self.context.get("sources"):
+            await self._coordinator.sync(self.context)
+        if hasattr(self, '_source_catalog'):
+            self._source_catalog.sync(self.context)
 
         num_sources = len(self.context.get("sources", []))
         if num_sources == 0:
             prefix_text = "Add your dataset to begin, then"
         else:
             prefix_text = f"{num_sources} source{'s' if num_sources > 1 else ''} connected;"
-        self._cta.object = f"{prefix_text} ask any question, or select a quick action below."
+        if hasattr(self, '_cta'):
+            self._cta.object = f"{prefix_text} ask any question, or select a quick action below."
 
     def _open_llm_dialog(self, event=None):
         """Open the LLM configuration dialog when the LLM chip is clicked."""

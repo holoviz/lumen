@@ -32,6 +32,7 @@ Write a SQL query for the user's data transformation request, focusing on intent
 {%- endblock -%}
 
 {%- block context -%}
+{%- if memory.get('metaset') %}
 ### Data summary
 {{ memory["metaset"].compact_context(5) }}
 
@@ -39,6 +40,7 @@ Write a SQL query for the user's data transformation request, focusing on intent
 {%- if other_tables.strip() != '{}' and memory["metaset"].catalog|length >= 5 %}
 ### Other Tables
 {{ other_tables }}
+{%- endif %}
 {%- endif %}
 
 {%- if 'sql' in memory %}

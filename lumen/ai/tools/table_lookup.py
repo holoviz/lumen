@@ -15,7 +15,7 @@ from ..context import ContextModel, TContext
 from ..llm import Message
 from ..models import PartialBaseModel
 from ..schemas import (
-    Column, Metaset, TableCatalogEntry, get_metaset,
+    Column, DocumentChunk, Metaset, TableCatalogEntry, get_metaset,
 )
 from ..utils import (
     get_schema, log_debug, parse_table_slug, stream_details, truncate_string,
@@ -161,7 +161,7 @@ class TableLookup(VectorLookupTool):
     )
 
     n_documents = param.Integer(
-        default=3,
+        default=2,
         bounds=(1, None),
         doc="""
         The number of document chunks to retrieve per table.""",
@@ -195,7 +195,6 @@ class TableLookup(VectorLookupTool):
         """
         sources = context.get("sources", [])
         if not sources:
-            log_debug("[TableLookup] sync called but no sources in context")
             return
 
         if "tables_metadata" not in context:
@@ -291,7 +290,6 @@ class TableLookup(VectorLookupTool):
         if sources is None and "source" in context:
             sources = [context["source"]]
         elif sources is None or len(sources) == 0:
-            log_debug("[TableLookup] _update_vector_store called but no sources available")
             return
         self._ready = False
         await asyncio.sleep(0.5)  # allow main thread time to load UI first
@@ -416,72 +414,85 @@ class TableLookup(VectorLookupTool):
             if vector_store_id is not None and processed_sources:
                 self._cleanup_sources_in_progress(vector_store_id, processed_sources)
 
-    async def _enrich_with_documents(self, query: str, catalog: dict[str, TableCatalogEntry], context: TContext) -> None:
+    async def _query_documents(
+        self,
+        query: str,
+        context: TContext,
+        relevant_tables: set[str] | None = None
+    ) -> list[DocumentChunk]:
         """
-        Query the vector store for relevant document chunks and attach them to tables.
+        Query the vector store for relevant document chunks.
 
-        Only queries documents that are associated with tables in the catalog.
+        Includes:
+        - Global docs (not in disabled_docs and not table-associated): Always
+        - Table-associated docs: Only if their table is in relevant_tables
 
         Parameters
         ----------
         query : str
-            The user's query
-        catalog : dict[str, TableCatalogEntry]
-            The catalog of tables to enrich
+            The search query
         context : TContext
-            The context dictionary
+            The context containing disabled_docs and sources
+        relevant_tables : set[str] | None
+            Set of relevant table slugs. If None, includes all table-associated docs.
         """
-        # Collect all unique filenames from associated metadata across all tables in catalog
-        all_associated_filenames = set()
-        for catalog_entry in catalog.values():
-            docs = catalog_entry.metadata.get("docs", [])
-            all_associated_filenames.update(docs)
+        doc_store = self.document_vector_store or self.vector_store
 
-        if not all_associated_filenames:
-            log_debug("[TableLookup] No associated metadata files found for tables in catalog")
-            return
+        # Get all document filenames from vector store
+        all_doc_results = await doc_store.query(text="", top_k=1000, filters={"type": "document"})
+        all_filenames = {r["metadata"]["filename"] for r in all_doc_results}
 
-        # Query for documents using the same query, but filter by associated filenames
-        try:
-            # Query each filename separately to get relevant chunks from each document
-            all_doc_results = []
-            for filename in all_associated_filenames:
-                doc_results = await self.vector_store.query(
-                    query,
-                    top_k=self.n_documents,
-                    filters={"type": "document", "filename": filename}
-                )
-                all_doc_results.extend(doc_results)
+        # Get disabled docs and table associations
+        disabled_docs = context.get("disabled_docs", set())
 
-            if not all_doc_results:
-                log_debug("[TableLookup] No document chunks found for associated metadata")
-                return
+        # Collect table-associated docs
+        table_associated_docs = {}  # filename -> set of table slugs
+        sources = context.get("sources", [])
+        for source in sources:
+            if source.metadata:
+                for table in source.get_tables():
+                    table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}"
+                    if table in source.metadata:
+                        for doc_filename in source.metadata[table].get("docs", []):
+                            if doc_filename not in table_associated_docs:
+                                table_associated_docs[doc_filename] = set()
+                            table_associated_docs[doc_filename].add(table_slug)
 
-            # Attach document chunks to each table based on their associations
-            for table_slug, catalog_entry in catalog.items():
-                docs = catalog_entry.metadata.get("docs", [])
+        # Filter filenames
+        included_filenames = set()
+        for filename in all_filenames:
+            # Skip if disabled
+            if filename in disabled_docs:
+                continue
 
-                if not docs:
+            # Include if global (not table-associated)
+            if filename not in table_associated_docs:
+                included_filenames.add(filename)
+            # Include if table-associated and table is relevant
+            elif relevant_tables is None or any(tbl in relevant_tables for tbl in table_associated_docs[filename]):
+                included_filenames.add(filename)
+
+        log_debug(f"[_query_documents] query={query!r}, all={len(all_filenames)}, disabled={len(disabled_docs)}, table_assoc={len(table_associated_docs)}, included={len(included_filenames)}")
+
+        if not included_filenames:
+            return []
+
+        # Query each included document file
+        all_docs: list[DocumentChunk] = []
+        for filename in included_filenames:
+            results = await doc_store.query(
+                text=query, top_k=self.n_documents, filters={"type": "document", "filename": filename}
+            )
+            for r in results:
+                if r["similarity"] < self.min_similarity:
                     continue
+                all_docs.append(DocumentChunk(
+                    filename=filename, text=r["text"], similarity=r["similarity"], metadata=r.get("metadata", {})
+                ))
 
-                relevant_chunks = []
-                for doc_result in all_doc_results:
-                    doc_metadata = doc_result.get("metadata", {})
-                    doc_filename = doc_metadata.get("filename", "")
-
-                    # Only include if document is associated with this specific table
-                    if doc_filename in docs:
-                        chunk_text = doc_result["text"]
-                        similarity = doc_result.get("similarity", 0)
-                        relevant_chunks.append(f"{chunk_text} (Relevance: {similarity:.2f})")
-
-                if relevant_chunks:
-                    catalog_entry.metadata["docs"] = relevant_chunks
-                    log_debug(f"[TableLookup] Attached {len(relevant_chunks)} document chunks to {table_slug}")
-
-        except Exception as e:
-            log_debug(f"[TableLookup] Error enriching with documents: {e}")
-            traceback.print_exc()
+        # Sort by similarity and limit
+        all_docs.sort(key=lambda c: c.similarity, reverse=True)
+        return all_docs[:self.n_documents * 2]  # Return top chunks across all files
 
     async def _gather_info(self, messages: list[dict[str, str]], context: TContext) -> TableLookupOutputs:
         """Gather relevant information about the tables based on the user query."""
@@ -559,10 +570,15 @@ class TableLookup(VectorLookupTool):
                 if table_slug in catalog:
                     catalog[table_slug].similarity = 1
 
-        # Enrich tables with relevant document chunks
-        await self._enrich_with_documents(query, catalog, context)
+        # Query for relevant document chunks, passing relevant tables for filtering
+        relevant_tables = set(catalog.keys())
+        docs = await self._query_documents(query, context, relevant_tables)
 
-        metaset = Metaset(catalog=catalog, query=query)
+        metaset = Metaset(
+            catalog=catalog,
+            query=query,
+            docs=docs if docs else None,
+        )
         return {"metaset": metaset}
 
     def _format_context(self, outputs: TableLookupOutputs) -> str:
@@ -805,6 +821,7 @@ class IterativeTableLookup(TableLookup):
             catalog=catalog,
             schemas=schemas,
             query=metaset.query,
+            docs=metaset.docs,
         )
         return {"metaset": metaset}
 

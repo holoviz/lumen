@@ -414,6 +414,11 @@ class BaseSourceControls(Viewer):
         """
         Add a metadata file for later association with tables.
         Stores in the SourceCatalog instance if available.
+
+        Parameters
+        ----------
+        card : UploadedFileRow
+            The file card containing the metadata file.
         """
         try:
             content = self._extract_metadata_content(card.file_obj, card.extension)
@@ -428,6 +433,8 @@ class BaseSourceControls(Viewer):
                         "display_name": card.filename,
                         "content": content
                     })
+                    # Sync to vector store via SourceCatalog
+                    asyncio.create_task(self._sync_metadata(filename))  # noqa: RUF006
 
             self.param.trigger('outputs')
             return 1
@@ -435,6 +442,16 @@ class BaseSourceControls(Viewer):
             self._error_placeholder.object += f"\nCould not process metadata file {card.filename}: {e}"
             self._error_placeholder.visible = True
             return 0
+
+    async def _sync_metadata(self, filename: str):
+        """
+        Sync metadata to vector store.
+        """
+        if not self.source_catalog:
+            return
+
+        # Sync to vector store
+        await self.source_catalog._sync_metadata_to_vector_store(filename)
 
     def _process_files(self):
         """Process all file cards and add them as sources."""
@@ -1016,22 +1033,32 @@ class AnnotationControls(RevisionControls):
 
 class SourceCatalog(Viewer):
     """
-    A component that displays all data sources as a hierarchical tree.
+    A component that displays all data sources and documents as hierarchical trees.
 
     Structure:
+        == Sources Tree ==
         Source (with delete action)
         └── Table (checkbox for visibility)
-             └── metadata_file.md (checkbox for association)
+             └── metadata_file.md (checkbox for table association)
 
-    Uses pmui.Tree with checkboxes and propagation for intuitive selection.
-    Tables can be selectively shown/hidden, which updates 'visible_slugs' in context.
-    Metadata files can be associated with tables by selecting them as children.
+        == Global Documents Tree ==
+        ☑ general_guidelines.md (always visible when checked)
+        ☐ old_standards.md (unchecked = disabled)
+
+    Document visibility states:
+    - Global: In self.global_docs → Always included in LLM context
+    - Table-associated: In Source.metadata[table]["docs"] → Only when table matches
+    - Disabled: Unchecked in both trees → Completely hidden from LLM
     """
 
     context = param.Dict(default={})
 
     sources = param.List(default=[], doc="""
         List of data sources to display in the catalog.""")
+
+    vector_store = param.Parameter(default=None, doc="""
+        The vector store to sync metadata documents to. If not provided,
+        metadata files will only be stored locally.""")
 
     def __init__(self, /, context: TContext | None = None, **params):
         if context is None:
@@ -1040,11 +1067,14 @@ class SourceCatalog(Viewer):
             context["sources"] = [context["source"]]
         if "visible_slugs" not in context:
             context["visible_slugs"] = set()
+        if "disabled_docs" not in context:
+            context["disabled_docs"] = set()  # Initialize disabled_docs
 
         super().__init__(context=context, **params)
 
-        self._title = Markdown("Select the tables and metadata you want visible to the LLM.", margin=(0, 10))
-        self._tree = Tree(
+        # === Sources Tree ===
+        self._sources_title = Markdown("**Data Sources**", margin=(0, 10))
+        self._sources_tree = Tree(
             items=[],
             checkboxes=True,
             propagate_to_child=True,
@@ -1052,25 +1082,44 @@ class SourceCatalog(Viewer):
             sizing_mode="stretch_width",
             margin=(0, 10),
         )
-        self._tree.param.watch(self._on_active_change, "active")
-        self._tree.on_action("Delete", self._on_delete_source)
+        self._sources_tree.param.watch(self._on_sources_active_change, "active")
+        self._sources_tree.on_action("Delete", self._on_delete_source)
 
-        # Store the layout as instance variable
-        self._layout = Column(self._title, self._tree, sizing_mode="stretch_width")
+        # === Global Documents Tree ===
+        self._docs_title = Markdown("**Global Documents**", margin=(10, 10, 0, 10))
+        self._docs_tree = Tree(
+            items=[],
+            checkboxes=True,
+            color="secondary",
+            sizing_mode="stretch_width",
+            margin=(0, 10),
+        )
+        self._docs_tree.param.watch(self._on_docs_active_change, "active")
+
+        # Combined layout
+        self._layout = Column(
+            self._sources_title,
+            self._sources_tree,
+            self._docs_title,
+            self._docs_tree,
+            sizing_mode="stretch_width"
+        )
 
         # Track the mapping from tree paths to source/table/metadata
         self._path_map = {}  # path tuple -> {"source": ..., "table": ..., "metadata": ...}
-        self._suppress_active_callback = False
+        self._docs_path_map = {}  # index -> filename
+        self._suppress_sources_callback = False
+        self._suppress_docs_callback = False
 
         # Store available metadata files
         self._available_metadata = []
 
-    def _build_items(self, sources: list) -> list[dict]:
+    def _build_sources_items(self, sources: list) -> list[dict]:
         """
         Build the tree items structure from sources.
 
         Returns:
-            List of item dicts for the Tree component.
+            List of item dicts for the Sources Tree component.
         """
         items = []
         available_metadata = self._available_metadata
@@ -1141,9 +1190,33 @@ class SourceCatalog(Viewer):
 
         return items
 
-    def _compute_active_paths(self, sources: list) -> list[tuple]:
+    def _build_docs_items(self) -> list[dict]:
         """
-        Compute which paths should be active based on visible_slugs and metadata associations.
+        Build the tree items structure for global documents.
+
+        Returns:
+            List of item dicts for the Docs Tree component.
+        """
+        items = []
+        self._docs_path_map.clear()
+
+        for idx, meta in enumerate(self._available_metadata):
+            self._docs_path_map[idx] = meta["filename"]
+            items.append({
+                "label": meta["filename"],
+                "icon": "description",
+            })
+
+        return items
+
+    def _compute_sources_active_paths(self, sources: list) -> list[tuple]:
+        """
+        Compute which paths should be active in sources tree.
+
+        Returns paths for:
+        - Tables: Only if in visible_slugs (user explicitly checked them)
+        - Docs: If associated with their parent table
+        - Sources: If ALL their tables are in visible_slugs
         """
         active = []
         visible_slugs = self.context.get("visible_slugs", set())
@@ -1152,19 +1225,46 @@ class SourceCatalog(Viewer):
 
         for src_idx, source in enumerate(sources):
             tables = source.get_tables()
+            all_tables_visible = True
+
             for tbl_idx, table in enumerate(tables):
                 table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}"
+                table_is_visible = table_slug in visible_slugs
 
-                if table_slug in visible_slugs:
+                # Table is checked ONLY if in visible_slugs
+                if table_is_visible:
                     active.append((src_idx, tbl_idx))
+                else:
+                    all_tables_visible = False
 
-                # Check metadata associations
+                # Add doc associations (independent of table visibility)
                 if source.metadata:
                     associations = source.metadata.get(table, {}).get("docs", [])
                     for meta_filename in associations:
                         if meta_filename in meta_filenames:
                             meta_idx = meta_filenames.index(meta_filename)
                             active.append((src_idx, tbl_idx, meta_idx))
+
+            # Source is checked ONLY if ALL tables are visible
+            if all_tables_visible and len(tables) > 0:
+                active.append((src_idx,))
+
+        return active
+
+    def _compute_docs_active_paths(self) -> list[tuple]:
+        """
+        Compute which paths should be active in docs tree.
+
+        A document is "global" if it's checked in the global docs tree,
+        meaning it should ALWAYS be included in LLM context.
+        """
+        # Global docs are those NOT in disabled_docs
+        disabled_docs = self.context.get("disabled_docs", set())
+
+        active = []
+        for idx, meta in enumerate(self._available_metadata):
+            if meta["filename"] not in disabled_docs:
+                active.append((idx,))
 
         return active
 
@@ -1174,82 +1274,158 @@ class SourceCatalog(Viewer):
         """
         return [(src_idx,) for src_idx in range(len(sources))]
 
-    def _on_active_change(self, event):
-        """
-        Handle tree selection changes.
-
-        Updates visible_slugs for table selections and metadata associations.
-        """
-        if self._suppress_active_callback:
+    def _on_sources_active_change(self, event):
+        """Handle sources tree selection changes."""
+        if self._suppress_sources_callback:
             return
 
         active_paths = set(event.new)
-        # Track which tables are selected and their metadata associations
         for path, info in self._path_map.items():
-            source = info["source"]
-            table = info["table"]
-            metadata = info["metadata"]
+            if info["table"] is None:
+                continue  # Skip source-level paths
 
-            if table is None:
-                # Source-level path, skip
+            if info["metadata"] is None:
+                self._update_table_visibility(path, info, active_paths)
+            else:
+                self._update_table_doc_association(path, info, active_paths)
+
+    def _update_table_visibility(self, path: tuple, info: dict, active_paths: set):
+        """Update table visibility based on checkbox state."""
+        source = info["source"]
+        table = info["table"]
+        table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}"
+
+        if path in active_paths:
+            self.context["visible_slugs"].add(table_slug)
+        else:
+            self.context["visible_slugs"].discard(table_slug)
+
+    def _update_table_doc_association(self, path: tuple, info: dict, active_paths: set):
+        """Update document-table association based on checkbox state."""
+        source = info["source"]
+        table = info["table"]
+        metadata = info["metadata"]
+
+        self._ensure_source_metadata(source)
+        associations = self._get_table_docs(source, table)
+
+        if path in active_paths:
+            if metadata not in associations:
+                associations.append(metadata)
+        elif metadata in associations:
+            associations.remove(metadata)
+
+    def _on_docs_active_change(self, event):
+        """
+        Handle docs tree selection changes.
+
+        When a doc is checked in the global docs tree:
+        - Remove from disabled_docs (enable globally)
+        - Associate with ALL tables
+
+        When a doc is unchecked in the global docs tree:
+        - Add to disabled_docs (disable globally)
+        - Remove from ALL table associations
+        """
+        if self._suppress_docs_callback:
+            return
+
+        active_indices = {path[0] for path in event.new if len(path) == 1}
+        sources = self.sources or self.context.get("sources", [])
+
+        for idx, filename in self._docs_path_map.items():
+            is_active = idx in active_indices
+            self._update_doc_state(filename, is_active, sources)
+
+        # Re-sync the sources tree to reflect the updated associations
+        self._sync_sources_tree_only()
+
+    def _update_doc_state(self, filename: str, is_active: bool, sources: list):
+        """Update document state (enabled/disabled and table associations)."""
+        if is_active:
+            self._enable_doc_globally(filename, sources)
+        else:
+            self._disable_doc_globally(filename, sources)
+
+    def _enable_doc_globally(self, filename: str, sources: list):
+        """Enable doc globally and associate with all tables."""
+        self.context["disabled_docs"].discard(filename)
+
+        for source in sources:
+            self._ensure_source_metadata(source)
+            for table in source.get_tables():
+                associations = self._get_table_docs(source, table)
+                if filename not in associations:
+                    associations.append(filename)
+
+    def _disable_doc_globally(self, filename: str, sources: list):
+        """Disable doc globally and remove from all tables."""
+        self.context["disabled_docs"].add(filename)
+
+        for source in sources:
+            if not source.metadata:
                 continue
 
-            table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}"
-
-            if metadata is None:
-                # Table-level path
-                if path in active_paths:
-                    self.context["visible_slugs"].add(table_slug)
-                else:
-                    self.context["visible_slugs"].discard(table_slug)
-            else:
-                # Metadata-level path
-                if source.metadata is None:
-                    source.metadata = {}
-                if table not in source.metadata:
-                    source.metadata[table] = {}
-                if "docs" not in source.metadata[table]:
-                    source.metadata[table]["docs"] = []
+            for table in source.get_tables():
+                if table not in source.metadata or "docs" not in source.metadata[table]:
+                    continue
 
                 associations = source.metadata[table]["docs"]
+                if filename in associations:
+                    associations.remove(filename)
 
-                if path in active_paths:
-                    if metadata not in associations:
-                        associations.append(metadata)
-                        # Sync to vector store asynchronously
-                        import asyncio
-                        asyncio.create_task(self._sync_metadata_to_vector_store(metadata))  # noqa: RUF006
-                elif metadata in associations:
-                    associations.remove(metadata)
+    def _ensure_source_metadata(self, source):
+        """Ensure source has metadata structure initialized."""
+        if source.metadata is None:
+            source.metadata = {}
+
+    def _get_table_docs(self, source, table: str) -> list:
+        """Get or create the docs list for a table."""
+        if table not in source.metadata:
+            source.metadata[table] = {}
+        if "docs" not in source.metadata[table]:
+            source.metadata[table]["docs"] = []
+        return source.metadata[table]["docs"]
 
     def _on_delete_source(self, item: dict):
-        """
-        Handle delete action on a source node.
-        """
+        """Handle delete action on a source node."""
         source_name = item["label"]
         sources = self.context.get("sources", [])
 
-        # Find and remove the source
+        source_to_delete = self._find_source_by_name(sources, source_name)
+        if not source_to_delete:
+            return
+
+        self._remove_source_tables_from_visible_slugs(source_to_delete)
+        self._remove_source_from_context(sources, source_to_delete)
+
+    def _find_source_by_name(self, sources: list, source_name: str):
+        """Find source by name, return None if not found."""
         for source in sources:
             if source.name == source_name:
-                # Remove all tables from visible_slugs
-                for table in source.get_tables():
-                    table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}"
-                    self.context["visible_slugs"].discard(table_slug)
+                return source
+        return None
 
-                self.context["sources"] = [
-                    s for s in sources if s is not source
-                ]
-                # Trigger sync to rebuild tree
-                self.sources = self.context["sources"]
-                break
+    def _remove_source_tables_from_visible_slugs(self, source):
+        """Remove all tables from a source from visible_slugs."""
+        for table in source.get_tables():
+            table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}"
+            self.context["visible_slugs"].discard(table_slug)
+
+    def _remove_source_from_context(self, sources: list, source_to_delete):
+        """Remove source from context and trigger sync."""
+        self.context["sources"] = [s for s in sources if s is not source_to_delete]
+        self.sources = self.context["sources"]
 
     async def _sync_metadata_to_vector_store(self, filename: str):
         """
-        Add metadata file to the vector store used by TableLookup.
+        Add metadata file to the vector store.
 
         This ensures document chunks are queryable alongside tables.
         """
+        if self.vector_store is None:
+            return
+
         available = {
             m["filename"]: m for m in self._available_metadata
         }
@@ -1258,28 +1434,42 @@ class SourceCatalog(Viewer):
             return
 
         metadata_info = available[filename]
+        content = metadata_info.get("content", "")
 
-        # Get the table lookup tool's vector store from context
-        table_lookup = self.context.get("table_lookup")
-        if table_lookup and hasattr(table_lookup, "vector_store"):
-            # Upsert document to the same vector store as tables
-            doc_entry = {
-                "text": metadata_info.get("content", ""),
-                "metadata": {
-                    "filename": filename,
-                    "type": "document",
-                },
-            }
-            await table_lookup.vector_store.upsert([doc_entry])
+        doc_entry = {
+            "text": content,
+            "metadata": {
+                "filename": filename,
+                "type": "document",
+            },
+        }
+
+        try:
+            await self.vector_store.upsert([doc_entry])
+        except Exception:
+            raise
 
     @param.depends("sources", watch=True)
     def _on_sources_change(self):
         """Trigger sync when sources param changes."""
         self.sync()
 
+    def _sync_sources_tree_only(self):
+        """Sync only the sources tree, without touching the docs tree."""
+        sources = self.sources or self.context.get("sources", [])
+
+        if not sources:
+            return
+
+        items = self._build_sources_items(sources)
+        if not items:
+            return
+
+        self._update_sources_tree_state(items, sources)
+
     def sync(self, context: TContext | None = None):
         """
-        Synchronize the tree with current sources.
+        Synchronize both trees with current sources and metadata.
 
         Args:
             context: Optional context dict. If None, uses self.context.
@@ -1287,70 +1477,107 @@ class SourceCatalog(Viewer):
         context = context or self.context
         sources = self.sources or context.get("sources", [])
 
+        self._sync_sources_tree(sources)
+        self._sync_docs_tree()
+
+    def _sync_sources_tree(self, sources: list):
+        """Sync the sources tree with current sources."""
         if not sources:
-            self._title.object = "No sources available. Add a source to get started."
-            self._tree.items = []
+            self._sources_title.object = "**Data Sources** *(no sources available)*"
+            self._sources_tree.items = []
             return
 
-        # Build tree structure
-        items = self._build_items(sources)
-
+        items = self._build_sources_items(sources)
         if not items:
-            self._title.object = "Sources loaded but no tables found."
-            self._tree.items = []
+            self._sources_title.object = "**Data Sources** *(no tables found)*"
+            self._sources_tree.items = []
             return
 
-        self._title.object = "Select the tables and metadata you want visible to the LLM."
+        self._sources_title.object = "**Data Sources**"
+        self._auto_associate_unassociated_metadata(sources)
+        self._update_sources_tree_state(items, sources)
 
-        # Find metadata files that are not yet associated with any table
-        available_metadata = self._available_metadata
-        meta_filenames = [m["filename"] for m in available_metadata]
+    def _auto_associate_unassociated_metadata(self, sources: list):
+        """Automatically associate metadata files that aren't yet associated with any table.
+        Also marks tables as visible on initial upload."""
+        meta_filenames = [m["filename"] for m in self._available_metadata]
+        associated = self._collect_associated_metadata(sources)
+        unassociated = set(meta_filenames) - associated
 
-        # Collect all currently associated metadata across all sources and tables
+        if not unassociated:
+            return
+
+        # Associate with all tables and mark them as visible
+        for source in sources:
+            for table in source.get_tables():
+                table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}"
+
+                self._ensure_source_metadata(source)
+                associations = self._get_table_docs(source, table)
+
+                for meta_filename in unassociated:
+                    if meta_filename not in associations:
+                        associations.append(meta_filename)
+
+                # Mark table as visible (only happens on initial upload)
+                self.context["visible_slugs"].add(table_slug)
+
+        # Sync to vector store once per document (not once per table)
+        for meta_filename in unassociated:
+            asyncio.create_task(self._sync_metadata_to_vector_store(meta_filename))  # noqa: RUF006
+
+    def _collect_associated_metadata(self, sources: list) -> set:
+        """Collect all metadata filenames currently associated with any table."""
         associated = set()
         for source in sources:
-            if source.metadata:
-                for table in source.get_tables():
-                    if table in source.metadata:
-                        associations = source.metadata[table].get("docs", [])
-                        associated.update(associations)
+            if not source.metadata:
+                continue
+            for table in source.get_tables():
+                if table in source.metadata:
+                    associations = source.metadata[table].get("docs", [])
+                    associated.update(associations)
+        return associated
 
-        # Auto-associate unassociated metadata with all tables
-        unassociated = set(meta_filenames) - associated
-        if unassociated:
-            for source in sources:
-                for table in source.get_tables():
-                    if source.metadata is None:
-                        source.metadata = {}
-                    if table not in source.metadata:
-                        source.metadata[table] = {}
-                    if "docs" not in source.metadata[table]:
-                        source.metadata[table]["docs"] = []
-
-                    associations = source.metadata[table]["docs"]
-                    for meta_filename in unassociated:
-                        if meta_filename not in associations:
-                            associations.append(meta_filename)
-                            self._sync_metadata_to_vector_store(meta_filename)
-
-        # Compute initial active and expanded states
-        active = self._compute_active_paths(sources)
+    def _update_sources_tree_state(self, items: list, sources: list):
+        """Update sources tree items, active paths, and expanded paths."""
+        active = self._compute_sources_active_paths(sources)
         expanded = self._compute_expanded_paths(sources)
 
-        # Suppress callback during programmatic update
-        self._suppress_active_callback = True
+        self._suppress_sources_callback = True
         try:
-            self._tree.items = items
-            self._tree.active = active
-            self._tree.expanded = expanded
+            self._sources_tree.items = items
+            self._sources_tree.active = active
+            self._sources_tree.expanded = expanded
         finally:
-            self._suppress_active_callback = False
+            self._suppress_sources_callback = False
+
+    def _sync_docs_tree(self):
+        """Sync the global docs tree with available metadata."""
+        if not self._available_metadata:
+            self._docs_title.object = "**Global Documents** *(no documents available)*"
+            self._docs_tree.items = []
+            self._docs_tree.visible = False
+            return
+
+        self._docs_title.object = "**Global Documents**"
+        self._docs_tree.visible = True
+
+        docs_items = self._build_docs_items()
+        docs_active = self._compute_docs_active_paths()
+
+        self._suppress_docs_callback = True
+        try:
+            self._docs_tree.items = docs_items
+            self._docs_tree.active = docs_active
+        finally:
+            self._suppress_docs_callback = False
 
     def __panel__(self):
         """
         Return the tree layout.
         """
         return self._layout
+
 
 
 class TableExplorer(Viewer):

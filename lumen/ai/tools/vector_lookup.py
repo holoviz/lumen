@@ -86,6 +86,12 @@ class VectorLookupTool(Tool):
         Vector store object which is queried to provide additional context
         before responding.""")
 
+    document_vector_store = param.ClassSelector(
+        class_=VectorStore,
+        default=None,
+        constant=True,
+        doc="""\n        Separate vector store for documents. If None, uses the same vector store as tables.\n        This allows for different embedding strategies or storage backends for documents vs tables.""")
+
     _item_type_name: str = None
 
     # Class variable to track which sources are currently being processed
@@ -362,10 +368,13 @@ class VectorLookupToolUser(ToolUser):
             (isinstance(tool, VectorLookupTool) and tool.vector_store is not None)
         ):
             return kwargs
-        elif isinstance(tool, VectorLookupTool) and tool._item_type_name == "document" and self.document_vector_store is not None:
-            kwargs["vector_store"] = self.document_vector_store
-            return kwargs
-        elif self.vector_store is not None:
+
+        # Always pass document_vector_store if available
+        if self.document_vector_store is not None:
+            kwargs["document_vector_store"] = self.document_vector_store
+
+        # Set main vector_store
+        if self.vector_store is not None:
             kwargs["vector_store"] = self.vector_store
             return kwargs
 

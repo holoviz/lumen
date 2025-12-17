@@ -59,7 +59,7 @@ class VectorStore(LLMUser):
     )
 
     chunk_size = param.Integer(
-        default=1024, doc="Maximum size of text chunks to split documents into."
+        default=512, doc="Maximum size of text chunks to split documents into."
     )
 
     chunk_tokenizer = param.String(
@@ -792,7 +792,9 @@ class NumpyVectorStore(VectorStore):
         -------
         List of results with 'id', 'text', 'metadata', and 'similarity' score.
         """
+        log_debug(f"[NumpyVectorStore.query] text={text!r}, top_k={top_k}, filters={filters}, threshold={threshold}")
         if self.vectors is None:
+            log_debug("[NumpyVectorStore.query] No vectors in store, returning empty")
             return []
         query_embedding = np.array((await self.embeddings.embed([text]))[0], dtype=np.float32)
         similarities = self._cosine_similarity(query_embedding, self.vectors)
@@ -808,6 +810,9 @@ class NumpyVectorStore(VectorStore):
         results = []
         if len(similarities) > 0:
             sorted_indices = np.argsort(similarities)[::-1]
+            log_debug(f"[NumpyVectorStore.query] Total items in store: {len(similarities)}, showing top similarities:")
+            for i, idx in enumerate(sorted_indices[:10]):  # Log top 10 for debugging
+                log_debug(f"  [{i+1}] id={self.ids[idx]}, sim={similarities[idx]:.4f}, meta={self.metadata[idx]}, text_preview={self.texts[idx][:80]!r}...")
             for idx in sorted_indices:
                 similarity = similarities[idx]
                 if similarity < threshold:
@@ -822,6 +827,7 @@ class NumpyVectorStore(VectorStore):
                 )
                 if len(results) >= top_k:
                     break
+        log_debug(f"[NumpyVectorStore.query] Returning {len(results)} results")
         return results
 
     def filter_by(
@@ -926,17 +932,22 @@ class NumpyVectorStore(VectorStore):
             text = item["text"]
             metadata = item.get("metadata", {}) or {}
 
-            # Check for exact text match
+            # Check for exact text match (whole document stored as single entry)
             match_indices = text_to_indices.get(text, [])
 
             # If no exact match found, check for chunked text match
+            # Collect ALL matching chunk indices
             if not match_indices:
-                for chunk in self._chunk_text(text, self.chunk_size, self.chunk_func, **self.chunk_func_kwargs):
+                chunks = self._chunk_text(text, self.chunk_size, self.chunk_func, **self.chunk_func_kwargs)
+                for chunk in chunks:
                     if chunk in text_to_indices:
                         match_indices.extend(text_to_indices[chunk])
 
             if match_indices:
-                match_found = False
+                # Check metadata compatibility for ALL matching chunks
+                all_chunks_match = True
+                matched_ids = []
+                needs_update = False
 
                 for idx in match_indices:
                     existing_id = self.ids[idx]
@@ -951,29 +962,32 @@ class NumpyVectorStore(VectorStore):
                             break
 
                     if has_value_conflict:
-                        # If values conflict, this is not a match
-                        continue
+                        # If values conflict, this chunk is not a match
+                        all_chunks_match = False
+                        break
 
-                    # If metadata keys are different but no value conflicts, update existing
+                    # Check if metadata needs updating
                     if set(metadata.keys()) != set(existing_meta.keys()):
-                        self.delete([existing_id])
+                        needs_update = True
+
+                    matched_ids.append(existing_id)
+
+                if all_chunks_match and matched_ids:
+                    if needs_update:
+                        # Delete all existing chunks and re-add with new metadata
+                        self.delete(matched_ids)
                         new_ids = await self.add(
                             [{"text": text, "metadata": metadata}],
-                            force_ids=[existing_id],
+                            force_ids=matched_ids,
                             situate=situate,
                         )
                         assigned_ids.extend(new_ids)
                     else:
-                        # Exact metadata match - reuse existing
-                        assigned_ids.append(existing_id)
-
-                    match_found = True
-                    break
-
-                if match_found:
+                        # All chunks have exact metadata match - reuse existing IDs
+                        assigned_ids.extend(matched_ids)
                     continue
 
-            # If no exact match, add as new item
+            # If no match or conflicts found, add as new item
             items_to_add.append(item)
 
         if items_to_add:
@@ -1311,7 +1325,9 @@ class DuckDBVectorStore(VectorStore):
         -------
         List of results with 'id', 'text', 'metadata', and 'similarity' score.
         """
+        log_debug(f"[DuckDBVectorStore.query] text={text!r}, top_k={top_k}, filters={filters}, threshold={threshold}")
         if not self._initialized:
+            log_debug("[DuckDBVectorStore.query] Not initialized, returning empty")
             return []
         query_embedding = np.array(
             (await self.embeddings.embed([text]))[0], dtype=np.float32
@@ -1339,6 +1355,9 @@ class DuckDBVectorStore(VectorStore):
 
         try:
             result = self.connection.execute(base_query, params).fetchall()
+            log_debug(f"[DuckDBVectorStore.query] Found {len(result)} results")
+            for i, row in enumerate(result[:10]):  # Log top 10 for debugging
+                log_debug(f"  [{i+1}] id={row[0]}, sim={row[3]:.4f}, meta={row[2]}, text_preview={row[1][:80]!r}...")
             return [
                 {
                     "id": row[0],
@@ -1461,7 +1480,7 @@ class DuckDBVectorStore(VectorStore):
             text = item["text"]
             metadata = item.get("metadata", {}) or {}
 
-            # Check for exact text match
+            # Check for exact text match (whole document stored as single entry)
             query = """
                 SELECT id, metadata
                 FROM documents
@@ -1474,49 +1493,63 @@ class DuckDBVectorStore(VectorStore):
             )
 
             # If no exact match, check for chunked text match
+            # Collect ALL matching chunk results
             if not result:
                 chunked_results = []
-                for chunk in self._chunk_text(text, self.chunk_size, self.chunk_func, **self.chunk_func_kwargs):
+                chunks = self._chunk_text(text, self.chunk_size, self.chunk_func, **self.chunk_func_kwargs)
+                for chunk in chunks:
                     chunk_results = await asyncio.to_thread(
                         self._execute_query, query, [chunk], fetchall=True
                     )
                     chunked_results.extend(chunk_results)
                 result = chunked_results
 
-            match_found = False
-            for row in result:
-                item_id = row[0]
-                existing_metadata = json.loads(row[1])
+            if result:
+                # Check metadata compatibility for ALL matching chunks
+                all_chunks_match = True
+                matched_ids = []
+                needs_update = False
 
-                # Check for metadata value conflicts
-                has_value_conflict = False
-                common_keys = set(metadata.keys()) & set(existing_metadata.keys())
-                for key in common_keys:
-                    if metadata[key] != existing_metadata[key]:
-                        has_value_conflict = True
+                for row in result:
+                    item_id = row[0]
+                    existing_metadata = json.loads(row[1])
+
+                    # Check for metadata value conflicts
+                    has_value_conflict = False
+                    common_keys = set(metadata.keys()) & set(existing_metadata.keys())
+                    for key in common_keys:
+                        if metadata[key] != existing_metadata[key]:
+                            has_value_conflict = True
+                            break
+
+                    if has_value_conflict:
+                        # If values conflict, this chunk is not a match
+                        all_chunks_match = False
                         break
 
-                if has_value_conflict:
-                    # If values conflict, try next match
+                    # Check if metadata needs updating
+                    if set(metadata.keys()) != set(existing_metadata.keys()):
+                        needs_update = True
+
+                    matched_ids.append(item_id)
+
+                if all_chunks_match and matched_ids:
+                    if needs_update:
+                        # Delete all existing chunks and re-add with new metadata
+                        self.delete(matched_ids)
+                        new_ids = await self.add(
+                            [{"text": text, "metadata": metadata}],
+                            force_ids=matched_ids,
+                            situate=situate,
+                        )
+                        assigned_ids.extend(new_ids)
+                    else:
+                        # All chunks have exact metadata match - reuse existing IDs
+                        assigned_ids.extend(matched_ids)
                     continue
 
-                # If metadata keys are different but no value conflicts, update existing
-                if set(metadata.keys()) != set(existing_metadata.keys()):
-                    self.delete([item_id])
-                    new_ids = await self.add(
-                        [{"text": text, "metadata": metadata}], force_ids=[item_id]
-                    )
-                    assigned_ids.extend(new_ids)
-                else:
-                    # Exact metadata match - reuse existing
-                    assigned_ids.append(item_id)
-
-                match_found = True
-                break
-
-            if not match_found:
-                # No exact text match, add as new
-                items_to_add.append(item)
+            # If no match or conflicts found, add as new item
+            items_to_add.append(item)
 
         if items_to_add:
             new_ids = await self.add(items_to_add, situate=situate)
