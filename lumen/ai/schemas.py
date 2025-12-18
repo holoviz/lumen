@@ -52,7 +52,7 @@ class Metaset:
     Contains:
     - catalog: Table discovery results (descriptions, columns, similarity)
     - schemas: Optional SQL schema data (types, enums, row counts)
-    - docs: Document chunks (already filtered by MetadataLookup based on disabled_docs)
+    - docs: Document chunks (already filtered by MetadataLookup based on visible_docs)
     """
 
     query: str | None

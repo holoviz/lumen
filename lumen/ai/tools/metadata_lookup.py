@@ -363,7 +363,7 @@ class MetadataLookup(VectorLookupTool):
 
         Includes docs that are:
         - Associated with at least one relevant table
-        - NOT explicitly disabled by user
+        - In the visible_docs set (if specified)
 
         Parameters
         ----------
@@ -380,11 +380,12 @@ class MetadataLookup(VectorLookupTool):
         all_doc_results = await doc_store.query(text="", top_k=1000, filters={"type": "document"})
         all_filenames = {r["metadata"]["filename"] for r in all_doc_results}
 
-        # Get explicitly disabled docs (unchecked by user)
-        disabled_docs = context.get("disabled_docs", set())
+        # Get visible docs (if specified, only include these; otherwise include all)
+        visible_docs = context.get("visible_docs")
 
-        # Filter out disabled docs first
-        all_filenames = all_filenames - disabled_docs
+        # Filter to only visible docs if specified
+        if visible_docs is not None:
+            all_filenames = all_filenames & visible_docs
 
         # Collect table-associated docs
         table_associated_docs = {}  # filename -> set of table slugs
@@ -407,12 +408,12 @@ class MetadataLookup(VectorLookupTool):
                 if relevant_tables is None or any(tbl in relevant_tables for tbl in table_associated_docs[filename]):
                     included_filenames.add(filename)
             # If NOT associated with any table, it might be newly uploaded
-            # Include it only if there are no disabled_docs tracking (backwards compat)
+            # Include it only if visible_docs is not set (backwards compat)
             # Once auto-association runs, it will be properly associated
-            elif not disabled_docs:
+            elif visible_docs is None:
                 included_filenames.add(filename)
 
-        log_debug(f"[_query_documents] query={query!r}, all={len(all_filenames)}, disabled={len(disabled_docs)}, included={len(included_filenames)}")
+        log_debug(f"[_query_documents] query={query!r}, all={len(all_filenames)}, visible={len(visible_docs) if visible_docs else 'all'}, included={len(included_filenames)}")
 
         if not included_filenames:
             return []
