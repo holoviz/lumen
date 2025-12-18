@@ -1083,8 +1083,6 @@ class SourceCatalog(Viewer):
             raise ValueError("SourceCatalog must be given a context dictionary.")
         if "source" in context and "sources" not in context:
             context["sources"] = [context["source"]]
-        if "visible_slugs" not in context:
-            context["visible_slugs"] = set()
 
         super().__init__(context=context, **params)
 
@@ -1235,7 +1233,7 @@ class SourceCatalog(Viewer):
         - Sources: If ALL their tables are in visible_slugs
         """
         active = []
-        visible_slugs = self.context.get("visible_slugs", set())
+        visible_slugs = self.context.get("visible_slugs")
         available_metadata = self._available_metadata
         meta_filenames = [m["filename"] for m in available_metadata]
 

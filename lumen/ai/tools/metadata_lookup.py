@@ -501,7 +501,7 @@ class MetadataLookup(VectorLookupTool):
             catalog[table_slug] = catalog_entry
 
         # If query contains an exact table name, mark it as max similarity
-        visible_slugs = context.get("visible_slugs", set())
+        visible_slugs = context.get("visible_slugs")
         tables_to_check = context["tables_metadata"]
         if visible_slugs:
             tables_to_check = {slug: data for slug, data in tables_to_check.items() if slug in visible_slugs}

@@ -744,7 +744,7 @@ class UI(Viewer):
             self.context["sources"] = old_sources + new_sources
 
             all_slugs = set()
-            for source in new_sources:
+            for source in new_sources or old_sources:  # initially populate from old sources
                 tables = source.get_tables()
                 for table in tables:
                     table_slug = f'{source.name}{SOURCE_TABLE_SEPARATOR}{table}'
@@ -752,14 +752,15 @@ class UI(Viewer):
 
             # Update visible_slugs, preserving existing visibility where possible
             # This ensures removed tables are filtered out, new tables are added
-            current_visible = self.context.get('visible_slugs', set())
+            current_visible = self.context.get("visible_slugs")
             if current_visible:
                 # Keep intersection of current visible and available slugs
                 # Plus add any new slugs that weren't previously available
-                self.context['visible_slugs'] = current_visible.intersection(all_slugs) | (all_slugs - current_visible)
+                self.context["visible_slugs"] = current_visible.intersection(all_slugs) | (all_slugs - current_visible)
             else:
                 # If no visible_slugs set, make all tables visible
-                self.context['visible_slugs'] = all_slugs
+                self.context["visible_slugs"] = all_slugs
+
         if "source" in context:
             if "source" in self.context:
                 old_source = self.context["source"]
