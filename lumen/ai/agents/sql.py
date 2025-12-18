@@ -1,4 +1,5 @@
 import asyncio
+import difflib
 import traceback
 
 from typing import (
@@ -87,59 +88,76 @@ class DistinctQuery(PartialBaseModel):
 
 
 class TableQuery(PartialBaseModel):
-    """Wildcard search across information_schema to discover tables and columns by pattern."""
+    """Wildcard search using native source metadata to discover tables and columns by pattern."""
 
     pattern: str = Field(description="Search pattern (e.g., 'revenue', 'customer')")
     scope: Literal["columns", "tables", "both"] = Field(
         default="both",
         description="Search scope: 'columns' for column names, 'tables' for table names, 'both' for either"
     )
-    # Note: query is generated dynamically via generate_sql()
-    query: SkipJsonSchema[str] = Field(default="", exclude=True)
 
-    def generate_sql(self, source: Source) -> str:
-        """Generate information_schema query based on scope and dialect."""
-        pattern_like = f"%{self.pattern}%"
+    def _match_string(self, pattern: str, target: str) -> float | None:
+        """Calculate match score for a pattern against a target string.
 
-        if self.scope == "columns":
-            return f"""
-                SELECT table_name, column_name
-                FROM information_schema.columns
-                WHERE column_name ILIKE '{pattern_like}'
-                ORDER BY table_name, column_name
-                LIMIT 20
-            """
-        elif self.scope == "tables":
-            return f"""
-                SELECT table_name, NULL as column_name
-                FROM information_schema.tables
-                WHERE table_name ILIKE '{pattern_like}'
-                AND table_schema NOT IN ('information_schema', 'pg_catalog')
-                ORDER BY table_name
-                LIMIT 20
-            """
-        else:  # both
-            return f"""
-                SELECT table_name, column_name
-                FROM information_schema.columns
-                WHERE column_name ILIKE '{pattern_like}'
-                   OR table_name ILIKE '{pattern_like}'
-                ORDER BY table_name, column_name
-                LIMIT 20
-            """
+        Returns:
+            Score from 0.0 to 1.0 if match is good enough, None otherwise.
+            1.0 = exact substring match, 0.6-0.99 = fuzzy match.
+        """
+        pattern_lower = pattern.lower()
+        target_lower = target.lower()
 
-    def format_result(self, df) -> str:
-        """Format query results for display."""
-        if df.empty:
+        # Exact substring match gets highest score
+        if pattern_lower in target_lower:
+            return 1.0
+
+        # Fuzzy match using SequenceMatcher
+        ratio = difflib.SequenceMatcher(None, pattern_lower, target_lower).ratio()
+        return ratio if ratio > 0.6 else None
+
+    def search_metadata(self, source: Source) -> list[tuple[str, str | None]]:
+        """Search tables and columns using native source metadata with fuzzy matching.
+
+        Returns:
+            List of (table_name, column_name) tuples sorted by match quality.
+            column_name is None for table matches.
+        """
+        matches = []  # List of (table, column, score)
+
+        # Get all tables and their metadata
+        tables = source.get_tables()
+        metadata = source._get_table_metadata(tables)
+
+        for table_name, table_meta in metadata.items():
+            # Check if table name matches
+            if self.scope in ("tables", "both"):
+                score = self._match_string(self.pattern, table_name)
+                if score is not None:
+                    matches.append((table_name, None, score))
+
+            # Check if any column names match
+            if self.scope in ("columns", "both") and "columns" in table_meta:
+                for col_name in table_meta["columns"].keys():
+                    score = self._match_string(self.pattern, col_name)
+                    if score is not None:
+                        matches.append((table_name, col_name, score))
+
+        # Sort by score (highest first) and limit to top 20
+        matches.sort(key=lambda x: x[2], reverse=True)
+        return [(table, col) for table, col, _ in matches[:20]]
+
+    def format_result(self, matches: list[tuple[str, str | None]]) -> str:
+        """Format search results for display."""
+        if not matches:
             return f" No matches found for pattern '{self.pattern}'"
 
-        matches = []
-        for _, row in df.head(20).iterrows():
-            if row.get('column_name') and row['column_name'] is not None:
-                matches.append(f"{row['table_name']}.{row['column_name']}")
+        formatted = []
+        for table_name, col_name in matches:
+            if col_name:
+                formatted.append(f"{table_name}.{col_name}")
             else:
-                matches.append(row['table_name'])
-        return f" `{matches}`"
+                formatted.append(table_name)
+
+        return f" `{formatted}`"
 
     def get_description(self) -> str:
         """Get query description for logging."""
@@ -609,15 +627,32 @@ class SQLAgent(BaseLumenAgent):
         sources: dict[tuple[str, str], Source],
     ) -> tuple[str, str]:
         """Execute a single discovery query and return formatted result."""
-        # Get the appropriate source
         if isinstance(query_model, TableQuery):
-            # TableQuery uses any available source for information_schema access
-            source = next(iter(sources.values()))
-        else:
-            # SampleQuery/DistinctQuery use the specific table's source
-            source = sources[(query_model.slug.source, query_model.slug.table)]
+            # TableQuery searches ALL unique sources using native metadata
+            unique_sources = {}
+            for (source_name, _), source in sources.items():
+                if source_name not in unique_sources:
+                    unique_sources[source_name] = source
 
-        # Generate SQL and get description
+            # Search metadata in all sources in parallel
+            tasks = [
+                asyncio.create_task(
+                    self._execute_table_query_on_source(query_model, source_name, source)
+                )
+                for source_name, source in unique_sources.items()
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # Combine non-empty results
+            combined_results = []
+            for source_name, result in zip(unique_sources.keys(), results, strict=False):
+                if isinstance(result, Exception):
+                    continue  # Skip failed sources
+                if result and "No matches" not in result:
+                    combined_results.append(f"`{source_name}`: {result}")
+            return query_model.get_description(), "\n".join(combined_results)
+
+        # SampleQuery/DistinctQuery use the specific table's source
+        source = sources[(query_model.slug.source, query_model.slug.table)]
         sql = query_model.generate_sql(source)
         query_type = query_model.get_description()
 
@@ -630,6 +665,20 @@ class SQLAgent(BaseLumenAgent):
         # Format results
         result = query_model.format_result(df)
         return query_type, result
+
+    async def _execute_table_query_on_source(
+        self,
+        query_model: TableQuery,
+        source_name: str,
+        source: Source,
+    ) -> str:
+        """Execute TableQuery on a single source using native metadata."""
+        try:
+            matches = query_model.search_metadata(source)
+            return query_model.format_result(matches)
+        except Exception:
+            # Some sources might not support metadata retrieval
+            return ""
 
     async def _run_discoveries_parallel(
         self,
