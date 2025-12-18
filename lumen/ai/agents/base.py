@@ -41,7 +41,7 @@ class Agent(Viewer, ToolUser, ContextProvider):
         The name of the user that will be respond to the user query.""")
 
     # Panel extensions this agent requires to be loaded
-    _extensions = ('filedropper',)
+    _extensions = ()
 
     # Maximum width of the output
     _max_width = 1200

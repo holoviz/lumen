@@ -957,14 +957,14 @@ class UI(Viewer):
     def _create_view(self, server: bool = False):
         if server:
             panel_extension(
-                *{ext for agent in self._coordinator.agents for ext in agent._extensions}
+                *{ext for agent in self._coordinator.agents for ext in agent._extensions} | {"filedropper"}
             )
             return self._page
         return super()._create_view()
 
     def _repr_mimebundle_(self, include=None, exclude=None):
         panel_extension(
-            *{ext for agent in self._coordinator.agents for ext in agent._extensions}, notifications=True
+            *{ext for agent in self._coordinator.agents for ext in agent._extensions} | {"filedropper"}, notifications=True
         )
         return self._create_view()._repr_mimebundle_(include, exclude)
 
