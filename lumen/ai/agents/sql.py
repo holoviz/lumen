@@ -41,6 +41,19 @@ class SampleQuery(PartialBaseModel):
 
     query: SkipJsonSchema[str] = Field(default="SELECT * FROM {slug[table]} LIMIT 5")
 
+    def generate_sql(self, source: Source) -> str:
+        """Generate SQL for this query type."""
+        format_kwargs = self.dict(exclude={'query'})
+        return self.query.format(**format_kwargs)
+
+    def format_result(self, df) -> str:
+        """Format query results for display."""
+        return f"\n```\n{df.head().to_string(max_cols=10)}\n```"
+
+    def get_description(self) -> str:
+        """Get query description for logging."""
+        return f"Sample from {self.slug.table}"
+
 
 class DistinctQuery(PartialBaseModel):
     """Universal column analysis with optional pattern matching - handles join keys, categories, date ranges."""
@@ -59,6 +72,19 @@ class DistinctQuery(PartialBaseModel):
             # Pattern provided - use ILIKE for case-insensitive partial matching
             self.query = "SELECT DISTINCT {column} FROM {slug[table]} WHERE {column} ILIKE '%{pattern}%' LIMIT 10 OFFSET {offset}"
 
+    def generate_sql(self, source: Source) -> str:
+        """Generate SQL for this query type."""
+        format_kwargs = self.dict(exclude={'query'})
+        return self.query.format(**format_kwargs)
+
+    def format_result(self, df) -> str:
+        """Format query results for display."""
+        return f" `{df.iloc[:10, 0].tolist()}`"
+
+    def get_description(self) -> str:
+        """Get query description for logging."""
+        return f"Distinct values from {self.slug.table!r} table column {self.column!r}"
+
 
 class TableQuery(PartialBaseModel):
     """Wildcard search across information_schema to discover tables and columns by pattern."""
@@ -68,8 +94,10 @@ class TableQuery(PartialBaseModel):
         default="both",
         description="Search scope: 'columns' for column names, 'tables' for table names, 'both' for either"
     )
+    # Note: query is generated dynamically via generate_sql()
+    query: SkipJsonSchema[str] = Field(default="", exclude=True)
 
-    def generate_query(self, dialect: str = "duckdb") -> str:
+    def generate_sql(self, source: Source) -> str:
         """Generate information_schema query based on scope and dialect."""
         pattern_like = f"%{self.pattern}%"
 
@@ -99,6 +127,23 @@ class TableQuery(PartialBaseModel):
                 ORDER BY table_name, column_name
                 LIMIT 20
             """
+
+    def format_result(self, df) -> str:
+        """Format query results for display."""
+        if df.empty:
+            return f" No matches found for pattern '{self.pattern}'"
+
+        matches = []
+        for _, row in df.head(20).iterrows():
+            if row.get('column_name') and row['column_name'] is not None:
+                matches.append(f"{row['table_name']}.{row['column_name']}")
+            else:
+                matches.append(row['table_name'])
+        return f" `{matches}`"
+
+    def get_description(self) -> str:
+        """Get query description for logging."""
+        return f"Wildcard search for '{self.pattern}' in {self.scope}"
 
 
 def make_discovery_model(sources: list[tuple[str, str]]):
@@ -564,46 +609,26 @@ class SQLAgent(BaseLumenAgent):
         sources: dict[tuple[str, str], Source],
     ) -> tuple[str, str]:
         """Execute a single discovery query and return formatted result."""
+        # Get the appropriate source
         if isinstance(query_model, TableQuery):
-            # TableQuery searches across information_schema
-            query_type = f"Wildcard search for '{query_model.pattern}' in {query_model.scope}"
-            # Use the first available source for information_schema query
+            # TableQuery uses any available source for information_schema access
             source = next(iter(sources.values()))
-            sql = query_model.generate_query(dialect=source.dialect)
-            try:
-                df = source.execute(sql)
-                if df.empty:
-                    result = f" No matches found for pattern '{query_model.pattern}'"
-                else:
-                    # Format results as table_name (column_name) list
-                    matches = []
-                    for _, row in df.head(20).iterrows():
-                        if row.get('column_name') and row['column_name'] is not None:
-                            matches.append(f"{row['table_name']}.{row['column_name']}")
-                        else:
-                            matches.append(row['table_name'])
-                    result = f" `{matches}`"
-            except Exception as e:
-                return query_type, f"Error: {e}"
-            return query_type, result
+        else:
+            # SampleQuery/DistinctQuery use the specific table's source
+            source = sources[(query_model.slug.source, query_model.slug.table)]
 
-        # Handle SampleQuery and DistinctQuery (existing code)
-        format_kwargs = query_model.dict(exclude={'query'})
-        sql = query_model.query.format(**format_kwargs)
-        table = query_model.slug.table
-        source = sources[(query_model.slug.source, table)]
-        if isinstance(query_model, SampleQuery):
-            query_type = f"Sample from {table}"
-        elif isinstance(query_model, DistinctQuery):
-            query_type = f"Distinct values from {table!r} table column {query_model.column!r}"
+        # Generate SQL and get description
+        sql = query_model.generate_sql(source)
+        query_type = query_model.get_description()
+
+        # Execute query
         try:
             df = source.execute(sql)
         except Exception as e:
             return f"Discovery query {query_type[0].lower()}{query_type[1:]} failed", str(e)
-        if isinstance(query_model, SampleQuery):
-            result = f"\n```\n{df.head().to_string(max_cols=10)}\n```"
-        else:
-            result = f" `{df.iloc[:10, 0].tolist()}`"
+
+        # Format results
+        result = query_model.format_result(df)
         return query_type, result
 
     async def _run_discoveries_parallel(
