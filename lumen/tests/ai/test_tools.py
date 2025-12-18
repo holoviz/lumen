@@ -6,7 +6,7 @@ except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
 from lumen.ai.coordinator import Coordinator
-from lumen.ai.tools import FunctionTool, IterativeTableLookup, MetadataLookup
+from lumen.ai.tools import FunctionTool, MetadataLookup
 from lumen.ai.vector_store import NumpyVectorStore
 
 
@@ -52,12 +52,12 @@ async def test_function_tool_provides():
 
 class TestVectorLookupToolUser:
     async def test_inherit_vector_store_uninstantiated(self):
-        coordinator = Coordinator(tools=[MetadataLookup, IterativeTableLookup])
+        coordinator = Coordinator(tools=[MetadataLookup])
         table_tool = coordinator._tools["main"][0]
         table_vector_store = table_tool.vector_store
         assert isinstance(table_tool, MetadataLookup)
         iterative_table_tool = coordinator._tools["main"][1]
-        assert isinstance(iterative_table_tool, IterativeTableLookup)
+        assert isinstance(iterative_table_tool)
         assert id(table_vector_store) == id(iterative_table_tool.vector_store)
 
     async def test_inherit_vector_store_all_tools_instantiated(self):
@@ -70,7 +70,6 @@ class TestVectorLookupToolUser:
         coordinator = Coordinator(
             tools=[
                 MetadataLookup(vector_store=vs1),
-                IterativeTableLookup(vector_store=vs2),
             ]
         )
 
@@ -80,13 +79,12 @@ class TestVectorLookupToolUser:
 
         # Verify they're the correct types
         assert isinstance(table_tool, MetadataLookup)
-        assert isinstance(iterative_table_tool, IterativeTableLookup)
 
         # Each tool should have its own vector store that was passed in
         assert id(table_tool.vector_store) == id(vs1)
         assert id(iterative_table_tool.vector_store) == id(vs2)
 
-        # Verify that MetadataLookup and IterativeTableLookup have different vector stores
+        # Verify that MetadataLookup have different vector stores
         # since they were explicitly created with different instances
         assert id(table_tool.vector_store) != id(iterative_table_tool.vector_store)
 
@@ -95,7 +93,7 @@ class TestVectorLookupToolUser:
         shared_vs = NumpyVectorStore()
 
         # Create coordinator with shared vector store and uninstantiated tools
-        coordinator = Coordinator(vector_store=shared_vs, tools=[MetadataLookup, IterativeTableLookup])
+        coordinator = Coordinator(vector_store=shared_vs, tools=[MetadataLookup])
 
         # Get the tools
         table_tool = coordinator._tools["main"][0]
@@ -103,35 +101,7 @@ class TestVectorLookupToolUser:
 
         # Verify they're the correct types
         assert isinstance(table_tool, MetadataLookup)
-        assert isinstance(iterative_table_tool, IterativeTableLookup)
 
         # All tools should use the shared vector store from the coordinator
         assert id(table_tool.vector_store) == id(shared_vs)
         assert id(iterative_table_tool.vector_store) == id(shared_vs)
-
-    async def test_inherit_vector_store_some_tools_instantiated(self):
-        # Create a vector store for the first tool
-        table_vs = NumpyVectorStore()
-
-        # Mix of instantiated and uninstantiated tools
-        coordinator = Coordinator(
-            tools=[
-                MetadataLookup(vector_store=table_vs),  # Explicitly instantiated with vector_store
-                IterativeTableLookup,  # Uninstantiated, should inherit from MetadataLookup
-            ]
-        )
-
-        # Get the tools
-        table_tool = coordinator._tools["main"][0]
-        iterative_table_tool = coordinator._tools["main"][1]
-
-        # Verify they're the correct types
-        assert isinstance(table_tool, MetadataLookup)
-        assert isinstance(iterative_table_tool, IterativeTableLookup)
-
-        # The first tool should use the explicitly provided vector store
-        assert id(table_tool.vector_store) == id(table_vs)
-
-        # IterativeTableLookup should inherit vector store from MetadataLookup
-        # because they have the same _item_type_name
-        assert id(iterative_table_tool.vector_store) == id(table_tool.vector_store)

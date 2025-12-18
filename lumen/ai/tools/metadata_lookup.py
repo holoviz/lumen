@@ -51,7 +51,7 @@ class MetadataLookup(VectorLookupTool):
 
     exclusions = param.List(default=["dbtsl_metaset"])
 
-    not_with = param.List(default=["IterativeTableLookup"])
+    not_with = param.List(default=[])
 
     purpose = param.String(
         default="""

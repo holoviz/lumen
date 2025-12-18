@@ -204,6 +204,7 @@ class Metaset:
         n: int | None = None,
         offset: int = 0,
         show_source: bool = False,
+        n_others: int = 0,
     ) -> str:
         sorted_slugs = self.get_top_tables(n, offset)
 
@@ -234,6 +235,17 @@ class Metaset:
                 result = yaml.dump(list(tables_data.keys()), default_flow_style=False, allow_unicode=True)
             else:
                 result = yaml.dump(tables_data, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+        # Add other tables section
+        if n_others > 0:
+            other_slugs = self.get_top_tables(n=n_others, offset=len(sorted_slugs))
+            if other_slugs:
+                result += "\n\nOther available:\n"
+                for slug in other_slugs:
+                    display_slug = slug
+                    if single_source and not show_source and SOURCE_TABLE_SEPARATOR in slug:
+                        display_slug = slug.split(SOURCE_TABLE_SEPARATOR, 1)[1]
+                    result += f"- {display_slug}\n"
 
         # Add docs section
         if include_docs:
@@ -271,18 +283,18 @@ class Metaset:
             sorted_slugs = sorted_slugs[:n]
         return sorted_slugs
 
-    def table_list(self, n: int | None = None, offset: int = 0, show_source: bool = False) -> str:
+    def table_list(self, n: int | None = None, offset: int = 0, show_source: bool = False, n_others: int = 0) -> str:
         """Generate minimal table listing for planning - no SQL expressions, but includes document chunks if present."""
-        return self._generate_context(include_columns=False, truncate=False, include_sql=False, include_docs=True, n=n, offset=offset, show_source=show_source)
+        return self._generate_context(include_columns=False, truncate=False, include_sql=False, include_docs=True, n=n, offset=offset, show_source=show_source, n_others=n_others)
 
-    def table_context(self, n: int | None = None, offset: int = 0, show_source: bool = True) -> str:
-        return self._generate_context(include_columns=False, truncate=False, n=n, offset=offset, show_source=show_source)
+    def table_context(self, n: int | None = None, offset: int = 0, show_source: bool = True, n_others: int = 0) -> str:
+        return self._generate_context(include_columns=False, truncate=False, n=n, offset=offset, show_source=show_source, n_others=n_others)
 
-    def full_context(self, n: int | None = None, offset: int = 0, show_source: bool = True) -> str:
-        return self._generate_context(include_columns=True, truncate=False, n=n, offset=offset, show_source=show_source)
+    def full_context(self, n: int | None = None, offset: int = 0, show_source: bool = True, n_others: int = 0) -> str:
+        return self._generate_context(include_columns=True, truncate=False, n=n, offset=offset, show_source=show_source, n_others=n_others)
 
-    def compact_context(self, n: int | None = None, offset: int = 0, show_source: bool = True) -> str:
-        return self._generate_context(include_columns=True, truncate=True, n=n, offset=offset, show_source=show_source)
+    def compact_context(self, n: int | None = None, offset: int = 0, show_source: bool = True, n_others: int = 0) -> str:
+        return self._generate_context(include_columns=True, truncate=True, n=n, offset=offset, show_source=show_source, n_others=n_others)
 
     def __str__(self) -> str:
         return self.table_context()

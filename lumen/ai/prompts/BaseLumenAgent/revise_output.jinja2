@@ -20,7 +20,8 @@ Your response should contain ONLY the corrected code with no additional text.
 {%- block context %}
 {% if memory.get("metaset") %}
 Available schema context:
-{{ memory["metaset"].compact_context(5) }}
+{# TODO: THIS SHOULD ONLY SUBSET THE PIPELINE TABLE #}
+{{ memory["metaset"].compact_context(3) }}
 {% endif %}
 
 {% if language %}

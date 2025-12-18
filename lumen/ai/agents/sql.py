@@ -60,6 +60,47 @@ class DistinctQuery(PartialBaseModel):
             self.query = "SELECT DISTINCT {column} FROM {slug[table]} WHERE {column} ILIKE '%{pattern}%' LIMIT 10 OFFSET {offset}"
 
 
+class TableQuery(PartialBaseModel):
+    """Wildcard search across information_schema to discover tables and columns by pattern."""
+
+    pattern: str = Field(description="Search pattern (e.g., 'revenue', 'customer')")
+    scope: Literal["columns", "tables", "both"] = Field(
+        default="both",
+        description="Search scope: 'columns' for column names, 'tables' for table names, 'both' for either"
+    )
+
+    def generate_query(self, dialect: str = "duckdb") -> str:
+        """Generate information_schema query based on scope and dialect."""
+        pattern_like = f"%{self.pattern}%"
+
+        if self.scope == "columns":
+            return f"""
+                SELECT table_name, column_name
+                FROM information_schema.columns
+                WHERE column_name ILIKE '{pattern_like}'
+                ORDER BY table_name, column_name
+                LIMIT 20
+            """
+        elif self.scope == "tables":
+            return f"""
+                SELECT table_name, NULL as column_name
+                FROM information_schema.tables
+                WHERE table_name ILIKE '{pattern_like}'
+                AND table_schema NOT IN ('information_schema', 'pg_catalog')
+                ORDER BY table_name
+                LIMIT 20
+            """
+        else:  # both
+            return f"""
+                SELECT table_name, column_name
+                FROM information_schema.columns
+                WHERE column_name ILIKE '{pattern_like}'
+                   OR table_name ILIKE '{pattern_like}'
+                ORDER BY table_name, column_name
+                LIMIT 20
+            """
+
+
 def make_discovery_model(sources: list[tuple[str, str]]):
 
     SourceTable = make_source_table(sources)
@@ -84,8 +125,8 @@ def make_discovery_model(sources: list[tuple[str, str]]):
         """LLM selects 2-4 essential discoveries using the core toolkit."""
 
         reasoning: str = Field(description="Brief discovery strategy")
-        queries: list[SampleQueryLiteral | DistinctQueryLiteral] = Field(
-            description="Choose 2-4 discovery queries from the Essential Three toolkit"
+        queries: list[SampleQueryLiteral | DistinctQueryLiteral | TableQuery] = Field(
+            description="Choose 2-4 discovery queries. Use SampleQuery/DistinctQuery for known tables, TableQuery for wildcard searches."
         )
 
     class DiscoverySufficiency(PartialBaseModel):
@@ -95,9 +136,9 @@ def make_discovery_model(sources: list[tuple[str, str]]):
 
         sufficient: bool = Field(description="True if discoveries provide enough context to fix the error")
 
-        follow_up_needed: list[SampleQueryLiteral | DistinctQueryLiteral] = Field(
+        follow_up_needed: list[SampleQueryLiteral | DistinctQueryLiteral | TableQuery] = Field(
             default_factory=list,
-            description="If insufficient, specify 1-3 follow-up discoveries (e.g., OFFSET for more values)"
+            description="If insufficient, specify 1-3 follow-up discoveries (e.g., OFFSET for more values, or TableQuery for wildcards)"
         )
 
     return DiscoveryQueries, DiscoverySufficiency
@@ -223,7 +264,7 @@ class SQLAgent(BaseLumenAgent):
         # Ensure schemas are loaded for top tables before rendering
         if "metaset" in context:
             metaset = context["metaset"]
-            top_tables = metaset.get_top_tables(n=5)
+            top_tables = metaset.get_top_tables(n=3)
             await metaset.ensure_schemas(top_tables)
 
         return prompt_context
@@ -277,7 +318,8 @@ class SQLAgent(BaseLumenAgent):
     ) -> tuple[Pipeline, Source, str]:
         """Execute SQL query and return pipeline and summary."""
         # Create SQL source
-        table_defs = {table: source.tables[table] for table in tables if table in source.tables}
+        source_tables = source.tables if source.tables is not None else {}
+        table_defs = {table: source_tables[table] for table in tables if table in source_tables}
         table_defs[expr_slug] = sql_query
 
         # Only pass materialize parameter for DuckDB sources
@@ -518,11 +560,34 @@ class SQLAgent(BaseLumenAgent):
 
     async def _execute_discovery_query(
         self,
-        query_model: SampleQuery | DistinctQuery,
+        query_model: SampleQuery | DistinctQuery | TableQuery,
         sources: dict[tuple[str, str], Source],
     ) -> tuple[str, str]:
         """Execute a single discovery query and return formatted result."""
-        # Generate the actual SQL
+        if isinstance(query_model, TableQuery):
+            # TableQuery searches across information_schema
+            query_type = f"Wildcard search for '{query_model.pattern}' in {query_model.scope}"
+            # Use the first available source for information_schema query
+            source = next(iter(sources.values()))
+            sql = query_model.generate_query(dialect=source.dialect)
+            try:
+                df = source.execute(sql)
+                if df.empty:
+                    result = f" No matches found for pattern '{query_model.pattern}'"
+                else:
+                    # Format results as table_name (column_name) list
+                    matches = []
+                    for _, row in df.head(20).iterrows():
+                        if row.get('column_name') and row['column_name'] is not None:
+                            matches.append(f"{row['table_name']}.{row['column_name']}")
+                        else:
+                            matches.append(row['table_name'])
+                    result = f" `{matches}`"
+            except Exception as e:
+                return query_type, f"Error: {e}"
+            return query_type, result
+
+        # Handle SampleQuery and DistinctQuery (existing code)
         format_kwargs = query_model.dict(exclude={'query'})
         sql = query_model.query.format(**format_kwargs)
         table = query_model.slug.table
@@ -543,7 +608,7 @@ class SQLAgent(BaseLumenAgent):
 
     async def _run_discoveries_parallel(
         self,
-        discovery_queries: list[SampleQuery | DistinctQuery],
+        discovery_queries: list[SampleQuery | DistinctQuery | TableQuery],
         sources: dict[tuple[str, str], Source],
     ) -> list[str]:
         """Execute all discoveries concurrently and stream results as they complete."""

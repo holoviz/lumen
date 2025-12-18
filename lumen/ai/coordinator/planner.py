@@ -140,10 +140,6 @@ class Planner(Coordinator):
     def _initialize_planner_tools(self, planner_tools_input: list, **params) -> list:
         """
         Initialize planner tools, reusing instances from _tools["main"] where possible.
-
-        This ensures that MetadataLookup and IterativeTableLookup share the same instances
-        between planner_tools and _tools["main"], so they share the same vector store
-        and state.
         """
         # Build a mapping of tool types to instances from _tools["main"]
         main_tools_by_type = {}
