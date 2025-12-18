@@ -7,6 +7,8 @@ site_dir = "builtdocs"
 repo_url = "https://github.com/holoviz/lumen"
 repo_name = "holoviz/lumen"
 edit_uri = "edit/main/docs/"
+extra_css = ["assets/extra.css"]
+extra_javascript = ["assets/extra.js"]
 nav = [
   {"Home" = "index.md"},
   {"Quick Start" = "quick_start.md"},
@@ -44,23 +46,37 @@ nav = [
       {"Deployment" = "configuration/spec/deployment.md"}
     ]}
   ]},
-  {"Tutorials" = [
+  {"Examples" = [
+    {"Tutorials" = [
       {"Overview" = "examples/tutorials/index.md"},
       {"Weather Data AI Explorer" = "examples/tutorials/weather_data_ai_explorer.md"},
       {"Penguins Dashboard Spec" = "examples/tutorials/penguins_dashboard_spec.md"}
+    ]},
+    {"Gallery" = [
+      {"Overview" = "examples/gallery/index.md"},
+      {"Penguins" = "examples/gallery/penguins.md"},
+      {"London Bike Points" = "examples/gallery/bikes.md"},
+      {"Seattle Weather" = "examples/gallery/seattle.md"},
+      {"NYC Taxi" = "examples/gallery/nyc_taxi.md"},
+      {"Precipitation" = "examples/gallery/precip.md"},
+      {"Earthquakes" = "examples/gallery/earthquakes.md"},
+      {"Wind Turbines" = "examples/gallery/windturbines.md"}
+    ]}
   ]},
   {"Reference" = [
-    {"Gallery" = [
-        {"Overview" = "examples/gallery/index.md"},
-        {"Penguins" = "examples/gallery/penguins.md"},
-        {"London Bike Points" = "examples/gallery/bikes.md"},
-        {"Seattle Weather" = "examples/gallery/seattle.md"},
-        {"NYC Taxi" = "examples/gallery/nyc_taxi.md"},
-        {"Precipitation" = "examples/gallery/precip.md"},
-        {"Earthquakes" = "examples/gallery/earthquakes.md"},
-        {"Wind Turbines" = "examples/gallery/windturbines.md"}
+    {"API" = [
+      {"AI" = [
+        {"Agents" = "reference/api/ai/agents.md"},
+        {"Coordinator" = "reference/api/ai/coordinator.md"},
+        {"Models" = "reference/api/ai/models.md"},
+        {"Tools" = "reference/api/ai/tools.md"},
+        {"Core" = "reference/api/ai/core.md"}
+      ]},
+      {"Pipeline" = "reference/api/pipeline.md"},
+      {"Sources" = "reference/api/sources.md"},
+      {"Transforms" = "reference/api/transforms.md"},
+      {"Views" = "reference/api/views.md"}
     ]},
-    {"API" = "reference/api/"},
     {"Contributing" = "reference/contributing.md"}
   ]}
 ]
@@ -70,22 +86,26 @@ nav = [
 variant = "modern"  # Use "classic" if you want the Material for MkDocs look
 logo = "assets/logo.svg"
 favicon = "assets/favicon.ico"
-
-# Theme features
-[project.theme.features]
-announce_dismiss = true
-content_action_edit = true
-content_action_view = true
-content_code_annotate = true
-content_code_copy = true
-content_tooltips = true
-navigation_footer = true
-navigation_indexes = true
-navigation_sections = true
-navigation_top = true
-search_highlight = true
-search_suggest = true
-toc_follow = true
+features = [
+  "announce.dismiss",
+  "content.action.edit",
+  "content.action.view",
+  "content.code.annotate",
+  "content.code.copy",
+  "content.tooltips",
+  "navigation.footer",
+  "navigation.indexes",
+  "navigation.instant",
+  "navigation.instant.prefetch",
+  "navigation.instant.progress",
+  "navigation.sections",
+  "navigation.top",
+  "navigation.tracking",
+  "search.highlight",
+  "search.share",
+  "search.suggest",
+  "toc.follow"
+]
 
 # Color palette
 [[project.theme.palette]]
@@ -151,11 +171,13 @@ search = {}
 typeset = {}
 literate_nav = {}
 
-[project.plugins.mkdocstrings]
-handlers.python.paths = ["."]
-handlers.python.options.docstring_style = "numpy"
-handlers.python.options.show_if_no_docstring = true
-handlers.python.options.filters = ["!^_"]
+[project.plugins.mkdocstrings.handlers.python]
+paths = ["."]
+
+[project.plugins.mkdocstrings.handlers.python.options]
+docstring_style = "numpy"
+show_if_no_docstring = true
+filters = ["!^_"]
 
 # Extra configuration
 [project.extra]
@@ -179,7 +201,3 @@ link = "https://twitter.com/holoviz_org"
 [[project.extra.social]]
 icon = "fontawesome/brands/python"
 link = "https://pypi.org/project/lumen/"
-
-# Custom CSS and JavaScript
-extra_css = ["assets/extra.css"]
-extra_javascript = ["assets/extra.js"]

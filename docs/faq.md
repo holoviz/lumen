@@ -63,7 +63,7 @@ ui = lmai.ExplorerUI(data=source)
 ui.servable()
 ```
 
-## I launched the UI, but it is only displaying a loading indicator, what am I missing?
+## I launched the UI, but it only shows a loading indicator?
 
 Make sure to call `.servable()` on the UI object to make it available in a server context:
 
