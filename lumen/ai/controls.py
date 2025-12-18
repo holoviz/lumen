@@ -1075,6 +1075,9 @@ class SourceCatalog(Viewer):
         The vector store to sync metadata documents to. If not provided,
         metadata files will only be stored locally.""")
 
+    visibility_changed = param.Event(doc="""
+        Triggered when table or document visibility changes.""")
+
     def __init__(self, /, context: TContext | None = None, **params):
         if context is None:
             raise ValueError("SourceCatalog must be given a context dictionary.")
@@ -1324,6 +1327,9 @@ class SourceCatalog(Viewer):
         # Re-sync the docs tree to reflect changes in doc associations
         self._sync_docs_tree()
 
+        # Trigger visibility changed event to rebuild metaset
+        self.param.trigger('visibility_changed')
+
     def _update_table_visibility(self, path: tuple, info: dict, active_paths: set):
         """Update table visibility based on checkbox state."""
         source = info["source"]
@@ -1364,15 +1370,24 @@ class SourceCatalog(Viewer):
         active_indices = {path[0] for path in event.new if len(path) == 1}
         sources = self.sources or self.context.get("sources", [])
 
+        # Track visible docs in context (mirrors visible_slugs pattern)
+        if "visible_docs" not in self.context:
+            self.context["visible_docs"] = set()
+
         for idx, filename in self._docs_path_map.items():
             is_active = idx in active_indices
             if is_active:
                 self._associate_doc_with_all_tables(filename, sources)
+                self.context["visible_docs"].add(filename)
             else:
                 self._remove_doc_from_all_tables(filename, sources)
+                self.context["visible_docs"].discard(filename)
 
         # Re-sync the sources tree to reflect the updated associations
         self._sync_sources_tree_only()
+
+        # Trigger visibility changed event to rebuild metaset
+        self.param.trigger('visibility_changed')
 
     def _associate_doc_with_all_tables(self, filename: str, sources: list):
         """Associate doc with all tables."""
@@ -1522,13 +1537,17 @@ class SourceCatalog(Viewer):
 
     def _auto_associate_unassociated_metadata(self, sources: list):
         """Automatically associate metadata files that aren't yet associated with any table.
-        Also marks tables as visible on initial upload."""
+        Also marks tables as visible on initial upload and initializes visible_docs."""
         meta_filenames = [m["filename"] for m in self._available_metadata]
         associated = self._collect_associated_metadata(sources)
         unassociated = set(meta_filenames) - associated
 
         if not unassociated:
             return
+
+        # Initialize visible_docs if not present
+        if "visible_docs" not in self.context:
+            self.context["visible_docs"] = set()
 
         # Associate with all tables and mark them as visible
         for source in sources:
@@ -1544,6 +1563,10 @@ class SourceCatalog(Viewer):
 
                 # Mark table as visible (only happens on initial upload)
                 self.context["visible_slugs"].add(table_slug)
+
+        # Mark unassociated docs as visible (they're being auto-associated)
+        for meta_filename in unassociated:
+            self.context["visible_docs"].add(meta_filename)
 
         # Sync to vector store once per document (not once per table)
         for meta_filename in unassociated:

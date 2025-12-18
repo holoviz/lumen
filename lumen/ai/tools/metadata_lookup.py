@@ -154,13 +154,13 @@ class MetadataLookup(VectorLookupTool):
         str
             Formatted description of table results
         """
-        visible_slugs = context.get("visible_slugs", set())
+        visible_slugs = context.get("visible_slugs")
         formatted_results = []
         for result in results:
             source_name = result["metadata"].get("source", "unknown")
             table_name = result["metadata"].get("table_name", "unknown")
             table_slug = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
-            if visible_slugs and table_slug not in visible_slugs:
+            if visible_slugs is not None and table_slug not in visible_slugs:
                 continue
 
             text = result["text"]
@@ -362,8 +362,8 @@ class MetadataLookup(VectorLookupTool):
         Query the vector store for relevant document chunks.
 
         Includes docs that are:
-        - NOT associated with any table: Always included
-        - Associated with tables: Only if their table is in relevant_tables
+        - Associated with at least one relevant table
+        - NOT explicitly disabled by user
 
         Parameters
         ----------
@@ -380,6 +380,12 @@ class MetadataLookup(VectorLookupTool):
         all_doc_results = await doc_store.query(text="", top_k=1000, filters={"type": "document"})
         all_filenames = {r["metadata"]["filename"] for r in all_doc_results}
 
+        # Get explicitly disabled docs (unchecked by user)
+        disabled_docs = context.get("disabled_docs", set())
+
+        # Filter out disabled docs first
+        all_filenames = all_filenames - disabled_docs
+
         # Collect table-associated docs
         table_associated_docs = {}  # filename -> set of table slugs
         sources = context.get("sources", [])
@@ -393,17 +399,20 @@ class MetadataLookup(VectorLookupTool):
                                 table_associated_docs[doc_filename] = set()
                             table_associated_docs[doc_filename].add(table_slug)
 
-        # Filter filenames
+        # Filter filenames - include only docs associated with relevant tables
         included_filenames = set()
         for filename in all_filenames:
-            # Include if NOT table-associated (global doc)
-            if filename not in table_associated_docs:
-                included_filenames.add(filename)
-            # Include if table-associated and table is relevant
-            elif relevant_tables is None or any(tbl in relevant_tables for tbl in table_associated_docs[filename]):
+            if filename in table_associated_docs:
+                # Include if table-associated and at least one table is relevant
+                if relevant_tables is None or any(tbl in relevant_tables for tbl in table_associated_docs[filename]):
+                    included_filenames.add(filename)
+            # If NOT associated with any table, it might be newly uploaded
+            # Include it only if there are no disabled_docs tracking (backwards compat)
+            # Once auto-association runs, it will be properly associated
+            elif not disabled_docs:
                 included_filenames.add(filename)
 
-        log_debug(f"[_query_documents] query={query!r}, all={len(all_filenames)}, table_assoc={len(table_associated_docs)}, included={len(included_filenames)}")
+        log_debug(f"[_query_documents] query={query!r}, all={len(all_filenames)}, disabled={len(disabled_docs)}, included={len(included_filenames)}")
 
         if not included_filenames:
             return []
@@ -460,8 +469,8 @@ class MetadataLookup(VectorLookupTool):
             table_slug = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
             similarity_score = result["similarity"]
             # Filter by visible_slugs if specified
-            visible_slugs = context.get("visible_slugs", set())
-            if visible_slugs and table_slug not in visible_slugs:
+            visible_slugs = context.get("visible_slugs")
+            if visible_slugs is not None and table_slug not in visible_slugs:
                 continue
 
             if any_matches and result["similarity"] < self.min_similarity and not same_table:

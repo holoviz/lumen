@@ -134,21 +134,51 @@ class IterativeTableLookup(MetadataLookup):
         Update metaset when visible_slugs changes.
         This ensures SQL operations only work with visible tables by regenerating
         the metaset using get_metaset.
-        """
-        slugs = context.get("visible_slugs", set())
 
-        # If no visible slugs or no sources, clear metaset
-        if not slugs or not context.get("sources"):
+        Note: docs are cleared so they get re-queried on next actual query,
+        ensuring disabled_docs filtering is applied.
+        """
+        # Use None as sentinel to distinguish "not set" from "empty set"
+        slugs = context.get("visible_slugs")  # None if not set, set() if explicitly empty
+
+        # Clear table-related context if the current table is no longer visible
+        current_table = context.get("table")
+        if current_table and slugs is not None:
+            # slugs is explicitly set (could be empty or have values)
+            # Check if current table's slug is still visible
+            sources = context.get("sources", [])
+            table_visible = False
+            for source in sources:
+                table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{current_table}"
+                if table_slug in slugs:
+                    table_visible = True
+                    break
+
+            if not table_visible:
+                context.pop("table", None)
+                context.pop("sql", None)
+                context.pop("data", None)
+                context.pop("pipeline", None)
+
+        # If no visible slugs (empty set) or no sources, clear metaset
+        # Note: slugs=None means "not set" (no filtering), slugs=set() means "all hidden"
+        if (slugs is not None and not slugs) or not context.get("sources"):
             context.pop("metaset", None)
             return
 
         if "metaset" not in context:
             return
 
+        # If slugs is None (not set), don't filter - use all tables
+        if slugs is None:
+            return
+
         try:
             sources = context["sources"]
             visible_tables = list(slugs)
             new_metaset = await get_metaset(sources, visible_tables, prev=context.get("metaset"))
+            # Clear docs so they get re-queried with updated disabled_docs filtering
+            new_metaset.docs = None
             context["metaset"] = new_metaset
             log_debug(f"[IterativeTableLookup] Updated metaset with {len(visible_tables)} visible tables")
         except Exception as e:
@@ -171,8 +201,8 @@ class IterativeTableLookup(MetadataLookup):
         examined_slugs = set(schemas.keys())
         # Filter to only include visible tables
         all_slugs = list(catalog.keys())
-        visible_slugs = context.get("visible_slugs", set())
-        if visible_slugs:
+        visible_slugs = context.get("visible_slugs")
+        if visible_slugs is not None:
             all_slugs = [slug for slug in all_slugs if slug in visible_slugs]
 
         if len(all_slugs) == 1:

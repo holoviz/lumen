@@ -579,6 +579,12 @@ class UI(Viewer):
 
         # Set up actions for the ChatAreaInput speed dial
         self._source_catalog = SourceCatalog(context=self.context)
+        # Watch for visibility changes and schedule async handler
+        def _schedule_visibility_change(event):
+            async def _do_sync():
+                await self._on_visibility_changed(event)
+            param.parameterized.async_executor(_do_sync)
+        self._source_catalog.param.watch(_schedule_visibility_change, 'visibility_changed')
 
         # Create separate upload and download controls with reference to catalog
         self._upload_controls = UploadControls(context=self.context, source_catalog=self._source_catalog)
@@ -754,6 +760,11 @@ class UI(Viewer):
     def _open_info_dialog(self, event=None):
         """Open the info dialog when the info button is clicked."""
         self._info_dialog.open = True
+
+    async def _on_visibility_changed(self, event):
+        """Handle visibility changes from SourceCatalog by re-syncing the coordinator."""
+        if hasattr(self, '_coordinator'):
+            await self._coordinator.sync(self.context)
 
     def _add_suggestions_to_footer(
         self,
