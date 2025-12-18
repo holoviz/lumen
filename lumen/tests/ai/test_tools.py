@@ -59,7 +59,6 @@ class TestVectorLookupToolUser:
         iterative_table_tool = coordinator._tools["main"][1]
         assert isinstance(iterative_table_tool, IterativeTableLookup)
         assert id(table_vector_store) == id(iterative_table_tool.vector_store)
-        document_tool = coordinator._tools["main"][2]
 
     async def test_inherit_vector_store_all_tools_instantiated(self):
         # Create three separate vector stores
@@ -96,12 +95,11 @@ class TestVectorLookupToolUser:
         shared_vs = NumpyVectorStore()
 
         # Create coordinator with shared vector store and uninstantiated tools
-        coordinator = Coordinator(vector_store=shared_vs, tools=[MetadataLookup, IterativeTableLookup, DocumentLookup])
+        coordinator = Coordinator(vector_store=shared_vs, tools=[MetadataLookup, IterativeTableLookup])
 
         # Get the tools
         table_tool = coordinator._tools["main"][0]
         iterative_table_tool = coordinator._tools["main"][1]
-        document_tool = coordinator._tools["main"][2]
 
         # Verify they're the correct types
         assert isinstance(table_tool, MetadataLookup)
@@ -110,7 +108,6 @@ class TestVectorLookupToolUser:
         # All tools should use the shared vector store from the coordinator
         assert id(table_tool.vector_store) == id(shared_vs)
         assert id(iterative_table_tool.vector_store) == id(shared_vs)
-        assert id(document_tool.vector_store) == id(shared_vs)
 
     async def test_inherit_vector_store_some_tools_instantiated(self):
         # Create a vector store for the first tool
@@ -127,7 +124,6 @@ class TestVectorLookupToolUser:
         # Get the tools
         table_tool = coordinator._tools["main"][0]
         iterative_table_tool = coordinator._tools["main"][1]
-        document_tool = coordinator._tools["main"][2]
 
         # Verify they're the correct types
         assert isinstance(table_tool, MetadataLookup)
