@@ -4,6 +4,9 @@ site_description = "Open-source agent framework for chatting with data and build
 site_author = "HoloViz Developers"
 site_url = "https://lumen.holoviz.org"
 site_dir = "builtdocs"
+repo_url = "https://github.com/holoviz/lumen"
+repo_name = "holoviz/lumen"
+edit_uri = "edit/main/docs/"
 nav = [
   {"Home" = "index.md"},
   {"Quick Start" = "quick_start.md"},
@@ -104,12 +107,6 @@ accent = "black"
 [project.theme.palette.toggle]
 icon = "material/brightness-4"
 name = "Switch to light mode"
-
-# Repository configuration
-[project.repo]
-url = "https://github.com/holoviz/lumen"
-name = "holoviz/lumen"
-edit_uri = "edit/main/docs/"
 
 # Markdown extensions
 [project.markdown_extensions.toc]
