@@ -36,6 +36,14 @@ Connect to databases using SQLAlchemy URLs:
 lumen-ai serve sqlite:///path/to/database.db
 ```
 
+``` bash title="DuckDB database"
+lumen-ai serve duckdb:///path/to/database.db
+```
+
+``` bash title="Auto-detect database type"
+lumen-ai serve database.db
+```
+
 ``` bash title="PostgreSQL"
 lumen-ai serve postgresql://user:password@localhost:5432/mydb
 ```
@@ -48,12 +56,35 @@ lumen-ai serve mysql+pymysql://user:password@localhost:3306/mydb
 lumen-ai serve data.csv postgresql://localhost/mydb
 ```
 
+#### Automatic database detection
+
+For `.db` files, Lumen automatically detects whether they're SQLite or DuckDB databases:
+
+``` bash title="Auto-detected .db files"
+lumen-ai serve test.db
+```
+
+Lumen reads the file header to determine the database type:
+- SQLite files start with `"SQLite format 3"`
+- DuckDB files start with `"DUCK"`
+
+You can still use explicit URLs if preferred:
+
+``` bash title="Explicit SQLite"
+lumen-ai serve sqlite:///test.db
+```
+
+``` bash title="Explicit DuckDB"
+lumen-ai serve duckdb:///test.db
+```
+
 !!! info "Tables auto-discovered"
     When connecting to a database, Lumen automatically discovers all available tables. No need to specify individual table names.
 
 **Supported databases:**
 
-- SQLite: `sqlite:///path/to/file.db`
+- SQLite: `sqlite:///path/to/file.db` (or just `file.db` for auto-detection)
+- DuckDB: `duckdb:///path/to/file.db` (or just `file.db` for auto-detection)
 - PostgreSQL: `postgresql://user:pass@host:port/db`
 - MySQL: `mysql+pymysql://user:pass@host:port/db`
 - Oracle: `oracle://user:pass@host:port/db`
