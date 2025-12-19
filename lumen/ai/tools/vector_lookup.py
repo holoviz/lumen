@@ -32,9 +32,9 @@ def make_refined_query_model(item_type_name: str = "items"):
         refined_search_query=(str, Field(
             description=f"""
             A refined search query that would help find more relevant {item_type_name}.
-            This should be a focused query with specific terms, entities, or concepts
+            This should be a Google-style keyword search query, focusing on terms
             that might appear in relevant {item_type_name}.
-            """
+            """,
         )),
         __base__=PartialBaseModel
     )
@@ -79,7 +79,7 @@ class VectorLookupTool(Tool):
         doc="Dictionary of available prompts for the tool."
     )
 
-    refinement_similarity_threshold = param.Number(default=0.3, bounds=(0, 1), doc="""
+    refinement_similarity_threshold = param.Number(default=0.05, bounds=(0, 1), doc="""
         Similarity threshold below which query refinement is triggered.""")
 
     vector_store = param.ClassSelector(class_=VectorStore, constant=True, doc="""

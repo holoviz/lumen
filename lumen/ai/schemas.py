@@ -53,12 +53,14 @@ class Metaset:
     - catalog: Table discovery results (descriptions, columns, similarity)
     - schemas: Optional SQL schema data (types, enums, row counts)
     - docs: Document chunks (already filtered by MetadataLookup based on visible_docs)
+    - schema_tables: Tables to show full schemas for (if None, uses top n by similarity)
     """
 
     query: str | None
     catalog: dict[str, TableCatalogEntry]
     schemas: dict[str, dict[str, Any]] | None = None
     docs: list[DocumentChunk] | None = None
+    schema_tables: list[str] | None = None
 
     @property
     def has_schemas(self) -> bool:
@@ -124,6 +126,7 @@ class Metaset:
         table_slug: str,
         catalog_entry: TableCatalogEntry,
         include_columns: bool,
+        include_schema: bool,
         truncate: bool,
         include_sql: bool = True,
     ) -> dict:
@@ -141,14 +144,20 @@ class Metaset:
                 desc = truncate_string(desc, max_length=100)
             data['info'] = desc
 
-        if self.has_schemas:
+        if include_schema and self.has_schemas:
             schema = self.schemas.get(table_slug)
             if schema and schema.get("__len__"):
                 data['row_count'] = len(schema)
 
-        if include_columns and catalog_entry.columns:
+        if include_columns:
+            if catalog_entry.columns:
+                data['columns'] = self._build_columns_data(
+                    table_slug, catalog_entry.columns, include_schema, truncate
+                )
+        elif include_schema and catalog_entry.columns:
+            # Show full column schema even without include_columns
             data['columns'] = self._build_columns_data(
-                table_slug, catalog_entry.columns, truncate
+                table_slug, catalog_entry.columns, include_schema, truncate
             )
 
         return data
@@ -157,8 +166,14 @@ class Metaset:
         self,
         table_slug: str,
         columns: list[Column],
+        include_schema: bool,
         truncate: bool
-    ) -> dict:
+    ) -> dict | list:
+        # If include_schema is False, just return column names as a list
+        if not include_schema:
+            return [col.name for col in columns]
+
+        # Otherwise, build full column data with schema info
         columns_data = {}
         schema = self.schemas.get(table_slug) if self.has_schemas else None
 
@@ -198,6 +213,7 @@ class Metaset:
     def _generate_context(
         self,
         include_columns: bool = False,
+        include_schema: bool = True,
         truncate: bool = False,
         include_sql: bool = True,
         include_docs: bool = True,
@@ -206,18 +222,24 @@ class Metaset:
         show_source: bool = False,
         n_others: int = 0,
     ) -> str:
-        sorted_slugs = self.get_top_tables(n, offset)
+        # Determine which tables to show with full details
+        if self.schema_tables is not None:
+            # Use explicitly set schema_tables
+            primary_slugs = [s for s in self.schema_tables if s in self.catalog]
+        else:
+            # Fall back to top n by similarity
+            primary_slugs = self.get_top_tables(n, offset)
 
         # Check if all tables come from a single source
         unique_sources = set()
-        for slug in sorted_slugs:
+        for slug in self.catalog.keys():
             if SOURCE_TABLE_SEPARATOR in slug:
                 unique_sources.add(slug.split(SOURCE_TABLE_SEPARATOR, 1)[0])
         single_source = len(unique_sources) == 1
 
-        # Build tables data
+        # Build tables data for primary tables
         tables_data = {}
-        for table_slug in sorted_slugs:
+        for table_slug in primary_slugs:
             entry = self.catalog.get(table_slug)
             if not entry:
                 continue
@@ -225,7 +247,7 @@ class Metaset:
             if single_source and not show_source and SOURCE_TABLE_SEPARATOR in table_slug:
                 display_slug = table_slug.split(SOURCE_TABLE_SEPARATOR, 1)[1]
             tables_data[display_slug] = self._build_table_data(
-                table_slug, entry, include_columns, truncate, include_sql
+                table_slug, entry, include_columns, include_schema, truncate, include_sql
             )
 
         # Build result
@@ -238,7 +260,11 @@ class Metaset:
 
         # Add other tables section
         if n_others > 0:
-            other_slugs = self.get_top_tables(n=n_others, offset=len(sorted_slugs))
+            primary_set = set(primary_slugs)
+            other_slugs = [
+                slug for slug in self.catalog.keys()
+                if slug not in primary_set
+            ][:n_others]
             if other_slugs:
                 result += "\n\nOther available:\n"
                 for slug in other_slugs:
@@ -283,18 +309,50 @@ class Metaset:
             sorted_slugs = sorted_slugs[:n]
         return sorted_slugs
 
-    def table_list(self, n: int | None = None, offset: int = 0, show_source: bool = False, n_others: int = 0) -> str:
-        """Generate minimal table listing for planning - no SQL expressions, but includes document chunks if present."""
-        return self._generate_context(include_columns=False, truncate=False, include_sql=False, include_docs=True, n=n, offset=offset, show_source=show_source, n_others=n_others)
+    def table_list(self, n: int | None = None, offset: int = 0, show_source: bool = False, n_others: int = 0, **override_kwargs) -> str:
+        """Generate minimal table listing for planning - just table names and columns without schema details."""
+        generate_kwargs = {
+            "include_columns": False,
+            "include_schema": False,
+            "truncate": False,
+            "include_sql": False,
+            "include_docs": True,
+        }
+        generate_kwargs.update(override_kwargs)
+        return self._generate_context(**generate_kwargs, n=n, offset=offset, show_source=show_source, n_others=n_others)
 
-    def table_context(self, n: int | None = None, offset: int = 0, show_source: bool = True, n_others: int = 0) -> str:
-        return self._generate_context(include_columns=False, truncate=False, n=n, offset=offset, show_source=show_source, n_others=n_others)
+    def table_context(self, n: int | None = None, offset: int = 0, show_source: bool = True, n_others: int = 0, **override_kwargs) -> str:
+        generate_kwargs = {
+            "include_columns": True,
+            "include_schema": False,
+            "truncate": False,
+            "include_sql": False,
+            "include_docs": True,
+        }
+        generate_kwargs.update(override_kwargs)
+        return self._generate_context(**generate_kwargs, n=n, offset=offset, show_source=show_source, n_others=n_others)
 
-    def full_context(self, n: int | None = None, offset: int = 0, show_source: bool = True, n_others: int = 0) -> str:
-        return self._generate_context(include_columns=True, truncate=False, n=n, offset=offset, show_source=show_source, n_others=n_others)
+    def full_context(self, n: int | None = None, offset: int = 0, show_source: bool = True, n_others: int = 0, **override_kwargs) -> str:
+        generate_kwargs = {
+            "include_columns": True,
+            "include_schema": True,
+            "truncate": False,
+            "include_sql": False,
+            "include_docs": True,
+        }
+        generate_kwargs.update(override_kwargs)
+        return self._generate_context(**generate_kwargs, n=n, offset=offset, show_source=show_source, n_others=n_others)
 
-    def compact_context(self, n: int | None = None, offset: int = 0, show_source: bool = True, n_others: int = 0) -> str:
-        return self._generate_context(include_columns=True, truncate=True, n=n, offset=offset, show_source=show_source, n_others=n_others)
+    def compact_context(self, n: int | None = None, offset: int = 0, show_source: bool = True, n_others: int = 0, **override_kwargs) -> str:
+        generate_kwargs = {
+            "include_columns": True,
+            "include_schema": True,
+            "truncate": True,
+            "include_sql": False,
+            "include_docs": True,
+        }
+        generate_kwargs.update(override_kwargs)
+        return self._generate_context(**generate_kwargs, n=n, offset=offset, show_source=show_source, n_others=n_others)
 
     def __str__(self) -> str:
         return self.table_context()

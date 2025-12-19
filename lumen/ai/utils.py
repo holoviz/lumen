@@ -370,7 +370,7 @@ def process_enums(spec, num_cols, limit=None, include_enum=True, reduce_enums=Tr
         # 20: Maximum base enums (for very short values)
         # 0.025: Decay rate (higher = faster drop-off)
         # max(2, ...): Minimum floor (always show at least 2)
-        base_max_enums = max(2, int(10 * math.exp(-0.035 * avg_length)))
+        base_max_enums = max(2, int(10 * math.exp(-0.04 * avg_length)))
 
         # Still consider number of columns but with less weight
         max_enums = max(2, int(base_max_enums * math.exp(-0.05 * max(0, num_cols - 10))))

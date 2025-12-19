@@ -36,13 +36,14 @@ class RawStep(BaseModel):
     Concise instruction capturing user intent at the right altitude.
 
     Right altitude:
-    - ❌ Too low: implementation details (SQL syntax, chart specs, row limits)
+    - ❌ Too low: implementation details (SQL syntax, chart specs, row limits, join on these tables)
     - ❌ Too high: vague ("handle this", "process data")
     - ✅ Just right: clear intent + relationship to context
 
     Encode intent: add/modify/filter/compare/create — reference existing context when applicable.
 
-    Never include implementation details unless user explicitly specified them.
+    Never include implementation details unless user explicitly specified them because selected actors
+    will have more knowledge revealed during execution.
     """)
     title: str
 
@@ -216,7 +217,13 @@ class Planner(Coordinator):
             collected_contexts = []
 
             for tool in self.planner_tools:
-                is_relevant = await self._check_tool_relevance(tool, "", self, f"Gather context for planning to answer {user_query}", messages, context)
+                if not await tool.applies(context):
+                    continue
+
+                if tool.always_use:
+                    is_relevant = True
+                else:
+                    is_relevant = await self._check_tool_relevance(tool, "", self, f"Gather context for planning to answer {user_query}", messages, context)
 
                 if not is_relevant:
                     continue

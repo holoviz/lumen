@@ -31,6 +31,8 @@ class MetadataLookup(VectorLookupTool):
     and responds with relevant tables for user queries.
     """
 
+    always_use = param.Boolean(default=True)
+
     conditions = param.List(
         default=[
             "Best paired with ChatAgent for general conversation about data",
@@ -92,14 +94,14 @@ class MetadataLookup(VectorLookupTool):
     )
 
     n = param.Integer(
-        default=10,
+        default=20,
         bounds=(1, None),
         doc="""
         The number of document results to return.""",
     )
 
     n_documents = param.Integer(
-        default=2,
+        default=4,
         bounds=(1, None),
         doc="""
         The number of document chunks to retrieve per table.""",

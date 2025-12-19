@@ -224,7 +224,38 @@ class SQLQuery(PartialBaseModel):
     )
 
 
+class TableSelection(PartialBaseModel):
+    """Select tables relevant to answering the user's query."""
+
+    reasoning: str = Field(description="Brief explanation of why these tables are needed to answer the query.")
+
+    tables: list[str] = Field(
+        description="List of table slugs needed to answer the query. Select only tables that are directly relevant."
+    )
+
+
+def make_table_selection_model(available_tables: list[str]):
+    """Create a table selection model with constrained table choices."""
+    if not available_tables:
+        return TableSelection
+
+    TableLiteral = Literal[tuple(available_tables)]  # type: ignore
+    return create_model(
+        "TableSelectionConstrained",
+        tables=(list[TableLiteral], FieldInfo(description="Tables needed to answer the query.")),
+        __base__=TableSelection
+    )
+
+
 def make_sql_model(sources: list[tuple[str, str]]):
+    """
+    Create a SQL query model with source/table validation.
+
+    Parameters
+    ----------
+    sources : list[tuple[str, str]]
+        List of (source_name, table_name) tuples for tables with full schemas.
+    """
     if len(sources) == 1:
         return SQLQuery
 
@@ -232,7 +263,8 @@ def make_sql_model(sources: list[tuple[str, str]]):
     return create_model(
         "SQLQueryWithSources",
         tables=(
-            list[SourceTable], FieldInfo(description="The source and table identifier(s) referenced in the SQL query.")
+            list[SourceTable],
+            FieldInfo(description="The source and table identifier(s) referenced in the SQL query.")
         ),
         __base__=SQLQuery
     )
@@ -299,6 +331,10 @@ class SQLAgent(BaseLumenAgent):
                 "response_model": make_sql_model,
                 "template": PROMPTS_DIR / "SQLAgent" / "main.jinja2",
             },
+            "select_tables": {
+                "response_model": make_table_selection_model,
+                "template": PROMPTS_DIR / "SQLAgent" / "select_tables.jinja2",
+            },
             "select_discoveries": {
                 "response_model": make_discovery_model,
                 "template": PROMPTS_DIR / "SQLAgent" / "select_discoveries.jinja2",
@@ -324,11 +360,11 @@ class SQLAgent(BaseLumenAgent):
         """Pre-compute metaset context for template rendering."""
         prompt_context = await super()._gather_prompt_context(prompt_name, messages, context, **kwargs)
 
-        # Ensure schemas are loaded for top tables before rendering
+        # Ensure schemas are loaded for schema_tables before rendering
         if "metaset" in context:
             metaset = context["metaset"]
-            top_tables = metaset.get_top_tables(n=3)
-            await metaset.ensure_schemas(top_tables)
+            if metaset.schema_tables:
+                await metaset.ensure_schemas(metaset.schema_tables)
 
         return prompt_context
 
@@ -449,6 +485,46 @@ class SQLAgent(BaseLumenAgent):
             mirrors[renamed_table] = (sources[(m.source, m.table)], m.table)
         return DuckDBSource(uri=":memory:", mirrors=mirrors), list(mirrors)
 
+    async def _select_tables(
+        self,
+        messages: list[Message],
+        context: TContext,
+        step: ChatStep,
+    ) -> list[str]:
+        """Select relevant tables for the query."""
+        metaset = context.get("metaset")
+        if not metaset:
+            return []
+
+        all_tables = list(metaset.catalog.keys())
+        # If 3 or fewer tables, use all of them
+        if len(all_tables) <= 3:
+            return all_tables
+
+        # Otherwise, ask LLM to select relevant tables
+        system_prompt = await self._render_prompt(
+            "select_tables",
+            messages,
+            context,
+        )
+
+        model_spec = self.prompts["select_tables"].get("llm_spec", self.llm_spec_key)
+        # Will always inject top tables
+        top_tables = metaset.get_top_tables(n=3)
+        available_tables = [t for t in all_tables if t not in top_tables]
+        selection_model = self._get_model("select_tables", available_tables=available_tables)
+
+        selection = await self.llm.invoke(
+            messages,
+            system=system_prompt,
+            model_spec=model_spec,
+            response_model=selection_model,
+        )
+
+        selected = selection.tables + top_tables if selection else top_tables
+        step.stream(f"Selected: {selected}")
+        return selected
+
     async def _render_execute_query(
         self,
         messages: list[Message],
@@ -485,8 +561,8 @@ class SQLAgent(BaseLumenAgent):
 
         Returns
         -------
-        Pipeline
-            Pipeline object from successful execution
+        SQLOutput
+            Output object from successful execution
         """
         with self._add_step(title=step_title, steps_layout=self._steps_layout) as step:
             # Generate SQL using common prompt pattern
@@ -507,7 +583,7 @@ class SQLAgent(BaseLumenAgent):
                 discovery_context=discovery_context,
             )
 
-            # Generate SQL using existing model
+            # Generate SQL
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
             sql_response_model = self._get_model("main", sources=list(sources))
 
@@ -517,6 +593,7 @@ class SQLAgent(BaseLumenAgent):
                 model_spec=model_spec,
                 response_model=sql_response_model,
             )
+
             if not output:
                 raise ValueError("No output was generated.")
 
@@ -775,7 +852,7 @@ class SQLAgent(BaseLumenAgent):
         context: TContext,
         step_title: str | None = None,
     ) -> tuple[list[Any], SQLOutputs]:
-        """Execute SQL generation with one-shot attempt first, then exploration if needed."""
+        """Execute SQL generation with table selection, then one-shot attempt, then exploration if needed."""
         sources = context["sources"]
         metaset = context["metaset"]
         selected_slugs = list(metaset.catalog)
@@ -786,9 +863,21 @@ class SQLAgent(BaseLumenAgent):
         elif not selected_slugs and visible_slugs:
             # if no closest matches, use visible slugs
             selected_slugs = list(visible_slugs)
+
+        # Select relevant tables if there are many
+        if len(selected_slugs) > 3:
+            with self._add_step(title="Selecting relevant tables...", steps_layout=self._steps_layout) as step:
+                selected_tables = await self._select_tables(messages, context, step)
+                if selected_tables:
+                    metaset.schema_tables = selected_tables
+                    step.stream(f"\n\nWill load schemas for: {selected_tables}")
+        else:
+            # Use all tables if 3 or fewer
+            metaset.schema_tables = selected_slugs
+
         sources = {
             tuple(table_slug.split(SOURCE_TABLE_SEPARATOR)): parse_table_slug(table_slug, sources)[0]
-            for table_slug in selected_slugs
+            for table_slug in visible_slugs
         }
         if not sources:
             raise ValueError("No valid SQL sources available for querying.")
@@ -804,8 +893,8 @@ class SQLAgent(BaseLumenAgent):
                 messages,
                 context,
                 sources=sources,
-                step_title="Attempting one-shot SQL generation...",
-                success_message="One-shot SQL generation successful",
+                step_title="Generating SQL...",
+                success_message="SQL generation successful",
                 discovery_context=None,
                 raise_if_empty=True,
                 output_title=step_title

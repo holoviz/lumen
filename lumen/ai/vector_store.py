@@ -572,7 +572,7 @@ class VectorStore(LLMUser):
         text: str,
         top_k: int = 5,
         filters: dict | None = None,
-        threshold: float = 0.0,
+        threshold: float = -1.0,
         situate: bool | None = None,
     ) -> list[dict]:
         """
@@ -772,7 +772,7 @@ class NumpyVectorStore(VectorStore):
         text: str,
         top_k: int = 5,
         filters: dict | None = None,
-        threshold: float = 0.0,
+        threshold: float = -1.0,
     ) -> list[dict]:
         """
         Query the vector store for similar items.
@@ -792,9 +792,7 @@ class NumpyVectorStore(VectorStore):
         -------
         List of results with 'id', 'text', 'metadata', and 'similarity' score.
         """
-        log_debug(f"[NumpyVectorStore.query] text={text!r}, top_k={top_k}, filters={filters}, threshold={threshold}")
         if self.vectors is None:
-            log_debug("[NumpyVectorStore.query] No vectors in store, returning empty")
             return []
         query_embedding = np.array((await self.embeddings.embed([text]))[0], dtype=np.float32)
         similarities = self._cosine_similarity(query_embedding, self.vectors)
@@ -804,15 +802,12 @@ class NumpyVectorStore(VectorStore):
             for key, value in filters.items():
                 mask &= np.array([item.get(key) == value for item in self.metadata])
             similarities = np.where(
-                mask, similarities, -1.0
+                mask, similarities, -9999
             )  # make filtered similarity values == -1
 
         results = []
         if len(similarities) > 0:
             sorted_indices = np.argsort(similarities)[::-1]
-            log_debug(f"[NumpyVectorStore.query] Total items in store: {len(similarities)}, showing top similarities:")
-            for i, idx in enumerate(sorted_indices[:10]):  # Log top 10 for debugging
-                log_debug(f"  [{i+1}] id={self.ids[idx]}, sim={similarities[idx]:.4f}, meta={self.metadata[idx]}, text_preview={self.texts[idx][:80]!r}...")
             for idx in sorted_indices:
                 similarity = similarities[idx]
                 if similarity < threshold:
@@ -1305,7 +1300,7 @@ class DuckDBVectorStore(VectorStore):
         text: str,
         top_k: int = 5,
         filters: dict | None = None,
-        threshold: float = 0.0,
+        threshold: float = -1.0,
     ) -> list[dict]:
         """
         Query the vector store for similar items.
