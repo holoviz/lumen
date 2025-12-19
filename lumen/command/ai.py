@@ -32,35 +32,6 @@ try:
 except ImportError:
     make_url = None
 
-
-def detect_db_type(file_path: str) -> str | None:
-    """
-    Detect if a .db file is SQLite or DuckDB by reading its header.
-
-    Returns
-    -------
-    str | None
-        'sqlite' for SQLite databases, 'duckdb' for DuckDB databases, None if unknown
-    """
-    if not os.path.exists(file_path):
-        return None
-
-    try:
-        with open(file_path, 'rb') as f:
-            header = f.read(16)
-
-        # SQLite files start with "SQLite format 3" (0x53 0x51 0x4c 0x69 0x74 0x65...)
-        if header.startswith(b'SQLite format 3'):
-            return 'sqlite'
-
-        # DuckDB files start with "DUCK" (0x44 0x55 0x43 0x4b)
-        if header.startswith(b'DUCK'):
-            return 'duckdb'
-
-        return None
-    except Exception:
-        return None
-
 CMD_DIR = THIS_DIR / ".." / "command"
 
 LLM_PROVIDERS = {
@@ -288,6 +259,35 @@ class AIHandler(CodeHandler):
         except Exception:
             return False
 
+    @staticmethod
+    def _detect_db_type(file_path: str) -> str | None:
+        """
+        Detect if a .db file is SQLite or DuckDB by reading its header.
+
+        Returns
+        -------
+        str | None
+            'sqlite' for SQLite databases, 'duckdb' for DuckDB databases, None if unknown
+        """
+        if not os.path.exists(file_path):
+            return None
+
+        try:
+            with open(file_path, 'rb') as f:
+                header = f.read(16)
+
+            # SQLite files start with "SQLite format 3" (0x53 0x51 0x4c 0x69 0x74 0x65...)
+            if header.startswith(b'SQLite format 3'):
+                return 'sqlite'
+
+            # DuckDB files start with "DUCK" (0x44 0x55 0x43 0x4b)
+            if header.startswith(b'DUCK'):
+                return 'duckdb'
+
+            return None
+        except Exception:
+            return None
+
     @classmethod
     def _categorize_sources(cls, tables: list[str]) -> tuple[list[str], list[str]]:
         """
@@ -307,7 +307,7 @@ class AIHandler(CodeHandler):
                 db_urls.append(table)
             elif table.endswith('.db'):
                 # Auto-detect database type for .db files
-                db_type = detect_db_type(table)
+                db_type = cls._detect_db_type(table)
                 if db_type == 'sqlite':
                     db_urls.append(f'sqlite:///{os.path.abspath(table)}')
                 elif db_type == 'duckdb':
