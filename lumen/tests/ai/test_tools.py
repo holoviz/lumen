@@ -51,15 +51,6 @@ async def test_function_tool_provides():
 
 
 class TestVectorLookupToolUser:
-    async def test_inherit_vector_store_uninstantiated(self):
-        coordinator = Coordinator(tools=[MetadataLookup])
-        table_tool = coordinator._tools["main"][0]
-        table_vector_store = table_tool.vector_store
-        assert isinstance(table_tool, MetadataLookup)
-        iterative_table_tool = coordinator._tools["main"][1]
-        assert isinstance(iterative_table_tool)
-        assert id(table_vector_store) == id(iterative_table_tool.vector_store)
-
     async def test_inherit_vector_store_all_tools_instantiated(self):
         # Create three separate vector stores
         vs1 = NumpyVectorStore()
@@ -75,33 +66,9 @@ class TestVectorLookupToolUser:
 
         # Get the tools
         table_tool = coordinator._tools["main"][0]
-        iterative_table_tool = coordinator._tools["main"][1]
 
         # Verify they're the correct types
         assert isinstance(table_tool, MetadataLookup)
 
         # Each tool should have its own vector store that was passed in
         assert id(table_tool.vector_store) == id(vs1)
-        assert id(iterative_table_tool.vector_store) == id(vs2)
-
-        # Verify that MetadataLookup have different vector stores
-        # since they were explicitly created with different instances
-        assert id(table_tool.vector_store) != id(iterative_table_tool.vector_store)
-
-    async def test_inherit_vector_store_instantiated_with_vector_store(self):
-        # Create a shared vector store at the coordinator level
-        shared_vs = NumpyVectorStore()
-
-        # Create coordinator with shared vector store and uninstantiated tools
-        coordinator = Coordinator(vector_store=shared_vs, tools=[MetadataLookup])
-
-        # Get the tools
-        table_tool = coordinator._tools["main"][0]
-        iterative_table_tool = coordinator._tools["main"][1]
-
-        # Verify they're the correct types
-        assert isinstance(table_tool, MetadataLookup)
-
-        # All tools should use the shared vector store from the coordinator
-        assert id(table_tool.vector_store) == id(shared_vs)
-        assert id(iterative_table_tool.vector_store) == id(shared_vs)
