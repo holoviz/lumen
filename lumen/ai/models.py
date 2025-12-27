@@ -88,3 +88,41 @@ class RetrySpec(BaseModel):
                     )
                 seen_replace_or_delete.add(e.line_no)
         return self
+
+
+class CallSpec(BaseModel):
+    """Specification for a single agent call."""
+    actor: str = Field(description="Name of the actor to call")
+    instruction: str = Field(description="What you want the actor to do (WHAT not HOW)")
+
+
+class StepDecision(BaseModel):
+    """Decision made by the iterative planner at each step."""
+    thinking: str = Field(description="Your reasoning about what to do next")
+    action: Literal["call", "escalate", "done"] = Field(
+        description="Action to take: call agents, escalate for more detail, or finish"
+    )
+
+    # For action="call"
+    calls: list[CallSpec] | None = Field(
+        default=None,
+        description="List of actor calls. Multiple calls run in parallel."
+    )
+
+    # For action="escalate"
+    actor: str | None = Field(
+        default=None,
+        description="Actor to escalate (get more detailed summary from)"
+    )
+
+    # For action="done"
+    final_message: str | None = Field(
+        default=None,
+        description="Final message to present to the user"
+    )
+
+
+class SufficiencyCheck(BaseModel):
+    """Router decision: is the current summary sufficient?"""
+    thinking: str = Field(description="Reasoning about whether the result is sufficient")
+    sufficient: bool = Field(description="True if result provides enough info to proceed")

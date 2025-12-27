@@ -43,7 +43,9 @@ from .context import TContext
 from .controls import (
     DownloadControls, SourceCatalog, TableExplorer, UploadControls,
 )
-from .coordinator import Coordinator, Plan, Planner
+from .coordinator import (
+    Coordinator, IterativePlanner, Plan, Planner,
+)
 from .export import export_notebook
 from .llm import Llm, Message, OpenAI
 from .llm_dialog import LLMConfigDialog
@@ -107,7 +109,7 @@ class UI(Viewer):
     context = param.Dict(default={})
 
     coordinator = param.ClassSelector(
-        class_=Coordinator, default=Planner, is_instance=False, doc="""
+        class_=Coordinator, default=IterativePlanner, is_instance=False, doc="""
         The Coordinator class that will be responsible for coordinating the Agents."""
     )
 

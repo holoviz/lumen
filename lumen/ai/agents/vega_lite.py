@@ -554,3 +554,22 @@ class VegaLiteAgent(BaseViewAgent):
             log_debug(f"Skipping invalid annotation update due to error: {e}")
             raise e
         return dump_yaml(spec["spec"])
+
+    def summarize(self, outputs: list, out_ctx: dict) -> dict[str, str]:
+        spec = out_ctx.get("vega_spec", {})
+        mark = spec.get("mark", "unknown")
+        if isinstance(mark, dict):
+            mark = mark.get("type", "unknown")
+
+        enc = spec.get("encoding", {})
+        x = enc.get("x", {}).get("field", "?")
+        y = enc.get("y", {}).get("field", "?")
+        color = enc.get("color", {}).get("field")
+
+        base = f"{mark} chart: {x} × {y}" + (f" by {color}" if color else "")
+
+        return {
+            "bare": base,
+            "compact": f"{base}, layers={len(spec.get('layer', []))}",
+            "detailed": f"Mark: {mark}\nX: {x}\nY: {y}\nColor: {color}\nEncoding: {enc}",
+        }

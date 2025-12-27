@@ -149,3 +149,27 @@ class AnalysisAgent(BaseLumenAgent):
         )
         out_context = await out.render_context()
         return [out], out_context
+
+    def summarize(self, outputs: list, out_ctx: dict) -> dict[str, str]:
+        findings = out_ctx.get("findings", [])
+        analysis = out_ctx.get("analysis", "")
+
+        if not findings and not analysis:
+            return {
+                "bare": "No significant findings",
+                "compact": "No significant findings",
+                "detailed": "Analysis complete but no notable findings",
+            }
+
+        if findings:
+            return {
+                "bare": "\n".join(f"- {f[:80]}" for f in findings[:5]),
+                "compact": "\n".join(f"- {f}" for f in findings),
+                "detailed": "\n".join(f"- {f}" for f in findings) + f"\n\nMethodology: {out_ctx.get('methodology', 'N/A')}",
+            }
+
+        return {
+            "bare": analysis[:150] + ("..." if len(analysis) > 150 else ""),
+            "compact": analysis[:500] + ("..." if len(analysis) > 500 else ""),
+            "detailed": analysis,
+        }

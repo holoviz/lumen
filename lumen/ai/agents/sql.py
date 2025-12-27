@@ -910,3 +910,102 @@ class SQLAgent(BaseLumenAgent):
             )
         out_context = await out.render_context()
         return [out], out_context
+
+    def summarize(self, outputs: list, out_ctx: dict) -> dict[str, str]:
+        # Handle errors
+        if "__error__" in out_ctx:
+            err = str(out_ctx["__error__"])
+
+            # Special handling for common missing context errors
+            if "metaset" in err.lower() or "keyerror" in err.lower():
+                return {
+                    "bare": "❌ Missing table metadata",
+                    "compact": "❌ Missing table metadata - need to discover tables first",
+                    "detailed": f"❌ Error: {err}\nHint: Run MetadataLookup or TableListAgent first to discover available tables",
+                }
+
+            return {
+                "bare": f"❌ {err[:80]}",
+                "compact": f"❌ {err}",
+                "detailed": f"❌ {err}\nSQL: {out_ctx.get('sql', 'N/A')[:300]}",
+            }
+
+        df = out_ctx.get("data")
+        slug = out_ctx.get("table", "result")
+
+        # Handle case where data might not be a DataFrame
+        if df is None:
+            rows = 0
+            cols = []
+        elif isinstance(df, str):
+            # Sometimes data is returned as a string (markdown table)
+            # Try to extract key info from the string
+            lines = df.strip().split('\n')
+            if len(lines) >= 3:  # Has header + separator + data
+                # Extract first data row for bare summary
+                header_line = lines[0]
+                data_line = lines[2] if len(lines) > 2 else ""
+
+                # Parse the data row to extract values more clearly
+                # Remove leading/trailing pipes and split
+                values = [v.strip() for v in data_line.split('|') if v.strip()]
+
+                return {
+                    "bare": f"`{slug}`: {len(lines) - 2} row(s). Values: {' | '.join(values)}",
+                    "compact": f"`{slug}`: Result as markdown table\n{df[:500]}{'...' if len(df) > 500 else ''}",
+                    "detailed": f"`{slug}`: Full result\n{df}\nSQL: {out_ctx.get('sql', 'N/A')[:300]}",
+                }
+            else:
+                return {
+                    "bare": f"`{slug}`: {df[:80]}",
+                    "compact": f"`{slug}`: {df}",
+                    "detailed": f"`{slug}`: {df}\nSQL: {out_ctx.get('sql', 'N/A')[:300]}",
+                }
+        else:
+            try:
+                rows = len(df)
+                cols = list(df.columns)
+            except (AttributeError, TypeError):
+                # Fallback if df is some other type
+                return {
+                    "bare": f"⚠️ Unexpected data type: {type(df).__name__}",
+                    "compact": f"⚠️ Data is {type(df).__name__}, not DataFrame",
+                    "detailed": f"⚠️ Data type: {type(df).__name__}\nValue: {str(df)[:200]}\nSQL: {out_ctx.get('sql', 'N/A')[:300]}",
+                }
+
+        # Catch malformed output
+        if rows > 0 and len(cols) == 0:
+            return {
+                "bare": "❌ Query returned rows but no columns",
+                "compact": f"❌ Malformed query: {rows} rows × 0 cols",
+                "detailed": f"❌ Query error — check SELECT clause\nSQL: {out_ctx.get('sql', 'N/A')[:300]}",
+            }
+
+        if rows == 0:
+            return {
+                "bare": f"⚠️ `{slug}`: No results",
+                "compact": f"⚠️ `{slug}`: 0 rows (empty result set)",
+                "detailed": f"⚠️ `{slug}`: 0 rows\nSQL: {out_ctx.get('sql', 'N/A')[:300]}\nCheck WHERE conditions",
+            }
+
+        # For small result sets (1-5 rows), show the actual data inline
+        # This helps the planner immediately see the answer
+        if rows <= 5:
+            try:
+                # Format as column: value pairs for clarity
+                first_row = df.iloc[0].to_dict()
+                row_str = ", ".join(f"{k}={v}" for k, v in first_row.items())
+                if rows == 1:
+                    bare = f"`{slug}`: {row_str}"
+                else:
+                    bare = f"`{slug}`: {rows} row(s). First: {row_str}"
+            except Exception:
+                bare = f"`{slug}`: {rows} row(s), cols=[{', '.join(cols)}]"
+        else:
+            bare = f"`{slug}`: {rows} rows, cols=[{', '.join(cols)}]"
+
+        return {
+            "bare": bare,
+            "compact": f"`{slug}`: {rows} row(s)\n{df.head(3).to_markdown(index=False) if hasattr(df, 'to_markdown') else df.head(3).to_string()}",
+            "detailed": f"`{slug}`: {rows} rows\nColumns: {cols}\nSQL: {out_ctx.get('sql', 'N/A')[:200]}\nHead:\n{df.head(5).to_string() if df is not None else 'N/A'}",
+        }

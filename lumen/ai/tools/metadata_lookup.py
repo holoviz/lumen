@@ -537,3 +537,37 @@ class MetadataLookup(VectorLookupTool):
         # Run the process to build schema objects
         out_model = await self._gather_info(messages, context)
         return [self._format_context(out_model)], out_model
+
+    def summarize(self, outputs: list, out_ctx: dict) -> dict[str, str]:
+        metaset = out_ctx.get("metaset")
+        if not metaset:
+            return {
+                "bare": "No metadata found",
+                "compact": "No metadata found",
+                "detailed": "MetadataLookup returned no results",
+            }
+
+        tables = list(metaset.catalog.keys())
+        n = len(tables)
+
+        # For bare: show ALL table names (just names, no columns)
+        # This ensures planner can see key tables like 'ord_tbl'
+        table_names = [t.split('⦙')[-1].strip() if '⦙' in t else t for t in tables]
+        bare_summary = f"{n} tables: {', '.join(table_names)}"
+
+        # Get column info for compact view
+        table_cols = {}
+        for t in tables[:10]:
+            entry = metaset.catalog.get(t)
+            if entry and entry.columns:
+                cols = [col.name for col in entry.columns]
+                table_cols[t] = cols
+            else:
+                table_cols[t] = []
+
+        return {
+            "bare": bare_summary,
+            "compact": "\n".join(f"- {t}: [{', '.join(cols[:8])}{'...' if len(cols) > 8 else ''}]"
+                                 for t, cols in table_cols.items()),
+            "detailed": metaset.render("detailed"),
+        }

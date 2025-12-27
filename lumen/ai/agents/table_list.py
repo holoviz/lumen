@@ -79,3 +79,64 @@ class TableListAgent(BaseListAgent):
             tables_by_source[source_name].append(table_name)
 
         return tables_by_source
+
+    def summarize(self, outputs: list, out_ctx: dict) -> dict[str, str]:
+        # TableListAgent's respond() doesn't populate out_ctx, but we can infer from the outputs
+        # The outputs contain Tabs with Tabulators showing the tables
+
+        if not outputs:
+            return {
+                "bare": "No tables available",
+                "compact": "No tables found",
+                "detailed": "No data tables are available",
+            }
+
+        # Try to extract table names from the Tabs widget in outputs
+        tables_by_source = {}
+        try:
+            # The output is typically [Tabs widget]
+            # Check if we have the _tabs stored on self from respond()
+            if hasattr(self, '_tabs') and self._tabs is not None:
+                for tab in self._tabs:
+                    source_name = tab.name
+                    # Each tab is a Tabulator with a DataFrame
+                    if hasattr(tab, 'value') and tab.value is not None:
+                        table_names = tab.value[self._column_name].tolist()
+                        if table_names:
+                            tables_by_source[source_name] = table_names
+        except Exception:
+            # Fallback if we can't extract from outputs
+            pass
+
+        if not tables_by_source:
+            return {
+                "bare": "Tables displayed but details unavailable",
+                "compact": "Table list generated but summary unavailable",
+                "detailed": "Table list widget created successfully",
+            }
+
+        # Flatten to get all table names
+        all_tables = []
+        for tables in tables_by_source.values():
+            all_tables.extend(tables)
+
+        n_tables = len(all_tables)
+        n_sources = len(tables_by_source)
+
+        # Build summaries
+        if n_sources == 1:
+            source_name = list(tables_by_source.keys())[0]
+            return {
+                "bare": f"{n_tables} tables from {source_name}: {', '.join(all_tables[:5])}{' ...' if n_tables > 5 else ''}",
+                "compact": f"{n_tables} tables from {source_name}:\n" + "\n".join(f"- {t}" for t in all_tables),
+                "detailed": f"{n_tables} tables from {source_name}:\n" + "\n".join(f"- {t}" for t in all_tables),
+            }
+        else:
+            return {
+                "bare": f"{n_tables} tables from {n_sources} sources: {', '.join(all_tables[:5])}{' ...' if n_tables > 5 else ''}",
+                "compact": "\n".join(f"**{source}**: {', '.join(tables)}" for source, tables in tables_by_source.items()),
+                "detailed": "\n".join(
+                    f"**{source}** ({len(tables)} tables):\n" + "\n".join(f"  - {t}" for t in tables)
+                    for source, tables in tables_by_source.items()
+                ),
+            }

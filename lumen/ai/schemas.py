@@ -354,6 +354,27 @@ class Metaset:
         generate_kwargs.update(override_kwargs)
         return self._generate_context(**generate_kwargs, n=n, offset=offset, show_source=show_source, n_others=n_others)
 
+    def render(self, level: str = "compact") -> str:
+        """
+        Render metaset at different detail levels.
+        
+        Parameters
+        ----------
+        level : str
+            - bare: table names only
+            - compact: table names with column names
+            - detailed: full schemas with types, samples
+        """
+        match level:
+            case "bare":
+                return self.table_list(n=50)
+            case "compact":
+                return self.compact_context(n=10)
+            case "detailed":
+                return self.full_context()
+            case _:
+                return self.compact_context(n=5)
+
     def __str__(self) -> str:
         return self.table_context()
 

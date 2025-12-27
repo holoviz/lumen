@@ -51,3 +51,16 @@ class ChatAgent(Agent):
             )
         system_prompt = await self._render_prompt("main", messages, context, **prompt_context)
         return [await self._stream(messages, system_prompt)], {}
+
+    def summarize(self, outputs: list, out_ctx: dict) -> dict[str, str]:
+        msg = ""
+        if outputs and hasattr(outputs[0], "object"):
+            msg = str(outputs[0].object)
+        elif outputs:
+            msg = str(outputs[0])
+
+        return {
+            "bare": msg[:150] + ("..." if len(msg) > 150 else ""),
+            "compact": msg,
+            "detailed": msg,
+        }

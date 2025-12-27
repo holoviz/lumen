@@ -137,3 +137,22 @@ class Agent(Viewer, ToolUser, ContextProvider):
         """
         system_prompt = await self._render_prompt("main", messages, context)
         return [await self._stream(messages, system_prompt)], context
+
+    def summarize(self, outputs: list, out_ctx: dict) -> dict[str, str]:
+        """
+        Return summary at three detail levels for the iterative planner.
+        
+        Override in subclasses for meaningful summaries.
+        
+        Returns
+        -------
+        dict with keys: bare, compact, detailed
+        """
+        n_outputs = len(outputs)
+        ctx_keys = list(out_ctx.keys())
+
+        return {
+            "bare": f"{n_outputs} outputs",
+            "compact": f"{n_outputs} outputs, context: {ctx_keys}",
+            "detailed": f"{n_outputs} outputs\nContext keys: {ctx_keys}\nContext: {str(out_ctx)[:500]}",
+        }
