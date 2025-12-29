@@ -810,6 +810,11 @@ class UI(Viewer):
 
     def _open_sources_dialog(self, event=None):
         """Open the sources dialog when the vector store badge is clicked."""
+        # Navigate to Source Catalog if sources exist, otherwise Upload
+        if self.context.get("sources"):
+            self._source_breadcrumbs.active = (0, 0, 0)  # Upload > Source Catalog
+        else:
+            self._source_breadcrumbs.active = (0, 0)  # Upload
         self._sources_dialog_content.open = True
 
     def _open_info_dialog(self, event=None):
