@@ -1081,7 +1081,6 @@ class ExplorerUI(UI):
                     width: 12px;
                     height: 12px;
                     background-color: var(--mui-palette-primary-main, #1976d2);
-                    border: none;
                     opacity: 1;
                 }
 
@@ -1333,7 +1332,6 @@ class ExplorerUI(UI):
                     width: 12px;
                     height: 12px;
                     background-color: var(--mui-palette-primary-main, #1976d2);
-                    border: none;
                     opacity: 1;
                 }
 
