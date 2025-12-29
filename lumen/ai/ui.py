@@ -621,7 +621,10 @@ class UI(Viewer):
         )
 
         # Set up actions for the ChatAreaInput speed dial
-        self._source_catalog = SourceCatalog(context=self.context)
+        # Use document_vector_store if available, otherwise fall back to main vector_store
+        doc_store = self.document_vector_store or self._coordinator.vector_store
+        self._source_catalog = SourceCatalog(context=self.context, vector_store=doc_store)
+
         # Watch for visibility changes and schedule async handler
         def _schedule_visibility_change(event):
             async def _do_sync():
@@ -632,13 +635,6 @@ class UI(Viewer):
         # Create separate upload and download controls with reference to catalog
         self._upload_controls = UploadControls(context=self.context, source_catalog=self._source_catalog)
         self._download_controls = DownloadControls(context=self.context, source_catalog=self._source_catalog)
-
-        # Wire up vector stores to components after they are created
-        # Use document_vector_store if available, otherwise fall back to main vector_store
-        doc_store = self.document_vector_store or self._coordinator.vector_store
-        self._source_catalog.vector_store = doc_store
-        self._upload_controls.source_catalog.vector_store = doc_store
-        self._download_controls.source_catalog.vector_store = doc_store
 
         # Watch for output changes from both controls
         self._upload_controls.param.watch(self._sync_sources, 'outputs')
