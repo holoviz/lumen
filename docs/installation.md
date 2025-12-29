@@ -15,7 +15,7 @@ Lumen works with any LLM provider. Choose the approach that fits your needs:
 
 ---
 
-## ☁️ Cloud Service Providers
+## Cloud Service Providers
 
 Use hosted LLM APIs from major providers. Fastest to set up, pay-per-use pricing.
 
@@ -68,7 +68,7 @@ Use hosted LLM APIs from major providers. Fastest to set up, pay-per-use pricing
 
 ---
 
-## 🖥️ Locally Hosted
+## Locally Hosted
 
 Run open-source LLMs on your own machine. No API keys required, full privacy, free to use.
 
@@ -100,7 +100,7 @@ Run open-source LLMs on your own machine. No API keys required, full privacy, fr
 
 ---
 
-## 🔀 Router / Multi-Provider
+## Router / Multi-Provider
 
 Use a unified interface to switch between multiple LLM providers. Useful for testing different models or supporting multiple backends.
 
