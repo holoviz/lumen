@@ -23,7 +23,7 @@ Help others learn Lumen:
 - Submit new tutorials
 
 ### ✨ Suggest Features
-Have an idea? [Start a discussion](https://github.com/holoviz/lumen/discussions):
+Have an idea? [Open a GitHub issue](https://github.com/holoviz/lumen/issues):
 
 - Explain the use case
 - Describe what you want to build
@@ -46,7 +46,8 @@ Have an idea? [Start a discussion](https://github.com/holoviz/lumen/discussions)
 
 ### 1. Fork & Clone
 ```bash
-# Fork the repo on GitHub
+# Visit and fork the repo on GitHub
+[https://github.com/holoviz/lumen](https://github.com/holoviz/lumen)
 # Then clone your fork
 git clone https://github.com/YOUR_USERNAME/lumen.git
 cd lumen
@@ -54,16 +55,21 @@ cd lumen
 
 ### 2. Create Environment
 ```bash
-# Using conda (recommended)
-conda create -n lumen-dev python=3.11
-conda activate lumen-dev
-pip install -e ".[all,dev]"
+# Using pixi (recommended)
+pixi install
 
-# Or using venv
-python -m venv venv
-source venv/bin/activate  # macOS/Linux
+# Or using pip
 pip install -e ".[all,dev]"
 ```
+
+#### Pixi Environments
+
+Lumen uses [pixi](https://pixi.sh) for development. Key environments:
+
+- `test-312` / `test-313`: Full test suite with AI and SQL dependencies
+- `test-core`: Minimal test environment
+- `docs`: Documentation building
+- `lint`: Code linting with pre-commit
 
 ### 3. Make Your Changes
 ```bash
@@ -77,14 +83,26 @@ git commit -m "Fix: clear description of change"
 
 ### 4. Run Tests
 ```bash
-# Run test suite
-pytest tests/
-
-# Run with coverage
-pytest --cov=lumen tests/
+# Run test suite with pixi
+pixi run -e test-312 test-unit
 ```
 
-### 5. Submit PR
+### 5. Lint Your Code
+```bash
+# Run linting
+pixi run -e lint lint
+```
+
+### 6. Build & Preview Docs
+```bash
+# Serve docs locally with live reload
+pixi run -e docs docs-serve
+
+# Build docs
+pixi run -e docs docs-build
+```
+
+### 7. Submit PR
 
 - Push to your fork
 - Open a Pull Request
@@ -119,16 +137,15 @@ pytest --cov=lumen tests/
 
 ## Need Help?
 
-- 💬 [Ask on Discourse](https://discourse.holoviz.org/c/lumen/14)
-- 💭 [GitHub Discussions](https://github.com/holoviz/lumen/discussions)
-- 📖 [Contributing Guide](https://github.com/holoviz/lumen/blob/main/CONTRIBUTING.md)
+- **Forum:** [Discourse](https://discourse.holoviz.org/c/lumen/)
+- **Chat:** [Discord](https://discord.com/invite/rb6gPXbdAr)
 
 ---
 
 ## Code of Conduct
 
 We're committed to providing a welcoming and inclusive environment.
-By participating, you agree to uphold our [Code of Conduct](https://github.com/holoviz/lumen/blob/main/CODE_OF_CONDUCT.md).
+By participating, you agree to uphold the [HoloViz Code of Conduct](https://holoviz.org/code_of_conduct.html).
 
 ---
 
