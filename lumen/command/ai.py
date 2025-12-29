@@ -259,10 +259,40 @@ class AIHandler(CodeHandler):
         except Exception:
             return False
 
+    @staticmethod
+    def _detect_db_type(file_path: str) -> str | None:
+        """
+        Detect if a .db file is SQLite or DuckDB by reading its header.
+
+        Returns
+        -------
+        str | None
+            'sqlite' for SQLite databases, 'duckdb' for DuckDB databases, None if unknown
+        """
+        if not os.path.exists(file_path):
+            return None
+
+        try:
+            with open(file_path, 'rb') as f:
+                header = f.read(16)
+
+            # SQLite files start with "SQLite format 3" (0x53 0x51 0x4c 0x69 0x74 0x65...)
+            if header.startswith(b'SQLite format 3'):
+                return 'sqlite'
+
+            # DuckDB files start with "DUCK" (0x44 0x55 0x43 0x4b)
+            if header.startswith(b'DUCK'):
+                return 'duckdb'
+
+            return None
+        except Exception:
+            return None
+
     @classmethod
     def _categorize_sources(cls, tables: list[str]) -> tuple[list[str], list[str]]:
         """
         Separate database URLs from file paths.
+        Automatically detects .db files and converts them to appropriate URLs.
 
         Returns
         -------
@@ -275,6 +305,16 @@ class AIHandler(CodeHandler):
         for table in tables:
             if cls._is_sqlalchemy_url(table):
                 db_urls.append(table)
+            elif table.endswith('.db'):
+                # Auto-detect database type for .db files
+                db_type = cls._detect_db_type(table)
+                if db_type == 'sqlite':
+                    db_urls.append(f'sqlite:///{os.path.abspath(table)}')
+                elif db_type == 'duckdb':
+                    db_urls.append(f'duckdb:///{os.path.abspath(table)}')
+                else:
+                    # If we can't detect the type, default to treating it as a file path
+                    file_paths.append(table)
             else:
                 file_paths.append(table)
         return db_urls, file_paths
