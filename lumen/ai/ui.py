@@ -995,7 +995,7 @@ class ExplorerUI(UI):
             theme_config={"light": {"palette": {"background": {"paper": "var(--mui-palette-grey-50)"}}}, "dark": {}}
         )
         self._sidebar_collapse = collapse = ToggleIcon(
-            value=True, active_icon="chevron_right", icon="chevron_left", styles={"margin-top": "auto", "margin-left": "auto"}, margin=5
+            value=False, active_icon="chevron_right", icon="chevron_left", styles={"margin-top": "auto", "margin-left": "auto"}, margin=5
         )
         self._sidebar_menu = menu = MenuList(
             items=[
