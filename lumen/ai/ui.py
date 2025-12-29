@@ -1066,7 +1066,27 @@ class ExplorerUI(UI):
             expanded_sizes=(40, 60),
             show_buttons=True,
             sizing_mode='stretch_both',
-            stylesheets=[".gutter-horizontal > .divider { background: unset }"]
+            stylesheets=[
+                """
+                .gutter-horizontal > .divider { background: unset }
+
+                /* Style toggle buttons with Material-UI theme */
+                .toggle-button-left,
+                .toggle-button-right {
+                    width: 24px;
+                    height: 24px;
+                    background-color: var(--mui-palette-primary-main, #1976d2);
+                    border: none;
+                    opacity: 1;
+                    -webkit-mask-size: 24px;
+                    mask-size: 24px;
+                }
+
+                .toggle-button-left {
+                    left: -36px;
+                }
+                """
+            ]
         )
         self._main[:] = [self._split]
         return main
