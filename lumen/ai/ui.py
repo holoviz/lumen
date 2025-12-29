@@ -1070,20 +1070,26 @@ class ExplorerUI(UI):
                 """
                 .gutter-horizontal > .divider { background: unset }
 
+                .gutter.gutter-horizontal::after {
+                    background-color: var(--mui-palette-primary-main, #1976d2);
+                    opacity: 0.8;
+                }
+
                 /* Style toggle buttons with Material-UI theme */
                 .toggle-button-left,
                 .toggle-button-right {
-                    width: 24px;
-                    height: 24px;
+                    width: 12px;
+                    height: 12px;
                     background-color: var(--mui-palette-primary-main, #1976d2);
                     border: none;
                     opacity: 1;
-                    -webkit-mask-size: 24px;
-                    mask-size: 24px;
                 }
 
                 .toggle-button-left {
-                    left: -36px;
+                    left: -28px;
+                }
+                .toggle-button-right {
+                    left: 8px;
                 }
                 """
             ]
@@ -1311,7 +1317,31 @@ class ExplorerUI(UI):
             expanded_sizes=(20, 80),
             sizes=(20, 80),
             sizing_mode="stretch_both",
-            styles={"overflow": "auto"}
+            styles={"overflow": "auto"},
+            stylesheets=[
+                """
+                .gutter-vertical > .divider { background: unset }
+
+                .gutter.gutter-vertical::after {
+                    background-color: var(--mui-palette-primary-main, #1976d2);
+                    opacity: 0.8;
+                }
+
+                /* Style toggle buttons with Material-UI theme */
+                .toggle-button-up,
+                .toggle-button-down {
+                    width: 12px;
+                    height: 12px;
+                    background-color: var(--mui-palette-primary-main, #1976d2);
+                    border: none;
+                    opacity: 1;
+                }
+
+                .toggle-button-up {
+                    top: -22px;
+                }
+                """
+            ]
         )
         controls.append(self._render_pop_out(exploration, vsplit, title))
         return (title, vsplit)
