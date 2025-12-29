@@ -547,7 +547,7 @@ class UploadControls(BaseSourceControls):
         self._layout = MuiColumn(
             self._file_input,
             self._upload_cards,
-            Row(self._add_button),
+            self._add_button,
             self._error_placeholder,
             self._message_placeholder,
             self._progress_bar,
