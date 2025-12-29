@@ -194,13 +194,6 @@ class UI(Viewer):
         self._configure_session()
         self._render_page()
 
-        # Wire up vector stores to components after they are created
-        # Use document_vector_store if available, otherwise fall back to main vector_store
-        doc_store = self.document_vector_store or self._coordinator.vector_store
-        self._source_catalog.vector_store = doc_store
-        self._upload_controls.source_catalog.vector_store = doc_store
-        self._download_controls.source_catalog.vector_store = doc_store
-
     @classmethod
     def _resolve_data(
         cls, data: DataT | list[DataT] | dict[DataT] | None
@@ -498,11 +491,9 @@ class UI(Viewer):
         self._transition_to_chat()
         if user_prompt:
             msg = Column(user_prompt, source_view) if source_view else user_prompt
-            with hold():
-                self.interface.send(msg, respond=True)
+            self.interface.send(msg, respond=True)
         elif source_view:
-            with hold():
-                self.interface.send(source_view, respond=False)
+            self.interface.send(source_view, respond=False)
 
     def _on_sources_dialog_close(self, event):
         """Handle sources dialog close - restore pending query to input if user closed without adding files."""
@@ -641,6 +632,13 @@ class UI(Viewer):
         # Create separate upload and download controls with reference to catalog
         self._upload_controls = UploadControls(context=self.context, source_catalog=self._source_catalog)
         self._download_controls = DownloadControls(context=self.context, source_catalog=self._source_catalog)
+
+        # Wire up vector stores to components after they are created
+        # Use document_vector_store if available, otherwise fall back to main vector_store
+        doc_store = self.document_vector_store or self._coordinator.vector_store
+        self._source_catalog.vector_store = doc_store
+        self._upload_controls.source_catalog.vector_store = doc_store
+        self._download_controls.source_catalog.vector_store = doc_store
 
         # Watch for output changes from both controls
         self._upload_controls.param.watch(self._sync_sources, 'outputs')
