@@ -1,0 +1,203 @@
+[project]
+site_name = "Lumen"
+site_description = "Open-source agent framework for chatting with data and building dashboards"
+site_author = "HoloViz Developers"
+site_url = "https://lumen.holoviz.org"
+site_dir = "builtdocs"
+repo_url = "https://github.com/holoviz/lumen"
+repo_name = "holoviz/lumen"
+edit_uri = "edit/main/docs/"
+extra_css = ["assets/extra.css"]
+extra_javascript = ["assets/extra.js"]
+nav = [
+  {"Home" = "index.md"},
+  {"Quick Start" = "quick_start.md"},
+  {"Installation" = "installation.md"},
+  {"FAQ" = "faq.md"},
+  {"Getting Started" = [
+    {"Launching Lumen" = "getting_started/launching_lumen.md"},
+    {"Navigating the UI" = "getting_started/navigating_the_ui.md"},
+    {"Using Lumen AI" = "getting_started/using_lumen_ai.md"}
+  ]},
+  {"Configuration" = [
+    {"CLI" = "configuration/cli.md"},
+    {"Prompts" = "configuration/prompts.md"},
+    {"Data Sources" = "configuration/sources.md"},
+    {"LLM Providers" = "configuration/llm_providers.md"},
+    {"Analyses" = "configuration/analyses.md"},
+    {"UI" = "configuration/ui.md"},
+    {"Context" = "configuration/context.md"},
+    {"Agents" = "configuration/agents.md"},
+    {"Tools" = "configuration/tools.md"},
+    {"Coordinator" = "configuration/coordinators.md"},
+    {"Embeddings" = "configuration/embeddings.md"},
+    {"Vector Stores" = "configuration/vector_stores.md"},
+    {"Specs" = [
+      {"Overview" = "configuration/spec/index.md"},
+      {"Core Concepts" = "configuration/spec/concepts.md"},
+      {"Loading Data" = "configuration/spec/sources.md"},
+      {"Transforming Data" = "configuration/spec/pipelines.md"},
+      {"Visualizing Data" = "configuration/spec/views.md"},
+      {"Variables & References" = "configuration/spec/variables.md"},
+      {"Custom Components" = "configuration/spec/customization.md"},
+      {"Python API" = "configuration/spec/python-api.md"},
+      {"Data Downloads" = "configuration/spec/downloads.md"},
+      {"Authentication" = "configuration/spec/authentication.md"},
+      {"Deployment" = "configuration/spec/deployment.md"}
+    ]}
+  ]},
+  {"Examples" = [
+    {"Tutorials" = [
+      {"Overview" = "examples/tutorials/index.md"},
+      {"Weather Data AI Explorer" = "examples/tutorials/weather_data_ai_explorer.md"},
+      {"Penguins Dashboard Spec" = "examples/tutorials/penguins_dashboard_spec.md"}
+    ]},
+    {"Gallery" = [
+      {"Overview" = "examples/gallery/index.md"},
+      {"Penguins" = "examples/gallery/penguins.md"},
+      {"London Bike Points" = "examples/gallery/bikes.md"},
+      {"Seattle Weather" = "examples/gallery/seattle.md"},
+      {"NYC Taxi" = "examples/gallery/nyc_taxi.md"},
+      {"Precipitation" = "examples/gallery/precip.md"},
+      {"Earthquakes" = "examples/gallery/earthquakes.md"},
+      {"Wind Turbines" = "examples/gallery/windturbines.md"}
+    ]}
+  ]},
+  {"Reference" = [
+    {"API" = [
+      {"AI" = [
+        {"Agents" = "reference/api/ai/agents.md"},
+        {"Coordinator" = "reference/api/ai/coordinator.md"},
+        {"Models" = "reference/api/ai/models.md"},
+        {"Tools" = "reference/api/ai/tools.md"},
+        {"Core" = "reference/api/ai/core.md"}
+      ]},
+      {"Pipeline" = "reference/api/pipeline.md"},
+      {"Sources" = "reference/api/sources.md"},
+      {"Transforms" = "reference/api/transforms.md"},
+      {"Views" = "reference/api/views.md"}
+    ]},
+    {"Contributing" = "reference/contributing.md"}
+  ]}
+]
+
+# Theme configuration
+[project.theme]
+variant = "modern"  # Use "classic" if you want the Material for MkDocs look
+logo = "assets/logo.svg"
+favicon = "assets/favicon.ico"
+features = [
+  "announce.dismiss",
+  "content.action.edit",
+  "content.action.view",
+  "content.code.annotate",
+  "content.code.copy",
+  "content.tooltips",
+  "navigation.footer",
+  "navigation.indexes",
+  "navigation.instant",
+  "navigation.instant.prefetch",
+  "navigation.instant.progress",
+  "navigation.sections",
+  "navigation.top",
+  "navigation.tracking",
+  "search.highlight",
+  "search.share",
+  "search.suggest",
+  "toc.follow"
+]
+
+# Color palette
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+primary = "custom"
+accent = "blue"
+
+[project.theme.palette.toggle]
+icon = "material/brightness-7"
+name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+primary = "custom"
+accent = "black"
+
+[project.theme.palette.toggle]
+icon = "material/brightness-4"
+name = "Switch to light mode"
+
+# Markdown extensions
+[project.markdown_extensions.toc]
+permalink = true
+
+[project.markdown_extensions.pymdownx.highlight]
+anchor_linenums = true
+line_spans = "__span"
+pygments_lang_class = true
+
+[project.markdown_extensions.pymdownx.superfences]
+
+[project.markdown_extensions.pymdownx.tasklist]
+custom_checkbox = true
+
+[project.markdown_extensions.pymdownx.inlinehilite]
+
+[project.markdown_extensions.admonition]
+
+[project.markdown_extensions.pymdownx.snippets]
+url_download = true
+base_path = ["."]
+
+[project.markdown_extensions.pymdownx.tabbed]
+alternate_style = true
+
+[project.markdown_extensions.pymdownx.emoji]
+emoji_index = "zensical.extensions.emoji.twemoji"
+emoji_generator = "zensical.extensions.emoji.to_svg"
+
+[project.markdown_extensions.attr_list]
+
+[project.markdown_extensions.md_in_html]
+
+[project.markdown_extensions.abbr]
+
+[project.markdown_extensions.def_list]
+
+# Plugins
+[project.plugins]
+search = {}
+typeset = {}
+literate_nav = {}
+
+[project.plugins.mkdocstrings.handlers.python]
+paths = ["."]
+
+[project.plugins.mkdocstrings.handlers.python.options]
+docstring_style = "numpy"
+show_if_no_docstring = true
+filters = ["!^_"]
+
+# Extra configuration
+[project.extra]
+
+[[project.extra.social]]
+icon = "fontawesome/brands/github"
+link = "https://github.com/holoviz/lumen"
+
+[[project.extra.social]]
+icon = "fontawesome/brands/discourse"
+link = "https://discourse.holoviz.org/c/lumen/"
+
+[[project.extra.social]]
+icon = "fontawesome/brands/discord"
+link = "https://discord.com/invite/rb6gPXbdAr"
+
+[[project.extra.social]]
+icon = "fontawesome/brands/twitter"
+link = "https://twitter.com/holoviz_org"
+
+[[project.extra.social]]
+icon = "fontawesome/brands/python"
+link = "https://pypi.org/project/lumen/"

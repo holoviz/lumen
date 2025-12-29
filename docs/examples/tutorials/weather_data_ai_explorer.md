@@ -147,7 +147,7 @@ Template overrides inject domain knowledge into agent system prompts. This custo
 
 **Key concepts:**
 
-- **Template overrides** inject specialized knowledge using the `template_overrides` attribute (see [Agents configuration](../configuration/agents.md))
+- **Template overrides** inject specialized knowledge using the `template_overrides` attribute (see [Agents configuration](../../configuration/agents.md))
 - **Global context** shares knowledge across all agents by setting overrides on the `Actor` base class
 - **Agent-specific overrides** customize individual agent types like `AnalystAgent`
 - **Jinja2 templates** use `{{ super() }}` to preserve original content while adding customizations
