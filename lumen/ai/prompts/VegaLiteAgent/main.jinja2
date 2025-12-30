@@ -11,8 +11,6 @@ Every visualization must:
 - Focus on ONE primary metric or relationship per chart
 - Include narrative titles that tell a story about the data (what happened, not just what's shown)
 - Do not overcrowd the plot with too many data points, especially for bars
-- Place `transform` at top level when filtering/ranking should apply to ALL layers (e.g., top 10)
-- NEVER plot metrics with different units/scales on the same axis (e.g., dollars and years, temperature and count)
 
 # MARK vs ENCODING
 
@@ -28,13 +26,6 @@ mark: {type: text, align: left, dx: 3, color: black}
 encoding:
   x: {field: year, type: quantitative}
   color: {value: 'blue'}  # Static values need {value: ...}
-```
-
-**Geographic data**: ALWAYS use `longitude` and `latitude` encodings for coordinate data, never `x` and `y`
-```yaml
-encoding:
-  longitude: {field: xlong, type: quantitative}
-  latitude: {field: ylat, type: quantitative}
 ```
 
 # LEGENDS
@@ -62,44 +53,37 @@ Legends appear when you map data to `color`, `size`, or `shape` in encoding.
 **Data types**: Match type to your data - quantitative for continuous, ordinal for ordered categories, nominal for unordered, temporal for dates
 - For year fields: use `type: quantitative` with `axis.format: 'd'` to prevent comma separators (1990 not 1,990)
 
-**Incompatible scales**: When data contains metrics with different units (GDP in $, Life Expectancy in years), choose ONE:
+**Incompatible scales**: Metrics with different units (GDP in $, Life Expectancy in years) cannot share the same Y-axis. Choose ONE:
 - Show only the primary metric (the one most relevant to the story)
-- Use faceting to create separate charts side-by-side
-- NEVER plot them on the same Y-axis - this makes one metric invisible
+- Use faceting: `transform: [{fold: [...]}]`, `facet: {row: {field: metric}}`, `resolve: {scale: {y: independent}}`
 
-**Dynamic filtering**: Use window transforms to avoid hardcoding values when filtering for min/max or endpoints.
-- Place transforms at the **top level** when they should apply to all layers (e.g., filtering to top 10)
-- Place transforms within a layer only when that specific layer needs different data
+**Dynamic filtering**: Use window transforms for dynamic filtering (min/max, endpoints) instead of hardcoding values:
+- Top-level transform: applies to all layers (e.g., filtering to top 10)
+- Layer-level transform: when only that layer needs different data
 
-**Scale domains**: For color or size encodings with quantitative data:
-- If data clusters in a narrow range (e.g., 5500-6000), set explicit domain: `scale: {domain: [5500, 6000]}`
-- Default domain starts at 0, which can make small differences invisible
-- Check data range before choosing whether to include 0 in the domain
+**Scale domains**: For color/size encodings with quantitative data:
+- Default domain starts at 0, making clustered data invisible (5500-6000 on 0-6000 scale)
+- Set explicit domain when data clusters: `scale: {domain: [5500, 6000]}`
 
-**Clean, minimal styling**: Remove unnecessary visual elements:
-- No chart borders: `config.view.stroke: null`
-- Minimal gridlines: 
-  - Horizontal bars: keep x-axis grid (vertical lines), disable y-axis grid
-  - Vertical bars: keep y-axis grid (horizontal lines), disable x-axis grid
-- Inline units: Add % or units to tick labels instead of axis titles (e.g., `format: '.0%'`)
-- Remove obvious axis titles ("Year" on x-axis when showing 2020, 2021, etc.)
-- Everything should align with something else
+**Clean, minimal styling**: 
+- Remove borders: `config.view.stroke: null`
+- Context-aware gridlines: horizontal bars need x-grid, vertical bars/lines need y-grid only
+- Inline units in tick labels: `format: '.0%'` instead of separate axis titles
+- Remove obvious axis titles ("Year" when showing 2020, 2021...)
 
 **Selective emphasis**: Guide attention to what matters:
 - Reduce opacity of secondary data: `opacity: 0.3` for background context
 - Keep primary data prominent: `opacity: 1, strokeWidth: 2`
 - Use direct labels on important lines, skip labels on minor ones
 
-**Geographic maps**: When data has latitude/longitude fields:
-- Use `longitude` and `latitude` encodings (NOT `x` and `y`)
-- Add a `projection` (e.g., `projection: {type: mercator}`)
-- Include a base map layer with world or country outlines
-- The projection and map layer are added automatically, focus on the data layer
+**Geographic maps**: When data has latitude/longitude coordinates:
+- Use `longitude`/`latitude` encodings (NOT `x`/`y`) to trigger map projection - field names don't matter
+- Add `projection` at top level (e.g., `projection: {type: mercator}`)
+- Base map layer added automatically
 
-**Choropleth maps** (colored regions): Use lookup transform to join your data with map boundaries:
+**Choropleth maps** (colored regions): Join your data with map boundaries using lookup:
 - Structure: `lookup: <field_in_map>` then `from: {data: {...}, key: <field_in_your_data>, fields: [...]}`
-- `key` and `fields` MUST be inside the `from` object
-- Example: Joining state names to get values to color the map
+- CRITICAL: `key` and `fields` MUST be inside the `from` object
 {% endblock %}
 
 {% block examples %}
