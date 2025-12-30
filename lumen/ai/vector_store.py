@@ -89,8 +89,15 @@ class VectorStore(LLMUser):
         contextual about the chunks.""",
     )
 
+    max_concurrent = param.Integer(
+        default=5,
+        bounds=(1, None),
+        doc="""
+        Maximum number of files to process concurrently in add_directory.
+        Set to 1 for backends that don't support concurrent writes.""",
+    )
+
     def __init__(self, **params):
-        self._add_items_lock = asyncio.Lock()  # Lock for thread-safe add_items
         super().__init__(**params)
         if self.chunk_func is None:
             self.chunk_func = semchunk.chunkerify(
@@ -231,6 +238,65 @@ class VectorStore(LLMUser):
             # Default to the class default in case of error
             return self.situate
 
+    async def _prepare_items_for_embedding(
+        self,
+        items: list[dict],
+        situate: bool | None = None,
+    ) -> tuple[list[str], list[dict], list[str]]:
+        """
+        Prepare items for embedding by chunking and optionally adding context.
+
+        Parameters
+        ----------
+        items: list[dict]
+            List of dictionaries containing 'text' and optional 'metadata'.
+        situate: bool | None
+            Whether to add LLM context to chunks. If None, uses self.situate.
+
+        Returns
+        -------
+        tuple of (texts, metadata_list, text_and_metadata_list)
+        """
+        all_texts = []
+        all_metadata = []
+        text_and_metadata_list = []
+
+        use_situate = self.situate if situate is None else situate
+
+        for item in items:
+            text = item["text"]
+            metadata = item.get("metadata", {}) or {}
+
+            content_chunks = self._chunk_text(
+                text, self.chunk_size, self.chunk_func, **self.chunk_func_kwargs
+            )
+
+            # Generate contextual descriptions if situate is enabled and multiple chunks exist
+            should_situate = use_situate and len(content_chunks) > 1
+            chunk_contexts = {}
+            if should_situate and self.llm:
+                previous_context = None
+                for chunk in content_chunks:
+                    needs_context = await self.should_situate_chunk(chunk)
+                    if not needs_context:
+                        continue
+                    context = await self._generate_context(text, chunk, previous_context, metadata)
+                    chunk_contexts[chunk] = context
+                    previous_context = context
+            elif should_situate and not self.llm:
+                raise ValueError("LLM not provided. Cannot apply situate.")
+
+            for chunk in content_chunks:
+                chunk_metadata = metadata.copy()
+                if should_situate and chunk in chunk_contexts:
+                    chunk_metadata["llm_context"] = chunk_contexts[chunk]
+                text_and_metadata = self._join_text_and_metadata(chunk, chunk_metadata)
+                all_texts.append(chunk)
+                all_metadata.append(chunk_metadata)
+                text_and_metadata_list.append(text_and_metadata)
+
+        return all_texts, all_metadata, text_and_metadata_list
+
     async def add(
         self,
         items: list[dict],
@@ -254,62 +320,15 @@ class VectorStore(LLMUser):
         -------
         List of assigned IDs for the added items.
         """
-        all_texts = []
-        all_metadata = []
-        text_and_metadata_list = []
+        all_texts, all_metadata, text_and_metadata_list = await self._prepare_items_for_embedding(items, situate)
 
-        # Use the provided situate parameter or fall back to the class default
-        use_situate = self.situate if situate is None else situate
+        if not all_texts:
+            return []
 
-        for item in items:
-            text = item["text"]
-            metadata = item.get("metadata", {}) or {}
-
-            # Split text into chunks
-            content_chunks = self._chunk_text(
-                text, self.chunk_size, self.chunk_func, **self.chunk_func_kwargs
-            )
-
-            # Skip situating if use_situate is False
-            if not use_situate or len(content_chunks) <= 1:
-                should_situate = False
-            else:
-                should_situate = True
-
-            # Generate contextual descriptions if situate is enabled and multiple chunks exist
-            chunk_contexts = {}
-            if should_situate and self.llm:
-                previous_context = None  # Start with no previous context
-                for chunk in content_chunks:
-                    needs_context = await self.should_situate_chunk(chunk)
-                    if not needs_context:
-                        continue
-
-                    context = await self._generate_context(text, chunk, previous_context, metadata)
-                    chunk_contexts[chunk] = context
-                    previous_context = context  # Save this context for the next chunk
-            elif should_situate and not self.llm:
-                raise ValueError("LLM not provided. Cannot apply situate.")
-
-            # Process each chunk with its context
-            for chunk in content_chunks:
-                chunk_metadata = metadata.copy()
-
-                # Add context to metadata if situate is enabled and multiple chunks exist
-                if should_situate and chunk in chunk_contexts:
-                    chunk_metadata["llm_context"] = chunk_contexts[chunk]
-
-                text_and_metadata = self._join_text_and_metadata(chunk, chunk_metadata)
-                all_texts.append(chunk)
-                all_metadata.append(chunk_metadata)
-                text_and_metadata_list.append(text_and_metadata)
-
-        # Get embeddings for all chunks
         embeddings = np.array(
             await self.embeddings.embed(text_and_metadata_list), dtype=np.float32
         )
 
-        # Implement add logic in derived classes
         return await self._add_items(all_texts, all_metadata, embeddings, force_ids)
 
     @abstractmethod
@@ -418,7 +437,7 @@ class VectorStore(LLMUser):
         situate: bool | None = None,
         upsert: bool = False,
         raise_on_error = False,
-        max_concurrent: int = 5,
+        max_concurrent: int | None = None,
     ) -> list[int]:
         """
         Recursively add files from a directory that match the pattern and don't match exclude patterns.
@@ -439,14 +458,16 @@ class VectorStore(LLMUser):
             If True, will update existing items if similar content is found. Default is False.
         raise_on_error: bool
             If True, will raise an error if any file fails to process. Default is False.
-        max_concurrent: int
-            Maximum number of files to process concurrently. Default is 5.
+        max_concurrent: int | None
+            Maximum number of files to process concurrently. If None, uses self.max_concurrent.
 
         Returns
         -------
         List[int]
             Combined list of IDs for all added files.
         """
+        if max_concurrent is None:
+            max_concurrent = self.max_concurrent
         if exclude_patterns is None:
             exclude_patterns = []
 
@@ -573,7 +594,6 @@ class VectorStore(LLMUser):
         top_k: int = 5,
         filters: dict | None = None,
         threshold: float = -1.0,
-        situate: bool | None = None,
     ) -> list[dict]:
         """
         Query the vector store for similar items.
@@ -588,9 +608,6 @@ class VectorStore(LLMUser):
             Optional metadata filters.
         threshold: float
             Minimum similarity score required for a result to be included.
-        situate: bool | None
-            Whether to insert a `llm_context` key in the metadata containing
-            contextual about the chunks. If None, uses the class default.
 
         Returns
         -------
@@ -801,9 +818,7 @@ class NumpyVectorStore(VectorStore):
             mask = np.ones(len(self.vectors), dtype=bool)
             for key, value in filters.items():
                 mask &= np.array([item.get(key) == value for item in self.metadata])
-            similarities = np.where(
-                mask, similarities, -9999
-            )  # make filtered similarity values == -1
+            similarities = np.where(mask, similarities, -9999)
 
         results = []
         if len(similarities) > 0:
@@ -822,7 +837,6 @@ class NumpyVectorStore(VectorStore):
                 )
                 if len(results) >= top_k:
                     break
-        log_debug(f"[NumpyVectorStore.query] Returning {len(results)} results")
         return results
 
     def filter_by(
@@ -973,7 +987,6 @@ class NumpyVectorStore(VectorStore):
                         self.delete(matched_ids)
                         new_ids = await self.add(
                             [{"text": text, "metadata": metadata}],
-                            force_ids=matched_ids,
                             situate=situate,
                         )
                         assigned_ids.extend(new_ids)
@@ -1050,6 +1063,14 @@ class DuckDBVectorStore(VectorStore):
 
     read_only = param.Boolean(default=False, doc="Whether to open the database in read-only mode")
 
+    max_concurrent = param.Integer(
+        default=1,
+        bounds=(1, None),
+        doc="""
+        Maximum number of files to process concurrently in add_directory.
+        Default is 1 for DuckDB due to VSS extension limitations with concurrent writes.""",
+    )
+
     embeddings = param.ClassSelector(
         class_=Embeddings,
         default=None,
@@ -1059,6 +1080,7 @@ class DuckDBVectorStore(VectorStore):
 
     def __init__(self, **params):
         super().__init__(**params)
+        self._add_items_lock = asyncio.Lock()
 
         connection = duckdb.connect(":memory:")
         # following the instructions from
@@ -1265,33 +1287,45 @@ class DuckDBVectorStore(VectorStore):
             vector_dim = embeddings.shape[1]
             self._setup_database(vector_dim)
 
-        text_ids = []
-
         # Acquire the lock once for the entire batch operation
         async with self._add_items_lock:
-            for i in range(len(texts)):
-                vector = np.array(embeddings[i], dtype=np.float32)
+            return await self._add_items_unlocked(texts, metadata, embeddings, force_ids)
 
-                if force_ids is not None:
-                    query = """
-                        INSERT INTO documents (id, text, metadata, embedding)
-                        VALUES (?, ?, ?::JSON, ?) RETURNING id;
-                        """
-                    params = [
-                        force_ids[i],
-                        texts[i],
-                        json.dumps(metadata[i]),
-                        vector.tolist(),
-                    ]
-                else:
-                    query = """
-                        INSERT INTO documents (text, metadata, embedding)
-                        VALUES (?, ?::JSON, ?) RETURNING id;
-                        """
-                    params = [texts[i], json.dumps(metadata[i]), vector.tolist()]
+    async def _add_items_unlocked(
+        self,
+        texts: list[str],
+        metadata: list[dict],
+        embeddings: np.ndarray,
+        force_ids: list[int] | None = None,
+    ) -> list[int]:
+        """
+        Internal method to add items without acquiring lock (caller must hold lock).
+        """
+        text_ids = []
 
-                result = await asyncio.to_thread(self._execute_query, query, params)
-                text_ids.append(result)
+        for i in range(len(texts)):
+            vector = np.array(embeddings[i], dtype=np.float32)
+
+            if force_ids is not None:
+                query = """
+                    INSERT INTO documents (id, text, metadata, embedding)
+                    VALUES (?, ?, ?::JSON, ?) RETURNING id;
+                    """
+                params = [
+                    force_ids[i],
+                    texts[i],
+                    json.dumps(metadata[i]),
+                    vector.tolist(),
+                ]
+            else:
+                query = """
+                    INSERT INTO documents (text, metadata, embedding)
+                    VALUES (?, ?::JSON, ?) RETURNING id;
+                    """
+                params = [texts[i], json.dumps(metadata[i]), vector.tolist()]
+
+            result = await asyncio.to_thread(self._execute_query, query, params)
+            text_ids.append(result)
 
         return text_ids
 
@@ -1320,9 +1354,7 @@ class DuckDBVectorStore(VectorStore):
         -------
         List of results with 'id', 'text', 'metadata', and 'similarity' score.
         """
-        log_debug(f"[DuckDBVectorStore.query] text={text!r}, top_k={top_k}, filters={filters}, threshold={threshold}")
         if not self._initialized:
-            log_debug("[DuckDBVectorStore.query] Not initialized, returning empty")
             return []
         query_embedding = np.array(
             (await self.embeddings.embed([text]))[0], dtype=np.float32
@@ -1350,9 +1382,6 @@ class DuckDBVectorStore(VectorStore):
 
         try:
             result = self.connection.execute(base_query, params).fetchall()
-            log_debug(f"[DuckDBVectorStore.query] Found {len(result)} results")
-            for i, row in enumerate(result[:10]):  # Log top 10 for debugging
-                log_debug(f"  [{i+1}] id={row[0]}, sim={row[3]:.4f}, meta={row[2]}, text_preview={row[1][:80]!r}...")
             return [
                 {
                     "id": row[0],
@@ -1471,85 +1500,97 @@ class DuckDBVectorStore(VectorStore):
         assigned_ids = []
         items_to_add = []
 
-        for item in items:
-            text = item["text"]
-            metadata = item.get("metadata", {}) or {}
+        # Acquire lock for entire upsert operation to prevent race conditions
+        async with self._add_items_lock:
+            for item in items:
+                text = item["text"]
+                metadata = item.get("metadata", {}) or {}
 
-            # Check for exact text match (whole document stored as single entry)
-            query = """
-                SELECT id, metadata
-                FROM documents
-                WHERE text = ?
-            """
+                # Check for exact text match (whole document stored as single entry)
+                query = """
+                    SELECT id, metadata
+                    FROM documents
+                    WHERE text = ?
+                """
 
-            # Execute the query in a thread
-            result = await asyncio.to_thread(
-                self._execute_query, query, [text], fetchall=True
-            )
+                # Execute the query in a thread
+                result = await asyncio.to_thread(
+                    self._execute_query, query, [text], fetchall=True
+                )
 
-            # If no exact match, check for chunked text match
-            # Collect ALL matching chunk results
-            if not result:
-                chunked_results = []
-                chunks = self._chunk_text(text, self.chunk_size, self.chunk_func, **self.chunk_func_kwargs)
-                for chunk in chunks:
-                    chunk_results = await asyncio.to_thread(
-                        self._execute_query, query, [chunk], fetchall=True
-                    )
-                    chunked_results.extend(chunk_results)
-                result = chunked_results
+                # If no exact match, check for chunked text match
+                # Collect ALL matching chunk results
+                if not result:
+                    chunked_results = []
+                    chunks = self._chunk_text(text, self.chunk_size, self.chunk_func, **self.chunk_func_kwargs)
+                    for chunk in chunks:
+                        chunk_results = await asyncio.to_thread(
+                            self._execute_query, query, [chunk], fetchall=True
+                        )
+                        chunked_results.extend(chunk_results)
+                    result = chunked_results
 
-            if result:
-                # Check metadata compatibility for ALL matching chunks
-                all_chunks_match = True
-                matched_ids = []
-                needs_update = False
+                if result:
+                    # Check metadata compatibility for ALL matching chunks
+                    all_chunks_match = True
+                    matched_ids = []
+                    needs_update = False
 
-                for row in result:
-                    item_id = row[0]
-                    existing_metadata = json.loads(row[1])
+                    for row in result:
+                        item_id = row[0]
+                        existing_metadata = json.loads(row[1])
 
-                    # Check for metadata value conflicts
-                    has_value_conflict = False
-                    common_keys = set(metadata.keys()) & set(existing_metadata.keys())
-                    for key in common_keys:
-                        if metadata[key] != existing_metadata[key]:
-                            has_value_conflict = True
+                        # Check for metadata value conflicts
+                        has_value_conflict = False
+                        common_keys = set(metadata.keys()) & set(existing_metadata.keys())
+                        for key in common_keys:
+                            if metadata[key] != existing_metadata[key]:
+                                has_value_conflict = True
+                                break
+
+                        if has_value_conflict:
+                            # If values conflict, this chunk is not a match
+                            all_chunks_match = False
                             break
 
-                    if has_value_conflict:
-                        # If values conflict, this chunk is not a match
-                        all_chunks_match = False
-                        break
+                        # Check if metadata needs updating
+                        if set(metadata.keys()) != set(existing_metadata.keys()):
+                            needs_update = True
 
-                    # Check if metadata needs updating
-                    if set(metadata.keys()) != set(existing_metadata.keys()):
-                        needs_update = True
+                        matched_ids.append(item_id)
 
-                    matched_ids.append(item_id)
+                    if all_chunks_match and matched_ids:
+                        if needs_update:
+                            # Delete all existing chunks and re-add with new metadata
+                            self.delete(matched_ids)
+                            all_texts, all_metadata, text_and_metadata_list = await self._prepare_items_for_embedding(
+                                [{"text": text, "metadata": metadata}], situate
+                            )
+                            if all_texts:
+                                embeddings = np.array(
+                                    await self.embeddings.embed(text_and_metadata_list), dtype=np.float32
+                                )
+                                new_ids = await self._add_items_unlocked(all_texts, all_metadata, embeddings)
+                                assigned_ids.extend(new_ids)
+                        else:
+                            # All chunks have exact metadata match - reuse existing IDs
+                            assigned_ids.extend(matched_ids)
+                        continue
 
-                if all_chunks_match and matched_ids:
-                    if needs_update:
-                        # Delete all existing chunks and re-add with new metadata
-                        self.delete(matched_ids)
-                        new_ids = await self.add(
-                            [{"text": text, "metadata": metadata}],
-                            force_ids=matched_ids,
-                            situate=situate,
-                        )
-                        assigned_ids.extend(new_ids)
-                    else:
-                        # All chunks have exact metadata match - reuse existing IDs
-                        assigned_ids.extend(matched_ids)
-                    continue
+                # If no match or conflicts found, add as new item
+                items_to_add.append(item)
 
-            # If no match or conflicts found, add as new item
-            items_to_add.append(item)
+            # Process new items while still holding the lock
+            if items_to_add:
+                all_texts, all_metadata, text_and_metadata_list = await self._prepare_items_for_embedding(items_to_add, situate)
 
-        if items_to_add:
-            new_ids = await self.add(items_to_add, situate=situate)
-            assigned_ids.extend(new_ids)
-            log_debug(f"Added {len(items_to_add)} new items to the vector store.")
+                if all_texts:
+                    embeddings = np.array(
+                        await self.embeddings.embed(text_and_metadata_list), dtype=np.float32
+                    )
+                    new_ids = await self._add_items_unlocked(all_texts, all_metadata, embeddings)
+                    assigned_ids.extend(new_ids)
+                    log_debug(f"Added {len(items_to_add)} new items to the vector store.")
 
         return assigned_ids
 
