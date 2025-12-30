@@ -266,7 +266,7 @@ class Metaset:
                 if slug not in primary_set
             ][:n_others]
             if other_slugs:
-                result += "\n\nOther available:\n"
+                result += "\n\nOthers available:\n"
                 for slug in other_slugs:
                     display_slug = slug
                     if single_source and not show_source and SOURCE_TABLE_SEPARATOR in slug:

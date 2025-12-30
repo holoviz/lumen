@@ -87,18 +87,18 @@ Data sources:
 {%- endif %}
 
 {%- if 'table' in memory %}
-📋 Last table: `{{ memory['table'] }}`
+Previously used table: `{{ memory['table'] }}`
 {%- endif %}
 
 {%- if 'sql' in memory %}
-Current SQL:
+Previously used SQL:
 ```sql
 {{ memory['sql'] }}
 ```
 {%- endif %}
 
 {%- if memory.get('data') is not none %}
-Current data summary:
+Previously derived data summary:
 {{ memory["data"] }}
 {%- endif -%}
 
