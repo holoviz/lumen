@@ -44,46 +44,28 @@ Legends appear when you map data to `color`, `size`, or `shape` in encoding.
 
 **Color purposefully**: Encode dimensions, highlight outliers/leaders, or show thresholds. Keep color in `mark` for text labels that shouldn't appear in legends. When encoding quantitative values with color, consider setting an appropriate `domain` if data doesn't start at 0 (e.g., `scale: {scheme: blues, domain: [min, max]}`).
 
-**Informative titles**: Always include a title object **at the top level** that tells a story:
-- `text`: Tell what happened, not just what's shown ("Sales spiked 40% in Q3" not "Sales over time")
-- `subtitle`: Add NEW insight or context, don't repeat the title ("Three offshore projects account for 70%" not "Showing locations and sizes")
+**Informative titles**: Title object at top level tells a story:
+- `text`: What happened ("Sales spiked 40% in Q3" not "Sales over time")
+- `subtitle`: NEW insight, don't repeat title ("Three offshore projects account for 70%")
 - `fontSize: 18`, `subtitleFontSize: 14`, `subtitleColor: '#666666'`, `anchor: start`
-- IMPORTANT: Title goes at top level, NOT inside `config.title`
 
 **Data types**: Match type to your data - quantitative for continuous, ordinal for ordered categories, nominal for unordered, temporal for dates
 - For year fields: use `type: quantitative` with `axis.format: 'd'` to prevent comma separators (1990 not 1,990)
 
-**Incompatible scales**: Metrics with different units (GDP in $, Life Expectancy in years) cannot share the same Y-axis. Choose ONE:
-- Show only the primary metric (the one most relevant to the story)
-- Use faceting: `transform: [{fold: [...]}]`, `facet: {row: {field: metric}}`, `resolve: {scale: {y: independent}}`
+**Incompatible scales**: Different units cannot share Y-axis. Choose: (1) primary metric only, or (2) faceting with `fold` + `resolve: {scale: {y: independent}}`
 
-**Dynamic filtering**: Use window transforms for dynamic filtering (min/max, endpoints) instead of hardcoding values:
-- Top-level transform: applies to all layers (e.g., filtering to top 10)
-- Layer-level transform: when only that layer needs different data
+**Dynamic filtering**: Use window transforms instead of hardcoding (min/max, endpoints, top N):
+- Top-level: applies to all layers | Layer-level: that layer only
 
-**Scale domains**: For color/size encodings with quantitative data:
-- Default domain starts at 0, making clustered data invisible (5500-6000 on 0-6000 scale)
-- Set explicit domain when data clusters: `scale: {domain: [5500, 6000]}`
+**Scale domains**: Default starts at 0, hiding clustered data (5500-6000 on 0-6000 scale). Set explicit domain: `scale: {domain: [5500, 6000]}`
 
-**Clean, minimal styling**: 
-- Remove borders: `config.view.stroke: null`
-- Context-aware gridlines: horizontal bars need x-grid, vertical bars/lines need y-grid only
-- Inline units in tick labels: `format: '.0%'` instead of separate axis titles
-- Remove obvious axis titles ("Year" when showing 2020, 2021...)
+**Clean, minimal styling**: Remove borders (`config.view.stroke: null`), context-aware gridlines (hbar=x-grid, vbar/line=y-grid), inline units (`format: '.0%'`), drop obvious titles
 
-**Selective emphasis**: Guide attention to what matters:
-- Reduce opacity of secondary data: `opacity: 0.3` for background context
-- Keep primary data prominent: `opacity: 1, strokeWidth: 2`
-- Use direct labels on important lines, skip labels on minor ones
+**Selective emphasis**: Reduce opacity of secondary data (`opacity: 0.3`), keep primary prominent (`opacity: 1, strokeWidth: 2-3`)
 
-**Geographic maps**: When data has latitude/longitude coordinates:
-- Use `longitude`/`latitude` encodings (NOT `x`/`y`) to trigger map projection - field names don't matter
-- Add `projection` at top level (e.g., `projection: {type: mercator}`)
-- Base map layer added automatically
+**Geographic maps**: Use `longitude`/`latitude` encodings (NOT `x`/`y`) with `projection: {type: mercator}` at top level. Base map added automatically.
 
-**Choropleth maps** (colored regions): Join your data with map boundaries using lookup:
-- Structure: `lookup: <field_in_map>` then `from: {data: {...}, key: <field_in_your_data>, fields: [...]}`
-- CRITICAL: `key` and `fields` MUST be inside the `from` object
+**Choropleth maps**: Join data to map boundaries - `lookup: <map_field>`, `from: {data: {...}, key: <your_field>, fields: [...]}` (key/fields inside from!)
 {% endblock %}
 
 {% block examples %}
@@ -96,34 +78,20 @@ Legends appear when you map data to `color`, `size`, or `shape` in encoding.
 
 Simple time series with endpoint labels:
 ```yaml
-# Title example (storytelling approach):
-# Good: "Sales tripled after Q2 product launch" or "California leads with 45% of installations"
-# Bad: "Sales Over Time" or "Installation Distribution by State"
 data:
   name: <TABLE_NAME>
-transform:  # Top-level: applies to all layers
+transform:
   - window:
     - {op: min, field: year, as: minYear}
     - {op: max, field: year, as: maxYear}
     frame: [null, null]
 layer:
-  - mark:
-      type: line
-      point: true
+  - mark: {type: line, point: true}
     encoding:
-      x:
-        field: year
-        type: quantitative
-        axis:
-          format: 'd'  # No comma separators for years
+      x: {field: year, type: quantitative, axis: {format: 'd'}}
       y: {field: avg_capacity, type: quantitative}
-  - transform:  # Layer-level: only this layer needs filtering
-      - filter: datum.year === datum.minYear || datum.year === datum.maxYear
-    mark:
-      type: text
-      align: left
-      dx: 5
-      dy: -5
+  - transform: [{filter: datum.year === datum.minYear || datum.year === datum.maxYear}]
+    mark: {type: text, align: left, dx: 5, dy: -5}
     encoding:
       x: {field: year, type: quantitative}
       y: {field: avg_capacity, type: quantitative}
@@ -131,193 +99,110 @@ layer:
       color: {value: black}
 ```
 
-Ranked bar chart with highlighting:
+Ranked bar chart with top 10 filter:
 ```yaml
 data:
   name: <TABLE_NAME>
-title:  # Top level, NOT in config
-  text: "Top 10 States Lead Wind Energy"
-  subtitle: "Texas accounts for 30% of all turbines"
-  fontSize: 18
-  subtitleFontSize: 14
-  subtitleColor: '#666666'
-  anchor: start
-transform:  # Top-level: limits ALL layers to top 10
-  - window:
-      - op: rank
-        field: turbine_count
-        as: rank
-    sort:
-      - field: turbine_count
-        order: descending
+transform:
+  - window: [{op: rank, field: turbine_count, as: rank}]
+    sort: [{field: turbine_count, order: descending}]
   - filter: datum.rank <= 10
 layer:
   - mark: bar
     encoding:
-      y:
-        field: state
-        type: nominal
-        sort: "-x"
-        axis:
-          title: null  # Obvious from context
-      x:
-        field: turbine_count
-        type: quantitative
-        axis:
-          title: "Number of Turbines"
-          format: ","  # Thousands separator
+      y: {field: state, type: nominal, sort: "-x", axis: {title: null}}
+      x: {field: turbine_count, type: quantitative, axis: {title: "Number of Turbines", format: ","}}
       color:
-        condition:
-          test: "datum.state === 'TX'"
-          value: '#1f77b4'
+        condition: {test: "datum.state === 'TX'", value: '#1f77b4'}
         value: '#aec7e8'
 config:
-  view:
-    stroke: null  # Remove border
-  axisX:
-    gridColor: '#eeeeee'  # Vertical gridlines for horizontal bars
-  axisY:
-    grid: false  # No horizontal gridlines
+  view: {stroke: null}
+  axisX: {gridColor: '#eeeeee'}
+  axisY: {grid: false}
 ```
 
-Geographic scatter (map with points sized by metric):
+Geographic scatter:
 ```yaml
 data:
   name: <TABLE_NAME>
 layer:
-  - mark:
-      type: circle
-      opacity: 0.7
+  - mark: {type: circle, opacity: 0.7}
     encoding:
-      longitude: {field: xlong, type: quantitative}  # NOT x!
-      latitude: {field: ylat, type: quantitative}    # NOT y!
-      size:
-        field: capacity_kw
-        type: quantitative
-        scale: {range: [100, 500]}
-        legend: {title: "Capacity (kW)"}
-      color:
-        value: '#1f77b4'  # Single color avoids redundant legend
+      longitude: {field: xlong, type: quantitative}
+      latitude: {field: ylat, type: quantitative}
+      size: {field: capacity_kw, type: quantitative, scale: {range: [100, 500]}, legend: {title: "Capacity (kW)"}}
+      color: {value: '#1f77b4'}
       tooltip:
         - {field: turbine_id, type: nominal, title: "ID"}
         - {field: capacity_kw, type: quantitative, title: "Capacity (kW)"}
 ```
 
-Multi-line chart with selective emphasis (highlight what matters):
+Multi-line with selective emphasis:
 ```yaml
 data:
   name: <TABLE_NAME>
 layer:
-  # Background lines (low opacity)
   - transform: [{filter: "datum.category != 'primary' && datum.category != 'secondary'"}]
     mark: {type: line, opacity: 0.2, strokeWidth: 1}
     encoding:
-      x:
-        field: year
-        type: quantitative
-        axis: {format: 'd'}  # No commas for years
+      x: {field: year, type: quantitative, axis: {format: 'd'}}
       y: {field: value, type: quantitative}
       color: {field: category, type: nominal, legend: null}
-  # Primary line (emphasized)
   - transform: [{filter: "datum.category == 'primary'"}]
     mark: {type: line, opacity: 1, strokeWidth: 3}
     encoding:
       x: {field: year, type: quantitative}
       y: {field: value, type: quantitative}
       color: {value: '#d62728'}
-  # Secondary line (semi-emphasized)
-  - transform: [{filter: "datum.category == 'secondary'"}]
-    mark: {type: line, opacity: 0.8, strokeWidth: 2}
-    encoding:
-      x: {field: year, type: quantitative}
-      y: {field: value, type: quantitative}
-      color: {value: '#1f77b4'}
 config:
   view: {stroke: null}
-  axisX: {grid: false}  # No vertical gridlines for line charts
-  axisY: {gridColor: '#eeeeee'}  # Horizontal gridlines
+  axisX: {grid: false}
+  axisY: {gridColor: '#eeeeee'}
 ```
 
-When color encodes a different metric, adjust domain if data clusters:
+Dual encoding (size + color for different metrics):
 ```yaml
 data:
   name: <TABLE_NAME>
 layer:
-  - mark:
-      type: circle
-      opacity: 0.7
+  - mark: {type: circle, opacity: 0.7}
     encoding:
       longitude: {field: xlong, type: quantitative}
       latitude: {field: ylat, type: quantitative}
-      size:
-        field: capacity_kw
-        type: quantitative
-      color:
-        field: efficiency_pct
-        type: quantitative
-        scale:
-          scheme: viridis
-          domain: [85, 95]  # Data clusters in 85-95% range
-        legend: {title: "Efficiency (%)"}
+      size: {field: capacity_kw, type: quantitative}
+      color: {field: efficiency_pct, type: quantitative, scale: {scheme: viridis, domain: [85, 95]}, legend: {title: "Efficiency (%)"}}
 ```
 
-Bar chart with legend (single data field):
+Bar chart with legend:
 ```yaml
 data:
   name: <TABLE_NAME>
 layer:
   - mark: bar
     encoding:
-      x:
-        field: category
-        type: nominal
-      y:
-        field: sales
-        type: quantitative
-      color:
-        field: category
-        type: nominal
-        legend:
-          title: "Category"
-          orient: "right"
+      x: {field: category, type: nominal}
+      y: {field: sales, type: quantitative}
+      color: {field: category, type: nominal, legend: {title: "Category", orient: "right"}}
 ```
 
-Choropleth map (US states):
+Choropleth map:
 ```yaml
-# CRITICAL: key and fields must be INSIDE the from object
-width: 700
-height: 400
 data:
   url: "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"
-  format:
-    type: topojson
-    feature: states
+  format: {type: topojson, feature: states}
 transform:
-  - lookup: "properties.name"  # Field in TopoJSON to match on
+  - lookup: "properties.name"
     from:
-      data:
-        name: <TABLE_NAME>  # Your data table
-      key: State  # Field in YOUR table to match (inside from!)
-      fields: [Total_Students]  # Fields to pull from YOUR table (inside from!)
+      data: {name: <TABLE_NAME>}
+      key: State
+      fields: [Total_Students]
 mark: geoshape
-projection:  # Projection at TOP LEVEL only, never in layers
-  type: albersUsa
+projection: {type: albersUsa}
 encoding:
-  color:
-    field: Total_Students
-    type: quantitative
-    scale:
-      scheme: blues
-    legend:
-      title: "Total Students"
+  color: {field: Total_Students, type: quantitative, scale: {scheme: blues}, legend: {title: "Total Students"}}
   tooltip:
-    - field: "properties.name"
-      type: nominal
-      title: "State"
-    - field: Total_Students
-      type: quantitative
-      format: ","
-      title: "Total Students"
+    - {field: "properties.name", type: nominal, title: "State"}
+    - {field: Total_Students, type: quantitative, format: ",", title: "Total Students"}
 ```
 {% endblock %}
 

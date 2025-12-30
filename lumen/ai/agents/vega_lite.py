@@ -432,7 +432,7 @@ class VegaLiteAgent(BaseViewAgent):
                             continue
                         doc_examples.append(f"{text_description}\n```yaml\n{spec}\n```")
                         k += 1
-                    if k >= 3:  # Limit to top 3 examples
+                    if k >= 1:  # Limit to top 1 example
                         break
         return doc_examples
 
