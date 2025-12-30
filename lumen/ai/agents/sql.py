@@ -509,10 +509,7 @@ class SQLAgent(BaseLumenAgent):
         )
 
         model_spec = self.prompts["select_tables"].get("llm_spec", self.llm_spec_key)
-        # Will always inject top tables
-        top_tables = metaset.get_top_tables(n=3)
-        available_tables = [t for t in all_tables if t not in top_tables]
-        selection_model = self._get_model("select_tables", available_tables=available_tables)
+        selection_model = self._get_model("select_tables", available_tables=all_tables)
 
         selection = await self.llm.invoke(
             messages,
@@ -521,7 +518,7 @@ class SQLAgent(BaseLumenAgent):
             response_model=selection_model,
         )
 
-        selected = selection.tables + top_tables if selection else top_tables
+        selected = selection.tables if selection else metaset.get_top_tables(n=3)
         step.stream(f"Selected: {selected}")
         return selected
 
