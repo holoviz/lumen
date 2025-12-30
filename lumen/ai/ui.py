@@ -636,13 +636,6 @@ class UI(Viewer):
         self._upload_controls = UploadControls(context=self.context, source_catalog=self._source_catalog)
         self._download_controls = DownloadControls(context=self.context, source_catalog=self._source_catalog)
 
-        # Wire up vector stores to components after they are created
-        # Use document_vector_store if available, otherwise fall back to main vector_store
-        doc_store = self.document_vector_store or self._coordinator.vector_store
-        self._source_catalog.vector_store = doc_store
-        self._upload_controls.source_catalog.vector_store = doc_store
-        self._download_controls.source_catalog.vector_store = doc_store
-
         # Watch for output changes from both controls
         self._upload_controls.param.watch(self._sync_sources, 'outputs')
         self._download_controls.param.watch(self._sync_sources, 'outputs')
