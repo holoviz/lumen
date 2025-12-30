@@ -148,6 +148,28 @@ def get_template_loader(
     return FileSystemLoader(search_paths), template_name
 
 
+def json_to_yaml(data):
+    """
+    Convert JSON string or Python dict/list to YAML format.
+
+    Parameters
+    ----------
+    data : str | dict | list
+        JSON string or Python data structure to convert to YAML
+
+    Returns
+    -------
+    str
+        YAML formatted string, or original data if conversion fails
+    """
+    try:
+        if isinstance(data, str):
+            data = json.loads(data)
+        return yaml.dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    except (json.JSONDecodeError, TypeError, AttributeError):
+        return data
+
+
 def render_template(template_path: Path | str, overrides: dict | None = None, relative_to: Path = PROMPTS_DIR, **context):
     fs_loader, template_name = get_template_loader(template_path, relative_to)
     if overrides:
@@ -171,6 +193,7 @@ def render_template(template_path: Path | str, overrides: dict | None = None, re
         env = Environment(loader=fs_loader, undefined=StrictUndefined)
 
     env.globals["dedent"] = lambda text: textwrap.dedent(text).strip()
+    env.filters["json_to_yaml"] = json_to_yaml
     template = env.get_template(template_name)
     return template.render(**context)
 
