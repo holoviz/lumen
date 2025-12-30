@@ -57,7 +57,8 @@ class Plan(Section):
 
     _tasks = param.List(item_type=ActorTask)
 
-    def render_task_history(self, i: int, failed: bool = False) -> tuple[list[Message], str]:
+    def render_task_history(self, i: int | None = None, failed: bool = False) -> tuple[list[Message], str]:
+        i = self._current if i is None else i
         user_query = None
         for msg in reversed(self.history):
             if msg.get("role") == "user":
@@ -219,7 +220,7 @@ class Plan(Section):
         if "__error__" in context:
             del context["__error__"]
         outputs, out_context = await super().execute(context, **kwargs)
-        _, todos = self.render_task_history(self._current, failed=self.status == "error")
+        _, todos = self.render_task_history(failed=self.status == "error")
         if self.steps_layout is not None:
             steps_title, todo_list = self.steps_layout.header
             todo_list.object = todos

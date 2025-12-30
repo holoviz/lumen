@@ -401,7 +401,7 @@ class TaskGroup(Task):
             except Exception as e:
                 tb.print_exception(e)
                 self.status = "error"
-                new_context = {"__error__": str(e)}
+                new_context = {"__error__": str(e), "__error_type__": type(e)}
                 task.out_context = new_context
                 if self.abort_on_error:
                     if self.parent is not None:
@@ -414,8 +414,9 @@ class TaskGroup(Task):
                     self.status = "error"
                     if self.abort_on_error:
                         break
-                self._current = i
                 views += new
+            finally:
+                self._current = i
         if self.status != "error":
             self.status = "success"
             self._current += 1
@@ -438,6 +439,14 @@ class TaskGroup(Task):
         self._tasks.append(task)
         self._populate_view()
         self._init_views()
+
+    def remove(self, task: Task | list[Task]):
+        tasks = task if isinstance(task, list) else [task]
+        for t in tasks:
+            self._tasks.remove(t)
+        self._populate_view()
+        self._init_views()
+        self._current = min(self._current, len(self)-1)
 
     def cleanup(self):
         for task, watcher in self._task_watchers.items():
@@ -565,6 +574,7 @@ class TaskGroup(Task):
             other.parent = self
             self._tasks.append(task)
         self._view[:] = list(self._view) + list(other._view)
+        self.history += [h for h in other.history if h not in self.history]
         self._init_views()
         return self
 
@@ -573,16 +583,16 @@ class TaskGroup(Task):
             await task.prepare(context)
         self._prepared = True
 
-    def reset(self):
+    def reset(self, start: int = 0):
         """
         Resets the view, removing generated outputs.
         """
         self.status = "idle"
-        self._current = 0
+        self._current = start
         with hold():
             self._header = []
             self._view.clear()
-            for task in self:
+            for task in self[start:]:
                 if isinstance(task, Task):
                     task.reset()
             self._populate_view()

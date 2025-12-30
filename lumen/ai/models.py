@@ -34,6 +34,24 @@ class EscapeBaseModel(PartialBaseModel):
             raise MissingContextError(self.insufficient_context_reason)
 
 
+class ErrorDescription(BaseModel):
+    """
+    Represents a user-facing error explanation.
+
+    Style rules:
+    - Do not use first-person pronouns (“I”, “we”).
+    - All outputs must be written in neutral, system-level language.
+
+    Guidance:
+    - If you think it's an internal error, indicate that the user should rerun.
+    - Otherwise, ask the user to either replan OR clarify their questions.
+    - You are given the error type, message, the user query, and the plan the planning agent came up with.
+    """
+
+    explanation: str = Field(
+        description="A brief description of the error suitable for a non-technical user.",
+        max_length=300
+    )
 class YesNo(BaseModel):
 
     yes: bool = Field(description="True if yes, otherwise False.")
