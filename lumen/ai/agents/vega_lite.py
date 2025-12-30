@@ -29,13 +29,16 @@ class VegaLiteSpec(EscapeBaseModel):
     chain_of_thought: str = Field(
         description="""Explain your design choices based on visualization theory:
         - What story does this data tell?
+        - What's the most compelling insight or trend (for the title)?
+        - What additional context adds value without repeating the title (for the subtitle)?
         - Which visual encodings (position, color, size) best reveal patterns?
         - Should color highlight specific insights or remain neutral?
         - What makes this plot engaging and useful for the user?
         Then describe the basic plot structure."""
     )
     yaml_spec: str = Field(
-        description="A basic vega-lite YAML specification with core plot elements only (data, mark, basic x/y encoding)."
+        description="""A complete Vega-Lite YAML specification. Include: $schema, data, layer (with mark and encoding), title, config.
+        Width and height will be set to 'container' automatically."""
     )
 
 
@@ -386,6 +389,11 @@ class VegaLiteAgent(BaseViewAgent):
             vega_spec = load_yaml(yaml_spec)
         elif json_spec := spec.get("json_spec"):
             vega_spec = load_json(json_spec)
+
+        # Remove wrapper properties that aren't part of Vega-Lite spec
+        for key in ['sizing_mode', 'min_height', 'type']:
+            vega_spec.pop(key, None)
+
         if "$schema" not in vega_spec:
             vega_spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
         if "width" not in vega_spec:
@@ -419,7 +427,7 @@ class VegaLiteAgent(BaseViewAgent):
                         # Include the text description/title before the spec
                         text_description = result.get("text", "")
                         spec = result["metadata"]["spec"]
-                        if "hconcat" in spec or "vconcat" in spec or "repeat" in spec or "params" in spec:
+                        if "hconcat" in spec or "vconcat" in spec or "repeat" in spec or "params" in spec or "values:" in spec:
                             # Skip complex multi-view specs for simplicity
                             continue
                         doc_examples.append(f"{text_description}\n```yaml\n{spec}\n```")
@@ -501,7 +509,7 @@ class VegaLiteAgent(BaseViewAgent):
             out.spec = dump_yaml(spec)
             log_debug(f"📊 Applied {step_name} updates and refreshed visualization")
 
-        return [out], {"view": dict(full_dict, type=view.view_type)}
+        return [out], {"view": {"spec": full_dict["spec"]}}
 
     async def annotate(
         self,
