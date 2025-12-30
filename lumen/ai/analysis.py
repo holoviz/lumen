@@ -7,11 +7,9 @@ import param
 
 from panel.chat import ChatFeed
 from panel.viewable import Viewable
-from panel_material_ui import AutocompleteInput, TextInput
 
 from ..base import Component
 from .actor import TContext
-from .config import SOURCE_TABLE_SEPARATOR
 from .utils import get_data
 
 if TYPE_CHECKING:
@@ -66,71 +64,4 @@ class Analysis(param.ParameterizedFunction):
             return pn.Param(self.param, parameters=config_options, margin=0, show_name=False)
 
     def __call__(self, pipeline: Pipeline, context: TContext) -> Component | Viewable:
-        return pipeline
-
-
-class Join(Analysis):
-
-    autorun = param.Boolean(default=False, doc="Whether to automatically run the analysis.")
-
-    table_name = param.String(doc="The name of the table to join.")
-
-    index_col = param.String(doc="The column to join on in the left table.")
-
-    guidance = param.String(doc="Additional context to provide to the LLM.")
-
-    _callable_by_llm = False
-
-    _previous_table = param.Parameter()
-
-    _previous_source = param.Parameter()
-
-    def _update_table_name(self, event):
-        self.table_name = event.new
-
-    def controls(self, context: TContext):
-        from .controls import SourceControls
-
-        self._source_controls = SourceControls(
-            multiple=True, replace_controls=False, context=context
-        )
-        self._run_button = self._source_controls._add_button
-        self._source_controls.param.watch(self._update_table_name, "_last_table")
-
-        source = self.context.get("source")
-        table = self.context.get("table")
-        self._previous_source = source
-        self._previous_table = table
-        columns = list(source.get_schema(table).keys())
-        index_col = AutocompleteInput.from_param(
-            self.param.index_col, options=columns, label="Join on",
-            placeholder="Start typing column name", search_strategy="includes",
-            case_sensitive=False, restrict=False
-        )
-        context = TextInput.from_param(self.param.guidance)
-        controls = pn.FlexBox(
-            index_col,
-            context,
-            self._source_controls,
-        )
-        return controls
-
-    async def __call__(self, pipeline: Pipeline, context: TContext) -> Component | Viewable:
-        if self.table_name:
-            agent = next(agent for agent in self.agents if type(agent).__name__ == "SQLAgent")
-            content = (
-                "Join these tables: "
-                f"'{self._previous_source}{SOURCE_TABLE_SEPARATOR}{self._previous_table}' "
-                f"and '{self._memory['source']}{SOURCE_TABLE_SEPARATOR}{self.table_name}'"
-            )
-            if self.index_col:
-                content += f" left join on {self.index_col}"
-            else:
-                content += " based on the closest matching columns"
-            if self.guidance:
-                content += f"\nadditional context:\n{self.guidance!r}"
-            await agent.answer(messages=[{"role": "user", "content": content}])
-            pipeline = context["pipeline"]
-
-        self.message = f"Joined {self._previous_table} with {self.table_name}."
         return pipeline

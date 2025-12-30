@@ -25,13 +25,12 @@ from ..context import TContext
 from ..llm import LlamaCpp, Llm, Message
 from ..models import ThinkingYesNo
 from ..report import ActorTask, Section, TaskGroup
-from ..tools import (
-    IterativeTableLookup, TableLookup, Tool, VectorLookupToolUser,
-)
+from ..tools import MetadataLookup, Tool, VectorLookupToolUser
 from ..utils import (
     fuse_messages, get_root_exception, log_debug, mutate_user_message,
     normalized_name, wrap_logfire,
 )
+from ..vector_store import NumpyVectorStore
 
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
@@ -310,6 +309,13 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 callback=self._chat_invoke, callback_exception="raise", load_buffer=5, show_button_tooltips=True, show_button_name=False, sizing_mode="stretch_both"
             )
 
+        # Create default vector stores if not provided
+        if vector_store is None:
+            vector_store = NumpyVectorStore()
+        # Use the same vector_store for documents if not explicitly provided
+        if document_vector_store is None:
+            document_vector_store = vector_store
+
         llm = llm or self.llm
         instantiated = []
         self._analyses = []
@@ -347,12 +353,12 @@ class Coordinator(Viewer, VectorLookupToolUser):
     def _process_tools(self, tools: list[type[Tool] | Tool] | None) -> list[type[Tool] | Tool]:
         tools = list(tools) if tools else []
 
-        # If none of the tools provide metaset, add tablelookup
+        # If none of the tools provide metaset, add MetadataLookup
         provides_metaset = any("metaset" in tool.output_schema.__annotations__ for tool in tools or [])
         if not provides_metaset:
             # Add both tools - they will share the same vector store through VectorLookupToolUser
             # Both need to be added as classes, not instances, for proper initialization
-            tools += [TableLookup, IterativeTableLookup]
+            tools += [MetadataLookup]
         return tools
 
     def _process_prompts(self, prompts: dict[str, dict[str, Any]], tools: list[type[Tool] | Tool]) -> dict[str, dict[str, Any]]:

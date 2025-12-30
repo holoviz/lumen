@@ -25,7 +25,6 @@ Lumen includes eight agents automatically. You don't need to configure anything.
 | **ChatAgent** | Answers questions and provides guidance |
 | **TableListAgent** | Lists available tables and columns |
 | **DocumentListAgent** | Manages uploaded documents |
-| **SourceAgent** | Handles data uploads |
 | **ValidationAgent** | Checks if results answer the question |
 
 These agents work together automatically. The coordinator picks which agents to use for each question.

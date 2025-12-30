@@ -148,6 +148,28 @@ def get_template_loader(
     return FileSystemLoader(search_paths), template_name
 
 
+def json_to_yaml(data):
+    """
+    Convert JSON string or Python dict/list to YAML format.
+
+    Parameters
+    ----------
+    data : str | dict | list
+        JSON string or Python data structure to convert to YAML
+
+    Returns
+    -------
+    str
+        YAML formatted string, or original data if conversion fails
+    """
+    try:
+        if isinstance(data, str):
+            data = json.loads(data)
+        return yaml.dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    except (json.JSONDecodeError, TypeError, AttributeError):
+        return data
+
+
 def render_template(template_path: Path | str, overrides: dict | None = None, relative_to: Path = PROMPTS_DIR, **context):
     fs_loader, template_name = get_template_loader(template_path, relative_to)
     if overrides:
@@ -171,6 +193,7 @@ def render_template(template_path: Path | str, overrides: dict | None = None, re
         env = Environment(loader=fs_loader, undefined=StrictUndefined)
 
     env.globals["dedent"] = lambda text: textwrap.dedent(text).strip()
+    env.filters["json_to_yaml"] = json_to_yaml
     template = env.get_template(template_name)
     return template.render(**context)
 
@@ -354,9 +377,26 @@ def process_enums(spec, num_cols, limit=None, include_enum=True, reduce_enums=Tr
     if "enum" not in spec:
         return spec, is_empty
 
-    # scale the number of enums based on the number of columns
+    # Scale max_enums based on average enum length (inverse relationship)
+    # Short enums (categories) = show more, long enums (text) = show fewer
     if reduce_enums:
-        max_enums = max(2, min(10, int(10 * math.exp(-0.1 * max(0, num_cols - 10)))))
+        enum_values = spec["enum"]
+        # Calculate average length, excluding None values
+        non_none_values = [v for v in enum_values if v is not None]
+        if non_none_values:
+            avg_length = sum(len(str(v)) for v in non_none_values) / len(non_none_values)
+        else:
+            avg_length = 0
+
+        # Exponential decay: short enums get more slots, long enums get fewer
+        # Formula: base_max = max(2, 10 * e^(-0.025 * avg_length))
+        # 20: Maximum base enums (for very short values)
+        # 0.025: Decay rate (higher = faster drop-off)
+        # max(2, ...): Minimum floor (always show at least 2)
+        base_max_enums = max(2, int(10 * math.exp(-0.04 * avg_length)))
+
+        # Still consider number of columns but with less weight
+        max_enums = max(2, int(base_max_enums * math.exp(-0.05 * max(0, num_cols - 10))))
     else:
         max_enums = 2
     truncate_limit = min(limit or 2, max_enums)

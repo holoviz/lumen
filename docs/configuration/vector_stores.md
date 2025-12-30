@@ -196,19 +196,6 @@ ui.servable()
 
 Users can now ask questions about uploaded documents. See [Tools - DocumentLookup](tools.md#built-in-tools) for how this works.
 
-### Table discovery
-
-``` py title="Vector-powered table lookup"
-from lumen.ai.tools import IterativeTableLookup
-
-tool = IterativeTableLookup(
-    vector_store=vector_store,
-    tables=['customers', 'orders', 'products']
-)
-```
-
-See [Tools - IterativeTableLookup](tools.md#built-in-tools) for details.
-
 ## Configuration
 
 ### Custom embeddings

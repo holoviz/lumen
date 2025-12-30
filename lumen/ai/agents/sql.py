@@ -1,4 +1,5 @@
 import asyncio
+import difflib
 import traceback
 
 from typing import (
@@ -41,6 +42,19 @@ class SampleQuery(PartialBaseModel):
 
     query: SkipJsonSchema[str] = Field(default="SELECT * FROM {slug[table]} LIMIT 5")
 
+    def generate_sql(self, source: Source) -> str:
+        """Generate SQL for this query type."""
+        format_kwargs = self.dict(exclude={'query'})
+        return self.query.format(**format_kwargs)
+
+    def format_result(self, df) -> str:
+        """Format query results for display."""
+        return f"\n```\n{df.head().to_string(max_cols=10)}\n```"
+
+    def get_description(self) -> str:
+        """Get query description for logging."""
+        return f"Sample from {self.slug.table}"
+
 
 class DistinctQuery(PartialBaseModel):
     """Universal column analysis with optional pattern matching - handles join keys, categories, date ranges."""
@@ -58,6 +72,96 @@ class DistinctQuery(PartialBaseModel):
         else:
             # Pattern provided - use ILIKE for case-insensitive partial matching
             self.query = "SELECT DISTINCT {column} FROM {slug[table]} WHERE {column} ILIKE '%{pattern}%' LIMIT 10 OFFSET {offset}"
+
+    def generate_sql(self, source: Source) -> str:
+        """Generate SQL for this query type."""
+        format_kwargs = self.dict(exclude={'query'})
+        return self.query.format(**format_kwargs)
+
+    def format_result(self, df) -> str:
+        """Format query results for display."""
+        return f" `{df.iloc[:10, 0].tolist()}`"
+
+    def get_description(self) -> str:
+        """Get query description for logging."""
+        return f"Distinct values from {self.slug.table!r} table column {self.column!r}"
+
+
+class TableQuery(PartialBaseModel):
+    """Wildcard search using native source metadata to discover tables and columns by pattern."""
+
+    pattern: str = Field(description="Search pattern (e.g., 'revenue', 'customer')")
+    scope: Literal["columns", "tables", "both"] = Field(
+        default="both",
+        description="Search scope: 'columns' for column names, 'tables' for table names, 'both' for either"
+    )
+
+    def _match_string(self, pattern: str, target: str) -> float | None:
+        """Calculate match score for a pattern against a target string.
+
+        Returns:
+            Score from 0.0 to 1.0 if match is good enough, None otherwise.
+            1.0 = exact substring match, 0.6-0.99 = fuzzy match.
+        """
+        pattern_lower = pattern.lower()
+        target_lower = target.lower()
+
+        # Exact substring match gets highest score
+        if pattern_lower in target_lower:
+            return 1.0
+
+        # Fuzzy match using SequenceMatcher
+        ratio = difflib.SequenceMatcher(None, pattern_lower, target_lower).ratio()
+        return ratio if ratio > 0.6 else None
+
+    def search_metadata(self, source: Source) -> list[tuple[str, str | None]]:
+        """Search tables and columns using native source metadata with fuzzy matching.
+
+        Returns:
+            List of (table_name, column_name) tuples sorted by match quality.
+            column_name is None for table matches.
+        """
+        matches = []  # List of (table, column, score)
+
+        # Get all tables and their metadata
+        tables = source.get_tables()
+        metadata = source._get_table_metadata(tables)
+
+        for table_name, table_meta in metadata.items():
+            # Check if table name matches
+            if self.scope in ("tables", "both"):
+                score = self._match_string(self.pattern, table_name)
+                if score is not None:
+                    matches.append((table_name, None, score))
+
+            # Check if any column names match
+            if self.scope in ("columns", "both") and "columns" in table_meta:
+                for col_name in table_meta["columns"].keys():
+                    score = self._match_string(self.pattern, col_name)
+                    if score is not None:
+                        matches.append((table_name, col_name, score))
+
+        # Sort by score (highest first) and limit to top 20
+        matches.sort(key=lambda x: x[2], reverse=True)
+        return [(table, col) for table, col, _ in matches[:20]]
+
+    def format_result(self, matches: list[tuple[str, str | None]]) -> str:
+        """Format search results for display."""
+        if not matches:
+            return f" No matches found for pattern '{self.pattern}'"
+
+        formatted = []
+        for table_name, col_name in matches:
+            if col_name:
+                formatted.append(f"{table_name}.{col_name}")
+            else:
+                formatted.append(table_name)
+
+        return f" `{formatted}`"
+
+    def get_description(self) -> str:
+        """Get query description for logging."""
+        return f"Wildcard search for '{self.pattern}' in {self.scope}"
 
 
 def make_discovery_model(sources: list[tuple[str, str]]):
@@ -84,8 +188,8 @@ def make_discovery_model(sources: list[tuple[str, str]]):
         """LLM selects 2-4 essential discoveries using the core toolkit."""
 
         reasoning: str = Field(description="Brief discovery strategy")
-        queries: list[SampleQueryLiteral | DistinctQueryLiteral] = Field(
-            description="Choose 2-4 discovery queries from the Essential Three toolkit"
+        queries: list[SampleQueryLiteral | DistinctQueryLiteral | TableQuery] = Field(
+            description="Choose 2-4 discovery queries. Use SampleQuery/DistinctQuery for known tables, TableQuery for wildcard searches."
         )
 
     class DiscoverySufficiency(PartialBaseModel):
@@ -95,9 +199,9 @@ def make_discovery_model(sources: list[tuple[str, str]]):
 
         sufficient: bool = Field(description="True if discoveries provide enough context to fix the error")
 
-        follow_up_needed: list[SampleQueryLiteral | DistinctQueryLiteral] = Field(
+        follow_up_needed: list[SampleQueryLiteral | DistinctQueryLiteral | TableQuery] = Field(
             default_factory=list,
-            description="If insufficient, specify 1-3 follow-up discoveries (e.g., OFFSET for more values)"
+            description="If insufficient, specify 1-3 follow-up discoveries (e.g., OFFSET for more values, or TableQuery for wildcards)"
         )
 
     return DiscoveryQueries, DiscoverySufficiency
@@ -120,7 +224,38 @@ class SQLQuery(PartialBaseModel):
     )
 
 
+class TableSelection(PartialBaseModel):
+    """Select tables relevant to answering the user's query."""
+
+    reasoning: str = Field(description="Brief explanation of why these tables are needed to answer the query.")
+
+    tables: list[str] = Field(
+        description="List of table slugs needed to answer the query. Select only tables that are directly relevant."
+    )
+
+
+def make_table_selection_model(available_tables: list[str]):
+    """Create a table selection model with constrained table choices."""
+    if not available_tables:
+        return TableSelection
+
+    TableLiteral = Literal[tuple(available_tables)]  # type: ignore
+    return create_model(
+        "TableSelectionConstrained",
+        tables=(list[TableLiteral], FieldInfo(description="Tables needed to answer the query.")),
+        __base__=TableSelection
+    )
+
+
 def make_sql_model(sources: list[tuple[str, str]]):
+    """
+    Create a SQL query model with source/table validation.
+
+    Parameters
+    ----------
+    sources : list[tuple[str, str]]
+        List of (source_name, table_name) tuples for tables with full schemas.
+    """
     if len(sources) == 1:
         return SQLQuery
 
@@ -128,7 +263,8 @@ def make_sql_model(sources: list[tuple[str, str]]):
     return create_model(
         "SQLQueryWithSources",
         tables=(
-            list[SourceTable], FieldInfo(description="The source and table identifier(s) referenced in the SQL query.")
+            list[SourceTable],
+            FieldInfo(description="The source and table identifier(s) referenced in the SQL query.")
         ),
         __base__=SQLQuery
     )
@@ -175,7 +311,7 @@ class SQLAgent(BaseLumenAgent):
 
     exclusions = param.List(default=["dbtsl_metaset"])
 
-    not_with = param.List(default=["DbtslAgent", "TableLookup", "TableListAgent"])
+    not_with = param.List(default=["DbtslAgent", "MetadataLookup", "TableListAgent"])
 
     exploration_enabled = param.Boolean(default=True, doc="""
         Whether to enable SQL exploration mode. When False, only attempts oneshot SQL generation.""")
@@ -194,6 +330,10 @@ class SQLAgent(BaseLumenAgent):
             "main": {
                 "response_model": make_sql_model,
                 "template": PROMPTS_DIR / "SQLAgent" / "main.jinja2",
+            },
+            "select_tables": {
+                "response_model": make_table_selection_model,
+                "template": PROMPTS_DIR / "SQLAgent" / "select_tables.jinja2",
             },
             "select_discoveries": {
                 "response_model": make_discovery_model,
@@ -220,11 +360,11 @@ class SQLAgent(BaseLumenAgent):
         """Pre-compute metaset context for template rendering."""
         prompt_context = await super()._gather_prompt_context(prompt_name, messages, context, **kwargs)
 
-        # Ensure schemas are loaded for top tables before rendering
+        # Ensure schemas are loaded for schema_tables before rendering
         if "metaset" in context:
             metaset = context["metaset"]
-            top_tables = metaset.get_top_tables(n=5)
-            await metaset.ensure_schemas(top_tables)
+            if metaset.schema_tables:
+                await metaset.ensure_schemas(metaset.schema_tables)
 
         return prompt_context
 
@@ -277,7 +417,8 @@ class SQLAgent(BaseLumenAgent):
     ) -> tuple[Pipeline, Source, str]:
         """Execute SQL query and return pipeline and summary."""
         # Create SQL source
-        table_defs = {table: source.tables[table] for table in tables if table in source.tables}
+        source_tables = source.tables if source.tables is not None else {}
+        table_defs = {table: source_tables[table] for table in tables if table in source_tables}
         table_defs[expr_slug] = sql_query
 
         # Only pass materialize parameter for DuckDB sources
@@ -344,6 +485,43 @@ class SQLAgent(BaseLumenAgent):
             mirrors[renamed_table] = (sources[(m.source, m.table)], m.table)
         return DuckDBSource(uri=":memory:", mirrors=mirrors), list(mirrors)
 
+    async def _select_tables(
+        self,
+        messages: list[Message],
+        context: TContext,
+        step: ChatStep,
+    ) -> list[str]:
+        """Select relevant tables for the query."""
+        metaset = context.get("metaset")
+        if not metaset:
+            return []
+
+        all_tables = list(metaset.catalog.keys())
+        # If 3 or fewer tables, use all of them
+        if len(all_tables) <= 3:
+            return all_tables
+
+        # Otherwise, ask LLM to select relevant tables
+        system_prompt = await self._render_prompt(
+            "select_tables",
+            messages,
+            context,
+        )
+
+        model_spec = self.prompts["select_tables"].get("llm_spec", self.llm_spec_key)
+        selection_model = self._get_model("select_tables", available_tables=all_tables)
+
+        selection = await self.llm.invoke(
+            messages,
+            system=system_prompt,
+            model_spec=model_spec,
+            response_model=selection_model,
+        )
+
+        selected = selection.tables if selection else metaset.get_top_tables(n=3)
+        step.stream(f"Selected: {selected}")
+        return selected
+
     async def _render_execute_query(
         self,
         messages: list[Message],
@@ -380,8 +558,8 @@ class SQLAgent(BaseLumenAgent):
 
         Returns
         -------
-        Pipeline
-            Pipeline object from successful execution
+        SQLOutput
+            Output object from successful execution
         """
         with self._add_step(title=step_title, steps_layout=self._steps_layout) as step:
             # Generate SQL using common prompt pattern
@@ -402,7 +580,7 @@ class SQLAgent(BaseLumenAgent):
                 discovery_context=discovery_context,
             )
 
-            # Generate SQL using existing model
+            # Generate SQL
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
             sql_response_model = self._get_model("main", sources=list(sources))
 
@@ -412,6 +590,7 @@ class SQLAgent(BaseLumenAgent):
                 model_spec=model_spec,
                 response_model=sql_response_model,
             )
+
             if not output:
                 raise ValueError("No output was generated.")
 
@@ -518,32 +697,66 @@ class SQLAgent(BaseLumenAgent):
 
     async def _execute_discovery_query(
         self,
-        query_model: SampleQuery | DistinctQuery,
+        query_model: SampleQuery | DistinctQuery | TableQuery,
         sources: dict[tuple[str, str], Source],
     ) -> tuple[str, str]:
         """Execute a single discovery query and return formatted result."""
-        # Generate the actual SQL
-        format_kwargs = query_model.dict(exclude={'query'})
-        sql = query_model.query.format(**format_kwargs)
-        table = query_model.slug.table
-        source = sources[(query_model.slug.source, table)]
-        if isinstance(query_model, SampleQuery):
-            query_type = f"Sample from {table}"
-        elif isinstance(query_model, DistinctQuery):
-            query_type = f"Distinct values from {table!r} table column {query_model.column!r}"
+        if isinstance(query_model, TableQuery):
+            # TableQuery searches ALL unique sources using native metadata
+            unique_sources = {}
+            for (source_name, _), source in sources.items():
+                if source_name not in unique_sources:
+                    unique_sources[source_name] = source
+
+            # Search metadata in all sources in parallel
+            tasks = [
+                asyncio.create_task(
+                    self._execute_table_query_on_source(query_model, source_name, source)
+                )
+                for source_name, source in unique_sources.items()
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # Combine non-empty results
+            combined_results = []
+            for source_name, result in zip(unique_sources.keys(), results, strict=False):
+                if isinstance(result, Exception):
+                    continue  # Skip failed sources
+                if result and "No matches" not in result:
+                    combined_results.append(f"`{source_name}`: {result}")
+            return query_model.get_description(), "\n".join(combined_results)
+
+        # SampleQuery/DistinctQuery use the specific table's source
+        source = sources[(query_model.slug.source, query_model.slug.table)]
+        sql = query_model.generate_sql(source)
+        query_type = query_model.get_description()
+
+        # Execute query
         try:
             df = source.execute(sql)
         except Exception as e:
             return f"Discovery query {query_type[0].lower()}{query_type[1:]} failed", str(e)
-        if isinstance(query_model, SampleQuery):
-            result = f"\n```\n{df.head().to_string(max_cols=10)}\n```"
-        else:
-            result = f" `{df.iloc[:10, 0].tolist()}`"
+
+        # Format results
+        result = query_model.format_result(df)
         return query_type, result
+
+    async def _execute_table_query_on_source(
+        self,
+        query_model: TableQuery,
+        source_name: str,
+        source: Source,
+    ) -> str:
+        """Execute TableQuery on a single source using native metadata."""
+        try:
+            matches = query_model.search_metadata(source)
+            return query_model.format_result(matches)
+        except Exception:
+            # Some sources might not support metadata retrieval
+            return ""
 
     async def _run_discoveries_parallel(
         self,
-        discovery_queries: list[SampleQuery | DistinctQuery],
+        discovery_queries: list[SampleQuery | DistinctQuery | TableQuery],
         sources: dict[tuple[str, str], Source],
     ) -> list[str]:
         """Execute all discoveries concurrently and stream results as they complete."""
@@ -636,7 +849,7 @@ class SQLAgent(BaseLumenAgent):
         context: TContext,
         step_title: str | None = None,
     ) -> tuple[list[Any], SQLOutputs]:
-        """Execute SQL generation with one-shot attempt first, then exploration if needed."""
+        """Execute SQL generation with table selection, then one-shot attempt, then exploration if needed."""
         sources = context["sources"]
         metaset = context["metaset"]
         selected_slugs = list(metaset.catalog)
@@ -647,6 +860,18 @@ class SQLAgent(BaseLumenAgent):
         elif not selected_slugs and visible_slugs:
             # if no closest matches, use visible slugs
             selected_slugs = list(visible_slugs)
+
+        # Select relevant tables if there are many
+        if len(selected_slugs) > 3:
+            with self._add_step(title="Selecting relevant tables...", steps_layout=self._steps_layout) as step:
+                selected_tables = await self._select_tables(messages, context, step)
+                if selected_tables:
+                    metaset.schema_tables = selected_tables
+                    step.stream(f"\n\nWill load schemas for: {selected_tables}")
+        else:
+            # Use all tables if 3 or fewer
+            metaset.schema_tables = selected_slugs
+
         sources = {
             tuple(table_slug.split(SOURCE_TABLE_SEPARATOR)): parse_table_slug(table_slug, sources)[0]
             for table_slug in selected_slugs
@@ -665,8 +890,8 @@ class SQLAgent(BaseLumenAgent):
                 messages,
                 context,
                 sources=sources,
-                step_title="Attempting one-shot SQL generation...",
-                success_message="One-shot SQL generation successful",
+                step_title="Generating SQL...",
+                success_message="SQL generation successful",
                 discovery_context=None,
                 raise_if_empty=True,
                 output_title=step_title

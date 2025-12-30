@@ -10,7 +10,6 @@ Lumen includes tools automatically:
 
 - **TableLookup** - Finds relevant tables in your data (see [Vector Stores](vector_stores.md#table-discovery))
 - **DocumentLookup** - Searches uploaded documents (see [Vector Stores](vector_stores.md#document-search))
-- **IterativeTableLookup** - Advanced table discovery with embeddings (see [Embeddings](embeddings.md#when-embeddings-are-used))
 - **DbtslLookup** - Queries dbt Semantic Layer metrics
 
 You don't need to configure these. Agents use them when needed.

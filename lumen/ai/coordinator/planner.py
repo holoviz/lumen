@@ -21,7 +21,7 @@ from ..context import (
 from ..llm import Message
 from ..models import ThinkingYesNo
 from ..report import ActorTask
-from ..tools import TableLookup, Tool
+from ..tools import MetadataLookup, Tool
 from ..utils import log_debug, wrap_logfire
 from .base import Coordinator, Plan
 
@@ -36,13 +36,14 @@ class RawStep(BaseModel):
     Concise instruction capturing user intent at the right altitude.
 
     Right altitude:
-    - ❌ Too low: implementation details (SQL syntax, chart specs, row limits)
+    - ❌ Too low: implementation details (SQL syntax, chart specs, row limits, join on these tables)
     - ❌ Too high: vague ("handle this", "process data")
     - ✅ Just right: clear intent + relationship to context
 
     Encode intent: add/modify/filter/compare/create — reference existing context when applicable.
 
-    Never include implementation details unless user explicitly specified them.
+    Never include implementation details unless user explicitly specified them because selected actors
+    will have more knowledge revealed during execution.
     """)
     title: str
 
@@ -101,7 +102,7 @@ class Planner(Coordinator):
     """
 
     planner_tools = param.List(
-        default=[TableLookup],
+        default=[MetadataLookup],
         doc="""
         List of tools to use to provide context for the planner prior
         to making a plan.""",
@@ -140,10 +141,6 @@ class Planner(Coordinator):
     def _initialize_planner_tools(self, planner_tools_input: list, **params) -> list:
         """
         Initialize planner tools, reusing instances from _tools["main"] where possible.
-
-        This ensures that TableLookup and IterativeTableLookup share the same instances
-        between planner_tools and _tools["main"], so they share the same vector store
-        and state.
         """
         # Build a mapping of tool types to instances from _tools["main"]
         main_tools_by_type = {}
@@ -220,7 +217,13 @@ class Planner(Coordinator):
             collected_contexts = []
 
             for tool in self.planner_tools:
-                is_relevant = await self._check_tool_relevance(tool, "", self, f"Gather context for planning to answer {user_query}", messages, context)
+                if not await tool.applies(context):
+                    continue
+
+                if tool.always_use:
+                    is_relevant = True
+                else:
+                    is_relevant = await self._check_tool_relevance(tool, "", self, f"Gather context for planning to answer {user_query}", messages, context)
 
                 if not is_relevant:
                     continue
@@ -397,7 +400,7 @@ class Planner(Coordinator):
             requires = set(await subagent.requirements(messages))
             provided |= set(subagent.output_schema.__annotations__)
             unmet_dependencies = (unmet_dependencies | requires) - provided
-            has_table_lookup = any(isinstance(task.actor, TableLookup) for task in tasks)
+            has_table_lookup = any(isinstance(task.actor, MetadataLookup) for task in tasks)
             if "table" in unmet_dependencies and not table_provided and "SQLAgent" in agents and has_table_lookup:
                 provided |= set(agents["SQLAgent"].output_schema.__annotations__)
                 sql_step = type(step)(

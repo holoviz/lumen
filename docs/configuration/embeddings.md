@@ -154,16 +154,6 @@ results = await vector_store.query('authentication setup')
 
 See [Vector Stores - Searching](vector_stores.md#searching) for query examples.
 
-**Table discovery** - Tools find relevant tables:
-
-``` py
-from lumen.ai.tools import IterativeTableLookup
-
-tool = IterativeTableLookup(tables=['customers', 'orders', 'products'])
-```
-
-See [Tools - Built-in tools](tools.md#built-in-tools) for tool configuration.
-
 **Contextual augmentation** - Chunks get context descriptions:
 
 ``` py
