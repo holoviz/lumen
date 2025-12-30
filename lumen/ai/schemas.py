@@ -22,6 +22,18 @@ class Column:
 
 
 @dataclass
+class DocumentChunk:
+    """A chunk of document text with relevance metadata."""
+    filename: str
+    text: str
+    similarity: float
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __str__(self) -> str:
+        return f"{self.text} (from: {self.filename}, relevance: {self.similarity:.2f})"
+
+
+@dataclass
 class TableCatalogEntry:
     table_slug: str
     similarity: float
@@ -35,19 +47,32 @@ class TableCatalogEntry:
 @dataclass
 class Metaset:
     """
-    Schema container for table metadata with optional SQL enrichment.
+    Schema container for table metadata with optional SQL enrichment and documents.
 
-    Contains table catalog from discovery (descriptions, columns) and optionally
-    SQL schema data (types, enums, row counts).
+    Contains:
+    - catalog: Table discovery results (descriptions, columns, similarity)
+    - schemas: Optional SQL schema data (types, enums, row counts)
+    - docs: Document chunks (already filtered by MetadataLookup based on visible_docs)
+    - schema_tables: Tables to show full schemas for (if None, uses top n by similarity)
     """
 
     query: str | None
     catalog: dict[str, TableCatalogEntry]
     schemas: dict[str, dict[str, Any]] | None = None
+    docs: list[DocumentChunk] | None = None
+    schema_tables: list[str] | None = None
 
     @property
     def has_schemas(self) -> bool:
         return self.schemas is not None and len(self.schemas) > 0
+
+    @property
+    def has_docs(self) -> bool:
+        return self.docs is not None and len(self.docs) > 0
+
+    def get_docs(self) -> list[DocumentChunk]:
+        """Get document chunks (already filtered by MetadataLookup)."""
+        return self.docs if self.docs else []
 
     async def get_schema(self, table_slug: str) -> dict[str, Any] | None:
         """
@@ -101,8 +126,9 @@ class Metaset:
         table_slug: str,
         catalog_entry: TableCatalogEntry,
         include_columns: bool,
+        include_schema: bool,
         truncate: bool,
-        include_sql: bool = True
+        include_sql: bool = True,
     ) -> dict:
         data = {}
 
@@ -118,14 +144,20 @@ class Metaset:
                 desc = truncate_string(desc, max_length=100)
             data['info'] = desc
 
-        if self.has_schemas:
+        if include_schema and self.has_schemas:
             schema = self.schemas.get(table_slug)
             if schema and schema.get("__len__"):
                 data['row_count'] = len(schema)
 
-        if include_columns and catalog_entry.columns:
+        if include_columns:
+            if catalog_entry.columns:
+                data['columns'] = self._build_columns_data(
+                    table_slug, catalog_entry.columns, include_schema, truncate
+                )
+        elif include_schema and catalog_entry.columns:
+            # Show full column schema even without include_columns
             data['columns'] = self._build_columns_data(
-                table_slug, catalog_entry.columns, truncate
+                table_slug, catalog_entry.columns, include_schema, truncate
             )
 
         return data
@@ -134,8 +166,14 @@ class Metaset:
         self,
         table_slug: str,
         columns: list[Column],
+        include_schema: bool,
         truncate: bool
-    ) -> dict:
+    ) -> dict | list:
+        # If include_schema is False, just return column names as a list
+        if not include_schema:
+            return [col.name for col in columns]
+
+        # Otherwise, build full column data with schema info
         columns_data = {}
         schema = self.schemas.get(table_slug) if self.has_schemas else None
 
@@ -175,52 +213,80 @@ class Metaset:
     def _generate_context(
         self,
         include_columns: bool = False,
+        include_schema: bool = True,
         truncate: bool = False,
         include_sql: bool = True,
+        include_docs: bool = True,
         n: int | None = None,
         offset: int = 0,
-        show_source: bool = False
+        show_source: bool = False,
+        n_others: int = 0,
     ) -> str:
-        sorted_slugs = self.get_top_tables(n, offset)
+        # Determine which tables to show with full details
+        if self.schema_tables is not None:
+            # Use explicitly set schema_tables
+            primary_slugs = [s for s in self.schema_tables if s in self.catalog]
+        else:
+            # Fall back to top n by similarity
+            primary_slugs = self.get_top_tables(n, offset)
 
         # Check if all tables come from a single source
         unique_sources = set()
-        for slug in sorted_slugs:
+        for slug in self.catalog.keys():
             if SOURCE_TABLE_SEPARATOR in slug:
-                source_name = slug.split(SOURCE_TABLE_SEPARATOR, 1)[0]
-                unique_sources.add(source_name)
-
+                unique_sources.add(slug.split(SOURCE_TABLE_SEPARATOR, 1)[0])
         single_source = len(unique_sources) == 1
 
+        # Build tables data for primary tables
         tables_data = {}
-        for table_slug in sorted_slugs:
-            catalog_entry = self.catalog.get(table_slug)
-            if not catalog_entry:
+        for table_slug in primary_slugs:
+            entry = self.catalog.get(table_slug)
+            if not entry:
                 continue
-
-            # If single source and not explicitly showing source, use just the table name
             display_slug = table_slug
             if single_source and not show_source and SOURCE_TABLE_SEPARATOR in table_slug:
                 display_slug = table_slug.split(SOURCE_TABLE_SEPARATOR, 1)[1]
-
             tables_data[display_slug] = self._build_table_data(
-                table_slug, catalog_entry, include_columns, truncate, include_sql
+                table_slug, entry, include_columns, include_schema, truncate, include_sql
             )
 
-        # If all tables have empty data, return a simple list
-        if all(not data for data in tables_data.values()):
-            return yaml.dump(
-                list(tables_data.keys()),
-                default_flow_style=False,
-                allow_unicode=True,
-            )
+        # Build result
+        result = ""
+        if tables_data:
+            if all(not data for data in tables_data.values()):
+                result = yaml.dump(list(tables_data.keys()), default_flow_style=False, allow_unicode=True)
+            else:
+                result = yaml.dump(tables_data, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
-        return yaml.dump(
-            tables_data,
-            default_flow_style=False,
-            allow_unicode=True,
-            sort_keys=False
-        )
+        # Add other tables section
+        if n_others > 0:
+            primary_set = set(primary_slugs)
+            other_slugs = [
+                slug for slug in self.catalog.keys()
+                if slug not in primary_set
+            ][:n_others]
+            if other_slugs:
+                result += "\n\nOthers available:\n"
+                for slug in other_slugs:
+                    display_slug = slug
+                    if single_source and not show_source and SOURCE_TABLE_SEPARATOR in slug:
+                        display_slug = slug.split(SOURCE_TABLE_SEPARATOR, 1)[1]
+                    result += f"- {display_slug}\n"
+
+        # Add docs section
+        if include_docs:
+            docs = self.get_docs()
+            if docs:
+                if result:
+                    result += "\n---\n\n"
+                result += "<documentation>\n"
+                for chunk in docs:
+                    text = truncate_string(chunk.text, 300) if truncate else truncate_string(chunk.text, 800)
+                    text = " ".join(text.split())
+                    result += f'<doc source="{chunk.filename}">\n{text}\n</doc>\n'
+                result += "</documentation>"
+
+        return result or "No data sources or documentation available."
 
     def get_top_tables(self, n: int | None = None, offset: int = 0) -> list[str]:
         """Get top n table slugs sorted by similarity.
@@ -243,18 +309,50 @@ class Metaset:
             sorted_slugs = sorted_slugs[:n]
         return sorted_slugs
 
-    def table_list(self, n: int | None = None, offset: int = 0, show_source: bool = False) -> str:
-        """Generate minimal table listing for planning - no SQL expressions."""
-        return self._generate_context(include_columns=False, truncate=False, include_sql=False, n=n, offset=offset, show_source=show_source)
+    def table_list(self, n: int | None = None, offset: int = 0, show_source: bool = False, n_others: int = 0, **override_kwargs) -> str:
+        """Generate minimal table listing for planning - just table names and columns without schema details."""
+        generate_kwargs = {
+            "include_columns": False,
+            "include_schema": False,
+            "truncate": False,
+            "include_sql": False,
+            "include_docs": True,
+        }
+        generate_kwargs.update(override_kwargs)
+        return self._generate_context(**generate_kwargs, n=n, offset=offset, show_source=show_source, n_others=n_others)
 
-    def table_context(self, n: int | None = None, offset: int = 0, show_source: bool = True) -> str:
-        return self._generate_context(include_columns=False, truncate=False, n=n, offset=offset, show_source=show_source)
+    def table_context(self, n: int | None = None, offset: int = 0, show_source: bool = True, n_others: int = 0, **override_kwargs) -> str:
+        generate_kwargs = {
+            "include_columns": True,
+            "include_schema": False,
+            "truncate": False,
+            "include_sql": False,
+            "include_docs": True,
+        }
+        generate_kwargs.update(override_kwargs)
+        return self._generate_context(**generate_kwargs, n=n, offset=offset, show_source=show_source, n_others=n_others)
 
-    def full_context(self, n: int | None = None, offset: int = 0, show_source: bool = True) -> str:
-        return self._generate_context(include_columns=True, truncate=False, n=n, offset=offset, show_source=show_source)
+    def full_context(self, n: int | None = None, offset: int = 0, show_source: bool = True, n_others: int = 0, **override_kwargs) -> str:
+        generate_kwargs = {
+            "include_columns": True,
+            "include_schema": True,
+            "truncate": False,
+            "include_sql": False,
+            "include_docs": True,
+        }
+        generate_kwargs.update(override_kwargs)
+        return self._generate_context(**generate_kwargs, n=n, offset=offset, show_source=show_source, n_others=n_others)
 
-    def compact_context(self, n: int | None = None, offset: int = 0, show_source: bool = True) -> str:
-        return self._generate_context(include_columns=True, truncate=True, n=n, offset=offset, show_source=show_source)
+    def compact_context(self, n: int | None = None, offset: int = 0, show_source: bool = True, n_others: int = 0, **override_kwargs) -> str:
+        generate_kwargs = {
+            "include_columns": True,
+            "include_schema": True,
+            "truncate": True,
+            "include_sql": False,
+            "include_docs": True,
+        }
+        generate_kwargs.update(override_kwargs)
+        return self._generate_context(**generate_kwargs, n=n, offset=offset, show_source=show_source, n_others=n_others)
 
     def __str__(self) -> str:
         return self.table_context()
@@ -335,10 +433,14 @@ async def get_metaset(
             )
         catalog_data[table_slug] = catalog_entry
 
+    # Preserve docs from previous metaset if available
+    docs = prev.docs if prev else None
+
     return Metaset(
         query=None,
         catalog=catalog_data,
         schemas=schemas_data,
+        docs=docs,
     )
 
 

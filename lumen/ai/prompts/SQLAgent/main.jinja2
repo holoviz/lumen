@@ -29,16 +29,15 @@ Write a SQL query for the user's data transformation request, focusing on intent
 - Entity search: Use multiple ILIKE patterns with variations
 - Format variation checking: underscores vs spaces using ILIKE
 {% endif %}
+
+## Requesting Additional Schemas
+You can ONLY write queries using tables shown above with full column details. Tables listed under "Others available" do NOT have their schemas loaded yet - if you need them, a prior step will select them.
 {%- endblock -%}
 
 {%- block context -%}
+{%- if memory.get('metaset') %}
 ### Data summary
-{{ memory["metaset"].compact_context(5) }}
-
-{%- set other_tables = memory["metaset"].table_context(10, offset=5) -%}
-{%- if other_tables.strip() != '{}' and memory["metaset"].catalog|length >= 5 %}
-### Other Tables
-{{ other_tables }}
+{{ memory["metaset"].compact_context(n_others=17) }}
 {%- endif %}
 
 {%- if 'sql' in memory %}

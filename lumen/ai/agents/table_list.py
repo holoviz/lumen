@@ -49,7 +49,7 @@ class TableListAgent(BaseListAgent):
             return {"Search Results": context["closest_tables"]}
 
         # Group tables by source
-        visible_slugs = context.get('visible_slugs', set())
+        visible_slugs = context.get('visible_slugs')
         if not visible_slugs:
             return {}
 

@@ -1,3 +1,4 @@
+import hashlib
 import re
 
 from abc import abstractmethod
@@ -12,6 +13,15 @@ STOP_WORDS = (Path(__file__).parent / "embeddings_stop_words.txt").read_text().s
 STOP_WORDS_RE = re.compile(r"\b(?:{})\b".format("|".join(STOP_WORDS)), re.IGNORECASE)
 
 
+def _deterministic_hash(text):
+    """
+    Deterministic hash function using MD5.
+    Returns a stable integer hash that is consistent across Python sessions.
+    """
+    hash_bytes = hashlib.md5(text.encode('utf-8')).digest()
+    return int.from_bytes(hash_bytes[:4], byteorder='big')
+
+
 class Embeddings(param.Parameterized):
     @abstractmethod
     async def embed(self, texts: list[str]) -> list[list[float]]:
@@ -23,9 +33,9 @@ class NumpyEmbeddings(Embeddings):
     NumpyEmbeddings is a simple embeddings class that uses a hash function
     to map n-grams to the vocabulary.
 
-    Note that the default hash function is not stable across different Python
-    sessions. If you need a stable hash function, you can set the `hash_func`,
-    e.g. using murmurhash from the `mmh3` package.
+    The default hash function uses MD5 for deterministic, stable hashing
+    across Python sessions. You can override with a custom hash function
+    if needed, e.g. using murmurhash from the `mmh3` package.
 
     :Example:
     >>> embeddings = NumpyEmbeddings()
@@ -34,7 +44,7 @@ class NumpyEmbeddings(Embeddings):
 
     embedding_dim = param.Integer(default=256, doc="The size of the embedding vector")
 
-    hash_func = param.Callable(default=hash, doc="""
+    hash_func = param.Callable(default=_deterministic_hash, doc="""
         The hashing function to use to map n-grams to the vocabulary.""")
 
     seed = param.Integer(default=42, doc="The seed for the random number generator.")

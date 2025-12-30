@@ -5,7 +5,6 @@ from .chat import ChatAgent
 from .dbtsl import DbtslAgent
 from .document_list import DocumentListAgent
 from .hvplot import hvPlotAgent
-from .source import SourceAgent
 from .sql import SQLAgent
 from .table_list import TableListAgent
 from .validation import ValidationAgent
@@ -19,7 +18,6 @@ __all__ = [
     "DbtslAgent",
     "DocumentListAgent",
     "hvPlotAgent",
-    "SourceAgent",
     "SQLAgent",
     "TableListAgent",
     "ValidationAgent",

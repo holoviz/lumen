@@ -80,32 +80,25 @@ Guidelines:
 {% endfor %}
 ## Current Data Context
 
-{%- if memory.get('document_sources') %}
-Documents available:
-{%- for document_source in memory['document_sources'] %}
-- '''{{ document_source['text'][:80].replace('\n', ' ') | default('<No text available></No>') }}...''' ({{ document_source['metadata'] | default('Unknown Filename') }})
-{%- endfor %}
-{% endif %}
-
 {%- if memory.get('metaset') %}
-{%- set table_list = memory['metaset'].table_list(n=5) %}
+{%- set table_list = memory['metaset'].table_list(n=3, n_others=17) %}
 Data sources:
 {{ table_list }}
-{% endif %}
+{%- endif %}
 
 {%- if 'table' in memory %}
-📋 Last table: `{{ memory['table'] }}`
+Previously used table: `{{ memory['table'] }}`
 {%- endif %}
 
 {%- if 'sql' in memory %}
-Current SQL:
+Previously used SQL:
 ```sql
 {{ memory['sql'] }}
 ```
 {%- endif %}
 
 {%- if memory.get('data') is not none %}
-Current data summary:
+Previously derived data summary:
 {{ memory["data"] }}
 {%- endif -%}
 

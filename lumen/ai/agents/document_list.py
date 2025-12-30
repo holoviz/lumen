@@ -1,14 +1,13 @@
-from typing import Any
-
 import param
 
 from ..context import ContextModel, TContext
+from ..schemas import Metaset
 from .base_list import BaseListAgent
 
 
 class DocumentListInputs(ContextModel):
 
-    document_sources: dict[str, Any]
+    metaset: Metaset
 
 
 class DocumentListAgent(BaseListAgent):
@@ -26,18 +25,24 @@ class DocumentListAgent(BaseListAgent):
     purpose = param.String(default="""
         Displays a list of all available documents.""")
 
+    input_schema = DocumentListInputs
+
     _column_name = "Documents"
 
     _message_format = "Tell me about: {item}"
 
     @classmethod
     async def applies(cls, context: TContext) -> bool:
-        sources = context.get("document_sources")
-        if not sources:
+        metaset = context.get("metaset")
+        if not metaset:
             return False
-        return len(sources) > 1
+        return metaset.has_docs and len(metaset.docs) > 1
 
     def _get_items(self, context: TContext) -> dict[str, list[str]]:
-        # extract the filename, following this pattern `Filename: 'filename'``
-        documents = [doc["metadata"].get("filename", "untitled") for doc in context.get("document_sources", [])]
-        return {"Documents": documents} if documents else {}
+        metaset = context.get("metaset")
+        if not metaset or not metaset.has_docs:
+            return {}
+
+        # Extract unique filenames from document chunks
+        filenames = sorted(set(doc.filename for doc in metaset.docs))
+        return {"Documents": filenames} if filenames else {}
