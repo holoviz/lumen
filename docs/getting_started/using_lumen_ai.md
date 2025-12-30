@@ -97,7 +97,7 @@ Run `lumen-ai serve --help` to see all available options.
 
 For fine-grained control, use the Python API:
 
-``` py title="Advanced Python configuration" hl_lines="4 6 7"
+```[ py title="Advanced Python configuration" hl_lines="4 6 7"]
 import lumen.ai as lmai
 
 ui = lmai.ExplorerUI(

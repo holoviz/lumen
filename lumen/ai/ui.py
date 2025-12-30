@@ -621,7 +621,10 @@ class UI(Viewer):
         )
 
         # Set up actions for the ChatAreaInput speed dial
-        self._source_catalog = SourceCatalog(context=self.context)
+        # Use document_vector_store if available, otherwise fall back to main vector_store
+        doc_store = self.document_vector_store or self._coordinator.vector_store
+        self._source_catalog = SourceCatalog(context=self.context, vector_store=doc_store)
+
         # Watch for visibility changes and schedule async handler
         def _schedule_visibility_change(event):
             async def _do_sync():
@@ -741,22 +744,28 @@ class UI(Viewer):
             new_sources = [src for src in context["sources"] if src not in old_sources]
             self.context["sources"] = old_sources + new_sources
 
+            # Compute table slugs for old, new, and all sources
+            old_slugs = set()
+            for source in old_sources:
+                tables = source.get_tables()
+                for table in tables:
+                    table_slug = f'{source.name}{SOURCE_TABLE_SEPARATOR}{table}'
+                    old_slugs.add(table_slug)
+
             all_slugs = set()
-            for source in new_sources or old_sources:  # initially populate from old sources
+            for source in self.context["sources"]:
                 tables = source.get_tables()
                 for table in tables:
                     table_slug = f'{source.name}{SOURCE_TABLE_SEPARATOR}{table}'
                     all_slugs.add(table_slug)
 
-            # Update visible_slugs, preserving existing visibility where possible
-            # This ensures removed tables are filtered out, new tables are added
+            new_slugs = all_slugs - old_slugs
+
+            # Update visible_slugs: preserve old table visibility, auto-check new tables
             current_visible = self.context.get("visible_slugs")
-            if current_visible:
-                # Keep intersection of current visible and available slugs
-                # Plus add any new slugs that weren't previously available
-                self.context["visible_slugs"] = current_visible.intersection(all_slugs) | (all_slugs - current_visible)
+            if current_visible is not None:  # Check for None, not truthiness (empty set is valid!)
+                self.context["visible_slugs"] = current_visible.intersection(old_slugs) | new_slugs
             else:
-                # If no visible_slugs set, make all tables visible
                 self.context["visible_slugs"] = all_slugs
 
         if "source" in context:
@@ -808,6 +817,11 @@ class UI(Viewer):
 
     def _open_sources_dialog(self, event=None):
         """Open the sources dialog when the vector store badge is clicked."""
+        # Navigate to Source Catalog if sources exist, otherwise Upload
+        if self.context.get("sources"):
+            self._source_breadcrumbs.active = (0, 0, 0)  # Upload > Source Catalog
+        else:
+            self._source_breadcrumbs.active = (0, 0)  # Upload
         self._sources_dialog_content.open = True
 
     def _open_info_dialog(self, event=None):

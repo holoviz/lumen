@@ -168,13 +168,15 @@ ui = lmai.ExplorerUI(data=[
     # Add domain-specific analysis in minutes
     class RevenueAnalysis(lmai.analysis.Analysis):
         """Calculate key revenue metrics."""
-        
-        def __call__(self, pipeline):
-            data = pipeline.data
-            return {
-                'MRR': data['revenue'].sum() / 12,
-                'Churn Rate': (data['churned'].sum() / len(data)) * 100
-            }
+
+        columns = ['revenue', 'churned']
+
+        def __call__(self, pipeline, ctx):
+            df = pipeline.data
+            return pd.DataFrame({
+                'MRR': df['revenue'].sum() / 12,
+                'Churn Rate': (df['churned'].sum() / len(df)) * 100
+            }, index=[0])
 
     ui = lmai.ExplorerUI(data=source, analyses=[RevenueAnalysis])
     ```
