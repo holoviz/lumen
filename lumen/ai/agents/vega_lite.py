@@ -299,6 +299,14 @@ class VegaLiteAgent(BaseViewAgent):
         """Add geographic visualization items to vega spec."""
         self._add_zoom_params(vega_spec)
         self._setup_projection(vega_spec)
+
+        # Remove projection from individual layers to prevent conflicts
+        # All layers must inherit the top-level projection for zoom/pan to work correctly
+        if "layer" in vega_spec:
+            for layer in vega_spec["layer"]:
+                if isinstance(layer, dict) and "projection" in layer:
+                    del layer["projection"]
+
         self._handle_map_compatibility(vega_spec, vega_spec_str)
         return vega_spec
 
