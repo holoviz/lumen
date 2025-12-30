@@ -37,8 +37,7 @@ class VegaLiteSpec(EscapeBaseModel):
         Then describe the basic plot structure."""
     )
     yaml_spec: str = Field(
-        description="""A complete Vega-Lite YAML specification. Include: $schema, data, layer (with mark and encoding), title, config.
-        Width and height will be set to 'container' automatically."""
+        description="A basic vega-lite YAML specification with core plot elements only (data, mark, basic x/y encoding)."
     )
 
 
@@ -509,7 +508,7 @@ class VegaLiteAgent(BaseViewAgent):
             out.spec = dump_yaml(spec)
             log_debug(f"📊 Applied {step_name} updates and refreshed visualization")
 
-        return [out], {"view": dict(spec, type=self.view_type.view_type)}
+        return [out], {"view": dict(full_dict, type=view.view_type)}
 
     async def annotate(
         self,
