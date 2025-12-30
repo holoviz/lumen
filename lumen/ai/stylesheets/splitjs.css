@@ -1,0 +1,49 @@
+/* Horizontal Split Gutter Styles */
+.gutter-horizontal > .divider {
+    background: unset;
+}
+
+.gutter.gutter-horizontal::after {
+    background-color: var(--mui-palette-primary-main, #1976d2);
+    opacity: 0.8;
+}
+
+/* Horizontal Split Toggle Buttons - Material-UI theme */
+.toggle-button-left,
+.toggle-button-right {
+    width: 12px;
+    height: 12px;
+    background-color: var(--mui-palette-primary-main, #1976d2);
+    opacity: 1;
+}
+
+.toggle-button-left {
+    left: -28px;
+}
+
+.toggle-button-right {
+    left: 8px;
+}
+
+/* Vertical Split Gutter Styles */
+.gutter-vertical > .divider {
+    background: unset;
+}
+
+.gutter.gutter-vertical::after {
+    background-color: var(--mui-palette-primary-main, #1976d2);
+    opacity: 0.8;
+}
+
+/* Vertical Split Toggle Buttons - Material-UI theme */
+.toggle-button-up,
+.toggle-button-down {
+    width: 12px;
+    height: 12px;
+    background-color: var(--mui-palette-primary-main, #1976d2);
+    opacity: 1;
+}
+
+.toggle-button-up {
+    top: -22px;
+}

@@ -38,7 +38,7 @@ from .agents import (
 )
 from .config import (
     DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROVIDED_SOURCE_NAME,
-    SOURCE_TABLE_SEPARATOR,
+    SOURCE_TABLE_SEPARATOR, SPLITJS_STYLES_PATH,
 )
 from .context import TContext
 from .controls import (
@@ -1066,32 +1066,7 @@ class ExplorerUI(UI):
             expanded_sizes=(40, 60),
             show_buttons=True,
             sizing_mode='stretch_both',
-            stylesheets=[
-                """
-                .gutter-horizontal > .divider { background: unset }
-
-                .gutter.gutter-horizontal::after {
-                    background-color: var(--mui-palette-primary-main, #1976d2);
-                    opacity: 0.8;
-                }
-
-                /* Style toggle buttons with Material-UI theme */
-                .toggle-button-left,
-                .toggle-button-right {
-                    width: 12px;
-                    height: 12px;
-                    background-color: var(--mui-palette-primary-main, #1976d2);
-                    opacity: 1;
-                }
-
-                .toggle-button-left {
-                    left: -28px;
-                }
-                .toggle-button-right {
-                    left: 8px;
-                }
-                """
-            ]
+            stylesheets=[str(SPLITJS_STYLES_PATH)]
         )
         self._main[:] = [self._split]
         return main
@@ -1317,29 +1292,7 @@ class ExplorerUI(UI):
             sizes=(20, 80),
             sizing_mode="stretch_both",
             styles={"overflow": "auto"},
-            stylesheets=[
-                """
-                .gutter-vertical > .divider { background: unset }
-
-                .gutter.gutter-vertical::after {
-                    background-color: var(--mui-palette-primary-main, #1976d2);
-                    opacity: 0.8;
-                }
-
-                /* Style toggle buttons with Material-UI theme */
-                .toggle-button-up,
-                .toggle-button-down {
-                    width: 12px;
-                    height: 12px;
-                    background-color: var(--mui-palette-primary-main, #1976d2);
-                    opacity: 1;
-                }
-
-                .toggle-button-up {
-                    top: -22px;
-                }
-                """
-            ]
+            stylesheets=[str(SPLITJS_STYLES_PATH)]
         )
         controls.append(self._render_pop_out(exploration, vsplit, title))
         return (title, vsplit)
