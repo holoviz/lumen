@@ -1,0 +1,11 @@
+{% extends 'Agent/main.jinja2' %}
+
+{%- block instructions %}
+# Instructions
+Select relevant tables for the user's query. Include tables that may be acronyms or abbreviations if they seem relevant.
+{%- endblock -%}
+
+{%- block context -%}
+## Available Tables
+{{ memory["metaset"].table_list(n=5, n_others=15, show_source=True, include_columns=True) }}
+{%- endblock -%}

@@ -39,13 +39,7 @@ Choose discoveries that directly address the error - be focused and efficient!
 {%- if error_context %}Original Error: {{ error_context }}{% endif -%}
 
 ## Data summary
-{{ memory["metaset"].compact_context(5) }}
-
-{%- set other_tables = memory["metaset"].table_context(10, offset=5) -%}
-{%- if other_tables.strip() != '{}' %}
-## Other Tables
-{{ other_tables }}
-{%- endif %}
+{{ memory["metaset"].compact_context(n=3, n_others=17) }}
 
 Your task: Select 2-4 discoveries that will help understand and fix this specific error.
 {% endblock %}
