@@ -609,6 +609,32 @@ class TestDuckDBVectorStore(VectorStoreTestKit):
         assert "api_key" not in params, "api_key should not be stored in metadata"
         store.close()
 
+    @pytest.mark.asyncio
+    async def test_add_directory(self, empty_store):
+        """
+        Override to use max_concurrent=1 to avoid DuckDB VSS extension crashes.
+        """
+        import warnings
+        warnings.filterwarnings("ignore", category=RuntimeWarning, message="Couldn't find ffmpeg or avconv - defaulting to ffmpeg")
+        dir_path = Path(__file__).parent / "test_dir"
+
+        # Add the directory to the store with max_concurrent=1 to avoid VSS crashes
+        ids = await empty_store.add_directory(dir_path, metadata={"version": 1}, upsert=True, max_concurrent=1)
+        await asyncio.sleep(0.1)
+        assert len(ids) > 0, "Should add at least one document"
+
+        # Query for a specific term in the added documents
+        assert len(await empty_store.query("Sed elementum")) > 0, "Should find the term in the added documents"
+
+        # Try upserting again
+        same_ids = await empty_store.add_directory(dir_path, metadata={"version": 1}, upsert=True, max_concurrent=1)
+        assert set(ids) == set(same_ids), "Should return the same IDs when upserting identical content"
+
+        # Increment version
+        new_ids = await empty_store.add_directory(dir_path, metadata={"version": 2}, upsert=True, max_concurrent=1)
+        assert len(new_ids) > 0, "Should add at least one document"
+        assert len(set(new_ids) & set(ids)) == 0, "Should return different IDs when version changes"
+
 
 # Sample readme content for testing (mimics real-world metadata files)
 SAMPLE_README = """# Population - Data package
