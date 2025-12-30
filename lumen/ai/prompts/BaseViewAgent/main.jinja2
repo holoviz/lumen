@@ -11,8 +11,8 @@ Here is the current dataset to use:
 
 {%- if "view" in memory %}
 The previous view specification was:
-```
-{{ memory["view"] }}
+```yaml
+{{ memory["view"] | json_to_yaml }}
 ```
 {%- endif %}
 
