@@ -15,7 +15,7 @@ from lumen.ai.agents import AnalystAgent, ChatAgent, SQLAgent
 from lumen.ai.agents.sql import SQLQuery
 from lumen.ai.coordinator import Plan, Planner
 from lumen.ai.coordinator.planner import Reasoning, make_plan_model
-from lumen.ai.models import ReplaceLine, RetrySpec, ThinkingYesNo
+from lumen.ai.models import ReplaceLine, RetrySpec
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
 from lumen.ai.tools import MetadataLookup
@@ -32,7 +32,6 @@ async def test_planner_empty_plan(llm):
     plan_model = make_plan_model(["ChatAgent"], [])
 
     llm.set_responses([
-        ThinkingYesNo(chain_of_thought="Just use ChatAgent", yes=False),
         Reasoning(chain_of_thought="Just use ChatAgent"),
         plan_model(title="Hello!", steps=[])
     ])
@@ -59,7 +58,6 @@ async def test_planner_simple_plan(llm):
     (StepModel,) = get_args(PlanModel.__annotations__['steps'])
 
     llm.set_responses([
-        ThinkingYesNo(chain_of_thought="Just use ChatAgent", yes=False),
         Reasoning(chain_of_thought="Just use ChatAgent"),
         PlanModel(title="Hello!", steps=[
             StepModel(
@@ -103,7 +101,6 @@ async def test_planner_error(llm):
     (StepModel,) = get_args(PlanModel.__annotations__['steps'])
 
     llm.set_responses([
-        ThinkingYesNo(chain_of_thought="Just use ChatAgent", yes=False),
         Reasoning(chain_of_thought="Just use ChatAgent"),
         lambda: PlanModel(
             title="Hello!", steps=[
