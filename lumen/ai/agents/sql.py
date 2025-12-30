@@ -874,7 +874,7 @@ class SQLAgent(BaseLumenAgent):
 
         sources = {
             tuple(table_slug.split(SOURCE_TABLE_SEPARATOR)): parse_table_slug(table_slug, sources)[0]
-            for table_slug in visible_slugs
+            for table_slug in selected_slugs
         }
         if not sources:
             raise ValueError("No valid SQL sources available for querying.")
