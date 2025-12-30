@@ -509,7 +509,7 @@ class VegaLiteAgent(BaseViewAgent):
             out.spec = dump_yaml(spec)
             log_debug(f"📊 Applied {step_name} updates and refreshed visualization")
 
-        return [out], {"view": {"spec": full_dict["spec"]}}
+        return [out], {"view": dict(spec, type=self.view_type.view_type)}
 
     async def annotate(
         self,
