@@ -13,7 +13,6 @@ from lumen.ai.embeddings import Embeddings, NumpyEmbeddings, OpenAIEmbeddings
 from lumen.ai.vector_store import DuckDBVectorStore, NumpyVectorStore
 
 
-@pytest.mark.xdist_group("vss")
 class VectorStoreTestKit:
     """
     A base class (test kit) that provides the *common* tests and fixture definitions.
@@ -537,6 +536,7 @@ class TestNumpyVectorStore(VectorStoreTestKit):
         return store
 
 
+@pytest.mark.xdist_group("vss")
 class TestDuckDBVectorStore(VectorStoreTestKit):
 
     @pytest.fixture
