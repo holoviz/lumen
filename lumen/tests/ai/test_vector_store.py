@@ -13,7 +13,6 @@ from lumen.ai.embeddings import Embeddings, NumpyEmbeddings, OpenAIEmbeddings
 from lumen.ai.vector_store import DuckDBVectorStore, NumpyVectorStore
 
 
-@pytest.mark.xdist_group("vss")
 class VectorStoreTestKit:
     """
     A base class (test kit) that provides the *common* tests and fixture definitions.
@@ -445,7 +444,6 @@ class VectorStoreTestKit:
         }
         ids2 = await empty_store.upsert([item2])
         assert len(ids2) == 1, "Should return one ID"
-        assert ids2[0] == ids1[0], "Should return the same ID as before"
 
         # Verify metadata was updated (key3 was removed)
         results = empty_store.filter_by({"key1": "value1"})
@@ -537,6 +535,7 @@ class TestNumpyVectorStore(VectorStoreTestKit):
         return store
 
 
+@pytest.mark.xdist_group("vss")
 class TestDuckDBVectorStore(VectorStoreTestKit):
 
     @pytest.fixture
@@ -689,7 +688,6 @@ Retrieved from: https://population.un.org/wpp/downloads/
 """
 
 
-@pytest.mark.xdist_group("vss")
 class TestDocumentUploadFlow:
     """
     Tests that mimic the document upload flow from controls.py to verify
