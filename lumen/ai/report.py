@@ -617,7 +617,7 @@ class TaskGroup(Task):
             elif isinstance(out, LumenOutput):
                 cell, ext = format_output(out)
             elif isinstance(out, Viewable):
-                cell, ext = format_output(Panel(out))
+                cell, ext = format_output(Panel(object=out))
             cells.append(cell)
             if ext and ext not in extensions:
                 extensions.append(ext)
@@ -823,7 +823,9 @@ class Report(TaskGroup):
     def _update_filename(self):
         self._export.filename = f"{self.title or 'Report'}.ipynb"
 
-    def _notebook_export(self):
+    async def _notebook_export(self):
+        if len(self) and self.status != "success":
+            await self.execute()
         return io.StringIO(self.to_notebook())
 
     def _expand_all(self, event):

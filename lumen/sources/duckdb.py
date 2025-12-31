@@ -222,6 +222,12 @@ class DuckDBSource(BaseSQLSource):
         if isinstance(sql_expr, dict):
             return {self._process_sql_paths(k): v for k, v in sql_expr.items()}
 
+        # Check if this is a raw file path (not a SQL expression)
+        if self._is_file_path(sql_expr):
+            if not re.match(r'^(?:http|ftp)s?://', sql_expr) and not os.path.isabs(sql_expr):
+                return os.path.abspath(sql_expr)
+            return sql_expr
+
         # Look for read_* patterns (case insensitive) like read_parquet, READ_CSV etc.
         matches = re.finditer(r"(?i)read_\w+\('([^']+)'\)", sql_expr)
         processed_sql = sql_expr
@@ -443,11 +449,9 @@ class DuckDBSource(BaseSQLSource):
             finally:
                 cursor.close()
 
-        # Preserve file-based metadata for tables that weren't overwritten
-        source._file_based_tables = {
-            k: v for k, v in self._file_based_tables.items()
-            if k not in tables
-        }
+        # Preserve file-based metadata from parent source and merge with
+        # any new file-based tables detected during __init__
+        source._file_based_tables = {**self._file_based_tables, **source._file_based_tables}
         return source
 
     def execute(self, sql_query: str, params: list | dict | None = None, *args, **kwargs):
