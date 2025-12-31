@@ -2,7 +2,9 @@
 
 **Open-source, fully extensible Python framework for AI-powered data exploration. Easy to use, reproducible results, and tailored to your domain expertise.**
 
-https://github.com/user-attachments/assets/ef6565f3-a21a-4a3e-b862-0b2b539b3261
+<video controls autoplay loop muted width="100%">
+  <source src="https://github.com/user-attachments/assets/ef6565f3-a21a-4a3e-b862-0b2b539b3261" type="video/mp4">
+</video>
 
 Ask questions in plain English and get instant answers, visualizations, and reports. No coding required. Natural language queries automatically generate database queries, create visualizations, and build dashboards. **[Get started in 30 seconds →](quick_start.md)**
 
