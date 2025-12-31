@@ -256,7 +256,9 @@ def make_sql_model(sources: list[tuple[str, str]]):
     sources : list[tuple[str, str]]
         List of (source_name, table_name) tuples for tables with full schemas.
     """
-    if len(sources) == 1:
+    # Check if all tables are from a single unique source
+    unique_sources = set(src for src, _ in sources)
+    if len(unique_sources) == 1:
         return SQLQuery
 
     SourceTable = make_source_table(sources)
@@ -594,10 +596,14 @@ class SQLAgent(BaseLumenAgent):
             if not output:
                 raise ValueError("No output was generated.")
 
-            if len(sources) == 1:
+            # Check if all tables are from a single unique source
+            unique_sources = set(src for src, _ in sources.keys())
+            if len(unique_sources) == 1:
+                # Single source - just get all table names
                 source = next(iter(sources.values()))
-                tables = [next(table for _, table in sources)]
+                tables = [table for _, table in sources.keys()]
             else:
+                # Multiple sources - need to merge
                 source, tables = self._merge_sources(sources, output.tables)
             sql_query = output.query.strip()
             expr_slug = output.table_slug.strip()
