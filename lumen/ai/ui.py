@@ -36,7 +36,7 @@ from .agents import (
 )
 from .config import (
     DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROVIDED_SOURCE_NAME,
-    SOURCE_TABLE_SEPARATOR,
+    SOURCE_TABLE_SEPARATOR, SPLITJS_STYLESHEETS,
 )
 from .context import TContext
 from .controls import (
@@ -1190,7 +1190,7 @@ class ExplorerUI(UI):
             expanded_sizes=(40, 60),
             show_buttons=True,
             sizing_mode='stretch_both',
-            stylesheets=[".gutter-horizontal > .divider { background: unset }"]
+            stylesheets=SPLITJS_STYLESHEETS
         )
         self._main[:] = [self._split]
         return main
@@ -1415,7 +1415,8 @@ class ExplorerUI(UI):
             expanded_sizes=(20, 80),
             sizes=(20, 80),
             sizing_mode="stretch_both",
-            styles={"overflow": "auto"}
+            styles={"overflow": "auto"},
+            stylesheets=SPLITJS_STYLESHEETS
         )
         controls.append(self._render_pop_out(exploration, vsplit, title))
         return (title, vsplit)

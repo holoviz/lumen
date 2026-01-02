@@ -59,6 +59,8 @@ class MissingContextError(Exception):
 
 THIS_DIR = Path(__file__).parent
 PROMPTS_DIR = THIS_DIR / "prompts"
+STYLESHEETS_DIR = THIS_DIR / "stylesheets"
+SPLITJS_STYLESHEETS = [(STYLESHEETS_DIR / "splitjs.css").read_text()]
 
 GETTING_STARTED_SUGGESTIONS = [
     ("search", "What data is available?"),
