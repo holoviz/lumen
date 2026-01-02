@@ -925,10 +925,10 @@ class RevisionControls(Viewer):
             self.param.active,
             active_icon="cancel",
             attached=[popup],
-            icon_size="1.1em",
             label="",
             margin=(5, 0),
             size="small",
+            icon_size="1.1em",
             **self.toggle_kwargs
         )
         popup.param.watch(self._close, "open")
@@ -1044,6 +1044,39 @@ class AnnotationControls(RevisionControls):
             self._report_status(diff_md, title="❌ Failed to apply annotations")
             raise
         self._report_status(diff_md)
+
+
+class CopyControls(Viewer):
+    """Controls for copying spec to clipboard."""
+
+    interface = param.Parameter()
+
+    layout_kwargs = param.Dict(default={})
+
+    task = param.Parameter()
+
+    view = param.Parameter(doc="The View to copy")
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        copy_icon = IconButton(
+            icon="content_copy",
+            active_icon="check",
+            margin=(5, 0),
+            toggle_duration=1000,
+            description="Copy YAML to clipboard",
+            size="small",
+            color="primary",
+            icon_size="0.9em"
+        )
+        copy_icon.js_on_click(
+            args={"code_editor": self.view._editor},
+            code="navigator.clipboard.writeText(code_editor.code);",
+        )
+        self._row = Row(copy_icon, **self.layout_kwargs)
+
+    def __panel__(self):
+        return self._row
 
 
 class SourceCatalog(Viewer):
