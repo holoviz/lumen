@@ -36,7 +36,7 @@ from .agents import (
 )
 from .config import (
     DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROVIDED_SOURCE_NAME,
-    SOURCE_TABLE_SEPARATOR,
+    SOURCE_TABLE_SEPARATOR, SPLITJS_STYLESHEETS,
 )
 from .context import TContext
 from .controls import (
@@ -57,23 +57,23 @@ DataT = str | Path | Source | Pipeline
 
 
 UI_INTRO_MESSAGE = """
-👋 Click a suggestion below or upload a data source to get started!
-
 Lumen AI combines large language models (LLMs) with specialized agents to help you explore, analyze,
 and visualize data without writing code.
 
 On the chat interface...
 
+⬆️ Drag & drop your dataset(s) to get started  
 💬 Ask questions in plain English to generate SQL queries and visualizations  
 🔍 Inspect and validate results through conversation  
 📝 Get summaries and key insights from your data  
 🧩 Apply custom analyses with a click of a button  
 
-If unsatisfied with the results hover over the <span class="material-icons-outlined" style="font-size: 1.2em;">add_circle</span> menu and...
+To refine your results, hover over the <span class="material-icons-outlined" style="font-size: 1.2em;">add_circle</span> menu and...
 
-<span class="material-icons">repeat</span> Use the Rerun button to re-run the last query  
-<span class="material-icons">undo</span> Use the Undo butto to remove the last query  
 <span class="material-icons">delete</span> Use the Clear button to start a new session  
+<span class="material-icons">undo</span> Use the Undo button to remove the last query  
+<span class="material-icons">repeat</span> Use the Rerun button to re-run the last query  
+<span class="material-icons">attach_file</span> Use the Attach Files button to upload more data  
 
 Click the toggle, or drag the right edge, to expand the results area and...
 
@@ -388,7 +388,7 @@ class UI(Viewer):
                 # Clear the input
                 chat_input.value_input = ""
 
-                # Open the manage data dialog
+                # Open the Data Sources dialog
                 self._sources_dialog_content.open = True
                 self._source_breadcrumbs.active = (0, 0)  # Navigate to Upload tab
                 return
@@ -421,20 +421,15 @@ class UI(Viewer):
         interface.disabled = False
         existing_actions = interface.active_widget.actions
         interface.active_widget.actions = {
-            'manage_llm': {
-                'icon': 'auto_awesome',
-                'callback': self._open_llm_dialog,
-                'label': 'Select LLM'
-            },
             **existing_actions,
         }
         self._configure_logs(interface)
         self.interface = interface
-        # Watch for drag-and-drop file uploads and open manage data dialog
+        # Watch for drag-and-drop file uploads and open Data Sources dialog
         interface.active_widget.param.watch(self._handle_file_drop, 'value_uploaded')
 
     def _handle_file_drop(self, event):
-        """Handle drag-and-drop file uploads by opening the manage data dialog."""
+        """Handle drag-and-drop file uploads by opening the Data Sources dialog."""
         if not event.new:  # No files uploaded
             return
 
@@ -443,11 +438,11 @@ class UI(Viewer):
             key: value["value"] for key, value in event.new.items()
         })
 
-        # Open the manage data dialog
+        # Open the Data Sources dialog
         self._sources_dialog_content.open = True
 
         # Set the breadcrumbs to "Upload" to show the uploaded files
-        # (0, 0) means Manage Data > Upload
+        # (0, 0) means Data Sources > Upload
         self._source_breadcrumbs.active = (0, 0)
 
     def _handle_upload_successful(self, event):
@@ -559,19 +554,9 @@ class UI(Viewer):
     def _render_main(self) -> list[Viewable]:
         num_sources = len(self.context.get("sources", []))
         if num_sources == 0:
-            prefix_text = "Add your dataset to begin, then"
+            prefix_text = "Drag & drop your dataset here to begin, then"
         else:
             prefix_text = f"{num_sources} source{'s' if num_sources > 1 else ''} connected;"
-
-        # Create help icon button for intro message
-        self._info_button = IconButton(
-            icon="help",
-            description="Help & Getting Started",
-            margin=(5, 10, 10, -8),
-            on_click=self._open_info_dialog,
-            variant="text",
-            sx={"p": "6px 0", "minWidth": "32px"},
-        )
 
         self._cta = Typography(
             f"{prefix_text} ask any question, or select a quick action below."
@@ -579,13 +564,10 @@ class UI(Viewer):
 
         self._splash = MuiColumn(
             Paper(
-                Row(
-                    Typography(
-                        "Illuminate your data",
-                        disable_anchors=True,
-                        variant="h1"
-                    ),
-                    self._info_button
+                Typography(
+                    "Ask questions, get insights",
+                    disable_anchors=True,
+                    variant="h1"
                 ),
                 self._cta,
                 self.interface._widget,
@@ -649,7 +631,7 @@ class UI(Viewer):
 
         self._source_breadcrumbs = NestedBreadcrumbs(
                 items=[{
-                    'label': 'Manage Data', 'icon': 'folder', "selectable": False, 'items': [{
+                    'label': 'Data Sources', 'icon': 'folder', "selectable": False, 'items': [{
                         "label": "Upload",
                         "icon": "cloud_upload",
                         "items": [
@@ -671,7 +653,7 @@ class UI(Viewer):
 
         self._sources_dialog_content = Dialog(
             MuiColumn(self._source_breadcrumbs, self._source_content, sizing_mode="stretch_width"),
-            close_on_click=True, show_close_button=True, width_option='lg', title="Manage Data",
+            close_on_click=True, show_close_button=True, width_option='lg', title="Data Sources",
             sizing_mode='stretch_width',
         )
         # Watch for dialog close to handle pending query if user closes without adding files
@@ -783,7 +765,7 @@ class UI(Viewer):
 
         num_sources = len(self.context.get("sources", []))
         if num_sources == 0:
-            prefix_text = "Add your dataset to begin, then"
+            prefix_text = "Drag & drop your dataset here to begin, then"
         else:
             prefix_text = f"{num_sources} source{'s' if num_sources > 1 else ''} connected;"
         if hasattr(self, '_cta'):
@@ -1052,7 +1034,7 @@ class ExplorerUI(UI):
     chat_ui_position = param.Selector(default='left', objects=['left', 'right'], doc="""
         The position of the chat interface panel relative to the exploration area.""")
 
-    title = param.String(default='Lumen Explorer', doc="Title of the app.")
+    title = param.String(default='Lumen AI - Data Explorer', doc="Title of the app.")
 
     _exploration = param.Dict()
 
@@ -1079,8 +1061,10 @@ class ExplorerUI(UI):
             self._open_sources_dialog()
         elif item["id"] == "llm":
             self._open_llm_dialog()
-        elif item["id"] == "settings":
+        elif item["id"] == "preferences":
             self._settings_popup.open = True
+        elif item["id"] == "help":
+            self._open_info_dialog()
 
     @param.depends("_exploration", watch=True)
     def _update_home(self):
@@ -1125,12 +1109,14 @@ class ExplorerUI(UI):
             items=[
                 {"label": "Home", "icon": "home", "id": "home", "active": True},
                 None,
-                {"label": "Exploration", "icon": "forum", "id": "exploration", "active": True},
+                {"label": "Exploration", "icon": "insights", "id": "exploration", "active": True},
                 {"label": "Report", "icon": "description_outlined", "id": "report", "active": False},
                 None,
-                {"label": "Manage Data", "icon": "drive_folder_upload_outlined", "id": "data"},
-                {"label": "Configure LLM", "icon": "psychology_outlined", "id": "llm"},
-                {"label": "Settings", "icon": "settings_outlined", "id": "settings"}
+                {"label": "Data Sources", "icon": "storage", "id": "data"},
+                {"label": "AI Model", "icon": "auto_awesome", "id": "llm"},
+                {"label": "Preferences", "icon": "tune", "id": "preferences"},
+                None,
+                {"label": "Help", "icon": "help_outline", "id": "help"}
             ],
             attached=[self._settings_popup],
             collapsed=collapse,
@@ -1143,7 +1129,8 @@ class ExplorerUI(UI):
                     "color": "var(--mui-palette-primary-dark)",
                     "fontSize": "28px"
                 }
-            }
+            },
+            sizing_mode="stretch_width",
         )
 
         return [menu, collapse]
@@ -1190,7 +1177,7 @@ class ExplorerUI(UI):
             expanded_sizes=(40, 60),
             show_buttons=True,
             sizing_mode='stretch_both',
-            stylesheets=[".gutter-horizontal > .divider { background: unset }"]
+            stylesheets=SPLITJS_STYLESHEETS
         )
         self._main[:] = [self._split]
         return main
@@ -1415,7 +1402,8 @@ class ExplorerUI(UI):
             expanded_sizes=(20, 80),
             sizes=(20, 80),
             sizing_mode="stretch_both",
-            styles={"overflow": "auto"}
+            styles={"overflow": "auto"},
+            stylesheets=SPLITJS_STYLESHEETS
         )
         controls.append(self._render_pop_out(exploration, vsplit, title))
         return (title, vsplit)

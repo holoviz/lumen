@@ -59,6 +59,7 @@ pydantic-extra-types = "*"
 semchunk = "*"
 tiktoken = "*"
 tabulate = "*"
+vl-convert-python = "*"
 panel-splitjs = ">=0.2.1"
 panel-graphic-walker = ">=0.6.4"
 

@@ -39,8 +39,6 @@ The chat interface provides several built-in actions:
 
 **Upload files** — You can attach files directly in the chat input to add new data sources or provide additional context.
 
-**Select LLM** — Click the sparkle icon (✨) in the chat input area to configure your LLM provider or switch models.
-
 ## Work with results
 
 ### Control how analysis runs
@@ -65,9 +63,9 @@ The left sidebar provides quick access to all major features:
 
 **Report** — Switch to report mode to see all explorations in a consolidated view for exporting.
 
-**Manage Data** — Add new data sources (CSV, Parquet, JSON, etc.) or view connected sources.
+**Data Sources** — Add new data sources (CSV, Parquet, JSON, etc.) or view connected sources.
 
-**Configure LLM** — Change your AI model provider or adjust model settings.
+**AI Model** — Change your AI model provider or adjust model settings.
 
 **Settings** — Toggle Chain of Thought, SQL Planning, and Validation Step options.
 
@@ -103,7 +101,7 @@ If you're in Report Mode (accessible via the left sidebar), you can export all e
 
 ### Manage your data
 
-Click **Manage Data** from the left sidebar to:
+Click **Data Sources** from the left sidebar to:
 
 - **Add Sources** — Upload CSV, Parquet, JSON files or connect to databases
 - **View Sources** — See all currently connected data sources and their tables
