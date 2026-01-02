@@ -2,6 +2,8 @@
 
 *Illuminate your data*
 
+https://github.com/user-attachments/assets/ef6565f3-a21a-4a3e-b862-0b2b539b3261
+
 |    |    |
 | --- | --- |
 | Build Status | [![Linux/MacOS/Windows Build Status](https://github.com/holoviz/lumen/actions/workflows/test.yaml/badge.svg)](https://github.com/holoviz/lumen/actions/workflows/test.yaml)
