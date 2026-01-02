@@ -34,7 +34,9 @@ from ..views.base import Panel, Table, View
 from .analysis import Analysis
 from .config import FORMAT_ICONS, FORMAT_LABELS, VEGA_ZOOMABLE_MAP_ITEMS
 from .controls import AnnotationControls, RetryControls
+from ..util import log
 from .utils import describe_data, get_data
+from importlib.util import find_spec
 
 if TYPE_CHECKING:
     from panel.chat.feed import ChatFeed
@@ -290,9 +292,20 @@ class LumenOutput(Viewer):
         return f"{self.__class__.__name__}:\n```yaml\n{self.spec}\n```"
 
 
+_HAS_VL_CONVERT = find_spec("vl_convert") is not None
+if not _HAS_VL_CONVERT:
+    log.debug(
+        "vl_convert is not installed; install it to enable exporting Vega-Lite outputs. "
+        "Install with: pip install vl-convert-python"
+    )
+
+_VEGA_LITE_EXPORT_FORMATS = (
+    ("yaml", "png", "jpeg", "pdf", "svg", "html") if _HAS_VL_CONVERT else ("yaml",)
+)
+
 class VegaLiteOutput(LumenOutput):
 
-    export_formats = ("yaml", "png", "jpeg", "pdf", "svg", "html")
+    export_formats = _VEGA_LITE_EXPORT_FORMATS
 
     _controls = [RetryControls, AnnotationControls]
 
