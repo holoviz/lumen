@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import re
 import asyncio
 import json
 import traceback
@@ -126,12 +126,18 @@ class LumenOutput(Viewer):
             sizing_mode="stretch_both"
         )
 
+    @classmethod
+    def _class_name_to_download_filename(cls, fmt) -> str:
+        """Convert class name to snake_case for filenames."""
+        name = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', cls.__name__)
+        return re.sub('([a-z0-9])([A-Z])', r'\1_\2', name).lower() + f'.{fmt}'
+
     def render_controls(self, task: Task, interface: ChatFeed):
         export_menu = MenuButton(
-            label="Export as...", variant='text', icon="file_download", margin=0,
+            label="Export", variant='text', icon="file_download", margin=0,
             items=[
                 {
-                    "label": FORMAT_LABELS.get(fmt, f"{fmt.upper()} (.{fmt})"),
+                    "label": FORMAT_LABELS.get(fmt, f"{fmt.upper()}"),
                     "format": fmt,
                     "icon": FORMAT_ICONS.get(fmt, "insert_drive_file")
                 } for fmt in self.export_formats
@@ -141,7 +147,7 @@ class LumenOutput(Viewer):
 
         def download_export(item):
             fmt = item["format"]
-            file_download.filename = f"{self.title or 'output'}.{fmt}"
+            file_download.filename = self._class_name_to_download_filename(fmt)
             return self.export(fmt)
 
         file_download = FileDownload(

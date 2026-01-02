@@ -23,22 +23,22 @@ ChatMessage.default_avatars.update({
 FORMAT_ICONS = {
     "csv":   "table_chart",
     "xlsx":  "grid_on",
-    "sql":   "description",
+    "sql":   "code",
 
-    "jpeg":  "image",
+    "jpeg":  "photo",
     "png":   "image",
-    "svg":   "vector_square",
+    "svg":   "polyline",
     "pdf":   "picture_as_pdf",
 }
 
 FORMAT_LABELS = {
-    "csv": "CSV (.csv)",
-    "xlsx": "Excel (.xlsx)",
-    "sql": "SQL (.sql)",
-    "jpeg": "JPEG (.jpeg)",
-    "png": "PNG (.png)",
-    "svg": "SVG (.svg)",
-    "pdf": "PDF (.pdf)",
+    "csv": "CSV",
+    "xlsx": "Excel",
+    "sql": "SQL",
+    "jpeg": "JPEG",
+    "png": "PNG",
+    "svg": "SVG",
+    "pdf": "PDF",
 }
 
 class LlmSetupError(Exception):
