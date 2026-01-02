@@ -1143,7 +1143,8 @@ class ExplorerUI(UI):
                     "color": "var(--mui-palette-primary-dark)",
                     "fontSize": "28px"
                 }
-            }
+            },
+            sizing_mode="stretch_width",
         )
 
         return [menu, collapse]
