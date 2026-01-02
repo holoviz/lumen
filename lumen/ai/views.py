@@ -41,8 +41,6 @@ if TYPE_CHECKING:
 
     from .report import Task
 
-_VEGA_LITE_EXPORT_FORMATS = ("yaml", "png", "jpeg", "pdf", "svg", "html")
-
 
 class LumenOutput(Viewer):
 
@@ -56,7 +54,7 @@ class LumenOutput(Viewer):
 
     title = param.String(allow_None=True)
 
-    export_formats = ["yaml"]
+    export_formats = ("yaml",)
 
     language = "yaml"
 
@@ -294,7 +292,7 @@ class LumenOutput(Viewer):
 
 class VegaLiteOutput(LumenOutput):
 
-    export_formats = _VEGA_LITE_EXPORT_FORMATS
+    export_formats = ("yaml", "png", "jpeg", "pdf", "svg", "html")
 
     _controls = [RetryControls, AnnotationControls]
 
