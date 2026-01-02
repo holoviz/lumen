@@ -390,7 +390,7 @@ class UI(Viewer):
 
                 # Open the Data Sources dialog
                 self._sources_dialog_content.open = True
-                self._source_breadcrumbs.active = (0, 0)  # Navigate to Upload tab
+                self._source_breadcrumbs.active = (0,)  # Navigate to Upload tab
                 return
 
             with self.interface.param.update(disabled=True, loading=True):
@@ -442,19 +442,19 @@ class UI(Viewer):
         self._sources_dialog_content.open = True
 
         # Set the breadcrumbs to "Upload" to show the uploaded files
-        # (0, 0) means Data Sources > Upload
-        self._source_breadcrumbs.active = (0, 0)
+        # (0,) means Upload
+        self._source_breadcrumbs.active = (0,)
 
     def _handle_upload_successful(self, event):
         """Handle successful file upload by switching to Source Catalog and executing pending query."""
         active = self._source_breadcrumbs.active
         # Navigate to Source Catalog under current selection (Upload or Download)
-        # active is (0, 0) for Upload or (0, 1) for Download
-        # We want (0, 0, 0) for Upload > Source Catalog or (0, 1, 0) for Download > Source Catalog
-        if len(active) >= 2:
-            self._source_breadcrumbs.active = (0, active[1], 0)
+        # active is (0,) for Upload or (1,) for Download
+        # We want (0, 0) for Upload > Source Catalog or (1, 0) for Download > Source Catalog
+        if len(active) >= 1:
+            self._source_breadcrumbs.active = (active[0], 0)
         else:
-            self._source_breadcrumbs.active = (0, 0, 0)
+            self._source_breadcrumbs.active = (0, 0)
 
         # Execute pending query if one exists
         if self._pending_query is not None or self._pending_sources_snapshot is not None:
@@ -508,14 +508,12 @@ class UI(Viewer):
         """Update the source dialog content based on breadcrumb selection."""
         active = event.new
         if len(active) == 1:
-            self._source_breadcrumbs.active = (0, 0)  # Default to Upload
-        elif len(active) == 2:
             # Upload (0,) or Download (1,)
-            if active[1] == 0:
+            if active[0] == 0:
                 self._source_content[:] = [self._upload_controls]
             else:
                 self._source_content[:] = [self._download_controls]
-        elif len(active) == 3:
+        elif len(active) == 2:
             # Upload > Source Catalog (0, 0) or Download > Source Catalog (1, 0)
             self._source_content[:] = [self._source_catalog]
 
@@ -565,7 +563,7 @@ class UI(Viewer):
         self._splash = MuiColumn(
             Paper(
                 Typography(
-                    "Ask questions, get insights",
+                    "Ask questions, get insights 💡",
                     disable_anchors=True,
                     variant="h1"
                 ),
@@ -631,7 +629,6 @@ class UI(Viewer):
 
         self._source_breadcrumbs = NestedBreadcrumbs(
                 items=[{
-                    'label': 'Data Sources', 'icon': 'folder', "selectable": False, 'items': [{
                         "label": "Upload",
                         "icon": "cloud_upload",
                         "items": [
@@ -644,9 +641,8 @@ class UI(Viewer):
                         "items": [
                             {"label": "Source Catalog", "icon": "storage"}
                         ]
-                    }]
-                }],
-            active=(0, 0,),
+                    }],
+            active=(0,),
             margin=(0, 10, 10, 10),
         )
         self._source_breadcrumbs.param.watch(self._update_source_content, 'active')
@@ -794,9 +790,9 @@ class UI(Viewer):
         """Open the sources dialog when the vector store badge is clicked."""
         # Navigate to Source Catalog if sources exist, otherwise Upload
         if self.context.get("sources"):
-            self._source_breadcrumbs.active = (0, 0, 0)  # Upload > Source Catalog
+            self._source_breadcrumbs.active = (0, 0)  # Upload > Source Catalog
         else:
-            self._source_breadcrumbs.active = (0, 0)  # Upload
+            self._source_breadcrumbs.active = (0,)  # Upload
         self._sources_dialog_content.open = True
 
     def _open_info_dialog(self, event=None):
@@ -1044,17 +1040,14 @@ class ExplorerUI(UI):
 
     @hold()
     def _handle_sidebar_event(self, item):
-        if item["id"] == "home":
+        if item["id"] == "exploration":
             self._toggle_report_mode(False)
-            self._exploration = self._explorations.items[0]
-        elif item["id"] == "exploration":
-            self._toggle_report_mode(False)
-            self._sidebar_menu.update_item(item, active=True, icon="forum")
-            self._sidebar_menu.update_item(self._sidebar_menu.items[3], active=False, icon="description_outlined")
+            self._sidebar_menu.update_item(item, active=True, icon="insights")
+            self._sidebar_menu.update_item(self._sidebar_menu.items[1], active=False, icon="description_outlined")
             self._update_home()
         elif item["id"] == "report":
             self._toggle_report_mode(True)
-            self._sidebar_menu.update_item(self._sidebar_menu.items[2], active=False, icon="forum_outlined")
+            self._sidebar_menu.update_item(self._sidebar_menu.items[0], active=False, icon="timeline")
             self._sidebar_menu.update_item(item, active=True, icon="description")
             self._update_home()
         elif item["id"] == "data":
@@ -1073,9 +1066,8 @@ class ExplorerUI(UI):
             return
         if not is_home:
             self._transition_to_chat()
-        home, _, exploration, report = self._sidebar_menu.items[:4]
-        self._sidebar_menu.update_item(home, active=is_home, icon="home" if is_home and not report["active"] else "home_outlined")
-        self._sidebar_menu.update_item(exploration, active=True, icon="forum_outlined" if report["active"] else "forum")
+        exploration, report = self._sidebar_menu.items[:2]
+        self._sidebar_menu.update_item(exploration, active=True, icon="timeline" if report["active"] else "insights")
 
     def _render_sidebar(self) -> list[Viewable]:
         switches = []
@@ -1107,14 +1099,12 @@ class ExplorerUI(UI):
         )
         self._sidebar_menu = menu = MenuList(
             items=[
-                {"label": "Home", "icon": "home", "id": "home", "active": True},
-                None,
                 {"label": "Exploration", "icon": "insights", "id": "exploration", "active": True},
                 {"label": "Report", "icon": "description_outlined", "id": "report", "active": False},
                 None,
-                {"label": "Data Sources", "icon": "storage", "id": "data"},
-                {"label": "AI Model", "icon": "auto_awesome", "id": "llm"},
-                {"label": "Preferences", "icon": "tune", "id": "preferences"},
+                {"label": "Data Sources", "icon": "create_new_folder_outlined", "id": "data"},
+                {"label": "AI Model", "icon": "auto_awesome_outlined", "id": "llm"},
+                {"label": "Preferences", "icon": "tune_outlined", "id": "preferences"},
                 None,
                 {"label": "Help", "icon": "help_outline", "id": "help"}
             ],
