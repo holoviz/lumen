@@ -661,10 +661,10 @@ class UI(Viewer):
 
         self._notebook_export = FileDownload(
             callback=self._export_notebook,
-            description="Export Notebook",
+            label="Export Notebook",
+            description="Export explorations as a Jupyter notebook",
             icon_size="1.8em",
             filename=f"{self.title.replace(' ', '_')}.ipynb", # TODO
-            label=" ",
             margin=(5, 10, 0, 0),
             sx={"p": "6px 0", "minWidth": "32px", "& .MuiButton-icon": {"ml": 0, "mr": 0}},
             styles={'z-index': '1000', 'margin-left': 'auto'},

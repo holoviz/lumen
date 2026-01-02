@@ -22,23 +22,28 @@ ChatMessage.default_avatars.update({
 
 FORMAT_ICONS = {
     "csv":   "table_chart",
-    "xlsx":  "grid_on",
-    "sql":   "description",
-
-    "jpeg":  "image",
-    "png":   "image",
-    "svg":   "vector_square",
+    "html":  "html",
+    "jpeg":  "photo_camera_back",
+    "json":  "data_object",
     "pdf":   "picture_as_pdf",
+    "png":   "image",
+    "sql":   "code",
+    "svg":   "polyline",
+    "xlsx":  "grid_on",
+    "yaml":  "segment",
 }
 
 FORMAT_LABELS = {
-    "csv": "CSV (.csv)",
-    "xlsx": "Excel (.xlsx)",
-    "sql": "SQL (.sql)",
-    "jpeg": "JPEG (.jpeg)",
-    "png": "PNG (.png)",
-    "svg": "SVG (.svg)",
-    "pdf": "PDF (.pdf)",
+    "csv": "CSV",
+    "html": "HTML",
+    "jpeg": "JPEG",
+    "json": "JSON",
+    "pdf": "PDF",
+    "png": "PNG",
+    "sql": "SQL",
+    "svg": "SVG",
+    "xlsx": "Excel",
+    "yaml": "YAML",
 }
 
 class LlmSetupError(Exception):
