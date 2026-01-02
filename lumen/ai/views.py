@@ -54,7 +54,7 @@ class LumenOutput(Viewer):
 
     title = param.String(allow_None=True)
 
-    export_formats = ["yaml"]
+    export_formats = ("yaml",)
 
     language = "yaml"
 
