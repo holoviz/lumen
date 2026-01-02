@@ -5,6 +5,7 @@ import json
 import traceback
 
 from copy import deepcopy
+from importlib.util import find_spec
 from io import BytesIO, StringIO
 from typing import TYPE_CHECKING, Any
 
@@ -30,13 +31,12 @@ from ..config import dump_yaml, load_yaml
 from ..downloads import Download
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
+from ..util import log
 from ..views.base import Panel, Table, View
 from .analysis import Analysis
 from .config import FORMAT_ICONS, FORMAT_LABELS, VEGA_ZOOMABLE_MAP_ITEMS
 from .controls import AnnotationControls, RetryControls
-from ..util import log
 from .utils import describe_data, get_data
-from importlib.util import find_spec
 
 if TYPE_CHECKING:
     from panel.chat.feed import ChatFeed
