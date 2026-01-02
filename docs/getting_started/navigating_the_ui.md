@@ -6,13 +6,27 @@ Lumen Explorer combines data exploration and AI-powered analysis in one split-sc
 
 ### Your interface at a glance
 
-When you open Lumen Explorer, you'll see the chat panel where you ask questions. The results area (where results appear) and the explorations sidebar (where you manage your work) are collapsed by default and expand as you start analyzing.
+When you open Lumen Explorer, you'll see the *Chat Panel* where you can drag and drop data and ask questions.
 
-**Chat panel** — Ask questions about your data in plain English. The AI will generate queries and visualizations automatically.
+Hidden on the right you will find the *Sessions Panel* where you manage your sessions.
+
+![Initial Chat Panel](../assets/ui_load_chat_panel.png)
+
+When the AI start responding to your first question or task the *Results Panel* will appear on the right instead of the *Sessions Panel*.
+
+![First Results Panel](../assets/ui_ask_results_panel.png)
+
+**Chat panel** — Drag and drop data and ask questions about your data in plain English. The AI will generate queries and visualizations automatically.
+
+![Chat Panel](../assets/ui_chat_panel.png)
 
 **Results area** — View interactive tables, charts, and analysis results. Use Graphic Walker to filter, sort, and explore visually. Appears when you ask your first question.
 
-**Explorations panel** (right sidebar) — Track all your analyses. Each exploration is a separate session, so you can branch off previous results and compare different approaches. Appends as you ask more questions.
+![Results Panel](../assets/ui_results_panel.png)
+
+**Sessions panel** Track all your sessions. Each exploration is a separate session, so you can branch off previous results and compare different approaches. Appends as you ask more questions.
+
+![Sessions Panel](../assets/ui_explorations_panel.png)
 
 ### Ask questions
 
@@ -43,23 +57,11 @@ The chat interface provides several built-in actions:
 
 ## Work with results
 
-### Control how analysis runs
-
-The settings menu (⚙️ icon in the left sidebar) lets you toggle three analysis features:
-
-**Chain of Thought** — When enabled, the AI shows its reasoning steps. Use this when you want to understand *how* the AI arrived at an answer. Disabled by default.
-
-**SQL Planning** — When enabled, the AI plans its SQL query before executing it. This improves accuracy for complex questions. Enabled by default.
-
-**Validation Step** — When enabled, the AI double-checks results for correctness. This catches data errors early. Enabled by default.
-
-Simply click the toggle next to each option to turn it on or off.
-
 ### Navigate the sidebar
 
 The left sidebar provides quick access to all major features:
 
-**Home** — Your starting point. This is where all analyses begin. Switch back here anytime.
+**Home** — Your starting point. This is where all sessions begin. Switch back here anytime.
 
 **Exploration** — The main chat and analysis mode (default view).
 
@@ -70,6 +72,20 @@ The left sidebar provides quick access to all major features:
 **Configure LLM** — Change your AI model provider or adjust model settings.
 
 **Settings** — Toggle Chain of Thought, SQL Planning, and Validation Step options.
+
+### Control how analysis runs
+
+The settings menu (⚙️ icon in the left sidebar) lets you toggle three analysis features:
+
+![Settings](../assets/ui_settings.png)
+
+**Chain of Thought** — When enabled, the AI shows its reasoning steps. Use this when you want to understand *how* the AI arrived at an answer. Disabled by default.
+
+**SQL Planning** — When enabled, the AI plans its SQL query before executing it. This improves accuracy for complex questions. Disabled by default.
+
+**Validation Step** — When enabled, the AI double-checks results for correctness. This catches data errors early. Disabled by default.
+
+Simply click the toggle next to each option to turn it on or off.
 
 ### Organize your explorations
 
