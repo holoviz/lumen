@@ -22,13 +22,15 @@ ChatMessage.default_avatars.update({
 
 FORMAT_ICONS = {
     "csv":   "table_chart",
-    "xlsx":  "grid_on",
-    "sql":   "code",
-
-    "jpeg":  "photo",
-    "png":   "image",
-    "svg":   "polyline",
+    "jpeg":  "photo_camera_back",
+    "json":  "data_object",
+    "html":  "html",
     "pdf":   "picture_as_pdf",
+    "png":   "image",
+    "sql":   "code",
+    "svg":   "polyline",
+    "xlsx":  "grid_on",
+    "yaml":  "segment",
 }
 
 FORMAT_LABELS = {
