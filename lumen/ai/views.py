@@ -5,7 +5,6 @@ import json
 import traceback
 
 from copy import deepcopy
-from importlib.util import find_spec
 from io import BytesIO, StringIO
 from typing import TYPE_CHECKING, Any
 
@@ -31,7 +30,6 @@ from ..config import dump_yaml, load_yaml
 from ..downloads import Download
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
-from ..util import log
 from ..views.base import Panel, Table, View
 from .analysis import Analysis
 from .config import FORMAT_ICONS, FORMAT_LABELS, VEGA_ZOOMABLE_MAP_ITEMS
@@ -42,6 +40,8 @@ if TYPE_CHECKING:
     from panel.chat.feed import ChatFeed
 
     from .report import Task
+
+_VEGA_LITE_EXPORT_FORMATS = ("yaml", "png", "jpeg", "pdf", "svg", "html")
 
 
 class LumenOutput(Viewer):
@@ -291,17 +291,6 @@ class LumenOutput(Viewer):
     def __str__(self):
         return f"{self.__class__.__name__}:\n```yaml\n{self.spec}\n```"
 
-
-_HAS_VL_CONVERT = find_spec("vl_convert") is not None
-if not _HAS_VL_CONVERT:
-    log.debug(
-        "vl_convert is not installed; install it to enable exporting Vega-Lite outputs. "
-        "Install with: pip install vl-convert-python"
-    )
-
-_VEGA_LITE_EXPORT_FORMATS = (
-    ("yaml", "png", "jpeg", "pdf", "svg", "html") if _HAS_VL_CONVERT else ("yaml",)
-)
 
 class VegaLiteOutput(LumenOutput):
 
