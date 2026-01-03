@@ -20,9 +20,10 @@ from panel.viewable import (
     Child, Children, Viewable, Viewer,
 )
 from panel_material_ui import (
-    Button, ChatFeed, ChatInterface, ChatMessage, Column as MuiColumn, Dialog,
-    FileDownload, IconButton, MenuList, NestedBreadcrumbs, Page, Paper, Popup,
-    Row, Switch, Tabs, ToggleIcon, Typography,
+    Breadcrumbs, Button, ChatFeed, ChatInterface, ChatMessage,
+    Column as MuiColumn, Dialog, FileDownload, IconButton, MenuList,
+    NestedBreadcrumbs, Page, Paper, Popup, Row, Switch, Tabs, ToggleIcon,
+    Typography,
 )
 from panel_splitjs import HSplit, MultiSplit, VSplit
 
@@ -56,38 +57,264 @@ from .views import AnalysisOutput, LumenOutput, SQLOutput
 DataT = str | Path | Source | Pipeline
 
 
-UI_INTRO_MESSAGE = """
-Lumen AI combines large language models (LLMs) with specialized agents to help you explore, analyze,
-and visualize data without writing code.
+# Contextual help messages for different UI areas
+# Each area has a ? icon that shows relevant help
 
-On the chat interface...
+SPLASH_HELP_HINT = "Click on Help on the left for more info."
 
-⬆️ Drag & drop your dataset(s) to get started  
-💬 Ask questions in plain English to generate SQL queries and visualizations  
-🔍 Inspect and validate results through conversation  
-📝 Get summaries and key insights from your data  
-🧩 Apply custom analyses with a click of a button  
+# Help sections for breadcrumb navigation
+HELP_GETTING_STARTED = """
+Ask questions in plain English and Lumen AI automatically generates SQL queries and creates visualizations.
 
-To refine your results, hover over the <span class="material-icons-outlined" style="font-size: 1.2em;">add_circle</span> menu and...
+**🚀 Start exploring:**
 
-<span class="material-icons">delete</span> Use the Clear button to start a new session  
-<span class="material-icons">undo</span> Use the Undo button to remove the last query  
-<span class="material-icons">repeat</span> Use the Rerun button to re-run the last query  
-<span class="material-icons">attach_file</span> Use the Attach Files button to upload more data  
+- Type a question like "What datasets are available?"
+- Click the quick action buttons below the chat
+- Select a table and click **Explore** to start analyzing
 
-Click the toggle, or drag the right edge, to expand the results area and...
+**❓ Example questions:**
 
-🌐 Explore data with [Graphic Walker](https://docs.kanaries.net/graphic-walker) - filter, sort, download  
-💾 Switch to report mode to see all the results and export them  
-📤 Export your session as a reproducible notebook  
-"""  # noqa: W291
+**Basic queries:**
+- "Show me the top 10 rows"
+- "What are the columns in the dataset?"
+- "Give me a summary of the data"
+
+**Visualizations:**
+- "What's the average revenue by region? Plot as a bar chart"
+- "Create a scatter plot of X vs Y, colored by category"
+- "Show me a histogram of sales with 20 bins"
+
+**Complex queries:**
+- "Filter for records over $1000 and show the distribution by category"
+- "Group by department and calculate average salary. Then plot the result."
+- "Are there any outliers in the data?"
+"""
+
+HELP_INTERFACE = """
+**🖥️ Panel Controls:**
+- **< >** buttons - Collapse/expand the chat and results panels
+- **^ v** arrows - Expand/collapse individual analyses
+
+**📂 Sidebar:**
+- **Home** - Return to the start page
+- **Exploration** - Main chat and analysis mode (default)
+- **Report** - View all explorations on one page
+- **Data Sources** - Add or manage your data
+- **Preferences** - Control AI behavior settings
+- **Help** - Open this help dialog
+
+**⌨️ Keyboard Shortcuts:**
+- **Enter** - Send message
+- **Shift + Enter** - New line in chat
+"""
+
+HELP_EXPLORATIONS = """
+**🧭 Breadcrumbs (top bar):**
+- Shows your path: Home > Exploration Name
+- Click any breadcrumb to switch between explorations
+- Each exploration has its own conversation history
+
+**🔍 What are Explorations?**
+
+Each time you ask a question that generates a computed result (SQL query, visualization, etc.), Lumen creates a new "Exploration" tab. This lets you:
+- Work on multiple analyses simultaneously
+- Compare different approaches side-by-side
+- Keep your work organized by topic
+- Hover over an exploration in the breadcrumbs to see the **Remove** (🗑️) icon
+"""
+
+HELP_EDITOR = """
+**📝 Two-pane editor:**
+
+When you ask a question, you'll see two panes:
+
+- **Top pane** = the spec (SQL query or YAML configuration)
+  - Edit directly here to modify the analysis
+  - Changes are applied in real-time to the preview below
+  - Great for small tweaks like changing colors or sort order
+
+- **Bottom pane** = live preview
+  - Automatically updates when you change the spec
+  - Shows tables, charts, or other visualizations
+"""
+
+HELP_RESULTS = """
+**🛠️ Toolbar actions (top of each result):**
+
+- **📋** - Copy YAML spec to clipboard
+- **✨** - Ask the LLM to revise this analysis
+- **💬** - Add highlights or callouts to visualizations (plots only)
+- **↗** - Pop out into a separate pane for comparison
+
+**📊 Table features:**
+- Click **column headers** to sort (^ = ascending, v = descending)
+- Use **pagination** (< >, page numbers) at the bottom to navigate large datasets
+- All data is interactive - you can explore it directly
+
+**🔄 Refining results:**
+- **Rerun** (⟲ in the chat input + menu) - Re-execute the last query if there was an error
+- **Undo** (↶ in the chat input + menu) - Remove the last response and try again
+- **Continue the conversation** - Send a new message to refine: "Can you make that chart show only the top 5?"
+- **Manual editing** - Edit the spec directly for precise control
+"""
+
+HELP_EXPORT = """
+**📄 Export individual results:**
+
+- **Export Output** ▼ (top of each result) - Download specific results:
+  - **Tables**: SQL, CSV, or Excel formats
+  - **Visualizations**: PNG, JPEG, PDF, SVG, or HTML
+
+**💾 Save your work:**
+
+- Click **Export Notebook** (top right) to download everything as a Jupyter notebook
+- Includes all SQL queries, visualizations, and results
+- Perfect for documentation or sharing with colleagues
+- Each exploration saves automatically during your session
+
+**📋 Report Mode:**
+
+- Click **Report** in the left sidebar
+- View all explorations on one page
+- Export everything as a single notebook
+"""
+
+HELP_TIPS = """
+**🔗 Combine multiple requests:**
+You can ask the AI to perform several steps at once.
+
+- "Filter the data for 2023, create a bar chart of sales by region, and then summarize the top 3 regions."
+
+**💡 Ask for suggestions:**
+Not sure where to start? Ask:
+- "What could be interesting to explore in this data?"
+- "Give me 3 ideas for visualizations."
+
+**✨ Refining results:**
+You don't have to get it right the first time.
+- "Can you make that chart show only the top 5?"
+- "Change the color of the bars to green."
+- "Add a trend line to the scatter plot."
+
+**🗂️ Need more data?**
+Click **Data Sources** in the left sidebar to add files or databases at any time.
+
+**🧠 Chain of Thought:**
+Enable **Chain of Thought** in Preferences to see the AI's step-by-step reasoning.
+- This is great for debugging or understanding complex queries.
+
+---
+
+✔️ You're all set! Close this dialog and start exploring.
+"""
+
+EXPLORATION_TOOLBAR_HELP = """
+Toolbar actions for this exploration:
+
+- **Export Output** — Download as CSV/Excel (tables) or PNG/SVG (visualizations)
+- **Copy** — Copy the spec to clipboard
+- **Sparkle** — Ask AI to revise the output
+- **Annotations** — Add highlights to visualizations (plots only)
+- **Pop-out** — Move to a separate pane
+
+Drag the divider between editor and view to resize.
+"""
+
+REPORT_HELP = """
+**Report Mode: View All Your Work**
+
+Report mode displays all explorations in one scrollable page for review and presentation.
+
+**Page Controls:**
+
+- **▶** (Execute Report) - Run all analyses and generate fresh results
+- **×** (Clear outputs) - Remove all output displays to start fresh
+- **∨ ∧** (Collapse/Expand) - Show or hide all analysis sections at once
+
+**Navigation:**
+
+- Click an exploration name in the left sidebar to scroll to it
+- All analyses appear in order with their results
+- Scroll through the entire report or jump to specific sections
+
+**Export:**
+
+- Click **Export Notebook** (top right) to download everything as one Jupyter notebook
+- Includes all SQL queries, visualizations, and results
+- Perfect for sharing findings or creating documentation
+
+**To get back:**
+
+- Click **Exploration** in the left sidebar to return to chat mode
+- Or click a specific exploration from the breadcrumbs to work on it
+"""  # noqa: RUF001
+
+DATA_SOURCES_HELP = """
+**Add data to explore with Lumen AI.**
+
+**Supported formats:**
+
+- CSV, Parquet, JSON, Excel, GeoJSON files
+- Remote URLs (https://example.com/data.csv)
+- Databases via SQLAlchemy
+
+**How to add data:**
+
+1. **Upload** — Drag and drop files or click to browse
+2. **Download** — Enter URLs to fetch remote data
+3. **View** — The Source Catalog shows all connected tables
+
+**Tips:**
+
+- Upload .md or .txt files alongside data to give the AI context
+- Multiple sources can be used together in queries
+- Data connections persist for your session
+"""
+
+PREFERENCES_HELP = """
+**Control how Lumen AI analyzes your questions.**
+
+**Chain of Thought** — Show the AI's reasoning steps as it works
+
+- Useful for understanding how the AI reached an answer
+- Displays expandable cards with step-by-step logic
+- Disabled by default
+
+**SQL Planning** — Run discovery queries before generating final SQL
+
+- Improves accuracy for complex questions
+- The AI explores your schema before querying
+- Enabled by default
+
+**Validation Step** — Double-check if the response answered your question
+
+- Catches data errors early
+- Verifies results match your intent
+- Enabled by default
+
+**Configure AI Models** — Choose which LLM provider and models to use for different tasks
+"""
+
 
 EXPLORATIONS_INTRO = """
-🧪 **Explorations**
+**Quick Start Guide:**
 
-* **Analyze** one or more datasets through interactive tables and visualizations.
-* **Launch** a new exploration tab for each SQL query result.
-* **Branch** from any result using the breadcrumbs menu — each exploration keeps its own context.
+**1. Explore your data**
+- Ask questions in plain English in the chat
+- Select a table in the catalog and click **Explore**
+- Use the quick action buttons for common tasks
+
+**2. Refine results**
+- **Top pane**: Edit the SQL or YAML spec directly
+- **Bottom pane**: View the live, interactive results
+- **✨ Sparkle**: Ask the AI to revise or improve an output
+
+**3. Navigate & Organize**
+- **Breadcrumbs**: Switch between different analyses
+- **< > Buttons**: Expand or collapse the chat and results
+- **Report Mode**: View all your work on one page
+
+**Need more help?** Click **Help** in the sidebar for detailed guides on Agents, Tools, and Tips.
 """
 
 
@@ -497,7 +724,7 @@ class UI(Viewer):
             return
 
         # If there's a pending query, restore it to the input field
-        # (user closed without clicking 'Add file(s)')
+        # (user closed without clicking 'Confirm file(s)')
         if self._pending_query:
             chat_input = self.interface.active_widget
             chat_input.value_input = self._pending_query
@@ -557,13 +784,13 @@ class UI(Viewer):
             prefix_text = f"{num_sources} source{'s' if num_sources > 1 else ''} connected;"
 
         self._cta = Typography(
-            f"{prefix_text} ask any question, or select a quick action below."
+            f"{prefix_text} ask any question, or select a quick action below. {SPLASH_HELP_HINT}"
         )
 
         self._splash = MuiColumn(
             Paper(
                 Typography(
-                    "Ask questions, get insights 💡",
+                    "Ask questions, get insights",
                     disable_anchors=True,
                     variant="h1"
                 ),
@@ -590,14 +817,75 @@ class UI(Viewer):
                 hide_after_use=False
             )
 
-        # Create info dialog with intro message
+        # Create info dialog with breadcrumb navigation
+        self._help_content = MuiColumn(sizing_mode="stretch_width")
+
+        help_items = [
+            {"label": "Quickstart", "icon": "rocket_launch"},
+            {"label": "Interface", "icon": "dashboard"},
+            {"label": "Explorations", "icon": "layers"},
+            {"label": "Editor", "icon": "code"},
+            {"label": "Results", "icon": "analytics"},
+            {"label": "Export", "icon": "ios_share"},
+            {"label": "Tips", "icon": "lightbulb"},
+        ]
+
+        self._help_breadcrumbs = Breadcrumbs(
+            items=help_items,
+            value=help_items[0],
+            margin=(0, 0, 10, 0),
+        )
+
+        self._next_help_button = Button(
+            name="Next",
+            variant="outlined",
+            sizing_mode="stretch_width",
+            align="end",
+        )
+
+        def next_section(event):
+            current_item = self._help_breadcrumbs.value
+            current_index = help_items.index(current_item)
+            if current_index < len(help_items) - 1:
+                self._help_breadcrumbs.value = help_items[current_index + 1]
+
+        self._next_help_button.on_click(next_section)
+
+        def update_help_content(event):
+            selected_item = event.new
+            section_index = help_items.index(selected_item)
+            help_texts = [
+                HELP_GETTING_STARTED, HELP_INTERFACE, HELP_EXPLORATIONS,
+                HELP_EDITOR, HELP_RESULTS, HELP_EXPORT, HELP_TIPS
+            ]
+            text = help_texts[section_index]
+            if section_index == 0:
+                text = self._current_help_text
+            self._help_content[:] = [Markdown(text, sizing_mode="stretch_width")]
+
+            if section_index == len(help_items) - 1:
+                self._next_help_button.visible = False
+            else:
+                self._next_help_button.visible = True
+
+        self._help_breadcrumbs.param.watch(update_help_content, 'value')
+
+        # Initialize with first section (will be updated based on data source availability)
+        # Use a deferred initialization to avoid race condition
+        self._help_content[:] = [Markdown("", sizing_mode="stretch_width")]
+
         self._info_dialog = Dialog(
-            Markdown(UI_INTRO_MESSAGE, sizing_mode="stretch_width"),
+            MuiColumn(
+                self._help_breadcrumbs,
+                self._help_content,
+                self._next_help_button,
+                sizing_mode="stretch_width"
+            ),
             close_on_click=True,
             show_close_button=True,
             sizing_mode='stretch_width',
             width_option='md',
-            title="Welcome to Lumen AI"
+            title="Help Guides"
         )
 
         # Set up actions for the ChatAreaInput speed dial
@@ -630,14 +918,14 @@ class UI(Viewer):
         self._source_breadcrumbs = NestedBreadcrumbs(
                 items=[{
                         "label": "Upload",
-                        "icon": "cloud_upload",
+                        "icon": "upload",
                         "items": [
                             {"label": "Source Catalog", "icon": "storage"}
                         ]
                     },
                     {
                         "label": "Download",
-                        "icon": "cloud_download",
+                        "icon": "download",
                         "items": [
                             {"label": "Source Catalog", "icon": "storage"}
                         ]
@@ -647,9 +935,22 @@ class UI(Viewer):
         )
         self._source_breadcrumbs.param.watch(self._update_source_content, 'active')
 
+        self._sources_help_caption = Typography(
+            "Add data to explore with Lumen AI. Supports CSV, Parquet, JSON, Excel, and databases.",
+            variant="body2",
+            color="text.secondary",
+            sizing_mode="stretch_width"
+        )
+
         self._sources_dialog_content = Dialog(
-            MuiColumn(self._source_breadcrumbs, self._source_content, sizing_mode="stretch_width"),
-            close_on_click=True, show_close_button=True, width_option='lg', title="Data Sources",
+            MuiColumn(
+                self._source_breadcrumbs,
+                self._sources_help_caption,
+                self._source_content,
+                sizing_mode="stretch_width"
+            ),
+            close_on_click=True, show_close_button=True, width_option='lg',
+            title="Data Sources",
             sizing_mode='stretch_width',
         )
         # Watch for dialog close to handle pending query if user closes without adding files
@@ -706,6 +1007,43 @@ class UI(Viewer):
             sidebar_resizable=False,
             sx={"&.mui-light .sidebar": {"bgcolor": "var(--mui-palette-grey-50)"}}
         )
+
+    def _update_help_getting_started(self):
+        """Update the Getting Started help text based on whether data sources are connected."""
+        num_sources = len(self.context.get("sources", []))
+        if num_sources == 0:
+            self._current_help_text = """**Welcome to Lumen AI!**
+
+⚠️ **No data sources connected yet.**
+
+**To get started:**
+
+1. Click **Data Sources** in the left sidebar
+2. Upload a file (CSV, Parquet, JSON, Excel, GeoJSON) or connect to a database
+3. Once your data is loaded, come back here to start asking questions!
+
+You can also drag & drop files directly into the chat interface.
+
+**Once you have data, you can ask questions like:**
+
+*Basic queries:*
+- "Show me the top 10 rows"
+- "What are the columns in the dataset?"
+- "Give me a summary of the data"
+
+*Visualizations:*
+- "What's the average revenue by region? Plot as a bar chart"
+- "Create a scatter plot of X vs Y, colored by category"
+
+*Complex queries:*
+- "Filter for records over $1000 and show the distribution by category"
+- "Group by department and calculate average salary. Then plot the result."
+
+---
+
+➡️ After adding data, click **Navigation** above to learn how to move around the interface."""
+        else:
+            self._current_help_text = HELP_GETTING_STARTED
 
     @param.depends('context', on_init=True, watch=True)
     async def _sync_sources(self, event=None):
@@ -765,7 +1103,14 @@ class UI(Viewer):
         else:
             prefix_text = f"{num_sources} source{'s' if num_sources > 1 else ''} connected;"
         if hasattr(self, '_cta'):
-            self._cta.object = f"{prefix_text} ask any question, or select a quick action below."
+            self._cta.object = f"{prefix_text} ask any question, or select a quick action below. {SPLASH_HELP_HINT}"
+
+        # Update help dialog content when sources change
+        if hasattr(self, '_help_content'):
+            self._update_help_getting_started()
+            # Only update if we're currently showing the Getting Started section
+            if hasattr(self, '_help_breadcrumbs') and self._help_breadcrumbs.value['label'] == 'Getting Started':
+                self._help_content[:] = [Markdown(self._current_help_text, sizing_mode="stretch_width")]
 
     def _open_llm_dialog(self, event=None):
         """Open the LLM configuration dialog when the LLM chip is clicked."""
@@ -797,6 +1142,11 @@ class UI(Viewer):
 
     def _open_info_dialog(self, event=None):
         """Open the info dialog when the info button is clicked."""
+        # Always update help content based on current data source state
+        self._update_help_getting_started()
+        # Set to Getting Started section
+        self._help_breadcrumbs.value = self._help_breadcrumbs.items[0]
+        self._help_content[:] = [Markdown(self._current_help_text, sizing_mode="stretch_width")]
         self._info_dialog.open = True
 
     async def _on_visibility_changed(self, event):
@@ -941,14 +1291,17 @@ class UI(Viewer):
     def _create_view(self, server: bool = False):
         if server:
             panel_extension(
-                *{ext for agent in self._coordinator.agents for ext in agent._extensions} | {"filedropper"}
+                *{ext for agent in self._coordinator.agents for ext in agent._extensions} | {"filedropper"},
+                css_files=["https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css"]
             )
             return self._page
         return super()._create_view()
 
     def _repr_mimebundle_(self, include=None, exclude=None):
         panel_extension(
-            *{ext for agent in self._coordinator.agents for ext in agent._extensions} | {"filedropper"}, notifications=True
+            *{ext for agent in self._coordinator.agents for ext in agent._extensions} | {"filedropper"},
+            notifications=True,
+            css_files=["https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css"]
         )
         return self._create_view()._repr_mimebundle_(include, exclude)
 
@@ -1052,8 +1405,6 @@ class ExplorerUI(UI):
             self._update_home()
         elif item["id"] == "data":
             self._open_sources_dialog()
-        elif item["id"] == "llm":
-            self._open_llm_dialog()
         elif item["id"] == "preferences":
             self._settings_popup.open = True
         elif item["id"] == "help":
@@ -1071,26 +1422,57 @@ class ExplorerUI(UI):
 
     def _render_sidebar(self) -> list[Viewable]:
         switches = []
-        cot = Switch(label='Chain of Thought')
+        cot = Switch(label='Chain of Thought', description='Show AI reasoning steps')
         switches.append(cot)
         sql_agent = next(
             (agent for agent in self._coordinator.agents if isinstance(agent, SQLAgent)),
             None
         )
         if sql_agent:
-            sql_planning = Switch(label='SQL Planning')
+            sql_planning = Switch(label='SQL Planning', description='Run discovery queries and adaptive exploration before final SQL')
             sql_agent.planning_enabled = sql_planning
             switches.append(sql_planning)
-        validation = Switch(label='Validation Step')
+        validation = Switch(label='Validation Step', description='Check if the response fully answered your question')
         switches.append(validation)
+
         self._coordinator.param.update(
             verbose=cot,
             validation_enabled=validation
         )
 
+        # Use Material-UI Button for consistent styling
+        llm_config_button = Button(
+            label="Configure AI Models",
+            icon="auto_awesome",
+            size="large",
+            variant="text",
+            button_type="default",
+            sizing_mode="stretch_width",
+            on_click=lambda e: setattr(self._llm_dialog, 'open', True),
+            margin=(-5, 10, 10, 10),
+            sx={
+                'fontSize': '16px',
+                '& .MuiIcon-root': {
+                    'fontSize': '28px',
+                    'marginRight': '10px'
+                }
+            }
+        )
+        switches.append(llm_config_button)
+
+        # Preferences header (no help icon needed)
+        prefs_header = Typography(
+            "Preferences",
+            variant="subtitle1",
+            sx={"fontWeight": "bold"},
+            margin=(10, 10, 5, 10)
+        )
+
         self._settings_popup = Popup(
+            prefs_header,
             *switches,
-            anchor_origin={"horizontal": "right", "vertical": "bottom"},
+            anchor_origin={"horizontal": "right", "vertical": "center"},
+            transform_origin={"horizontal": "left", "vertical": "top"},
             styles={"z-index": '1300'},
             theme_config={"light": {"palette": {"background": {"paper": "var(--mui-palette-grey-50)"}}}, "dark": {}}
         )
@@ -1103,10 +1485,9 @@ class ExplorerUI(UI):
                 {"label": "Report", "icon": "description_outlined", "id": "report", "active": False},
                 None,
                 {"label": "Data Sources", "icon": "create_new_folder_outlined", "id": "data"},
-                {"label": "AI Model", "icon": "auto_awesome_outlined", "id": "llm"},
                 {"label": "Preferences", "icon": "tune_outlined", "id": "preferences"},
                 None,
-                {"label": "Help", "icon": "help_outline", "id": "help"}
+                {"label": "Help Guides", "icon": "help_outline", "id": "help"}
             ],
             attached=[self._settings_popup],
             collapsed=collapse,
@@ -1132,10 +1513,22 @@ class ExplorerUI(UI):
     def _render_main(self) -> list[Viewable]:
         main = super()._render_main()
 
-        # Render home page
-        self._explorations_intro = Markdown(
-            EXPLORATIONS_INTRO,
-            margin=(0, 0, 0, 20),
+        # Render home page with help caption
+        self._explorations_help_caption = Typography(
+            "Use < > to expand/collapse panels. Edit the spec (top) and the view (bottom) syncs. Click ✨ to ask LLM to revise.",
+            variant="body2",
+            color="text.secondary",
+            margin=(0, 0, 10, 20),
+            sizing_mode="stretch_width"
+        )
+        self._explorations_intro = MuiColumn(
+            Typography("Explorations", variant="h6", margin=(0, 0, 0, 20)),
+            self._explorations_help_caption,
+            Markdown(
+                EXPLORATIONS_INTRO,
+                margin=(0, 0, 0, 20),
+                sizing_mode='stretch_width',
+            ),
             sizing_mode='stretch_width',
         )
         self._explorer = TableExplorer(context=self.context)
@@ -1214,15 +1607,43 @@ class ExplorerUI(UI):
 
     def _toggle_report_mode(self, active: bool):
         """Toggle between regular and report mode."""
+        # Check if there are any explorations beyond home
+        if active and len(self._explorations.items) <= 1:
+            # Show message and button to go back to exploration
+            no_explorations_msg = Markdown(
+                "### No Explorations Yet\n\nGenerate an exploration first by asking a question about your data.",
+                sizing_mode="stretch_width",
+            )
+            back_button = Button(
+                label="Back to Exploration",
+                icon="insights",
+                button_type="primary",
+                on_click=lambda e: self._handle_sidebar_event(self._sidebar_menu.items[0]),
+            )
+            self._main[:] = [
+                Column(no_explorations_msg, back_button, sizing_mode="stretch_both", align="center", margin=20)
+            ]
+            return
+
         if active:
+            # Report mode with help caption
+            report_help_caption = Typography(
+                "Use ▶ to execute all, × to clear outputs, ∨∧ to collapse/expand sections. Click exploration names to jump to them.",  # noqa: RUF001
+                variant="body2",
+                color="text.secondary",
+                margin=(10, 10, 5, 10),
+                sizing_mode="stretch_width"
+            )
             self._main[:] = [
                 Row(
                     Paper(
+                        Typography("Report", variant="h6", margin=(10, 10, 0, 10)),
+                        report_help_caption,
                         self._explorations,
                         sizing_mode="stretch_height",
                         sx={"borderRadius": 0},
                         theme_config={"light": {"palette": {"background": {"paper": "var(--mui-palette-grey-100)"}}}, "dark": {}},
-                        width=200,
+                        width=350,
                     ),
                     Report(
                         *(exploration['view'].plan for exploration in self._explorations.items[1:])
@@ -1421,7 +1842,7 @@ class ExplorerUI(UI):
             if not isinstance(view, LumenOutput) or view in event.old:
                 continue
             if tabs and isinstance(view, SQLOutput) and not exploration.initialized:
-                tabs[0] = ("Overview", view.render_explorer())
+                tabs[0] = ("Data Source", view.render_explorer())
                 exploration.initialized = True
             title, vsplit = self._render_view(exploration, view)
             content.append((title, vsplit))
@@ -1471,7 +1892,7 @@ class ExplorerUI(UI):
         plan.reset(plan._current)
         tabs = exploration.view[0]
         if replan:
-            tabs[:] = [("Overview", Markdown("Waiting on data...", margin=(5, 20)))]
+            tabs[:] = [("Data Source", Markdown("Waiting on data...", margin=(5, 20)))]
             tabs.active = 0
         elif len(tabs) > 1 and isinstance(tabs[-1], Markdown):
             tabs.pop(-1)

@@ -371,20 +371,16 @@ class LlamaCpp(Llm, LlamaCppMixin):
 
     model_kwargs = param.Dict(default={
         "default": {
-            "repo_id": "unsloth/Qwen3-8B-GGUF",
-            "filename": "Qwen3-8B-Q5_K_M.gguf",
+            "repo_id": "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
+            "filename": "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf",
             "chat_format": "qwen",
         },
     })
 
     select_models = param.List(default=[
-        "unsloth/Qwen3-8B-GGUF",
-        "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF",
-        "unsloth/DeepSeek-V3.1-GGUF",
-        "unsloth/gpt-oss-20b-GGUF",
-        "unsloth/GLM-4.6-GGUF",
-        "microsoft/Phi-4-GGUF",
-        "meta-llama/Llama-3.3-70B-Instruct-GGUF"
+        "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
+        "unsloth/Qwen2.5-7B-Instruct-GGUF",
+        "bartowski/DeepSeek-R1-Distill-Qwen-32B-GGUF"
     ], constant=True, doc="Available models for selection dropdowns")
 
     temperature = param.Number(default=0.4, bounds=(0, None), constant=True)
@@ -475,12 +471,12 @@ class OpenAI(Llm, OpenAIMixin):
     })
 
     select_models = param.List(default=[
-        "gpt-4.1-mini",
-        "gpt-4.1-nano",
+        "gpt-5.2",
         "gpt-5-mini",
-        "gpt-4-turbo",
-        "gpt-4o",
-        "gpt-4o-mini"
+        "gpt-5-nano",
+        "gpt-4.1",
+        "gpt-4.1-mini",
+        "gpt-4.1-nano"
     ], constant=True, doc="Available models for selection dropdowns")
 
     temperature = param.Number(default=0.25, bounds=(0, None), constant=True)
@@ -748,13 +744,8 @@ class Anthropic(Llm):
 
     select_models = param.List(default=[
         "claude-sonnet-4-5",
-        "claude-sonnet-4-0",
-        "claude-3-7-sonnet-latest",
-        "claude-opus-4-1",
-        "claude-opus-4-0",
         "claude-haiku-4-5",
-        "claude-3-5-haiku-latest",
-        "claude-3-haiku-20240307"
+        "claude-opus-4-5"
     ], constant=True, doc="Available models for selection dropdowns")
 
     temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)

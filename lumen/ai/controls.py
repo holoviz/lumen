@@ -244,7 +244,7 @@ class BaseSourceControls(Viewer):
         files_to_process = self._upload_cards.param["objects"].rx.len() > 0
         self._add_button = Button.from_param(
             self.param.add,
-            name="Add file(s)",
+            name="Confirm file(s)",
             icon="add",
             visible=files_to_process,
             button_type="success"
@@ -854,7 +854,7 @@ class DownloadControls(BaseSourceControls):
 
         success_count = len(downloaded_files)
         if success_count > 0:
-            self._message_placeholder.object = f"Successfully downloaded {success_count} file(s). Click 'Add file(s)' to process."
+            self._message_placeholder.object = f"Successfully downloaded {success_count} file(s). Click 'Confirm file(s)' to process."
         else:
             self._message_placeholder.visible = False
 
@@ -1133,13 +1133,14 @@ class SourceCatalog(Viewer):
         self._sources_tree.on_action("Delete", self._on_delete_source)
 
         # === Global Documents Tree ===
-        self._docs_title = Markdown("**Apply to All Tables**", margin=(10, 10, 0, 10))
+        self._docs_title = Markdown("**Apply to All Tables**", margin=(10, 10, 0, 10), visible=False)
         self._docs_tree = Tree(
             items=[],
             checkboxes=True,
             color="secondary",
             sizing_mode="stretch_width",
             margin=(0, 10),
+            visible=False,
         )
         self._docs_tree.param.watch(self._on_docs_active_change, "active")
 
@@ -1631,11 +1632,11 @@ class SourceCatalog(Viewer):
     def _sync_docs_tree(self):
         """Sync the global docs tree with available metadata."""
         if not self._available_metadata:
-            self._docs_title.object = "**Apply to All Tables** *(no documents available)*"
-            self._docs_tree.items = []
+            self._docs_title.visible = False
             self._docs_tree.visible = False
             return
 
+        self._docs_title.visible = True
         self._docs_title.object = "**Apply to All Tables**"
         self._docs_tree.visible = True
 
