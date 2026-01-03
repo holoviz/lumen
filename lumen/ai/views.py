@@ -28,7 +28,6 @@ from panel_material_ui import (
 
 from ..base import Component
 from ..config import dump_yaml, load_yaml
-from ..downloads import Download
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
 from ..views.base import Panel, Table, View
@@ -193,14 +192,7 @@ class LumenOutput(Viewer):
             """
             ]
         )
-        download = Download(
-            view=table, hide=False, filename=f'{pipeline.table}',
-            format='csv'
-        )
-        download_pane = download.__panel__()
-        download_pane.sizing_mode = 'fixed'
         controls = Row(
-            download_pane,
             styles={'position': 'absolute', 'right': '40px', 'top': '-35px'}
         )
         for sql_limit in pipeline.sql_transforms:

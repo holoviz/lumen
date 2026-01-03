@@ -47,6 +47,8 @@ If results aren't what you expected, you have several options:
 
 **Continue the conversation** — Send a new message to refine or adjust the results. For example: "Can you make that chart show only the top 5 items?" or "Add a trend line to the visualization."
 
+**Add annotations** — For visualizations, click the annotation button (💬 icon) to add highlights, callouts, or labels. For example: "Highlight the peak values" or "Mark outliers in red."
+
 **Manually edit** — Directly edit the SQL query or visualization specification in the editor panel. This works if you're comfortable with SQL or need precise control over the output.
 
 Use manual editing for small tweaks (like changing chart colors or sort order), and send a new message for bigger changes to the underlying query or analysis approach.
