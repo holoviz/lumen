@@ -63,6 +63,37 @@ DataT = str | Path | Source | Pipeline
 SPLASH_HELP_HINT = "Click on Help on the left for more info."
 
 # Help sections for breadcrumb navigation
+HELP_NO_SOURCES = """**Welcome to Lumen AI!**
+
+⚠️ **No data sources connected yet.**
+
+**To get started:**
+
+1. Click **Data Sources** in the left sidebar
+2. Upload a file (CSV, Parquet, JSON, Excel, GeoJSON) or connect to a database
+3. Once your data is loaded, come back here to start asking questions!
+
+You can also drag & drop files directly into the chat interface.
+
+**Once you have data, you can ask questions like:**
+
+*Basic queries:*
+- "Show me the top 10 rows"
+- "What are the columns in the dataset?"
+- "Give me a summary of the data"
+
+*Visualizations:*
+- "What's the average revenue by region? Plot as a bar chart"
+- "Create a scatter plot of X vs Y, colored by category"
+
+*Complex queries:*
+- "Filter for records over $1000 and show the distribution by category"
+- "Group by department and calculate average salary. Then plot the result."
+
+---
+
+➡️ After adding data, click **Navigation** above to learn how to move around the interface."""
+
 HELP_GETTING_STARTED = """
 Ask questions in plain English and Lumen AI automatically generates SQL queries and creates visualizations.
 
@@ -109,11 +140,6 @@ HELP_INTERFACE = """
 """
 
 HELP_EXPLORATIONS = """
-**🧭 Breadcrumbs (top bar):**
-- Shows your path: Home > Exploration Name
-- Click any breadcrumb to switch between explorations
-- Each exploration has its own conversation history
-
 **🔍 What are Explorations?**
 
 Each time you ask a question that generates a computed result (SQL query, visualization, etc.), Lumen creates a new "Exploration" tab. This lets you:
@@ -121,6 +147,11 @@ Each time you ask a question that generates a computed result (SQL query, visual
 - Compare different approaches side-by-side
 - Keep your work organized by topic
 - Hover over an exploration in the breadcrumbs to see the **Remove** (🗑️) icon
+
+**🧭 Breadcrumbs (top bar):**
+- Shows your path: Home > Exploration Name
+- Click any breadcrumb to switch between explorations
+- Each exploration has its own conversation history
 """
 
 HELP_EDITOR = """
@@ -220,6 +251,10 @@ Toolbar actions for this exploration:
 Drag the divider between editor and view to resize.
 """
 
+EXPLORATIONS_INTRO_HELP = "Select a table below to start a new exploration, or ask a question in the chat."
+
+EXPLORATION_VIEW_HELP = "Use < > to expand/collapse panels. Edit the spec (top) and the view (bottom) syncs. Click ✨ to ask LLM to revise."
+
 REPORT_HELP = """
 **Report Mode: View All Your Work**
 
@@ -271,6 +306,15 @@ DATA_SOURCES_HELP = """
 - Data connections persist for your session
 """
 
+DATA_SOURCES_UPLOAD_HELP = (
+    "Add data to explore with Lumen AI. Supports CSV, Parquet, JSON, Excel, and databases. "
+    "Select between data / metadata and set an alias."
+)
+
+DATA_SOURCES_CATALOG_HELP = (
+    "Check on the box to make the source visible to the LLM. Associate metadata with datasets"
+)
+
 PREFERENCES_HELP = """
 **Control how Lumen AI analyzes your questions.**
 
@@ -293,28 +337,6 @@ PREFERENCES_HELP = """
 - Enabled by default
 
 **Configure AI Models** — Choose which LLM provider and models to use for different tasks
-"""
-
-
-EXPLORATIONS_INTRO = """
-**Quick Start Guide:**
-
-**1. Explore your data**
-- Ask questions in plain English in the chat
-- Select a table in the catalog and click **Explore**
-- Use the quick action buttons for common tasks
-
-**2. Refine results**
-- **Top pane**: Edit the SQL or YAML spec directly
-- **Bottom pane**: View the live, interactive results
-- **✨ Sparkle**: Ask the AI to revise or improve an output
-
-**3. Navigate & Organize**
-- **Breadcrumbs**: Switch between different analyses
-- **< > Buttons**: Expand or collapse the chat and results
-- **Report Mode**: View all your work on one page
-
-**Need more help?** Click **Help** in the sidebar for detailed guides on Agents, Tools, and Tips.
 """
 
 
@@ -413,6 +435,8 @@ class UI(Viewer):
         interface: ChatInterface | None = None,
         **params
     ):
+        self._page = None
+        self._explorer = None
         params["log_level"] = params.get("log_level", self.param["log_level"].default).upper()
         super().__init__(**params)
         self._configure_context(data)
@@ -740,9 +764,11 @@ class UI(Viewer):
                 self._source_content[:] = [self._upload_controls]
             else:
                 self._source_content[:] = [self._download_controls]
+            self._sources_help_caption.object = DATA_SOURCES_UPLOAD_HELP
         elif len(active) == 2:
             # Upload > Source Catalog (0, 0) or Download > Source Catalog (1, 0)
             self._source_content[:] = [self._source_catalog]
+            self._sources_help_caption.object = DATA_SOURCES_CATALOG_HELP
 
     def _configure_coordinator(self):
         # Set up table upload callbacks on all control classes
@@ -773,121 +799,7 @@ class UI(Viewer):
             **self.coordinator_params
         )
 
-    def _render_header(self) -> list[Viewable]:
-        return []
-
-    def _render_main(self) -> list[Viewable]:
-        num_sources = len(self.context.get("sources", []))
-        if num_sources == 0:
-            prefix_text = "Drag & drop your dataset here to begin, then"
-        else:
-            prefix_text = f"{num_sources} source{'s' if num_sources > 1 else ''} connected;"
-
-        self._cta = Typography(
-            f"{prefix_text} ask any question, or select a quick action below. {SPLASH_HELP_HINT}"
-        )
-
-        self._splash = MuiColumn(
-            Paper(
-                Typography(
-                    "Ask questions, get insights",
-                    disable_anchors=True,
-                    variant="h1"
-                ),
-                self._cta,
-                self.interface._widget,
-                max_width=850,
-                styles={'margin': 'auto'},
-                sx={'p': '0 20px 20px 20px'}
-            ),
-            margin=(0, 5, 0, 0),
-            sx={'display': 'flex', 'align-items': 'center'},
-            height_policy='max'
-        )
-
-        self._main = Column(self._splash, sizing_mode='stretch_both', align="center")
-
-        if self.suggestions:
-            self._add_suggestions_to_footer(
-                self.suggestions,
-                num_objects=1,
-                inplace=True,
-                analysis=False,
-                append_demo=True,
-                hide_after_use=False
-            )
-
-        # Create info dialog with breadcrumb navigation
-        self._help_content = MuiColumn(sizing_mode="stretch_width")
-
-        help_items = [
-            {"label": "Quickstart", "icon": "rocket_launch"},
-            {"label": "Interface", "icon": "dashboard"},
-            {"label": "Explorations", "icon": "layers"},
-            {"label": "Editor", "icon": "code"},
-            {"label": "Results", "icon": "analytics"},
-            {"label": "Export", "icon": "ios_share"},
-            {"label": "Tips", "icon": "lightbulb"},
-        ]
-
-        self._help_breadcrumbs = Breadcrumbs(
-            items=help_items,
-            value=help_items[0],
-            margin=(0, 0, 10, 0),
-        )
-
-        self._next_help_button = Button(
-            name="Next",
-            variant="outlined",
-            sizing_mode="stretch_width",
-            align="end",
-        )
-
-        def next_section(event):
-            current_item = self._help_breadcrumbs.value
-            current_index = help_items.index(current_item)
-            if current_index < len(help_items) - 1:
-                self._help_breadcrumbs.value = help_items[current_index + 1]
-
-        self._next_help_button.on_click(next_section)
-
-        def update_help_content(event):
-            selected_item = event.new
-            section_index = help_items.index(selected_item)
-            help_texts = [
-                HELP_GETTING_STARTED, HELP_INTERFACE, HELP_EXPLORATIONS,
-                HELP_EDITOR, HELP_RESULTS, HELP_EXPORT, HELP_TIPS
-            ]
-            text = help_texts[section_index]
-            if section_index == 0:
-                text = self._current_help_text
-            self._help_content[:] = [Markdown(text, sizing_mode="stretch_width")]
-
-            if section_index == len(help_items) - 1:
-                self._next_help_button.visible = False
-            else:
-                self._next_help_button.visible = True
-
-        self._help_breadcrumbs.param.watch(update_help_content, 'value')
-
-        # Initialize with first section (will be updated based on data source availability)
-        # Use a deferred initialization to avoid race condition
-        self._help_content[:] = [Markdown("", sizing_mode="stretch_width")]
-
-        self._info_dialog = Dialog(
-            MuiColumn(
-                self._help_breadcrumbs,
-                self._help_content,
-                self._next_help_button,
-                sizing_mode="stretch_width"
-            ),
-            close_on_click=True,
-            show_close_button=True,
-            sizing_mode='stretch_width',
-            width_option='md',
-            title="Help Guides"
-        )
-
+    def _create_sources_dialog(self):
         # Set up actions for the ChatAreaInput speed dial
         # Use document_vector_store if available, otherwise fall back to main vector_store
         doc_store = self.document_vector_store or self._coordinator.vector_store
@@ -936,7 +848,7 @@ class UI(Viewer):
         self._source_breadcrumbs.param.watch(self._update_source_content, 'active')
 
         self._sources_help_caption = Typography(
-            "Add data to explore with Lumen AI. Supports CSV, Parquet, JSON, Excel, and databases.",
+            DATA_SOURCES_UPLOAD_HELP,
             variant="body2",
             color="text.secondary",
             sizing_mode="stretch_width"
@@ -955,6 +867,120 @@ class UI(Viewer):
         )
         # Watch for dialog close to handle pending query if user closes without adding files
         self._sources_dialog_content.param.watch(self._on_sources_dialog_close, 'open')
+
+    def _create_info_dialog(self):
+        # Create info dialog with breadcrumb navigation
+        self._help_content = MuiColumn(sizing_mode="stretch_width")
+
+        help_items = [
+            {"label": "Getting Started", "icon": "rocket_launch"},
+            {"label": "Interface", "icon": "dashboard"},
+            {"label": "Explorations", "icon": "layers"},
+            {"label": "Editor", "icon": "code"},
+            {"label": "Results", "icon": "analytics"},
+            {"label": "Export", "icon": "ios_share"},
+            {"label": "Tips", "icon": "lightbulb"},
+        ]
+
+        self._help_breadcrumbs = Breadcrumbs(
+            items=help_items,
+            value=help_items[0],
+            margin=(0, 0, 10, 0),
+        )
+
+        self._next_help_button = Button(
+            name="Next",
+            variant="outlined",
+            sizing_mode="stretch_width",
+            align="end",
+        )
+
+        def next_section(event):
+            current_item = self._help_breadcrumbs.value
+            current_index = help_items.index(current_item)
+            if current_index < len(help_items) - 1:
+                self._help_breadcrumbs.value = help_items[current_index + 1]
+
+        self._next_help_button.on_click(next_section)
+
+        def update_help_content(event):
+            selected_item = event.new
+            section_index = help_items.index(selected_item)
+            help_texts = [
+                HELP_GETTING_STARTED, HELP_INTERFACE, HELP_EXPLORATIONS,
+                HELP_EDITOR, HELP_RESULTS, HELP_EXPORT, HELP_TIPS
+            ]
+            text = help_texts[section_index]
+            if section_index == 0:
+                text = self._current_help_text
+            elif section_index == 2:
+                text = self._current_explorations_help
+            self._help_content[:] = [Markdown(text, sizing_mode="stretch_width")]
+
+            if section_index == len(help_items) - 1:
+                self._next_help_button.visible = False
+            else:
+                self._next_help_button.visible = True
+
+        self._help_breadcrumbs.param.watch(update_help_content, 'value')
+
+        # Initialize with first section (will be updated based on data source availability)
+        # Use a deferred initialization to avoid race condition
+        self._help_content[:] = [Markdown("", sizing_mode="stretch_width")]
+
+        self._info_dialog = Dialog(
+            MuiColumn(
+                self._help_breadcrumbs,
+                self._help_content,
+                self._next_help_button,
+                sizing_mode="stretch_width"
+            ),
+            close_on_click=True,
+            show_close_button=True,
+            sizing_mode='stretch_width',
+            width_option='md',
+            title="Help Guides"
+        )
+
+    def _render_header(self) -> list[Viewable]:
+        return []
+
+    def _render_main(self) -> list[Viewable]:
+        self._cta = Typography()
+        self._update_cta()
+
+        self._splash = MuiColumn(
+            Paper(
+                Typography(
+                    "Ask questions, get insights",
+                    disable_anchors=True,
+                    variant="h1"
+                ),
+                self._cta,
+                self.interface._widget,
+                max_width=850,
+                styles={'margin': 'auto'},
+                sx={'p': '0 20px 20px 20px'}
+            ),
+            margin=(0, 5, 0, 0),
+            sx={'display': 'flex', 'align-items': 'center'},
+            height_policy='max'
+        )
+
+        self._main = Column(self._splash, sizing_mode='stretch_both', align="center")
+
+        if self.suggestions:
+            self._add_suggestions_to_footer(
+                self.suggestions,
+                num_objects=1,
+                inplace=True,
+                analysis=False,
+                append_demo=True,
+                hide_after_use=False
+            )
+
+        self._create_info_dialog()
+        self._create_sources_dialog()
 
         self._notebook_export = FileDownload(
             callback=self._export_notebook,
@@ -978,7 +1004,6 @@ class UI(Viewer):
         self._explorations.param.watch(self._sync_active, 'value')
         self._explorations.on_action('remove', self._delete_exploration)
 
-        # Create LLM configuration dialog
         self._llm_dialog = LLMConfigDialog(
             llm=self.llm,
             llm_choices=self.llm_choices,
@@ -1008,75 +1033,34 @@ class UI(Viewer):
             sx={"&.mui-light .sidebar": {"bgcolor": "var(--mui-palette-grey-50)"}}
         )
 
+    def _update_cta(self):
+        num_sources = len(self.context.get("sources", []))
+        if num_sources == 0:
+            prefix_text = "Drag & drop your dataset here to begin, then"
+        else:
+            prefix_text = f"{num_sources} source{'s' if num_sources > 1 else ''} connected;"
+        cta_text = f"{prefix_text} ask any question, or select a quick action below. {SPLASH_HELP_HINT}"
+        self._cta.object = cta_text
+        return cta_text
+
     def _update_help_getting_started(self):
         """Update the Getting Started help text based on whether data sources are connected."""
         num_sources = len(self.context.get("sources", []))
         if num_sources == 0:
-            self._current_help_text = """**Welcome to Lumen AI!**
-
-⚠️ **No data sources connected yet.**
-
-**To get started:**
-
-1. Click **Data Sources** in the left sidebar
-2. Upload a file (CSV, Parquet, JSON, Excel, GeoJSON) or connect to a database
-3. Once your data is loaded, come back here to start asking questions!
-
-You can also drag & drop files directly into the chat interface.
-
-**Once you have data, you can ask questions like:**
-
-*Basic queries:*
-- "Show me the top 10 rows"
-- "What are the columns in the dataset?"
-- "Give me a summary of the data"
-
-*Visualizations:*
-- "What's the average revenue by region? Plot as a bar chart"
-- "Create a scatter plot of X vs Y, colored by category"
-
-*Complex queries:*
-- "Filter for records over $1000 and show the distribution by category"
-- "Group by department and calculate average salary. Then plot the result."
-
----
-
-➡️ After adding data, click **Navigation** above to learn how to move around the interface."""
+            self._current_help_text = HELP_NO_SOURCES
         else:
             self._current_help_text = HELP_GETTING_STARTED
+        self._current_explorations_help = HELP_EXPLORATIONS
 
-    @param.depends('context', on_init=True, watch=True)
-    async def _sync_sources(self, event=None):
-        context = event.new if event else self.context
-        if 'sources' in context:
-            old_sources = self.context.get("sources", [self.context["source"]] if "source" in self.context else [])
-            new_sources = [src for src in context["sources"] if src not in old_sources]
-            self.context["sources"] = old_sources + new_sources
+    def _get_table_slugs(self, sources: list[Source]) -> set[str]:
+        slugs = set()
+        for source in sources:
+            tables = source.get_tables()
+            for table in tables:
+                slugs.add(f'{source.name}{SOURCE_TABLE_SEPARATOR}{table}')
+        return slugs
 
-            # Compute table slugs for old, new, and all sources
-            old_slugs = set()
-            for source in old_sources:
-                tables = source.get_tables()
-                for table in tables:
-                    table_slug = f'{source.name}{SOURCE_TABLE_SEPARATOR}{table}'
-                    old_slugs.add(table_slug)
-
-            all_slugs = set()
-            for source in self.context["sources"]:
-                tables = source.get_tables()
-                for table in tables:
-                    table_slug = f'{source.name}{SOURCE_TABLE_SEPARATOR}{table}'
-                    all_slugs.add(table_slug)
-
-            new_slugs = all_slugs - old_slugs
-
-            # Update visible_slugs: preserve old table visibility, auto-check new tables
-            current_visible = self.context.get("visible_slugs")
-            if current_visible is not None:  # Check for None, not truthiness (empty set is valid!)
-                self.context["visible_slugs"] = current_visible.intersection(old_slugs) | new_slugs
-            else:
-                self.context["visible_slugs"] = all_slugs
-
+    def _sync_context_source(self, context: dict[str, Any]):
         if "source" in context:
             if "source" in self.context:
                 old_source = self.context["source"]
@@ -1088,29 +1072,49 @@ You can also drag & drop files directly into the chat interface.
         if "table" in context:
             self.context["table"] = context["table"]
 
-        # Guard against early calls during init when components don't exist yet
-        if hasattr(self, '_explorer'):
-            await self._explorer.sync()
-        # Only sync coordinator if we have sources and coordinator exists
-        if hasattr(self, '_coordinator') and self.context.get("sources"):
-            await self._coordinator.sync(self.context)
-        if hasattr(self, '_source_catalog'):
-            self._source_catalog.sync(self.context)
+    @param.depends('context', on_init=True, watch=True)
+    async def _sync_sources(self, event=None):
+        context = event.new if event else self.context
+        if 'sources' in context:
+            old_sources = self.context.get("sources", [self.context["source"]] if "source" in self.context else [])
+            new_sources = [src for src in context["sources"] if src not in old_sources]
+            self.context["sources"] = old_sources + new_sources
 
-        num_sources = len(self.context.get("sources", []))
-        if num_sources == 0:
-            prefix_text = "Drag & drop your dataset here to begin, then"
-        else:
-            prefix_text = f"{num_sources} source{'s' if num_sources > 1 else ''} connected;"
-        if hasattr(self, '_cta'):
-            self._cta.object = f"{prefix_text} ask any question, or select a quick action below. {SPLASH_HELP_HINT}"
+            # Compute table slugs for old, new, and all sources
+            old_slugs = self._get_table_slugs(old_sources)
+            all_slugs = self._get_table_slugs(self.context["sources"])
+            new_slugs = all_slugs - old_slugs
+
+            # Update visible_slugs: preserve old table visibility, auto-check new tables
+            current_visible = self.context.get("visible_slugs")
+            if current_visible is not None:  # Check for None, not truthiness (empty set is valid!)
+                self.context["visible_slugs"] = current_visible.intersection(old_slugs) | new_slugs
+            else:
+                self.context["visible_slugs"] = all_slugs
+
+        self._sync_context_source(context)
+
+        # Guard against early calls during init when components don't exist yet
+        if not self._page:
+            return
+
+        if self.context.get("sources"):
+            await self._coordinator.sync(self.context)
+
+        if self._explorer:
+            await self._explorer.sync()
+        self._source_catalog.sync(self.context)
+
+        self._update_cta()
 
         # Update help dialog content when sources change
-        if hasattr(self, '_help_content'):
-            self._update_help_getting_started()
-            # Only update if we're currently showing the Getting Started section
-            if hasattr(self, '_help_breadcrumbs') and self._help_breadcrumbs.value['label'] == 'Getting Started':
-                self._help_content[:] = [Markdown(self._current_help_text, sizing_mode="stretch_width")]
+        self._update_help_getting_started()
+        # Only update if we're currently showing the Getting Started or Explorations section
+        label = self._help_breadcrumbs.value['label']
+        if label == 'Getting Started':
+            self._help_content[:] = [Markdown(self._current_help_text, sizing_mode="stretch_width")]
+        elif label == 'Explorations':
+            self._help_content[:] = [Markdown(self._current_explorations_help, sizing_mode="stretch_width")]
 
     def _open_llm_dialog(self, event=None):
         """Open the LLM configuration dialog when the LLM chip is clicked."""
@@ -1151,8 +1155,7 @@ You can also drag & drop files directly into the chat interface.
 
     async def _on_visibility_changed(self, event):
         """Handle visibility changes from SourceCatalog by re-syncing the coordinator."""
-        if hasattr(self, '_coordinator'):
-            await self._coordinator.sync(self.context)
+        await self._coordinator.sync(self.context)
 
     def _add_suggestions_to_footer(
         self,
@@ -1387,6 +1390,12 @@ class ExplorerUI(UI):
 
     _exploration = param.Dict()
 
+    def _update_help_getting_started(self):
+        super()._update_help_getting_started()
+        is_home = self._exploration.get("view") is self._home
+        if not is_home:
+            self._current_explorations_help = EXPLORATION_TOOLBAR_HELP
+
     def _export_notebook(self):
         nb = export_notebook(self._exploration['view'].plan.views, preamble=self.notebook_preamble)
         return StringIO(nb)
@@ -1412,13 +1421,21 @@ class ExplorerUI(UI):
 
     @param.depends("_exploration", watch=True)
     def _update_home(self):
-        is_home = self._exploration["view"] is self._home
-        if not hasattr(self, '_page'):
+        if not self._page:
             return
+        is_home = self._exploration["view"] is self._home
         if not is_home:
             self._transition_to_chat()
         exploration, report = self._sidebar_menu.items[:2]
         self._sidebar_menu.update_item(exploration, active=True, icon="timeline" if report["active"] else "insights")
+
+        self._explorations_title.object = "Explorations" if is_home else self._exploration['label']
+        self._explorations_help_caption.object = EXPLORATIONS_INTRO_HELP if is_home else EXPLORATION_VIEW_HELP
+
+        # Update help dialog content when exploration changes
+        self._update_help_getting_started()
+        if self._help_breadcrumbs.value['label'] == 'Explorations':
+            self._help_content[:] = [Markdown(self._current_explorations_help, sizing_mode="stretch_width")]
 
     def _render_sidebar(self) -> list[Viewable]:
         switches = []
@@ -1440,7 +1457,6 @@ class ExplorerUI(UI):
             validation_enabled=validation
         )
 
-        # Use Material-UI Button for consistent styling
         llm_config_button = Button(
             label="Configure AI Models",
             icon="auto_awesome",
@@ -1460,7 +1476,6 @@ class ExplorerUI(UI):
         )
         switches.append(llm_config_button)
 
-        # Preferences header (no help icon needed)
         prefs_header = Typography(
             "Preferences",
             variant="subtitle1",
@@ -1515,25 +1530,21 @@ class ExplorerUI(UI):
 
         # Render home page with help caption
         self._explorations_help_caption = Typography(
-            "Use < > to expand/collapse panels. Edit the spec (top) and the view (bottom) syncs. Click ✨ to ask LLM to revise.",
+            EXPLORATIONS_INTRO_HELP,
             variant="body2",
             color="text.secondary",
             margin=(0, 0, 10, 20),
             sizing_mode="stretch_width"
         )
+        self._explorations_title = Typography("Explorations", variant="h6", margin=(0, 0, 0, 20))
         self._explorations_intro = MuiColumn(
-            Typography("Explorations", variant="h6", margin=(0, 0, 0, 20)),
+            self._explorations_title,
             self._explorations_help_caption,
-            Markdown(
-                EXPLORATIONS_INTRO,
-                margin=(0, 0, 0, 20),
-                sizing_mode='stretch_width',
-            ),
             sizing_mode='stretch_width',
         )
         self._explorer = TableExplorer(context=self.context)
         self._explorer.param.watch(self._add_exploration_from_explorer, "add_exploration")
-        self._home.view = MuiColumn(self._explorations_intro, self._explorer)
+        self._home.view = MuiColumn(self._explorer)
 
         # Menus
         self._breadcrumbs = NestedBreadcrumbs(
@@ -1546,7 +1557,11 @@ class ExplorerUI(UI):
         # Main Area
         self._notebook_export.disabled = self.param._exploration.rx()['view'].rx.is_(self._home)
         self._output = Paper(
-            Row(self._breadcrumbs, self._notebook_export, sizing_mode="stretch_width"),
+            MuiColumn(
+                Row(self._breadcrumbs, self._notebook_export, sizing_mode="stretch_width"),
+                self._explorations_intro,
+                sizing_mode="stretch_width"
+            ),
             self._home,
             elevation=2,
             margin=(5, 10, 5, 5),
@@ -1579,7 +1594,7 @@ class ExplorerUI(UI):
 
         with hold():
             self._transition_to_chat()
-            self.interface.send(f"Add exploration for the `{table}` table", respond=False)
+            self.interface.stream(f"Added exploration for the `{table}` table", user="Assistant")
             out_context = await sql_out.render_context()
             watcher = plan.param.watch(partial(self._add_views, exploration), "views")
             try:
