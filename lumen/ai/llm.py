@@ -371,16 +371,20 @@ class LlamaCpp(Llm, LlamaCppMixin):
 
     model_kwargs = param.Dict(default={
         "default": {
-            "repo_id": "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
-            "filename": "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf",
+            "repo_id": "unsloth/Qwen3-8B-GGUF",
+            "filename": "Qwen3-8B-Q5_K_M.gguf",
             "chat_format": "qwen",
         },
     })
 
     select_models = param.List(default=[
-        "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
-        "unsloth/Qwen2.5-7B-Instruct-GGUF",
-        "bartowski/DeepSeek-R1-Distill-Qwen-32B-GGUF"
+        "unsloth/Qwen3-8B-GGUF",
+        "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF",
+        "unsloth/DeepSeek-V3.1-GGUF",
+        "unsloth/gpt-oss-20b-GGUF",
+        "unsloth/GLM-4.6-GGUF",
+        "microsoft/Phi-4-GGUF",
+        "meta-llama/Llama-3.3-70B-Instruct-GGUF"
     ], constant=True, doc="Available models for selection dropdowns")
 
     temperature = param.Number(default=0.4, bounds=(0, None), constant=True)
