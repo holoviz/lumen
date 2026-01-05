@@ -475,12 +475,12 @@ class OpenAI(Llm, OpenAIMixin):
     })
 
     select_models = param.List(default=[
-        "gpt-4.1-mini",
-        "gpt-4.1-nano",
+        "gpt-5.2",
         "gpt-5-mini",
-        "gpt-4-turbo",
-        "gpt-4o",
-        "gpt-4o-mini"
+        "gpt-5-nano",
+        "gpt-4.1",
+        "gpt-4.1-mini",
+        "gpt-4.1-nano"
     ], constant=True, doc="Available models for selection dropdowns")
 
     temperature = param.Number(default=0.25, bounds=(0, None), constant=True)
@@ -748,13 +748,8 @@ class Anthropic(Llm):
 
     select_models = param.List(default=[
         "claude-sonnet-4-5",
-        "claude-sonnet-4-0",
-        "claude-3-7-sonnet-latest",
-        "claude-opus-4-1",
-        "claude-opus-4-0",
         "claude-haiku-4-5",
-        "claude-3-5-haiku-latest",
-        "claude-3-haiku-20240307"
+        "claude-opus-4-5"
     ], constant=True, doc="Available models for selection dropdowns")
 
     temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
