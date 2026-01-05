@@ -870,11 +870,12 @@ class Google(Llm):
     mode = param.Selector(default=Mode.GENAI_TOOLS, objects=[Mode.GENAI_TOOLS, Mode.GENAI_STRUCTURED_OUTPUTS])
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "gemini-2.5-flash"},  # Best price-performance with thinking
-        "edit": {"model": "gemini-2.5-pro"},  # State-of-the-art thinking model
+        "default": {"model": "gemini-3-flash-preview"},
     })
 
     select_models = param.List(default=[
+        "gemini-3-flash-preview",
+        "gemini-3-pro-preview",
         "gemini-2.5-pro",
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
@@ -885,6 +886,8 @@ class Google(Llm):
     ], constant=True, doc="Available models for selection dropdowns")
 
     temperature = param.Number(default=1, bounds=(0, 1), constant=True)
+
+    thinking_level = param.Selector(default="low", objects=["low", "medium", "high"])
 
     timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
         The timeout in seconds for Google AI API calls.""")
@@ -903,6 +906,42 @@ class Google(Llm):
         elif hasattr(chunk, 'content') and chunk.content:
             return chunk.content
         return ""
+
+    @classmethod
+    def _messages_to_contents(cls, messages: list[Message]) -> list[dict[str, Any]]:
+        """
+        Transform messages into contents format expected by Google GenAI API.
+
+        Parameters
+        ----------
+        messages : list[Message]
+            List of messages with 'role', 'content', and optional 'name' fields.
+
+        Returns
+        -------
+        list[dict[str, Any]]
+            List of content dictionaries with 'role' and 'parts' fields.
+        """
+        contents = []
+        for message in messages:
+            role = message["role"]
+            content = message["content"]
+
+            if role == "system":
+                role = "system"
+            if role == "assistant":
+                role = "model"
+            elif role == "user":
+                role = "user"
+            else:
+                continue
+
+            contents.append({
+                "role": role,
+                "parts": [{"text": content}]
+            })
+
+        return contents
 
     async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         from google import genai
@@ -925,24 +964,28 @@ class Google(Llm):
     async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
         """Override to handle Gemini-specific message format conversion."""
         try:
-            from google.genai.types import GenerateContentConfig, HttpOptions
+            from google.genai.types import (
+                GenerateContentConfig, HttpOptions, ThinkingConfig,
+            )
         except ImportError as exc:
             raise ImportError(
                 "Please install the `google-generativeai` package to use Google AI models. "
                 "You can install it with `pip install -U google-genai`."
             ) from exc
 
+        model_kwargs = self._get_model_kwargs(model_spec)
         client = await self.get_client(model_spec, **kwargs)
-
+        http_options = HttpOptions(timeout=self.timeout)
+        thinking_config = ThinkingConfig(thinking_level=model_kwargs.get("thinking_level", self.thinking_level), include_thoughts=False)
+        config = GenerateContentConfig(
+            http_options=http_options, temperature=self.temperature, thinking_config=thinking_config,
+        )
         if kwargs.get("response_model"):
-            config = GenerateContentConfig(http_options=HttpOptions(timeout=self.timeout), temperature=self.temperature)
             return await client(messages=messages, config=config, **kwargs)
-        else:
-            kwargs.pop("stream")
-            system_instruction = next((message["content"] for message in messages if message["role"] == "system"), "Be helpful.")
-            config = GenerateContentConfig(http_options=HttpOptions(timeout=self.timeout), temperature=self.temperature, system_instruction=system_instruction)
-            prompt = messages.pop(-1)["content"]
-            return await client(contents=[prompt], **kwargs)
+
+        kwargs.pop("stream", None)
+        contents = self._messages_to_contents(messages)
+        return await client(contents=contents, **kwargs)
 
 
 class AINavigator(OpenAI):
