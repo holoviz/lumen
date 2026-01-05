@@ -64,26 +64,7 @@ PROVIDER_ENV_VARS = {
 }
 
 
-
-def detect_provider() -> str | None:
-    """
-    Detect available LLM provider based on environment variables.
-
-    This is a convenience wrapper around get_available_llm() that only returns
-    the provider name without instantiating the LLM.
-
-    Returns
-    -------
-    str | None
-        The provider name if an API key is found and LLM can be instantiated, None otherwise.
-    """
-    result = get_available_llm()
-    if result is not None:
-        return result[1]
-    return None
-
-
-def get_available_llm() -> type[Llm]:
+def get_available_llm() -> type[Llm] | None:
     """
     Detect and instantiate an available LLM provider by checking environment variables
     and attempting to instantiate each provider in order.
@@ -985,7 +966,7 @@ class Google(Llm):
 
         kwargs.pop("stream", None)
         contents = self._messages_to_contents(messages)
-        return await client(contents=contents, **kwargs)
+        return await client(contents=contents, config=config, **kwargs)
 
 
 class AINavigator(OpenAI):

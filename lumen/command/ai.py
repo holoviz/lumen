@@ -90,7 +90,7 @@ class LumenAIServe(Serve):
         elif not provider:
             provider_cls = get_available_llm()
 
-        if provider is None:
+        if provider is None and provider_cls is None:
             raise RuntimeError(
                 "It looks like a Language Model provider isn't set up yet.\n"
                 "You have a few options to resolve this:\n\n"
