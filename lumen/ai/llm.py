@@ -37,6 +37,74 @@ class ImageResponse(BaseModel):
 
 BASE_MODES = list(Mode)
 
+# LLM Provider Configuration
+# Mapping from provider names to LLM class names
+LLM_PROVIDERS = {
+    'openai': 'OpenAI',
+    'google': 'Google',
+    'anthropic': 'Anthropic',
+    'mistral': 'MistralAI',
+    'azure-openai': 'AzureOpenAI',
+    'azure-mistral': 'AzureMistralAI',
+    "ai-navigator": "AINavigator",
+    'ollama': 'Ollama',
+    'llama-cpp': 'LlamaCpp',
+    'litellm': 'LiteLLM',
+}
+
+# Environment variable mapping for providers that require API keys
+# Providers not in this list (like ollama, llama-cpp) may work without env vars
+PROVIDER_ENV_VARS = {
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "mistral": "MISTRAL_API_KEY",
+    "azure-mistral": "AZUREAI_ENDPOINT_KEY",
+    "azure-openai": "AZUREAI_ENDPOINT_KEY",
+    "google": "GEMINI_API_KEY",
+}
+
+
+
+def detect_provider() -> str | None:
+    """
+    Detect available LLM provider based on environment variables.
+
+    This is a convenience wrapper around get_available_llm() that only returns
+    the provider name without instantiating the LLM.
+
+    Returns
+    -------
+    str | None
+        The provider name if an API key is found and LLM can be instantiated, None otherwise.
+    """
+    result = get_available_llm()
+    if result is not None:
+        return result[1]
+    return None
+
+
+def get_available_llm() -> type[Llm]:
+    """
+    Detect and instantiate an available LLM provider by checking environment variables
+    and attempting to instantiate each provider in order.
+
+    Returns
+    -------
+    type[Llm] | None
+        The LLM class if successful, or None if no provider is available.
+    """
+    for provider, class_name in LLM_PROVIDERS.items():
+        env_var = PROVIDER_ENV_VARS.get(provider)
+        if env_var and not os.environ.get(env_var):
+            continue
+
+        try:
+            provider_cls = globals()[class_name]
+            return provider_cls
+        except KeyError:
+            continue
+    return None
+
 
 class Llm(param.Parameterized):
     """
@@ -468,9 +536,6 @@ class OpenAI(Llm, OpenAIMixin):
 
     model_kwargs = param.Dict(default={
         "default": {"model": "gpt-4.1-mini"},
-        "sql": {"model": "gpt-4.1-mini"},
-        "vega_lite": {"model": "gpt-4.1-mini"},
-        "edit": {"model": "gpt-4.1-mini"},
         "ui": {"model": "gpt-4.1-nano"},
     })
 

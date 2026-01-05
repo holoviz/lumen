@@ -45,7 +45,9 @@ from .controls import (
 )
 from .coordinator import Coordinator, Plan, Planner
 from .export import export_notebook
-from .llm import Llm, Message, OpenAI
+from .llm import (
+    Llm, Message, OpenAI, get_available_llm,
+)
 from .llm_dialog import LLMConfigDialog
 from .logs import ChatLogs
 from .models import ErrorDescription
@@ -331,6 +333,15 @@ EXPLORATIONS_INTRO_HELP = "Select a table below to start a new exploration, or a
 EXPLORATION_VIEW_HELP = "Use < > to expand/collapse panels. Edit the spec (top) and the view (bottom) syncs. Click ✨ to ask LLM to revise."
 
 
+def _get_default_llm():
+    """
+    Get the default LLM instance, trying to find an available one first,
+    falling back to OpenAI if none are available.
+    """
+    result = get_available_llm()
+    return result() if result is not None else OpenAI()
+
+
 class UI(Viewer):
     """
     UI provides a baseclass and high-level entrypoint to start chatting with your data.
@@ -368,7 +379,7 @@ class UI(Viewer):
     interface = param.ClassSelector(class_=ChatFeed, doc="""
         The interface for the Coordinator to interact with.""")
 
-    llm = param.ClassSelector(class_=Llm, default=OpenAI(), doc="""
+    llm = param.ClassSelector(class_=Llm, default=_get_default_llm(), doc="""
         The LLM provider to be used by default""")
 
     llm_choices = param.List(default=[], doc="""

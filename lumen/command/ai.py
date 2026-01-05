@@ -24,6 +24,7 @@ except ImportError as e:
     sys.exit(1)
 
 from ..ai import agents as lumen_agents, llm as lumen_llms  # Aliased here
+from ..ai.llm import LLM_PROVIDERS, get_available_llm
 from ..ai.utils import parse_huggingface_url, render_template
 
 # Optional SQLAlchemy support
@@ -33,39 +34,6 @@ except ImportError:
     make_url = None
 
 CMD_DIR = THIS_DIR / ".." / "command"
-
-LLM_PROVIDERS = {
-    'openai': 'OpenAI',
-    'google': 'Google',
-    'anthropic': 'Anthropic',
-    'mistral': 'MistralAI',
-    'azure-openai': 'AzureOpenAI',
-    'azure-mistral': 'AzureMistralAI',
-    "ai-navigator": "AINavigator",
-    'ollama': 'Ollama',
-    'llama-cpp': 'LlamaCpp',
-    'litellm': 'LiteLLM',
-}
-
-
-class LLMConfig:
-    """Configuration handler for LLM providers"""
-
-    PROVIDER_ENV_VARS = {
-        "openai": "OPENAI_API_KEY",
-        "anthropic": "ANTHROPIC_API_KEY",
-        "mistral": "MISTRAL_API_KEY",
-        "azure-mistral": "AZUREAI_ENDPOINT_KEY",
-        "azure-openai": "AZUREAI_ENDPOINT_KEY",
-    }
-
-    @classmethod
-    def detect_provider(cls) -> str | None:
-        """Detect available LLM provider based on environment variables"""
-        for provider, env_var in cls.PROVIDER_ENV_VARS.items():
-            if env_var and os.environ.get(env_var):
-                return provider
-        return None
 
 
 class LumenAIServe(Serve):
@@ -111,6 +79,7 @@ class LumenAIServe(Serve):
         """Override invoke to handle both sets of arguments"""
         provider = args.provider
         llm_model_url = args.llm_model_url
+        provider_cls = None
         if llm_model_url and provider and provider != "llama":
             raise ValueError(
                 f"Cannot specify both --llm-model-url and --provider {provider!r}. "
@@ -119,7 +88,7 @@ class LumenAIServe(Serve):
         elif llm_model_url:
             provider = "llama"
         elif not provider:
-            provider = LLMConfig.detect_provider()
+            provider_cls = get_available_llm()
 
         if provider is None:
             raise RuntimeError(
@@ -139,12 +108,13 @@ class LumenAIServe(Serve):
         log_level = args.log_level
         logfire_tags = getattr(args, 'logfire_tags', None)
 
-        try:
-            provider_cls = getattr(lumen_llms, LLM_PROVIDERS[provider])
-        except (KeyError, AttributeError) as err:
-            raise ValueError(
-                f"Could not find LLM Provider {provider!r}, valid providers include: {list(LLM_PROVIDERS)}."
-            ) from err
+        if provider_cls is None:
+            try:
+                provider_cls = getattr(lumen_llms, LLM_PROVIDERS[provider])
+            except (KeyError, AttributeError) as err:
+                raise ValueError(
+                    f"Could not find LLM Provider {provider!r}, valid providers include: {list(LLM_PROVIDERS)}."
+                ) from err
 
         model_kwargs = None
         if args.model_kwargs or llm_model_url:
