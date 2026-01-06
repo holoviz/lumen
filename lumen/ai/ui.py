@@ -51,7 +51,7 @@ from .llm import (
 from .llm_dialog import LLMConfigDialog
 from .logs import ChatLogs
 from .models import ErrorDescription
-from .report import ActorTask, Report
+from .report import ActorTask, Report, Section
 from .utils import log_debug, wrap_logfire
 from .vector_store import VectorStore
 from .views import AnalysisOutput, LumenOutput, SQLOutput
@@ -1657,7 +1657,8 @@ class ExplorerUI(UI):
             main = Column(no_explorations_msg, back_button, sizing_mode="stretch_both", align="center", margin=20)
         elif active:
             main = Report(
-                *(exploration['view'].plan for exploration in self._explorations.items[1:])
+                *(Section(item["view"].plan, *(it.plan for it in item["items"]), title=item["view"].plan.title)
+                  for item in self._explorations.items[1:])
             )
         else:
             main = self._split
@@ -1773,6 +1774,7 @@ class ExplorerUI(UI):
         }
         with hold():
             self.interface.objects = conversation
+            # Temporarily un-idle to allow exploration to be rendered
             self._idle.set()
             if is_home or not plan.is_followup:
                 self._explorations.items = self._explorations.items + [view_item]
@@ -1780,6 +1782,7 @@ class ExplorerUI(UI):
                 self._explorations.update_item(
                     parent_item, items=parent_item.get('items', []) + [view_item]
                 )
+                self._explorations.expanded = [self._explorations._lookup_path(parent_item)]
             self._exploration = view_item
             self._idle.clear()
             self._toggle_report_mode(False)
