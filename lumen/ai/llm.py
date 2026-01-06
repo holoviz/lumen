@@ -844,6 +844,25 @@ class Anthropic(Llm):
         else:
             return partial(self._get_completion_method(), model=model, **self._get_create_kwargs(response_model))
 
+    def _messages_to_contents(self, messages: list[Message]) -> tuple[list[Message], str | None]:
+        """Extract system messages from the messages list.
+
+        Anthropic requires system to be passed separately, not in messages array.
+        """
+        filtered = []
+        system_text = None
+        for msg in messages:
+            if msg["role"] == "system":
+                system_text = msg["content"]
+            else:
+                filtered.append(msg)
+        return filtered, system_text
+
+    def _add_system_message(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
+        if system:
+            input_kwargs["system"] = system
+        return messages, input_kwargs
+
     async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         if self.interceptor:
             raise NotImplementedError("Interceptors are not supported for Anthropic.")
@@ -855,15 +874,44 @@ class Anthropic(Llm):
         client_callable = self._get_cached_client(response_model, model=model, **model_kwargs)
         return partial(client_callable.func, *client_callable.args, timeout=self.timeout, **client_callable.keywords)
 
+    async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
+        """Override to handle Anthropic-specific message format."""
+        log_debug(f"Input messages: \033[95m{len(messages)} messages\033[0m including system")
+
+        # Extract system from messages
+        filtered_messages, extracted_system = self._messages_to_contents(messages)
+
+        # Combine system from kwargs (via _add_system_message) with extracted system
+        system = kwargs.get("system")
+        if not system and extracted_system:
+            kwargs["system"] = extracted_system
+
+        previous_role = None
+        for i, message in enumerate(filtered_messages):
+            role = message["role"]
+            if role == "user":
+                log_debug(f"Message \033[95m{i} (u)\033[0m: {message['content']}")
+            else:
+                log_debug(f"Message \033[95m{i} (a)\033[0m: {message['content']}")
+            if previous_role == role:
+                log_debug(
+                    "\033[91mWARNING: Two consecutive messages from the same role; "
+                    "some providers disallow this.\033[0m"
+                )
+            previous_role = role
+
+        client = await self.get_client(model_spec, **kwargs)
+        result = await client(messages=filtered_messages, **kwargs)
+        if response_model := kwargs.get("response_model"):
+            log_debug(f"Response model: \033[93m{response_model.__name__!r}\033[0m")
+        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
+        return result
+
     @classmethod
     def _get_delta(cls, chunk: Any) -> str:
         if hasattr(chunk, 'delta') and hasattr(chunk.delta, "text"):
             return chunk.delta.text
         return ""
-
-    def _add_system_message(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
-        input_kwargs["system"] = system
-        return messages, input_kwargs
 
 
 class Bedrock(Llm):
@@ -871,17 +919,19 @@ class Bedrock(Llm):
     A LLM implementation that calls AWS Bedrock models using the Converse API.
 
     Uses boto3 bedrock-runtime client with the Converse API for a unified
-    interface across different foundation models.
+    interface across different foundation models. Supports standard AWS
+    credential resolution including environment variables, ~/.aws/credentials,
+    and AWS SSO.
     """
 
     aws_access_key_id = param.String(
         default=os.getenv("AWS_ACCESS_KEY_ID"),
-        doc="AWS access key ID. If not provided, boto3 will use default credentials."
+        doc="AWS access key ID. If not provided, boto3 will use default credentials (including SSO)."
     )
 
     api_key = param.String(
         default=os.getenv("AWS_SECRET_ACCESS_KEY"),
-        doc="AWS secret access key (stored as api_key for consistency). If not provided, boto3 will use default credentials."
+        doc="AWS secret access key. If not provided, boto3 will use default credentials (including SSO)."
     )
 
     aws_session_token = param.String(
@@ -954,20 +1004,21 @@ class Bedrock(Llm):
             **kwargs
         )
 
-    def _messages_to_bedrock(self, messages: list[Message]) -> list[dict]:
+    def _messages_to_contents(self, messages: list[Message]) -> tuple[list[dict], str | None]:
         """Convert messages to Bedrock Converse API format.
 
-        Filters out system messages since Bedrock requires them to be passed
-        separately via the 'system' parameter, not in the messages array.
+        Extracts system messages and returns them separately since Bedrock
+        requires them to be passed via the 'system' parameter.
         """
         bedrock_messages = []
+        system_text = None
 
         for msg in messages:
             role = msg["role"]
             content = msg["content"]
 
-            # Skip system messages - they must be passed via 'system' param
             if role == "system":
+                system_text = content
                 continue
 
             if isinstance(content, str):
@@ -981,7 +1032,7 @@ class Bedrock(Llm):
                         bedrock_content.append(item)
                 bedrock_messages.append({"role": role, "content": bedrock_content})
 
-        return bedrock_messages
+        return bedrock_messages, system_text
 
     def _add_system_message(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
         if system:
@@ -990,6 +1041,13 @@ class Bedrock(Llm):
 
     async def _bedrock_invoke(self, messages, model, stream=False, response_model=None, **kwargs):
         """Async wrapper for Bedrock converse API."""
+        bedrock_messages, extracted_system = self._messages_to_contents(messages)
+
+        # Combine system from kwargs (via _add_system_message) with extracted system
+        system = kwargs.get("system")
+        if not system and extracted_system:
+            system = [{"text": extracted_system}]
+
         if response_model:
             mode = kwargs.pop("mode", self.mode)
             if mode not in self._instructor_clients:
@@ -1001,17 +1059,16 @@ class Bedrock(Llm):
                 "response_model": response_model,
                 **self._get_create_kwargs(response_model),
             }
-            if system := kwargs.get("system"):
+            if system:
                 create_kwargs["system"] = system
             return await asyncio.to_thread(client.messages.create, **create_kwargs)
 
-        bedrock_messages = self._messages_to_bedrock(messages)
         call_kwargs = {
             "modelId": model,
             "messages": bedrock_messages,
             "inferenceConfig": self._client_kwargs,
         }
-        if system := kwargs.get("system"):
+        if system:
             call_kwargs["system"] = system
 
         if stream:
@@ -1105,9 +1162,12 @@ class Google(Llm):
         return ""
 
     @classmethod
-    def _messages_to_contents(cls, messages: list[Message]) -> list[dict[str, Any]]:
+    def _messages_to_contents(cls, messages: list[Message]) -> tuple[list[dict[str, Any]], str | None]:
         """
         Transform messages into contents format expected by Google GenAI API.
+
+        Extracts system messages and returns them separately since Google
+        requires them via the system_instruction parameter.
 
         Parameters
         ----------
@@ -1116,15 +1176,19 @@ class Google(Llm):
 
         Returns
         -------
-        list[dict[str, Any]]
-            Contents list for Google GenAI API.
+        tuple[list[dict[str, Any]], str | None]
+            Tuple of (contents list, system_instruction)
         """
         contents = []
+        system_instruction = None
 
         for message in messages:
             role = message["role"]
             content = message["content"]
-            if role != "user":
+            if role == "system":
+                system_instruction = content
+                continue
+            elif role != "user":
                 role = "model"
 
             if isinstance(content, Image):
@@ -1138,12 +1202,7 @@ class Google(Llm):
                     "parts": [{"text": content}]
                 })
 
-        return contents
-
-    def _add_system_message(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
-        if system:
-            input_kwargs["system_instruction"] = system
-        return messages, input_kwargs
+        return contents, system_instruction
 
     async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         model_kwargs = self._get_model_kwargs(model_spec)
@@ -1176,12 +1235,11 @@ class Google(Llm):
             ) from exc
 
         response_model = kwargs.get("response_model")
-        system_instruction = kwargs.pop("system_instruction", None)
         http_options = HttpOptions(timeout=self.timeout * 1000)  # timeout is in milliseconds
         thinking_config = ThinkingConfig(thinking_budget=0, include_thoughts=False)
 
         client = await self.get_client(model_spec, **kwargs)
-        contents = self._messages_to_contents(messages)
+        contents, system_instruction = self._messages_to_contents(messages)
         config = GenerateContentConfig(
             http_options=http_options,
             temperature=self.temperature,
@@ -1190,7 +1248,6 @@ class Google(Llm):
         )
 
         if response_model:
-            # client_result is a partial callable from instructor
             result = await client(messages=messages, config=config, **kwargs)
             return result
 
