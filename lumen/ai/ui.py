@@ -1595,7 +1595,7 @@ class ExplorerUI(UI):
             sizing_mode="stretch_height",
             sx={"borderRadius": 0},
             theme_config={"light": {"palette": {"background": {"paper": "var(--mui-palette-grey-100)"}}}, "dark": {}},
-            width=300,
+            width=275,
         )
         self._main[:] = [self._split]
         return main
@@ -1631,7 +1631,7 @@ class ExplorerUI(UI):
             title='Home',
             conversation=self.interface.objects
         )
-        self._exploration = {'label': 'Home', 'icon': 'home', 'view': self._home, 'items': []}
+        self._exploration = {'label': 'Home', 'icon': None, 'view': self._home, 'items': []}
         super()._configure_session()
         self._idle = asyncio.Event()
         self._idle.set()
@@ -1767,13 +1767,15 @@ class ExplorerUI(UI):
         view_item = {
             'label': plan.title,
             'view': exploration,
-            'icon': "insights",
+            'icon': None,
             'actions': [{'action': 'remove', 'label': 'Remove', 'icon': 'delete'}],
             'parent': parent_item if plan.is_followup else self._explorations.items[0],
             'items': []
         }
         with hold():
             self.interface.objects = conversation
+            # Collapse sidebar if we are launching first exploration
+            self._sidebar_collapse.value = len(self._main) == 1
             # Temporarily un-idle to allow exploration to be rendered
             self._idle.set()
             if is_home or not plan.is_followup:
