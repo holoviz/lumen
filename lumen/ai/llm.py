@@ -922,18 +922,22 @@ class Google(Llm):
         for message in messages:
             role = message["role"]
             content = message["content"]
-            if role == "assistant":
-                role = "model"
-            elif role in ("user", "system"):
-                # keep role as-is for user and system messages
-                pass
-            else:
+            if role == "system":
+                system_instruction = content
+                continue
+            elif role != "user":
                 role = "model"
 
-            contents.append({
-                "role": role,
-                "parts": [{"text": content}]
-            })
+            if isinstance(content, Image):
+                contents.append({
+                    "role": role,
+                    "parts": [content.to_genai()]
+                })
+            else:
+                contents.append({
+                    "role": role,
+                    "parts": [{"text": content}]
+                })
 
         return contents, system_instruction
 
@@ -970,7 +974,7 @@ class Google(Llm):
         http_options = HttpOptions(timeout=self.timeout * 1000)  # timeout is in milliseconds
         thinking_config = ThinkingConfig(thinking_budget=0, include_thoughts=False)
 
-        client_result = await self.get_client(model_spec, **kwargs)
+        client = await self.get_client(model_spec, **kwargs)
         contents, system_instruction = self._messages_to_contents(messages)
         config = GenerateContentConfig(
             http_options=http_options,
@@ -981,11 +985,11 @@ class Google(Llm):
 
         if response_model:
             # client_result is a partial callable from instructor
-            result = await client_result(messages=messages, config=config, **kwargs)
+            result = await client(messages=messages, config=config, **kwargs)
             return result
 
-        kwargs.pop("stream", None)  # already handled
-        result = await client_result(contents=contents, config=config, **kwargs)
+        kwargs.pop("stream", None)
+        result = await client(contents=contents, config=config, **kwargs)
         return result
 
 
