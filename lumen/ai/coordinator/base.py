@@ -149,6 +149,7 @@ class Plan(Section):
                 traceback.print_exception(e)
                 raise e
         elif isinstance(e, asyncio.CancelledError):
+            traceback.print_exception(e)
             step.failed_title = f"{task.title!r} task was cancelled"
             raise e
         else:
