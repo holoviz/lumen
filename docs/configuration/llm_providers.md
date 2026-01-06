@@ -321,6 +321,26 @@ Recommended ranges: 0.1 (SQL) to 0.4 (chat).
     ui.servable()
     ```
 
+#### Anthropic on Bedrock
+
+For specialized support of Anthropic models on AWS Bedrock, Lumen provides the `AnthropicBedrock` provider. This provider uses the `anthropic` library's native Bedrock integration and is restricted to Anthropic models.
+
+**Prerequisites:**
+
+- `anthropic` installed: `pip install anthropic`
+
+=== "Python"
+
+    ``` py
+    llm = lmai.llm.AnthropicBedrock(
+        aws_access_key_id='...',
+        api_key='...', # Secret Access Key
+        region_name='us-east-1'
+    )
+    ui = lmai.ExplorerUI(data='penguins.csv', llm=llm)
+    ui.servable()
+    ```
+
 ### Ollama (local)
 
 **Prerequisites:**

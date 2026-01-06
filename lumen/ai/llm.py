@@ -20,7 +20,9 @@ from instructor.processing.multimodal import Image
 from pydantic import BaseModel
 
 from .interceptor import Interceptor
-from .services import AzureOpenAIMixin, LlamaCppMixin, OpenAIMixin
+from .services import (
+    AzureOpenAIMixin, BedrockMixin, LlamaCppMixin, OpenAIMixin,
+)
 from .utils import format_exception, log_debug, truncate_string
 
 
@@ -44,6 +46,7 @@ LLM_PROVIDERS = {
     'openai': 'OpenAI',
     'google': 'Google',
     'anthropic': 'Anthropic',
+    'anthropic_bedrock': 'AnthropicBedrock',
     'bedrock': 'Bedrock',
     'mistral': 'MistralAI',
     'azure-openai': 'AzureOpenAI',
@@ -60,6 +63,7 @@ PROVIDER_ENV_VARS = {
     "openai": "OPENAI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
     "bedrock": "AWS_ACCESS_KEY_ID",  # AWS credentials
+    "anthropic_bedrock": "AWS_ACCESS_KEY_ID",  # AWS credentials
     "mistral": "MISTRAL_API_KEY",
     "azure-mistral": "AZUREAI_ENDPOINT_KEY",
     "azure-openai": "AZUREAI_ENDPOINT_KEY",
@@ -914,7 +918,28 @@ class Anthropic(Llm):
         return ""
 
 
-class Bedrock(Llm):
+class AnthropicBedrock(BedrockMixin, Anthropic):  # Keep it before Anthropic so API key is correct
+
+    display_name = param.String(default="Anthropic on AWS Bedrock", constant=True, doc="Display name for UI")
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"},
+        "ui": {"model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"},
+        "edit": {"model": "us.anthropic.claude-opus-4-5-20251101-v1:0"},
+    })
+
+    def _create_base_client(self, **kwargs) -> Any:
+        from anthropic.lib.bedrock import AsyncAnthropicBedrock
+        return AsyncAnthropicBedrock(
+            aws_access_key=self.aws_access_key_id,
+            aws_secret_key=self.api_key,
+            aws_session_token=self.aws_session_token,
+            aws_region=self.region_name,
+            **kwargs
+        )
+
+
+class Bedrock(Llm, BedrockMixin):
     """
     A LLM implementation that calls AWS Bedrock models using the Converse API.
 
@@ -923,21 +948,6 @@ class Bedrock(Llm):
     credential resolution including environment variables, ~/.aws/credentials,
     and AWS SSO.
     """
-
-    aws_access_key_id = param.String(
-        default=os.getenv("AWS_ACCESS_KEY_ID"),
-        doc="AWS access key ID. If not provided, boto3 will use default credentials (including SSO)."
-    )
-
-    api_key = param.String(
-        default=os.getenv("AWS_SECRET_ACCESS_KEY"),
-        doc="AWS secret access key. If not provided, boto3 will use default credentials (including SSO)."
-    )
-
-    aws_session_token = param.String(
-        default=os.getenv("AWS_SESSION_TOKEN"),
-        doc="AWS session token for temporary credentials (optional)."
-    )
 
     display_name = param.String(default="AWS Bedrock", constant=True, doc="Display name for UI")
 
@@ -948,8 +958,6 @@ class Bedrock(Llm):
         "ui": {"model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"},
         "edit": {"model": "us.anthropic.claude-opus-4-5-20251101-v1:0"},
     })
-
-    region_name = param.String(default="us-east-1", doc="The AWS region name for Bedrock API calls.")
 
     select_models = param.List(default=[
         # Inference profiles (cross-region) - recommended for Claude 4+
