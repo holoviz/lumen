@@ -59,6 +59,7 @@ class LumenOutput(Viewer):
     language = "yaml"
 
     _controls = [CopyControls, RetryControls]
+    _label = "Result"
 
     def __init__(self, **params):
         try:
@@ -108,7 +109,7 @@ class LumenOutput(Viewer):
 
     def render_controls(self, task: Task, interface: ChatFeed):
         export_menu = MenuButton(
-            label="Export Output", variant='text', icon="file_download", margin=0,
+            label=f"Export {self._label} as", variant='text', icon="file_download", margin=0,
             items=[
                 {
                     "label": FORMAT_LABELS.get(fmt, f"{fmt.upper()}"),
@@ -268,6 +269,7 @@ class VegaLiteOutput(LumenOutput):
     export_formats = ("yaml", "png", "jpeg", "pdf", "svg", "html")
 
     _controls = [CopyControls, RetryControls, AnnotationControls]
+    _label = "Plot"
 
     def export(self, fmt: str) -> StringIO | BytesIO:
         ret = super().export(fmt)
@@ -480,6 +482,7 @@ class SQLOutput(LumenOutput):
     language = "sql"
 
     export_formats = ("sql", "csv", "xlsx")
+    _label = "Table"
 
     def export(self, fmt: str) -> str | bytes:
         super().export(fmt)
