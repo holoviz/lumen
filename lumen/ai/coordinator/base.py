@@ -55,6 +55,8 @@ class Plan(Section):
 
     interface = param.ClassSelector(class_=ChatFeed)
 
+    is_followup = param.Boolean(default=False)
+
     _tasks = param.List(item_type=ActorTask)
 
     def render_task_history(self, i: int | None = None, failed: bool = False) -> tuple[list[Message], str]:
@@ -325,7 +327,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 agent = agent()
             if isinstance(agent, AnalysisAgent):
                 analyses = indent("\n".join(
-                    f"- `{analysis.__name__}`:\n{indent(dedent(analysis.__doc__ or '').strip(), " " * 4)} (required cols: {', '.join(analysis.columns)})"
+                    f"- `{analysis.__name__}`:\n{indent(dedent(analysis.__doc__ or '').strip(), ' ' * 4)} (required cols: {', '.join(analysis.columns)})"
                     for analysis in agent.analyses if analysis._callable_by_llm
                 ), " " * 4)
                 agent.conditions.append(

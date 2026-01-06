@@ -332,6 +332,14 @@ EXPLORATIONS_INTRO_HELP = "Select a table below to start a new exploration, or a
 
 EXPLORATION_VIEW_HELP = "Use < > to expand/collapse panels. Edit the spec (top) and the view (bottom) syncs. Click ✨ to ask LLM to revise."
 
+EXPLORATION_CAPTION = """
+Launch new explorations by chatting or selecting a table.
+
+Ask follow up question by navigating to an existing exploration.
+"""
+
+REPORT_CAPTION = "Use ▶ to execute all, × to clear outputs, ∨∧ to collapse/expand sections. Click exploration names to jump to them."  # noqa: RUF001
+
 
 def _get_default_llm():
     """
@@ -860,7 +868,7 @@ class UI(Viewer):
             height_policy='max'
         )
 
-        self._main = Column(self._splash, sizing_mode='stretch_both', align="center")
+        self._main = Row(self._splash, sizing_mode='stretch_both', align="center")
 
         if self.suggestions:
             self._add_suggestions_to_footer(
@@ -1025,8 +1033,8 @@ class UI(Viewer):
         )
 
         self._explorations = MenuList(
-            items=[self._exploration], value=self.param._exploration, show_children=False,
-            dense=True, label='Explorations', margin=0, sizing_mode='stretch_width',
+            items=[self._exploration], value=self.param._exploration, show_children=True,
+            dense=True, margin=0, sizing_mode='stretch_width',
             sx={".mui-light .MuiBox-root": {"backgroundColor": "var(--mui-palette-grey-100)"}},
         )
         self._explorations.param.watch(self._cleanup_explorations, 'items')
@@ -1551,18 +1559,10 @@ class ExplorerUI(UI):
         self._explorer.param.watch(self._add_exploration_from_explorer, "add_exploration")
         self._home.view = MuiColumn(self._explorations_intro, self._explorer)
 
-        # Menus
-        self._breadcrumbs = NestedBreadcrumbs(
-            items=[self._exploration],
-            value=self.param._exploration,
-            margin=(10, 0, 0, 13)
-        )
-        self._breadcrumbs.param.watch(self._sync_active, 'value')
-
         # Main Area
         self._notebook_export.disabled = self.param._exploration.rx()['view'].rx.is_(self._home)
         self._output = Paper(
-            Row(self._breadcrumbs, self._notebook_export, sizing_mode="stretch_width"),
+            Row(self._notebook_export, styles={"top": "0", "right": "0", "position": "absolute"}),
             self._home,
             elevation=2,
             margin=(5, 10, 5, 5),
@@ -1577,6 +1577,25 @@ class ExplorerUI(UI):
             show_buttons=True,
             sizing_mode='stretch_both',
             stylesheets=SPLITJS_STYLESHEETS
+        )
+        self._navigation_title = Typography(
+            "Exploration", variant="h6", margin=(10, 10, 0, 10)
+        )
+        self._navigation_caption = Typography(
+            EXPLORATION_CAPTION,
+            variant="body2",
+            color="text.secondary",
+            margin=(10, 10, 5, 10),
+            sizing_mode="stretch_width"
+        )
+        self._navigation = Paper(
+            self._navigation_title,
+            self._navigation_caption,
+            self._explorations,
+            sizing_mode="stretch_height",
+            sx={"borderRadius": 0},
+            theme_config={"light": {"palette": {"background": {"paper": "var(--mui-palette-grey-100)"}}}, "dark": {}},
+            width=300,
         )
         self._main[:] = [self._split]
         return main
@@ -1623,7 +1642,6 @@ class ExplorerUI(UI):
 
     def _toggle_report_mode(self, active: bool):
         """Toggle between regular and report mode."""
-        # Check if there are any explorations beyond home
         if active and len(self._explorations.items) <= 1:
             # Show message and button to go back to exploration
             no_explorations_msg = Markdown(
@@ -1636,38 +1654,18 @@ class ExplorerUI(UI):
                 button_type="primary",
                 on_click=lambda e: self._handle_sidebar_event(self._sidebar_menu.items[0]),
             )
-            self._main[:] = [
-                Column(no_explorations_msg, back_button, sizing_mode="stretch_both", align="center", margin=20)
-            ]
-            return
-
-        if active:
-            # Report mode with help caption
-            report_help_caption = Typography(
-                "Use ▶ to execute all, × to clear outputs, ∨∧ to collapse/expand sections. Click exploration names to jump to them.",  # noqa: RUF001
-                variant="body2",
-                color="text.secondary",
-                margin=(10, 10, 5, 10),
-                sizing_mode="stretch_width"
+            main = Column(no_explorations_msg, back_button, sizing_mode="stretch_both", align="center", margin=20)
+        elif active:
+            main = Report(
+                *(exploration['view'].plan for exploration in self._explorations.items[1:])
             )
-            self._main[:] = [
-                Row(
-                    Paper(
-                        Typography("Report", variant="h6", margin=(10, 10, 0, 10)),
-                        report_help_caption,
-                        self._explorations,
-                        sizing_mode="stretch_height",
-                        sx={"borderRadius": 0},
-                        theme_config={"light": {"palette": {"background": {"paper": "var(--mui-palette-grey-100)"}}}, "dark": {}},
-                        width=350,
-                    ),
-                    Report(
-                        *(exploration['view'].plan for exploration in self._explorations.items[1:])
-                    )
-                )
-            ]
         else:
-            self._main[:] = [self._split]
+            main = self._split
+
+        with hold():
+            self._navigation_title.object = "Report" if active else "Exploration"
+            self._navigation_caption.object = REPORT_CAPTION if active else EXPLORATION_CAPTION
+            self._main[:] = [self._navigation, main] if len(self._explorations.items) > 1 else [main]
 
     def _delete_exploration(self, item):
         self._explorations.items = [it for it in self._explorations.items if it is not item]
@@ -1734,25 +1732,25 @@ class ExplorerUI(UI):
         return messages
 
     async def _add_exploration(self, plan: Plan, parent: Exploration) -> Exploration:
-        # Sanpshot previous conversation
         is_home = parent is self._home
+        parent_item = self._exploration
         if is_home:
             parent.conversation = []
         else:
             parent.conversation = self._snapshot_messages(new=True)
-        conversation = list(self.interface.objects)
+        conversation = [msg for msg in self.interface.objects if plan.is_followup or msg not in parent.conversation]
 
         tabs = Tabs(
-            ('Overview', Markdown("Waiting on data...", margin=(5, 20))),
+            ("Data Source", Markdown("Waiting on data...", margin=(5, 20))),
             dynamic=True,
-            sizing_mode='stretch_both',
+            sizing_mode="stretch_both",
             loading=plan.param.running
         )
-        output = MultiSplit(tabs, sizing_mode='stretch_both')
+        output = MultiSplit(tabs, sizing_mode="stretch_both")
         exploration = Exploration(
             context=plan.param.out_context,
             conversation=conversation,
-            parent=parent,
+            parent=parent if plan.is_followup else self._home,
             plan=plan,
             title=plan.title,
             view=output
@@ -1765,15 +1763,18 @@ class ExplorerUI(UI):
             'actions': [{'action': 'remove', 'label': 'Remove', 'icon': 'delete'}],
             'items': []
         }
-        items = self._explorations.items + [view_item]
         with hold():
-            self._breadcrumbs.value["items"].append(view_item)
-            self._breadcrumbs.param.trigger("items")
             self.interface.objects = conversation
             self._idle.set()
-            self._explorations.param.update(items=items)
+            if is_home or not plan.is_followup:
+                self._explorations.items = self._explorations.items + [view_item]
+            else:
+                self._explorations.update_item(
+                    parent_item, items=parent_item.get('items', []) + [view_item]
+                )
             self._exploration = view_item
             self._idle.clear()
+            self._toggle_report_mode(False)
             self._output[1:] = [output]
             self._notebook_export.filename = f"{plan.title.replace(' ', '_')}.ipynb"
             await self._update_conversation()
