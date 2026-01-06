@@ -4,7 +4,6 @@ import argparse
 import inspect
 import json
 import logging
-import os
 import sys
 import traceback
 
@@ -26,12 +25,6 @@ except ImportError as e:
 from ..ai import agents as lumen_agents, llm as lumen_llms  # Aliased here
 from ..ai.llm import LLM_PROVIDERS, get_available_llm
 from ..ai.utils import parse_huggingface_url, render_template
-
-# Optional SQLAlchemy support
-try:
-    from sqlalchemy.engine.url import make_url
-except ImportError:
-    make_url = None
 
 CMD_DIR = THIS_DIR / ".." / "command"
 
@@ -217,88 +210,15 @@ class AIHandler(CodeHandler):
         )
         super().__init__(filename="lumen_ai.py", source=source, **kwargs)
 
-    @staticmethod
-    def _is_sqlalchemy_url(table_str: str) -> bool:
-        """Check if a string is a valid SQLAlchemy URL"""
-        if make_url is None or "://" not in table_str:
-            return False
 
-        try:
-            make_url(table_str)
-            return True
-        except Exception:
-            return False
-
-    @staticmethod
-    def _detect_db_type(file_path: str) -> str | None:
-        """
-        Detect if a .db file is SQLite or DuckDB by reading its header.
-
-        Returns
-        -------
-        str | None
-            'sqlite' for SQLite databases, 'duckdb' for DuckDB databases, None if unknown
-        """
-        if not os.path.exists(file_path):
-            return None
-
-        try:
-            with open(file_path, 'rb') as f:
-                header = f.read(16)
-
-            # SQLite files start with "SQLite format 3" (0x53 0x51 0x4c 0x69 0x74 0x65...)
-            if header.startswith(b'SQLite format 3'):
-                return 'sqlite'
-
-            # DuckDB files start with "DUCK" (0x44 0x55 0x43 0x4b)
-            if header.startswith(b'DUCK'):
-                return 'duckdb'
-
-            return None
-        except Exception:
-            return None
-
-    @classmethod
-    def _categorize_sources(cls, tables: list[str]) -> tuple[list[str], list[str]]:
-        """
-        Separate database URLs from file paths.
-        Automatically detects .db files and converts them to appropriate URLs.
-
-        Returns
-        -------
-        tuple[list[str], list[str]]
-            (database_urls, file_paths)
-        """
-        db_urls = []
-        file_paths = []
-
-        for table in tables:
-            if cls._is_sqlalchemy_url(table):
-                db_urls.append(table)
-            elif table.endswith('.db'):
-                # Auto-detect database type for .db files
-                db_type = cls._detect_db_type(table)
-                if db_type == 'sqlite':
-                    db_urls.append(f'sqlite:///{os.path.abspath(table)}')
-                elif db_type == 'duckdb':
-                    db_urls.append(f'duckdb:///{os.path.abspath(table)}')
-                else:
-                    # If we can't detect the type, default to treating it as a file path
-                    file_paths.append(table)
-            else:
-                file_paths.append(table)
-        return db_urls, file_paths
 
     def _build_source_code(self, tables: list[str], **config) -> str:
         """Build source code with configuration"""
-        # Categorize sources into database URLs and file paths
-        db_urls, file_paths = self._categorize_sources(tables)
+        # Only include llm_provider in context if a provider was explicitly specified
+        provider = config.get('provider')
 
         context = {
-            "llm_provider": LLM_PROVIDERS[config['provider']],
-            "file_tables": [repr(t) for t in file_paths],
-            "db_urls": [repr(t) for t in db_urls],
-            "has_db_sources": len(db_urls) > 0,
+            "tables": [repr(t) for t in tables],
             "api_key": config.get("api_key"),
             "endpoint": config.get("endpoint"),
             "mode": config.get("mode"),
@@ -308,13 +228,23 @@ class AIHandler(CodeHandler):
             "model_kwargs": config.get('model_kwargs') or {},
             "logfire_tags": config.get("logfire_tags"),
         }
+
+        # Only add llm_provider if explicitly specified
+        if provider is not None:
+            if provider not in LLM_PROVIDERS:
+                available_providers = list(LLM_PROVIDERS.keys())
+                raise ValueError(
+                    f"Unknown provider '{provider}'. Available providers: {available_providers}"
+                )
+            context["llm_provider"] = LLM_PROVIDERS[provider]
+
         context = {k: v for k, v in context.items() if v is not None}
 
         source = render_template(
             CMD_DIR / "app.py.jinja2", relative_to=CMD_DIR, **context
         ).replace("\n\n", "\n").strip()
 
-        print(f"Generated source code:\n{source}\n")  # noqa: T201 for reusability
+        print(f"Generated source code:\n```python\n{source}\n```\n")  # noqa: T201 for reusability
         return source
 
 

@@ -472,6 +472,7 @@ class UI(Viewer):
         sources = []
         remote = False
         mirrors, tables = {}, {}
+
         for src in data:
             if isinstance(src, Source):
                 sources.append(src)
@@ -483,6 +484,24 @@ class UI(Viewer):
                     src = str(src)
                 else:
                     name = src = str(src)
+
+                # Handle .db files as SQLite databases via SQLAlchemy
+                if src.endswith('.db'):
+                    try:
+                        from ..sources.sqlalchemy import SQLAlchemySource
+                        db_path = Path(src).absolute()
+                        source = SQLAlchemySource(
+                            url=f'sqlite:///{db_path}',
+                            name=name
+                        )
+                        sources.append(source)
+                    except ImportError as e:
+                        raise ImportError(
+                            "SQLAlchemy is required to read .db files. "
+                            "Install it with: pip install sqlalchemy"
+                        ) from e
+                    continue
+
                 if src.startswith('http'):
                     remote = True
                 if src.endswith(('.parq', '.parquet', '.csv', '.json', '.tsv', '.jsonl', '.ndjson')):
@@ -804,19 +823,24 @@ class UI(Viewer):
             **self.coordinator_params
         )
 
+    def _get_status_text(self) -> str:
+        """Generate the status text showing sources and LLM provider."""
+        num_sources = len(self.context.get("sources", []))
+        llm_name = type(self.llm).__name__
+
+        if num_sources == 0:
+            status = f"Drag & drop your dataset here to begin; using **{llm_name}** as the LLM provider."
+        else:
+            sources_text = f"**{num_sources} source{'s' if num_sources > 1 else ''} connected**"
+            status = f"{sources_text}; using **{llm_name}** as the LLM provider."
+
+        return f"{status} {SPLASH_HELP_HINT}"
+
     def _render_header(self) -> list[Viewable]:
         return []
 
     def _render_main(self) -> list[Viewable]:
-        num_sources = len(self.context.get("sources", []))
-        if num_sources == 0:
-            prefix_text = "Drag & drop your dataset here to begin, then"
-        else:
-            prefix_text = f"{num_sources} source{'s' if num_sources > 1 else ''} connected;"
-
-        self._cta = Typography(
-            f"{prefix_text} ask any question, or select a quick action below. {SPLASH_HELP_HINT}"
-        )
+        self._cta = Typography(self._get_status_text())
 
         self._splash = MuiColumn(
             Paper(
@@ -1100,13 +1124,8 @@ class UI(Viewer):
         if hasattr(self, '_source_catalog'):
             self._source_catalog.sync(self.context)
 
-        num_sources = len(self.context.get("sources", []))
-        if num_sources == 0:
-            prefix_text = "Drag & drop your dataset here to begin, then"
-        else:
-            prefix_text = f"{num_sources} source{'s' if num_sources > 1 else ''} connected;"
         if hasattr(self, '_cta'):
-            self._cta.object = f"{prefix_text} ask any question, or select a quick action below. {SPLASH_HELP_HINT}"
+            self._cta.object = self._get_status_text()
 
         # Update help dialog content when sources change
         if hasattr(self, '_help_content'):
