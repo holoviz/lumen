@@ -569,13 +569,14 @@ class UI(Viewer):
         try:
             await self.llm.initialize(log_level=self.log_level)
             self._llm_status = 'connected'
+            self.interface.active_widget.disabled = False
             self.interface.disabled = False
         except Exception as e:
             import traceback
             traceback.print_exc()
             self._llm_status = str(e)
             if self._error_alert is not None:
-                self._error_alert.object = str(e)
+                self._error_alert.object = "LLM connection failed; try another LLM under Preferences or check logs for more details."
                 self._error_alert.visible = True
                 self.interface.active_widget.disabled = True
         finally:
