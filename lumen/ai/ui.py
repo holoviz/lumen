@@ -335,7 +335,7 @@ EXPLORATION_VIEW_HELP = "Use < > to expand/collapse panels. Edit the spec (top) 
 EXPLORATION_CAPTION = """
 Launch new explorations by chatting or selecting a table.
 
-Ask follow up question by navigating to an existing exploration.
+Ask follow-up questions by navigating to an existing exploration.
 """
 
 REPORT_CAPTION = "Use ▶ to execute all, × to clear outputs, ∨∧ to collapse/expand sections. Click exploration names to jump to them."  # noqa: RUF001
@@ -1671,7 +1671,7 @@ class ExplorerUI(UI):
         with hold():
             if item in self._explorations.items:
                 self._explorations.items = [it for it in self._explorations.items if it is not item]
-                self._explorations.value = self._home
+                self._explorations.value = self._explorations.items[0]
             else:
                 parent = item["parent"]
                 self._explorations.update_item(parent, items=[it for it in parent["items"] if it is not item])
@@ -1768,7 +1768,7 @@ class ExplorerUI(UI):
             'view': exploration,
             'icon': "insights",
             'actions': [{'action': 'remove', 'label': 'Remove', 'icon': 'delete'}],
-            'parent': parent_item if plan.is_followup else self._home,
+            'parent': parent_item if plan.is_followup else self._explorations.items[0],
             'items': []
         }
         with hold():
