@@ -824,7 +824,7 @@ class UI(Viewer):
         if self._llm_status == 'verifying':
             llm_text = f"verifying **{llm_name}** connection"
         elif self._llm_status == 'connected':
-            llm_text = f"connected to **{llm_name}**"
+            llm_text = f"using **{llm_name}** as the LLM provider"
         else:
             llm_text = f"connecting to **{llm_name}** failed"
 
