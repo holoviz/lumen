@@ -37,6 +37,55 @@ class ImageResponse(BaseModel):
 
 BASE_MODES = list(Mode)
 
+# LLM Provider Configuration
+# Mapping from provider names to LLM class names
+LLM_PROVIDERS = {
+    'openai': 'OpenAI',
+    'google': 'Google',
+    'anthropic': 'Anthropic',
+    'mistral': 'MistralAI',
+    'azure-openai': 'AzureOpenAI',
+    'azure-mistral': 'AzureMistralAI',
+    "ai-navigator": "AINavigator",
+    'ollama': 'Ollama',
+    'llama-cpp': 'LlamaCpp',
+    'litellm': 'LiteLLM',
+}
+
+# Environment variable mapping for providers that require API keys
+# Providers not in this list (like ollama, llama-cpp) may work without env vars
+PROVIDER_ENV_VARS = {
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "mistral": "MISTRAL_API_KEY",
+    "azure-mistral": "AZUREAI_ENDPOINT_KEY",
+    "azure-openai": "AZUREAI_ENDPOINT_KEY",
+    "google": "GEMINI_API_KEY",
+}
+
+
+def get_available_llm() -> type[Llm] | None:
+    """
+    Detect and instantiate an available LLM provider by checking environment variables
+    and attempting to instantiate each provider in order.
+
+    Returns
+    -------
+    type[Llm] | None
+        The LLM class if successful, or None if no provider is available.
+    """
+    for provider, class_name in LLM_PROVIDERS.items():
+        env_var = PROVIDER_ENV_VARS.get(provider)
+        if env_var and not os.environ.get(env_var):
+            continue
+
+        try:
+            provider_cls = globals()[class_name]
+            return provider_cls
+        except KeyError:
+            continue
+    return None
+
 
 class Llm(param.Parameterized):
     """
@@ -108,7 +157,6 @@ class Llm(param.Parameterized):
             return model_spec
 
         model_kwargs = self.model_kwargs.get(model_spec) or self.model_kwargs["default"]
-        log_debug(f"LLM Model: \033[96m{model_kwargs.get('model')!r}\033[0m")
         return dict(model_kwargs)
 
     def _get_create_kwargs(self, response_model: type[BaseModel] | None) -> dict[str, Any]:
@@ -317,16 +365,15 @@ class Llm(param.Parameterized):
         try:
             async for chunk in chunks:
                 if response_model is None:
-                    delta = self._get_delta(chunk)
-                    string += delta
+                    string += self._get_delta(chunk)
                     yield string
                 else:
                     yield getattr(chunk, field) if field is not None else chunk
         except TypeError:
+            # Handle synchronous iterators
             for chunk in chunks:
                 if response_model is None:
-                    delta = self._get_delta(chunk)
-                    string += delta
+                    string += self._get_delta(chunk)
                     yield string
                 else:
                     yield getattr(chunk, field) if field is not None else chunk
@@ -468,9 +515,6 @@ class OpenAI(Llm, OpenAIMixin):
 
     model_kwargs = param.Dict(default={
         "default": {"model": "gpt-4.1-mini"},
-        "sql": {"model": "gpt-4.1-mini"},
-        "vega_lite": {"model": "gpt-4.1-mini"},
-        "edit": {"model": "gpt-4.1-mini"},
         "ui": {"model": "gpt-4.1-nano"},
     })
 
@@ -517,6 +561,7 @@ class OpenAI(Llm, OpenAIMixin):
     async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         model_kwargs = self._get_model_kwargs(model_spec)
         model = model_kwargs.pop("model")
+        log_debug(f"LLM Model: \033[96m{model!r}\033[0m")
         mode = model_kwargs.pop("mode", self.mode)
 
         # Use the mixin to create the OpenAI client
@@ -805,11 +850,12 @@ class Google(Llm):
     mode = param.Selector(default=Mode.GENAI_TOOLS, objects=[Mode.GENAI_TOOLS, Mode.GENAI_STRUCTURED_OUTPUTS])
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "gemini-2.5-flash"},  # Best price-performance with thinking
-        "edit": {"model": "gemini-2.5-pro"},  # State-of-the-art thinking model
+        "default": {"model": "gemini-3-flash-preview"},
     })
 
     select_models = param.List(default=[
+        "gemini-3-flash-preview",
+        "gemini-3-pro-preview",
         "gemini-2.5-pro",
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
@@ -826,58 +872,125 @@ class Google(Llm):
 
     _supports_model_stream = True
 
+    # Cached genai client to avoid creating new aiohttp sessions on each call
+    _genai_client = None
+
     @property
     def _client_kwargs(self):
         return {}
 
+    def _get_genai_client(self):
+        """Get or create a cached genai.Client instance."""
+        if self._genai_client is None:
+            from google import genai
+            self._genai_client = genai.Client(api_key=self.api_key)
+        return self._genai_client
+
     @classmethod
     def _get_delta(cls, chunk: Any) -> str:
-        """Extract delta content from streaming response."""
+        """Extract delta content from streaming response or full response."""
         if hasattr(chunk, 'text'):
-            return chunk.text
-        elif hasattr(chunk, 'content') and chunk.content:
+            return chunk.text or ""
+        if hasattr(chunk, 'content') and chunk.content:
             return chunk.content
+        # Handle full response from generate_content (non-streaming fallback)
+        if hasattr(chunk, 'candidates') and chunk.candidates:
+            candidate = chunk.candidates[0]
+            if hasattr(candidate, 'content') and candidate.content:
+                if hasattr(candidate.content, 'parts') and candidate.content.parts:
+                    return candidate.content.parts[0].text or ""
         return ""
 
+    @classmethod
+    def _messages_to_contents(cls, messages: list[Message]) -> tuple[list[dict[str, Any]], str | None]:
+        """
+        Transform messages into contents format expected by Google GenAI API.
+
+        Parameters
+        ----------
+        messages : list[Message]
+            List of messages with 'role', 'content', and optional 'name' fields.
+
+        Returns
+        -------
+        tuple[list[dict[str, Any]], str | None]
+            Tuple of (contents list, system_instruction string or None)
+        """
+        contents = []
+        system_instruction = None
+
+        for message in messages:
+            role = message["role"]
+            content = message["content"]
+            if role == "system":
+                system_instruction = content
+                continue
+            elif role != "user":
+                role = "model"
+
+            if isinstance(content, Image):
+                contents.append({
+                    "role": role,
+                    "parts": [content.to_genai()]
+                })
+            else:
+                contents.append({
+                    "role": role,
+                    "parts": [{"text": content}]
+                })
+
+        return contents, system_instruction
+
     async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
-        from google import genai
         model_kwargs = self._get_model_kwargs(model_spec)
         model = model_kwargs.pop("model")
+        log_debug(f"LLM Model: \033[96m{model!r}\033[0m")
         mode = model_kwargs.pop("mode", self.mode)
 
-        llm = genai.Client(api_key=self.api_key, **model_kwargs)
+        # Reuse cached client to avoid aiohttp session issues
+        llm = self._get_genai_client()
 
         if response_model:
             client = instructor.from_genai(llm, mode=mode, use_async=True)
             return partial(client.chat.completions.create, model=model, **self._get_create_kwargs(response_model))
+        elif kwargs.get("stream"):
+            return partial(llm.aio.models.generate_content_stream, model=model)
         else:
-            chat = llm.aio.models
-            if kwargs.pop("stream", None):
-                return partial(chat.generate_content_stream, model=model, **self._get_create_kwargs(response_model))
-            else:
-                return partial(chat.generate_content, model=model, **self._get_create_kwargs(response_model))
+            return partial(llm.aio.models.generate_content, model=model)
 
     async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
         """Override to handle Gemini-specific message format conversion."""
         try:
-            from google.genai.types import GenerateContentConfig, HttpOptions
+            from google.genai.types import (
+                GenerateContentConfig, HttpOptions, ThinkingConfig,
+            )
         except ImportError as exc:
             raise ImportError(
                 "Please install the `google-generativeai` package to use Google AI models. "
                 "You can install it with `pip install -U google-genai`."
             ) from exc
 
-        client = await self.get_client(model_spec, **kwargs)
+        response_model = kwargs.get("response_model")
+        http_options = HttpOptions(timeout=self.timeout * 1000)  # timeout is in milliseconds
+        thinking_config = ThinkingConfig(thinking_budget=0, include_thoughts=False)
 
-        if kwargs.get("response_model"):
-            config = GenerateContentConfig(http_options=HttpOptions(timeout=self.timeout), temperature=self.temperature)
-            return await client(messages=messages, config=config, **kwargs)
-        else:
-            kwargs.pop("stream")
-            system_instruction = next((message["content"] for message in messages if message["role"] == "system"), "Be helpful.")
-            config = GenerateContentConfig(http_options=HttpOptions(timeout=self.timeout), temperature=self.temperature, system_instruction=system_instruction)
-            prompt = messages.pop(-1)["content"]
-            return await client(contents=[prompt], **kwargs)
+        client = await self.get_client(model_spec, **kwargs)
+        contents, system_instruction = self._messages_to_contents(messages)
+        config = GenerateContentConfig(
+            http_options=http_options,
+            temperature=self.temperature,
+            thinking_config=thinking_config,
+            system_instruction=system_instruction,
+        )
+
+        if response_model:
+            # client_result is a partial callable from instructor
+            result = await client(messages=messages, config=config, **kwargs)
+            return result
+
+        kwargs.pop("stream", None)
+        result = await client(contents=contents, config=config, **kwargs)
+        return result
 
 
 class AINavigator(OpenAI):

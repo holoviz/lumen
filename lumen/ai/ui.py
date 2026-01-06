@@ -45,7 +45,9 @@ from .controls import (
 )
 from .coordinator import Coordinator, Plan, Planner
 from .export import export_notebook
-from .llm import Llm, Message, OpenAI
+from .llm import (
+    Llm, Message, OpenAI, get_available_llm,
+)
 from .llm_dialog import LLMConfigDialog
 from .logs import ChatLogs
 from .models import ErrorDescription
@@ -331,6 +333,15 @@ EXPLORATIONS_INTRO_HELP = "Select a table below to start a new exploration, or a
 EXPLORATION_VIEW_HELP = "Use < > to expand/collapse panels. Edit the spec (top) and the view (bottom) syncs. Click ✨ to ask LLM to revise."
 
 
+def _get_default_llm():
+    """
+    Get the default LLM instance, trying to find an available one first,
+    falling back to OpenAI if none are available.
+    """
+    result = get_available_llm()
+    return result() if result is not None else OpenAI()
+
+
 class UI(Viewer):
     """
     UI provides a baseclass and high-level entrypoint to start chatting with your data.
@@ -368,7 +379,7 @@ class UI(Viewer):
     interface = param.ClassSelector(class_=ChatFeed, doc="""
         The interface for the Coordinator to interact with.""")
 
-    llm = param.ClassSelector(class_=Llm, default=OpenAI(), doc="""
+    llm = param.ClassSelector(class_=Llm, default=_get_default_llm(), doc="""
         The LLM provider to be used by default""")
 
     llm_choices = param.List(default=[], doc="""
@@ -461,6 +472,7 @@ class UI(Viewer):
         sources = []
         remote = False
         mirrors, tables = {}, {}
+
         for src in data:
             if isinstance(src, Source):
                 sources.append(src)
@@ -472,6 +484,24 @@ class UI(Viewer):
                     src = str(src)
                 else:
                     name = src = str(src)
+
+                # Handle .db files as SQLite databases via SQLAlchemy
+                if src.endswith('.db'):
+                    try:
+                        from ..sources.sqlalchemy import SQLAlchemySource
+                        db_path = Path(src).absolute()
+                        source = SQLAlchemySource(
+                            url=f'sqlite:///{db_path}',
+                            name=name
+                        )
+                        sources.append(source)
+                    except ImportError as e:
+                        raise ImportError(
+                            "SQLAlchemy is required to read .db files. "
+                            "Install it with: pip install sqlalchemy"
+                        ) from e
+                    continue
+
                 if src.startswith('http'):
                     remote = True
                 if src.endswith(('.parq', '.parquet', '.csv', '.json', '.tsv', '.jsonl', '.ndjson')):
@@ -793,19 +823,24 @@ class UI(Viewer):
             **self.coordinator_params
         )
 
+    def _get_status_text(self) -> str:
+        """Generate the status text showing sources and LLM provider."""
+        num_sources = len(self.context.get("sources", []))
+        llm_name = type(self.llm).__name__
+
+        if num_sources == 0:
+            status = f"Drag & drop your dataset here to begin; using **{llm_name}** as the LLM provider."
+        else:
+            sources_text = f"**{num_sources} source{'s' if num_sources > 1 else ''} connected**"
+            status = f"{sources_text}; using **{llm_name}** as the LLM provider."
+
+        return f"{status} {SPLASH_HELP_HINT}"
+
     def _render_header(self) -> list[Viewable]:
         return []
 
     def _render_main(self) -> list[Viewable]:
-        num_sources = len(self.context.get("sources", []))
-        if num_sources == 0:
-            prefix_text = "Drag & drop your dataset here to begin, then"
-        else:
-            prefix_text = f"{num_sources} source{'s' if num_sources > 1 else ''} connected;"
-
-        self._cta = Typography(
-            f"{prefix_text} ask any question, or select a quick action below. {SPLASH_HELP_HINT}"
-        )
+        self._cta = Typography(self._get_status_text())
 
         self._splash = MuiColumn(
             Paper(
@@ -1089,13 +1124,8 @@ class UI(Viewer):
         if hasattr(self, '_source_catalog'):
             self._source_catalog.sync(self.context)
 
-        num_sources = len(self.context.get("sources", []))
-        if num_sources == 0:
-            prefix_text = "Drag & drop your dataset here to begin, then"
-        else:
-            prefix_text = f"{num_sources} source{'s' if num_sources > 1 else ''} connected;"
         if hasattr(self, '_cta'):
-            self._cta.object = f"{prefix_text} ask any question, or select a quick action below. {SPLASH_HELP_HINT}"
+            self._cta.object = self._get_status_text()
 
         # Update help dialog content when sources change
         if hasattr(self, '_help_content'):

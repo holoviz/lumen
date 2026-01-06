@@ -321,6 +321,7 @@ class Planner(Coordinator):
                 is_follow_up=is_follow_up,
             )
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
+
             async for reasoning in self.llm.stream(
                 messages=messages,
                 system=system,
