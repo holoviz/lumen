@@ -265,6 +265,53 @@ Recommended ranges: 0.1 (SQL) to 0.4 (chat).
     ui.servable()
     ```
 
+### AWS Bedrock
+
+**Prerequisites:**
+
+- Lumen AI installed in your Python environment
+- `boto3` installed: `pip install boto3`
+- AWS credentials with access to Bedrock foundation models
+
+**Default models:**
+
+- `default`: `us.anthropic.claude-sonnet-4-5`
+- `edit`: `us.anthropic.claude-opus-4-5`
+
+**Popular models:**
+
+- **`us.anthropic.claude-sonnet-4-5`** - High intelligence cross-region inference profile
+- **`us.anthropic.claude-haiku-4-5`** - High performance cross-region inference profile
+- **`us.anthropic.claude-opus-4-5`** - Highest intelligence cross-region inference profile
+- **`us.anthropic.claude-3-5-sonnet-20241022-v2:0`** - Performance cross-region inference profile
+
+**Environment variables:**
+
+- `AWS_ACCESS_KEY_ID`: Your AWS access key ID (required)
+- `AWS_SECRET_ACCESS_KEY`: Your AWS secret access key (required)
+- `AWS_SESSION_TOKEN`: Your AWS session token (optional)
+- `AWS_DEFAULT_REGION`: Your AWS region (e.g. `us-east-1`)
+
+=== "CLI"
+
+    ``` bash
+    export AWS_ACCESS_KEY_ID="..."
+    export AWS_SECRET_ACCESS_KEY="..."
+    lumen-ai serve penguins.csv --provider bedrock
+    ```
+
+=== "Python"
+
+    ``` py
+    llm = lmai.llm.Bedrock(
+        aws_access_key_id='...',
+        api_key='...', # Secret Access Key
+        region_name='us-east-1'
+    )
+    ui = lmai.ExplorerUI(data='penguins.csv', llm=llm)
+    ui.servable()
+    ```
+
 ### Ollama (local)
 
 **Prerequisites:**
@@ -347,6 +394,7 @@ Recommended ranges: 0.1 (SQL) to 0.4 (chat).
     - **Anthropic**: `"claude-sonnet-4-5"`, `"claude-haiku-4-5"`, `"claude-opus-4-5"`
     - **Google**: `"gemini/gemini-2.0-flash"`, `"gemini/gemini-2.0-flash-thinking-exp"`
     - **Azure**: `"azure/your-deployment-name"`
+    - **Bedrock**: `"us.anthropic.claude-sonnet-4-5"`
     - **Cohere**: `"command-r-plus"`
     
     See [LiteLLM providers](https://docs.litellm.ai/docs/providers) for complete list.
@@ -508,6 +556,7 @@ OpenAI • Anthropic • Google Gemini • Azure • AWS Bedrock • Cohere • 
     - **Google**: `"gemini/gemini-2.5-flash"`, `"gemini/gemini-2.5-pro"`
     - **Mistral**: `"mistral/mistral-medium-latest"`, `"mistral/mistral-small-latest"`
     - **Azure**: `"azure/your-deployment-name"`
+    - **Bedrock**: `"bedrock/us.anthropic.claude-sonnet-4-5"`
     - **Cohere**: `"command-r-plus"`
     
     See [LiteLLM providers](https://docs.litellm.ai/docs/providers) for complete list.
