@@ -922,12 +922,11 @@ class Google(Llm):
         for message in messages:
             role = message["role"]
             content = message["content"]
-
-            if role == "system":
-                system_instruction = content
-                continue
-            elif role == "user":
-                role = "user"
+            if role == "assistant":
+                role = "model"
+            elif role in ("user", "system"):
+                # keep role as-is for user and system messages
+                pass
             else:
                 role = "model"
 
