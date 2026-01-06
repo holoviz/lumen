@@ -157,7 +157,6 @@ class Llm(param.Parameterized):
             return model_spec
 
         model_kwargs = self.model_kwargs.get(model_spec) or self.model_kwargs["default"]
-        log_debug(f"LLM Model: \033[96m{model_kwargs.get('model')!r}\033[0m")
         return dict(model_kwargs)
 
     def _get_create_kwargs(self, response_model: type[BaseModel] | None) -> dict[str, Any]:
@@ -366,16 +365,15 @@ class Llm(param.Parameterized):
         try:
             async for chunk in chunks:
                 if response_model is None:
-                    delta = self._get_delta(chunk)
-                    string += delta
+                    string += self._get_delta(chunk)
                     yield string
                 else:
                     yield getattr(chunk, field) if field is not None else chunk
         except TypeError:
+            # Handle synchronous iterators
             for chunk in chunks:
                 if response_model is None:
-                    delta = self._get_delta(chunk)
-                    string += delta
+                    string += self._get_delta(chunk)
                     yield string
                 else:
                     yield getattr(chunk, field) if field is not None else chunk
@@ -563,6 +561,7 @@ class OpenAI(Llm, OpenAIMixin):
     async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         model_kwargs = self._get_model_kwargs(model_spec)
         model = model_kwargs.pop("model")
+        log_debug(f"LLM Model: \033[96m{model!r}\033[0m")
         mode = model_kwargs.pop("mode", self.mode)
 
         # Use the mixin to create the OpenAI client
@@ -868,28 +867,42 @@ class Google(Llm):
 
     temperature = param.Number(default=1, bounds=(0, 1), constant=True)
 
-    thinking_level = param.Selector(default="low", objects=["low", "medium", "high"])
-
     timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
         The timeout in seconds for Google AI API calls.""")
 
     _supports_model_stream = True
 
+    # Cached genai client to avoid creating new aiohttp sessions on each call
+    _genai_client = None
+
     @property
     def _client_kwargs(self):
         return {}
 
+    def _get_genai_client(self):
+        """Get or create a cached genai.Client instance."""
+        if self._genai_client is None:
+            from google import genai
+            self._genai_client = genai.Client(api_key=self.api_key)
+        return self._genai_client
+
     @classmethod
     def _get_delta(cls, chunk: Any) -> str:
-        """Extract delta content from streaming response."""
+        """Extract delta content from streaming response or full response."""
         if hasattr(chunk, 'text'):
-            return chunk.text
-        elif hasattr(chunk, 'content') and chunk.content:
+            return chunk.text or ""
+        if hasattr(chunk, 'content') and chunk.content:
             return chunk.content
+        # Handle full response from generate_content (non-streaming fallback)
+        if hasattr(chunk, 'candidates') and chunk.candidates:
+            candidate = chunk.candidates[0]
+            if hasattr(candidate, 'content') and candidate.content:
+                if hasattr(candidate.content, 'parts') and candidate.content.parts:
+                    return candidate.content.parts[0].text or ""
         return ""
 
     @classmethod
-    def _messages_to_contents(cls, messages: list[Message]) -> list[dict[str, Any]]:
+    def _messages_to_contents(cls, messages: list[Message]) -> tuple[list[dict[str, Any]], str | None]:
         """
         Transform messages into contents format expected by Google GenAI API.
 
@@ -900,47 +913,47 @@ class Google(Llm):
 
         Returns
         -------
-        list[dict[str, Any]]
-            List of content dictionaries with 'role' and 'parts' fields.
+        tuple[list[dict[str, Any]], str | None]
+            Tuple of (contents list, system_instruction string or None)
         """
         contents = []
+        system_instruction = None
+
         for message in messages:
             role = message["role"]
             content = message["content"]
 
             if role == "system":
-                role = "system"
-            if role == "assistant":
-                role = "model"
+                system_instruction = content
+                continue
             elif role == "user":
                 role = "user"
             else:
-                continue
+                role = "model"
 
             contents.append({
                 "role": role,
                 "parts": [{"text": content}]
             })
 
-        return contents
+        return contents, system_instruction
 
     async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
-        from google import genai
         model_kwargs = self._get_model_kwargs(model_spec)
         model = model_kwargs.pop("model")
+        log_debug(f"LLM Model: \033[96m{model!r}\033[0m")
         mode = model_kwargs.pop("mode", self.mode)
 
-        llm = genai.Client(api_key=self.api_key, **model_kwargs)
+        # Reuse cached client to avoid aiohttp session issues
+        llm = self._get_genai_client()
 
         if response_model:
             client = instructor.from_genai(llm, mode=mode, use_async=True)
             return partial(client.chat.completions.create, model=model, **self._get_create_kwargs(response_model))
+        elif kwargs.get("stream"):
+            return partial(llm.aio.models.generate_content_stream, model=model)
         else:
-            chat = llm.aio.models
-            if kwargs.pop("stream", None):
-                return partial(chat.generate_content_stream, model=model, **self._get_create_kwargs(response_model))
-            else:
-                return partial(chat.generate_content, model=model, **self._get_create_kwargs(response_model))
+            return partial(llm.aio.models.generate_content, model=model)
 
     async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
         """Override to handle Gemini-specific message format conversion."""
@@ -954,19 +967,27 @@ class Google(Llm):
                 "You can install it with `pip install -U google-genai`."
             ) from exc
 
-        model_kwargs = self._get_model_kwargs(model_spec)
-        client = await self.get_client(model_spec, **kwargs)
-        http_options = HttpOptions(timeout=self.timeout)
-        thinking_config = ThinkingConfig(thinking_level=model_kwargs.get("thinking_level", self.thinking_level), include_thoughts=False)
-        config = GenerateContentConfig(
-            http_options=http_options, temperature=self.temperature, thinking_config=thinking_config,
-        )
-        if kwargs.get("response_model"):
-            return await client(messages=messages, config=config, **kwargs)
+        response_model = kwargs.get("response_model")
+        http_options = HttpOptions(timeout=self.timeout * 1000)  # timeout is in milliseconds
+        thinking_config = ThinkingConfig(thinking_budget=0, include_thoughts=False)
 
-        kwargs.pop("stream", None)
-        contents = self._messages_to_contents(messages)
-        return await client(contents=contents, config=config, **kwargs)
+        client_result = await self.get_client(model_spec, **kwargs)
+        contents, system_instruction = self._messages_to_contents(messages)
+        config = GenerateContentConfig(
+            http_options=http_options,
+            temperature=self.temperature,
+            thinking_config=thinking_config,
+            system_instruction=system_instruction,
+        )
+
+        if response_model:
+            # client_result is a partial callable from instructor
+            result = await client_result(messages=messages, config=config, **kwargs)
+            return result
+
+        kwargs.pop("stream", None)  # already handled
+        result = await client_result(contents=contents, config=config, **kwargs)
+        return result
 
 
 class AINavigator(OpenAI):

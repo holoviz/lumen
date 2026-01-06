@@ -88,14 +88,18 @@ class Agent(Viewer, ToolUser, ContextProvider):
         message = None
         model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
         output = self.llm.stream(messages, system=system_prompt, model_spec=model_spec, field="output")
-        async for output_chunk in output:
-            if self.interface is None:
-                if message is None:
-                    message = ChatMessage(output_chunk, user=self.user)
+        try:
+            async for output_chunk in output:
+                if self.interface is None:
+                    if message is None:
+                        message = ChatMessage(output_chunk, user=self.user)
+                    else:
+                        message.object = output_chunk
                 else:
-                    message.object = output_chunk
-            else:
-                message = self.interface.stream(output_chunk, replace=True, message=message, user=self.user, max_width=self._max_width)
+                    message = self.interface.stream(output_chunk, replace=True, message=message, user=self.user, max_width=self._max_width)
+        except Exception as e:
+            traceback.print_exc()
+            raise e
         return message
 
     async def _gather_prompt_context(self, prompt_name: str, messages: list, context: TContext, **kwargs):
