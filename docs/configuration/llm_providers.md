@@ -287,9 +287,10 @@ Recommended ranges: 0.1 (SQL) to 0.4 (chat).
 
 **Environment variables:**
 
-- `AWS_ACCESS_KEY_ID`: Your AWS access key ID (required)
-- `AWS_SECRET_ACCESS_KEY`: Your AWS secret access key (required)
+- `AWS_ACCESS_KEY_ID`: Your AWS access key ID (required if not using SSO)
+- `AWS_SECRET_ACCESS_KEY`: Your AWS secret access key (required if not using SSO)
 - `AWS_SESSION_TOKEN`: Your AWS session token (optional)
+- `AWS_PROFILE`: Your AWS profile name (for SSO or named profiles)
 - `AWS_DEFAULT_REGION`: Your AWS region (e.g. `us-east-1`)
 
 === "CLI"
@@ -297,6 +298,14 @@ Recommended ranges: 0.1 (SQL) to 0.4 (chat).
     ``` bash
     export AWS_ACCESS_KEY_ID="..."
     export AWS_SECRET_ACCESS_KEY="..."
+    lumen-ai serve penguins.csv --provider bedrock
+    ```
+
+=== "SSO Login"
+
+    ``` bash
+    aws sso login --profile your-profile
+    export AWS_PROFILE=your-profile
     lumen-ai serve penguins.csv --provider bedrock
     ```
 
