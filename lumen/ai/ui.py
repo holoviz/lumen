@@ -1668,7 +1668,14 @@ class ExplorerUI(UI):
             self._main[:] = [self._navigation, main] if len(self._explorations.items) > 1 else [main]
 
     def _delete_exploration(self, item):
-        self._explorations.items = [it for it in self._explorations.items if it is not item]
+        with hold():
+            if item in self._explorations.items:
+                self._explorations.items = [it for it in self._explorations.items if it is not item]
+                self._explorations.value = self._home
+            else:
+                parent = item["parent"]
+                self._explorations.update_item(parent, items=[it for it in parent["items"] if it is not item])
+                self._explorations.value = parent
 
     def _destroy(self, session_context):
         """
@@ -1761,6 +1768,7 @@ class ExplorerUI(UI):
             'view': exploration,
             'icon': "insights",
             'actions': [{'action': 'remove', 'label': 'Remove', 'icon': 'delete'}],
+            'parent': parent_item if plan.is_followup else self._home,
             'items': []
         }
         with hold():
