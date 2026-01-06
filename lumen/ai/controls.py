@@ -19,9 +19,9 @@ from panel.pane.markup import HTML, Markdown
 from panel.viewable import Viewer
 from panel.widgets import FileDropper
 from panel_material_ui import (
-    Button, Card, ChatAreaInput, Column as MuiColumn, IconButton,
-    LinearProgress, Popup, RadioButtonGroup, Select, Tabs, TextInput,
-    ToggleIcon, Tree, Typography,
+    Button, Card, Column as MuiColumn, IconButton, LinearProgress, Popup,
+    RadioButtonGroup, Select, Tabs, TextAreaInput, TextInput, ToggleIcon, Tree,
+    Typography,
 )
 
 from ..config import load_yaml
@@ -538,9 +538,10 @@ class UploadControls(BaseSourceControls):
         self._file_input = FileDropper(
             layout="compact",
             multiple=self.param.multiple,
-            margin=0,
+            margin=1,
             sizing_mode="stretch_width",
             disabled=self.param.disabled,
+            stylesheets=[".bk-input.filepond--root { box-shadow: unset; cursor: grab; } .bk-input.filepond--root:not([disabled]):hover { box-shadow: unset; }"]
         )
         self._file_input.param.watch(self._on_file_upload, "value")
 
@@ -594,23 +595,22 @@ class DownloadControls(BaseSourceControls):
     Controls for downloading files from URLs.
     """
 
-    download_url = param.String(default="", doc="URL input for downloading files")
+    download_url = param.String(default="", doc="Enter one or more URLs, one per line, and press <Shift+Enter> to download", label="Download URL(s)")
 
-    input_placeholder = param.String(default="Enter URLs, one per line, and press <Enter> to download")
+    input_placeholder = param.String(default="Enter URLs, one per line, and press <Shift+Enter> to download")
 
     _active_download_task = param.ClassSelector(class_=asyncio.Task)
 
     def __init__(self, **params):
         super().__init__(**params)
 
-        self._url_input = ChatAreaInput.from_param(
+        self._url_input = TextAreaInput.from_param(
             self.param.download_url,
             placeholder=self.param.input_placeholder,
             rows=4,
             margin=10,
             sizing_mode="stretch_width",
             disabled=self.param.disabled,
-            enable_upload=False
         )
         self._url_input.param.watch(self._handle_urls, "enter_pressed")
 
@@ -1150,7 +1150,8 @@ class SourceCatalog(Viewer):
             self._docs_tree,
             self._sources_title,
             self._sources_tree,
-            sizing_mode="stretch_width"
+            sizing_mode="stretch_width",
+            margin=(0, 0, 10, 0)
         )
 
         # Track the mapping from tree paths to source/table/metadata

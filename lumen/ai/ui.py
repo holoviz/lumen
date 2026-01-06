@@ -21,9 +21,8 @@ from panel.viewable import (
 )
 from panel_material_ui import (
     Breadcrumbs, Button, ChatFeed, ChatInterface, ChatMessage,
-    Column as MuiColumn, Dialog, FileDownload, IconButton, MenuList,
-    NestedBreadcrumbs, Page, Paper, Popup, Row, Switch, Tabs, ToggleIcon,
-    Typography,
+    Column as MuiColumn, Dialog, FileDownload, IconButton, MenuList, Page,
+    Paper, Popup, Row, Switch, Tabs, ToggleIcon, Typography,
 )
 from panel_splitjs import HSplit, MultiSplit, VSplit
 
@@ -293,9 +292,8 @@ DATA_SOURCES_HELP = """
 
 **How to add data:**
 
-1. **Upload** — Drag and drop files or click to browse
-2. **Download** — Enter URLs to fetch remote data
-3. **View** — The Source Catalog shows all connected tables
+1. **Upload Data** — Drag and drop files or click to browse
+2. **Fetch Remote Data** — Enter URLs to fetch remote data
 
 **Tips:**
 
@@ -668,7 +666,7 @@ class UI(Viewer):
 
                 # Open the Data Sources dialog
                 self._sources_dialog_content.open = True
-                self._source_breadcrumbs.active = (0,)  # Navigate to Upload tab
+                self._source_content.active = 0  # Navigate to Upload tab
                 return
 
             with self.interface.param.update(disabled=True, loading=True):
@@ -711,28 +709,20 @@ class UI(Viewer):
         if not event.new:  # No files uploaded
             return
 
-        # Generate file cards in the upload controls
-        self._upload_controls._generate_file_cards({
-            key: value["value"] for key, value in event.new.items()
-        })
+        with hold():
+            # Generate file cards in the upload controls
+            self._upload_controls._generate_file_cards({
+                key: value["value"] for key, value in event.new.items()
+            })
+            self._sources_dialog_content.open = True
 
-        # Open the Data Sources dialog
-        self._sources_dialog_content.open = True
-
-        # Set the breadcrumbs to "Upload" to show the uploaded files
-        # (0,) means Upload
-        self._source_breadcrumbs.active = (0,)
+            # Set the breadcrumbs to "Upload" to show the uploaded file (0 means Upload)
+            self._source_content.active = 0
 
     def _handle_upload_successful(self, event):
         """Handle successful file upload by switching to Source Catalog and executing pending query."""
-        active = self._source_breadcrumbs.active
-        # Navigate to Source Catalog under current selection (Upload or Download)
-        # active is (0,) for Upload or (1,) for Download
-        # We want (0, 0) for Upload > Source Catalog or (1, 0) for Download > Source Catalog
-        if len(active) >= 1:
-            self._source_breadcrumbs.active = (active[0], 0)
-        else:
-            self._source_breadcrumbs.active = (0, 0)
+
+        # Maybe expand
 
         # Execute pending query if one exists
         if self._pending_query is not None or self._pending_sources_snapshot is not None:
@@ -781,26 +771,6 @@ class UI(Viewer):
             chat_input.value_input = self._pending_query
             self._pending_query = None
             self._pending_sources_snapshot = None
-
-    def _update_source_content(self, event):
-        """Update the source dialog content based on breadcrumb selection."""
-        active = event.new
-        if len(active) == 1:
-            # Upload (0,) or Download (1,)
-            if active[0] == 0:
-                self._source_content[:] = [self._upload_controls]
-            else:
-                self._source_content[:] = [self._download_controls]
-            self._sources_help_caption.object = (
-                "Add data to explore with Lumen AI. Supports CSV, Parquet, JSON, Excel, and databases. "
-                "Select between data / metadata and set an alias."
-            )
-        elif len(active) == 2:
-            # Upload > Source Catalog (0, 0) or Download > Source Catalog (1, 0)
-            self._source_content[:] = [self._source_catalog]
-            self._sources_help_caption.object = (
-                "Check on the box to make the source visible to the LLM. Associate metadata with datasets"
-            )
 
     def _configure_coordinator(self):
         # Set up table upload callbacks on all control classes
@@ -976,27 +946,11 @@ class UI(Viewer):
         self._download_controls.param.watch(self._handle_upload_successful, 'upload_successful')
 
         # Content container that switches based on breadcrumb selection
-        self._source_content = MuiColumn(self._upload_controls, sizing_mode="stretch_width")
-
-        self._source_breadcrumbs = NestedBreadcrumbs(
-                items=[{
-                        "label": "Upload",
-                        "icon": "upload",
-                        "items": [
-                            {"label": "Source Catalog", "icon": "storage"}
-                        ]
-                    },
-                    {
-                        "label": "Download",
-                        "icon": "download",
-                        "items": [
-                            {"label": "Source Catalog", "icon": "storage"}
-                        ]
-                    }],
-            active=(0,),
-            margin=(0, 10, 10, 10),
+        self._source_content = Tabs(
+            ('<span class="material-icons" style="vertical-align: middle;">upload</span> Upload Data', self._upload_controls),
+            ('<span class="material-icons" style="vertical-align: middle;">download</span> Fetch Remote Data', self._download_controls),
+            sizing_mode="stretch_width"
         )
-        self._source_breadcrumbs.param.watch(self._update_source_content, 'active')
 
         self._sources_help_caption = Typography(
             "Add data to explore with Lumen AI. Supports CSV, Parquet, JSON, Excel, and databases. "
@@ -1008,9 +962,9 @@ class UI(Viewer):
 
         self._sources_dialog_content = Dialog(
             MuiColumn(
-                self._source_breadcrumbs,
                 self._sources_help_caption,
-                self._source_content,
+                Paper(self._source_content, margin=(0, 0, 10, 0)),
+                Paper(self._source_catalog, max_height=400, sx={"overflowX": "auto"}),
                 sizing_mode="stretch_width"
             ),
             close_on_click=True, show_close_button=True, width_option='lg',
@@ -1164,10 +1118,6 @@ class UI(Viewer):
     def _open_sources_dialog(self, event=None):
         """Open the sources dialog when the vector store badge is clicked."""
         # Navigate to Source Catalog if sources exist, otherwise Upload
-        if self.context.get("sources"):
-            self._source_breadcrumbs.active = (0, 0)  # Upload > Source Catalog
-        else:
-            self._source_breadcrumbs.active = (0,)  # Upload
         self._sources_dialog_content.open = True
 
     def _open_info_dialog(self, event=None):
@@ -1646,7 +1596,6 @@ class ExplorerUI(UI):
             # Show message and button to go back to exploration
             no_explorations_msg = Markdown(
                 "### No Explorations Yet\n\nGenerate an exploration first by asking a question about your data.",
-                sizing_mode="stretch_width",
             )
             back_button = Button(
                 label="Back to Exploration",
@@ -1654,7 +1603,7 @@ class ExplorerUI(UI):
                 button_type="primary",
                 on_click=lambda e: self._handle_sidebar_event(self._sidebar_menu.items[0]),
             )
-            main = Column(no_explorations_msg, back_button, sizing_mode="stretch_both", align="center", margin=20)
+            main = Column(no_explorations_msg, back_button, styles={"margin": "auto"})
         elif active:
             main = Report(
                 *(Section(item["view"].plan, *(it.plan for it in item["items"]), title=item["view"].plan.title)
