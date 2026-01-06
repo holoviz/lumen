@@ -72,14 +72,12 @@ class Plan(Section):
             instruction = task.instruction
             if failed and idx == i:
                 status = "❌"
+            elif i == idx:
+                status = "🟡"
+            elif idx < i:
+                status = "🟢"
             else:
-                if i == idx:
-                    instruction = f"<u>{instruction}</u>"
-                if idx < i:
-                    status = "x"
-                else:
-                    status = " "
-                status = f"[{status}]"
+                status = "⚪"
             todos_list.append(f"- {status} {instruction}")
         todos = "\n".join(todos_list)
 
