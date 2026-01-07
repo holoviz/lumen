@@ -344,6 +344,7 @@ class Planner(Coordinator):
         messages: list[Message],
         context: TContext,
         previous_actors: list[str],
+        is_followup: bool = False
     ) -> tuple[Plan, set[str], list[str]]:
         table_provided = False
         tasks = []
@@ -433,7 +434,10 @@ class Planner(Coordinator):
                 log_debug(f"Skipping summarization with {actor} due to conflicts: {conflicts}")
                 raw_plan.steps = steps
                 previous_actors = actors
-                return Plan(*tasks, title=raw_plan.title, history=messages, context=context, coordinator=self, steps_layout=self.steps_layout), previous_actors
+                plan = Plan(
+                    *tasks, title=raw_plan.title, history=messages, context=context, coordinator=self, steps_layout=self.steps_layout, is_followup=is_followup
+                )
+                return plan, previous_actors
 
             summarize_step = type(step)(
                 actor=actor,
@@ -461,7 +465,10 @@ class Planner(Coordinator):
             actors_in_graph.add("ValidationAgent")
 
         raw_plan.steps = steps
-        return Plan(*tasks, title=raw_plan.title, history=messages, context=context, coordinator=self, steps_layout=self.steps_layout), actors
+        plan = Plan(
+            *tasks, title=raw_plan.title, history=messages, context=context, coordinator=self, steps_layout=self.steps_layout, is_followup=is_followup
+        )
+        return plan, actors
 
     async def _compute_plan(
         self, messages: list[Message], context: TContext, agents: dict[str, Agent], tools: dict[str, Tool], pre_plan_output: dict[str, Any]
@@ -469,6 +476,7 @@ class Planner(Coordinator):
         tool_names = list(tools)
         agent_names = list(agents)
         plan_model = self._get_model("main", agents=agent_names, tools=tool_names)
+        is_followup = pre_plan_output["is_follow_up"]
 
         planned = False
         unmet_dependencies = set()
@@ -492,7 +500,7 @@ class Planner(Coordinator):
                         previous_plans,
                         plan_model,
                         istep,
-                        is_follow_up=pre_plan_output["is_follow_up"],
+                        is_follow_up=is_followup,
                     )
                 except asyncio.CancelledError as e:
                     self._todos_title.object = istep.failed_title = "Planning was cancelled, please try again."
@@ -503,7 +511,9 @@ class Planner(Coordinator):
                     self._todos_title.object = "Planner could not settle on a plan of action to perform the requested query. Please restate your request."
                     traceback.print_exception(e)
                     raise e
-                plan, previous_actors = await self._resolve_plan(raw_plan, agents, tools, messages, context, previous_actors)
+                plan, previous_actors = await self._resolve_plan(
+                    raw_plan, agents, tools, messages, context, previous_actors, is_followup=is_followup
+                )
                 try:
                     plan.validate()
                 except ContextError as e:

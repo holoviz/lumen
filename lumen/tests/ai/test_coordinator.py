@@ -83,7 +83,7 @@ async def test_planner_simple_plan(llm):
     assert reasoning_step[0].object == "Just use ChatAgent"
     title, todos = steps_layout.header
     assert title.object == "🧾 Checklist ready..."
-    assert todos.object == "- [ ] Say Hello!"
+    assert todos.object == "- ⚪ Say Hello!"
 
     assert isinstance(plan, Plan)
     assert plan.title == "Hello!"
