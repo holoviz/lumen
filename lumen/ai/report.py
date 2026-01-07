@@ -422,7 +422,7 @@ class TaskGroup(Task):
                         break
                 views += new
             finally:
-                self._current = i + 1
+                self._current = i + (0 if task.status == "error" else 1)
         if self.status != "error":
             self.status = "success"
         contexts = [self.context] if self.context else []

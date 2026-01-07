@@ -614,7 +614,7 @@ class UI(Viewer):
 
     def _transition_to_chat(self):
         """Transition from splash screen to chat interface."""
-        if self._main[0] is not self.interface:
+        if self._main[0] not in (self.interface, self._navigation):
             self._main[0] = self.interface
 
     def _configure_interface(self, interface):
@@ -1487,7 +1487,6 @@ class ExplorerUI(UI):
         super()._render_page()
         self._page.sidebar_width = self._sidebar_collapse.rx().rx.where(61, 183)
 
-
     def _render_main(self) -> list[Viewable]:
         main = super()._render_main()
 
@@ -1556,29 +1555,27 @@ class ExplorerUI(UI):
         return main
 
     async def _add_exploration_from_explorer(self, event: param.parameterized.Event | None = None):
-        sql_out = self._explorer.create_sql_output()
-        if sql_out is None:
+        if self._explorer.table_slug is None:
             return
 
         table = self._explorer.table_slug.split(SOURCE_TABLE_SEPARATOR)[0]
+        self._transition_to_chat()
+        self.interface.send(f"Add exploration for the `{table}` table", respond=False)
+
+        # Flush UI
+        await asyncio.sleep(0.01)
+
         prev = self._explorations.value
         sql_agent = next(agent for agent in self._coordinator.agents if isinstance(agent, SQLAgent))
-        sql_task = ActorTask(sql_agent, title=f"Load {table}")
-        plan = Plan(sql_task, title=f"Explore {table}")
+        sql_out = self._explorer.create_sql_output()
+        out_context = await sql_out.render_context()
+        sql_task = ActorTask(sql_agent, title=f"Load {table}", views=[sql_out], out_context=out_context, status="success")
+        plan = Plan(sql_task, title=f"Explore {table}", context=self.context, status="success")
 
         with hold():
-            self._transition_to_chat()
             exploration = await self._add_exploration(plan, self._home)
-            self.interface.send(f"Add exploration for the `{table}` table", respond=False)
-            out_context = await sql_out.render_context()
-            watcher = plan.param.watch(partial(self._add_views, exploration), "views")
-            try:
-                sql_task.param.update(
-                    views=[sql_out], out_context=out_context, status="success"
-                )
-            finally:
-                plan.param.unwatch(watcher)
-                await self._postprocess_exploration(plan, exploration, prev, is_new=True)
+            self._add_views(exploration, items=plan.views)
+            await self._postprocess_exploration(plan, exploration, prev, is_new=True)
 
     def _configure_session(self):
         self._home = self._last_synced = Exploration(
@@ -1819,11 +1816,12 @@ class ExplorerUI(UI):
                     return i
         return None
 
-    def _add_views(self, exploration: Exploration, event: param.parameterized.Event):
+    def _add_views(self, exploration: Exploration, event: param.parameterized.Event | None = None, items: list | None = None):
         tabs = exploration.view[0]
         content = []
-        for view in event.new:
-            if not isinstance(view, LumenOutput) or view in event.old:
+        new_items = items if event is None else event.new
+        for view in new_items:
+            if not isinstance(view, LumenOutput) or (event and view in event.old):
                 continue
             if tabs and isinstance(view, SQLOutput) and not exploration.initialized:
                 tabs[0] = ("Data Source", view.render_explorer())

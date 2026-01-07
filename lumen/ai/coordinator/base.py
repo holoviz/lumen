@@ -81,7 +81,7 @@ class Plan(Section):
             todos_list.append(f"- {status} {instruction}")
         todos = "\n".join(todos_list)
 
-        formatted_content = f"User Request: {user_query['content']!r}\n\nComplete the underlined todo:\n{todos}"
+        formatted_content = (f"User Request: {user_query['content']!r}\n\n" if user_query else "") + f"Complete the current todo:\n{todos}"
         rendered_history = []
         for msg in self.history:
             if msg is user_query:

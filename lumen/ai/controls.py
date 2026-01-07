@@ -1268,7 +1268,7 @@ class SourceCatalog(Viewer):
         - Sources: If ALL their tables are in visible_slugs
         """
         active = []
-        visible_slugs = self.context.get("visible_slugs")
+        visible_slugs = self.context.get("visible_slugs", [])
         available_metadata = self._available_metadata
         meta_filenames = [m["filename"] for m in available_metadata]
 
