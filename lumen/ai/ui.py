@@ -789,6 +789,7 @@ class UI(Viewer):
             )
         elif len(active) == 2:
             # Upload > Source Catalog (0, 0) or Download > Source Catalog (1, 0)
+            self._source_catalog._layout.loading = True
             self._source_content[:] = [self._source_catalog]
             self._sources_help_caption.object = (
                 "Check on the box to make the source visible to the LLM. Associate metadata with datasets"
