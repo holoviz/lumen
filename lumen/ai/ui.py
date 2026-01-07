@@ -2002,7 +2002,7 @@ class ExplorerUI(UI):
             ), "role": "user"}],
             response_model=ErrorDescription
         )
-        explanation = f"⚠️ **Unable to complete your request**\n\n{response.explanation}"
+        explanation = f"❌ **Unable to complete your request**\n\n{response.explanation}"
         tabs = exploration.view[0]
         if exploration.initialized:
             tabs.append(("Error", Markdown(explanation, margin=(5, 20))))
