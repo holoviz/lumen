@@ -658,7 +658,7 @@ class UI(Viewer):
                 chat_input.value_uploaded = {}
 
                 # Store the pending query to execute after files are added
-                self._pending_query = user_prompt
+                self._pending_query = user_prompt or None
                 self._pending_sources_snapshot = list(self.context.get("sources", []))
 
                 # Clear the input
@@ -721,11 +721,7 @@ class UI(Viewer):
 
     def _handle_upload_successful(self, event):
         """Handle successful file upload by switching to Source Catalog and executing pending query."""
-
-        # Maybe expand
-
-        # Execute pending query if one exists
-        if self._pending_query is not None or self._pending_sources_snapshot is not None:
+        if self._pending_query is not None:
             self._execute_pending_query()
 
     def _execute_pending_query(self):
@@ -736,8 +732,6 @@ class UI(Viewer):
         # Clear pending state first (before any dialog operations)
         self._pending_query = None
         self._pending_sources_snapshot = None
-
-        # Note: Dialog stays open so user can review the Source Catalog
 
         # Build message with new sources info
         new_sources = [
@@ -1087,6 +1081,10 @@ class UI(Viewer):
 
         if hasattr(self, '_cta'):
             self._cta.object = self._get_status_text()
+
+        if hasattr(self, '_splash_tabs'):
+            num_sources = len(self.context.get("sources", []))
+            self._splash_tabs.disabled = [] if num_sources else [1]
 
         # Update help dialog content when sources change
         if hasattr(self, '_help_content'):
@@ -1503,11 +1501,14 @@ class ExplorerUI(UI):
             self._explorations_help_caption,
             self._explorer
         )
-        self._splash[0][1] = Tabs(
+        num_sources = len(self.context.get("sources", []))
+        self._splash_tabs = Tabs(
             ("Chat with Data", self._chat_splash),
             ("Browse Data", self._explorer_splash),
+            disabled=[] if num_sources else [1],
             margin=(0, 10)
         )
+        self._splash[0][1] = self._splash_tabs
 
         # Initialize home as empty
         self._home.view = MuiColumn()
