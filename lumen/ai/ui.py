@@ -1497,7 +1497,8 @@ class ExplorerUI(UI):
             ("Chat with Data", self.interface._widget),
             ("Select Data to Explore", self._explorer),
             disabled=[] if num_sources else [1],
-            height=125,
+            min_height=125,
+            sizing_mode="stretch_height",
             stylesheets=[".MuiTabsPanel > .MuiBox-root { overflow: visible}"]
         )
 
