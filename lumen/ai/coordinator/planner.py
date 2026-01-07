@@ -65,7 +65,12 @@ class Reasoning(BaseModel):
         high-level, data-focused, or other. Identify the most relevant and compatible actors,
         explaining their requirements, and what you already have satisfied. If there were previous failures, discuss them.
         IMPORTANT: Ensure no consecutive steps use the same actor in your planned sequence.
-        """
+        Keep response to 1-2 sentences.
+        """,
+        examples=[
+            "The user wants to find which country hosted the most Winter Olympics—a data-focused query requiring aggregation. SQLAgent can handle this (requires source/metaset, both available) by filtering to Winter and counting by location, with no consecutive actor conflicts.",
+            "The user wants a horizontal bar chart of existing data—a visualization request. VegaLiteAgent is ready (requires pipeline/data/table, all satisfied from previous SQLAgent step) and will create the chart without consecutive actor issues."
+        ]
     )
 
 

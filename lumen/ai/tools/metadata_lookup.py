@@ -464,6 +464,7 @@ class MetadataLookup(VectorLookupTool):
             source_name = result["metadata"]["source"]
             table_name = result["metadata"]["table_name"]
             source_obj = None
+            sql = None
             for source in context.get("sources", []):
                 if source.name == source_name:
                     source_obj = source

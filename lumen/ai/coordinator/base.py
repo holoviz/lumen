@@ -71,7 +71,7 @@ class Plan(Section):
         for idx, task in enumerate(self):
             instruction = task.instruction
             if failed and idx == i:
-                status = "❌"
+                status = "🔴"
             elif i == idx:
                 status = "🟡"
             elif idx < i:
