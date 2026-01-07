@@ -67,6 +67,7 @@ sql = ['duckdb', 'intake-sql', 'sqlalchemy']
 ai-local = ['huggingface_hub', 'hf_xet']
 ai-openai = ['openai']
 ai-mistralai = ['mistralai']
+ai-bedrock = ['boto3>=1.42.23']
 ai-anthropic = ['anthropic']
 ai-transformers = ['lumen[ai-local]', 'sentence_transformers>=2.7.0', 'transformers>=4.51.0']  # for embeddings
 ai-llama = ['lumen[ai-local]', 'llama-cpp-python >=0.3.15']
