@@ -110,13 +110,19 @@ class Plan(Section):
                     outputs, task_context = await task.execute(subcontext, **kwargs)
             except Exception as e:
                 outputs, task_context = await self._handle_task_execution_error(e, task, context, step, i)
+
+            # Check if task errored before validating context to have richer error info
+            if task.status == "error":
+                # Get the error message from context if available
+                error_msg = task_context.get("__error__", "unknown error")
+                step.failed_title = f"{task.title} errored during execution."
+                raise RuntimeError(error_msg)
+
             unprovided = [p for p in task.output_schema.__required_keys__ if p not in task_context]
             if unprovided:
                 step.failed_title = f"{task.title!r} failed to provide declared context values {', '.join(unprovided)}. Aborting the plan."
                 raise RuntimeError(f"{task.title!r} task failed to provide declared context.")
-            elif task.status == "error":
-                step.failed_title = f"{task.title} errored during execution."
-                raise RuntimeError(step.failed_title)
+
             context_keys = ", ".join(f"`{k}`" for k in task_context)
             step.stream(f"Generated {len(outputs)} and provided {context_keys}.")
             step.success_title = f"Task {task.title!r} successfully completed"
@@ -144,10 +150,16 @@ class Plan(Section):
                 step.success_title = f"{task.title!r} task successfully completed after retry"
                 return outputs, out_context  # Return after successful retry
             else:
-                # If we can't find a provider, raise the original error
-                step.failed_title = f"{task.title!r} - Cannot resolve missing context"
-                traceback.print_exception(e)
-                raise e
+                # If we can't find a provider, this error is unrecoverable
+                # Show it clearly to the user instead of re-raising
+                error_msg = str(root_exception)
+                step.failed_title = f"{task.title!r} failed: {error_msg}"
+                step.stream(f"\n\n❌ **{error_msg}**")
+                # Set error status and store the error message
+                task.status = "error"
+                # Store the error in context so it can be accessed later
+                task.out_context["__error__"] = error_msg
+                return [], {"__error__": error_msg}  # Return with error message in context
         elif isinstance(e, asyncio.CancelledError):
             traceback.print_exception(e)
             step.failed_title = f"{task.title!r} task was cancelled"
