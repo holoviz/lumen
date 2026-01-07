@@ -326,7 +326,7 @@ PREFERENCES_HELP = """
 **Configure AI Models** — Choose which LLM provider and models to use for different tasks
 """
 
-EXPLORATIONS_INTRO_HELP = "Select a table below to start a new exploration."
+EXPLORATIONS_INTRO_HELP = "**Select a table below** to start a new exploration. Click on Help on the left for more info."
 
 EXPLORATION_VIEW_HELP = "Use < > to expand/collapse panels. Edit the spec (top) and the view (bottom) syncs. Click ✨ to ask LLM to revise."
 
@@ -1082,9 +1082,9 @@ class UI(Viewer):
         if hasattr(self, '_cta'):
             self._cta.object = self._get_status_text()
 
-        if hasattr(self, '_splash_tabs'):
+        if hasattr(self, '_input_tabs'):
             num_sources = len(self.context.get("sources", []))
-            self._splash_tabs.disabled = [] if num_sources else [1]
+            self._input_tabs.disabled = [] if num_sources else [1]
 
         # Update help dialog content when sources change
         if hasattr(self, '_help_content'):
@@ -1488,28 +1488,35 @@ class ExplorerUI(UI):
     def _render_main(self) -> list[Viewable]:
         main = super()._render_main()
 
-        self._explorations_help_caption = Typography(
-            EXPLORATIONS_INTRO_HELP,
-            variant="body2",
-            color="text.secondary",
-            margin=(0, 0, 10, 5),
-            sizing_mode="stretch_width"
-        )
         self._explorer = TableExplorer(context=self.context)
         self._explorer.param.watch(self._add_exploration_from_explorer, "add_exploration")
-        self._explorer_splash = Column(
-            self._explorations_help_caption,
-            self._explorer
-        )
+
+        # Create tabs wrapping just the input components
         num_sources = len(self.context.get("sources", []))
-        self._splash_tabs = Tabs(
-            ("Chat with Data", self._chat_splash),
-            ("Select Data to Explore", self._explorer_splash),
+        self._input_tabs = Tabs(
+            ("Chat with Data", self.interface._widget),
+            ("Select Data to Explore", self._explorer),
             disabled=[] if num_sources else [1],
-            margin=(0, 10),
+            height=125,
             stylesheets=[".MuiTabsPanel > .MuiBox-root { overflow: visible}"]
         )
-        self._splash[0][1] = self._splash_tabs
+
+        # Update chat_splash to use tabs instead of interface widget
+        self._chat_splash[:] = [self._cta, self._input_tabs]
+
+        # Add suggestions to chat_splash (after tabs)
+        if self.suggestions:
+            # Remove the original suggestions that were added in parent class
+            if len(self._chat_splash) > 2:
+                self._chat_splash.pop()
+            self._add_suggestions_to_footer(
+                self.suggestions,
+                num_objects=0,
+                inplace=False,
+                analysis=False,
+                append_demo=True,
+                hide_after_use=False
+            )
 
         # Initialize home as empty
         self._home.view = MuiColumn()
@@ -1562,7 +1569,7 @@ class ExplorerUI(UI):
 
         table = self._explorer.table_slug.split(SOURCE_TABLE_SEPARATOR)[0]
         self._transition_to_chat()
-        self.interface.send(f"Add exploration for the `{table}` table", respond=False)
+        self.interface.send(f"Explore the `{table}` table", respond=False)
 
         # Flush UI
         await asyncio.sleep(0.01)

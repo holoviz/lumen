@@ -19,9 +19,9 @@ from panel.pane.markup import HTML, Markdown
 from panel.viewable import Viewer
 from panel.widgets import FileDropper
 from panel_material_ui import (
-    Button, Card, Column as MuiColumn, IconButton, LinearProgress, Popup,
-    RadioButtonGroup, Select, Tabs, TextAreaInput, TextInput, ToggleIcon, Tree,
-    Typography,
+    AutocompleteInput, Button, Card, Column as MuiColumn, IconButton,
+    LinearProgress, Popup, RadioButtonGroup, Select, Tabs, TextAreaInput,
+    TextInput, ToggleIcon, Tree, Typography,
 )
 
 from ..config import load_yaml
@@ -1671,32 +1671,37 @@ class TableExplorer(Viewer):
 
     add_exploration = param.Event(label="Explore table")
 
-    table_slug = param.Selector(label="Select table(s) to preview")
+    table_slug = param.Selector(label="Select table(s) to preview.")
 
     context = param.Dict(default={})
 
     def __init__(self, **params):
         self._initialized = False
         super().__init__(**params)
-        self._table_select = Select.from_param(
-            self.param.table_slug,
-            height=60,
-            margin=0,
-            label="",
+        self._table_autocomplete = AutocompleteInput(
+            value="",
+            options=[],
+            restrict=True,
+            case_sensitive=False,
+            search_strategy="includes",
+            min_characters=0,
+            placeholder="Select or search for a table...",
             sizing_mode='stretch_width',
-            sx={"height": "80px"}
         )
-        self._explore_button = Button.from_param(
-            self.param.add_exploration,
-            icon='add_chart', color='primary', icon_size="2em",
-            disabled=self._table_select.param.value.rx().rx.not_(),
-            margin=(0, 0, 0, 10), width=180, height=60
-        )
+        self._table_autocomplete.param.watch(self._on_table_selected, 'value')
         self._input_row = Row(
-            self._table_select, self._explore_button
+            self._table_autocomplete
         )
         self.source_map = {}
         self._layout = self._input_row
+
+    def _on_table_selected(self, event):
+        """Handle table selection from autocomplete."""
+        if event.new:
+            self.table_slug = event.new
+            self.param.trigger('add_exploration')
+            # Clear the autocomplete after selection
+            self._table_autocomplete.value = ""
 
     @param.depends("context", watch=True)
     async def sync(self, context: TContext | None = None):
@@ -1728,7 +1733,10 @@ class TableExplorer(Viewer):
         self.source_map.clear()
         self.source_map.update(new)
         selected = selected[-1] if len(selected) == 1 else None
-        self._table_select.param.update(options=list(self.source_map), value=selected)
+
+        self._table_autocomplete.options = list(self.source_map)
+        if selected:
+            self.table_slug = selected
         self._input_row.visible = bool(self.source_map)
         self._initialized = True
 
@@ -1747,15 +1755,6 @@ class TableExplorer(Viewer):
         new_source = source.create_sql_expr_source({new_table: sql_expr})
         pipeline = Pipeline(source=new_source, table=new_table)
         return SQLOutput(spec=sql_expr, component=pipeline)
-
-    def _explore_table_if_single(self, event):
-        """
-        If only one table is uploaded, help the user load it
-        without requiring them to click twice. This step
-        only triggers when the Upload in the Overview tab is used
-        """
-        if len(self._table_select.options) == 1:
-            self._explore_button.param.trigger("value")
 
     def __panel__(self):
         return self._layout
