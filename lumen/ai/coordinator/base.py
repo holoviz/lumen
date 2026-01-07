@@ -155,9 +155,7 @@ class Plan(Section):
                 error_msg = str(root_exception)
                 step.failed_title = f"{task.title!r} failed: {error_msg}"
                 step.stream(f"\n\n❌ **{error_msg}**")
-                # Set error status and store the error message
                 task.status = "error"
-                # Store the error in context so it can be accessed later
                 task.out_context["__error__"] = error_msg
                 return [], {"__error__": error_msg}  # Return with error message in context
         elif isinstance(e, asyncio.CancelledError):
