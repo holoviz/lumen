@@ -111,7 +111,7 @@ async def test_exploration_ui_error(explorer_ui_with_error):
     # Ensure error output is correct
     tabs = exploration.view[0]
     assert len(tabs) == 3
-    assert tabs[-1].object == "⚠️ **Unable to complete your request:**\n\nbar"
+    assert tabs[-1].object == "❌ **Unable to complete your request**\n\nbar"
 
     # Check Interface contents
     assert len(ui.interface) == 2

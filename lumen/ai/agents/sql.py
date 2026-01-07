@@ -20,7 +20,7 @@ from ...transforms.sql import SQLLimit
 from ..config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from ..context import ContextModel, TContext
 from ..llm import Message
-from ..models import PartialBaseModel, RetrySpec
+from ..models import EscapeBaseModel, PartialBaseModel, RetrySpec
 from ..schemas import Metaset
 from ..utils import (
     clean_sql, describe_data, get_data, get_pipeline, parse_table_slug,
@@ -192,7 +192,7 @@ def make_discovery_model(sources: list[tuple[str, str]]):
             description="Choose 2-4 discovery queries. Use SampleQuery/DistinctQuery for known tables, TableQuery for wildcard searches."
         )
 
-    class DiscoverySufficiency(PartialBaseModel):
+    class DiscoverySufficiency(EscapeBaseModel):
         """Evaluate if discovery results provide enough context to fix the original error."""
 
         reasoning: str = Field(description="Analyze discovery results - do they reveal the cause of the error?")
