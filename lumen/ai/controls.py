@@ -27,7 +27,7 @@ from panel_material_ui import (
 from ..config import load_yaml
 from ..pipeline import Pipeline
 from ..sources.duckdb import DuckDBSource
-from ..util import detect_file_encoding
+from ..util import detect_file_encoding, normalize_table_name
 from .config import SOURCE_TABLE_SEPARATOR
 from .context import TContext
 from .utils import generate_diff
@@ -89,7 +89,7 @@ class UploadedFileRow(Viewer):
 
         params["filename"] = filename
         params["extension"] = extension.lower()
-        params["alias"] = filename.replace("-", "_").replace(" ", "_").lower()
+        params["alias"] = normalize_table_name(filename)
 
         # Auto-detect file type
         is_metadata = (
@@ -162,10 +162,11 @@ class UploadedFileRow(Viewer):
 
     @param.depends("alias", watch=True)
     def _sanitize_alias(self):
-        """Ensure alias is a valid SQL identifier."""
-        sanitized = "".join(
-            c if c.isalnum() else "_" for c in self.alias
-        ).strip("_").lower()
+        """Ensure alias is a valid SQL identifier.
+
+        Uses the same normalization as DuckDBSource.normalize_table.
+        """
+        sanitized = normalize_table_name(self.alias)
         if sanitized != self.alias:
             self.alias = sanitized
 
@@ -1550,6 +1551,8 @@ class SourceCatalog(Viewer):
 
         self._sync_sources_tree(sources)
         self._sync_docs_tree()
+
+        self._layout.loading = False
 
     def _sync_sources_tree(self, sources: list):
         """Sync the sources tree with current sources."""

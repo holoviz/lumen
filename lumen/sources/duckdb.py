@@ -18,7 +18,7 @@ from ..transforms import Filter
 from ..transforms.sql import (
     SQLCount, SQLFilter, SQLLimit, SQLSelectFrom,
 )
-from ..util import detect_file_encoding
+from ..util import detect_file_encoding, normalize_table_name
 from .base import BaseSQLSource, Source, cached
 
 if TYPE_CHECKING:
@@ -476,7 +476,7 @@ class DuckDBSource(BaseSQLSource):
         if table not in tables and 'read_' in table:
             # Extract table name from read_* function
             table = re.search(r"read_(\w+)\('(.+?)'", table).group(2)
-        table = re.sub(r'\W+', '_', table)
+        table = normalize_table_name(table)
         return table
 
     @cached
