@@ -1676,8 +1676,11 @@ class TableExplorer(Viewer):
         self._initialized = False
         super().__init__(**params)
         self._table_select = Select.from_param(
-            self.param.table_slug, sizing_mode='stretch_width',
-            max_height=200, margin=0
+            self.param.table_slug,
+            max_height=200,
+            margin=0,
+            label="",
+            sizing_mode='stretch_width'
         )
         self._explore_button = Button.from_param(
             self.param.add_exploration,
@@ -1685,7 +1688,9 @@ class TableExplorer(Viewer):
             disabled=self._table_select.param.value.rx().rx.not_(),
             margin=(0, 0, 0, 10), width=200, align='end'
         )
-        self._input_row = Row(self._table_select, self._explore_button, margin=(0, 10, 0, 10))
+        self._input_row = Row(
+            self._table_select, self._explore_button
+        )
         self.source_map = {}
         self._layout = self._input_row
 
@@ -1719,7 +1724,8 @@ class TableExplorer(Viewer):
         self.source_map.clear()
         self.source_map.update(new)
         selected = selected[-1] if len(selected) == 1 else None
-        self._table_select.param.update(options=list(self.source_map), value=selected)
+        self.param.table_slug.objects = self.source_map
+        self.table_slug = selected
         self._input_row.visible = bool(self.source_map)
         self._initialized = True
 

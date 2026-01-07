@@ -326,7 +326,7 @@ PREFERENCES_HELP = """
 **Configure AI Models** — Choose which LLM provider and models to use for different tasks
 """
 
-EXPLORATIONS_INTRO_HELP = "Select a table below to start a new exploration, or ask a question in the chat."
+EXPLORATIONS_INTRO_HELP = "Select a table below to start a new exploration:"
 
 EXPLORATION_VIEW_HELP = "Use < > to expand/collapse panels. Edit the spec (top) and the view (bottom) syncs. Click ✨ to ask LLM to revise."
 
@@ -614,8 +614,8 @@ class UI(Viewer):
 
     def _transition_to_chat(self):
         """Transition from splash screen to chat interface."""
-        if self._split[0][0] is not self.interface:
-            self._split[0][0] = self.interface
+        if self._main[0] is not self.interface:
+            self._main[0] = self.interface
 
     def _configure_interface(self, interface):
         def on_undo(instance, _):
@@ -818,8 +818,8 @@ class UI(Viewer):
         return []
 
     def _render_main(self) -> list[Viewable]:
-        self._cta = Typography(self._get_status_text())
-
+        self._cta = Typography(self._get_status_text(), margin=(10, 0, 0, 10))
+        self._chat_splash = Column(self._cta, self.interface._widget, margin=(0, 0, 0, -10))
         self._splash = MuiColumn(
             Paper(
                 Typography(
@@ -827,8 +827,7 @@ class UI(Viewer):
                     disable_anchors=True,
                     variant="h1"
                 ),
-                self._cta,
-                self.interface._widget,
+                self._chat_splash,
                 max_width=850,
                 styles={'margin': 'auto'},
                 sx={'p': '0 20px 20px 20px'}
@@ -1208,12 +1207,12 @@ class UI(Viewer):
                     icon=suggestion[0] if isinstance(suggestion, tuple) else None,
                     variant="outlined",
                     on_click=use_suggestion,
-                    margin=5,
+                    margin=5 if i else (5, 5, 5, 5),
                     disabled=self.interface.param.loading
                 )
-                for suggestion in suggestions
+                for i, suggestion in enumerate(suggestions)
             ],
-            margin=(5, 5),
+            margin=5,
         )
 
         if append_demo and self.demo_inputs:
@@ -1236,7 +1235,7 @@ class UI(Viewer):
                 footer_objects = message.footer_objects or []
                 message.footer_objects = footer_objects + [suggestion_buttons]
         else:
-            self._splash[0].append(suggestion_buttons)
+            self._splash[0][1].append(suggestion_buttons)
 
         self.interface.param.watch(hide_suggestions, "objects")
 
@@ -1488,26 +1487,31 @@ class ExplorerUI(UI):
         super()._render_page()
         self._page.sidebar_width = self._sidebar_collapse.rx().rx.where(61, 183)
 
+
     def _render_main(self) -> list[Viewable]:
         main = super()._render_main()
 
-        # Render home page with help caption
         self._explorations_help_caption = Typography(
             EXPLORATIONS_INTRO_HELP,
             variant="body2",
             color="text.secondary",
-            margin=(0, 0, 10, 20),
+            margin=(0, 0, 10, 5),
             sizing_mode="stretch_width"
-        )
-        self._explorations_title = Typography("Explorations", variant="h6", margin=(0, 0, 0, 20))
-        self._explorations_intro = MuiColumn(
-            self._explorations_title,
-            self._explorations_help_caption,
-            sizing_mode='stretch_width',
         )
         self._explorer = TableExplorer(context=self.context)
         self._explorer.param.watch(self._add_exploration_from_explorer, "add_exploration")
-        self._home.view = MuiColumn(self._explorations_intro, self._explorer)
+        self._explorer_splash = Column(
+            self._explorations_help_caption,
+            self._explorer
+        )
+        self._splash[0][1] = Tabs(
+            ("Chat with Data", self._chat_splash),
+            ("Browse Data", self._explorer_splash),
+            margin=(0, 10)
+        )
+
+        # Initialize home as empty
+        self._home.view = MuiColumn()
 
         # Main Area
         self._notebook_export.disabled = self.param._exploration.rx()['view'].rx.is_(self._home)
@@ -1516,13 +1520,14 @@ class ExplorerUI(UI):
             self._home,
             elevation=2,
             margin=(5, 10, 5, 5),
-            height_policy='max',
+            height_policy="max",
+            width_policy="max",
             sizing_mode="stretch_both"
         )
         self._split = HSplit(
-            Column(self._splash),
+            self.interface,
             self._output,
-            collapsed=1,
+            collapsed=None,
             expanded_sizes=(40, 60),
             show_buttons=True,
             sizing_mode='stretch_both',
@@ -1547,7 +1552,7 @@ class ExplorerUI(UI):
             theme_config={"light": {"palette": {"background": {"paper": "var(--mui-palette-grey-100)"}}}, "dark": {}},
             width=275,
         )
-        self._main[:] = [self._split]
+        self._main[:] = [self._splash]
         return main
 
     async def _add_exploration_from_explorer(self, event: param.parameterized.Event | None = None):
@@ -1637,7 +1642,7 @@ class ExplorerUI(UI):
     async def _update_conversation(self, event=None, replan: bool = False):
         exploration = self._explorations.value['view']
         if exploration is self._home:
-            self._split[0][0] = self._splash
+            self._split[0] = self._splash
         self._output[1:] = [exploration]
 
         if event is not None:
