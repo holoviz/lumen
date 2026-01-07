@@ -1504,9 +1504,10 @@ class ExplorerUI(UI):
         num_sources = len(self.context.get("sources", []))
         self._splash_tabs = Tabs(
             ("Chat with Data", self._chat_splash),
-            ("Browse Data", self._explorer_splash),
+            ("Select Data to Explore", self._explorer_splash),
             disabled=[] if num_sources else [1],
-            margin=(0, 10)
+            margin=(0, 10),
+            stylesheets=[".MuiTabsPanel > .MuiBox-root { overflow: visible}"]
         )
         self._splash[0][1] = self._splash_tabs
 
