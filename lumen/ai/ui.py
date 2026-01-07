@@ -326,7 +326,7 @@ PREFERENCES_HELP = """
 **Configure AI Models** — Choose which LLM provider and models to use for different tasks
 """
 
-EXPLORATIONS_INTRO_HELP = "Select a table below to start a new exploration:"
+EXPLORATIONS_INTRO_HELP = "Select a table below to start a new exploration."
 
 EXPLORATION_VIEW_HELP = "Use < > to expand/collapse panels. Edit the spec (top) and the view (bottom) syncs. Click ✨ to ask LLM to revise."
 

@@ -1677,7 +1677,7 @@ class TableExplorer(Viewer):
         super().__init__(**params)
         self._table_select = Select.from_param(
             self.param.table_slug,
-            height=80,
+            height=60,
             margin=0,
             label="",
             sizing_mode='stretch_width',
@@ -1687,7 +1687,7 @@ class TableExplorer(Viewer):
             self.param.add_exploration,
             icon='add_chart', color='primary', icon_size="2em",
             disabled=self._table_select.param.value.rx().rx.not_(),
-            margin=(0, 0, 0, 10), width=180, height=80
+            margin=(0, 0, 0, 10), width=180, height=60
         )
         self._input_row = Row(
             self._table_select, self._explore_button
