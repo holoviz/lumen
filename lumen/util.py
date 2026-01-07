@@ -458,3 +458,36 @@ def _set_backend_opts(element, cur_opts, compat_opts):
     if hvplot_extension.compatibility and compat_opts:
         element = element.opts(**compat_opts, backend=hvplot_extension.compatibility)
     return element
+
+
+def normalize_table_name(name: str) -> str:
+    """
+    Normalize a table name to a valid SQL identifier.
+
+    Replaces all non-word characters (anything except letters, digits,
+    and underscores) with underscores, strips leading/trailing underscores,
+    and converts to lowercase.
+
+    This matches the behavior of DuckDBSource.normalize_table() to ensure
+    consistent table naming across the codebase.
+
+    Parameters
+    ----------
+    name : str
+        The table name to normalize (e.g., filename without extension)
+
+    Returns
+    -------
+    str
+        The normalized table name
+
+    Examples
+    --------
+    >>> normalize_table_name("customer (orders)")
+    'customer_orders'
+    >>> normalize_table_name("My-Data File")
+    'my_data_file'
+    >>> normalize_table_name("table__name")
+    'table_name'
+    """
+    return re.sub(r'\W+', '_', name).strip('_').lower()
