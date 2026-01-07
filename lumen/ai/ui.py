@@ -21,9 +21,8 @@ from panel.viewable import (
 )
 from panel_material_ui import (
     Breadcrumbs, Button, ChatFeed, ChatInterface, ChatMessage,
-    Column as MuiColumn, Dialog, FileDownload, IconButton, MenuList,
-    NestedBreadcrumbs, Page, Paper, Popup, Row, Switch, Tabs, ToggleIcon,
-    Typography,
+    Column as MuiColumn, Dialog, FileDownload, IconButton, MenuList, Page,
+    Paper, Popup, Row, Switch, Tabs, ToggleIcon, Typography,
 )
 from panel_splitjs import HSplit, MultiSplit, VSplit
 
@@ -51,7 +50,7 @@ from .llm import (
 from .llm_dialog import LLMConfigDialog
 from .logs import ChatLogs
 from .models import ErrorDescription
-from .report import ActorTask, Report
+from .report import ActorTask, Report, Section
 from .utils import log_debug, wrap_logfire
 from .vector_store import VectorStore
 from .views import AnalysisOutput, LumenOutput, SQLOutput
@@ -293,9 +292,8 @@ DATA_SOURCES_HELP = """
 
 **How to add data:**
 
-1. **Upload** — Drag and drop files or click to browse
-2. **Download** — Enter URLs to fetch remote data
-3. **View** — The Source Catalog shows all connected tables
+1. **Upload Data** — Drag and drop files or click to browse
+2. **Fetch Remote Data** — Enter URLs to fetch remote data
 
 **Tips:**
 
@@ -328,9 +326,17 @@ PREFERENCES_HELP = """
 **Configure AI Models** — Choose which LLM provider and models to use for different tasks
 """
 
-EXPLORATIONS_INTRO_HELP = "Select a table below to start a new exploration, or ask a question in the chat."
+EXPLORATIONS_INTRO_HELP = "Select a table below to start a new exploration."
 
 EXPLORATION_VIEW_HELP = "Use < > to expand/collapse panels. Edit the spec (top) and the view (bottom) syncs. Click ✨ to ask LLM to revise."
+
+EXPLORATION_CAPTION = """
+Launch new explorations by chatting or selecting a table.
+
+Ask follow-up questions by navigating to an existing exploration.
+"""
+
+REPORT_CAPTION = "Use ▶ to execute all, × to clear outputs, ∨∧ to collapse/expand sections. Click exploration names to jump to them."  # noqa: RUF001
 
 
 def _get_default_llm():
@@ -608,8 +614,8 @@ class UI(Viewer):
 
     def _transition_to_chat(self):
         """Transition from splash screen to chat interface."""
-        if self._split[0][0] is not self.interface:
-            self._split[0][0] = self.interface
+        if self._splash in self._main:
+            self._main[:] = [self._navigation, self._split] if len(self._explorations.items) > 1 else [self._split]
 
     def _configure_interface(self, interface):
         def on_undo(instance, _):
@@ -652,7 +658,7 @@ class UI(Viewer):
                 chat_input.value_uploaded = {}
 
                 # Store the pending query to execute after files are added
-                self._pending_query = user_prompt
+                self._pending_query = user_prompt or None
                 self._pending_sources_snapshot = list(self.context.get("sources", []))
 
                 # Clear the input
@@ -660,7 +666,7 @@ class UI(Viewer):
 
                 # Open the Data Sources dialog
                 self._sources_dialog_content.open = True
-                self._source_breadcrumbs.active = (0,)  # Navigate to Upload tab
+                self._source_content.active = 0  # Navigate to Upload tab
                 return
 
             with self.interface.param.update(disabled=True, loading=True):
@@ -703,31 +709,19 @@ class UI(Viewer):
         if not event.new:  # No files uploaded
             return
 
-        # Generate file cards in the upload controls
-        self._upload_controls._generate_file_cards({
-            key: value["value"] for key, value in event.new.items()
-        })
+        with hold():
+            # Generate file cards in the upload controls
+            self._upload_controls._generate_file_cards({
+                key: value["value"] for key, value in event.new.items()
+            })
+            self._sources_dialog_content.open = True
 
-        # Open the Data Sources dialog
-        self._sources_dialog_content.open = True
-
-        # Set the breadcrumbs to "Upload" to show the uploaded files
-        # (0,) means Upload
-        self._source_breadcrumbs.active = (0,)
+            # Set the breadcrumbs to "Upload" to show the uploaded file (0 means Upload)
+            self._source_content.active = 0
 
     def _handle_upload_successful(self, event):
         """Handle successful file upload by switching to Source Catalog and executing pending query."""
-        active = self._source_breadcrumbs.active
-        # Navigate to Source Catalog under current selection (Upload or Download)
-        # active is (0,) for Upload or (1,) for Download
-        # We want (0, 0) for Upload > Source Catalog or (1, 0) for Download > Source Catalog
-        if len(active) >= 1:
-            self._source_breadcrumbs.active = (active[0], 0)
-        else:
-            self._source_breadcrumbs.active = (0, 0)
-
-        # Execute pending query if one exists
-        if self._pending_query is not None or self._pending_sources_snapshot is not None:
+        if self._pending_query is not None:
             self._execute_pending_query()
 
     def _execute_pending_query(self):
@@ -738,8 +732,6 @@ class UI(Viewer):
         # Clear pending state first (before any dialog operations)
         self._pending_query = None
         self._pending_sources_snapshot = None
-
-        # Note: Dialog stays open so user can review the Source Catalog
 
         # Build message with new sources info
         new_sources = [
@@ -773,26 +765,6 @@ class UI(Viewer):
             chat_input.value_input = self._pending_query
             self._pending_query = None
             self._pending_sources_snapshot = None
-
-    def _update_source_content(self, event):
-        """Update the source dialog content based on breadcrumb selection."""
-        active = event.new
-        if len(active) == 1:
-            # Upload (0,) or Download (1,)
-            if active[0] == 0:
-                self._source_content[:] = [self._upload_controls]
-            else:
-                self._source_content[:] = [self._download_controls]
-            self._sources_help_caption.object = (
-                "Add data to explore with Lumen AI. Supports CSV, Parquet, JSON, Excel, and databases. "
-                "Select between data / metadata and set an alias."
-            )
-        elif len(active) == 2:
-            # Upload > Source Catalog (0, 0) or Download > Source Catalog (1, 0)
-            self._source_content[:] = [self._source_catalog]
-            self._sources_help_caption.object = (
-                "Check on the box to make the source visible to the LLM. Associate metadata with datasets"
-            )
 
     def _configure_coordinator(self):
         # Set up table upload callbacks on all control classes
@@ -840,8 +812,8 @@ class UI(Viewer):
         return []
 
     def _render_main(self) -> list[Viewable]:
-        self._cta = Typography(self._get_status_text())
-
+        self._cta = Typography(self._get_status_text(), margin=(10, 0, 0, 10))
+        self._chat_splash = Column(self._cta, self.interface._widget, margin=(0, 0, 0, -10))
         self._splash = MuiColumn(
             Paper(
                 Typography(
@@ -849,8 +821,7 @@ class UI(Viewer):
                     disable_anchors=True,
                     variant="h1"
                 ),
-                self._cta,
-                self.interface._widget,
+                self._chat_splash,
                 max_width=850,
                 styles={'margin': 'auto'},
                 sx={'p': '0 20px 20px 20px'}
@@ -860,7 +831,7 @@ class UI(Viewer):
             height_policy='max'
         )
 
-        self._main = Column(self._splash, sizing_mode='stretch_both', align="center")
+        self._main = Row(self._splash, sizing_mode='stretch_both', align="center")
 
         if self.suggestions:
             self._add_suggestions_to_footer(
@@ -968,27 +939,11 @@ class UI(Viewer):
         self._download_controls.param.watch(self._handle_upload_successful, 'upload_successful')
 
         # Content container that switches based on breadcrumb selection
-        self._source_content = MuiColumn(self._upload_controls, sizing_mode="stretch_width")
-
-        self._source_breadcrumbs = NestedBreadcrumbs(
-                items=[{
-                        "label": "Upload",
-                        "icon": "upload",
-                        "items": [
-                            {"label": "Source Catalog", "icon": "storage"}
-                        ]
-                    },
-                    {
-                        "label": "Download",
-                        "icon": "download",
-                        "items": [
-                            {"label": "Source Catalog", "icon": "storage"}
-                        ]
-                    }],
-            active=(0,),
-            margin=(0, 10, 10, 10),
+        self._source_content = Tabs(
+            ('<span class="material-icons" style="vertical-align: middle;">upload</span> Upload Data', self._upload_controls),
+            ('<span class="material-icons" style="vertical-align: middle;">download</span> Fetch Remote Data', self._download_controls),
+            sizing_mode="stretch_width"
         )
-        self._source_breadcrumbs.param.watch(self._update_source_content, 'active')
 
         self._sources_help_caption = Typography(
             "Add data to explore with Lumen AI. Supports CSV, Parquet, JSON, Excel, and databases. "
@@ -1000,9 +955,9 @@ class UI(Viewer):
 
         self._sources_dialog_content = Dialog(
             MuiColumn(
-                self._source_breadcrumbs,
                 self._sources_help_caption,
-                self._source_content,
+                Paper(self._source_content, margin=(0, 0, 10, 0)),
+                Paper(self._source_catalog, max_height=400, sx={"overflowX": "auto"}),
                 sizing_mode="stretch_width"
             ),
             close_on_click=True, show_close_button=True, width_option='lg',
@@ -1025,8 +980,8 @@ class UI(Viewer):
         )
 
         self._explorations = MenuList(
-            items=[self._exploration], value=self.param._exploration, show_children=False,
-            dense=True, label='Explorations', margin=0, sizing_mode='stretch_width',
+            items=[self._exploration], value=self.param._exploration, show_children=True,
+            dense=True, margin=0, sizing_mode='stretch_width',
             sx={".mui-light .MuiBox-root": {"backgroundColor": "var(--mui-palette-grey-100)"}},
         )
         self._explorations.param.watch(self._cleanup_explorations, 'items')
@@ -1127,6 +1082,10 @@ class UI(Viewer):
         if hasattr(self, '_cta'):
             self._cta.object = self._get_status_text()
 
+        if hasattr(self, '_splash_tabs'):
+            num_sources = len(self.context.get("sources", []))
+            self._splash_tabs.disabled = [] if num_sources else [1]
+
         # Update help dialog content when sources change
         if hasattr(self, '_help_content'):
             self._update_help_getting_started()
@@ -1156,10 +1115,6 @@ class UI(Viewer):
     def _open_sources_dialog(self, event=None):
         """Open the sources dialog when the vector store badge is clicked."""
         # Navigate to Source Catalog if sources exist, otherwise Upload
-        if self.context.get("sources"):
-            self._source_breadcrumbs.active = (0, 0)  # Upload > Source Catalog
-        else:
-            self._source_breadcrumbs.active = (0,)  # Upload
         self._sources_dialog_content.open = True
 
     def _open_info_dialog(self, event=None):
@@ -1250,12 +1205,12 @@ class UI(Viewer):
                     icon=suggestion[0] if isinstance(suggestion, tuple) else None,
                     variant="outlined",
                     on_click=use_suggestion,
-                    margin=5,
+                    margin=5 if i else (5, 5, 5, 5),
                     disabled=self.interface.param.loading
                 )
-                for suggestion in suggestions
+                for i, suggestion in enumerate(suggestions)
             ],
-            margin=(5, 5),
+            margin=5,
         )
 
         if append_demo and self.demo_inputs:
@@ -1278,7 +1233,7 @@ class UI(Viewer):
                 footer_objects = message.footer_objects or []
                 message.footer_objects = footer_objects + [suggestion_buttons]
         else:
-            self._splash[0].append(suggestion_buttons)
+            self._splash[0][1].append(suggestion_buttons)
 
         self.interface.param.watch(hide_suggestions, "objects")
 
@@ -1533,78 +1488,99 @@ class ExplorerUI(UI):
     def _render_main(self) -> list[Viewable]:
         main = super()._render_main()
 
-        # Render home page with help caption
         self._explorations_help_caption = Typography(
             EXPLORATIONS_INTRO_HELP,
             variant="body2",
             color="text.secondary",
-            margin=(0, 0, 10, 20),
+            margin=(0, 0, 10, 5),
             sizing_mode="stretch_width"
-        )
-        self._explorations_title = Typography("Explorations", variant="h6", margin=(0, 0, 0, 20))
-        self._explorations_intro = MuiColumn(
-            self._explorations_title,
-            self._explorations_help_caption,
-            sizing_mode='stretch_width',
         )
         self._explorer = TableExplorer(context=self.context)
         self._explorer.param.watch(self._add_exploration_from_explorer, "add_exploration")
-        self._home.view = MuiColumn(self._explorations_intro, self._explorer)
-
-        # Menus
-        self._breadcrumbs = NestedBreadcrumbs(
-            items=[self._exploration],
-            value=self.param._exploration,
-            margin=(10, 0, 0, 13)
+        self._explorer_splash = Column(
+            self._explorations_help_caption,
+            self._explorer
         )
-        self._breadcrumbs.param.watch(self._sync_active, 'value')
+        num_sources = len(self.context.get("sources", []))
+        self._splash_tabs = Tabs(
+            ("Chat with Data", self._chat_splash),
+            ("Select Data to Explore", self._explorer_splash),
+            disabled=[] if num_sources else [1],
+            margin=(0, 10),
+            stylesheets=[".MuiTabsPanel > .MuiBox-root { overflow: visible}"]
+        )
+        self._splash[0][1] = self._splash_tabs
+
+        # Initialize home as empty
+        self._home.view = MuiColumn()
 
         # Main Area
         self._notebook_export.disabled = self.param._exploration.rx()['view'].rx.is_(self._home)
         self._output = Paper(
-            Row(self._breadcrumbs, self._notebook_export, sizing_mode="stretch_width"),
+            Row(self._notebook_export, styles={"top": "0", "right": "0", "position": "absolute"}),
             self._home,
             elevation=2,
             margin=(5, 10, 5, 5),
-            height_policy='max',
+            height_policy="max",
+            width_policy="max",
             sizing_mode="stretch_both"
         )
         self._split = HSplit(
-            Column(self._splash),
+            self.interface,
             self._output,
-            collapsed=1,
+            collapsed=None,
             expanded_sizes=(40, 60),
             show_buttons=True,
             sizing_mode='stretch_both',
             stylesheets=SPLITJS_STYLESHEETS
         )
-        self._main[:] = [self._split]
+        self._navigation_title = Typography(
+            "Exploration", variant="h6", margin=(10, 10, 0, 10)
+        )
+        self._navigation_caption = Typography(
+            EXPLORATION_CAPTION,
+            variant="body2",
+            color="text.secondary",
+            margin=(10, 10, 5, 10),
+            sizing_mode="stretch_width"
+        )
+        self._navigation = Paper(
+            self._navigation_title,
+            self._navigation_caption,
+            self._explorations,
+            sizing_mode="stretch_height",
+            sx={"borderRadius": 0},
+            theme_config={"light": {"palette": {"background": {"paper": "var(--mui-palette-grey-100)"}}}, "dark": {}},
+            width=275,
+        )
+        self._main[:] = [self._splash]
         return main
 
     async def _add_exploration_from_explorer(self, event: param.parameterized.Event | None = None):
-        sql_out = self._explorer.create_sql_output()
-        if sql_out is None:
+        if self._explorer.table_slug is None:
             return
 
         table = self._explorer.table_slug.split(SOURCE_TABLE_SEPARATOR)[0]
+        self._transition_to_chat()
+        self.interface.send(f"Add exploration for the `{table}` table", respond=False)
+
+        # Flush UI
+        await asyncio.sleep(0.01)
+
         prev = self._explorations.value
         sql_agent = next(agent for agent in self._coordinator.agents if isinstance(agent, SQLAgent))
-        sql_task = ActorTask(sql_agent, title=f"Load {table}")
-        plan = Plan(sql_task, title=f"Explore {table}")
-        exploration = await self._add_exploration(plan, self._home)
+        sql_out = self._explorer.create_sql_output()
+        out_context = await sql_out.render_context()
+        sql_task = ActorTask(sql_agent, title=f"Load {table}", views=[sql_out], out_context=out_context, status="success")
+        plan = Plan(sql_task, title=f"Explore {table}", context=self.context, status="success")
 
         with hold():
-            self._transition_to_chat()
-            self.interface.send(f"Add exploration for the `{table}` table", respond=False)
-            out_context = await sql_out.render_context()
-            watcher = plan.param.watch(partial(self._add_views, exploration), "views")
             try:
-                sql_task.param.update(
-                    views=[sql_out], out_context=out_context, status="success"
-                )
-            finally:
-                plan.param.unwatch(watcher)
+                exploration = await self._add_exploration(plan, self._home)
+                self._add_views(exploration, items=plan.views)
                 await self._postprocess_exploration(plan, exploration, prev, is_new=True)
+            finally:
+                self._idle.set()
 
     def _configure_session(self):
         self._home = self._last_synced = Exploration(
@@ -1612,7 +1588,7 @@ class ExplorerUI(UI):
             title='Home',
             conversation=self.interface.objects
         )
-        self._exploration = {'label': 'Home', 'icon': 'home', 'view': self._home, 'items': []}
+        self._exploration = {'label': 'Home', 'icon': None, 'view': self._home, 'items': []}
         super()._configure_session()
         self._idle = asyncio.Event()
         self._idle.set()
@@ -1623,12 +1599,10 @@ class ExplorerUI(UI):
 
     def _toggle_report_mode(self, active: bool):
         """Toggle between regular and report mode."""
-        # Check if there are any explorations beyond home
         if active and len(self._explorations.items) <= 1:
             # Show message and button to go back to exploration
             no_explorations_msg = Markdown(
                 "### No Explorations Yet\n\nGenerate an exploration first by asking a question about your data.",
-                sizing_mode="stretch_width",
             )
             back_button = Button(
                 label="Back to Exploration",
@@ -1636,41 +1610,31 @@ class ExplorerUI(UI):
                 button_type="primary",
                 on_click=lambda e: self._handle_sidebar_event(self._sidebar_menu.items[0]),
             )
-            self._main[:] = [
-                Column(no_explorations_msg, back_button, sizing_mode="stretch_both", align="center", margin=20)
-            ]
-            return
-
-        if active:
-            # Report mode with help caption
-            report_help_caption = Typography(
-                "Use ▶ to execute all, × to clear outputs, ∨∧ to collapse/expand sections. Click exploration names to jump to them.",  # noqa: RUF001
-                variant="body2",
-                color="text.secondary",
-                margin=(10, 10, 5, 10),
-                sizing_mode="stretch_width"
+            main = Column(no_explorations_msg, back_button, styles={"margin": "auto"})
+        elif active:
+            main = Report(
+                *(Section(item["view"].plan, *(it.plan for it in item["items"]), title=item["view"].plan.title)
+                  for item in self._explorations.items[1:])
             )
-            self._main[:] = [
-                Row(
-                    Paper(
-                        Typography("Report", variant="h6", margin=(10, 10, 0, 10)),
-                        report_help_caption,
-                        self._explorations,
-                        sizing_mode="stretch_height",
-                        sx={"borderRadius": 0},
-                        theme_config={"light": {"palette": {"background": {"paper": "var(--mui-palette-grey-100)"}}}, "dark": {}},
-                        width=350,
-                    ),
-                    Report(
-                        *(exploration['view'].plan for exploration in self._explorations.items[1:])
-                    )
-                )
-            ]
         else:
-            self._main[:] = [self._split]
+            main = self._split
 
-    def _delete_exploration(self, item):
-        self._explorations.items = [it for it in self._explorations.items if it is not item]
+        with hold():
+            self._navigation_title.object = "Report" if active else "Exploration"
+            self._navigation_caption.object = REPORT_CAPTION if active else EXPLORATION_CAPTION
+            self._main[:] = [self._navigation, main] if len(self._explorations.items) > 1 else [main]
+
+    async def _delete_exploration(self, item):
+        await self._idle.wait()
+        with hold():
+            if item in self._explorations.items:
+                self._explorations.items = [it for it in self._explorations.items if it is not item]
+                self._explorations.value = self._explorations.items[0]
+            else:
+                parent = item["parent"]
+                self._explorations.update_item(parent, items=[it for it in parent["items"] if it is not item])
+                self._explorations.value = parent
+            self.interface.objects = []
 
     def _destroy(self, session_context):
         """
@@ -1682,8 +1646,12 @@ class ExplorerUI(UI):
     async def _update_conversation(self, event=None, replan: bool = False):
         exploration = self._explorations.value['view']
         if exploration is self._home:
-            self._split[0][0] = self._splash
-        self._output[1:] = [exploration]
+            self._main[:] = [self._navigation, self._splash] if len(self._explorations.items) > 1 else [self._splash]
+            self._output[1:] = []
+        else:
+            if self._splash in self._main:
+                self._main[:] = [self._navigation, self._split]
+            self._output[1:] = [exploration]
 
         if event is not None:
             # When user switches explorations and coordinator is running
@@ -1734,25 +1702,25 @@ class ExplorerUI(UI):
         return messages
 
     async def _add_exploration(self, plan: Plan, parent: Exploration) -> Exploration:
-        # Sanpshot previous conversation
         is_home = parent is self._home
+        parent_item = self._exploration
         if is_home:
             parent.conversation = []
         else:
             parent.conversation = self._snapshot_messages(new=True)
-        conversation = list(self.interface.objects)
+        conversation = [msg for msg in self.interface.objects if plan.is_followup or msg not in parent.conversation]
 
         tabs = Tabs(
-            ('Overview', Markdown("Waiting on data...", margin=(5, 20))),
+            ("Data Source", Markdown("Waiting on data...", margin=(5, 20))),
             dynamic=True,
-            sizing_mode='stretch_both',
+            sizing_mode="stretch_both",
             loading=plan.param.running
         )
-        output = MultiSplit(tabs, sizing_mode='stretch_both')
+        output = MultiSplit(tabs, sizing_mode="stretch_both")
         exploration = Exploration(
             context=plan.param.out_context,
             conversation=conversation,
-            parent=parent,
+            parent=parent if plan.is_followup else self._home,
             plan=plan,
             title=plan.title,
             view=output
@@ -1761,19 +1729,27 @@ class ExplorerUI(UI):
         view_item = {
             'label': plan.title,
             'view': exploration,
-            'icon': "insights",
+            'icon': None,
             'actions': [{'action': 'remove', 'label': 'Remove', 'icon': 'delete'}],
+            'parent': parent_item if plan.is_followup else self._explorations.items[0],
             'items': []
         }
-        items = self._explorations.items + [view_item]
         with hold():
-            self._breadcrumbs.value["items"].append(view_item)
-            self._breadcrumbs.param.trigger("items")
             self.interface.objects = conversation
+            # Collapse sidebar if we are launching first exploration
+            self._sidebar_collapse.value = len(self._main) == 1
+            # Temporarily un-idle to allow exploration to be rendered
             self._idle.set()
-            self._explorations.param.update(items=items)
-            self._exploration = view_item
+            if is_home or not plan.is_followup:
+                self._explorations.items = self._explorations.items + [view_item]
+            else:
+                self._explorations.update_item(
+                    parent_item, items=parent_item.get('items', []) + [view_item]
+                )
+                self._explorations.expanded = [self._explorations._lookup_path(parent_item)]
+            self._explorations.value = self._exploration = view_item
             self._idle.clear()
+            self._toggle_report_mode(False)
             self._output[1:] = [output]
             self._notebook_export.filename = f"{plan.title.replace(' ', '_')}.ipynb"
             await self._update_conversation()
@@ -1851,11 +1827,12 @@ class ExplorerUI(UI):
                     return i
         return None
 
-    def _add_views(self, exploration: Exploration, event: param.parameterized.Event):
+    def _add_views(self, exploration: Exploration, event: param.parameterized.Event | None = None, items: list | None = None):
         tabs = exploration.view[0]
         content = []
-        for view in event.new:
-            if not isinstance(view, LumenOutput) or view in event.old:
+        new_items = items if event is None else event.new
+        for view in new_items:
+            if not isinstance(view, LumenOutput) or (event and view in event.old):
                 continue
             if tabs and isinstance(view, SQLOutput) and not exploration.initialized:
                 tabs[0] = ("Data Source", view.render_explorer())

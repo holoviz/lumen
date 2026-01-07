@@ -55,6 +55,8 @@ class Plan(Section):
 
     interface = param.ClassSelector(class_=ChatFeed)
 
+    is_followup = param.Boolean(default=False)
+
     _tasks = param.List(item_type=ActorTask)
 
     def render_task_history(self, i: int | None = None, failed: bool = False) -> tuple[list[Message], str]:
@@ -70,18 +72,16 @@ class Plan(Section):
             instruction = task.instruction
             if failed and idx == i:
                 status = "❌"
+            elif i == idx:
+                status = "🟡"
+            elif idx < i:
+                status = "🟢"
             else:
-                if i == idx:
-                    instruction = f"<u>{instruction}</u>"
-                if idx < i:
-                    status = "x"
-                else:
-                    status = " "
-                status = f"[{status}]"
+                status = "⚪"
             todos_list.append(f"- {status} {instruction}")
         todos = "\n".join(todos_list)
 
-        formatted_content = f"User Request: {user_query['content']!r}\n\nComplete the underlined todo:\n{todos}"
+        formatted_content = (f"User Request: {user_query['content']!r}\n\n" if user_query else "") + f"Complete the current todo:\n{todos}"
         rendered_history = []
         for msg in self.history:
             if msg is user_query:
@@ -325,7 +325,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 agent = agent()
             if isinstance(agent, AnalysisAgent):
                 analyses = indent("\n".join(
-                    f"- `{analysis.__name__}`:\n{indent(dedent(analysis.__doc__ or '').strip(), " " * 4)} (required cols: {', '.join(analysis.columns)})"
+                    f"- `{analysis.__name__}`:\n{indent(dedent(analysis.__doc__ or '').strip(), ' ' * 4)} (required cols: {', '.join(analysis.columns)})"
                     for analysis in agent.analyses if analysis._callable_by_llm
                 ), " " * 4)
                 agent.conditions.append(

@@ -243,6 +243,8 @@ class Task(Viewer):
 
 class TaskGroup(Task):
 
+    _current = param.Integer(default=0)
+
     _tasks = param.List(item_type=Task)
 
     level = 3
@@ -256,7 +258,8 @@ class TaskGroup(Task):
             tasks = list(tasks)
         self._task_watchers = {}
         _tasks = []
-        for task in tasks:
+        current = 0
+        for i, task in enumerate(tasks):
             if isinstance(task, FunctionType):
                 task = FunctionTool(task)
             if isinstance(task, Actor) and not issubclass(Actor, self.param._tasks.item_type):
@@ -266,9 +269,12 @@ class TaskGroup(Task):
                 self._task_watchers[task] = task.param.watch(
                     self._sync_context, 'out_context'
                 )
+            if current == i and task.status == "success":
+                current = i+1
             _tasks.append(task)
-        super().__init__(_tasks=_tasks, **params)
-        self._current = 0
+        if "status" not in params and current == len(tasks):
+            params["status"] = "success"
+        super().__init__(_tasks=_tasks, _current=current, **params)
         self._watchers = {}
         self._init_view()
         self._init_views()
@@ -416,10 +422,9 @@ class TaskGroup(Task):
                         break
                 views += new
             finally:
-                self._current = i
+                self._current = i + (0 if task.status == "error" else 1)
         if self.status != "error":
             self.status = "success"
-            self._current += 1
         contexts = [self.context] if self.context else []
         contexts += [task.out_context for task in self]
         return views, merge_contexts(LWW, contexts)
@@ -446,7 +451,7 @@ class TaskGroup(Task):
             self._tasks.remove(t)
         self._populate_view()
         self._init_views()
-        self._current = min(self._current, len(self)-1)
+        self._current = min(self._current, len(self))
 
     def cleanup(self):
         for task, watcher in self._task_watchers.items():
@@ -815,6 +820,11 @@ class Report(TaskGroup):
             margin=(0, 0, 0, 5),
             sizing_mode="stretch_both"
         )
+        self._update_run_state()
+
+    @param.depends('_current', '_tasks', watch=True)
+    def _update_run_state(self):
+        self._run.disabled = self._current == len(self)
 
     async def _execute_event(self, event):
         await self.execute()
@@ -970,7 +980,11 @@ class ActorTask(ExecutableTask):
     level = 3
 
     def __init__(self, actor: Actor, **params):
+        views = params.get("views", None)
+        out_context = params.get("out_context", None)
         super().__init__(actor=actor, **params)
+        if views and out_context:
+            self._add_outputs(views, out_context)
 
     @property
     def input_schema(self):
