@@ -27,10 +27,10 @@ from panel_material_ui import (
 from ..config import load_yaml
 from ..pipeline import Pipeline
 from ..sources.duckdb import DuckDBSource
-from ..util import detect_file_encoding
+from ..util import detect_file_encoding, normalize_table_name
 from .config import SOURCE_TABLE_SEPARATOR
 from .context import TContext
-from .utils import generate_diff, normalize_table_name
+from .utils import generate_diff
 
 if TYPE_CHECKING:
     from .views import SQLOutput
@@ -1551,7 +1551,6 @@ class SourceCatalog(Viewer):
         self._sync_sources_tree(sources)
         self._sync_docs_tree()
 
-        # Turn off loading indicator
         self._layout.loading = False
 
     def _sync_sources_tree(self, sources: list):
