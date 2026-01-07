@@ -614,8 +614,8 @@ class UI(Viewer):
 
     def _transition_to_chat(self):
         """Transition from splash screen to chat interface."""
-        if self._main[0] not in (self.interface, self._navigation):
-            self._main[0] = self.interface
+        if self._splash in self._main:
+            self._main[:] = [self._navigation, self._split] if len(self._explorations.items) > 1 else [self._split]
 
     def _configure_interface(self, interface):
         def on_undo(instance, _):
@@ -1573,9 +1573,12 @@ class ExplorerUI(UI):
         plan = Plan(sql_task, title=f"Explore {table}", context=self.context, status="success")
 
         with hold():
-            exploration = await self._add_exploration(plan, self._home)
-            self._add_views(exploration, items=plan.views)
-            await self._postprocess_exploration(plan, exploration, prev, is_new=True)
+            try:
+                exploration = await self._add_exploration(plan, self._home)
+                self._add_views(exploration, items=plan.views)
+                await self._postprocess_exploration(plan, exploration, prev, is_new=True)
+            finally:
+                self._idle.set()
 
     def _configure_session(self):
         self._home = self._last_synced = Exploration(
@@ -1619,7 +1622,8 @@ class ExplorerUI(UI):
             self._navigation_caption.object = REPORT_CAPTION if active else EXPLORATION_CAPTION
             self._main[:] = [self._navigation, main] if len(self._explorations.items) > 1 else [main]
 
-    def _delete_exploration(self, item):
+    async def _delete_exploration(self, item):
+        await self._idle.wait()
         with hold():
             if item in self._explorations.items:
                 self._explorations.items = [it for it in self._explorations.items if it is not item]
@@ -1628,6 +1632,7 @@ class ExplorerUI(UI):
                 parent = item["parent"]
                 self._explorations.update_item(parent, items=[it for it in parent["items"] if it is not item])
                 self._explorations.value = parent
+            self.interface.objects = []
 
     def _destroy(self, session_context):
         """
@@ -1639,7 +1644,8 @@ class ExplorerUI(UI):
     async def _update_conversation(self, event=None, replan: bool = False):
         exploration = self._explorations.value['view']
         if exploration is self._home:
-            self._main[:] = [self._navigation, self._splash]
+            self._main[:] = [self._navigation, self._splash] if len(self._explorations.items) > 1 else [self._splash]
+            self._output[1:] = []
         else:
             if self._splash in self._main:
                 self._main[:] = [self._navigation, self._split]
@@ -1739,7 +1745,7 @@ class ExplorerUI(UI):
                     parent_item, items=parent_item.get('items', []) + [view_item]
                 )
                 self._explorations.expanded = [self._explorations._lookup_path(parent_item)]
-            self._exploration = view_item
+            self._explorations.value = self._exploration = view_item
             self._idle.clear()
             self._toggle_report_mode(False)
             self._output[1:] = [output]
