@@ -1666,7 +1666,7 @@ class TableExplorer(Viewer):
     interrogate the data via a chat interface.
     """
 
-    add_exploration = param.Event(label='Explore table(s)')
+    add_exploration = param.Event(label="Explore table")
 
     table_slug = param.Selector(label="Select table(s) to preview")
 
@@ -1677,16 +1677,17 @@ class TableExplorer(Viewer):
         super().__init__(**params)
         self._table_select = Select.from_param(
             self.param.table_slug,
-            max_height=200,
+            height=80,
             margin=0,
             label="",
-            sizing_mode='stretch_width'
+            sizing_mode='stretch_width',
+            sx={"height": "80px"}
         )
         self._explore_button = Button.from_param(
             self.param.add_exploration,
             icon='add_chart', color='primary', icon_size="2em",
             disabled=self._table_select.param.value.rx().rx.not_(),
-            margin=(0, 0, 0, 10), width=200, align='end'
+            margin=(0, 0, 0, 10), width=180, height=80
         )
         self._input_row = Row(
             self._table_select, self._explore_button
@@ -1724,8 +1725,7 @@ class TableExplorer(Viewer):
         self.source_map.clear()
         self.source_map.update(new)
         selected = selected[-1] if len(selected) == 1 else None
-        self.param.table_slug.objects = self.source_map
-        self.table_slug = selected
+        self._table_select.param.update(options=list(self.source_map), value=selected)
         self._input_row.visible = bool(self.source_map)
         self._initialized = True
 

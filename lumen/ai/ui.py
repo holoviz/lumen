@@ -1565,10 +1565,10 @@ class ExplorerUI(UI):
         sql_agent = next(agent for agent in self._coordinator.agents if isinstance(agent, SQLAgent))
         sql_task = ActorTask(sql_agent, title=f"Load {table}")
         plan = Plan(sql_task, title=f"Explore {table}")
-        exploration = await self._add_exploration(plan, self._home)
 
         with hold():
             self._transition_to_chat()
+            exploration = await self._add_exploration(plan, self._home)
             self.interface.send(f"Add exploration for the `{table}` table", respond=False)
             out_context = await sql_out.render_context()
             watcher = plan.param.watch(partial(self._add_views, exploration), "views")
