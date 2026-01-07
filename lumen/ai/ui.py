@@ -1639,8 +1639,11 @@ class ExplorerUI(UI):
     async def _update_conversation(self, event=None, replan: bool = False):
         exploration = self._explorations.value['view']
         if exploration is self._home:
-            self._split[0] = self._splash
-        self._output[1:] = [exploration]
+            self._main[:] = [self._navigation, self._splash]
+        else:
+            if self._splash in self._main:
+                self._main[:] = [self._navigation, self._split]
+            self._output[1:] = [exploration]
 
         if event is not None:
             # When user switches explorations and coordinator is running
