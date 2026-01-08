@@ -678,7 +678,7 @@ class UI(Viewer):
 
         # Track pending query when files are being uploaded
         self._pending_query = None
-        self._pending_sources_snapshot = None
+        self._pending_sources_snapshot = None  # Also indicates dialog was opened from chat
 
         def on_submit(event=None, instance=None):
             chat_input = self.interface.active_widget
@@ -752,6 +752,9 @@ class UI(Viewer):
             return
 
         with hold():
+            # Capture current sources - also marks dialog as opened from chat
+            self._pending_sources_snapshot = list(self.context.get("sources", []))
+
             # Generate file cards in the upload controls
             self._upload_controls._generate_file_cards({
                 key: value["value"] for key, value in event.new.items()
@@ -762,19 +765,31 @@ class UI(Viewer):
             self._source_content.active = 0
 
     def _handle_upload_successful(self, event):
-        """Handle successful file upload by switching to Source Catalog and executing pending query."""
-        if self._pending_query is not None:
-            self._execute_pending_query()
+        """Handle successful file upload by closing dialog and executing pending query if present."""
+        # Only auto-close if dialog was opened from chat (indicated by snapshot being set)
+        if self._pending_sources_snapshot is None:
+            return
 
-    def _execute_pending_query(self):
-        """Execute a pending query after files have been uploaded."""
-        user_prompt = self._pending_query
-        old_sources = self._pending_sources_snapshot or []
+        # Capture any text currently in the input field
+        chat_input = self.interface.active_widget
+        current_text = chat_input.value_input
+        if self._pending_query is None and current_text:
+            self._pending_query = current_text
+            chat_input.value_input = ""
 
-        # Clear pending state first (before any dialog operations)
-        self._pending_query = None
-        self._pending_sources_snapshot = None
+        # Save state before closing (close triggers _on_sources_dialog_close which resets state)
+        query = self._pending_query
+        sources_snapshot = self._pending_sources_snapshot
 
+        # Close dialog (this will reset _pending_query and _pending_sources_snapshot)
+        self._sources_dialog_content.open = False
+
+        # Execute query if present
+        if query:
+            self._execute_pending_query_with(query, sources_snapshot)
+
+    def _execute_pending_query_with(self, user_prompt, old_sources):
+        """Execute a query after files have been uploaded."""
         # Build message with new sources info
         new_sources = [
             source for source in self.context.get("sources", [])
@@ -786,27 +801,23 @@ class UI(Viewer):
             sizing_mode="stretch_width"
         ) if new_sources else None
 
-        # Send message and respond if there's a query
+        # Transition to chat and send message
         self._transition_to_chat()
-        if user_prompt:
-            msg = Column(user_prompt, source_view) if source_view else user_prompt
-            self.interface.send(msg, respond=True)
-        elif source_view:
-            self.interface.send(source_view, respond=False)
+        msg = Column(user_prompt, source_view) if source_view else user_prompt
+        self.interface.send(msg, respond=True)
 
     def _on_sources_dialog_close(self, event):
         """Handle sources dialog close - restore pending query to input if user closed without adding files."""
-        # Only act when dialog is closing (open becomes False)
-        if event.new:
+        if event.new:  # Only act when dialog is closing
             return
 
-        # If there's a pending query, restore it to the input field
-        # (user closed without clicking 'Confirm file(s)')
+        # Restore pending query if user closed without confirming
         if self._pending_query:
-            chat_input = self.interface.active_widget
-            chat_input.value_input = self._pending_query
-            self._pending_query = None
-            self._pending_sources_snapshot = None
+            self.interface.active_widget.value_input = self._pending_query
+
+        # Reset state
+        self._pending_query = None
+        self._pending_sources_snapshot = None
 
     def _configure_coordinator(self):
         log.setLevel(self.log_level)
