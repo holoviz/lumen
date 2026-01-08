@@ -752,6 +752,9 @@ class UI(Viewer):
             return
 
         with hold():
+            # Capture current sources before any files are added
+            self._pending_sources_snapshot = list(self.context.get("sources", []))
+
             # Generate file cards in the upload controls
             self._upload_controls._generate_file_cards({
                 key: value["value"] for key, value in event.new.items()
@@ -762,9 +765,21 @@ class UI(Viewer):
             self._source_content.active = 0
 
     def _handle_upload_successful(self, event):
-        """Handle successful file upload by switching to Source Catalog and executing pending query."""
-        if self._pending_query is not None:
-            self._execute_pending_query()
+        """Handle successful file upload by closing dialog and executing pending query if present."""
+        # Close the dialog
+        self._sources_dialog_content.open = False
+
+        # Capture any text currently in the input field (user may have typed after drag-drop)
+        chat_input = self.interface.active_widget
+        current_text = chat_input.value_input
+
+        # Use pending query if set (from submit flow), otherwise use current input
+        if self._pending_query is None and current_text:
+            self._pending_query = current_text
+            chat_input.value_input = ""  # Clear the input
+
+        # Execute pending query if there was text submitted, otherwise just update splash
+        self._execute_pending_query()
 
     def _execute_pending_query(self):
         """Execute a pending query after files have been uploaded."""
@@ -786,13 +801,12 @@ class UI(Viewer):
             sizing_mode="stretch_width"
         ) if new_sources else None
 
-        # Send message and respond if there's a query
-        self._transition_to_chat()
+        # Only transition to chat and send message if there's actual user text
         if user_prompt:
+            self._transition_to_chat()
             msg = Column(user_prompt, source_view) if source_view else user_prompt
             self.interface.send(msg, respond=True)
-        elif source_view:
-            self.interface.send(source_view, respond=False)
+        # If no user text, just update splash screen (sources already synced via outputs watcher)
 
     def _on_sources_dialog_close(self, event):
         """Handle sources dialog close - restore pending query to input if user closed without adding files."""
