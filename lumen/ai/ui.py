@@ -410,7 +410,7 @@ class UI(Viewer):
         Preamble to add to exported notebook(s).""")
 
     source_controls = param.List(default=[UploadControls, DownloadControls], doc="""
-        Additional SourceControls types to manage datasets.""")
+        List of SourceControls types to manage datasets.""")
 
     suggestions = param.List(default=GETTING_STARTED_SUGGESTIONS, doc="""
         Initial list of suggestions of actions the user can take.""")
