@@ -869,13 +869,13 @@ class UI(Viewer):
         return []
 
     def _render_main(self) -> list[Viewable]:
-        self._cta = Typography(self._get_status_text(), margin=(10, 0, 0, 10))
+        self._cta = Typography(self._get_status_text(), margin=(0, 0, 10, 0))
         self._chat_splash = Column(self._cta, self.interface._widget, margin=(0, 0, 0, -10))
         self._error_alert = Alert(
             object="",
             severity="error",
             sizing_mode="stretch_width",
-            margin=(5, 10),
+            margin=(10, 0, 5, 0),
             visible=False
         )
 
@@ -884,17 +884,16 @@ class UI(Viewer):
                 Typography(
                     "Ask questions, get insights",
                     disable_anchors=True,
-                    variant="h1"
+                    variant="h1",
+                    margin=(10, 0, 5, 0),
                 ),
-                self._chat_splash,
                 self._cta,
+                self._chat_splash,
                 self._error_alert,
-                self.interface._widget,
                 max_width=850,
                 styles={'margin': 'auto'},
                 sx={'p': '0 20px 20px 20px'}
             ),
-            margin=(0, 5, 0, 0),
             sx={'display': 'flex', 'align-items': 'center'},
             height_policy='max'
         )
@@ -1305,7 +1304,7 @@ class UI(Viewer):
                 footer_objects = message.footer_objects or []
                 message.footer_objects = footer_objects + [suggestion_buttons]
         else:
-            self._splash[0][1].append(suggestion_buttons)
+            self._splash[0][2].append(suggestion_buttons)
 
         self.interface.param.watch(hide_suggestions, "objects")
 
@@ -1575,7 +1574,7 @@ class ExplorerUI(UI):
         )
 
         # Update chat_splash to use tabs instead of interface widget
-        self._chat_splash[:] = [self._cta, self._input_tabs]
+        self._chat_splash[:] = [self._input_tabs]
 
         # Add suggestions to chat_splash (after tabs)
         if self.suggestions:
