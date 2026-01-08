@@ -149,6 +149,15 @@ class Llm(param.Parameterized):
                 f"parameter for {self.__class__.__name__}."
             )
 
+    @param.depends("logfire_tags", watch=True)
+    def _update_logfire_tags(self):
+        if self.logfire_tags is not None and self._supports_logfire:
+            import logfire
+            logfire.configure(send_to_logfire=True)
+            self._logfire = logfire.Logfire(tags=self.logfire_tags)
+        else:
+            self._logfire = None
+
     def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
         """
         Can specify model kwargs as a dict or as a string that is a key in the model_kwargs
@@ -534,15 +543,6 @@ class OpenAI(Llm, OpenAIMixin):
         The timeout in seconds for OpenAI API calls.""")
 
     _supports_logfire = True
-
-    @param.depends("logfire_tags", watch=True)
-    def _update_logfire_tags(self):
-        if self.logfire_tags is not None:
-            import logfire
-            logfire.configure(send_to_logfire=True)
-            self._logfire = logfire.Logfire(tags=self.logfire_tags)
-        else:
-            self._logfire = None
 
     @property
     def _client_kwargs(self):
