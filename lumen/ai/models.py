@@ -60,7 +60,11 @@ class YesNo(BaseModel):
 class ThinkingYesNo(BaseModel):
 
     chain_of_thought: str = Field(
-        description="Briefly explain your reasoning as to why you will be answering yes or no.")
+        description="In 1-2 sentences, explain your reasoning for yes or no.",
+        examples=[
+            "The query asks for top 10 hosts which requires extending the existing aggregation from LIMIT 1 to LIMIT 10.",
+            "The data contains location and count columns needed for a bar chart visualization."
+        ])
 
     yes: bool = Field(description="True if yes, otherwise False.")
 
@@ -90,7 +94,12 @@ LineEdit = Annotated[
 class RetrySpec(BaseModel):
     """Represents a revision of text with its content and changes."""
 
-    chain_of_thought: str = Field(description="In a sentence or two, explain the plan to revise the text based on the feedback provided.")
+    chain_of_thought: str = Field(
+        description="In 1-2 sentences, explain the plan to revise the text based on the feedback provided.",
+        examples=[
+            "The SQL query failed due to missing quotes around the column name. Will add double quotes to fix the syntax error.",
+            "The chart needs horizontal bars instead of vertical. Will swap x and y encodings."
+        ])
     edits: list[LineEdit] = Field(description="A list of line edits based on the chain_of_thought.")
 
     @model_validator(mode="after")

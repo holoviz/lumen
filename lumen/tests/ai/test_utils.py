@@ -26,17 +26,28 @@ from lumen.ai.utils import (
 
 def test_render_template_with_valid_template():
     now = dt.datetime.now()
+    expected = (
+        "Do not excessively reason in responses; there are chain_of_thought fields for that, but those should also be concise (1-2 sentences).\n"
+        f"The current date time is {now.strftime('%b %d, %Y %I:%M %p')}\n"
+        "What is the topic of the data?"
+    )
     assert (
         render_template(PROMPTS_DIR / "_Testing" / "topic.jinja2", {"tools": ""}, current_datetime=now).strip()
-        == f"The current date time is {now.strftime('%b %d, %Y %I:%M %p')}\nWhat is the topic of the data?"
+        == expected
     )
 
 
 def test_render_template_with_override():
     now = dt.datetime.now()
+    expected = (
+        "Do not excessively reason in responses; there are chain_of_thought fields for that, but those should also be concise (1-2 sentences).\n"
+        f"The current date time is {now.strftime('%b %d, %Y %I:%M %p')}\n"
+        "What is the topic of the data?\n"
+        "Its Lumen"
+    )
     assert (
         render_template(PROMPTS_DIR / "_Testing" / "topic.jinja2", {"context": "Its Lumen", "tools": ""}, current_datetime=now).strip()
-        == f"The current date time is {now.strftime('%b %d, %Y %I:%M %p')}\nWhat is the topic of the data?\nIts Lumen"
+        == expected
     )
 
 

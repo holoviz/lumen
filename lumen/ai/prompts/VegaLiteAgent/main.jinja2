@@ -14,19 +14,10 @@ Every visualization must:
 
 # MARK vs ENCODING
 
-This is the most common source of errors. Properties belong in different places:
-
-**Mark** (static styling): Position (`dx`, `dy`, `align`, `baseline`) and style (`color`, `opacity`, `fontSize`) go here
-```yaml
-mark: {type: text, align: left, dx: 3, color: black}
-```
-
-**Encoding** (data mappings): Fields and channels (`x`, `y`, `color`, `size`, `text`) go here
-```yaml
-encoding:
-  x: {field: year, type: quantitative}
-  color: {value: 'blue'}  # Static values need {value: ...}
-```
+This is the most common source of errors. See examples for correct placement:
+- **Mark**: static styling—position (`dx`, `dy`, `align`, `baseline`) and appearance (`color`, `opacity`, `fontSize`)
+- **Encoding**: data mappings—channels (`x`, `y`, `color`, `size`, `text`) with `{field: ...}` or `{value: ...}`
+- **NEVER put `dx`, `dy`, `align`, `baseline` in encoding**—they belong in mark only
 
 # LEGENDS
 
@@ -44,10 +35,7 @@ Legends appear when you map data to `color`, `size`, or `shape` in encoding.
 
 **Color purposefully**: Encode dimensions, highlight outliers/leaders, or show thresholds. Keep color in `mark` for text labels that shouldn't appear in legends. When encoding quantitative values with color, consider setting an appropriate `domain` if data doesn't start at 0 (e.g., `scale: {scheme: blues, domain: [min, max]}`).
 
-**Informative titles**: Title object at top level tells a story:
-- `text`: What happened ("Sales spiked 40% in Q3" not "Sales over time")
-- `subtitle`: NEW insight, don't repeat title ("Three offshore projects account for 70%")
-- `fontSize: 18`, `subtitleFontSize: 14`, `subtitleColor: '#666666'`, `anchor: start`
+**Informative titles**: Title tells a story (what happened, not what's shown). See examples.
 
 **Data types**: Match type to your data - quantitative for continuous, ordinal for ordered categories, nominal for unordered, temporal for dates
 - For year fields: use `type: quantitative` with `axis.format: 'd'` to prevent comma separators (1990 not 1,990)
@@ -75,6 +63,32 @@ Legends appear when you map data to `color`, `size`, or `shape` in encoding.
 {{ example }}
 {% endfor %}
 {% endif %}
+
+Mark vs Encoding (common error—dx/dy go in mark, NOT encoding):
+```yaml
+layer:
+  # ✅ CORRECT: dx in mark
+  - mark: {type: text, align: left, dx: 5, color: black}
+    encoding:
+      x: {field: value, type: quantitative}
+      y: {field: category, type: nominal}
+      text: {field: value, type: quantitative}
+  # ❌ WRONG: dx in encoding causes validation error
+  # - mark: text
+  #   encoding:
+  #     dx: {value: 5}  # INVALID - dx is not an encoding channel
+```
+
+Title with subtitle:
+```yaml
+title:
+  text: "Sales Spiked 40% in Q3"  # What happened, not "Sales Over Time"
+  subtitle: "Online channels drove 80% of growth"  # New insight, don't repeat title
+  fontSize: 18
+  subtitleFontSize: 14
+  subtitleColor: '#666666'
+  anchor: start
+```
 
 Simple time series with endpoint labels:
 ```yaml

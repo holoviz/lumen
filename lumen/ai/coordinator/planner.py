@@ -32,29 +32,34 @@ if TYPE_CHECKING:
 
 class RawStep(BaseModel):
     actor: str
-    instruction: str = Field(description="""
-    Concise instruction capturing user intent at the right altitude.
+    instruction: str = Field(
+        description="""
+        Concise instruction capturing user intent at the right altitude.
 
-    Right altitude:
-    - ❌ Too low: implementation details (SQL syntax, chart specs, row limits, join on these tables)
-    - ❌ Too high: vague ("handle this", "process data")
-    - ✅ Just right: clear intent + relationship to context
+        Right altitude:
+        - ❌ Too low: implementation details (SQL syntax, chart specs, row limits)
+        - ❌ Too high: vague ("handle this", "process data")
+        - ✅ Just right: clear intent + context reference
 
-    Encode intent: add/modify/filter/compare/create — reference existing context when applicable.
+        Examples:
+        - "Query top 5 countries by sales, sorted descending"
+        - "Horizontal bar chart highlighting the leader"
 
-    Never include implementation details unless user explicitly specified them because selected actors
-    will have more knowledge revealed during execution.
-    """)
+        Never include: rendering instructions, SQL syntax, join details.
+        """,
+        examples=[
+            "Show top 5 countries by sales on a bar chart",
+            "Query top 5 countries by sales, sorted descending",
+            "Horizontal bar chart, highlight top country",
+        ],
+    )
     title: str
 
 
 class RawPlan(BaseModel):
     title: str = Field(description="A title that describes this plan, up to three words.")
     steps: list[RawStep] = Field(
-        description="""
-        A list of steps to perform that will solve user query. Each step MUST use a DIFFERENT actor than the previous step.
-        Review your plan to ensure this constraint is met.
-        """
+        description="""Steps to solve the user query. Each step MUST use a DIFFERENT actor than the previous step and try to limit to minimal steps.""",
     )
 
 
@@ -65,7 +70,12 @@ class Reasoning(BaseModel):
         high-level, data-focused, or other. Identify the most relevant and compatible actors,
         explaining their requirements, and what you already have satisfied. If there were previous failures, discuss them.
         IMPORTANT: Ensure no consecutive steps use the same actor in your planned sequence.
-        """
+        Keep response to 1-2 sentences.
+        """,
+        examples=[
+            "Find which country hosted the most Winter Olympics—a data-focused query requiring aggregation. SQLAgent can handle this (requires source/metaset, both available) by filtering to Winter and counting by location, with no consecutive actor conflicts.",
+            "A horizontal bar chart of existing data. VegaLiteAgent is ready (requires pipeline/data/table, all satisfied from previous SQLAgent step) and will create the chart without consecutive actor issues."
+        ]
     )
 
 

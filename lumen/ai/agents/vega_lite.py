@@ -34,7 +34,11 @@ class VegaLiteSpec(EscapeBaseModel):
         - Which visual encodings (position, color, size) best reveal patterns?
         - Should color highlight specific insights or remain neutral?
         - What makes this plot engaging and useful for the user?
-        Then describe the basic plot structure."""
+        Keep response to 1-2 sentences.""",
+        examples=[
+            "The data reveals US dominance in Winter Olympic hosting (4 times vs France's 3)—title should emphasize this leadership. Position encoding via horizontal bars sorted descending makes comparison immediate, neutral blue keeps focus on counts rather than categories, and the subtitle can note the 23-country spread to add context without redundancy.",
+            "This time series shows a 40% revenue spike in Q3 2024—the key trend for the title. A line chart with position encoding (time→x, revenue→y) reveals the pattern, endpoint labels eliminate need for constant grid reference making it cleaner, and color remains neutral since there's one series; the subtitle should explain what drove the spike (e.g., 'Three offshore projects') to add insight."
+        ]
     )
     yaml_spec: str = Field(
         description="A basic vega-lite YAML specification with core plot elements only (data, mark, basic x/y encoding)."
@@ -43,7 +47,11 @@ class VegaLiteSpec(EscapeBaseModel):
 
 class VegaLiteSpecUpdate(BaseModel):
     chain_of_thought: str = Field(
-        description="Explain what changes you're making to the Vega-Lite spec and why."
+        description="Explain what changes you're making to the Vega-Lite spec and why. Keep to 1-2 sentences.",
+        examples=[
+            "Adding tooltips to show exact values on hover for better interactivity.",
+            "Swapping x and y axes to create horizontal bars as requested."
+        ]
     )
     yaml_update: str = Field(
         description="""Partial YAML with ONLY modified properties (unchanged values omitted).
