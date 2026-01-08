@@ -840,7 +840,7 @@ class SQLRemoveSourceSeparator(SQLTransform):
         # - Any non-quote/space characters followed by separator (source__@__)
         # - The filename (captured in group 2)
         # - Optional closing quote (captured in group 3)
-        pattern = r'(["\']?)\b[^\s"\']*?' + re.escape(self.separator) + r'([^\s"\']+)(["\']?)'
+        pattern = r'(["\']?)\b[^\s"\']*?\s*' + re.escape(self.separator) + r'\s*([^\s"\']+)(["\']?)'
 
         def replacer(match):
             quote_start = match.group(1)

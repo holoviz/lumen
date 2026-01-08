@@ -1077,7 +1077,7 @@ class CopyControls(Viewer):
             icon_size="0.9em"
         )
         copy_icon.js_on_click(
-            args={"code_editor": self.view._editor},
+            args={"code_editor": self.view.editor},
             code="navigator.clipboard.writeText(code_editor.code);",
         )
         self._row = Row(copy_icon, **self.layout_kwargs)

@@ -30,11 +30,20 @@ from ..views import LumenOutput, SQLOutput
 from .base_lumen import BaseLumenAgent
 
 
-def make_source_table(sources: list[tuple[str, str]]):
+def make_source_table_model(sources: list[tuple[str, str]]):
     class LiteralSourceTable(BaseModel):
         source: Literal[tuple(set(src for src, _ in sources))]
         table: Literal[tuple(set(table for _, table in sources))]
     return LiteralSourceTable
+
+
+def make_table_model(sources: list[tuple[str, str]]):
+    """
+    Create a table model with constrained table choices.
+    """
+    available_tables = list(set(table for _, table in sources))
+    TableLiteral = Literal[tuple(available_tables)]  # type: ignore
+    return TableLiteral
 
 
 class SampleQuery(PartialBaseModel):
@@ -166,7 +175,7 @@ class TableQuery(PartialBaseModel):
 
 def make_discovery_model(sources: list[tuple[str, str]]):
 
-    SourceTable = make_source_table(sources)
+    SourceTable = make_source_table_model(sources)
 
     SampleQueryLiteral = create_model(
         "LiteralSampleQuery",
@@ -259,9 +268,17 @@ def make_sql_model(sources: list[tuple[str, str]]):
     # Check if all tables are from a single unique source
     unique_sources = set(src for src, _ in sources)
     if len(unique_sources) == 1:
-        return SQLQuery
+        Table = make_table_model(sources)
+        return create_model(
+            "SQLQueryWithTables",
+            tables=(
+                list[Table],
+                FieldInfo(description="The table name(s) referenced in the SQL query.")
+            ),
+            __base__=SQLQuery
+        )
 
-    SourceTable = make_source_table(sources)
+    SourceTable = make_source_table_model(sources)
     return create_model(
         "SQLQueryWithSources",
         tables=(
@@ -599,11 +616,11 @@ class SQLAgent(BaseLumenAgent):
             # Check if all tables are from a single unique source
             unique_sources = set(src for src, _ in sources.keys())
             if len(unique_sources) == 1:
-                # Single source - just get all table names
+                # Single source - use tables from LLM output (list of table names)
                 source = next(iter(sources.values()))
-                tables = [table for _, table in sources.keys()]
+                tables = output.tables
             else:
-                # Multiple sources - need to merge
+                # Multiple sources - need to merge (output.tables contains SourceTable objects)
                 source, tables = self._merge_sources(sources, output.tables)
             sql_query = output.query.strip()
             expr_slug = output.table_slug.strip()

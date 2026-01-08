@@ -12,7 +12,7 @@ from panel.tests.util import async_wait_until
 from panel_material_ui import Card, ChatMessage, Typography
 
 from lumen.ai.agents import AnalystAgent, ChatAgent, SQLAgent
-from lumen.ai.agents.sql import SQLQuery
+from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.coordinator import Plan, Planner
 from lumen.ai.coordinator.planner import Reasoning, make_plan_model
 from lumen.ai.models import ReplaceLine, RetrySpec
@@ -145,8 +145,14 @@ async def sql_plan(llm, tiny_source):
         "visible_slugs": [slug]
     }
 
+    # Create the proper SQL model with tables field for single source
+    SQLQueryWithTables = make_sql_model([(tiny_source.name, "tiny")])
     llm.set_responses([
-        SQLQuery(query="SELECT SUM(value) as value_sum FROM tiny", table_slug="tiny_agg"),
+        SQLQueryWithTables(
+            query="SELECT SUM(value) as value_sum FROM tiny",
+            table_slug="tiny_agg",
+            tables=["tiny"]
+        ),
         lambda: f"Result: {plan[0].out_context['pipeline'].data.iloc[0, 0]}"
     ])
 
