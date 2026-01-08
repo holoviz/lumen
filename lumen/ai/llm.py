@@ -395,11 +395,14 @@ class Llm(param.Parameterized):
                 model_spec=model_spec,
                 **kwargs,
             )
-            if field is not None and hasattr(output, field):
-                output = getattr(output, field)
+            if response_model is not None:
+                # Return Pydantic model as-is, or extract field if specified
+                if field is not None and hasattr(output, field):
+                    output = getattr(output, field)
             elif isinstance(output, str):
                 pass  # Already a string
             else:
+                # No response_model and not a string - extract content from raw response
                 output = self._get_content(output)
             yield output
             return
@@ -1187,6 +1190,16 @@ class Google(Llm):
         return ""
 
     @classmethod
+    def _get_content(cls, response: Any) -> str:
+        """Extract content from a non-streaming Google GenAI response."""
+        if hasattr(response, 'candidates') and response.candidates:
+            candidate = response.candidates[0]
+            if hasattr(candidate, 'content') and candidate.content:
+                if hasattr(candidate.content, 'parts') and candidate.content.parts:
+                    return candidate.content.parts[0].text or ""
+        return str(response)
+
+    @classmethod
     def _messages_to_contents(cls, messages: list[Message]) -> tuple[list[dict[str, Any]], str | None]:
         """
         Transform messages into contents format expected by Google GenAI API.
@@ -1278,12 +1291,6 @@ class Google(Llm):
 
         kwargs.pop("stream", None)
         result = await client(contents=contents, config=config, **kwargs)
-        # Extract text from GenerateContentResponse when no response_model
-        if hasattr(result, 'candidates') and result.candidates:
-            candidate = result.candidates[0]
-            if hasattr(candidate, 'content') and candidate.content:
-                if hasattr(candidate.content, 'parts') and candidate.content.parts:
-                    return candidate.content.parts[0].text or ""
         return result
 
 
