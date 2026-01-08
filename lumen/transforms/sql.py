@@ -310,15 +310,27 @@ class SQLSelectFrom(SQLFormat):
                         ),
                         "",
                     )
-                    tables[
-                        Table(
-                            this=Identifier(this=renamed_key),
-                            alias=Identifier(this=alias),
-                        )
-                    ] = Table(
-                        this=Identifier(this=renamed_value),
+                    key_table = Table(
+                        this=Identifier(this=renamed_key),
                         alias=Identifier(this=alias),
                     )
+                    # Try to parse renamed_value as SQL if it looks like a SQL expression
+                    value_expr = None
+                    if isinstance(renamed_value, str) and (
+                        renamed_value.strip().upper().startswith('SELECT') or
+                        ' FROM ' in renamed_value.upper()
+                    ):
+                        try:
+                            value_expr = self.parse_sql(renamed_value).subquery(alias=alias or renamed_key)
+                        except Exception:
+                            pass
+                    # Default: treat as table name
+                    if value_expr is None:
+                        value_expr = Table(
+                            this=Identifier(this=renamed_value),
+                            alias=Identifier(this=alias),
+                        )
+                    tables[key_table] = value_expr
 
         if expression.find(Select) is not None:
             # if no tables to replace, just return the SQL

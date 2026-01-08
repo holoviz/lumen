@@ -846,6 +846,64 @@ class TestSQLSelectFrom:
         expected = 'SELECT * FROM "/path/to/my_data.parquet"'
         assert result == expected
 
+    def test_sql_expression_as_table_value(self):
+        """Test that SQL expressions with quoted identifiers are handled correctly.
+        
+        When tables dict contains a SQL expression as the value (not just a table name),
+        the quoted identifiers in that expression should be preserved without double-quoting.
+        
+        This was a bug where 'SELECT * FROM obs WHERE "Smoking Status" = \'Former\''
+        would become 'SELECT * FROM obs WHERE ""Smoking Status"" = \'Former\''
+        """
+        sql_in = "my_new_table"
+        sql_expr = '''SELECT * FROM obs WHERE "Smoking Status" = 'Former' '''
+        result = SQLSelectFrom.apply_to(
+            sql_in,
+            tables={"my_new_table": sql_expr},
+            read="duckdb"
+        )
+        # The result should contain the SQL as a subquery, preserving the quoted identifier
+        assert '"Smoking Status"' in result
+        # Should NOT have double-quoted identifiers
+        assert '""Smoking Status""' not in result
+        # Should be wrapped as a subquery
+        assert 'SELECT * FROM (' in result or 'FROM (' in result
+
+    def test_sql_expression_with_complex_where_clause(self):
+        """Test SQL expressions with complex WHERE clauses containing quoted column names."""
+        sql_in = "subset_smokers"
+        sql_expr = '''SELECT * FROM obs WHERE "Smoking Status" = 'Current' OR "Smoking Status" = 'Former' '''
+        result = SQLSelectFrom.apply_to(
+            sql_in,
+            tables={"subset_smokers": sql_expr},
+            read="duckdb"
+        )
+        # Quoted identifiers should be preserved
+        assert '"Smoking Status"' in result
+        # Should NOT have double-quoted identifiers  
+        assert '""Smoking Status""' not in result
+        # Should preserve the OR condition
+        assert "'Current'" in result
+        assert "'Former'" in result
+
+    def test_sql_expression_preserves_column_names_with_spaces(self):
+        """Test that column names with spaces remain properly quoted."""
+        sql_in = "filtered_data"
+        sql_expr = '''SELECT "Pack Years", "Stage at Dx" FROM obs WHERE "Tissue Type" = 'Primary' '''
+        result = SQLSelectFrom.apply_to(
+            sql_in,
+            tables={"filtered_data": sql_expr},
+            read="duckdb"
+        )
+        # All quoted identifiers should be preserved correctly
+        assert '"Pack Years"' in result
+        assert '"Stage at Dx"' in result  
+        assert '"Tissue Type"' in result
+        # No double-quoting
+        assert '""Pack Years""' not in result
+        assert '""Stage at Dx""' not in result
+        assert '""Tissue Type""' not in result
+
 
 class TestSQLRemoveSourceSeparator:
 
