@@ -619,8 +619,8 @@ class View(MultiTypeComponent, Viewer):
         Parameters
         ----------
         context: Dict[str, Any]
-          Context contains the specification of all previously serialized components,
-          e.g. to allow resolving of references.
+            Context contains the specification of all previously serialized components,
+            e.g. to allow resolving of references.
 
         Returns
         -------

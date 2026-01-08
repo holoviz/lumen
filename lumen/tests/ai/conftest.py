@@ -25,10 +25,13 @@ def pytest_collection_modifyitems(config, items):
 
 class MockLLM(Llm):
 
-    model_kwargs = param.Dict({'default': 'mock'})
+    model_kwargs = param.Dict({'default': {"model": "foo"}})
 
     _supports_stream = False
     _supports_model_stream = False
+
+    async def initialize(self, log_level: str):
+        self._ready = True
 
     async def invoke(
         self,
@@ -40,9 +43,11 @@ class MockLLM(Llm):
         **input_kwargs,
     ) -> BaseModel:
         ret = self._responses[self._index]
-        if callable(ret):
-            ret = ret()
-        self._index += 1
+        try:
+            if callable(ret):
+                ret = ret()
+        finally:
+            self._index += 1
         return ret
 
     def set_responses(self, responses):

@@ -243,6 +243,8 @@ class Task(Viewer):
 
 class TaskGroup(Task):
 
+    _current = param.Integer(default=0)
+
     _tasks = param.List(item_type=Task)
 
     level = 3
@@ -256,7 +258,8 @@ class TaskGroup(Task):
             tasks = list(tasks)
         self._task_watchers = {}
         _tasks = []
-        for task in tasks:
+        current = 0
+        for i, task in enumerate(tasks):
             if isinstance(task, FunctionType):
                 task = FunctionTool(task)
             if isinstance(task, Actor) and not issubclass(Actor, self.param._tasks.item_type):
@@ -266,9 +269,12 @@ class TaskGroup(Task):
                 self._task_watchers[task] = task.param.watch(
                     self._sync_context, 'out_context'
                 )
+            if current == i and task.status == "success":
+                current = i+1
             _tasks.append(task)
-        super().__init__(_tasks=_tasks, **params)
-        self._current = 0
+        if "status" not in params and current == len(tasks):
+            params["status"] = "success"
+        super().__init__(_tasks=_tasks, _current=current, **params)
         self._watchers = {}
         self._init_view()
         self._init_views()
@@ -401,7 +407,7 @@ class TaskGroup(Task):
             except Exception as e:
                 tb.print_exception(e)
                 self.status = "error"
-                new_context = {"__error__": str(e)}
+                new_context = {"__error__": str(e), "__error_type__": type(e)}
                 task.out_context = new_context
                 if self.abort_on_error:
                     if self.parent is not None:
@@ -414,11 +420,11 @@ class TaskGroup(Task):
                     self.status = "error"
                     if self.abort_on_error:
                         break
-                self._current = i
                 views += new
+            finally:
+                self._current = i + (0 if task.status == "error" else 1)
         if self.status != "error":
             self.status = "success"
-            self._current += 1
         contexts = [self.context] if self.context else []
         contexts += [task.out_context for task in self]
         return views, merge_contexts(LWW, contexts)
@@ -438,6 +444,14 @@ class TaskGroup(Task):
         self._tasks.append(task)
         self._populate_view()
         self._init_views()
+
+    def remove(self, task: Task | list[Task]):
+        tasks = task if isinstance(task, list) else [task]
+        for t in tasks:
+            self._tasks.remove(t)
+        self._populate_view()
+        self._init_views()
+        self._current = min(self._current, len(self))
 
     def cleanup(self):
         for task, watcher in self._task_watchers.items():
@@ -565,6 +579,7 @@ class TaskGroup(Task):
             other.parent = self
             self._tasks.append(task)
         self._view[:] = list(self._view) + list(other._view)
+        self.history += [h for h in other.history if h not in self.history]
         self._init_views()
         return self
 
@@ -573,16 +588,16 @@ class TaskGroup(Task):
             await task.prepare(context)
         self._prepared = True
 
-    def reset(self):
+    def reset(self, start: int = 0):
         """
         Resets the view, removing generated outputs.
         """
         self.status = "idle"
-        self._current = 0
+        self._current = start
         with hold():
             self._header = []
             self._view.clear()
-            for task in self:
+            for task in self[start:]:
                 if isinstance(task, Task):
                     task.reset()
             self._populate_view()
@@ -607,7 +622,7 @@ class TaskGroup(Task):
             elif isinstance(out, LumenOutput):
                 cell, ext = format_output(out)
             elif isinstance(out, Viewable):
-                cell, ext = format_output(Panel(out))
+                cell, ext = format_output(Panel(object=out))
             cells.append(cell)
             if ext and ext not in extensions:
                 extensions.append(ext)
@@ -805,6 +820,11 @@ class Report(TaskGroup):
             margin=(0, 0, 0, 5),
             sizing_mode="stretch_both"
         )
+        self._update_run_state()
+
+    @param.depends('_current', '_tasks', watch=True)
+    def _update_run_state(self):
+        self._run.disabled = self._current == len(self)
 
     async def _execute_event(self, event):
         await self.execute()
@@ -813,7 +833,9 @@ class Report(TaskGroup):
     def _update_filename(self):
         self._export.filename = f"{self.title or 'Report'}.ipynb"
 
-    def _notebook_export(self):
+    async def _notebook_export(self):
+        if len(self) and self.status != "success":
+            await self.execute()
         return io.StringIO(self.to_notebook())
 
     def _expand_all(self, event):
@@ -958,7 +980,11 @@ class ActorTask(ExecutableTask):
     level = 3
 
     def __init__(self, actor: Actor, **params):
+        views = params.get("views", None)
+        out_context = params.get("out_context", None)
         super().__init__(actor=actor, **params)
+        if views and out_context:
+            self._add_outputs(views, out_context)
 
     @property
     def input_schema(self):

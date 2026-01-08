@@ -12,12 +12,29 @@ from panel.layout import Column, HSpacer, Row
 from panel.pane import Markdown
 from panel.viewable import Viewer
 from panel_material_ui import (
-    Button, Dialog, Divider, FloatSlider, Select,
+    Button, Dialog, Divider, FloatSlider, Select, Typography,
 )
 
 from .agents import Agent
 from .llm import Llm
 from .utils import class_name_to_llm_spec_key
+
+LLM_CONFIG_HELP = """
+**AI Model Configuration**
+
+Configure the language models used for different tasks.
+
+**Provider:** Choose between OpenAI, Anthropic, etc.
+**Temperature:** Lower (0.1-0.3) for focused answers, higher (0.7-1.0) for creative tasks
+
+**Model roles:**
+- **Default Model** — Used for most queries
+- **Edit Model** — Used when revising outputs with the sparkle button
+- **UI Model** — Used for lightweight interface interactions
+"""
+
+# Export for use in ui.py
+AI_CONFIGURATION_HELP = LLM_CONFIG_HELP
 
 
 class LLMModelCard(Viewer):
@@ -136,9 +153,6 @@ class LLMConfigDialog(Viewer):
         if not self.provider_choices:
             self.provider_choices = self._get_available_providers()
 
-        # Title
-        self._subtitle = Markdown("Configure your language model provider, settings and select models for different tasks.", margin=(0, 0, 8, 0))
-
         # Provider selection
         current_provider_class = type(self.llm)
         self._provider_select = Select(
@@ -173,9 +187,17 @@ class LLMConfigDialog(Viewer):
 
         self._buttons = Row(self._reset_button, HSpacer(), self._cancel_button, self._apply_button, sizing_mode="stretch_width")
 
-        # Create the dialog content
+        # Create the dialog content with help caption
+        help_caption = Typography(
+            "Configure your language model provider, settings and select models for different tasks.",
+            variant="body2",
+            color="text.secondary",
+            margin=(0, 0, 10, 0),
+            sizing_mode="stretch_width"
+        )
+
         self._content = Column(
-            self._subtitle,
+            help_caption,
             Divider(sizing_mode="stretch_width"),
             Markdown("### Provider Selection", margin=0),
             Markdown(
@@ -199,7 +221,6 @@ class LLMConfigDialog(Viewer):
             self._model_cards,
             self._buttons,
             sizing_mode="stretch_width",
-            margin=(0, 24, 8, 24),
         )
 
         # Create dialog wrapper

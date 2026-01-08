@@ -1,9 +1,10 @@
 import panel as pn
 
-from . import agents, embeddings, llm  # noqa
+from . import (  # noqa
+    actor, agents, embeddings, llm,
+)
 from .analysis import Analysis  # noqa
 from .coordinator import Coordinator, DependencyResolver, Planner  # noqa
-from .tools import IterativeTableLookup  # noqa
 from .ui import ChatUI, ExplorerUI  # noqa
 from .vector_store import DuckDBVectorStore, NumpyVectorStore  # noqa
 

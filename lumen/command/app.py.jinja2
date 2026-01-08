@@ -24,13 +24,10 @@ from lumen.ai.agents import {{ agent }}
 {% if temperature is defined %}
   {%- set args = args + ["temperature=" ~ temperature] -%}
 {%- endif -%}
-{%- if logfire_tags is defined -%}
-  {%- set args = args + ["logfire_tags=" ~ logfire_tags] -%}
-{%- endif -%}
 llm = lmai.llm.{{ llm_provider }}{{ "()" if args == [] else "(\n    "+', '.join(args)+"\n)" }}
 {% endif %}
 
-data = [{{ tables | join(', ') }}]
+data = [{{ tables | join(', ') if tables is defined else '' }}]
 {% set assistant_args = ['data=data'] -%}
 {%- if llm_provider is defined -%}
   {%- set assistant_args = assistant_args + ['llm=llm'] -%}
@@ -38,6 +35,9 @@ data = [{{ tables | join(', ') }}]
 {%- if agents is defined -%}
   {%- set agents_list = agents | join(', ') -%}
   {%- set assistant_args = assistant_args + ['agents=[{}]'.format(agents_list)] -%}
+{%- endif -%}
+{%- if logfire_tags is defined -%}
+  {%- set assistant_args = assistant_args + ['logfire_tags=' ~ logfire_tags] -%}
 {%- endif -%}
 
 lmai.ExplorerUI(

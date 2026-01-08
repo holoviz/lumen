@@ -32,9 +32,9 @@ def make_refined_query_model(item_type_name: str = "items"):
         refined_search_query=(str, Field(
             description=f"""
             A refined search query that would help find more relevant {item_type_name}.
-            This should be a focused query with specific terms, entities, or concepts
+            This should be a Google-style keyword search query, focusing on terms
             that might appear in relevant {item_type_name}.
-            """
+            """,
         )),
         __base__=PartialBaseModel
     )
@@ -79,12 +79,18 @@ class VectorLookupTool(Tool):
         doc="Dictionary of available prompts for the tool."
     )
 
-    refinement_similarity_threshold = param.Number(default=0.3, bounds=(0, 1), doc="""
+    refinement_similarity_threshold = param.Number(default=0.05, bounds=(0, 1), doc="""
         Similarity threshold below which query refinement is triggered.""")
 
     vector_store = param.ClassSelector(class_=VectorStore, constant=True, doc="""
         Vector store object which is queried to provide additional context
         before responding.""")
+
+    document_vector_store = param.ClassSelector(
+        class_=VectorStore,
+        default=None,
+        constant=True,
+        doc="""\n        Separate vector store for documents. If None, uses the same vector store as tables.\n        This allows for different embedding strategies or storage backends for documents vs tables.""")
 
     _item_type_name: str = None
 
@@ -362,38 +368,30 @@ class VectorLookupToolUser(ToolUser):
             (isinstance(tool, VectorLookupTool) and tool.vector_store is not None)
         ):
             return kwargs
-        elif isinstance(tool, VectorLookupTool) and tool._item_type_name == "document" and self.document_vector_store is not None:
-            kwargs["vector_store"] = self.document_vector_store
-            return kwargs
-        elif self.vector_store is not None:
-            kwargs["vector_store"] = self.vector_store
-            return kwargs
 
-        vector_store = next(
-            (t.vector_store for t in prompt_tools
-             if isinstance(t, VectorLookupTool)),
-            None
-        )
-        # Only inherit vector_store if the _item_type_name is the same
-        if hasattr(tool, "vector_store") and vector_store is not None:
-            # Find the source tool that provided the vector_store
-            source_tool = next(
-                (t for t in prompt_tools
-                 if isinstance(t, VectorLookupTool) and hasattr(t, "vector_store")
-                 and t.vector_store is vector_store),
-                None
-            )
+        # Always pass document_vector_store if available
+        if self.document_vector_store is not None:
+            kwargs["document_vector_store"] = self.document_vector_store
 
-            # Get item types for comparison
-            # Handle both class types and instances
-            tool_item_type = getattr(tool, "_item_type_name", None)
-            source_item_type = getattr(source_tool, "_item_type_name", None) if source_tool else None
-
-            # Only set vector_store if item types match (e.g., IterativeTableLookup and TableLookup both use "tables")
-            # or if either doesn't specify a type (None)
+        # First, try to inherit vector_store from another tool with the same _item_type_name
+        # This takes precedence over self.vector_store to allow tools to share stores
+        inherited_vector_store = None
+        tool_item_type = tool._item_type_name
+        for t in prompt_tools:
+            if not isinstance(t, VectorLookupTool) or t.vector_store is None:
+                continue
+            source_item_type = t._item_type_name
+            # Only inherit if item types match or either is None
             if tool_item_type is None or source_item_type is None or tool_item_type == source_item_type:
-                kwargs["vector_store"] = vector_store
+                inherited_vector_store = t.vector_store
+                break
+
+        if inherited_vector_store is not None:
+            kwargs["vector_store"] = inherited_vector_store
+        elif self.vector_store is not None:
+            # Fall back to self.vector_store if no inheritance source found
+            kwargs["vector_store"] = self.vector_store
         else:
-            # default to NumpyVectorStore if not provided
+            # Default to NumpyVectorStore if nothing else is available
             kwargs["vector_store"] = NumpyVectorStore()
         return kwargs

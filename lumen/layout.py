@@ -837,13 +837,14 @@ class Layout(Component, Viewer):
         Parameters
         ----------
         spec : dict
-          Specification declared as a dictionary of parameter values.
-        kwargs: dict
-          Additional kwargs to pass to the Layout
+            Specification declared as a dictionary of parameter values.
+        kwargs : dict
+            Additional kwargs to pass to the Layout.
 
         Returns
         -------
-        Resolved and instantiated Layout object
+        Layout
+            Resolved and instantiated Layout object.
         """
         if isinstance(spec, str):
             raise ValueError(

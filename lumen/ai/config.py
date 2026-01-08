@@ -22,23 +22,28 @@ ChatMessage.default_avatars.update({
 
 FORMAT_ICONS = {
     "csv":   "table_chart",
-    "xlsx":  "grid_on",
-    "sql":   "description",
-
-    "jpeg":  "image",
-    "png":   "image",
-    "svg":   "vector_square",
+    "html":  "html",
+    "jpeg":  "photo_camera_back",
+    "json":  "data_object",
     "pdf":   "picture_as_pdf",
+    "png":   "image",
+    "sql":   "code",
+    "svg":   "polyline",
+    "xlsx":  "grid_on",
+    "yaml":  "segment",
 }
 
 FORMAT_LABELS = {
-    "csv": "CSV (.csv)",
-    "xlsx": "Excel (.xlsx)",
-    "sql": "SQL (.sql)",
-    "jpeg": "JPEG (.jpeg)",
-    "png": "PNG (.png)",
-    "svg": "SVG (.svg)",
-    "pdf": "PDF (.pdf)",
+    "csv": "CSV",
+    "html": "HTML",
+    "jpeg": "JPEG",
+    "json": "JSON",
+    "pdf": "PDF",
+    "png": "PNG",
+    "sql": "SQL",
+    "svg": "SVG",
+    "xlsx": "Excel",
+    "yaml": "YAML",
 }
 
 class LlmSetupError(Exception):
@@ -59,6 +64,8 @@ class MissingContextError(Exception):
 
 THIS_DIR = Path(__file__).parent
 PROMPTS_DIR = THIS_DIR / "prompts"
+STYLESHEETS_DIR = THIS_DIR / "stylesheets"
+SPLITJS_STYLESHEETS = [(STYLESHEETS_DIR / "splitjs.css").read_text()]
 
 GETTING_STARTED_SUGGESTIONS = [
     ("search", "What data is available?"),

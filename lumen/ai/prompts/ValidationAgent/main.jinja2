@@ -51,6 +51,8 @@ Data Overview:
 {%- endif -%}
 {% if memory.get('view') %}
 Generated View:
-{{ memory["view"] }}
+```yaml
+{{ memory["view"] | json_to_yaml }}
+```
 {%- endif -%}
 {%- endblock -%}

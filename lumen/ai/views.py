@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import traceback
 
 from copy import deepcopy
@@ -22,18 +23,17 @@ from panel.widgets import CodeEditor
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
     Alert, Button, Checkbox, CircularProgress, Column, FileDownload,
-    IconButton, MenuButton,
+    MenuButton,
 )
 
 from ..base import Component
 from ..config import dump_yaml, load_yaml
-from ..downloads import Download
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
 from ..views.base import Panel, Table, View
 from .analysis import Analysis
 from .config import FORMAT_ICONS, FORMAT_LABELS, VEGA_ZOOMABLE_MAP_ITEMS
-from .controls import AnnotationControls, RetryControls
+from .controls import AnnotationControls, CopyControls, RetryControls
 from .utils import describe_data, get_data
 
 if TYPE_CHECKING:
@@ -54,11 +54,12 @@ class LumenOutput(Viewer):
 
     title = param.String(allow_None=True)
 
-    export_formats = ["yaml"]
+    export_formats = ("yaml",)
 
     language = "yaml"
 
-    _controls = [RetryControls]
+    _controls = [CopyControls, RetryControls]
+    _label = "Result"
 
     def __init__(self, **params):
         try:
@@ -90,34 +91,8 @@ class LumenOutput(Viewer):
             styles={"border": "1px solid var(--border-color)"}
         )
         self._editor.link(self, bidirectional=True, value='spec')
-        copy_icon = IconButton(
-            icon="content_copy", active_icon="check", margin=(5, 0), toggle_duration=1000,
-            description="Copy YAML to clipboard", size="small", color="default", icon_size="0.8em"
-        )
-        copy_icon.js_on_click(
-            args={"code_editor": self._editor},
-            code="navigator.clipboard.writeText(code_editor.code);",
-        )
-        download_icon = IconButton(
-            icon="download", active_icon="check", margin=(5, 0), toggle_duration=1000,
-            description="Download YAML to file", size="small", color="default", icon_size="0.9em"
-        )
-        download_icon.js_on_click(
-            args={"code_editor": self._editor},
-            code="""
-            var text = code_editor.code;
-            var blob = new Blob([text], {type: 'text/plain'});
-            var url = window.URL.createObjectURL(blob);
-            var a = document.createElement('a');
-            a.href = url;
-            a.download = 'lumen_spec.yaml';
-            document.body.appendChild(a); // we need to append the element to the dom -> otherwise it will not work in firefox
-            a.click();
-            a.parentNode.removeChild(a);  //afterwards we remove the element again
-            """,
-        )
         self._icons = Row(
-            *([copy_icon, download_icon] + self.footer),
+            *self.footer,
             margin=(0, 0, 5, 10)
         )
         return Column(
@@ -126,12 +101,18 @@ class LumenOutput(Viewer):
             sizing_mode="stretch_both"
         )
 
+    @classmethod
+    def _class_name_to_download_filename(cls, fmt) -> str:
+        """Convert class name to snake_case for filenames."""
+        name = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1_\2', cls.__name__)
+        return re.sub(r'([a-z\d])([A-Z])', r'\1_\2', name).lower() + f'.{fmt}'
+
     def render_controls(self, task: Task, interface: ChatFeed):
         export_menu = MenuButton(
-            label="Export as...", variant='text', icon="file_download", margin=0,
+            label=f"Export {self._label} as", variant='text', icon="file_download", margin=0,
             items=[
                 {
-                    "label": FORMAT_LABELS.get(fmt, f"{fmt.upper()} (.{fmt})"),
+                    "label": FORMAT_LABELS.get(fmt, f"{fmt.upper()}"),
                     "format": fmt,
                     "icon": FORMAT_ICONS.get(fmt, "insert_drive_file")
                 } for fmt in self.export_formats
@@ -141,11 +122,12 @@ class LumenOutput(Viewer):
 
         def download_export(item):
             fmt = item["format"]
-            file_download.filename = f"{self.title}.{fmt}"
+            file_download.filename = self._class_name_to_download_filename(fmt)
             return self.export(fmt)
 
         file_download = FileDownload(
-            auto=True, callback=param.bind(download_export, export_menu), filename=self.title, visible=False
+            auto=True, callback=param.bind(download_export, export_menu),
+            filename=self.title or 'output', visible=False
         )
         export_menu.attached.append(file_download)
 
@@ -187,7 +169,7 @@ class LumenOutput(Viewer):
 
     @param.depends("footer", watch=True)
     def _update_footer(self):
-        self._icons[:] = list(self._icons[:2]) + self.footer
+        self._icons[:] = self.footer
 
     @param.depends("spec", watch=True)
     def _update_component(self):
@@ -211,14 +193,7 @@ class LumenOutput(Viewer):
             """
             ]
         )
-        download = Download(
-            view=table, hide=False, filename=f'{pipeline.table}',
-            format='csv'
-        )
-        download_pane = download.__panel__()
-        download_pane.sizing_mode = 'fixed'
         controls = Row(
-            download_pane,
             styles={'position': 'absolute', 'right': '40px', 'top': '-35px'}
         )
         for sql_limit in pipeline.sql_transforms:
@@ -293,13 +268,26 @@ class VegaLiteOutput(LumenOutput):
 
     export_formats = ("yaml", "png", "jpeg", "pdf", "svg", "html")
 
-    _controls = [RetryControls, AnnotationControls]
+    _controls = [CopyControls, RetryControls, AnnotationControls]
+    _label = "Plot"
 
     def export(self, fmt: str) -> StringIO | BytesIO:
         ret = super().export(fmt)
         if ret is not None:
             return ret
         kwargs = {"scale": 2} if fmt in ("png", "jpeg", "pdf") else {}
+        # Replace 'container' with actual dimensions for image and HTML exports
+        if fmt in ("png", "jpeg", "pdf", "svg", "html"):
+            spec = load_yaml(self.spec)
+            # Replace 'container' with actual pixel values or use defaults
+            if spec.get("width") == "container" or "width" not in spec:
+                spec["width"] = 800
+            if spec.get("height") == "container" or "height" not in spec:
+                spec["height"] = 400
+            # Temporarily update spec for export
+            with self.param.update(spec=dump_yaml(spec)):
+                out = self.component.get_panel().export(fmt, **kwargs)
+            return BytesIO(out) if isinstance(out, bytes) else StringIO(out)
         out = self.component.get_panel().export(fmt, **kwargs)
         return BytesIO(out) if isinstance(out, bytes) else StringIO(out)
 
@@ -494,6 +482,7 @@ class SQLOutput(LumenOutput):
     language = "sql"
 
     export_formats = ("sql", "csv", "xlsx")
+    _label = "Table"
 
     def export(self, fmt: str) -> str | bytes:
         super().export(fmt)

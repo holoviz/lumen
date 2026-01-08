@@ -59,6 +59,7 @@ pydantic-extra-types = "*"
 semchunk = "*"
 tiktoken = "*"
 tabulate = "*"
+vl-convert-python = "*"
 panel-splitjs = ">=0.2.1"
 panel-graphic-walker = ">=0.6.4"
 
@@ -95,13 +96,18 @@ toolz = "*"
 # =================== DOCS ====================
 # =============================================
 [feature.doc.dependencies]
-nbsite = ">=0.8.4,<0.9.0"
+# Replaced mkdocs with zensical
+zensical = "*"
+mkdocstrings = "*"
+mkdocstrings-python = "*"
+mkdocs-gen-files = "*"
+mkdocs-literate-nav = "*"
 
 [feature.doc.tasks]
-_docs-refs = 'python doc/generate_reference.py'
-_docs-generate = 'nbsite build --what=html --output=builtdocs --org holoviz --project-name lumen'
-[feature.doc.tasks.docs-build]
-depends-on = ['_docs-refs', '_docs-generate']
+# Updated tasks to use zensical instead of mkdocs
+docs-build = { cmd = 'zensical build', depends-on = ['install'] }
+docs-serve = { cmd = 'zensical serve', depends-on = ['install'] }
+docs-clean = { cmd = 'rm -rf builtdocs', depends-on = ['install'] }
 
 # =============================================
 # ================== BUILD ====================

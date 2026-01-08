@@ -202,16 +202,6 @@ class SQLFormat(SQLTransform):
     This transform allows for replacing placeholders in SQL queries using
     either Python string format-style placeholders {name} or sqlglot-style
     placeholders :name.
-
-    Parameters
-    ----------
-    sql_expr : str
-        The SQL expression template with placeholders to be formatted.
-    parameters : dict
-        Dictionary of parameter names and values to replace in the SQL template.
-    py_format : bool
-        Whether to convert Python format-style placeholders {name} to sqlglot
-        placeholders :name before parsing. Default is True.
     """
 
     parameters = param.Dict(default={}, doc="""
@@ -729,8 +719,6 @@ class SQLSample(SQLTransform):
             return self._apply_tablesample_dialect(expression)
         elif dialect in ('mysql', 'mariadb'):
             return self._apply_mysql_dialect(expression)
-        elif dialect == 'sqlite':
-            return self._apply_sqlite_dialect(expression)
         else:
             return self._apply_generic_dialect(expression)
 
@@ -790,43 +778,6 @@ class SQLSample(SQLTransform):
             )
 
         return self.to_sql(sample_expression)
-
-    def _apply_sqlite_dialect(self, expression: Expression) -> str:
-        """Handle SQLite sampling which doesn't have native TABLESAMPLE support.
-
-        Uses a more efficient approach with a subquery for sample size-based sampling.
-        For percent-based sampling, uses RANDOM() < X filter.
-        """
-        main_subquery = expression.subquery("main_query")
-        sampling_subquery = expression.subquery("sampling_query")
-        if self.seed is not None:
-            random_func = func("RANDOM", SQLLiteral.number(self.seed))
-        else:
-            random_func = func("RANDOM")
-        if self.size is not None:
-            inner_query = (
-                select(Column(this="rowid"))
-                .from_(sampling_subquery)
-                .order_by(random_func)
-                .limit(self.size)
-            )
-            sample_expr = (
-                select("*")
-                .from_(main_subquery)
-                .where(Column(this="rowid").isin(inner_query))
-            )
-            return self.to_sql(sample_expr)
-        else:
-            filter_expr = LT(
-                this=random_func,
-                expression=SQLLiteral.number(self.percent/100.0)
-            )
-            sample_expr = (
-                select("*")
-                .from_(main_subquery)
-                .where(filter_expr)
-            )
-            return self.to_sql(sample_expr)
 
     def _apply_generic_dialect(self, expression: Expression) -> str:
         """Handle sampling for generic SQL dialects."""

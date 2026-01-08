@@ -21,7 +21,7 @@ from ..context import (
 from ..llm import Message
 from ..models import ThinkingYesNo
 from ..report import ActorTask
-from ..tools import TableLookup, Tool
+from ..tools import MetadataLookup, Tool
 from ..utils import log_debug, wrap_logfire
 from .base import Coordinator, Plan
 
@@ -32,17 +32,34 @@ if TYPE_CHECKING:
 
 class RawStep(BaseModel):
     actor: str
-    instruction: str = Field(description="Concise instruction defining the specific subtask. Never generate instructions to create synthetic data.")
+    instruction: str = Field(
+        description="""
+        Concise instruction capturing user intent at the right altitude.
+
+        Right altitude:
+        - ❌ Too low: implementation details (SQL syntax, chart specs, row limits)
+        - ❌ Too high: vague ("handle this", "process data")
+        - ✅ Just right: clear intent + context reference
+
+        Examples:
+        - "Query top 5 countries by sales, sorted descending"
+        - "Horizontal bar chart highlighting the leader"
+
+        Never include: rendering instructions, SQL syntax, join details.
+        """,
+        examples=[
+            "Show top 5 countries by sales on a bar chart",
+            "Query top 5 countries by sales, sorted descending",
+            "Horizontal bar chart, highlight top country",
+        ],
+    )
     title: str
 
 
 class RawPlan(BaseModel):
     title: str = Field(description="A title that describes this plan, up to three words.")
     steps: list[RawStep] = Field(
-        description="""
-        A list of steps to perform that will solve user query. Each step MUST use a DIFFERENT actor than the previous step.
-        Review your plan to ensure this constraint is met.
-        """
+        description="""Steps to solve the user query. Each step MUST use a DIFFERENT actor than the previous step and try to limit to minimal steps.""",
     )
 
 
@@ -53,7 +70,12 @@ class Reasoning(BaseModel):
         high-level, data-focused, or other. Identify the most relevant and compatible actors,
         explaining their requirements, and what you already have satisfied. If there were previous failures, discuss them.
         IMPORTANT: Ensure no consecutive steps use the same actor in your planned sequence.
-        """
+        Keep response to 1-2 sentences.
+        """,
+        examples=[
+            "Find which country hosted the most Winter Olympics—a data-focused query requiring aggregation. SQLAgent can handle this (requires source/metaset, both available) by filtering to Winter and counting by location, with no consecutive actor conflicts.",
+            "A horizontal bar chart of existing data. VegaLiteAgent is ready (requires pipeline/data/table, all satisfied from previous SQLAgent step) and will create the chart without consecutive actor issues."
+        ]
     )
 
 
@@ -90,7 +112,7 @@ class Planner(Coordinator):
     """
 
     planner_tools = param.List(
-        default=[TableLookup],
+        default=[MetadataLookup],
         doc="""
         List of tools to use to provide context for the planner prior
         to making a plan.""",
@@ -129,10 +151,6 @@ class Planner(Coordinator):
     def _initialize_planner_tools(self, planner_tools_input: list, **params) -> list:
         """
         Initialize planner tools, reusing instances from _tools["main"] where possible.
-
-        This ensures that TableLookup and IterativeTableLookup share the same instances
-        between planner_tools and _tools["main"], so they share the same vector store
-        and state.
         """
         # Build a mapping of tool types to instances from _tools["main"]
         main_tools_by_type = {}
@@ -209,7 +227,13 @@ class Planner(Coordinator):
             collected_contexts = []
 
             for tool in self.planner_tools:
-                is_relevant = await self._check_tool_relevance(tool, "", self, f"Gather context for planning to answer {user_query}", messages, context)
+                if not await tool.applies(context):
+                    continue
+
+                if tool.always_use:
+                    is_relevant = True
+                else:
+                    is_relevant = await self._check_tool_relevance(tool, "", self, f"Gather context for planning to answer {user_query}", messages, context)
 
                 if not is_relevant:
                     continue
@@ -307,6 +331,7 @@ class Planner(Coordinator):
                 is_follow_up=is_follow_up,
             )
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
+
             async for reasoning in self.llm.stream(
                 messages=messages,
                 system=system,
@@ -329,6 +354,7 @@ class Planner(Coordinator):
         messages: list[Message],
         context: TContext,
         previous_actors: list[str],
+        is_followup: bool = False
     ) -> tuple[Plan, set[str], list[str]]:
         table_provided = False
         tasks = []
@@ -386,7 +412,7 @@ class Planner(Coordinator):
             requires = set(await subagent.requirements(messages))
             provided |= set(subagent.output_schema.__annotations__)
             unmet_dependencies = (unmet_dependencies | requires) - provided
-            has_table_lookup = any(isinstance(task.actor, TableLookup) for task in tasks)
+            has_table_lookup = any(isinstance(task.actor, MetadataLookup) for task in tasks)
             if "table" in unmet_dependencies and not table_provided and "SQLAgent" in agents and has_table_lookup:
                 provided |= set(agents["SQLAgent"].output_schema.__annotations__)
                 sql_step = type(step)(
@@ -418,7 +444,10 @@ class Planner(Coordinator):
                 log_debug(f"Skipping summarization with {actor} due to conflicts: {conflicts}")
                 raw_plan.steps = steps
                 previous_actors = actors
-                return Plan(*tasks, title=raw_plan.title, history=messages, context=context, coordinator=self, steps_layout=self.steps_layout), previous_actors
+                plan = Plan(
+                    *tasks, title=raw_plan.title, history=messages, context=context, coordinator=self, steps_layout=self.steps_layout, is_followup=is_followup
+                )
+                return plan, previous_actors
 
             summarize_step = type(step)(
                 actor=actor,
@@ -446,7 +475,10 @@ class Planner(Coordinator):
             actors_in_graph.add("ValidationAgent")
 
         raw_plan.steps = steps
-        return Plan(*tasks, title=raw_plan.title, history=messages, context=context, coordinator=self, steps_layout=self.steps_layout), actors
+        plan = Plan(
+            *tasks, title=raw_plan.title, history=messages, context=context, coordinator=self, steps_layout=self.steps_layout, is_followup=is_followup
+        )
+        return plan, actors
 
     async def _compute_plan(
         self, messages: list[Message], context: TContext, agents: dict[str, Agent], tools: dict[str, Tool], pre_plan_output: dict[str, Any]
@@ -454,6 +486,7 @@ class Planner(Coordinator):
         tool_names = list(tools)
         agent_names = list(agents)
         plan_model = self._get_model("main", agents=agent_names, tools=tool_names)
+        is_followup = pre_plan_output["is_follow_up"]
 
         planned = False
         unmet_dependencies = set()
@@ -477,7 +510,7 @@ class Planner(Coordinator):
                         previous_plans,
                         plan_model,
                         istep,
-                        is_follow_up=pre_plan_output["is_follow_up"],
+                        is_follow_up=is_followup,
                     )
                 except asyncio.CancelledError as e:
                     self._todos_title.object = istep.failed_title = "Planning was cancelled, please try again."
@@ -488,7 +521,9 @@ class Planner(Coordinator):
                     self._todos_title.object = "Planner could not settle on a plan of action to perform the requested query. Please restate your request."
                     traceback.print_exception(e)
                     raise e
-                plan, previous_actors = await self._resolve_plan(raw_plan, agents, tools, messages, context, previous_actors)
+                plan, previous_actors = await self._resolve_plan(
+                    raw_plan, agents, tools, messages, context, previous_actors, is_followup=is_followup
+                )
                 try:
                     plan.validate()
                 except ContextError as e:

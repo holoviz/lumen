@@ -5,7 +5,7 @@ import re
 import traceback
 
 from functools import partial
-from textwrap import dedent
+from textwrap import dedent, indent
 from typing import TYPE_CHECKING, Any, Self
 
 import param
@@ -25,13 +25,12 @@ from ..context import TContext
 from ..llm import LlamaCpp, Llm, Message
 from ..models import ThinkingYesNo
 from ..report import ActorTask, Section, TaskGroup
-from ..tools import (
-    IterativeTableLookup, TableLookup, Tool, VectorLookupToolUser,
-)
+from ..tools import MetadataLookup, Tool, VectorLookupToolUser
 from ..utils import (
     fuse_messages, get_root_exception, log_debug, mutate_user_message,
     normalized_name, wrap_logfire,
 )
+from ..vector_store import NumpyVectorStore
 
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
@@ -56,9 +55,12 @@ class Plan(Section):
 
     interface = param.ClassSelector(class_=ChatFeed)
 
+    is_followup = param.Boolean(default=False)
+
     _tasks = param.List(item_type=ActorTask)
 
-    def render_task_history(self, i: int, failed: bool = False) -> tuple[list[Message], str]:
+    def render_task_history(self, i: int | None = None, failed: bool = False) -> tuple[list[Message], str]:
+        i = self._current if i is None else i
         user_query = None
         for msg in reversed(self.history):
             if msg.get("role") == "user":
@@ -69,19 +71,17 @@ class Plan(Section):
         for idx, task in enumerate(self):
             instruction = task.instruction
             if failed and idx == i:
-                status = "❌"
+                status = "🔴"
+            elif i == idx:
+                status = "🟡"
+            elif idx < i:
+                status = "🟢"
             else:
-                if i == idx:
-                    instruction = f"<u>{instruction}</u>"
-                if idx < i:
-                    status = "x"
-                else:
-                    status = " "
-                status = f"[{status}]"
+                status = "⚪"
             todos_list.append(f"- {status} {instruction}")
         todos = "\n".join(todos_list)
 
-        formatted_content = f"User Request: {user_query['content']!r}\n\nComplete the underlined todo:\n{todos}"
+        formatted_content = (f"User Request: {user_query['content']!r}\n\n" if user_query else "") + f"Complete the current todo:\n{todos}"
         rendered_history = []
         for msg in self.history:
             if msg is user_query:
@@ -110,13 +110,19 @@ class Plan(Section):
                     outputs, task_context = await task.execute(subcontext, **kwargs)
             except Exception as e:
                 outputs, task_context = await self._handle_task_execution_error(e, task, context, step, i)
+
+            # Check if task errored before validating context to have richer error info
+            if task.status == "error":
+                # Get the error message from context if available
+                error_msg = task_context.get("__error__", "unknown error")
+                step.failed_title = f"{task.title} errored during execution."
+                raise RuntimeError(error_msg)
+
             unprovided = [p for p in task.output_schema.__required_keys__ if p not in task_context]
             if unprovided:
                 step.failed_title = f"{task.title!r} failed to provide declared context values {', '.join(unprovided)}. Aborting the plan."
                 raise RuntimeError(f"{task.title!r} task failed to provide declared context.")
-            elif task.status == "error":
-                step.failed_title = f"{task.title} errored during execution."
-                raise RuntimeError(step.failed_title)
+
             context_keys = ", ".join(f"`{k}`" for k in task_context)
             step.stream(f"Generated {len(outputs)} and provided {context_keys}.")
             step.success_title = f"Task {task.title!r} successfully completed"
@@ -144,11 +150,16 @@ class Plan(Section):
                 step.success_title = f"{task.title!r} task successfully completed after retry"
                 return outputs, out_context  # Return after successful retry
             else:
-                # If we can't find a provider, raise the original error
-                step.failed_title = f"{task.title!r} - Cannot resolve missing context"
-                traceback.print_exception(e)
-                raise e
+                # If we can't find a provider, this error is unrecoverable
+                # Show it clearly to the user instead of re-raising
+                error_msg = str(root_exception)
+                step.failed_title = f"{task.title!r} failed: {error_msg}"
+                step.stream(f"\n\n❌ **{error_msg}**")
+                task.status = "error"
+                task.out_context["__error__"] = error_msg
+                return [], {"__error__": error_msg}  # Return with error message in context
         elif isinstance(e, asyncio.CancelledError):
+            traceback.print_exception(e)
             step.failed_title = f"{task.title!r} task was cancelled"
             raise e
         else:
@@ -220,7 +231,7 @@ class Plan(Section):
         if "__error__" in context:
             del context["__error__"]
         outputs, out_context = await super().execute(context, **kwargs)
-        _, todos = self.render_task_history(self._current, failed=self.status == "error")
+        _, todos = self.render_task_history(failed=self.status == "error")
         if self.steps_layout is not None:
             steps_title, todo_list = self.steps_layout.header
             todo_list.object = todos
@@ -283,6 +294,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
     validation_enabled = param.Boolean(
         default=True,
+        allow_refs=True,
         doc="""
         Whether to enable the ValidationAgent in the planning process.""",
     )
@@ -308,6 +320,13 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 callback=self._chat_invoke, callback_exception="raise", load_buffer=5, show_button_tooltips=True, show_button_name=False, sizing_mode="stretch_both"
             )
 
+        # Create default vector stores if not provided
+        if vector_store is None:
+            vector_store = NumpyVectorStore()
+        # Use the same vector_store for documents if not explicitly provided
+        if document_vector_store is None:
+            document_vector_store = vector_store
+
         llm = llm or self.llm
         instantiated = []
         self._analyses = []
@@ -315,11 +334,13 @@ class Coordinator(Viewer, VectorLookupToolUser):
             if not isinstance(agent, Agent):
                 agent = agent()
             if isinstance(agent, AnalysisAgent):
-                analyses = "\n".join(
-                    f"- `{analysis.__name__}`: {dedent(analysis.__doc__ or '').strip()}" for analysis in agent.analyses if analysis._callable_by_llm
+                analyses = indent("\n".join(
+                    f"- `{analysis.__name__}`:\n{indent(dedent(analysis.__doc__ or '').strip(), ' ' * 4)} (required cols: {', '.join(analysis.columns)})"
+                    for analysis in agent.analyses if analysis._callable_by_llm
+                ), " " * 4)
+                agent.conditions.append(
+                    f"The following analyses can be performed by AnalysisAgent:\n {analyses}\n"
                 )
-                agent.purpose = f"Available analyses include:\n\n{analyses}\nSelect this agent to perform one of these analyses."
-                self._analyses.extend(agent.analyses)
             # must use the same interface or else nothing shows
             if agent.llm is None:
                 agent.llm = llm
@@ -343,12 +364,12 @@ class Coordinator(Viewer, VectorLookupToolUser):
     def _process_tools(self, tools: list[type[Tool] | Tool] | None) -> list[type[Tool] | Tool]:
         tools = list(tools) if tools else []
 
-        # If none of the tools provide metaset, add tablelookup
+        # If none of the tools provide metaset, add MetadataLookup
         provides_metaset = any("metaset" in tool.output_schema.__annotations__ for tool in tools or [])
         if not provides_metaset:
             # Add both tools - they will share the same vector store through VectorLookupToolUser
             # Both need to be added as classes, not instances, for proper initialization
-            tools += [TableLookup, IterativeTableLookup]
+            tools += [MetadataLookup]
         return tools
 
     def _process_prompts(self, prompts: dict[str, dict[str, Any]], tools: list[type[Tool] | Tool]) -> dict[str, dict[str, Any]]:

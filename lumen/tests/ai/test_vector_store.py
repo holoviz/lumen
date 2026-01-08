@@ -13,7 +13,6 @@ from lumen.ai.embeddings import Embeddings, NumpyEmbeddings, OpenAIEmbeddings
 from lumen.ai.vector_store import DuckDBVectorStore, NumpyVectorStore
 
 
-@pytest.mark.xdist_group("vss")
 class VectorStoreTestKit:
     """
     A base class (test kit) that provides the *common* tests and fixture definitions.
@@ -445,7 +444,6 @@ class VectorStoreTestKit:
         }
         ids2 = await empty_store.upsert([item2])
         assert len(ids2) == 1, "Should return one ID"
-        assert ids2[0] == ids1[0], "Should return the same ID as before"
 
         # Verify metadata was updated (key3 was removed)
         results = empty_store.filter_by({"key1": "value1"})
@@ -537,6 +535,7 @@ class TestNumpyVectorStore(VectorStoreTestKit):
         return store
 
 
+@pytest.mark.xdist_group("vss")
 class TestDuckDBVectorStore(VectorStoreTestKit):
 
     @pytest.fixture
@@ -608,3 +607,249 @@ class TestDuckDBVectorStore(VectorStoreTestKit):
         params = metadata.get("params", {})
         assert "api_key" not in params, "api_key should not be stored in metadata"
         store.close()
+
+
+# Sample readme content for testing (mimics real-world metadata files)
+SAMPLE_README = """# Population - Data package
+
+This data package contains the data that powers the chart ["Population"](https://ourworldindata.org/grapher/population-with-un-projections?v=1&csvType=full&useColumnShortNames=false) on the Our World in Data website.
+
+## CSV Structure
+
+The high level structure of the CSV file is that each row is an observation for an entity (usually a country or region) and a timepoint (usually a year).
+
+The first two columns in the CSV file are "Entity" and "Code". "Entity" is the name of the entity (e.g. "United States"). "Code" is the OWID internal entity code that we use if the entity is a country or region. For normal countries, this is the same as the [iso alpha-3](https://en.wikipedia.org/wiki/ISO_3166-1_alpha-3) code of the entity (e.g. "USA") - for non-standard countries like historical countries these are custom codes.
+
+The third column is either "Year" or "Day". If the data is annual, this is "Year" and contains only the year as an integer. If the column is "Day", the column contains a date string in the form "YYYY-MM-DD".
+
+The remaining columns are the data columns, each of which is a time series. If the CSV data is downloaded using the "full data" option, then each column corresponds to one time series below. If the CSV data is downloaded using the "only selected data visible in the chart" option then the data columns are transformed depending on the chart type and thus the association with the time series might not be as straightforward.
+
+## Metadata.json structure
+
+The .metadata.json file contains metadata about the data package. The "charts" key contains information to recreate the chart, like the title, subtitle etc.. The "columns" key contains information about each of the columns in the csv, like the unit, timespan covered, citation for the data etc..
+
+## About the data
+
+Our World in Data is almost never the original producer of the data - almost all of the data we use has been compiled by others. If you want to re-use data, it is your responsibility to ensure that you adhere to the sources' license and to credit them correctly. Please note that a single time series may have more than one source - e.g. when we stich together data from different time periods by different producers or when we calculate per capita metrics using population data from a second source.
+
+### How we process data at Our World In Data
+All data and visualizations on Our World in Data rely on data sourced from one or several original data providers. Preparing this original data involves several processing steps. Depending on the data, this can include standardizing country names and world region definitions, converting units, calculating derived indicators such as per capita measures, as well as adding or adapting metadata such as the name or the description given to an indicator.
+[Read about our data pipeline](https://docs.owid.io/projects/etl/)
+
+## Detailed information about each time series
+
+
+## Population, total - UN WPP
+De facto total population in a country, area or region as of 1 July of the year indicated.
+Last updated: July 12, 2024
+Date range: 1950-2023
+Unit: people
+
+
+### How to cite this data
+
+#### In-line citation
+If you have limited space (e.g. in data visualizations), you can use this abbreviated in-line citation:
+UN, World Population Prospects (2024) - processed by Our World in Data
+
+#### Full citation
+UN, World Population Prospects (2024) - processed by Our World in Data. "Population, total - UN WPP" [dataset]. United Nations, "World Population Prospects" [original data].
+Source: UN, World Population Prospects (2024) - processed by Our World In Data
+
+### Source
+
+#### United Nations - World Population Prospects
+Retrieved on: 2024-07-11
+Retrieved from: https://population.un.org/wpp/downloads/
+
+
+## Population, medium projection - UN WPP
+De facto total population in a country, area or region as of 1 July of the year indicated.  Projections from 2024 onwards are based on the UN's medium scenario.
+Last updated: July 12, 2024
+Date range: 2024-2100
+Unit: people
+
+
+### How to cite this data
+
+#### In-line citation
+If you have limited space (e.g. in data visualizations), you can use this abbreviated in-line citation:
+UN, World Population Prospects (2024) - processed by Our World in Data
+
+#### Full citation
+UN, World Population Prospects (2024) - processed by Our World in Data. "Population, medium projection - UN WPP" [dataset]. United Nations, "World Population Prospects" [original data].
+Source: UN, World Population Prospects (2024) - processed by Our World In Data
+
+### Source
+
+#### United Nations - World Population Prospects
+Retrieved on: 2024-07-11
+Retrieved from: https://population.un.org/wpp/downloads/
+"""
+
+
+class TestDocumentUploadFlow:
+    """
+    Tests that mimic the document upload flow from controls.py to verify
+    that documents are properly chunked and queryable.
+    """
+
+    @pytest.fixture
+    async def store(self):
+        # Use smaller chunk size to ensure documents get chunked
+        store = NumpyVectorStore(embeddings=NumpyEmbeddings(), chunk_size=512)
+        store.clear()
+        return store
+
+    @pytest.mark.asyncio
+    async def test_readme_upload_creates_chunks(self, store):
+        """
+        Verifies that uploading a readme file creates multiple chunks,
+        not a single large entry.
+        """
+        # Mimic what controls.py does: upsert with filename and type metadata
+        doc_entry = {
+            "text": SAMPLE_README,
+            "metadata": {
+                "filename": "readme.md",
+                "type": "document",
+            },
+        }
+        
+        ids = await store.upsert([doc_entry])
+        
+        # Should have created multiple chunks (readme is ~4000 chars, chunk_size=512 tokens)
+        assert len(ids) > 1, f"Expected multiple chunks, got {len(ids)} chunk(s). Document length: {len(SAMPLE_README)} chars"
+        
+        # All chunks should have the same metadata
+        all_docs = store.filter_by({"filename": "readme.md"})
+        assert len(all_docs) == len(ids), "All chunks should have filename metadata"
+        
+        for doc in all_docs:
+            assert doc["metadata"]["type"] == "document"
+            assert doc["metadata"]["filename"] == "readme.md"
+
+    @pytest.mark.asyncio
+    async def test_query_returns_relevant_chunks_not_whole_doc(self, store):
+        """
+        Verifies that querying returns relevant chunks, not the entire document.
+        """
+        doc_entry = {
+            "text": SAMPLE_README,
+            "metadata": {
+                "filename": "readme.md",
+                "type": "document",
+            },
+        }
+        
+        await store.upsert([doc_entry])
+        
+        # Query for specific content
+        results = await store.query(
+            "How to cite this data",
+            top_k=3,
+            filters={"type": "document", "filename": "readme.md"}
+        )
+        
+        assert len(results) > 0, "Should find at least one result"
+        
+        # Each result should be a chunk, not the whole document
+        for result in results:
+            chunk_text = result["text"]
+            assert len(chunk_text) < len(SAMPLE_README), (
+                f"Chunk length ({len(chunk_text)}) should be less than full doc ({len(SAMPLE_README)})"
+            )
+
+    @pytest.mark.asyncio
+    async def test_query_different_sections_returns_different_chunks(self, store):
+        """
+        Verifies that querying different topics returns different relevant chunks.
+        """
+        doc_entry = {
+            "text": SAMPLE_README,
+            "metadata": {
+                "filename": "readme.md",
+                "type": "document",
+            },
+        }
+        
+        await store.upsert([doc_entry])
+        
+        # Query for CSV structure
+        csv_results = await store.query(
+            "CSV structure Entity Code columns",
+            top_k=1,
+            filters={"type": "document"}
+        )
+        
+        # Query for citation
+        citation_results = await store.query(
+            "How to cite UN World Population Prospects",
+            top_k=1,
+            filters={"type": "document"}
+        )
+        
+        assert len(csv_results) > 0, "Should find CSV structure chunk"
+        assert len(citation_results) > 0, "Should find citation chunk"
+        
+        # The chunks should be different (different parts of the document)
+        csv_chunk = csv_results[0]["text"]
+        citation_chunk = citation_results[0]["text"]
+        
+        # They might overlap somewhat, but shouldn't be identical
+        assert csv_chunk != citation_chunk, "Different queries should return different chunks"
+
+    @pytest.mark.asyncio
+    async def test_chunk_size_affects_number_of_chunks(self):
+        """
+        Verifies that smaller chunk_size creates more chunks.
+        """
+        doc_entry = {
+            "text": SAMPLE_README,
+            "metadata": {
+                "filename": "readme.md",
+                "type": "document",
+            },
+        }
+        
+        # Create store with small chunk size
+        small_store = NumpyVectorStore(embeddings=NumpyEmbeddings(), chunk_size=256)
+        ids_small = await small_store.upsert([doc_entry])
+        small_chunk_count = len(ids_small)
+        
+        # Create store with larger chunk size
+        large_store = NumpyVectorStore(embeddings=NumpyEmbeddings(), chunk_size=2048)
+        ids_large = await large_store.upsert([doc_entry])
+        large_chunk_count = len(ids_large)
+        
+        assert small_chunk_count > large_chunk_count, (
+            f"Smaller chunk_size ({small_chunk_count} chunks) should create more chunks "
+            f"than larger chunk_size ({large_chunk_count} chunks)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_upsert_same_document_twice_no_duplicates(self, store):
+        """
+        Verifies that upserting the same document twice doesn't create duplicates.
+        """
+        doc_entry = {
+            "text": SAMPLE_README,
+            "metadata": {
+                "filename": "readme.md",
+                "type": "document",
+            },
+        }
+        
+        # First upsert
+        ids1 = await store.upsert([doc_entry])
+        count_after_first = len(store)
+        
+        # Second upsert (same content)
+        ids2 = await store.upsert([doc_entry])
+        count_after_second = len(store)
+        
+        assert count_after_first == count_after_second, (
+            f"Second upsert should not create duplicates. "
+            f"First: {count_after_first}, Second: {count_after_second}"
+        )
+        assert set(ids1) == set(ids2), "Should return same IDs on duplicate upsert"

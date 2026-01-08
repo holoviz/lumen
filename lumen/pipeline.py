@@ -204,9 +204,9 @@ class Pipeline(Viewer, Component):
         Parameters
         ----------
         context: Dict[str, Any]
-          Context contains the specification of all previously
-          serialized components, e.g. to allow resolving of
-          references.
+            Context contains the specification of all previously
+            serialized components, e.g. to allow resolving of
+            references.
 
         Returns
         -------
@@ -299,7 +299,7 @@ class Pipeline(Viewer, Component):
         Returns
         -------
         schema: dict[str, any]
-          JSON schema for each column in the current data.
+            JSON schema for each column in the current data.
         """
         if self._stale:
             self._update_data(force=True)

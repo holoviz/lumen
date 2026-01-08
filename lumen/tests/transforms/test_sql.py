@@ -733,14 +733,14 @@ def test_sql_sample_mysql_size():
 def test_sql_sample_sqlite_percent():
     """Test percent-based sampling in SQLite"""
     result = SQLSample.apply_to("SELECT * FROM TABLE", percent=20, write="sqlite")
-    expected = "SELECT * FROM (SELECT * FROM TABLE) AS main_query WHERE RANDOM() < 0.2"
+    expected = "SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE RANDOM() < 0.2"
     assert result == expected
 
 
 def test_sql_sample_sqlite_size():
     """Test size-based sampling in SQLite"""
     result = SQLSample.apply_to("SELECT * FROM TABLE", size=100, write="sqlite")
-    expected = "SELECT * FROM (SELECT * FROM TABLE) AS main_query WHERE rowid IN (SELECT rowid FROM (SELECT * FROM TABLE) AS sampling_query ORDER BY RANDOM() LIMIT 100)"
+    expected = "SELECT * FROM (SELECT * FROM TABLE) AS subquery ORDER BY RANDOM() LIMIT 100"
     assert result == expected
 
 
@@ -749,7 +749,7 @@ def test_sql_sample_sqlite_with_seed():
     result = SQLSample.apply_to(
         "SELECT * FROM TABLE", size=100, seed=42, write="sqlite"
     )
-    expected = "SELECT * FROM (SELECT * FROM TABLE) AS main_query WHERE rowid IN (SELECT rowid FROM (SELECT * FROM TABLE) AS sampling_query ORDER BY RANDOM(42) LIMIT 100)"
+    expected = "SELECT * FROM (SELECT * FROM TABLE) AS subquery ORDER BY RANDOM(42) LIMIT 100"
     assert result == expected
 
 

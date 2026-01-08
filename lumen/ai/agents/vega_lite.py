@@ -29,10 +29,16 @@ class VegaLiteSpec(EscapeBaseModel):
     chain_of_thought: str = Field(
         description="""Explain your design choices based on visualization theory:
         - What story does this data tell?
+        - What's the most compelling insight or trend (for the title)?
+        - What additional context adds value without repeating the title (for the subtitle)?
         - Which visual encodings (position, color, size) best reveal patterns?
         - Should color highlight specific insights or remain neutral?
         - What makes this plot engaging and useful for the user?
-        Then describe the basic plot structure."""
+        Keep response to 1-2 sentences.""",
+        examples=[
+            "The data reveals US dominance in Winter Olympic hosting (4 times vs France's 3)—title should emphasize this leadership. Position encoding via horizontal bars sorted descending makes comparison immediate, neutral blue keeps focus on counts rather than categories, and the subtitle can note the 23-country spread to add context without redundancy.",
+            "This time series shows a 40% revenue spike in Q3 2024—the key trend for the title. A line chart with position encoding (time→x, revenue→y) reveals the pattern, endpoint labels eliminate need for constant grid reference making it cleaner, and color remains neutral since there's one series; the subtitle should explain what drove the spike (e.g., 'Three offshore projects') to add insight."
+        ]
     )
     yaml_spec: str = Field(
         description="A basic vega-lite YAML specification with core plot elements only (data, mark, basic x/y encoding)."
@@ -41,7 +47,11 @@ class VegaLiteSpec(EscapeBaseModel):
 
 class VegaLiteSpecUpdate(BaseModel):
     chain_of_thought: str = Field(
-        description="Explain what changes you're making to the Vega-Lite spec and why."
+        description="Explain what changes you're making to the Vega-Lite spec and why. Keep to 1-2 sentences.",
+        examples=[
+            "Adding tooltips to show exact values on hover for better interactivity.",
+            "Swapping x and y axes to create horizontal bars as requested."
+        ]
     )
     yaml_update: str = Field(
         description="""Partial YAML with ONLY modified properties (unchanged values omitted).
@@ -299,6 +309,14 @@ class VegaLiteAgent(BaseViewAgent):
         """Add geographic visualization items to vega spec."""
         self._add_zoom_params(vega_spec)
         self._setup_projection(vega_spec)
+
+        # Remove projection from individual layers to prevent conflicts
+        # All layers must inherit the top-level projection for zoom/pan to work correctly
+        if "layer" in vega_spec:
+            for layer in vega_spec["layer"]:
+                if isinstance(layer, dict) and "projection" in layer:
+                    del layer["projection"]
+
         self._handle_map_compatibility(vega_spec, vega_spec_str)
         return vega_spec
 
@@ -378,6 +396,11 @@ class VegaLiteAgent(BaseViewAgent):
             vega_spec = load_yaml(yaml_spec)
         elif json_spec := spec.get("json_spec"):
             vega_spec = load_json(json_spec)
+
+        # Remove wrapper properties that aren't part of Vega-Lite spec
+        for key in ['sizing_mode', 'min_height', 'type']:
+            vega_spec.pop(key, None)
+
         if "$schema" not in vega_spec:
             vega_spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
         if "width" not in vega_spec:
@@ -411,12 +434,12 @@ class VegaLiteAgent(BaseViewAgent):
                         # Include the text description/title before the spec
                         text_description = result.get("text", "")
                         spec = result["metadata"]["spec"]
-                        if "hconcat" in spec or "vconcat" in spec or "repeat" in spec or "params" in spec:
+                        if "hconcat" in spec or "vconcat" in spec or "repeat" in spec or "params" in spec or "values:" in spec:
                             # Skip complex multi-view specs for simplicity
                             continue
                         doc_examples.append(f"{text_description}\n```yaml\n{spec}\n```")
                         k += 1
-                    if k >= 3:  # Limit to top 3 examples
+                    if k >= 1:  # Limit to top 1 example
                         break
         return doc_examples
 

@@ -4,7 +4,6 @@ import argparse
 import inspect
 import json
 import logging
-import os
 import sys
 import traceback
 
@@ -24,42 +23,10 @@ except ImportError as e:
     sys.exit(1)
 
 from ..ai import agents as lumen_agents, llm as lumen_llms  # Aliased here
+from ..ai.llm import LLM_PROVIDERS, get_available_llm
 from ..ai.utils import parse_huggingface_url, render_template
 
 CMD_DIR = THIS_DIR / ".." / "command"
-
-LLM_PROVIDERS = {
-    'openai': 'OpenAI',
-    'google': 'Google',
-    'anthropic': 'Anthropic',
-    'mistral': 'MistralAI',
-    'azure-openai': 'AzureOpenAI',
-    'azure-mistral': 'AzureMistralAI',
-    "ai-navigator": "AINavigator",
-    'ollama': 'Ollama',
-    'llama-cpp': 'LlamaCpp',
-    'litellm': 'LiteLLM',
-}
-
-
-class LLMConfig:
-    """Configuration handler for LLM providers"""
-
-    PROVIDER_ENV_VARS = {
-        "openai": "OPENAI_API_KEY",
-        "anthropic": "ANTHROPIC_API_KEY",
-        "mistral": "MISTRAL_API_KEY",
-        "azure-mistral": "AZUREAI_ENDPOINT_KEY",
-        "azure-openai": "AZUREAI_ENDPOINT_KEY",
-    }
-
-    @classmethod
-    def detect_provider(cls) -> str | None:
-        """Detect available LLM provider based on environment variables"""
-        for provider, env_var in cls.PROVIDER_ENV_VARS.items():
-            if env_var and os.environ.get(env_var):
-                return provider
-        return None
 
 
 class LumenAIServe(Serve):
@@ -104,15 +71,8 @@ class LumenAIServe(Serve):
     def invoke(self, args: argparse.Namespace) -> bool:
         """Override invoke to handle both sets of arguments"""
         provider = args.provider
-        api_key = args.api_key
-        endpoint = args.provider_endpoint
-        mode = args.validation_mode
-        temperature = args.temperature
-        agents = args.agents
-        log_level = args.log_level
-        logfire_tags = getattr(args, 'logfire_tags', None)
-
         llm_model_url = args.llm_model_url
+        provider_cls = None
         if llm_model_url and provider and provider != "llama":
             raise ValueError(
                 f"Cannot specify both --llm-model-url and --provider {provider!r}. "
@@ -121,16 +81,9 @@ class LumenAIServe(Serve):
         elif llm_model_url:
             provider = "llama"
         elif not provider:
-            provider = LLMConfig.detect_provider()
+            provider_cls = get_available_llm()
 
-        try:
-            provider_cls = getattr(lumen_llms, LLM_PROVIDERS[provider])
-        except (KeyError, AttributeError) as err:
-            raise ValueError(
-                f"Could not find LLM Provider {provider!r}, valid providers include: {list(LLM_PROVIDERS)}."
-            ) from err
-
-        if provider is None:
+        if provider is None and provider_cls is None:
             raise RuntimeError(
                 "It looks like a Language Model provider isn't set up yet.\n"
                 "You have a few options to resolve this:\n\n"
@@ -139,6 +92,22 @@ class LumenAIServe(Serve):
                 "- Custom endpoint: If using an OpenAI-compatible API, set --provider openai and define the --provider-endpoint.\n\n"
                 "If you still need assistance visit the docs: https://lumen.holoviz.org/lumen_ai/how_to/llm/index.html"
             )
+
+        api_key = args.api_key
+        endpoint = args.provider_endpoint
+        mode = args.validation_mode
+        temperature = args.temperature
+        agents = args.agents
+        log_level = args.log_level
+        logfire_tags = getattr(args, 'logfire_tags', None)
+
+        if provider_cls is None:
+            try:
+                provider_cls = getattr(lumen_llms, LLM_PROVIDERS[provider])
+            except (KeyError, AttributeError) as err:
+                raise ValueError(
+                    f"Could not find LLM Provider {provider!r}, valid providers include: {list(LLM_PROVIDERS)}."
+                ) from err
 
         model_kwargs = None
         if args.model_kwargs or llm_model_url:
@@ -241,10 +210,14 @@ class AIHandler(CodeHandler):
         )
         super().__init__(filename="lumen_ai.py", source=source, **kwargs)
 
+
+
     def _build_source_code(self, tables: list[str], **config) -> str:
         """Build source code with configuration"""
+        # Only include llm_provider in context if a provider was explicitly specified
+        provider = config.get('provider')
+
         context = {
-            "llm_provider": LLM_PROVIDERS[config['provider']],
             "tables": [repr(t) for t in tables],
             "api_key": config.get("api_key"),
             "endpoint": config.get("endpoint"),
@@ -255,11 +228,23 @@ class AIHandler(CodeHandler):
             "model_kwargs": config.get('model_kwargs') or {},
             "logfire_tags": config.get("logfire_tags"),
         }
+
+        # Only add llm_provider if explicitly specified
+        if provider is not None:
+            if provider not in LLM_PROVIDERS:
+                available_providers = list(LLM_PROVIDERS.keys())
+                raise ValueError(
+                    f"Unknown provider '{provider}'. Available providers: {available_providers}"
+                )
+            context["llm_provider"] = LLM_PROVIDERS[provider]
+
         context = {k: v for k, v in context.items() if v is not None}
 
         source = render_template(
             CMD_DIR / "app.py.jinja2", relative_to=CMD_DIR, **context
         ).replace("\n\n", "\n").strip()
+
+        print(f"Generated source code:\n```python\n{source}\n```\n")  # noqa: T201 for reusability
         return source
 
 

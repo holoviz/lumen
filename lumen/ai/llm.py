@@ -4,9 +4,10 @@ import asyncio
 import base64
 import os
 
+from abc import abstractmethod
+from collections.abc import Callable
 from functools import partial
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, Literal, TypedDict
 
 import instructor
@@ -19,7 +20,9 @@ from instructor.processing.multimodal import Image
 from pydantic import BaseModel
 
 from .interceptor import Interceptor
-from .services import AzureOpenAIMixin, LlamaCppMixin, OpenAIMixin
+from .services import (
+    AzureOpenAIMixin, BedrockMixin, LlamaCppMixin, OpenAIMixin,
+)
 from .utils import format_exception, log_debug, truncate_string
 
 
@@ -37,14 +40,67 @@ class ImageResponse(BaseModel):
 
 BASE_MODES = list(Mode)
 
+# LLM Provider Configuration
+# Mapping from provider names to LLM class names
+LLM_PROVIDERS = {
+    'openai': 'OpenAI',
+    'google': 'Google',
+    'anthropic': 'Anthropic',
+    'anthropic_bedrock': 'AnthropicBedrock',
+    'bedrock': 'Bedrock',
+    'mistral': 'MistralAI',
+    'azure-openai': 'AzureOpenAI',
+    'azure-mistral': 'AzureMistralAI',
+    "ai-navigator": "AINavigator",
+    'ollama': 'Ollama',
+    'llama-cpp': 'LlamaCpp',
+    'litellm': 'LiteLLM',
+}
+
+# Environment variable mapping for providers that require API keys
+# Providers not in this list (like ollama, llama-cpp) may work without env vars
+PROVIDER_ENV_VARS = {
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "bedrock": "AWS_ACCESS_KEY_ID",  # AWS credentials
+    "anthropic_bedrock": "AWS_ACCESS_KEY_ID",  # AWS credentials
+    "mistral": "MISTRAL_API_KEY",
+    "azure-mistral": "AZUREAI_ENDPOINT_KEY",
+    "azure-openai": "AZUREAI_ENDPOINT_KEY",
+    "google": "GEMINI_API_KEY",
+}
+
+
+def get_available_llm() -> type[Llm] | None:
+    """
+    Detect and instantiate an available LLM provider by checking environment variables
+    and attempting to instantiate each provider in order.
+
+    Returns
+    -------
+    type[Llm] | None
+        The LLM class if successful, or None if no provider is available.
+    """
+    for provider, class_name in LLM_PROVIDERS.items():
+        env_var = PROVIDER_ENV_VARS.get(provider)
+        if env_var and not os.environ.get(env_var):
+            continue
+
+        try:
+            provider_cls = globals()[class_name]
+            return provider_cls
+        except KeyError:
+            continue
+    return None
+
 
 class Llm(param.Parameterized):
     """
-    Baseclass for LLM implementations.
+    Base class for LLM implementations with standardized client caching.
 
-    An LLM implementation wraps a local or cloud based LLM provider
-    with instructor to enable support for correctly validating Pydantic
-    models.
+    Subclasses MUST implement _create_base_client().
+    Subclasses MAY set _instructor_wrapper (default: "openai").
+    Subclasses MAY override _create_instructor_client() or _get_completion_method().
     """
 
     create_kwargs = param.Dict(default={"max_retries": 1}, doc="""
@@ -82,6 +138,9 @@ class Llm(param.Parameterized):
     # Whether the LLM supports streaming of Pydantic model output
     _supports_model_stream = True
 
+    # Used for `instructor.from_*` wrapping; subclasses may override
+    _instructor_wrapper: str = "openai"
+
     __abstract = True
 
     def __init__(self, **params):
@@ -89,15 +148,29 @@ class Llm(param.Parameterized):
             if isinstance(params["mode"], str):
                 params["mode"] = Mode[params["mode"].upper()]
         super().__init__(**params)
+        # Instance-level client caches
+        self._base_client = None
+        self._instructor_clients: dict[Mode, Any] = {}
+
         if self.logfire_tags is not None and not self._supports_logfire:
             raise ValueError(
                 f"LLM {self.__class__.__name__} does not support logfire."
             )
+        self._update_logfire_tags()
         if not self.model_kwargs.get("default"):
             raise ValueError(
                 f"Please specify a 'default' model in the model_kwargs "
                 f"parameter for {self.__class__.__name__}."
             )
+
+    @param.depends("logfire_tags", watch=True)
+    def _update_logfire_tags(self):
+        if self.logfire_tags is not None and self._supports_logfire:
+            import logfire
+            logfire.configure(send_to_logfire=True)
+            self._logfire = logfire.Logfire(tags=self.logfire_tags)
+        else:
+            self._logfire = None
 
     def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
         """
@@ -108,7 +181,6 @@ class Llm(param.Parameterized):
             return model_spec
 
         model_kwargs = self.model_kwargs.get(model_spec) or self.model_kwargs["default"]
-        log_debug(f"LLM Model: \033[96m{model_kwargs.get('model')!r}\033[0m")
         return dict(model_kwargs)
 
     def _get_create_kwargs(self, response_model: type[BaseModel] | None) -> dict[str, Any]:
@@ -121,6 +193,40 @@ class Llm(param.Parameterized):
     @property
     def _client_kwargs(self) -> dict[str, Any]:
         return {}
+
+    @abstractmethod
+    def _create_base_client(self, **kwargs) -> Any:
+        """Create the underlying SDK client (e.g., AsyncOpenAI, AsyncAnthropic)."""
+        raise NotImplementedError(f"{self.__class__.__name__} must implement _create_base_client()")
+
+    def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
+        """Wrap the base client with instructor. Override for non-standard wrapping."""
+        wrapper_fn = getattr(instructor, f"from_{self._instructor_wrapper}")
+        return wrapper_fn(base_client, mode=mode)
+
+    def _get_completion_method(self) -> Callable:
+        """Get completion method from base client. Override for non-OpenAI APIs."""
+        return self._base_client.chat.completions.create
+
+    def _get_cached_client(
+        self,
+        response_model: BaseModel | None = None,
+        model: str | None = None,
+        **kwargs
+    ) -> Callable:
+        """Get cached client callable - base or instructor-wrapped depending on response_model."""
+        mode = kwargs.pop("mode", self.mode)
+
+        if self._base_client is None:
+            self._base_client = self._create_base_client(**kwargs)
+
+        if response_model:
+            if mode not in self._instructor_clients:
+                self._instructor_clients[mode] = self._create_instructor_client(self._base_client, mode)
+            client = self._instructor_clients[mode]
+            return partial(client.chat.completions.create, model=model, **self._get_create_kwargs(response_model))
+        else:
+            return partial(self._get_completion_method(), model=model, **self._get_create_kwargs(response_model))
 
     def _add_system_message(
         self,
@@ -317,16 +423,15 @@ class Llm(param.Parameterized):
         try:
             async for chunk in chunks:
                 if response_model is None:
-                    delta = self._get_delta(chunk)
-                    string += delta
+                    string += self._get_delta(chunk)
                     yield string
                 else:
                     yield getattr(chunk, field) if field is not None else chunk
         except TypeError:
+            # Handle synchronous iterators
             for chunk in chunks:
                 if response_model is None:
-                    delta = self._get_delta(chunk)
-                    string += delta
+                    string += self._get_delta(chunk)
                     yield string
                 else:
                     yield getattr(chunk, field) if field is not None else chunk
@@ -359,8 +464,7 @@ class Llm(param.Parameterized):
 
 class LlamaCpp(Llm, LlamaCppMixin):
     """
-    A LLM implementation using Llama.cpp Python wrapper together
-    with huggingface_hub to fetch the models.
+    A LLM implementation using Llama.cpp Python wrapper together with huggingface_hub to fetch the models.
     """
 
     chat_format = param.String(constant=True)
@@ -389,42 +493,46 @@ class LlamaCpp(Llm, LlamaCppMixin):
 
     temperature = param.Number(default=0.4, bounds=(0, None), constant=True)
 
+    # LlamaCpp doesn't use from_* wrapper - uses patch(create=...)
+    _instructor_wrapper = None
+
     def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
         if isinstance(model_spec, dict):
             return model_spec
 
-        # First get base model kwargs using parent implementation
         if model_spec in self.model_kwargs or "/" not in model_spec:
             model_kwargs = super()._get_model_kwargs(model_spec)
         else:
-            # Use mixin to resolve repo_id/filename from model spec string
             base_kwargs = self.model_kwargs["default"]
             model_kwargs = self.resolve_model_spec(model_spec, base_kwargs)
 
-        # Ensure n_ctx is set (0 = from model)
         if "n_ctx" not in model_kwargs:
             model_kwargs["n_ctx"] = 0
 
-        # Merge with instance-level configuration from the mixin
         try:
-            full_kwargs = self._instantiate_client_kwargs(model_kwargs=model_kwargs)
-            return full_kwargs
+            return self._instantiate_client_kwargs(model_kwargs=model_kwargs)
         except Exception:
-            # Fallback to just model_kwargs if there's an issue with instance config
             return dict(model_kwargs)
 
     @property
     def _client_kwargs(self) -> dict[str, Any]:
         return {"temperature": self.temperature}
 
-    def _cache_model(self, model_spec: str | dict, mode: str, **kwargs):
-        from llama_cpp import Llama as LlamaCpp
-        llm = LlamaCpp(**kwargs)
+    def _create_base_client(self, **kwargs) -> Any:
+        from llama_cpp import Llama as LlamaCppModel
+        return LlamaCppModel(**kwargs)
 
-        raw_client = llm.create_chat_completion_openai_v1
-        # patch works with/without response_model
-        client_callable = patch(create=raw_client, mode=mode)
-        pn.state.cache[(model_spec, mode)] = client_callable
+    def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
+        raw_client = base_client.create_chat_completion_openai_v1
+        return patch(create=raw_client, mode=mode)
+
+    def _get_cache_key(self, model_spec: str | dict, mode: Mode) -> tuple:
+        return ("llamacpp", str(model_spec), mode)
+
+    def _load_and_cache_model(self, model_spec: str | dict, mode: Mode, **kwargs) -> Any:
+        base_client = self._create_base_client(**kwargs)
+        client_callable = self._create_instructor_client(base_client, mode)
+        pn.state.cache[self._get_cache_key(model_spec, mode)] = client_callable
         return client_callable
 
     @classmethod
@@ -432,16 +540,16 @@ class LlamaCpp(Llm, LlamaCppMixin):
         model_kwargs = model_kwargs or cls.model_kwargs
         if 'default' not in model_kwargs:
             model_kwargs['default'] = cls.model_kwargs['default']
-        # Use the mixin's warmup functionality
         cls._warmup_models(model_kwargs)
 
     async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         model_kwargs = self._get_model_kwargs(model_spec)
         mode = model_kwargs.pop("mode", self.mode)
-        if client_callable := pn.state.cache.get((model_spec, mode)):
-            return client_callable
 
-        # Use the mixin to handle model path resolution and kwargs
+        cache_key = self._get_cache_key(model_spec, mode)
+        if cached := pn.state.cache.get(cache_key):
+            return cached
+
         llm_kwargs = self._instantiate_client_kwargs(
             model_kwargs=model_kwargs,
             n_gpu_layers=-1,
@@ -449,8 +557,7 @@ class LlamaCpp(Llm, LlamaCppMixin):
             logits_all=False,
         )
 
-        client_callable = await asyncio.to_thread(self._cache_model, model_spec, mode=mode, **llm_kwargs)
-        return client_callable
+        return await asyncio.to_thread(self._load_and_cache_model, model_spec, mode, **llm_kwargs)
 
     async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
         client = await self.get_client(model_spec, **kwargs)
@@ -468,19 +575,16 @@ class OpenAI(Llm, OpenAIMixin):
 
     model_kwargs = param.Dict(default={
         "default": {"model": "gpt-4.1-mini"},
-        "sql": {"model": "gpt-4.1-mini"},
-        "vega_lite": {"model": "gpt-4.1-mini"},
-        "edit": {"model": "gpt-4.1-mini"},
         "ui": {"model": "gpt-4.1-nano"},
     })
 
     select_models = param.List(default=[
-        "gpt-4.1-mini",
-        "gpt-4.1-nano",
+        "gpt-5.2",
         "gpt-5-mini",
-        "gpt-4-turbo",
-        "gpt-4o",
-        "gpt-4o-mini"
+        "gpt-5-nano",
+        "gpt-4.1",
+        "gpt-4.1-mini",
+        "gpt-4.1-nano"
     ], constant=True, doc="Available models for selection dropdowns")
 
     temperature = param.Number(default=0.25, bounds=(0, None), constant=True)
@@ -490,53 +594,38 @@ class OpenAI(Llm, OpenAIMixin):
 
     _supports_logfire = True
 
-    @param.depends("logfire_tags", watch=True, on_init=True)
-    def _update_logfire_tags(self):
-        if self.logfire_tags is not None:
-            import logfire
-            logfire.configure(send_to_logfire=True)
-            self._logfire = logfire.Logfire(tags=self.logfire_tags)
-        else:
-            self._logfire = None
-
     @property
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
     def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
         model_kwargs = super()._get_model_kwargs(model_spec)
-
-        # Merge with instance-level client configuration from the mixin
         instance_kwargs = self._instantiate_client_kwargs()
+        return {**instance_kwargs, **model_kwargs}
 
-        # Model-specific kwargs should override instance defaults
-        merged_kwargs = {**instance_kwargs, **model_kwargs}
+    def _create_base_client(self, **kwargs) -> Any:
+        client = self._instantiate_client(async_client=True, **kwargs)
+        if self.logfire_tags:
+            self._logfire.instrument_openai(client)
+        return client
 
-        return merged_kwargs
+    def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
+        if self.interceptor:
+            self.interceptor.patch_client(base_client, mode="store_inputs")
+        wrapped = instructor.from_openai(base_client, mode=mode)
+        if self.interceptor:
+            self.interceptor.patch_client_response(wrapped)
+        return wrapped
 
     async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         model_kwargs = self._get_model_kwargs(model_spec)
         model = model_kwargs.pop("model")
-        mode = model_kwargs.pop("mode", self.mode)
+        log_debug(f"LLM Model: \033[96m{model!r}\033[0m")
+        model_kwargs["mode"] = model_kwargs.pop("mode", self.mode)
 
-        # Use the mixin to create the OpenAI client
-        llm = self._instantiate_client(async_client=True, **model_kwargs)
-
-        if self.logfire_tags:
-            self._logfire.instrument_openai(llm)
-
-        if self.interceptor:
-            self.interceptor.patch_client(llm, mode="store_inputs")
-
-        if response_model:
-            llm = patch(llm, mode=mode)
-
-        if self.interceptor:
-            # must be called after instructor
-            self.interceptor.patch_client_response(llm)
-
-        client_callable = partial(llm.chat.completions.create, model=model, timeout=self.timeout, **self._get_create_kwargs(response_model))
-        return client_callable
+        client_callable = self._get_cached_client(response_model, model=model, **model_kwargs)
+        # Add timeout to the partial
+        return partial(client_callable.func, *client_callable.args, timeout=self.timeout, **client_callable.keywords)
 
 
 class AzureOpenAI(Llm, AzureOpenAIMixin):
@@ -573,35 +662,27 @@ class AzureOpenAI(Llm, AzureOpenAIMixin):
 
     def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
         model_kwargs = super()._get_model_kwargs(model_spec)
-
-        # Merge with instance-level client configuration from the mixin
         instance_kwargs = self._instantiate_client_kwargs()
+        return {**instance_kwargs, **model_kwargs}
 
-        # Model-specific kwargs should override instance defaults
-        merged_kwargs = {**instance_kwargs, **model_kwargs}
+    def _create_base_client(self, **kwargs) -> Any:
+        return self._instantiate_client(async_client=True, **kwargs)
 
-        return merged_kwargs
+    def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
+        if self.interceptor:
+            self.interceptor.patch_client(base_client, mode="store_inputs")
+        wrapped = super()._create_instructor_client(base_client, mode)
+        if self.interceptor:
+            self.interceptor.patch_client_response(wrapped)
+        return wrapped
 
     async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         model_kwargs = self._get_model_kwargs(model_spec)
         model = model_kwargs.pop("model")
-        mode = model_kwargs.pop("mode", self.mode)
+        model_kwargs["mode"] = model_kwargs.pop("mode", self.mode)
 
-        # Use the mixin to create the Azure OpenAI client
-        llm = self._instantiate_client(async_client=True, **model_kwargs)
-
-        if self.interceptor:
-            self.interceptor.patch_client(llm, mode="store_inputs")
-
-        if response_model:
-            llm = patch(llm, mode=mode)
-
-        if self.interceptor:
-            # must be called after instructor
-            self.interceptor.patch_client_response(llm)
-
-        client_callable = partial(llm.chat.completions.create, model=model, timeout=self.timeout, **self._get_create_kwargs(response_model))
-        return client_callable
+        client_callable = self._get_cached_client(response_model, model=model, **model_kwargs)
+        return partial(client_callable.func, *client_callable.args, timeout=self.timeout, **client_callable.keywords)
 
 
 class MistralAI(Llm):
@@ -638,35 +719,39 @@ class MistralAI(Llm):
         The timeout in seconds for Mistral AI API calls.""")
 
     _supports_model_stream = False  # instructor doesn't work with Mistral's streaming
+    _instructor_wrapper = "mistral"
 
     @property
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
-    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
+    def _create_base_client(self, **kwargs) -> Any:
         from mistralai import Mistral
+        return Mistral(api_key=self.api_key, **kwargs)
 
+    def _get_completion_method(self, stream: bool = False) -> Callable:
+        return self._base_client.chat.stream_async if stream else self._base_client.chat.complete_async
+
+    def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
+        return instructor.from_mistral(base_client, mode=mode, use_async=True)
+
+    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         model_kwargs = self._get_model_kwargs(model_spec)
-        model_kwargs["api_key"] = self.api_key
         model = model_kwargs.pop("model")
         mode = model_kwargs.pop("mode", self.mode)
-        llm = Mistral(**model_kwargs)
-
         stream = kwargs.get("stream", False)
-        llm.chat.completions = SimpleNamespace(create=None)  # make it like OpenAI for simplicity
-        llm.chat.completions.create = llm.chat.stream_async if stream else llm.chat.complete_async
-
-        if self.interceptor:
-            self.interceptor.patch_client(llm, mode="store_inputs")
 
         if response_model:
-            llm = patch(llm, mode=mode)
-
-        if self.interceptor:
-            self.interceptor.patch_client_response(llm)
-
-        client_callable = partial(llm.chat.completions.create, model=model, timeout_ms=self.timeout * 1000, **self._get_create_kwargs(response_model))
-        return client_callable
+            client_callable = self._get_cached_client(response_model, model=model, mode=mode, **model_kwargs)
+            return partial(client_callable.func, *client_callable.args, timeout_ms=self.timeout * 1000, **client_callable.keywords)
+        else:
+            if self._base_client is None:
+                self._base_client = self._create_base_client(**model_kwargs)
+            return partial(
+                self._get_completion_method(stream),
+                model=model,
+                timeout_ms=self.timeout * 1000
+            )
 
     @classmethod
     def _get_delta(cls, chunk):
@@ -699,35 +784,9 @@ class AzureMistralAI(MistralAI):
     timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
         The timeout in seconds for Mistral AI API calls.""")
 
-    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
+    def _create_base_client(self, **kwargs) -> Any:
         from mistralai_azure import MistralAzure
-
-        async def llm_chat_non_stream_async(*args, **kwargs):
-            response = await llm.chat.complete_async(*args, **kwargs)
-            return response.choices[0].message.content
-
-        model_kwargs = self._get_model_kwargs(model_spec)
-        model_kwargs["api_key"] = self.api_key
-        model_kwargs["azure_endpoint"] = self.endpoint
-        model = model_kwargs.pop("model")
-        mode = model_kwargs.pop("mode", self.mode)
-        llm = MistralAzure(**model_kwargs)
-
-        stream = kwargs.get("stream", False)
-        llm.chat.completions = SimpleNamespace(create=None)  # make it like OpenAI for simplicity
-        llm.chat.completions.create = llm.chat.stream_async if stream else llm.chat.complete_async
-
-        if self.interceptor:
-            self.interceptor.patch_client(llm, mode="store_inputs")
-
-        if response_model:
-            llm = patch(llm, mode=mode)
-
-        if self.interceptor:
-            self.interceptor.patch_client_response(llm)
-
-        client_callable = partial(llm.chat.completions.create, model=model, timeout_ms=self.timeout * 1000, **self._get_create_kwargs(response_model))
-        return client_callable
+        return MistralAzure(api_key=self.api_key, azure_endpoint=self.endpoint, **kwargs)
 
 
 class Anthropic(Llm):
@@ -748,13 +807,8 @@ class Anthropic(Llm):
 
     select_models = param.List(default=[
         "claude-sonnet-4-5",
-        "claude-sonnet-4-0",
-        "claude-3-7-sonnet-latest",
-        "claude-opus-4-1",
-        "claude-opus-4-0",
         "claude-haiku-4-5",
-        "claude-3-5-haiku-latest",
-        "claude-3-haiku-20240307"
+        "claude-opus-4-5"
     ], constant=True, doc="Available models for selection dropdowns")
 
     temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
@@ -763,39 +817,296 @@ class Anthropic(Llm):
         The timeout in seconds for Anthropic API calls.""")
 
     _supports_model_stream = True
+    _instructor_wrapper = "anthropic"
 
     @property
     def _client_kwargs(self):
         return {"temperature": self.temperature, "max_tokens": 1024}
 
+    def _create_base_client(self, **kwargs) -> Any:
+        from anthropic import AsyncAnthropic
+        return AsyncAnthropic(api_key=self.api_key, **kwargs)
+
+    def _get_completion_method(self) -> Callable:
+        return self._base_client.messages.create
+
+    def _get_cached_client(
+        self,
+        response_model: BaseModel | None = None,
+        model: str | None = None,
+        **kwargs
+    ) -> Callable:
+        mode = kwargs.pop("mode", self.mode)
+
+        if self._base_client is None:
+            self._base_client = self._create_base_client(**kwargs)
+
+        if response_model:
+            if mode not in self._instructor_clients:
+                self._instructor_clients[mode] = self._create_instructor_client(self._base_client, mode)
+            client = self._instructor_clients[mode]
+            return partial(client.messages.create, model=model, **self._get_create_kwargs(response_model))
+        else:
+            return partial(self._get_completion_method(), model=model, **self._get_create_kwargs(response_model))
+
+    def _messages_to_contents(self, messages: list[Message]) -> tuple[list[Message], str | None]:
+        """Extract system messages from the messages list.
+
+        Anthropic requires system to be passed separately, not in messages array.
+        """
+        filtered = []
+        system_text = None
+        for msg in messages:
+            if msg["role"] == "system":
+                system_text = msg["content"]
+            else:
+                filtered.append(msg)
+        return filtered, system_text
+
+    def _add_system_message(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
+        if system:
+            input_kwargs["system"] = system
+        return messages, input_kwargs
+
     async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         if self.interceptor:
             raise NotImplementedError("Interceptors are not supported for Anthropic.")
 
-        from anthropic import AsyncAnthropic
-
         model_kwargs = self._get_model_kwargs(model_spec)
         model = model_kwargs.pop("model")
-        mode = model_kwargs.pop("mode", self.mode)
+        model_kwargs["mode"] = model_kwargs.pop("mode", self.mode)
 
-        llm = AsyncAnthropic(api_key=self.api_key, **model_kwargs)
+        client_callable = self._get_cached_client(response_model, model=model, **model_kwargs)
+        return partial(client_callable.func, *client_callable.args, timeout=self.timeout, **client_callable.keywords)
 
-        if response_model:
-            client = instructor.from_anthropic(llm, mode=mode)
-            return partial(client.messages.create, model=model, timeout=self.timeout, **self._get_create_kwargs(response_model))
-        else:
-            return partial(llm.messages.create, model=model, timeout=self.timeout, **self._get_create_kwargs(response_model))
+    async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
+        """Override to handle Anthropic-specific message format."""
+        log_debug(f"Input messages: \033[95m{len(messages)} messages\033[0m including system")
+
+        # Extract system from messages
+        filtered_messages, extracted_system = self._messages_to_contents(messages)
+
+        # Combine system from kwargs (via _add_system_message) with extracted system
+        system = kwargs.get("system")
+        if not system and extracted_system:
+            kwargs["system"] = extracted_system
+
+        previous_role = None
+        for i, message in enumerate(filtered_messages):
+            role = message["role"]
+            if role == "user":
+                log_debug(f"Message \033[95m{i} (u)\033[0m: {message['content']}")
+            else:
+                log_debug(f"Message \033[95m{i} (a)\033[0m: {message['content']}")
+            if previous_role == role:
+                log_debug(
+                    "\033[91mWARNING: Two consecutive messages from the same role; "
+                    "some providers disallow this.\033[0m"
+                )
+            previous_role = role
+
+        client = await self.get_client(model_spec, **kwargs)
+        result = await client(messages=filtered_messages, **kwargs)
+        if response_model := kwargs.get("response_model"):
+            log_debug(f"Response model: \033[93m{response_model.__name__!r}\033[0m")
+        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
+        return result
 
     @classmethod
     def _get_delta(cls, chunk: Any) -> str:
-        if hasattr(chunk, 'delta'):
-            if hasattr(chunk.delta, "text"):
-                return chunk.delta.text
+        if hasattr(chunk, 'delta') and hasattr(chunk.delta, "text"):
+            return chunk.delta.text
         return ""
 
+
+class AnthropicBedrock(BedrockMixin, Anthropic):  # Keep it before Anthropic so API key is correct
+
+    display_name = param.String(default="Anthropic on AWS Bedrock", constant=True, doc="Display name for UI")
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"},
+        "ui": {"model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"},
+        "edit": {"model": "us.anthropic.claude-opus-4-5-20251101-v1:0"},
+    })
+
+    def _create_base_client(self, **kwargs) -> Any:
+        from anthropic.lib.bedrock import AsyncAnthropicBedrock
+        return AsyncAnthropicBedrock(
+            aws_access_key=self.aws_access_key_id,
+            aws_secret_key=self.api_key,
+            aws_session_token=self.aws_session_token,
+            aws_region=self.region_name,
+            **kwargs
+        )
+
+
+class Bedrock(Llm, BedrockMixin):
+    """
+    A LLM implementation that calls AWS Bedrock models using the Converse API.
+
+    Uses boto3 bedrock-runtime client with the Converse API for a unified
+    interface across different foundation models. Supports standard AWS
+    credential resolution including environment variables, ~/.aws/credentials,
+    and AWS SSO.
+    """
+
+    display_name = param.String(default="AWS Bedrock", constant=True, doc="Display name for UI")
+
+    mode = param.Selector(default=Mode.BEDROCK_TOOLS, objects=[Mode.BEDROCK_JSON, Mode.BEDROCK_TOOLS])
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"},
+        "ui": {"model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"},
+        "edit": {"model": "us.anthropic.claude-opus-4-5-20251101-v1:0"},
+    })
+
+    select_models = param.List(default=[
+        # Inference profiles (cross-region) - recommended for Claude 4+
+        "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "us.anthropic.claude-opus-4-5-20251101-v1:0",
+        "us.anthropic.claude-opus-4-1-20250805-v1:0",
+        "us.anthropic.claude-sonnet-4-20250514-v1:0",
+        # Claude 3.5 with inference profile
+        "us.anthropic.claude-3-5-haiku-20241022-v1:0",
+        "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+        # Direct model IDs (if inference profiles don't work)
+        "anthropic.claude-3-haiku-20240307-v1:0",
+        "anthropic.claude-3-sonnet-20240229-v1:0",
+    ], constant=True, doc="Available Claude models on Bedrock")
+
+    temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
+
+    timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
+        The timeout in seconds for Bedrock API calls.""")
+
+    _instructor_wrapper = "bedrock"
+    _supports_stream = True
+    _supports_model_stream = True
+
+    @property
+    def _client_kwargs(self):
+        return {"temperature": self.temperature, "maxTokens": 4096}
+
+    def _create_base_client(self, **kwargs) -> Any:
+        """Create boto3 bedrock-runtime client for inference."""
+        try:
+            import boto3
+        except ImportError as exc:
+            raise ImportError(
+                "Please install boto3 to use AWS Bedrock. "
+                "You can install it with `pip install boto3`."
+            ) from exc
+
+        credentials = {}
+        if self.aws_access_key_id:
+            credentials["aws_access_key_id"] = self.aws_access_key_id
+        if self.api_key:
+            credentials["aws_secret_access_key"] = self.api_key
+        if self.aws_session_token:
+            credentials["aws_session_token"] = self.aws_session_token
+
+        return boto3.client(
+            service_name="bedrock-runtime",
+            region_name=self.region_name,
+            **credentials,
+            **kwargs
+        )
+
+    def _messages_to_contents(self, messages: list[Message]) -> tuple[list[dict], str | None]:
+        """Convert messages to Bedrock Converse API format.
+
+        Extracts system messages and returns them separately since Bedrock
+        requires them to be passed via the 'system' parameter.
+        """
+        bedrock_messages = []
+        system_text = None
+
+        for msg in messages:
+            role = msg["role"]
+            content = msg["content"]
+
+            if role == "system":
+                system_text = content
+                continue
+
+            if isinstance(content, str):
+                bedrock_messages.append({"role": role, "content": [{"text": content}]})
+            elif isinstance(content, list):
+                bedrock_content = []
+                for item in content:
+                    if isinstance(item, str):
+                        bedrock_content.append({"text": item})
+                    elif isinstance(item, dict):
+                        bedrock_content.append(item)
+                bedrock_messages.append({"role": role, "content": bedrock_content})
+
+        return bedrock_messages, system_text
+
     def _add_system_message(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
-        input_kwargs["system"] = system
+        if system:
+            input_kwargs["system"] = [{"text": system}]
         return messages, input_kwargs
+
+    async def _bedrock_invoke(self, messages, model, stream=False, response_model=None, **kwargs):
+        """Async wrapper for Bedrock converse API."""
+        bedrock_messages, extracted_system = self._messages_to_contents(messages)
+
+        # Combine system from kwargs (via _add_system_message) with extracted system
+        system = kwargs.get("system")
+        if not system and extracted_system:
+            system = [{"text": extracted_system}]
+
+        if response_model:
+            mode = kwargs.pop("mode", self.mode)
+            if mode not in self._instructor_clients:
+                self._instructor_clients[mode] = self._create_instructor_client(self._base_client, mode)
+            client = self._instructor_clients[mode]
+            create_kwargs = {
+                "model": model,
+                "messages": messages,
+                "response_model": response_model,
+                **self._get_create_kwargs(response_model),
+            }
+            if system:
+                create_kwargs["system"] = system
+            return await asyncio.to_thread(client.messages.create, **create_kwargs)
+
+        call_kwargs = {
+            "modelId": model,
+            "messages": bedrock_messages,
+            "inferenceConfig": self._client_kwargs,
+        }
+        if system:
+            call_kwargs["system"] = system
+
+        if stream:
+            resp = await asyncio.to_thread(self._base_client.converse_stream, **call_kwargs)
+            return self._wrap_stream(resp)
+        else:
+            resp = await asyncio.to_thread(self._base_client.converse, **call_kwargs)
+            return resp["output"]["message"]["content"][0]["text"]
+
+    async def _wrap_stream(self, response):
+        """Wrap synchronous Bedrock stream as async generator."""
+        for chunk in response["stream"]:
+            yield chunk
+
+    @classmethod
+    def _get_delta(cls, chunk) -> str:
+        if "contentBlockDelta" in chunk:
+            return chunk["contentBlockDelta"]["delta"].get("text", "")
+        return ""
+
+    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
+        model_kwargs = self._get_model_kwargs(model_spec)
+        model = model_kwargs.pop("model")
+        log_debug(f"LLM Model: \033[96m{model!r}\033[0m")
+
+        if self._base_client is None:
+            self._base_client = self._create_base_client()
+
+        return partial(self._bedrock_invoke, model=model)
 
 
 class Google(Llm):
@@ -810,11 +1121,12 @@ class Google(Llm):
     mode = param.Selector(default=Mode.GENAI_TOOLS, objects=[Mode.GENAI_TOOLS, Mode.GENAI_STRUCTURED_OUTPUTS])
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "gemini-2.5-flash"},  # Best price-performance with thinking
-        "edit": {"model": "gemini-2.5-pro"},  # State-of-the-art thinking model
+        "default": {"model": "gemini-3-flash-preview"},
     })
 
     select_models = param.List(default=[
+        "gemini-3-flash-preview",
+        "gemini-3-pro-preview",
         "gemini-2.5-pro",
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
@@ -830,59 +1142,127 @@ class Google(Llm):
         The timeout in seconds for Google AI API calls.""")
 
     _supports_model_stream = True
+    _instructor_wrapper = "genai"
 
     @property
     def _client_kwargs(self):
         return {}
 
+    def _create_base_client(self, **kwargs) -> Any:
+        from google import genai
+        return genai.Client(api_key=self.api_key)
+
+    def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
+        return instructor.from_genai(base_client, mode=mode, use_async=True)
+
     @classmethod
     def _get_delta(cls, chunk: Any) -> str:
-        """Extract delta content from streaming response."""
+        """Extract delta content from streaming response or full response."""
         if hasattr(chunk, 'text'):
-            return chunk.text
-        elif hasattr(chunk, 'content') and chunk.content:
+            return chunk.text or ""
+        if hasattr(chunk, 'content') and chunk.content:
             return chunk.content
+        # Handle full response from generate_content (non-streaming fallback)
+        if hasattr(chunk, 'candidates') and chunk.candidates:
+            candidate = chunk.candidates[0]
+            if hasattr(candidate, 'content') and candidate.content:
+                if hasattr(candidate.content, 'parts') and candidate.content.parts:
+                    return candidate.content.parts[0].text or ""
         return ""
 
+    @classmethod
+    def _messages_to_contents(cls, messages: list[Message]) -> tuple[list[dict[str, Any]], str | None]:
+        """
+        Transform messages into contents format expected by Google GenAI API.
+
+        Extracts system messages and returns them separately since Google
+        requires them via the system_instruction parameter.
+
+        Parameters
+        ----------
+        messages : list[Message]
+            List of messages with 'role', 'content', and optional 'name' fields.
+
+        Returns
+        -------
+        tuple[list[dict[str, Any]], str | None]
+            Tuple of (contents list, system_instruction)
+        """
+        contents = []
+        system_instruction = None
+
+        for message in messages:
+            role = message["role"]
+            content = message["content"]
+            if role == "system":
+                system_instruction = content
+                continue
+            elif role != "user":
+                role = "model"
+
+            if isinstance(content, Image):
+                contents.append({
+                    "role": role,
+                    "parts": [content.to_genai()]
+                })
+            else:
+                contents.append({
+                    "role": role,
+                    "parts": [{"text": content}]
+                })
+
+        return contents, system_instruction
+
     async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
-        from google import genai
         model_kwargs = self._get_model_kwargs(model_spec)
         model = model_kwargs.pop("model")
+        log_debug(f"LLM Model: \033[96m{model!r}\033[0m")
         mode = model_kwargs.pop("mode", self.mode)
 
-        llm = genai.Client(api_key=self.api_key, **model_kwargs)
-
         if response_model:
-            client = instructor.from_genai(llm, mode=mode, use_async=True)
-            return partial(client.chat.completions.create, model=model, **self._get_create_kwargs(response_model))
+            return self._get_cached_client(response_model, model=model, mode=mode, **model_kwargs)
+
+        # Ensure base client exists
+        if self._base_client is None:
+            self._base_client = self._create_base_client(**model_kwargs)
+
+        if kwargs.get("stream"):
+            return partial(self._base_client.aio.models.generate_content_stream, model=model)
         else:
-            chat = llm.aio.models
-            if kwargs.pop("stream", None):
-                return partial(chat.generate_content_stream, model=model, **self._get_create_kwargs(response_model))
-            else:
-                return partial(chat.generate_content, model=model, **self._get_create_kwargs(response_model))
+            return partial(self._base_client.aio.models.generate_content, model=model)
 
     async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
         """Override to handle Gemini-specific message format conversion."""
         try:
-            from google.genai.types import GenerateContentConfig, HttpOptions
+            from google.genai.types import (
+                GenerateContentConfig, HttpOptions, ThinkingConfig,
+            )
         except ImportError as exc:
             raise ImportError(
                 "Please install the `google-generativeai` package to use Google AI models. "
                 "You can install it with `pip install -U google-genai`."
             ) from exc
 
-        client = await self.get_client(model_spec, **kwargs)
+        response_model = kwargs.get("response_model")
+        http_options = HttpOptions(timeout=self.timeout * 1000)  # timeout is in milliseconds
+        thinking_config = ThinkingConfig(thinking_budget=0, include_thoughts=False)
 
-        if kwargs.get("response_model"):
-            config = GenerateContentConfig(http_options=HttpOptions(timeout=self.timeout), temperature=self.temperature)
-            return await client(messages=messages, config=config, **kwargs)
-        else:
-            kwargs.pop("stream")
-            system_instruction = next((message["content"] for message in messages if message["role"] == "system"), "Be helpful.")
-            config = GenerateContentConfig(http_options=HttpOptions(timeout=self.timeout), temperature=self.temperature, system_instruction=system_instruction)
-            prompt = messages.pop(-1)["content"]
-            return await client(contents=[prompt], **kwargs)
+        client = await self.get_client(model_spec, **kwargs)
+        contents, system_instruction = self._messages_to_contents(messages)
+        config = GenerateContentConfig(
+            http_options=http_options,
+            temperature=self.temperature,
+            thinking_config=thinking_config,
+            system_instruction=system_instruction,
+        )
+
+        if response_model:
+            result = await client(messages=messages, config=config, **kwargs)
+            return result
+
+        kwargs.pop("stream", None)
+        result = await client(contents=contents, config=config, **kwargs)
+        return result
 
 
 class AINavigator(OpenAI):
@@ -958,6 +1338,7 @@ class Response(BaseModel):
 
 
 class WebLLM(Llm):
+    """WebLLM implementation using panel_web_llm. Uses patch(create=...) like LlamaCpp."""
 
     display_name = param.String(default="WebLLM", constant=True, doc="Display name for UI")
 
@@ -973,10 +1354,19 @@ class WebLLM(Llm):
 
     temperature = param.Number(default=0.4, bounds=(0, None))
 
+    # WebLLM doesn't use from_* wrapper - uses patch(create=...)
+    _instructor_wrapper = None
+
     def __init__(self, **params):
         from panel_web_llm import WebLLM as pnWebLLM
         self._llm = pnWebLLM()
         super().__init__(**params)
+
+    def _create_base_client(self, **kwargs) -> Any:
+        return self._llm
+
+    def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
+        return patch(create=self._create_completion, mode=mode)
 
     async def _create_completion(self, messages, **kwargs):
         if kwargs.get('stream', False):
@@ -1006,11 +1396,15 @@ class WebLLM(Llm):
     async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         model_kwargs = self._get_model_kwargs(model_spec)
         mode = model_kwargs.pop("mode", self.mode)
+
         if not self._llm.loaded:
             self._llm.param.update(**{k: v for k, v in model_kwargs.items() if k in self._llm.param})
             self._llm.param.trigger('load_model')
-        client_callable = patch(create=self._create_completion, mode=mode)
-        return client_callable
+
+        # Cache instructor client by mode
+        if mode not in self._instructor_clients:
+            self._instructor_clients[mode] = self._create_instructor_client(self._llm, mode)
+        return self._instructor_clients[mode]
 
     def status(self):
         return pn.Row(self._status, self._llm)
@@ -1098,79 +1492,62 @@ class LiteLLM(Llm):
 
     _supports_stream = True
     _supports_model_stream = True
+    _instructor_wrapper = "litellm"
 
     def __init__(self, **params):
         super().__init__(**params)
-        self._setup_router()
-        # Configure caching if enabled
+        self._router = None  # Lazy init
         if self.enable_caching:
-            self._setup_caching()
+            import litellm
 
-    def _setup_caching(self):
-        """Enable LiteLLM caching."""
-        import litellm
+            from litellm import Cache
+            litellm.cache = Cache()
 
-        from litellm import Cache
-        litellm.cache = Cache()
-
-    def _setup_router(self):
-        """Initialize LiteLLM Router for load balancing."""
-        from litellm import Router
-
-        # Build model list from model_kwargs
-        model_list = []
-        for key, config in self.model_kwargs.items():
-            if isinstance(config, dict) and 'model' in config:
-                model_list.append({
-                    'model_name': key,
-                    'litellm_params': config
-                })
-
-        # Add fallback models to router settings if provided
-        router_kwargs = dict(self.router_settings)
-        if self.fallback_models:
-            router_kwargs['fallbacks'] = self.fallback_models
-
-        self.router = Router(model_list=model_list, timeout=self.timeout, **router_kwargs)
+    def _get_router(self):
+        """Get or create cached LiteLLM Router."""
+        if self._router is None:
+            from litellm import Router
+            model_list = [
+                {'model_name': key, 'litellm_params': config}
+                for key, config in self.model_kwargs.items()
+                if isinstance(config, dict) and 'model' in config
+            ]
+            router_kwargs = dict(self.router_settings)
+            if self.fallback_models:
+                router_kwargs['fallbacks'] = self.fallback_models
+            self._router = Router(model_list=model_list, timeout=self.timeout, **router_kwargs)
+        return self._router
 
     @property
     def _client_kwargs(self):
         """Base kwargs for all LiteLLM calls."""
-        kwargs = {
-            "temperature": self.temperature,
-        }
+        kwargs = {"temperature": self.temperature}
         kwargs.update(self.litellm_params)
         return kwargs
 
-    def _get_model_string(self, model_spec: str | dict) -> str:
-        """Extract the model string from model spec."""
-        model_kwargs = self._get_model_kwargs(model_spec)
-        return model_kwargs.get("model")
+    def _create_base_client(self, **kwargs) -> Any:
+        return self._get_router()
+
+    def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
+        return instructor.from_litellm(base_client.acompletion, mode=mode)
+
+    def _get_completion_method(self) -> Callable:
+        return self._get_router().acompletion
 
     async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
-        """
-        Get a client callable that's compatible with instructor.
-
-        For LiteLLM, we create a wrapper around litellm.acompletion that
-        can be patched by instructor.
-        """
-        model = self._get_model_string(model_spec)
         model_kwargs = self._get_model_kwargs(model_spec)
         model = model_kwargs.pop("model")
         mode = model_kwargs.pop("mode", self.mode)
 
-        # Use router if available, otherwise use litellm.acompletion directly
-        llm = self.router.acompletion
         if response_model:
-            llm = instructor.from_litellm(llm, mode=mode)
-            return partial(llm.chat.completions.create, model=model, **self._get_create_kwargs(response_model))
+            return self._get_cached_client(response_model, model=model, mode=mode, **model_kwargs)
         else:
-            return partial(llm, model=model, **self._client_kwargs, **model_kwargs)
+            router = self._get_router()
+            return partial(router.acompletion, model=model, **self._client_kwargs, **model_kwargs)
 
     @classmethod
     def _get_delta(cls, chunk) -> str:
         """Extract delta content from streaming chunks."""
-        # LiteLLM returns OpenAI-compatible responses
         if hasattr(chunk, 'choices') and chunk.choices:
             choice = chunk.choices[0]
             if hasattr(choice, 'delta') and hasattr(choice.delta, 'content'):

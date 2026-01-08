@@ -10,16 +10,16 @@
 
 If user asks to "make it look better", "professional", "publication-ready", or similar, apply these changes:
 
-1. **Increase font sizes**: title 24-26pt, subtitle 19-21pt, axis labels 19-21pt, axis titles 21-24pt
-2. **Remove chart border**: `config.view.stroke: null`
-3. **Clean up gridlines**: disable x-axis grid, keep subtle y-axis grid (`#cccccc`)
-4. **Add padding**: `config.axis.titlePadding: 15`, `config.title.subtitlePadding: 10`
-5. **Use semantic colors**: map meaning to color (e.g., warm=red, cool=blue) with explicit `scale.domain` and `scale.range`
-6. **Add value labels**: with units via `transform.calculate`, positioned above/below bars
-7. **Add solid zero line**: if data spans positive/negative values
-8. **Clean tick labels**: use `labelExpr` to format ugly values (e.g., snake_case → Title Case)
-9. **Fix label angles**: rotate to 0, or -90 degrees, if they are crowded and categorical
-10. **Limit results for readability**: For bar/column charts with many categories (10+), limit to top 5-10 using `transform` with `window` rank + `filter`
+1. **Remove clutter**: `config.view.stroke: null` (no border)
+2. **Clean gridlines**: 
+   - Horizontal bars: keep x-axis grid (`config.axisX.gridColor: '#eeeeee'`), disable y-axis (`config.axisY.grid: false`)
+   - Vertical bars: keep y-axis grid (`config.axisY.gridColor: '#eeeeee'`), disable x-axis (`config.axisX.grid: false`)
+3. **Increase font sizes**: `title.fontSize: 26`, `title.subtitleFontSize: 18`, `config.axis.labelFontSize: 16`
+4. **Selective emphasis**: If multiple lines/series, reduce opacity of less important ones (`opacity: 0.2-0.3`)
+5. **Use semantic colors**: map meaning to color (warm=red, cool=blue) with explicit `scale.domain` and `scale.range`
+6. **Add value labels**: with units via `transform.calculate`, positioned with `dy` offset
+7. **Clean tick labels**: use `labelExpr` to format values (snake_case → Title Case)
+8. **Limit results**: For bar charts with 10+ categories, show top 5-10 using **top-level** `transform`
 {% endblock %}
 
 {%- block examples -%}
