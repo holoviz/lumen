@@ -225,11 +225,13 @@ class BaseSourceControls(Viewer):
 
     source_catalog = param.Parameter(default=None, doc="Reference to SourceCatalog instance")
 
-    table_upload_callbacks = {}
+    upload_handlers = param.Dict(default={}, doc="Handlers for custom file extensions")
 
     _last_table = param.String(default="", doc="Last table added")
 
     _count = param.Integer(default=0, doc="Count of sources added")
+
+    label = ""
 
     __abstract = True
 
@@ -479,7 +481,7 @@ class BaseSourceControls(Viewer):
         n_metadata = 0
         table_upload_callbacks = {
             key.lstrip("."): value
-            for key, value in self.table_upload_callbacks.items()
+            for key, value in self.upload_handlers.items()
         }
         custom_table_extensions = tuple(table_upload_callbacks)
 
@@ -532,6 +534,8 @@ class UploadControls(BaseSourceControls):
     """
     Controls for uploading files from the local filesystem.
     """
+
+    label = '<span class="material-icons" style="vertical-align: middle;">upload</span> Upload Data'
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -601,6 +605,8 @@ class DownloadControls(BaseSourceControls):
     input_placeholder = param.String(default="Enter URLs, one per line, and press <Shift+Enter> to download")
 
     _active_download_task = param.ClassSelector(class_=asyncio.Task)
+
+    label = '<span class="material-icons" style="vertical-align: middle;">download</span> Fetch Remote Data'
 
     def __init__(self, **params):
         super().__init__(**params)
