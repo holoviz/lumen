@@ -142,6 +142,7 @@ class Llm(param.Parameterized):
             raise ValueError(
                 f"LLM {self.__class__.__name__} does not support logfire."
             )
+        self._update_logfire_tags()
         if not self.model_kwargs.get("default"):
             raise ValueError(
                 f"Please specify a 'default' model in the model_kwargs "
@@ -534,7 +535,7 @@ class OpenAI(Llm, OpenAIMixin):
 
     _supports_logfire = True
 
-    @param.depends("logfire_tags", watch=True, on_init=True)
+    @param.depends("logfire_tags", watch=True)
     def _update_logfire_tags(self):
         if self.logfire_tags is not None:
             import logfire

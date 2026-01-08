@@ -17,6 +17,7 @@ Every visualization must:
 This is the most common source of errors. See examples for correct placement:
 - **Mark**: static styling—position (`dx`, `dy`, `align`, `baseline`) and appearance (`color`, `opacity`, `fontSize`)
 - **Encoding**: data mappings—channels (`x`, `y`, `color`, `size`, `text`) with `{field: ...}` or `{value: ...}`
+- **NEVER put `dx`, `dy`, `align`, `baseline` in encoding**—they belong in mark only
 
 # LEGENDS
 
@@ -63,15 +64,19 @@ Legends appear when you map data to `color`, `size`, or `shape` in encoding.
 {% endfor %}
 {% endif %}
 
-Mark vs Encoding (common error source):
+Mark vs Encoding (common error—dx/dy go in mark, NOT encoding):
 ```yaml
 layer:
-  - mark: {type: text, align: left, dx: 3, color: black}  # Static: position & style in mark
+  # ✅ CORRECT: dx in mark
+  - mark: {type: text, align: left, dx: 5, color: black}
     encoding:
-      x: {field: year, type: quantitative}
-      y: {field: value, type: quantitative}
-      text: {field: label, type: nominal}
-      color: {value: 'blue'}  # Static values need {value: ...} in encoding
+      x: {field: value, type: quantitative}
+      y: {field: category, type: nominal}
+      text: {field: value, type: quantitative}
+  # ❌ WRONG: dx in encoding causes validation error
+  # - mark: text
+  #   encoding:
+  #     dx: {value: 5}  # INVALID - dx is not an encoding channel
 ```
 
 Title with subtitle:
