@@ -341,6 +341,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 agent.conditions.append(
                     f"The following analyses can be performed by AnalysisAgent:\n {analyses}\n"
                 )
+                self._analyses.extend(agent.analyses)
             # must use the same interface or else nothing shows
             if agent.llm is None:
                 agent.llm = llm
