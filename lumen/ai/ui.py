@@ -1621,7 +1621,7 @@ class ExplorerUI(UI):
             main = Column(no_explorations_msg, back_button, styles={"margin": "auto"})
         elif active:
             main = Report(
-                *(Section(item["view"].plan, *(it.plan for it in item["items"]), title=item["view"].plan.title)
+                *(Section(item["view"].plan, *(it["view"].plan for it in item["items"]), title=item["view"].plan.title)
                   for item in self._explorations.items[1:])
             )
         else:
