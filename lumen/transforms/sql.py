@@ -831,7 +831,7 @@ class SQLRemoveSourceSeparator(SQLTransform):
         string
             New SQL query derived from the above query.
         """
-        if self.separator not in sql_in:
+        if self.separator.strip() not in sql_in:
             return sql_in
 
         # Simple regex approach: find all occurrences of source__@__filename and replace with filename
@@ -840,7 +840,7 @@ class SQLRemoveSourceSeparator(SQLTransform):
         # - Any non-quote/space characters followed by separator (source__@__)
         # - The filename (captured in group 2)
         # - Optional closing quote (captured in group 3)
-        pattern = r'(["\']?)\b[^\s"\']*?' + re.escape(self.separator) + r'([^\s"\']+)(["\']?)'
+        pattern = r'(["\']?)\b[^\s"\']*?\s*' + re.escape(self.separator.strip()) + r'\s*([^\s"\']+)(["\']?)'
 
         def replacer(match):
             quote_start = match.group(1)
