@@ -14,7 +14,7 @@ from panel_material_ui import Column as MuiColumn
 from panel_splitjs import VSplit
 
 from lumen.ai.agents.analyst import AnalystAgent
-from lumen.ai.agents.sql import SQLAgent, SQLQuery
+from lumen.ai.agents.sql import SQLAgent, make_sql_model
 from lumen.ai.coordinator import Plan
 from lumen.ai.models import ErrorDescription, YesNo
 from lumen.ai.report import ActorTask
@@ -66,8 +66,15 @@ async def explorer_ui_with_error(explorer_ui):
     def raise_exception():
         raise Exception("foo")
 
+    # Create the proper SQL model with tables field for single source
+    test_source = explorer_ui.context["source"]
+    SQLQueryWithTables = make_sql_model([(test_source.name, "test_table")])
     explorer_ui.llm.set_responses([
-        SQLQuery(query="SELECT SUM(value) as value_sum FROM test_table", table_slug="test_sql_agg"),
+        SQLQueryWithTables(
+            query="SELECT SUM(value) as value_sum FROM test_table",
+            table_slug="test_sql_agg",
+            tables=["test_table"]
+        ),
         raise_exception,
         ErrorDescription(explanation="bar")
     ])
@@ -145,8 +152,15 @@ async def test_exploration_ui_error_replan(explorer_ui_with_error):
     ui = explorer_ui_with_error
     exploration = ui._exploration['view']
 
+    # Create the proper SQL model with tables field for single source
+    test_source = ui.context["source"]
+    SQLQueryWithTables = make_sql_model([(test_source.name, "test_table")])
     ui.llm.set_responses([
-        SQLQuery(query="SELECT SUM(value) as value_sum FROM test_table", table_slug="test_sql_agg"),
+        SQLQueryWithTables(
+            query="SELECT SUM(value) as value_sum FROM test_table",
+            table_slug="test_sql_agg",
+            tables=["test_table"]
+        ),
         "foo"
     ])
 
