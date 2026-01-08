@@ -12,8 +12,8 @@ import sqlglot
 
 from sqlglot import parse
 from sqlglot.expressions import (
-    LT, Column, Expression, Identifier, Literal as SQLLiteral, Max, Min, Null,
-    ReadCSV, Select, Star, Table, TableSample, and_, func, or_,
+    LT, Alias, Column, Expression, Identifier, Literal as SQLLiteral, Max, Min,
+    Null, ReadCSV, Select, Star, Table, TableSample, and_, func, or_,
     replace_placeholders, replace_tables, select,
 )
 from sqlglot.optimizer import optimize
@@ -166,6 +166,27 @@ class SQLTransform(Transform):
                 expr.find(ReadCSV).find(SQLLiteral).replace(Identifier(this=f"'{literal.this}', encoding='{encoding}'", is_string=literal.is_string))
 
         return expr
+
+    def _to_subquery(self, expression: Expression, alias: str | None = None) -> Expression:
+        """
+        Convert an expression to a subquery, handling Alias expressions that don't have .subquery().
+
+        Parameters
+        ----------
+        expression : Expression
+            The expression to convert to a subquery
+        alias : str, optional
+            Alias for the subquery
+
+        Returns
+        -------
+        Expression
+            A subquery expression
+        """
+        if isinstance(expression, Alias):
+            # Alias expressions are already suitable for use as subqueries
+            return expression
+        return expression.subquery(alias)
 
     def to_sql(self, expression: Expression) -> str:
         """
@@ -369,7 +390,7 @@ class SQLGroupBy(SQLTransform):
         elif not self.by:
             return sql_in
 
-        subquery = self.parse_sql(sql_in).subquery()
+        subquery = self._to_subquery(self.parse_sql(sql_in))
         aggs = []
         for agg, cols in self.aggregates.items():
             for col in [cols] if isinstance(cols, str) else cols:
@@ -401,7 +422,7 @@ class SQLLimit(SQLTransform):
                 # do not modify the original query
                 return sql_in
 
-        subquery = parsed_expression.subquery()
+        subquery = self._to_subquery(parsed_expression)
         expression = select("*").from_(subquery).limit(self.limit)
         return self.to_sql(expression)
 
@@ -416,7 +437,7 @@ class SQLDistinct(SQLTransform):
         if not self.columns:
             return sql_in
 
-        subquery = self.parse_sql(sql_in).subquery()
+        subquery = self._to_subquery(self.parse_sql(sql_in))
         expression = select(*[Identifier(this=col, quoted=True) for col in self.columns]).from_(subquery).distinct()
         return self.to_sql(expression)
 
@@ -426,7 +447,7 @@ class SQLCount(SQLTransform):
     transform_type: ClassVar[str] = 'sql_count'
 
     def apply(self, sql_in: str) -> str:
-        subquery = self.parse_sql(sql_in).subquery()
+        subquery = self._to_subquery(self.parse_sql(sql_in))
         expression = select("COUNT(*) as count").from_(subquery)
         return self.to_sql(expression)
 
@@ -441,7 +462,7 @@ class SQLMinMax(SQLTransform):
         if not self.columns:
             return sql_in
 
-        subquery = self.parse_sql(sql_in).subquery()
+        subquery = self._to_subquery(self.parse_sql(sql_in))
         minmax = []
         for col in self.columns:
             quoted = self.identify or bool(re.search(r'\W', col))
@@ -464,7 +485,7 @@ class SQLColumns(SQLTransform):
         if not self.columns:
             return sql_in
 
-        subquery = self.parse_sql(sql_in).subquery()
+        subquery = self._to_subquery(self.parse_sql(sql_in))
         expression = select(*self.columns).from_(subquery)
         return self.to_sql(expression)
 
@@ -584,7 +605,7 @@ class SQLFilter(SQLFilterBase):
         if not self.conditions:
             return sql_in
 
-        subquery = self.parse_sql(sql_in).subquery()
+        subquery = self._to_subquery(self.parse_sql(sql_in))
         filters = self._build_filter_conditions(self.conditions)
 
         if not filters:
@@ -735,7 +756,7 @@ class SQLSample(SQLTransform):
             return self._apply_generic_dialect(expression)
 
     def _apply_tablesample_dialect(self, expression: Expression) -> str:
-        subquery = expression.subquery("subquery")
+        subquery = self._to_subquery(expression, "subquery")
 
         if self.size is not None:
             sample_clause = TableSample(size=SQLLiteral(this=str(self.size), is_string=False))
@@ -764,7 +785,7 @@ class SQLSample(SQLTransform):
 
     def _apply_mysql_dialect(self, expression: Expression) -> str:
         """Handle MySQL sampling using ORDER BY RAND() with an indexed random column."""
-        subquery = expression.subquery("subquery")
+        subquery = self._to_subquery(expression, "subquery")
 
         if self.size is not None:
             rand_low = func("RAND")
@@ -793,7 +814,7 @@ class SQLSample(SQLTransform):
 
     def _apply_generic_dialect(self, expression: Expression) -> str:
         """Handle sampling for generic SQL dialects."""
-        subquery = expression.subquery("subquery")
+        subquery = self._to_subquery(expression, "subquery")
 
         if self.seed is not None:
             rand_func = func("RAND", SQLLiteral.number(self.seed))
