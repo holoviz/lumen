@@ -338,6 +338,13 @@ class Llm(param.Parameterized):
             return chunk.choices[0].delta.content or ""
         return ""
 
+    @classmethod
+    def _get_content(cls, response) -> str:
+        """Extract content from a non-streaming response. Override for non-OpenAI APIs."""
+        if hasattr(response, "choices"):
+            return response.choices[0].message.content
+        return str(response)
+
     async def initialize(self, log_level: str):
         try:
             self._ready = False
@@ -390,8 +397,10 @@ class Llm(param.Parameterized):
             )
             if field is not None and hasattr(output, field):
                 output = getattr(output, field)
-            elif hasattr(output, "choices"):
-                output = output.choices[0].message.content
+            elif isinstance(output, str):
+                pass  # Already a string
+            else:
+                output = self._get_content(output)
             yield output
             return
 
@@ -816,6 +825,7 @@ class Anthropic(Llm):
     timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
         The timeout in seconds for Anthropic API calls.""")
 
+    _supports_logfire = True
     _supports_model_stream = True
     _instructor_wrapper = "anthropic"
 
@@ -825,7 +835,10 @@ class Anthropic(Llm):
 
     def _create_base_client(self, **kwargs) -> Any:
         from anthropic import AsyncAnthropic
-        return AsyncAnthropic(api_key=self.api_key, **kwargs)
+        client = AsyncAnthropic(api_key=self.api_key, **kwargs)
+        if self.logfire_tags:
+            self._logfire.instrument_anthropic(client)
+        return client
 
     def _get_completion_method(self) -> Callable:
         return self._base_client.messages.create
@@ -1141,6 +1154,7 @@ class Google(Llm):
     timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
         The timeout in seconds for Google AI API calls.""")
 
+    _supports_logfire = True
     _supports_model_stream = True
     _instructor_wrapper = "genai"
 
@@ -1150,6 +1164,8 @@ class Google(Llm):
 
     def _create_base_client(self, **kwargs) -> Any:
         from google import genai
+        if self.logfire_tags:
+            self._logfire.instrument_google_genai()
         return genai.Client(api_key=self.api_key)
 
     def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
@@ -1262,6 +1278,12 @@ class Google(Llm):
 
         kwargs.pop("stream", None)
         result = await client(contents=contents, config=config, **kwargs)
+        # Extract text from GenerateContentResponse when no response_model
+        if hasattr(result, 'candidates') and result.candidates:
+            candidate = result.candidates[0]
+            if hasattr(candidate, 'content') and candidate.content:
+                if hasattr(candidate.content, 'parts') and candidate.content.parts:
+                    return candidate.content.parts[0].text or ""
         return result
 
 
@@ -1490,6 +1512,7 @@ class LiteLLM(Llm):
     timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
         The timeout in seconds for LiteLLM API calls.""")
 
+    _supports_logfire = True
     _supports_stream = True
     _supports_model_stream = True
     _instructor_wrapper = "litellm"
@@ -1502,6 +1525,8 @@ class LiteLLM(Llm):
 
             from litellm import Cache
             litellm.cache = Cache()
+        if self.logfire_tags:
+            self._logfire.instrument_litellm()
 
     def _get_router(self):
         """Get or create cached LiteLLM Router."""
