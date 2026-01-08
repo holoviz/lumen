@@ -616,7 +616,7 @@ class DownloadControls(BaseSourceControls):
         self._url_input = TextAreaInput.from_param(
             self.param.download_url,
             placeholder=self.param.input_placeholder,
-            rows=4,
+            rows=2,
             margin=10,
             sizing_mode="stretch_width",
             disabled=self.param.disabled,
