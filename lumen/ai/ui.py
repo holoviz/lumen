@@ -409,13 +409,16 @@ class UI(Viewer):
     notebook_preamble = param.String(default='', doc="""
         Preamble to add to exported notebook(s).""")
 
+    source_controls = param.List(default=[UploadControls, DownloadControls], doc="""
+        Additional SourceControls types to manage datasets.""")
+
     suggestions = param.List(default=GETTING_STARTED_SUGGESTIONS, doc="""
         Initial list of suggestions of actions the user can take.""")
 
-    table_upload_callbacks = param.Dict(default={}, doc="""
-        Dictionary mapping from file extensions to callback function,
+    upload_handlers = param.Dict(default={}, doc="""
+        Dictionary mapping from file extensions to handler function,
         e.g. {"hdf5": ...}. The callback function should accept the file bytes,
-        table alias, and filename, add or modify the `source` in memory, and return a bool
+        table alias, and filename, add or modify the `sources` in memory, and return a bool
         (True if the table was successfully uploaded).""")
 
     template = param.Selector(
@@ -702,7 +705,7 @@ class UI(Viewer):
 
                 # Open the Data Sources dialog
                 self._sources_dialog_content.open = True
-                self._source_content.active = 0  # Navigate to Upload tab
+                self._source_content.active = self._source_controls.index(self._upload_controls)
                 return
 
             with self.interface.param.update(disabled=True, loading=True):
@@ -732,6 +735,9 @@ class UI(Viewer):
         }
         interface.disabled = False
         existing_actions = interface.active_widget.actions
+        interface.active_widget.enable_upload = any(
+            issubclass(sc, UploadControls) for sc in self.source_controls
+        )
         interface.active_widget.actions = {
             **existing_actions,
         }
@@ -803,10 +809,6 @@ class UI(Viewer):
             self._pending_sources_snapshot = None
 
     def _configure_coordinator(self):
-        # Set up table upload callbacks on all control classes
-        UploadControls.table_upload_callbacks = self.table_upload_callbacks
-        DownloadControls.table_upload_callbacks = self.table_upload_callbacks
-
         log.setLevel(self.log_level)
 
         agents = self.agents
@@ -981,24 +983,21 @@ class UI(Viewer):
             param.parameterized.async_executor(_do_sync)
         self._source_catalog.param.watch(_schedule_visibility_change, 'visibility_changed')
 
-        # Create separate upload and download controls with reference to catalog
-        self._upload_controls = UploadControls(context=self.context, source_catalog=self._source_catalog)
-        self._download_controls = DownloadControls(context=self.context, source_catalog=self._source_catalog)
-
-        # Watch for output changes from both controls
-        self._upload_controls.param.watch(self._sync_sources, 'outputs')
-        self._download_controls.param.watch(self._sync_sources, 'outputs')
-
-        # Watch for successful uploads to switch to Source Catalog
-        self._upload_controls.param.watch(self._handle_upload_successful, 'upload_successful')
-        self._download_controls.param.watch(self._handle_upload_successful, 'upload_successful')
-
-        # Content container that switches based on breadcrumb selection
-        self._source_content = Tabs(
-            ('<span class="material-icons" style="vertical-align: middle;">upload</span> Upload Data', self._upload_controls),
-            ('<span class="material-icons" style="vertical-align: middle;">download</span> Fetch Remote Data', self._download_controls),
-            sizing_mode="stretch_width"
-        )
+        # Initialize source controls
+        self._source_controls = []
+        control_tabs = []
+        for control in self.source_controls:
+            control_inst = control(
+                context=self.context, source_catalog=self._source_catalog,
+                upload_handlers=self.upload_handlers
+            )
+            control_inst.param.watch(self._sync_sources, 'outputs')
+            control_inst.param.watch(self._handle_upload_successful, 'upload_successful')
+            if isinstance(control_inst, UploadControls):
+                self._upload_controls = control_inst
+            control_tabs.append((control.label, control_inst))
+            self._source_controls.append(control_inst)
+        self._source_content = Tabs(*control_tabs, sizing_mode="stretch_width")
 
         self._sources_help_caption = Typography(
             "Add data to explore with Lumen AI. Supports CSV, Parquet, JSON, Excel, and databases. "
