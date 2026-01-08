@@ -397,6 +397,12 @@ class UI(Viewer):
     log_level = param.ObjectSelector(default='DEBUG', objects=['DEBUG', 'INFO', 'WARNING', 'ERROR'], doc="""
         The log level to use.""")
 
+    logfire_tags = param.List(default=None, doc="""
+        Whether to log LLM calls and responses to logfire.
+        If a list of tags is provided, those tags will be used for logging.
+        Suppresses streaming responses if enabled since
+        logfire does not track token usage on stream.""")
+
     logs_db_path = param.String(default=None, constant=True, doc="""
         The path to the log file that will store the messages exchanged with the LLM.""")
 
@@ -445,6 +451,11 @@ class UI(Viewer):
     ):
         params["log_level"] = params.get("log_level", self.param["log_level"].default).upper()
         super().__init__(**params)
+        if self.logfire_tags is not None:
+            if self.llm._supports_logfire:
+                self.llm.logfire_tags = self.logfire_tags
+            else:
+                log_debug(f"LLM {type(self.llm).__name__} does not support logfire logging.")
         self._configure_context(data)
         self._configure_interface(interface)
         self._configure_coordinator()
@@ -506,6 +517,10 @@ class UI(Viewer):
                             "SQLAlchemy is required to read .db files. "
                             "Install it with: pip install sqlalchemy"
                         ) from e
+                    continue
+
+                # Handle "no_data" as a special case for starting without data
+                if src == 'no_data':
                     continue
 
                 if src.startswith('http'):
@@ -1621,7 +1636,7 @@ class ExplorerUI(UI):
             main = Column(no_explorations_msg, back_button, styles={"margin": "auto"})
         elif active:
             main = Report(
-                *(Section(item["view"].plan, *(it.plan for it in item["items"]), title=item["view"].plan.title)
+                *(Section(item["view"].plan, *(it["view"].plan for it in item["items"]), title=item["view"].plan.title)
                   for item in self._explorations.items[1:])
             )
         else:
