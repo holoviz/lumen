@@ -20,7 +20,7 @@ from panel.viewable import (
     Child, Children, Viewable, Viewer,
 )
 from panel_material_ui import (
-    Breadcrumbs, Button, ChatFeed, ChatInterface, ChatMessage,
+    Alert, Breadcrumbs, Button, ChatFeed, ChatInterface, ChatMessage,
     Column as MuiColumn, Dialog, FileDownload, IconButton, MenuList, Page,
     Paper, Popup, Row, Switch, Tabs, ToggleIcon, Typography,
 )
@@ -441,6 +441,12 @@ class UI(Viewer):
         or inferred from the tools provided."""
     )
 
+    _llm_status = param.String(default='verifying', doc="""
+        The current LLM connection status. Either 'verifying', 'connected', or an error message.""")
+
+    _cta = None  # Initialized in _render_main
+    _error_alert = None  # Initialized in _render_main
+
     __abstract = True
 
     def __init__(
@@ -570,12 +576,27 @@ class UI(Viewer):
     @wrap_logfire(span_name="Initialize LLM")
     async def _initialize_new_llm(self):
         """Initialize the new LLM after provider change."""
+        self._llm_status = 'verifying'
+        if self._cta is not None:
+            self._cta.object = self._get_status_text()
+        if self._error_alert is not None:
+            self._error_alert.visible = False
         try:
             await self.llm.initialize(log_level=self.log_level)
+            self._llm_status = 'connected'
+            self.interface.active_widget.disabled = False
             self.interface.disabled = False
-        except Exception:
+        except Exception as e:
             import traceback
             traceback.print_exc()
+            self._llm_status = str(e)
+            if self._error_alert is not None:
+                self._error_alert.object = "LLM connection failed; try another LLM under Preferences or check logs for more details."
+                self._error_alert.visible = True
+                self.interface.active_widget.disabled = True
+        finally:
+            if self._cta is not None:
+                self._cta.object = self._get_status_text()
 
     def _destroy(self, session_context):
         """
@@ -815,11 +836,19 @@ class UI(Viewer):
         num_sources = len(self.context.get("sources", []))
         llm_name = type(self.llm).__name__
 
+        # Build LLM status text
+        if self._llm_status == 'verifying':
+            llm_text = f"verifying **{llm_name}** connection"
+        elif self._llm_status == 'connected':
+            llm_text = f"using **{llm_name}** as the LLM provider"
+        else:
+            llm_text = f"connecting to **{llm_name}** failed"
+
         if num_sources == 0:
-            status = f"Drag & drop your dataset here to begin; using **{llm_name}** as the LLM provider."
+            status = f"Drag & drop your dataset here to begin; {llm_text}."
         else:
             sources_text = f"**{num_sources} source{'s' if num_sources > 1 else ''} connected**"
-            status = f"{sources_text}; using **{llm_name}** as the LLM provider."
+            status = f"{sources_text}; {llm_text}."
 
         return f"{status} {SPLASH_HELP_HINT}"
 
@@ -829,6 +858,14 @@ class UI(Viewer):
     def _render_main(self) -> list[Viewable]:
         self._cta = Typography(self._get_status_text(), margin=(10, 0, 0, 10))
         self._chat_splash = Column(self._cta, self.interface._widget, margin=(0, 0, 0, -10))
+        self._error_alert = Alert(
+            object="",
+            severity="error",
+            sizing_mode="stretch_width",
+            margin=(5, 10),
+            visible=False
+        )
+
         self._splash = MuiColumn(
             Paper(
                 Typography(
@@ -837,6 +874,9 @@ class UI(Viewer):
                     variant="h1"
                 ),
                 self._chat_splash,
+                self._cta,
+                self._error_alert,
+                self.interface._widget,
                 max_width=850,
                 styles={'margin': 'auto'},
                 sx={'p': '0 20px 20px 20px'}
@@ -1116,6 +1156,13 @@ class UI(Viewer):
         """Handle LLM provider change from the dialog."""
         # Update the UI's LLM reference
         self.llm = new_llm
+
+        # Reset status to verifying when provider changes
+        self._llm_status = 'verifying'
+        if self._cta is not None:
+            self._cta.object = self._get_status_text()
+        if self._error_alert is not None:
+            self._error_alert.visible = False
 
         # Update the coordinator's LLM reference
         self._coordinator.llm = new_llm

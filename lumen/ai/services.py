@@ -303,3 +303,33 @@ class AzureOpenAIMixin(OpenAIMixin):
             return openai.AsyncAzureOpenAI(**kwargs)
         else:
             return openai.AzureOpenAI(**kwargs)
+
+
+class BedrockMixin(param.Parameterized):
+    """
+    Mixin class for AWS Bedrock functionality that can be shared
+    between LLM implementations and embedding classes.
+    """
+
+    aws_access_key_id = param.String(
+        default=os.getenv("AWS_ACCESS_KEY_ID"),
+        doc="AWS access key ID. If not provided, boto3 will use default credentials (including SSO)."
+    )
+
+    api_key = param.String(
+        default=os.getenv("AWS_SECRET_ACCESS_KEY"),
+        doc="AWS secret access key. If not provided, boto3 will use default credentials (including SSO)."
+    )
+
+    aws_session_token = param.String(
+        default=os.getenv("AWS_SESSION_TOKEN"),
+        doc="AWS session token for temporary credentials (optional)."
+    )
+
+    region_name = param.String(default="us-east-1", doc="The AWS region name for Bedrock API calls.")
+
+    def __init__(self, **params):
+        params["api_key"] = params.pop("aws_secret_access_key", params.get("api_key"))
+        if not params["api_key"]:
+            del params["api_key"]
+        super().__init__(**params)
