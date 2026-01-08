@@ -805,6 +805,7 @@ class UI(Viewer):
         self._transition_to_chat()
         msg = Column(user_prompt, source_view) if source_view else user_prompt
         self.interface.send(msg, respond=True)
+        self.interface.active_widget.value_input = ""
 
     def _on_sources_dialog_close(self, event):
         """Handle sources dialog close - restore pending query to input if user closed without adding files."""
@@ -1230,7 +1231,6 @@ class UI(Viewer):
                     suggestion_buttons.visible = False
                     if event.new > 1:  # prevent double clicks
                         return
-
                 self._transition_to_chat()
 
                 if not analysis:
