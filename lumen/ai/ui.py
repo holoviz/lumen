@@ -1859,7 +1859,7 @@ class ExplorerUI(UI):
         self._last_synced = exploration
         return exploration
 
-    def _render_pop_out(self, exploration: Exploration, view: VSplit, title: str):
+    def _render_pop_out(self, exploration: Exploration, view: Column, title: str):
         title_view = Typography(
             title.upper(),
             color="primary",
@@ -1902,32 +1902,31 @@ class ExplorerUI(UI):
 
         task = next(task for task in exploration.plan if view in task.views)
         controls = view.render_controls(task, self.interface)
-        editor = Column(controls, view.editor)
         vsplit = VSplit(
-            editor, view,
+            Column(view.editor, width_policy="max", scroll="y-auto"),
+            view,
             expanded_sizes=(20, 80),
             sizes=(20, 80),
             sizing_mode="stretch_both",
             styles={"overflow": "auto"},
             stylesheets=SPLITJS_STYLESHEETS
         )
-        controls.append(self._render_pop_out(exploration, vsplit, title))
-        return (title, vsplit)
+        view = Column(controls, vsplit)
+        controls.append(self._render_pop_out(exploration, view, title))
+        return (title, view)
 
-    def _find_view_in_tabs(self, exploration: Exploration, out: LumenOutput):
+    def _find_view_in_tabs(self, exploration: Exploration, out: Column):
         tabs = exploration.view[0]
-        for i, tab in enumerate(tabs):
+        for i, tab in enumerate(tabs[1:], start=1):
             content = tab[1] if isinstance(tab, tuple) and len(tab) > 1 else tab
-            if isinstance(content, VSplit) and out.view in content:
+            if out is content:
                 return i
         return None
 
-    def _find_view_in_popped_out(self, exploration: Exploration, out: LumenOutput):
+    def _find_view_in_popped_out(self, exploration: Exploration, out: Column):
         for i, standalone in enumerate(exploration.view[1:], start=1):
-            if isinstance(standalone, Column) and len(standalone) > 1:
-                vsplit = standalone[1]
-                if isinstance(vsplit, VSplit) and out.view in vsplit:
-                    return i
+            if isinstance(standalone, Column) and len(standalone) > 1 and out is standalone[1]:
+                return i
         return None
 
     def _add_views(self, exploration: Exploration, event: param.parameterized.Event | None = None, items: list | None = None):

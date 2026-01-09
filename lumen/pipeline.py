@@ -13,9 +13,10 @@ import tqdm  # type: ignore
 
 from panel.io.document import unlocked
 from panel.io.state import state as pn_state
+from panel.layout import Column, Row
 from panel.param import Param
 from panel.viewable import Viewer
-from panel.widgets import Widget
+from panel.widgets import Tabulator, Widget
 
 from .base import Component
 from .filters.base import Filter, ParamFilter, WidgetFilter
@@ -194,8 +195,12 @@ class Pipeline(Viewer, Component):
     def _update_refs(self, *events: param.parameterized.Event):
         self._update_data()
 
-    def __panel__(self) -> pn.Row:
-        return pn.Row(self.control_panel, pn.widgets.Tabulator(self.param.data, pagination='remote'))
+    def __panel__(self) -> Row:
+        controls = self.control_panel
+        table = Tabulator(self.param.data, pagination='remote', sizing_mode="stretch_both", min_height=300)
+        if controls:
+            return Row(self.control_panel, table)
+        return table
 
     def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
         """
@@ -709,8 +714,8 @@ class Pipeline(Viewer, Component):
         return objects
 
     @property
-    def control_panel(self) -> pn.Column:
-        col = pn.Column()
+    def control_panel(self) -> Column:
+        col = Column()
         filters = [filt.panel for filt in self.traverse('filters')]
         if any(filters):
             col.append('<div style="font-size: 1.5em; font-weight: bold;">Filters</div>')

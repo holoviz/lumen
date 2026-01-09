@@ -8,7 +8,7 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
-from panel.layout import Column
+from panel.layout import Column, Row
 from panel.tests.util import async_wait_until
 from panel_material_ui import Column as MuiColumn
 from panel_splitjs import VSplit
@@ -248,21 +248,25 @@ async def test_exploration_pop_out(explorer_ui):
     assert initial_tab_count == 2
 
     # Check that the view is in tabs
-    vsplit = tabs[1]
+    view = tabs[1]
     title = tabs._names[1]
+    assert isinstance(view, Column)
+    assert len(view) == 2
+    controls, vsplit = view
+    assert isinstance(controls, Row)
     assert isinstance(vsplit, VSplit)
 
     # Create pop-out button
-    pop_button = explorer_ui._render_pop_out(exploration, vsplit, title)
+    pop_button = explorer_ui._render_pop_out(exploration, view, title)
 
     # Trigger the pop-out callback directly
     pop_button.param.trigger("clicks")
 
     # Wait for the view to be removed from tabs
-    await async_wait_until(lambda: vsplit not in tabs, timeout=5.0)
+    await async_wait_until(lambda: view not in tabs, timeout=5.0)
 
     # Check that view was removed from tabs
-    assert vsplit not in tabs
+    assert view not in tabs
     assert len(tabs) == initial_tab_count - 1
 
     # Check that standalone view was added to exploration.view
@@ -276,10 +280,10 @@ async def test_exploration_pop_out(explorer_ui):
     pop_button.param.trigger("clicks")
 
     # Wait for the view to be back in tabs
-    await async_wait_until(lambda: vsplit in tabs, timeout=5.0)
+    await async_wait_until(lambda: view in tabs, timeout=5.0)
 
     # Check that view is back in tabs
-    assert vsplit in tabs
+    assert view in tabs
     assert len(tabs) == initial_tab_count
 
     # Check button description changed back
@@ -325,14 +329,14 @@ async def test_find_view_in_tabs(explorer_ui):
     sql_output = views[0]
 
     # Render the view
-    title, vsplit = explorer_ui._render_view(exploration, sql_output)
+    title, view = explorer_ui._render_view(exploration, sql_output)
 
     # Find the view in tabs
-    tab_idx = explorer_ui._find_view_in_tabs(exploration, sql_output)
+    tab_idx = explorer_ui._find_view_in_tabs(exploration, view)
 
     # Should find it (if it's in tabs)
     tabs = exploration.view[0]
-    if vsplit in tabs:
+    if view in tabs:
         assert tab_idx is not None
         assert tab_idx >= 0
 
@@ -356,8 +360,8 @@ async def test_find_view_in_popped_out(explorer_ui):
     # Render and pop out
     tabs = exploration.view[0]
     title = tabs._names[1]
-    vsplit = tabs[1]
-    pop_button = explorer_ui._render_pop_out(exploration, vsplit, title)
+    view = tabs[1]
+    pop_button = explorer_ui._render_pop_out(exploration, view, title)
 
     # Trigger pop out by calling the callback directly
     pop_button.param.trigger("clicks")
@@ -366,7 +370,7 @@ async def test_find_view_in_popped_out(explorer_ui):
     await async_wait_until(lambda: len(exploration.view) > 1, timeout=5.0)
 
     # Find the popped out view
-    popped_idx = explorer_ui._find_view_in_popped_out(exploration, sql_output)
+    popped_idx = explorer_ui._find_view_in_popped_out(exploration, view)
 
     # Should find it
     assert popped_idx is not None
