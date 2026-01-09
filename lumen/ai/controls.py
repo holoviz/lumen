@@ -19,7 +19,7 @@ from panel.pane.markup import HTML, Markdown
 from panel.viewable import Viewer
 from panel.widgets import FileDropper
 from panel_material_ui import (
-    AutocompleteInput, Button, Card, Column as MuiColumn, Divider, IconButton,
+    AutocompleteInput, Button, Card, Column as MuiColumn, IconButton,
     LinearProgress, Popup, RadioButtonGroup, Select, Tabs, TextAreaInput,
     TextInput, ToggleIcon, Tree, Typography,
 )
@@ -185,7 +185,6 @@ class UploadedFileRow(Viewer):
             self._delete_button,
             sizing_mode="stretch_width",
             margin=(5, 0),
-            styles={"border-bottom": "1px solid #e0e0e0", "padding-bottom": "5px"}
         )
 
         if self.extension == "xlsx":
@@ -241,7 +240,7 @@ class BaseSourceControls(Viewer):
         self._file_cards = []  # Track UploadedFileRow instances
 
         # Shared UI components
-        self._upload_cards = MuiColumn(sizing_mode="stretch_width", margin=0)
+        self._upload_cards = MuiColumn(sizing_mode="stretch_width", margin=0, styles={"border-top": "1px solid #e0e0e0", "padding-top": "5px"})
         self._upload_cards.visible = False
 
         files_to_process = self._upload_cards.param["objects"].rx.len() > 0
@@ -250,6 +249,8 @@ class BaseSourceControls(Viewer):
             name="Confirm file(s)",
             icon="add",
             visible=files_to_process,
+            description="",
+            align="center",
             sizing_mode="stretch_width",
             height=42,
         )
@@ -547,13 +548,13 @@ class UploadControls(BaseSourceControls):
             margin=1,
             sizing_mode="stretch_width",
             disabled=self.param.disabled,
-            stylesheets=[".bk-input.filepond--root { box-shadow: unset; cursor: grab; } .bk-input.filepond--root:not([disabled]):hover { box-shadow: unset; }"]
+            stylesheets=[".bk-input.filepond--root { box-shadow: unset; cursor: grab; } .bk-input.filepond--root:not([disabled]):hover { box-shadow: unset; }"],
+            visible=self._upload_cards.param.visible.rx.not_()
         )
         self._file_input.param.watch(self._on_file_upload, "value")
 
         self._layout = MuiColumn(
             self._file_input,
-            Divider(),
             self._upload_cards,
             self._add_button,
             self._error_placeholder,
@@ -635,7 +636,6 @@ class DownloadControls(BaseSourceControls):
 
         self._layout = MuiColumn(
             self._url_input,
-            Divider(),
             self._upload_cards,
             Row(self._add_button, self._cancel_button),
             self._error_placeholder,
