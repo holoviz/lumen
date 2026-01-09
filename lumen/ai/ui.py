@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
+from contextlib import contextmanager
 from functools import partial
 from io import StringIO
 from pathlib import Path
@@ -1083,6 +1084,26 @@ class UI(Viewer):
             sidebar_resizable=False,
             sx={"&.mui-light .sidebar": {"bgcolor": "var(--mui-palette-grey-50)"}}
         )
+        # Unlink busy indicator
+        self._page.busy = False
+
+    @contextmanager
+    def _busy(self):
+        """
+        Context manager that clears self._idle and sets self._page.busy to True,
+        then restores both self._idle and self._page.busy to their previous states
+        after exiting the context.
+        """
+        old_busy = self._page.busy
+        self._idle.clear()
+        with edit_readonly(self._page):
+            self._page.busy = True
+        try:
+            yield
+        finally:
+            self._idle.set()
+            with edit_readonly(self._page):
+                self._page.busy = old_busy
 
     def _update_help_getting_started(self):
         """Update the Getting Started help text based on whether data sources are connected."""
@@ -1255,14 +1276,15 @@ class UI(Viewer):
                     coordinator=self._coordinator,
                     title=contents,
                 )
-                await self._execute_plan(plan)
+                with self._busy():
+                    await self._execute_plan(plan)
 
         async def run_demo(event):
             if hide_after_use:
                 suggestion_buttons.visible = False
                 if event.new > 1:  # prevent double clicks
                     return
-            with self.interface.active_widget.param.update(loading=True):
+            with self.interface.active_widget.param.update(loading=True), self._busy():
                 for demo_message in self.demo_inputs:
                     while self.interface.disabled:
                         await asyncio.sleep(1.25)
@@ -1653,13 +1675,10 @@ class ExplorerUI(UI):
         sql_task = ActorTask(sql_agent, title=f"Load {table}", views=[sql_out], out_context=out_context, status="success")
         plan = Plan(sql_task, title=f"Explore {table}", context=self.context, status="success")
 
-        with hold():
-            try:
-                exploration = await self._add_exploration(plan, self._home)
-                self._add_views(exploration, items=plan.views)
-                await self._postprocess_exploration(plan, exploration, prev, is_new=True)
-            finally:
-                self._idle.set()
+        with hold(), self._busy():
+            exploration = await self._add_exploration(plan, self._home)
+            self._add_views(exploration, items=plan.views)
+            await self._postprocess_exploration(plan, exploration, prev, is_new=True)
 
     def _configure_session(self):
         self._home = self._last_synced = Exploration(
@@ -2087,11 +2106,8 @@ class ExplorerUI(UI):
         self, messages: list[Message], user: str, instance: ChatInterface, context: TContext | None = None
     ):
         log_debug(f"New Message: \033[91m{messages!r}\033[0m", show_sep="above")
-        self._idle.clear()
-        try:
+        with self._busy():
             exploration = self._exploration['view']
             plan = await self._coordinator.respond(messages, exploration.context)
             if plan is not None:
                 await self._execute_plan(plan)
-        finally:
-            self._idle.set()
