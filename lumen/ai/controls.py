@@ -243,12 +243,12 @@ class BaseSourceControls(Viewer):
         self._upload_cards = MuiColumn(sizing_mode="stretch_width", margin=0, styles={"border-top": "1px solid #e0e0e0", "padding-top": "5px"})
         self._upload_cards.visible = False
 
-        files_to_process = self._upload_cards.param["objects"].rx.len() > 0
+        self._files_to_process = self._upload_cards.param["objects"].rx.len() > 0
         self._add_button = Button.from_param(
             self.param.add,
             name="Confirm file(s)",
             icon="add",
-            visible=files_to_process,
+            visible=self._files_to_process,
             description="",
             align="center",
             sizing_mode="stretch_width",
@@ -548,7 +548,8 @@ class UploadControls(BaseSourceControls):
             margin=1,
             sizing_mode="stretch_width",
             disabled=self.param.disabled,
-            stylesheets=[".bk-input.filepond--root { box-shadow: unset; cursor: grab; } .bk-input.filepond--root:not([disabled]):hover { box-shadow: unset; }"]
+            stylesheets=[".bk-input.filepond--root { box-shadow: unset; cursor: grab; } .bk-input.filepond--root:not([disabled]):hover { box-shadow: unset; }"],
+            visible=self._upload_cards.param.visible.rx.not_()
         )
         self._file_input.param.watch(self._on_file_upload, "value")
 
