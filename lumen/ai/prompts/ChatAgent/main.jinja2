@@ -36,7 +36,7 @@ Here was the plan that was executed:
 {% endif %}
 
 {%- if memory.get('metaset') %}
-{%- set table_list = memory['metaset'].table_list(n=3) %}
+{%- set table_list = memory['metaset'].table_context() %}
 Data sources (sorted by relevance):
 {{ table_list }}
 {%- else %}
