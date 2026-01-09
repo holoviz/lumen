@@ -19,7 +19,7 @@ from panel.pane.markup import HTML, Markdown
 from panel.viewable import Viewer
 from panel.widgets import FileDropper
 from panel_material_ui import (
-    AutocompleteInput, Button, Card, Column as MuiColumn, IconButton,
+    AutocompleteInput, Button, Card, Column as MuiColumn, Divider, IconButton,
     LinearProgress, Popup, RadioButtonGroup, Select, Tabs, TextAreaInput,
     TextInput, ToggleIcon, Tree, Typography,
 )
@@ -250,7 +250,8 @@ class BaseSourceControls(Viewer):
             name="Confirm file(s)",
             icon="add",
             visible=files_to_process,
-            button_type="success"
+            sizing_mode="stretch_width",
+            height=42,
         )
 
         self._error_placeholder = HTML("", visible=False, margin=(0, 10, 5, 10))
@@ -552,6 +553,7 @@ class UploadControls(BaseSourceControls):
 
         self._layout = MuiColumn(
             self._file_input,
+            Divider(),
             self._upload_cards,
             self._add_button,
             self._error_placeholder,
@@ -614,7 +616,7 @@ class DownloadControls(BaseSourceControls):
         self._url_input = TextAreaInput.from_param(
             self.param.download_url,
             placeholder=self.param.input_placeholder,
-            rows=4,
+            rows=2,
             margin=10,
             sizing_mode="stretch_width",
             disabled=self.param.disabled,
@@ -633,6 +635,7 @@ class DownloadControls(BaseSourceControls):
 
         self._layout = MuiColumn(
             self._url_input,
+            Divider(),
             self._upload_cards,
             Row(self._add_button, self._cancel_button),
             self._error_placeholder,
@@ -1563,17 +1566,17 @@ class SourceCatalog(Viewer):
     def _sync_sources_tree(self, sources: list):
         """Sync the sources tree with current sources."""
         if not sources:
-            self._sources_title.object = "**Data Sources** *(no sources available)*"
+            self._sources_title.object = "**Available Sources** *(no sources available)*"
             self._sources_tree.items = []
             return
 
         items = self._build_sources_items(sources)
         if not items:
-            self._sources_title.object = "**Data Sources** *(no tables found)*"
+            self._sources_title.object = "**Available Sources** *(no tables found)*"
             self._sources_tree.items = []
             return
 
-        self._sources_title.object = "**Data Sources**"
+        self._sources_title.object = "**Available Sources**"
         self._auto_associate_unassociated_metadata(sources)
         self._update_sources_tree_state(items, sources)
 
