@@ -1719,7 +1719,12 @@ class ExplorerUI(UI):
                   for item in self._explorations.items[1:])
             )
         else:
-            main = self._split
+            # Check if we should show splash (when on Home with no explorations)
+            exploration = self._explorations.value['view']
+            if exploration is self._home:
+                main = self._splash
+            else:
+                main = self._split
 
         with hold():
             self._navigation_title.object = "Report" if active else "Exploration"
