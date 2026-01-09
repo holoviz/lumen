@@ -1303,6 +1303,7 @@ class UI(Viewer):
                 )
                 for i, suggestion in enumerate(suggestions)
             ],
+            name="Suggestions",
             margin=5,
         )
 
@@ -1324,7 +1325,11 @@ class UI(Viewer):
             message = self.interface.objects[-1]
             if inplace:
                 footer_objects = message.footer_objects or []
-                message.footer_objects = footer_objects + [suggestion_buttons]
+                prev_suggestions = [obj for obj in footer_objects if obj.name == "Suggestions"]
+                if prev_suggestions:
+                    prev_suggestions[0][:] = list(suggestion_buttons)
+                else:
+                    message.footer_objects = footer_objects + [suggestion_buttons]
         else:
             self._splash[0][2].append(suggestion_buttons)
 
