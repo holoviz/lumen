@@ -1090,8 +1090,9 @@ class UI(Viewer):
     @contextmanager
     def _busy(self):
         """
-        Context manager to unset self._idle and set self._page to busy,
-        then revert both after exiting the context.
+        Context manager that clears self._idle and sets self._page.busy to True,
+        then restores both self._idle and self._page.busy to their previous states
+        after exiting the context.
         """
         old_busy = self._page.busy
         self._idle.clear()
