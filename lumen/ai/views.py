@@ -73,7 +73,6 @@ class LumenOutput(Viewer):
         super().__init__(**params)
         self.editor = self._render_editor()
         self.view = ParamMethod(self.render, inplace=True, sizing_mode='stretch_width')
-        self.view.loading = self.param.loading
         self._rendered = False
         self._last_output = {}
 
@@ -228,9 +227,7 @@ class LumenOutput(Viewer):
             )
             return
 
-        yield CircularProgress(
-            value=True, label="Rendering component...", height=50, width=50
-        )
+        yield CircularProgress(value=True, label="Rendering component...")
 
         if self.spec in self._last_output:
             yield self._last_output[self.spec]
@@ -464,17 +461,16 @@ class AnalysisOutput(LumenOutput):
         return out_context
 
     async def _rerun(self, event):
-        with self.view.param.update(loading=True):
-            if asyncio.iscoroutinefunction(self.analysis.__call__):
-                view = await self.analysis(self.pipeline, self.context)
-            else:
-                view = await asyncio.to_thread(self.analysis, self.pipeline, self.context)
-            view = as_panel(view)
-            if isinstance(view, Viewable):
-                view = Panel(object=view, pipeline=self.pipeline)
-            self.component = view
-            self._rendered = False
-            self.spec, self._spec_dict = self._serialize_component(view)
+        if asyncio.iscoroutinefunction(self.analysis.__call__):
+            view = await self.analysis(self.pipeline, self.context)
+        else:
+            view = await asyncio.to_thread(self.analysis, self.pipeline, self.context)
+        view = as_panel(view)
+        if isinstance(view, Viewable):
+            view = Panel(object=view, pipeline=self.pipeline)
+        self.component = view
+        self._rendered = False
+        self.spec, self._spec_dict = self._serialize_component(view)
 
 
 class SQLOutput(LumenOutput):
