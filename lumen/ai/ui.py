@@ -655,7 +655,7 @@ class UI(Viewer):
     def _transition_to_chat(self):
         """Transition from splash screen to chat interface."""
         if self._splash in self._main:
-            self._main[:] = [self._navigation, self._split] if len(self._explorations.items) > 1 else [self._split]
+            self._main[:] = [self._navigation, self.interface] if len(self._explorations.items) > 1 else [self.interface]
 
     def _configure_interface(self, interface):
         def on_undo(instance, _):
@@ -1491,7 +1491,7 @@ class ExplorerUI(UI):
         if not hasattr(self, '_page'):
             return
         if not is_home:
-            self._transition_to_chat()
+            self._toggle_report_mode(False)
         exploration, report = self._sidebar_menu.items[:2]
         self._sidebar_menu.update_item(exploration, active=True, icon="timeline" if report["active"] else "insights")
 
