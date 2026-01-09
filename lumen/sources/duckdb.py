@@ -307,8 +307,13 @@ class DuckDBSource(BaseSQLSource):
     @classmethod
     def from_spec(cls, spec: dict[str, Any] | str) -> Source:
         if spec.get('ephemeral') and 'tables' in spec:
-            ephemeral_tables = spec['tables']
-            spec['tables'] = {}
+            ephemeral_tables, tables = {}, {}
+            for table, table_spec in spec['tables'].items():
+                if isinstance(table_spec, str):
+                    tables[table] = table_spec
+                else:
+                    ephemeral_tables[table] = table_spec
+            spec['tables'] = tables
         else:
             ephemeral_tables = {}
 
@@ -325,7 +330,7 @@ class DuckDBSource(BaseSQLSource):
             except duckdb.ParserException:
                 continue
             new_tables[t] = source.sql_expr.format(table=t)
-        source.tables = new_tables
+        source.tables = dict(new_tables, **tables)
 
         resolved_mirrors = {}
         for table, mirror in mirrors.items():
