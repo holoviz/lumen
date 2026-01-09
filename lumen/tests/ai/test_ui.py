@@ -332,7 +332,7 @@ async def test_find_view_in_tabs(explorer_ui):
     title, view = explorer_ui._render_view(exploration, sql_output)
 
     # Find the view in tabs
-    tab_idx = explorer_ui._find_view_in_tabs(exploration, view)
+    tab_idx = explorer_ui._find_view_in_tabs(exploration, sql_output)
 
     # Should find it (if it's in tabs)
     tabs = exploration.view[0]
@@ -370,7 +370,7 @@ async def test_find_view_in_popped_out(explorer_ui):
     await async_wait_until(lambda: len(exploration.view) > 1, timeout=5.0)
 
     # Find the popped out view
-    popped_idx = explorer_ui._find_view_in_popped_out(exploration, view)
+    popped_idx = explorer_ui._find_view_in_popped_out(exploration, sql_output)
 
     # Should find it
     assert popped_idx is not None

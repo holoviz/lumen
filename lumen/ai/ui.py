@@ -1915,18 +1915,20 @@ class ExplorerUI(UI):
         controls.append(self._render_pop_out(exploration, view, title))
         return (title, view)
 
-    def _find_view_in_tabs(self, exploration: Exploration, out: Column):
+    def _find_view_in_tabs(self, exploration: Exploration, out: LumenOutput):
         tabs = exploration.view[0]
         for i, tab in enumerate(tabs[1:], start=1):
-            content = tab[1] if isinstance(tab, tuple) and len(tab) > 1 else tab
-            if out is content:
+            content = tab[1][1] if isinstance(tab, tuple) and len(tab) > 1 else tab[1]
+            if isinstance(content, VSplit) and out.view in content:
                 return i
         return None
 
-    def _find_view_in_popped_out(self, exploration: Exploration, out: Column):
+    def _find_view_in_popped_out(self, exploration: Exploration, out: LumenOutput):
         for i, standalone in enumerate(exploration.view[1:], start=1):
-            if isinstance(standalone, Column) and len(standalone) > 1 and out is standalone[1]:
-                return i
+            if isinstance(standalone, Column) and len(standalone) > 1:
+                vsplit = standalone[1][1]
+                if isinstance(vsplit, VSplit) and out.view in vsplit:
+                    return i
         return None
 
     def _add_views(self, exploration: Exploration, event: param.parameterized.Event | None = None, items: list | None = None):
