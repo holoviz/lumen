@@ -243,16 +243,16 @@ class BaseSourceControls(Viewer):
         self._upload_cards = MuiColumn(sizing_mode="stretch_width", margin=0, styles={"border-top": "1px solid #e0e0e0", "padding-top": "5px"})
         self._upload_cards.visible = False
 
-        self._files_to_process = self._upload_cards.param["objects"].rx.len() > 0
+        files_to_process = self._upload_cards.param["objects"].rx.len() > 0
         self._add_button = Button.from_param(
             self.param.add,
             name="Confirm file(s)",
             icon="add",
-            visible=self._files_to_process,
+            visible=files_to_process,
             description="",
             align="center",
             sizing_mode="stretch_width",
-            height=50,
+            height=42,
         )
 
         self._error_placeholder = HTML("", visible=False, margin=(0, 10, 5, 10))
