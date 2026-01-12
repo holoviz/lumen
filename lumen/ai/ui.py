@@ -1477,7 +1477,6 @@ class ExplorerUI(UI):
             self._toggle_report_mode(True)
             self._sidebar_menu.update_item(self._sidebar_menu.items[0], active=False, icon="timeline")
             self._sidebar_menu.update_item(item, active=True, icon="description")
-            self._update_home()
         elif item["id"] == "data":
             self._open_sources_dialog()
         elif item["id"] == "preferences":
@@ -1719,6 +1718,9 @@ class ExplorerUI(UI):
                 *(Section(item["view"].plan, *(it["view"].plan for it in item["items"]), title=item["view"].plan.title)
                   for item in self._explorations.items[1:])
             )
+        # Check if we should show splash (when no messages in interface)
+        elif not self.interface.objects:
+            main = self._splash
         else:
             main = self._split
 
@@ -2112,6 +2114,9 @@ class ExplorerUI(UI):
         self, messages: list[Message], user: str, instance: ChatInterface, context: TContext | None = None
     ):
         log_debug(f"New Message: \033[91m{messages!r}\033[0m", show_sep="above")
+        # Collapse sidebar on first message sent
+        if len(self.interface.objects) <= 1:  # First message (only user message exists)
+            self._sidebar_collapse.value = True
         with self._busy():
             exploration = self._exploration['view']
             plan = await self._coordinator.respond(messages, exploration.context)
