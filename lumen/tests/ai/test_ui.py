@@ -10,14 +10,14 @@ except ModuleNotFoundError:
 
 from panel.layout import Column, Row
 from panel.tests.util import async_wait_until
-from panel_material_ui import Column as MuiColumn, Container
+from panel_material_ui import Container
 from panel_splitjs import VSplit
 
 from lumen.ai.agents.analyst import AnalystAgent
 from lumen.ai.agents.sql import SQLAgent, make_sql_model
 from lumen.ai.coordinator import Plan
-from lumen.ai.models import ErrorDescription, YesNo
-from lumen.ai.report import ActorTask, Report
+from lumen.ai.models import ErrorDescription
+from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
 from lumen.ai.ui import Exploration, ExplorerUI
 from lumen.ai.views import SQLOutput
@@ -523,7 +523,7 @@ async def test_delete_exploration_switches_to_parent(explorer_ui):
         is_followup=True
     )
 
-    child_exploration = await explorer_ui._add_exploration(child_plan, parent_exploration)
+    await explorer_ui._add_exploration(child_plan, parent_exploration)
 
     await asyncio.sleep(0.1)
 
