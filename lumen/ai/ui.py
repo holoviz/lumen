@@ -746,8 +746,17 @@ class UI(Viewer):
         self._pending_query = None
         self._pending_sources_snapshot = None  # Also indicates dialog was opened from chat
 
-        def on_submit(event=None, instance=None):
+        async def on_submit(event=None, instance=None):
             chat_input = self.interface.active_widget
+
+            # Check if there are pending uploads that need to be transferred first
+            if chat_input.pending_uploads:
+                # Initiate the transfer
+                chat_input.transfer()
+                # Wait for transfer to complete
+                while not chat_input.value_uploaded:
+                    await asyncio.sleep(0.1)
+
             uploaded = chat_input.value_uploaded
             user_prompt = chat_input.value_input
             if not user_prompt and not uploaded:
@@ -781,6 +790,9 @@ class UI(Viewer):
                 with hold():
                     self.interface.send(user_prompt, respond=bool(user_prompt))
                     chat_input.value_input = ""
+
+        # Store as instance variable for access from other methods
+        self._on_submit = on_submit
 
         if interface is None:
             interface = ChatInterface(
@@ -1321,7 +1333,10 @@ class UI(Viewer):
                 self._update_main_view()
 
                 if not analysis:
-                    self.interface.send(contents)
+                    # Set the input value and trigger submit
+                    # This will handle pending uploads via on_submit
+                    self.interface.active_widget.value_input = contents
+                    await self._on_submit()
                     return
 
                 for agent in self.agents:
