@@ -7,6 +7,7 @@ import logging
 import sys
 import traceback
 
+from pathlib import Path
 from textwrap import dedent
 
 import bokeh.command.subcommands.serve
@@ -196,6 +197,15 @@ class AIHandler(CodeHandler):
         logfire_tags: list[str] | None = None,
         **kwargs,
     ) -> None:
+        # Validate that table files exist
+        for table_path in tables:
+            if table_path != "no_data":  # Skip validation for special "no_data" case
+                path = Path(table_path)
+                if not path.exists():
+                    raise FileNotFoundError(f"Table file not found: {table_path}")
+                if not path.is_file():
+                    raise ValueError(f"Table path is not a file: {table_path}")
+
         source = self._build_source_code(
             tables=tables,
             provider=provider,
@@ -244,7 +254,7 @@ class AIHandler(CodeHandler):
             CMD_DIR / "app.py.jinja2", relative_to=CMD_DIR, **context
         ).replace("\n\n", "\n").strip()
 
-        print(f"Generated source code:\n```python\n{source}\n```\n")  # noqa: T201 for reusability
+        print(f"\033[93mGenerated source code:\n```python\n{source}\n```\033[0m\n")  # noqa: T201 for reusability
         return source
 
 
