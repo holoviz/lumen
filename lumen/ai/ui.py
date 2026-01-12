@@ -652,10 +652,75 @@ class UI(Viewer):
         interface.message_params["reaction_icons"] = {"like": "thumb-up", "dislike": "thumb-down"}
         interface.post_hook = on_message
 
-    def _transition_to_chat(self):
-        """Transition from splash screen to chat interface."""
-        if self._splash in self._main:
-            self._main[:] = [self._navigation, self.interface] if len(self._explorations.items) > 1 else [self.interface]
+    def _is_report_mode(self) -> bool:
+        """Check if we're currently in report mode."""
+        report_item = self._sidebar_menu.items[1] if len(self._sidebar_menu.items) > 1 else None
+        return report_item is not None and report_item.get("active", False)
+
+    def _has_explorations(self) -> bool:
+        """Check if there are any explorations beyond home."""
+        return len(self._explorations.items) > 1
+
+    def _should_show_navigation(self) -> bool:
+        """Determine if navigation pane should be visible."""
+        return self._has_explorations()
+
+    def _get_current_exploration(self) -> Exploration:
+        """Get the currently active exploration."""
+        return self._explorations.value['view']
+
+    @hold()
+    def _update_main_view(self, force_report_mode: bool | None = None):
+        """
+        Centralized method to update the main view based on current state.
+
+        This method determines what should be displayed in self._main based on:
+        - Whether we're in report mode
+        - Whether there are explorations
+        - Whether the current exploration has data to show
+        - Whether we're on the home view
+
+        Parameters
+        ----------
+        force_report_mode : bool | None
+            If provided, force report mode on/off. Otherwise use current state.
+        """
+        in_report_mode = force_report_mode if force_report_mode is not None else self._is_report_mode()
+
+        if in_report_mode:
+            if not self._has_explorations():
+                no_explorations_msg = Markdown(
+                    "### No Explorations Yet\n\nGenerate an exploration first by asking a question about your data.",
+                )
+                back_button = Button(
+                    label="Back to Exploration",
+                    icon="insights",
+                    button_type="primary",
+                    on_click=lambda e: self._handle_sidebar_event(self._sidebar_menu.items[0]),
+                )
+                main_content = Column(no_explorations_msg, back_button, styles={"margin": "auto"})
+            else:
+                main_content = Report(
+                    *(Section(item["view"].plan, *(it["view"].plan for it in item["items"]), title=item["view"].plan.title)
+                      for item in self._explorations.items[1:])
+                )
+            self._navigation_title.object = "Report"
+            self._navigation_caption.object = REPORT_CAPTION
+        else:
+            exploration = self._get_current_exploration()
+            if exploration is self._home:
+                main_content = self.interface if self.interface.objects else self._splash
+                self._output[1:] = []
+            else:
+                main_content = self._split
+                self._output[1:] = [exploration]
+            self._navigation_title.object = "Exploration"
+            self._navigation_caption.object = EXPLORATION_CAPTION
+
+        if self._should_show_navigation():
+            self._main[:] = [self._navigation, main_content]
+        else:
+            self._main[:] = [main_content]
 
     def _configure_interface(self, interface):
         def on_undo(instance, _):
@@ -705,12 +770,14 @@ class UI(Viewer):
                 chat_input.value_input = ""
 
                 # Open the Data Sources dialog
-                self._sources_dialog_content.open = True
-                self._source_content.active = self._source_controls.index(self._upload_controls)
+                with hold():
+                    self._sources_dialog_content.open = True
+                    self._source_content.active = self._source_controls.index(self._upload_controls)
+                state.execute(self._upload_controls._add_button.focus, schedule=True)
                 return
 
             with self.interface.param.update(disabled=True, loading=True):
-                self._transition_to_chat()
+                self._update_main_view()
                 with hold():
                     self.interface.send(user_prompt, respond=bool(user_prompt))
                     chat_input.value_input = ""
@@ -802,8 +869,7 @@ class UI(Viewer):
             sizing_mode="stretch_width"
         ) if new_sources else None
 
-        # Transition to chat and send message
-        self._transition_to_chat()
+        self._update_main_view()
         msg = Column(user_prompt, source_view) if source_view else user_prompt
         self.interface.send(msg, respond=True)
         self.interface.active_widget.value_input = ""
@@ -1252,7 +1318,7 @@ class UI(Viewer):
                     suggestion_buttons.visible = False
                     if event.new > 1:  # prevent double clicks
                         return
-                self._transition_to_chat()
+                self._update_main_view()
 
                 if not analysis:
                     self.interface.send(contents)
@@ -1330,10 +1396,9 @@ class UI(Viewer):
                     prev_suggestions[0][:] = list(suggestion_buttons)
                 else:
                     message.footer_objects = footer_objects + [suggestion_buttons]
+            self.interface.param.watch(hide_suggestions, "objects")
         else:
             self._splash[0][2].append(suggestion_buttons)
-
-        self.interface.param.watch(hide_suggestions, "objects")
 
     async def _add_analysis_suggestions(self, plan: Plan):
         pipeline = plan.out_context["pipeline"]
@@ -1489,10 +1554,11 @@ class ExplorerUI(UI):
         is_home = self._exploration["view"] is self._home
         if not hasattr(self, '_page'):
             return
-        if not is_home:
+        if not is_home and self._is_report_mode():
             self._toggle_report_mode(False)
         exploration, report = self._sidebar_menu.items[:2]
         self._sidebar_menu.update_item(exploration, active=True, icon="timeline" if report["active"] else "insights")
+        self._update_main_view()
 
     def _render_sidebar(self) -> list[Viewable]:
         switches = []
@@ -1604,9 +1670,6 @@ class ExplorerUI(UI):
 
         # Add suggestions to chat_splash (after tabs)
         if self.suggestions:
-            # Remove the original suggestions that were added in parent class
-            if len(self._chat_splash) > 2:
-                self._chat_splash.pop()
             self._add_suggestions_to_footer(
                 self.suggestions,
                 num_objects=0,
@@ -1666,7 +1729,7 @@ class ExplorerUI(UI):
             return
 
         table = self._explorer.table_slug.split(SOURCE_TABLE_SEPARATOR)[0]
-        self._transition_to_chat()
+        self._update_main_view()
         self.interface.send(f"Explore the `{table}` table", respond=False)
 
         # Flush UI
@@ -1701,33 +1764,7 @@ class ExplorerUI(UI):
 
     def _toggle_report_mode(self, active: bool):
         """Toggle between regular and report mode."""
-        if active and len(self._explorations.items) <= 1:
-            # Show message and button to go back to exploration
-            no_explorations_msg = Markdown(
-                "### No Explorations Yet\n\nGenerate an exploration first by asking a question about your data.",
-            )
-            back_button = Button(
-                label="Back to Exploration",
-                icon="insights",
-                button_type="primary",
-                on_click=lambda e: self._handle_sidebar_event(self._sidebar_menu.items[0]),
-            )
-            main = Column(no_explorations_msg, back_button, styles={"margin": "auto"})
-        elif active:
-            main = Report(
-                *(Section(item["view"].plan, *(it["view"].plan for it in item["items"]), title=item["view"].plan.title)
-                  for item in self._explorations.items[1:])
-            )
-        # Check if we should show splash (when no messages in interface)
-        elif not self.interface.objects:
-            main = self._splash
-        else:
-            main = self._split
-
-        with hold():
-            self._navigation_title.object = "Report" if active else "Exploration"
-            self._navigation_caption.object = REPORT_CAPTION if active else EXPLORATION_CAPTION
-            self._main[:] = [self._navigation, main] if len(self._explorations.items) > 1 else [main]
+        self._update_main_view(force_report_mode=active)
 
     async def _delete_exploration(self, item):
         await self._idle.wait()
@@ -1749,14 +1786,13 @@ class ExplorerUI(UI):
             c['view'].context.clear()
 
     async def _update_conversation(self, event=None, replan: bool = False):
+        """
+        Update the conversation for the current exploration.
+
+        This method handles conversation management (switching, syncing) but
+        delegates view switching to _update_main_view.
+        """
         exploration = self._explorations.value['view']
-        if exploration is self._home:
-            self._main[:] = [self._navigation, self._splash] if len(self._explorations.items) > 1 else [self._splash]
-            self._output[1:] = []
-        else:
-            if self._splash in self._main:
-                self._main[:] = [self._navigation, self._split]
-            self._output[1:] = [exploration]
 
         if event is not None:
             # When user switches explorations and coordinator is running
@@ -1776,6 +1812,7 @@ class ExplorerUI(UI):
 
         with hold():
             self._set_conversation(exploration.conversation)
+            self._update_main_view()
             self.interface._chat_log.scroll_to_latest()
         self._last_synced = exploration
 
@@ -1839,6 +1876,7 @@ class ExplorerUI(UI):
             'parent': parent_item if plan.is_followup else self._explorations.items[0],
             'items': []
         }
+        is_busy = not self._idle.is_set()
         with hold():
             self.interface.objects = conversation
             # Collapse sidebar if we are launching first exploration
@@ -1853,8 +1891,8 @@ class ExplorerUI(UI):
                 )
                 self._explorations.expanded = [self._explorations._lookup_path(parent_item)]
             self._explorations.value = self._exploration = view_item
-            self._idle.clear()
-            self._toggle_report_mode(False)
+            if is_busy:
+                self._idle.clear()
             self._output[1:] = [output]
             self._notebook_export.filename = f"{plan.title.replace(' ', '_')}.ipynb"
             await self._update_conversation()
@@ -2049,13 +2087,10 @@ class ExplorerUI(UI):
             plan.remove(list(old_plan))
             self._reset_error(old_plan, exploration, replan=old_plan is plan)
 
-        self._idle.clear()
-        try:
+        with self._busy():
             new_plan = await self._coordinator.respond(messages, exploration.context)
             if new_plan is not None:
                 await self._execute_plan(new_plan, replan=True)
-        finally:
-            self._idle.set()
 
     async def _postprocess_exploration(
         self, plan: Plan, exploration: Exploration, prev: dict, is_new: bool = False, partial_plan: Plan | None = None
@@ -2064,6 +2099,7 @@ class ExplorerUI(UI):
         if "__error__" not in plan.out_context and plan.status != "error":
             if "pipeline" in plan.out_context:
                 await self._add_analysis_suggestions(plan)
+
             if is_new:
                 plan.param.watch(partial(self._update_views, exploration), "views")
             return
@@ -2117,6 +2153,7 @@ class ExplorerUI(UI):
         # Collapse sidebar on first message sent
         if len(self.interface.objects) <= 1:  # First message (only user message exists)
             self._sidebar_collapse.value = True
+        self._update_main_view()
         with self._busy():
             exploration = self._exploration['view']
             plan = await self._coordinator.respond(messages, exploration.context)

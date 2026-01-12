@@ -18,8 +18,6 @@ from lumen.ai.coordinator.planner import Reasoning, make_plan_model
 from lumen.ai.models import ReplaceLine, RetrySpec
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
-from lumen.ai.tools import MetadataLookup
-from lumen.ai.vector_store import NumpyVectorStore
 from lumen.ai.views import SQLOutput
 from lumen.config import SOURCE_TABLE_SEPARATOR
 
