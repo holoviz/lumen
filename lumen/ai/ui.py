@@ -1901,8 +1901,6 @@ class ExplorerUI(UI):
         is_busy = not self._idle.is_set()
         with hold():
             self.interface.objects = conversation
-            # Collapse sidebar if we are launching first exploration
-            self._sidebar_collapse.value = len(self._main) == 1
             # Temporarily un-idle to allow exploration to be rendered
             self._idle.set()
             if is_home or not plan.is_followup:
@@ -2172,9 +2170,6 @@ class ExplorerUI(UI):
         self, messages: list[Message], user: str, instance: ChatInterface, context: TContext | None = None
     ):
         log_debug(f"New Message: \033[91m{messages!r}\033[0m", show_sep="above")
-        # Collapse sidebar on first message sent
-        if len(self.interface.objects) <= 1:  # First message (only user message exists)
-            self._sidebar_collapse.value = True
         self._update_main_view()
         with self._busy():
             exploration = self._exploration['view']
