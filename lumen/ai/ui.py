@@ -1148,7 +1148,13 @@ class UI(Viewer):
             title=self.title,
             sidebar_width=65,
             sidebar_resizable=False,
-            sx={"&.mui-light .sidebar": {"bgcolor": "var(--mui-palette-grey-50)"}}
+            sx={
+                # MuiAppBar-root
+                "&.mui-light .MuiAppBar-root": {"bgcolor": "#2A2A2A"},
+                "&.mui-dark .MuiAppBar-root": {"bgcolor": "#2A2A2A"},
+                "&.mui-light .sidebar": {"bgcolor": "#2A2A2A"},
+                "&.mui-dark .sidebar": {"bgcolor": "#2A2A2A"},
+            }
         )
         # Unlink busy indicator
         self._page.busy = False
@@ -1591,9 +1597,10 @@ class ExplorerUI(UI):
             margin=(-5, 10, 10, 10),
             sx={
                 'fontSize': '16px',
+                'color': 'text.primary',
                 '& .MuiIcon-root': {
                     'fontSize': '28px',
-                    'marginRight': '10px'
+                    'marginRight': '10px',
                 }
             }
         )
@@ -1615,29 +1622,47 @@ class ExplorerUI(UI):
             theme_config={"light": {"palette": {"background": {"paper": "var(--mui-palette-grey-50)"}}}, "dark": {}}
         )
         self._sidebar_collapse = collapse = ToggleIcon(
-            value=False, active_icon="chevron_right", icon="chevron_left", styles={"margin-top": "auto", "margin-left": "auto"}, margin=5
+            value=False, active_icon="chevron_right", icon="chevron_left",
+            styles={"margin-top": "auto", "margin-left": "auto"},
+            color="light",
         )
         self._sidebar_menu = menu = MenuList(
             items=[
-                {"label": "Exploration", "icon": "insights", "id": "exploration", "active": True},
-                {"label": "Report", "icon": "description_outlined", "id": "report", "active": False},
+                {"label": "Explore", "icon": "insights", "id": "exploration"},
+                {"label": "Report", "icon": "description_outlined", "id": "report"},
                 None,
-                {"label": "Data Sources", "icon": "create_new_folder_outlined", "id": "data"},
-                {"label": "Preferences", "icon": "tune_outlined", "id": "preferences"},
+                {"label": "Sources", "icon": "create_new_folder_outlined", "id": "data"},
+                {"label": "Config", "icon": "tune_outlined", "id": "preferences"},
                 None,
-                {"label": "Help Guides", "icon": "help_outline", "id": "help"}
+                {"label": "Help", "icon": "help_outline", "id": "help"}
             ],
+            active=0,
             attached=[self._settings_popup],
             collapsed=collapse,
             highlight=False,
-            margin=0,
+            margin=(0, 0, 0, 5),
             on_click=self._handle_sidebar_event,
             sx={
-                "& .MuiButtonBase-root.MuiListItemButton-root, & .MuiButtonBase-root.MuiListItemButton-root.collapsed": {"p": 2},
+                "p": 0,
+                # Base button styling
+                "& .MuiButtonBase-root.MuiListItemButton-root": {
+                    "p": "8px 10px",
+                    "margin-left": "2px",
+                },
+                # Icon styling - white on primary background
                 ".MuiListItemIcon-root > .MuiIcon-root": {
-                    "color": "var(--mui-palette-primary-dark)",
-                    "fontSize": "28px"
-                }
+                    # contrast text color for primary background
+                    "color": "var(--mui-palette-default-contrastText)",
+                },
+                # Base text styling - white, medium weight
+                "& .MuiListItemButton-root .MuiTypography-root": {
+                    "color": "var(--mui-palette-default-contrastText)",
+                    "fontWeight": "500 !important",
+                },
+                # Divider styling - white with low opacity
+                "& .MuiDivider-root": {
+                    "borderColor": "rgba(255, 255, 255, 0.2)",
+                },
             },
             sizing_mode="stretch_width",
         )
@@ -1646,7 +1671,7 @@ class ExplorerUI(UI):
 
     def _render_page(self):
         super()._render_page()
-        self._page.sidebar_width = self._sidebar_collapse.rx().rx.where(61, 183)
+        self._page.sidebar_width = self._sidebar_collapse.rx().rx.where(56, 125)
 
     def _render_main(self) -> list[Viewable]:
         main = super()._render_main()
