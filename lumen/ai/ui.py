@@ -1111,11 +1111,10 @@ class UI(Viewer):
         self._explorations.on_action('export_notebook', self._export_exploration)
 
         # Create hidden download button for exporting notebook
+        # Later appended to return so it's in the DOM
         self._exploration_download = FileDownload(
             visible=False
         )
-        # Attach to output so it's in the DOM
-        self._explorations.insert(0, self._exploration_download)
 
         # Create LLM configuration dialog
         self._llm_dialog = LLMConfigDialog(
@@ -1126,7 +1125,7 @@ class UI(Viewer):
             agent_types=[type(agent) for agent in self._coordinator.agents],
         )
 
-        return [self._main, self._sources_dialog_content, self._llm_dialog, self._info_dialog]
+        return [self._main, self._sources_dialog_content, self._llm_dialog, self._info_dialog, self._exploration_download]
 
     def _render_contextbar(self) -> list[Viewable]:
         return []
