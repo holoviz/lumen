@@ -218,18 +218,6 @@ encoding:
     - {field: "properties.name", type: nominal, title: "State"}
     - {field: Total_Students, type: quantitative, format: ",", title: "Total Students"}
 ```
-
-Scatter plot (shows all observations without misleading connections)
-```yaml
-data:
-  name: <TABLE_NAME>
-layer:
-  - mark: {type: point, opacity: 0.6, size: 40}
-    encoding:
-      x: {field: year, type: quantitative, axis: {format: 'd'}}
-      y: {field: value, type: quantitative}
-      color: {field: category, type: nominal}
-```
 {% endblock %}
 
 {% block context %}
