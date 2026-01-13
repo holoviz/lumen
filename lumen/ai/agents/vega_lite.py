@@ -20,7 +20,7 @@ from ..context import TContext
 from ..llm import Message, OpenAI
 from ..models import EscapeBaseModel, RetrySpec
 from ..utils import (
-    get_schema, load_json, log_debug, retry_llm_output,
+    apply_changes, get_schema, load_json, log_debug, retry_llm_output,
 )
 from ..vector_store import DuckDBVectorStore
 from ..views import LumenOutput, VegaLiteOutput
@@ -77,7 +77,7 @@ class VegaLiteAgent(BaseViewAgent):
     prompts = param.Dict(
         default={
             "main": {"response_model": VegaLiteSpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"},
-            "interaction_polish": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "interaction_polish.jinja2"},
+            "interaction_polish": {"response_model": RetrySpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "interaction_polish.jinja2"},
             "annotate_plot": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "annotate_plot.jinja2"},
             "revise_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "revise_output.jinja2"},
         }
@@ -519,11 +519,16 @@ class VegaLiteAgent(BaseViewAgent):
             step_name = "interaction_polish"
             current_spec = load_yaml(out.spec) if isinstance(out.spec, str) else out.spec
             vega_spec = dump_yaml(current_spec, default_flow_style=False)
+            lines = vega_spec.splitlines()
+            numbered_text = "\n".join(f"{i:2d}: {line}" for i, line in enumerate(lines, 1))
             system_prompt = await self._render_prompt(
                 step_name,
                 messages,
                 context,
                 vega_spec=vega_spec,
+                feedback="Enhance the visualization's clarity, aesthetics, and effectiveness based on best practices.",
+                numbered_text=numbered_text,
+                language="yaml",
                 doc=doc,
                 table=pipeline.table,
             )
@@ -535,20 +540,20 @@ class VegaLiteAgent(BaseViewAgent):
                 result = await self.llm.invoke(
                     messages=invoke_messages,
                     system=system_prompt,
-                    response_model=VegaLiteSpecUpdate,
+                    response_model=self.prompts[step_name].get("response_model", self.llm_spec_key),
                     model_spec=model_spec,
                 )
 
                 try:
-                    update_dict = load_yaml(result.yaml_update)
-
-                    # Validate merged spec
-                    test_spec = self._deep_merge_dicts(current_spec, update_dict)
-                    await self._extract_spec(context, {"yaml_spec": dump_yaml(test_spec)})
-
-                    # Apply polish
-                    polished_spec = self._deep_merge_dicts(current_spec, update_dict)
-                    out.spec = dump_yaml(polished_spec)
+                    new_spec_raw = apply_changes(lines, result.edits)
+                    spec = load_yaml(new_spec_raw)
+                    if view is not None:
+                        view.validate_spec(spec)
+                    if isinstance(spec, str):
+                        yaml_spec = spec
+                    else:
+                        yaml_spec = dump_yaml(spec)
+                    out.spec = yaml_spec
                     log_debug("📊 Applied background polish to visualization")
 
                 except Exception as e:
