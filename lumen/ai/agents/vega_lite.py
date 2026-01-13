@@ -1,3 +1,5 @@
+import asyncio
+
 from typing import Any
 
 import param
@@ -493,51 +495,68 @@ class VegaLiteAgent(BaseViewAgent):
 
         # Step 1: Generate basic spec
         doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
-        # Produces {"spec": {$schema: ..., ...}, "sizing_mode": ..., ...}
         full_dict = await self._generate_basic_spec(messages, context, pipeline, doc_examples, doc)
 
-        # Step 2: Show complete plot immediately
+        # Step 2: Create output to return immediately (user sees initial plot)
         view = self.view_type(pipeline=pipeline, **full_dict)
         out = self._output_type(component=view, title=step_title)
+        result_context = {"view": dict(full_dict, type=view.view_type)}
 
-        # Step 2.5: Export the current plot as an image for vision-based analysis
+        # Step 3: Export image for vision-based polish (before returning)
         plot_image = None
         try:
-            image_io = out.export("png")  # Returns BytesIO with PNG data
-            plot_image = image_io.getvalue()  # Extract bytes from BytesIO
+            image_io = out.export("png")
+            plot_image = image_io.getvalue()
             log_debug("Successfully exported plot image for vision analysis")
         except Exception as e:
             log_debug(f"Failed to export plot image for vision analysis: {e}")
-            # Continue without image - LLM can still work with spec alone
 
-        # Step 3: enhancements (LLM-driven creative decisions)
-        steps = {
-            "interaction_polish": "Polish plot appearance and fix visual issues",
-        }
+        # Step 4: Schedule background polish (runs after UI renders initial plot)
+        async def apply_polish():
+            """Apply visual polish in background after initial render."""
+            await asyncio.sleep(0.1)  # Let UI render initial view
 
-        # Execute steps sequentially
-        for step_name, step_desc in steps.items():
-            # Only pass the vega lite 'spec' portion to prevent ballooning context
-            try:
-                step_name, update_dict = await self._update_spec_step(
-                    step_name, step_desc, out.spec, step_name, messages, context, doc=doc,
-                    image_data=plot_image  # Pass the image for vision-based analysis
+            step_name = "interaction_polish"
+            current_spec = load_yaml(out.spec) if isinstance(out.spec, str) else out.spec
+            with out.param.update(loading=True):
+                vega_spec = dump_yaml(current_spec, default_flow_style=False)
+                system_prompt = await self._render_prompt(
+                    step_name,
+                    messages,
+                    context,
+                    vega_spec=vega_spec,
+                    doc=doc,
+                    table=pipeline.table,
                 )
-            except Exception as e:
-                log_debug(f"Failed to generate {step_name} update: {e}")
-                continue
-            try:
-                # Validate merged spec
-                test_spec = self._deep_merge_dicts(full_dict["spec"], update_dict)
-                await self._extract_spec(context, {"yaml_spec": dump_yaml(test_spec)})
-            except Exception as e:
-                log_debug(f"Skipping invalid {step_name} update due to error: {e}")
-                continue
-            spec = self._deep_merge_dicts(full_dict["spec"], update_dict)
-            out.spec = dump_yaml(spec)
-            log_debug(f"📊 Applied {step_name} updates and refreshed visualization")
 
-        return [out], {"view": dict(full_dict, type=view.view_type)}
+                model_spec = self.prompts.get(step_name, {}).get("llm_spec", self.llm_spec_key)
+                invoke_messages = [{"role": "user", "content": [Image(plot_image)]}] if plot_image else messages
+
+                result = await self.llm.invoke(
+                    messages=invoke_messages,
+                    system=system_prompt,
+                    response_model=VegaLiteSpecUpdate,
+                    model_spec=model_spec,
+                )
+
+                try:
+                    update_dict = load_yaml(result.yaml_update)
+
+                    # Validate merged spec
+                    test_spec = self._deep_merge_dicts(current_spec, update_dict)
+                    await self._extract_spec(context, {"yaml_spec": dump_yaml(test_spec)})
+
+                    # Apply polish
+                    polished_spec = self._deep_merge_dicts(current_spec, update_dict)
+                    out.spec = dump_yaml(polished_spec)
+                    log_debug("📊 Applied background polish to visualization")
+
+                except Exception as e:
+                    log_debug(f"Background polish failed: {e}")
+
+        param.parameterized.async_executor(apply_polish)
+
+        return [out], result_context
 
     async def annotate(
         self,
