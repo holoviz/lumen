@@ -1152,7 +1152,7 @@ class UI(Viewer):
                 # Hover
                 ".sidebar": {"transition": "width 0.2s ease-in-out"},
                 ".sidebar:hover": {"width": "140px"},
-                "&.mui-light .sidebar": {"bgcolor": "var(--mui-palette-grey-100)"},
+                "&.mui-light .sidebar": {"bgcolor": "var(--mui-palette-grey-50)"},
             }
         )
         # Unlink busy indicator
@@ -1646,10 +1646,7 @@ class ExplorerUI(UI):
                 # Icon styling
                 ".MuiListItemIcon-root > .MuiIcon-root": {
                     "margin-right": "16px",
-                },
-                # Base text styling
-                "& .MuiListItemButton-root .MuiTypography-root": {
-                    "fontWeight": "500",
+                    "color": "var(--mui-palette-text-primary)",
                 },
                 "& .MuiDivider-root": {
                     "margin-left": "-4px",
