@@ -859,12 +859,13 @@ class Report(TaskGroup):
         return outputs
 
     def __panel__(self):
-        return Column(
+        return Container(
             self._menu,
-            Container(
-                self._container, sizing_mode="stretch_both", height_policy="max",
-                stylesheets=[":host > div { overflow-y: auto; }"], min_height=600
-            )
+            self._container,
+            sizing_mode="stretch_both",
+            height_policy="max",
+            stylesheets=[":host > div { overflow-y: auto; }"],
+            min_height=600
         )
 
 
