@@ -1152,11 +1152,6 @@ class UI(Viewer):
                 # Hover
                 ".sidebar": {"transition": "width 0.2s ease-in-out"},
                 ".sidebar:hover": {"width": "150px"},
-                # MuiAppBar-root
-                "&.mui-light .MuiAppBar-root": {"bgcolor": "var(--mui-palette-grey-900)"},
-                "&.mui-dark .MuiAppBar-root": {"bgcolor": "var(--mui-palette-grey-900)"},
-                "&.mui-light .sidebar": {"bgcolor": "var(--mui-palette-grey-900)"},
-                "&.mui-dark .sidebar": {"bgcolor": "var(--mui-palette-grey-900)"},
             }
         )
         # Unlink busy indicator
@@ -1648,13 +1643,10 @@ class ExplorerUI(UI):
                 # Icon styling - white on primary background
                 ".MuiListItemIcon-root > .MuiIcon-root": {
                     # contrast text color for primary background
-                    "color": "var(--mui-palette-default-contrastText)",
-                    "-webkit-text-stroke": "0.5px var(--mui-palette-grey-50)",  # make icons thinner
                     "margin-right": "16px",
                 },
                 # Base text styling - white, medium weight
                 "& .MuiListItemButton-root .MuiTypography-root": {
-                    "color": "var(--mui-palette-default-contrastText)",
                     "fontWeight": "500",
                 },
                 # Divider styling - white with low opacity
