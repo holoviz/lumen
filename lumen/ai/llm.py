@@ -455,7 +455,9 @@ class Llm(param.Parameterized):
             role = message["role"]
             if role == "system":
                 continue
-            if role == "user":
+            if isinstance(message["content"], instructor.Image):
+                log_debug(f"Message \033[95m{i} (u)\033[0m: [Image data]")
+            elif role == "user":
                 log_debug(f"Message \033[95m{i} (u)\033[0m: {message['content']}")
             else:
                 log_debug(f"Message \033[95m{i} (a)\033[0m: {message['content']}")

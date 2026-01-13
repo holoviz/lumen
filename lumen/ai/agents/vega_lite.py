@@ -3,6 +3,7 @@ from typing import Any
 import param
 import requests
 
+from panel.pane.image import Image
 from pydantic import BaseModel, Field
 
 from ...config import dump_yaml, load_yaml
@@ -55,7 +56,8 @@ class VegaLiteSpecUpdate(BaseModel):
     )
     yaml_update: str = Field(
         description="""Partial YAML with ONLY modified properties (unchanged values omitted).
-        Respect your step's scope; don't override previous steps."""
+        Respect your step's scope; don't override previous steps.
+        If you cannot fit the complete YAML, choose fewer changes to make."""
     )
 
 
@@ -247,6 +249,7 @@ class VegaLiteAgent(BaseViewAgent):
         messages: list[Message],
         context: TContext,
         doc: str | None = None,
+        image_data: bytes | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """Update a Vega-Lite spec with incremental changes for a specific step."""
         with self._add_step(title=step_desc, steps_layout=self._steps_layout) as step:
@@ -261,8 +264,25 @@ class VegaLiteAgent(BaseViewAgent):
             )
 
             model_spec = self.prompts.get(prompt_name, {}).get("llm_spec", self.llm_spec_key)
+
+            # Build message content with optional image for vision-based analysis
+            invoke_messages = messages
+            if image_data:
+                user_message = (
+                    "Look at the rendered visualization above. Identify 1-2 specific visual problems that reduce clarity:\n"
+                    "- Are labels overlapping or cramped?\n"
+                    "- Are gridlines adding unnecessary clutter?\n"
+                    "- Would tooltips help users understand the data better?\n"
+                    "- Is there excessive visual noise?\n"
+                    "\n"
+                    "Then provide COMPLETE, VALID YAML to fix only those specific issues.\n"
+                    "Do NOT truncate field names or use ellipsis (...). \n"
+                    "If you cannot write complete YAML, choose fewer fixes."
+                )
+                invoke_messages = [{"role": "user", "content": [Image(image_data), user_message]}]
+
             result = await self.llm.invoke(
-                messages=messages,
+                messages=invoke_messages,
                 system=system_prompt,
                 response_model=VegaLiteSpecUpdate,
                 model_spec=model_spec,
@@ -494,17 +514,32 @@ class VegaLiteAgent(BaseViewAgent):
         view = self.view_type(pipeline=pipeline, **full_dict)
         out = self._output_type(component=view, title=step_title)
 
+        # Step 2.5: Export the current plot as an image for vision-based analysis
+        plot_image = None
+        try:
+            image_io = out.export("png")  # Returns BytesIO with PNG data
+            plot_image = image_io.getvalue()  # Extract bytes from BytesIO
+            log_debug("Successfully exported plot image for vision analysis")
+        except Exception as e:
+            log_debug(f"Failed to export plot image for vision analysis: {e}")
+            # Continue without image - LLM can still work with spec alone
+
         # Step 3: enhancements (LLM-driven creative decisions)
         steps = {
-            "interaction_polish": "Add helpful tooltips and ensure responsive, accessible user experience",
+            "interaction_polish": "Polish plot appearance and fix visual issues",
         }
 
         # Execute steps sequentially
         for step_name, step_desc in steps.items():
             # Only pass the vega lite 'spec' portion to prevent ballooning context
-            step_name, update_dict = await self._update_spec_step(
-                step_name, step_desc, out.spec, step_name, messages, context, doc=doc
-            )
+            try:
+                step_name, update_dict = await self._update_spec_step(
+                    step_name, step_desc, out.spec, step_name, messages, context, doc=doc,
+                    image_data=plot_image  # Pass the image for vision-based analysis
+                )
+            except Exception as e:
+                log_debug(f"Failed to generate {step_name} update: {e}")
+                continue
             try:
                 # Validate merged spec
                 test_spec = self._deep_merge_dicts(full_dict["spec"], update_dict)
