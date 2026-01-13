@@ -1110,6 +1110,13 @@ class UI(Viewer):
         self._explorations.on_action('remove', self._delete_exploration)
         self._explorations.on_action('export_notebook', self._export_exploration)
 
+        # Create hidden download button for exporting notebook
+        self._exploration_download = FileDownload(
+            visible=False
+        )
+        # Attach to output so it's in the DOM
+        self._explorations.insert(0, self._exploration_download)
+
         # Create LLM configuration dialog
         self._llm_dialog = LLMConfigDialog(
             llm=self.llm,
@@ -1881,14 +1888,6 @@ class ExplorerUI(UI):
             title=plan.title,
             view=output
         )
-
-        # Create hidden download button for exporting notebook
-        self._exploration_download = FileDownload(
-            filename=f"{plan.title.replace(' ', '_')}.ipynb",
-            visible=False
-        )
-        # Attach to output so it's in the DOM
-        output.append(self._exploration_download)
 
         view_item = {
             'label': plan.title,
