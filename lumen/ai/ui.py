@@ -773,7 +773,12 @@ class UI(Viewer):
                 with hold():
                     self._sources_dialog_content.open = True
                     self._source_content.active = self._source_controls.index(self._upload_controls)
-                state.execute(self._upload_controls._add_button.focus, schedule=True)
+
+                async def focus():
+                    await asyncio.sleep(0.5)
+                    self._upload_controls._add_button.focus()
+
+                state.execute(focus, schedule=True)
                 return
 
             with self.interface.param.update(disabled=True, loading=True):

@@ -22,9 +22,9 @@ from panel.layout.base import (
 from panel.pane import Markdown
 from panel.viewable import Viewable, Viewer
 from panel_material_ui import (
-    Accordion, Button, Card, ChatFeed, ChatMessage, Container, Dialog, Divider,
-    FileDownload, IconButton, Progress, Select, TextAreaInput, TextInput,
-    Typography,
+    Accordion, BreakpointSwitcher, Button, Card, ChatFeed, ChatMessage,
+    Container, Dialog, Divider, FileDownload, IconButton, Progress, Select,
+    SpeedDial, TextAreaInput, TextInput, Typography,
 )
 
 from ..views.base import Panel, View
@@ -716,9 +716,9 @@ class Section(TaskGroup):
         self._container = Column(
             Row(
                 self._settings,
-                self._dialog,
                 styles={'position': 'absolute', 'top': '-57.5px', 'right': '20px'}
             ),
+            self._dialog,
             self._view,
             sizing_mode='stretch_width',
             styles={'min-height': 'unset'},
@@ -775,7 +775,12 @@ class Report(TaskGroup):
         )
         self._view = Accordion(
             sizing_mode="stretch_width", min_height=0, margin=(0, 5, 5, 5),
-            sx={"& .MuiAccordionDetails-root": {"p": "0 calc(2 * var(--mui-spacing)) 1em !important"}}
+            sx={
+                "& .MuiAccordionDetails-root": {
+                    "p": "0 calc(2 * var(--mui-spacing)) 1em !important",
+                    "overflowX": "auto"
+                }
+            }
         )
         self._run = IconButton(
             icon="play_arrow", on_click=self._execute_event, margin=0, size="large",
@@ -814,19 +819,55 @@ class Report(TaskGroup):
             self._settings,
             sizing_mode="stretch_width"
         )
+        self._dial = SpeedDial(
+            items=[
+                {"label": "Execute Report", "icon": "play_arrow"},
+                {"label": "Clear Report", "icon": "clear"},
+                {"label": "Export Report to Notebook", "icon": "get_app"},
+                {"label": "Configure Report", "icon": "settings"}
+            ],
+            color="default",
+            direction="down",
+            icon="more_vert",
+            size="small",
+            styles={"margin": "10px 10px 10px auto"},
+            on_click=self._trigger_event
+        )
+        self._collapsed_menu = Row(
+            self._header_title,
+            self._dial,
+            sizing_mode="stretch_width"
+        )
+        self._switcher = BreakpointSwitcher(
+            media_query='(min-width: 800px)',
+            small=self._collapsed_menu,
+            large=self._menu,
+            sizing_mode="stretch_width"
+        )
         self._container = Column(
             self._view,
             self._dialog,
             margin=(0, 0, 0, 5),
-            sizing_mode="stretch_both"
+            sizing_mode="stretch_both",
         )
         self._update_run_state()
+
+    async def _trigger_event(self, item: dict):
+        icon = item["icon"]
+        if icon == "play_arrow":
+            await self._execute_event()
+        elif icon == "clear":
+            self.reset()
+        elif icon == "get_app":
+            self._export.transfer()
+        elif icon == "settings":
+            self._open_settings()
 
     @param.depends('_current', '_tasks', watch=True)
     def _update_run_state(self):
         self._run.disabled = self._current == len(self)
 
-    async def _execute_event(self, event):
+    async def _execute_event(self, event=None):
         await self.execute()
 
     @param.depends('title', watch=True)
@@ -838,7 +879,7 @@ class Report(TaskGroup):
             await self.execute()
         return io.StringIO(self.to_notebook())
 
-    def _expand_all(self, event):
+    def _expand_all(self, event=None):
         if self._collapse.icon == "unfold_less":
             self._view.active = []
             self._collapse.icon = "expand"
@@ -846,7 +887,7 @@ class Report(TaskGroup):
             self._view.active = list(range(len(self._view)))
             self._collapse.icon = "unfold_less"
 
-    def _open_settings(self, event):
+    def _open_settings(self, event=None):
         self._dialog.open = True
 
     def _populate_view(self):
@@ -860,12 +901,13 @@ class Report(TaskGroup):
 
     def __panel__(self):
         return Container(
-            self._menu,
+            self._switcher,
             self._container,
             sizing_mode="stretch_both",
             height_policy="max",
             stylesheets=[":host > div { overflow-y: auto; }"],
-            min_height=600
+            min_height=600,
+            sx={"minWidth": "320px"}
         )
 
 
