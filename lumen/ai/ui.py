@@ -1146,13 +1146,13 @@ class UI(Viewer):
             main=self._render_main(),
             sidebar=self._render_sidebar(),
             title=self.title,
-            sidebar_width=60,
+            sidebar_width=62,
             sidebar_resizable=False,
             sx={
                 # Hover
                 ".sidebar": {"transition": "width 0.2s ease-in-out"},
-                ".sidebar:hover": {"width": "150px"},
-                "&.mui-light .sidebar": {"bgcolor": "var(--mui-palette-grey-50)"},
+                ".sidebar:hover": {"width": "140px"},
+                "&.mui-light .sidebar": {"bgcolor": "var(--mui-palette-primary-main)"},
             }
         )
         # Unlink busy indicator
@@ -1645,16 +1645,19 @@ class ExplorerUI(UI):
                 },
                 # Icon styling
                 ".MuiListItemIcon-root > .MuiIcon-root": {
-                    "color": "var(--mui-palette-text-primary)",
+                    "color": "white",
                     "margin-right": "16px",
                 },
                 # Base text styling
                 "& .MuiListItemButton-root .MuiTypography-root": {
-                    "color": "var(--mui-palette-text-primary)",
+                    "color": "white",
                     "fontWeight": "500",
                 },
                 "& .MuiDivider-root": {
-                    "borderColor": "--mui-palette-text-primary",
+                    "margin-left": "-4px",
+                    "margin-block": "8px",
+                    "opacity": "0.3",
+                    "borderColor": "var(--mui-palette-grey-300)",
                 },
             },
             sizing_mode="stretch_width",
