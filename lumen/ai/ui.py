@@ -1099,18 +1099,6 @@ class UI(Viewer):
         # Watch for dialog close to handle pending query if user closes without adding files
         self._sources_dialog_content.param.watch(self._on_sources_dialog_close, 'open')
 
-        self._notebook_export = FileDownload(
-            callback=self._export_notebook,
-            label="Export Notebook",
-            description="Export explorations as a Jupyter notebook",
-            icon_size="1.8em",
-            filename=f"{self.title.replace(' ', '_')}.ipynb", # TODO
-            margin=(5, 10, 0, 0),
-            sx={"p": "6px 0", "minWidth": "32px", "& .MuiButton-icon": {"ml": 0, "mr": 0}},
-            styles={'z-index': '1000', 'margin-left': 'auto'},
-            variant="text"
-        )
-
         self._explorations = MenuList(
             items=[self._exploration], value=self.param._exploration, show_children=True,
             dense=True, margin=0, sizing_mode='stretch_width',
@@ -1120,6 +1108,12 @@ class UI(Viewer):
         self._explorations.param.watch(self._update_conversation, 'active')
         self._explorations.param.watch(self._sync_active, 'value')
         self._explorations.on_action('remove', self._delete_exploration)
+        self._explorations.on_action('export_notebook', self._export_exploration)
+
+        # Create hidden download button for exporting notebook
+        self._exploration_download = FileDownload(
+            visible=False
+        )
 
         # Create LLM configuration dialog
         self._llm_dialog = LLMConfigDialog(
@@ -1130,7 +1124,7 @@ class UI(Viewer):
             agent_types=[type(agent) for agent in self._coordinator.agents],
         )
 
-        return [self._main, self._sources_dialog_content, self._llm_dialog, self._info_dialog]
+        return [self._main, self._sources_dialog_content, self._llm_dialog, self._info_dialog, self._exploration_download]
 
     def _render_contextbar(self) -> list[Viewable]:
         return []
@@ -1532,10 +1526,6 @@ class ExplorerUI(UI):
 
     _exploration = param.Dict()
 
-    def _export_notebook(self):
-        nb = export_notebook(self._exploration['view'].plan.views, preamble=self.notebook_preamble)
-        return StringIO(nb)
-
     @hold()
     def _handle_sidebar_event(self, item):
         if item["id"] == "exploration":
@@ -1698,9 +1688,7 @@ class ExplorerUI(UI):
         self._home.view = MuiColumn()
 
         # Main Area
-        self._notebook_export.disabled = self.param._exploration.rx()['view'].rx.is_(self._home)
         self._output = Paper(
-            Row(self._notebook_export, styles={"top": "0", "right": "0", "position": "absolute"}),
             self._home,
             elevation=2,
             margin=(5, 10, 5, 5),
@@ -1792,6 +1780,22 @@ class ExplorerUI(UI):
                 self._explorations.update_item(parent, items=[it for it in parent["items"] if it is not item])
                 self._explorations.value = parent
             self.interface.objects = []
+
+    async def _export_exploration(self, item):
+        """Export a single exploration as a Jupyter notebook."""
+        exploration = item["view"]
+        if exploration.plan is None:
+            return
+
+        def make_notebook():
+            nb = export_notebook(exploration.plan.views, preamble=self.notebook_preamble)
+            return StringIO(nb)
+
+        self._exploration_download.param.update(
+            filename=f"{exploration.title.replace(' ', '_')}.ipynb",
+            callback=make_notebook
+        )
+        self._exploration_download.transfer()
 
     def _destroy(self, session_context):
         """
@@ -1887,7 +1891,10 @@ class ExplorerUI(UI):
             'label': plan.title,
             'view': exploration,
             'icon': None,
-            'actions': [{'action': 'remove', 'label': 'Remove', 'icon': 'delete'}],
+            'actions': [
+                {'action': 'export_notebook', 'label': 'Export Notebook', 'icon': 'download'},
+                {'action': 'remove', 'label': 'Remove', 'icon': 'delete'}
+            ],
             'parent': parent_item if plan.is_followup else self._explorations.items[0],
             'items': []
         }
@@ -1907,7 +1914,6 @@ class ExplorerUI(UI):
             if is_busy:
                 self._idle.clear()
             self._output[1:] = [output]
-            self._notebook_export.filename = f"{plan.title.replace(' ', '_')}.ipynb"
             await self._update_conversation()
         self._last_synced = exploration
         return exploration
