@@ -87,7 +87,8 @@ class LumenOutput(Viewer):
             indent=2,
             margin=(0, 10),
             disabled=self.param.spec.rx.is_(None),
-            styles={"border": "1px solid var(--border-color)"}
+            styles={"border": "1px solid var(--border-color)"},
+            loading=self.param.loading
         )
         self._editor.link(self, bidirectional=True, value='spec')
         self._icons = Row(
