@@ -1778,13 +1778,11 @@ class ExplorerUI(UI):
                 filename=f"{exploration.plan.title.replace(' ', '_')}.ipynb",
                 visible=False
             )
+            # Attach to output so it's in the DOM
+            self._output.append(download)
+            await asyncio.sleep(0.1)  # Wait for DOM attachment
 
-        # Attach to output so it's in the DOM
-        self._output.append(download)
-        await asyncio.sleep(0.1)  # Wait for DOM attachment
         download.transfer()
-        await asyncio.sleep(0.1)  # Clean up after transfer
-        self._output.remove(download)
 
     def _destroy(self, session_context):
         """
