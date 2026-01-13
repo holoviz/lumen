@@ -1767,21 +1767,7 @@ class ExplorerUI(UI):
         if exploration.plan is None:
             return
 
-        download = getattr(exploration, '_export_download', None)
-        if download is None:
-            def make_notebook():
-                nb = export_notebook(exploration.plan.views, preamble=self.notebook_preamble)
-                return StringIO(nb)
-
-            download = exploration._export_download = FileDownload(
-                callback=make_notebook,
-                filename=f"{exploration.plan.title.replace(' ', '_')}.ipynb",
-                visible=False
-            )
-            # Attach to output so it's in the DOM
-            self._output.append(download)
-            await asyncio.sleep(0.1)  # Wait for DOM attachment
-
+        download = exploration._export_download
         download.transfer()
 
     def _destroy(self, session_context):
@@ -1850,6 +1836,10 @@ class ExplorerUI(UI):
         return messages
 
     async def _add_exploration(self, plan: Plan, parent: Exploration) -> Exploration:
+        def make_notebook():
+            nb = export_notebook(plan.views, preamble=self.notebook_preamble)
+            return StringIO(nb)
+
         is_home = parent is self._home
         parent_item = self._exploration
         if is_home:
@@ -1873,6 +1863,15 @@ class ExplorerUI(UI):
             title=plan.title,
             view=output
         )
+
+        # Create hidden download button for exporting notebook
+        download = exploration._export_download = FileDownload(
+            callback=make_notebook,
+            filename=f"{plan.title.replace(' ', '_')}.ipynb",
+            visible=False
+        )
+        # Attach to output so it's in the DOM
+        output.append(download)
 
         view_item = {
             'label': plan.title,
