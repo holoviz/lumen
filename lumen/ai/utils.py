@@ -579,9 +579,15 @@ async def describe_data(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: boo
         shape = df.shape
         n_rows, n_cols = shape
 
-        # For tiny datasets, just return the full table
+        # For tiny datasets, return compact column-oriented YAML
         if size < 250:
-            return df.to_markdown(index=False)
+            data = {}
+            for col in df.columns:
+                vals = [to_python_native(v) for v in df[col].tolist()]
+                # Format floats
+                vals = [format_float(v) if isinstance(v, float) else v for v in vals]
+                data[col] = vals
+            return yaml.dump(data, default_flow_style=None, allow_unicode=True, sort_keys=False)
 
         # Sampling strategy with deterministic seed
         is_sampled = n_rows > 5000
