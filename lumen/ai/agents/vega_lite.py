@@ -518,20 +518,20 @@ class VegaLiteAgent(BaseViewAgent):
 
             step_name = "interaction_polish"
             current_spec = load_yaml(out.spec) if isinstance(out.spec, str) else out.spec
+            vega_spec = dump_yaml(current_spec, default_flow_style=False)
+            system_prompt = await self._render_prompt(
+                step_name,
+                messages,
+                context,
+                vega_spec=vega_spec,
+                doc=doc,
+                table=pipeline.table,
+            )
+
+            model_spec = self.prompts.get(step_name, {}).get("llm_spec", self.llm_spec_key)
+            invoke_messages = [{"role": "user", "content": [Image(plot_image)]}] if plot_image else messages
+
             with out.param.update(loading=True):
-                vega_spec = dump_yaml(current_spec, default_flow_style=False)
-                system_prompt = await self._render_prompt(
-                    step_name,
-                    messages,
-                    context,
-                    vega_spec=vega_spec,
-                    doc=doc,
-                    table=pipeline.table,
-                )
-
-                model_spec = self.prompts.get(step_name, {}).get("llm_spec", self.llm_spec_key)
-                invoke_messages = [{"role": "user", "content": [Image(plot_image)]}] if plot_image else messages
-
                 result = await self.llm.invoke(
                     messages=invoke_messages,
                     system=system_prompt,
