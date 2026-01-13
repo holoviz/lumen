@@ -264,23 +264,9 @@ class VegaLiteAgent(BaseViewAgent):
             )
 
             model_spec = self.prompts.get(prompt_name, {}).get("llm_spec", self.llm_spec_key)
-
-            # Build message content with optional image for vision-based analysis
             invoke_messages = messages
             if image_data:
-                user_message = (
-                    "Look at the rendered visualization above. Identify 1-2 specific visual problems that reduce clarity:\n"
-                    "- Are labels overlapping or cramped?\n"
-                    "- Are gridlines adding unnecessary clutter?\n"
-                    "- Would tooltips help users understand the data better?\n"
-                    "- Is there excessive visual noise?\n"
-                    "\n"
-                    "Then provide COMPLETE, VALID YAML to fix only those specific issues.\n"
-                    "Do NOT truncate field names or use ellipsis (...). \n"
-                    "If you cannot write complete YAML, choose fewer fixes."
-                )
-                invoke_messages = [{"role": "user", "content": [Image(image_data), user_message]}]
-
+                invoke_messages = [{"role": "user", "content": [Image(image_data)]}]
             result = await self.llm.invoke(
                 messages=invoke_messages,
                 system=system_prompt,
