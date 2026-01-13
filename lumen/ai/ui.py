@@ -1111,7 +1111,6 @@ class UI(Viewer):
         self._explorations.on_action('export_notebook', self._export_exploration)
 
         # Create hidden download button for exporting notebook
-        # Later appended to return so it's in the DOM
         self._exploration_download = FileDownload(
             visible=False
         )
