@@ -23,7 +23,7 @@ from panel.viewable import (
 from panel_material_ui import (
     Alert, Breadcrumbs, Button, ChatFeed, ChatInterface, ChatMessage,
     Column as MuiColumn, Dialog, FileDownload, IconButton, MenuList, Page,
-    Paper, Popup, Row, Switch, Tabs, ToggleIcon, Typography,
+    Paper, Popup, Row, Switch, Tabs, Typography,
 )
 from panel_splitjs import HSplit, MultiSplit, VSplit
 
@@ -1135,9 +1135,14 @@ class UI(Viewer):
             main=self._render_main(),
             sidebar=self._render_sidebar(),
             title=self.title,
-            sidebar_width=65,
+            sidebar_width=62,
             sidebar_resizable=False,
-            sx={"&.mui-light .sidebar": {"bgcolor": "var(--mui-palette-grey-50)"}}
+            sx={
+                # Hover
+                ".sidebar": {"transition": "width 0.2s ease-in-out"},
+                ".sidebar:hover": {"width": "140px"},
+                "&.mui-light .sidebar": {"bgcolor": "var(--mui-palette-grey-50)"},
+            }
         )
         # Unlink busy indicator
         self._page.busy = False
@@ -1576,9 +1581,10 @@ class ExplorerUI(UI):
             margin=(-5, 10, 10, 10),
             sx={
                 'fontSize': '16px',
+                'color': 'text.primary',
                 '& .MuiIcon-root': {
                     'fontSize': '28px',
-                    'marginRight': '10px'
+                    'marginRight': '10px',
                 }
             }
         )
@@ -1599,39 +1605,48 @@ class ExplorerUI(UI):
             styles={"z-index": '1300'},
             theme_config={"light": {"palette": {"background": {"paper": "var(--mui-palette-grey-50)"}}}, "dark": {}}
         )
-        self._sidebar_collapse = collapse = ToggleIcon(
-            value=False, active_icon="chevron_right", icon="chevron_left", styles={"margin-top": "auto", "margin-left": "auto"}, margin=5
-        )
         self._sidebar_menu = menu = MenuList(
             items=[
-                {"label": "Exploration", "icon": "insights", "id": "exploration", "active": True},
+                {"label": "Explore", "icon": "insights", "id": "exploration", "active": True},
                 {"label": "Report", "icon": "description_outlined", "id": "report", "active": False},
                 None,
-                {"label": "Data Sources", "icon": "create_new_folder_outlined", "id": "data"},
-                {"label": "Preferences", "icon": "tune_outlined", "id": "preferences"},
+                {"label": "Sources", "icon": "create_new_folder_outlined", "id": "data"},
+                {"label": "Config", "icon": "tune_outlined", "id": "preferences"},
                 None,
-                {"label": "Help Guides", "icon": "help_outline", "id": "help"}
+                {"label": "Help", "icon": "help_outline", "id": "help"}
             ],
+            active=0,
             attached=[self._settings_popup],
-            collapsed=collapse,
+            collapsed=False,
             highlight=False,
             margin=0,
             on_click=self._handle_sidebar_event,
             sx={
-                "& .MuiButtonBase-root.MuiListItemButton-root, & .MuiButtonBase-root.MuiListItemButton-root.collapsed": {"p": 2},
+                # Base padding
+                "paddingLeft": "4px",
+                # Base button styling
+                "& .MuiButtonBase-root.MuiListItemButton-root": {
+                    "p": "8px 14px",
+                },
+                # Icon styling
                 ".MuiListItemIcon-root > .MuiIcon-root": {
-                    "color": "var(--mui-palette-primary-dark)",
-                    "fontSize": "28px"
-                }
+                    "margin-right": "16px",
+                    "color": "var(--mui-palette-text-primary)",
+                },
+                "& .MuiDivider-root": {
+                    "margin-left": "-4px",
+                    "margin-block": "8px",
+                    "opacity": "0.3",
+                    "borderColor": "var(--mui-palette-grey-500)",
+                },
             },
             sizing_mode="stretch_width",
         )
 
-        return [menu, collapse]
+        return [menu]
 
     def _render_page(self):
         super()._render_page()
-        self._page.sidebar_width = self._sidebar_collapse.rx().rx.where(61, 183)
 
     def _render_main(self) -> list[Viewable]:
         main = super()._render_main()
@@ -1889,8 +1904,6 @@ class ExplorerUI(UI):
         is_busy = not self._idle.is_set()
         with hold():
             self.interface.objects = conversation
-            # Collapse sidebar if we are launching first exploration
-            self._sidebar_collapse.value = len(self._main) == 1
             # Temporarily un-idle to allow exploration to be rendered
             self._idle.set()
             if is_home or not plan.is_followup:
@@ -2159,9 +2172,6 @@ class ExplorerUI(UI):
         self, messages: list[Message], user: str, instance: ChatInterface, context: TContext | None = None
     ):
         log_debug(f"New Message: \033[91m{messages!r}\033[0m", show_sep="above")
-        # Collapse sidebar on first message sent
-        if len(self.interface.objects) <= 1:  # First message (only user message exists)
-            self._sidebar_collapse.value = True
         self._update_main_view()
         with self._busy():
             exploration = self._exploration['view']

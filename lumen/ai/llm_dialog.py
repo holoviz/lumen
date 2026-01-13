@@ -31,6 +31,8 @@ Configure the language models used for different tasks.
 - **Default Model** — Used for most queries
 - **Edit Model** — Used when revising outputs with the sparkle button
 - **UI Model** — Used for lightweight interface interactions
+
+⚠️ **Warning:** Reasoning models (e.g., `gpt-5`, `o4-mini`, `gemini-2.0-flash-thinking`) are significantly slower and not suitable for dialog interfaces. They work best for single, complex queries rather than interactive chat.
 """
 
 # Export for use in ui.py

@@ -586,7 +586,7 @@ class OpenAI(Llm, OpenAIMixin):
     mode = param.Selector(default=Mode.TOOLS)
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "gpt-4.1-mini"},
+        "default": {"model": "gpt-4.1-mini"},  # Use standard models, not reasoning models (gpt-5, o4-mini)
         "ui": {"model": "gpt-4.1-nano"},
     })
 
@@ -597,7 +597,8 @@ class OpenAI(Llm, OpenAIMixin):
         "gpt-4.1",
         "gpt-4.1-mini",
         "gpt-4.1-nano"
-    ], constant=True, doc="Available models for selection dropdowns")
+    ], constant=True, doc="""Available models for selection dropdowns.
+        Warning: Reasoning models (gpt-5, o4-mini) are much slower and not suitable for dialog interfaces.""")
 
     temperature = param.Number(default=0.25, bounds=(0, None), constant=True)
 

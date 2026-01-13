@@ -77,6 +77,9 @@ Recommended ranges: 0.1 (SQL) to 0.4 (chat).
 - **`gpt-5-nano`** - Fastest, most cost-efficient
 - **`gpt-4.1`** - Smartest non-reasoning model
 
+!!! warning "Reasoning Models Not Suitable for Dialog"
+    Reasoning models like `gpt-5`, `o4-mini`, and other o-series models are **significantly slower** than standard models. They are designed for single, complex queries that require deep thinking, not interactive chat interfaces. For dialog-based applications like Lumen, use standard models (`gpt-4.1`, `gpt-5-mini`, `gpt-5-nano`) for better user experience.
+
 **Environment variables:**
 
 - `OPENAI_API_KEY`: Your OpenAI API key (required)
@@ -156,6 +159,9 @@ Recommended ranges: 0.1 (SQL) to 0.4 (chat).
 - **`gemini-2.5-flash`** - Best price-performance with thinking
 - **`gemini-2.5-flash-lite`** - Lightweight with thinking capabilities
 - **`gemini-2.0-flash`** - Latest general-purpose model
+
+!!! warning "Thinking Models and Dialog Performance"
+    Models with "thinking" capabilities (e.g., `gemini-2.0-flash-thinking-exp`) are slower than standard models. While they provide better reasoning for complex queries, they may not be ideal for interactive dialog interfaces where response time is critical. Consider using standard models for better user experience in chat-based applications.
 
 === "CLI"
 
@@ -667,6 +673,13 @@ Additional model types:
 
 - `default` - Simple tasks work well with `gpt-5-mini` or `claude-haiku-4-5`
 - `chat` - Conversation works with smaller models
+
+**Avoid reasoning models in dialog interfaces:**
+
+- Reasoning models (`gpt-5`, `o4-mini`, `gemini-2.0-flash-thinking`) are **significantly slower**
+- They're designed for single, complex queries, not interactive chat
+- For Lumen's dialog interface, use standard models (`gpt-4.1`, `gpt-5-mini`, `claude-sonnet-4-5`)
+- Reserve reasoning models for batch processing or one-off complex analyses
 
 **Set temperature by task:**
 
