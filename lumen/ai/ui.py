@@ -23,7 +23,7 @@ from panel.viewable import (
 from panel_material_ui import (
     Alert, Breadcrumbs, Button, ChatFeed, ChatInterface, ChatMessage,
     Column as MuiColumn, Dialog, FileDownload, IconButton, MenuList, Page,
-    Paper, Popup, Row, Switch, Tabs, ToggleIcon, Typography,
+    Paper, Popup, Row, Switch, Tabs, Typography,
 )
 from panel_splitjs import HSplit, MultiSplit, VSplit
 
@@ -1139,6 +1139,14 @@ class UI(Viewer):
         return []
 
     def _render_page(self):
+        sidebar_hover_css = """
+        .sidebar {
+            transition: width 0.2s ease-in-out !important;
+        }
+        .sidebar:hover {
+            width: 150px !important;
+        }
+        """
         self._page = Page(
             contextbar_open=False,
             contextbar=self._render_contextbar(),
@@ -1146,14 +1154,15 @@ class UI(Viewer):
             main=self._render_main(),
             sidebar=self._render_sidebar(),
             title=self.title,
-            sidebar_width=65,
+            sidebar_width=60,
             sidebar_resizable=False,
+            stylesheets=[sidebar_hover_css],
             sx={
                 # MuiAppBar-root
-                "&.mui-light .MuiAppBar-root": {"bgcolor": "#2A2A2A"},
-                "&.mui-dark .MuiAppBar-root": {"bgcolor": "#2A2A2A"},
-                "&.mui-light .sidebar": {"bgcolor": "#2A2A2A"},
-                "&.mui-dark .sidebar": {"bgcolor": "#2A2A2A"},
+                "&.mui-light .MuiAppBar-root": {"bgcolor": "var(--mui-palette-grey-900)"},
+                "&.mui-dark .MuiAppBar-root": {"bgcolor": "var(--mui-palette-grey-900)"},
+                "&.mui-light .sidebar": {"bgcolor": "var(--mui-palette-grey-900)"},
+                "&.mui-dark .sidebar": {"bgcolor": "var(--mui-palette-grey-900)"},
             }
         )
         # Unlink busy indicator
@@ -1621,15 +1630,10 @@ class ExplorerUI(UI):
             styles={"z-index": '1300'},
             theme_config={"light": {"palette": {"background": {"paper": "var(--mui-palette-grey-50)"}}}, "dark": {}}
         )
-        self._sidebar_collapse = collapse = ToggleIcon(
-            value=False, active_icon="chevron_right", icon="chevron_left",
-            styles={"margin-top": "auto", "margin-left": "auto"},
-            color="light",
-        )
         self._sidebar_menu = menu = MenuList(
             items=[
-                {"label": "Explore", "icon": "insights", "id": "exploration"},
-                {"label": "Report", "icon": "description_outlined", "id": "report"},
+                {"label": "Explore", "icon": "insights", "id": "exploration", "active": True},
+                {"label": "Report", "icon": "description_outlined", "id": "report", "active": False},
                 None,
                 {"label": "Sources", "icon": "create_new_folder_outlined", "id": "data"},
                 {"label": "Config", "icon": "tune_outlined", "id": "preferences"},
@@ -1638,26 +1642,26 @@ class ExplorerUI(UI):
             ],
             active=0,
             attached=[self._settings_popup],
-            collapsed=collapse,
+            collapsed=False,
             highlight=False,
             margin=(0, 0, 0, 5),
             on_click=self._handle_sidebar_event,
             sx={
-                "p": 0,
                 # Base button styling
                 "& .MuiButtonBase-root.MuiListItemButton-root": {
-                    "p": "8px 10px",
-                    "margin-left": "2px",
+                    "p": "8px 14px",
                 },
                 # Icon styling - white on primary background
                 ".MuiListItemIcon-root > .MuiIcon-root": {
                     # contrast text color for primary background
                     "color": "var(--mui-palette-default-contrastText)",
+                    "-webkit-text-stroke": "0.5px var(--mui-palette-grey-50)",  # make icons thinner
+                    "margin-right": "16px",
                 },
                 # Base text styling - white, medium weight
                 "& .MuiListItemButton-root .MuiTypography-root": {
                     "color": "var(--mui-palette-default-contrastText)",
-                    "fontWeight": "500 !important",
+                    "fontWeight": "500",
                 },
                 # Divider styling - white with low opacity
                 "& .MuiDivider-root": {
@@ -1667,11 +1671,10 @@ class ExplorerUI(UI):
             sizing_mode="stretch_width",
         )
 
-        return [menu, collapse]
+        return [menu]
 
     def _render_page(self):
         super()._render_page()
-        self._page.sidebar_width = self._sidebar_collapse.rx().rx.where(56, 125)
 
     def _render_main(self) -> list[Viewable]:
         main = super()._render_main()
