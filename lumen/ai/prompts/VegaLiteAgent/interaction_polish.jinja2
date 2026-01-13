@@ -1,190 +1,61 @@
 {% extends 'VegaLiteAgent/improvement_step.jinja2' %}
 
 {% block instructions %}
-# THESIS
-You are analyzing a rendered Vega-Lite visualization. Your goal is to identify and fix visual issues to create a polished, publication-ready plot that maximizes clarity.
+# Visual Polish
 
-# SCOPE: Visual Polish & Layout
+Analyze the rendered image and fix visual issues for publication-ready clarity.
 
-Focus on fixing these common issues:
-- **Overlapping labels**: Adjust label angles, truncation, or spacing
-- **Cramped layouts**: Adjust width, height, or padding
-- **Poor readability**: Fix font sizes, colors, contrast
-- **Tooltips**: Add helpful tooltips if missing
-- **Axis improvements**: Better tick formatting, label clarity
-- **Legend placement**: Optimize legend position and formatting
-- **Color accessibility**: Ensure sufficient contrast
-- **Remove clutter**: Eliminate unnecessary gridlines, borders, or decorative elements
-- **Simplify**: Use the minimum visual encoding needed to convey the message
+**Focus areas**: overlapping labels, cramped layouts, poor readability, missing tooltips, clutter
 
-# APPROACH
-1. Examine the rendered image carefully
-2. Identify specific visual problems that hinder clarity
-3. Propose targeted spec changes to fix them
-4. Prioritize changes that improve signal-to-noise ratio
-5. Explain your reasoning clearly
+**Rules**:
+- Layers require BOTH `mark` and `encoding` - always include both
+- Make minimal, targeted changes (1-3 fixes)
+- NEVER use ellipsis (`...`) or placeholders
+- Every element should serve a purpose
 
-# CRITICAL RULES
-- The spec uses layers. When updating a layer, you MUST include both `mark` and `encoding`
-- Even if only changing one property, copy the existing mark type
-- Each layer requires both `mark` and `encoding` properties
-- Make minimal, targeted changes - don't rewrite the entire spec
-- Respect properties set in previous steps
-- Every element should serve a purpose - remove what doesn't add value
-- **NEVER use ellipsis (`...`) or placeholders** - all YAML must be complete and valid
-- **Focus on 1-3 specific improvements** rather than trying to fix everything
-- Test your YAML mentally - it must parse correctly
+# Quick Fixes
 
-# COMMON FIXES
-
-## Overlapping X-axis labels
 ```yaml
+# Overlapping x-axis labels
 encoding:
-  x:
-    axis:
-      labelAngle: -45
-      labelLimit: 100
-```
+  x: {axis: {labelAngle: -45, labelLimit: 100}}
 
-## Overlapping Y-axis labels
-```yaml
-encoding:
-  y:
-    axis:
-      labelLimit: 150
-```
-
-## Add padding for cramped plot
-```yaml
+# Add padding
 config:
-  padding: 20
-```
+  padding: {left: 20, bottom: 50}
 
-## Reduce gridline clutter
-```yaml
+# Reduce clutter
 config:
-  axis:
-    grid: false  # Remove if not essential
-```
+  axis: {grid: false}
 
-## Improve tooltip (COMPLETE layer structure required)
-```yaml
-layer:
-  - mark: bar  # MUST include existing mark
-    encoding:
-      x: {field: category, type: ordinal}
-      y: {field: value, type: quantitative}
-      tooltip:
-        - {field: category, title: Category, type: ordinal}
-        - {field: value, title: Value, format: .2f, type: quantitative}
-```
-
-## Common MISTAKES to avoid
-```yaml
-# ❌ WRONG - Missing mark
-layer:
-  - encoding:
-      tooltip: [...]
-
-# ❌ WRONG - Using ellipsis
-config:
-  axis:
-    grid: false
-  ...  # NEVER DO THIS
-
-# ❌ WRONG - Truncating field names (THIS IS A SEVERE ERROR)
+# Add tooltip (MUST include mark)
 layer:
   - mark: line
     encoding:
       x: {field: year, type: quantitative}
-      y: {field: sst...field: oni}  # INVALID - truncated!
-      
-# ❌ WRONG - Incomplete tooltip
-layer:
-  - mark: point
-    encoding:
-      tooltip:
-        - {field: year, title: Year, type: quantitative}
-        ...  # INVALID - never use ellipsis!
-
-# ✅ CORRECT - Complete structure
-layer:
-  - mark: line  # Include the mark
-    encoding:
-      x: {field: year, type: quantitative}
       y: {field: value, type: quantitative}
       tooltip:
         - {field: year, title: Year, type: quantitative}
         - {field: value, title: Value, format: .2f, type: quantitative}
 ```
 
-## Adjust font size for readability
+# Common Mistakes
 ```yaml
-config:
-  axis:
-    labelFontSize: 11
-    titleFontSize: 13
-```
+# ❌ WRONG - Missing mark
+layer:
+  - encoding: {tooltip: [...]}
 
-## Legend positioning to reduce clutter
-```yaml
-encoding:
-  color:
-    legend:
-      orient: right
-      offset: 10
-```
+# ❌ WRONG - Ellipsis
+config: {axis: {grid: false}, ...}
 
-## Simplify axis (remove unnecessary ticks)
-```yaml
-encoding:
-  x:
-    axis:
-      tickCount: 5  # Reduce visual noise
+# ✅ CORRECT - Complete structure
+layer:
+  - mark: line
+    encoding:
+      x: {field: year, type: quantitative}
+      y: {field: value, type: quantitative}
 ```
 {% endblock %}
 
 {% block examples %}
-# EXAMPLES
-
-Example 1: Fixing overlapping bar chart labels and reducing clutter
-```yaml
-# Input: Bar chart with overlapping x-axis labels and excessive gridlines
-# Fix: Rotate labels, adjust layout, remove unnecessary grid
-encoding:
-  x:
-    axis:
-      labelAngle: -45
-      labelLimit: 100
-  y:
-    axis:
-      grid: false  # Remove horizontal gridlines if they add clutter
-config:
-  padding: {left: 20, bottom: 50}
-```
-
-Example 2: Adding informative tooltips to reduce need for axis labels
-```yaml
-layer:
-  - mark: point  # MUST include existing mark even when only adding tooltip
-    encoding:
-      x: {field: year, type: quantitative}
-      y: {field: value, type: quantitative}
-      tooltip:  # Tooltips can replace some axis detail
-        - {field: year, title: Year, type: quantitative}
-        - {field: value, title: Value, format: .2f, type: quantitative}
-```
-
-Example 3: Simplifying a cluttered time series
-```yaml
-# Reduce tick frequency and remove minor gridlines
-encoding:
-  x:
-    axis:
-      tickCount: 6
-      grid: false
-  y:
-    axis:
-      tickCount: 5
-```
 {% endblock %}
