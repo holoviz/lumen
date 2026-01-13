@@ -199,12 +199,22 @@ class AIHandler(CodeHandler):
     ) -> None:
         # Validate that table files exist
         for table_path in tables:
-            if table_path != "no_data":  # Skip validation for special "no_data" case
-                path = Path(table_path)
-                if not path.exists():
-                    raise FileNotFoundError(f"Table file not found: {table_path}")
-                if not path.is_file():
+            if table_path == "no_data":  # Skip validation for special "no_data" case
+                continue
+
+            # Skip validation for non-local sources (e.g. URLs, DB connection strings)
+            if "://" in table_path or table_path.startswith(
+                ("sqlite:", "postgresql:", "mysql:", "mssql:", "oracle:", "duckdb:")
+            ):
+                continue
+
+            path = Path(table_path)
+            # Path.is_file() returns False if the path does not exist, so we only
+            # call exists() after is_file() to distinguish error types.
+            if not path.is_file():
+                if path.exists():
                     raise ValueError(f"Table path is not a file: {table_path}")
+                raise FileNotFoundError(f"Table file not found: {table_path}")
 
         source = self._build_source_code(
             tables=tables,
