@@ -446,7 +446,7 @@ class VegaLiteAgent(BaseViewAgent):
         vector_store = self._get_vector_store()
         if vector_store:
             if user_query:
-                doc_results = await vector_store.query(user_query, top_k=5, threshold=0.05)
+                doc_results = await vector_store.query(user_query, top_k=5, threshold=0.2)
                 # Extract text and specs from results
                 k = 0
                 for result in doc_results:

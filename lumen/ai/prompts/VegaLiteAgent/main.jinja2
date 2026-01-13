@@ -54,6 +54,17 @@ Legends appear when you map data to `color`, `size`, or `shape` in encoding.
 **Geographic maps**: Use `longitude`/`latitude` encodings (NOT `x`/`y`) with `projection: {type: mercator}` at top level. Base map added automatically.
 
 **Choropleth maps**: Join data to map boundaries - `lookup: <map_field>`, `from: {data: {...}, key: <your_field>, fields: [...]}` (key/fields inside from!)
+
+**LINE CHART WARNING**: Check stats for `note: "multiple rows per <time_col>"`—if present, the data has multiple rows per x-value.
+- A line chart requires **exactly one y-value per x-value per color/series**
+- If a dimension like `season` shows `note: "multiple rows per year"`, you MUST either:
+  1. **Aggregate first**: `transform: [{aggregate: [{op: mean, field: y, as: y_mean}], groupby: [x, color_field]}]`
+  2. **Use scatter instead**: `mark: point` shows all observations without misleading line connections
+
+**Example**: Stats show `season: {note: "multiple rows per year"}`
+- ❌ WRONG: `mark: line` with `x: year`, `y: value`, `color: season` → zigzag chaos
+- ✅ RIGHT: Aggregate with `groupby: [year]` first, then `mark: line`
+- ✅ RIGHT: `mark: point` with `x: year`, `y: value`, `color: season` (no aggregation needed)
 {% endblock %}
 
 {% block examples %}
@@ -217,6 +228,18 @@ encoding:
   tooltip:
     - {field: "properties.name", type: nominal, title: "State"}
     - {field: Total_Students, type: quantitative, format: ",", title: "Total Students"}
+```
+
+```yaml
+# Option B: Scatter plot (shows all observations without misleading connections)
+data:
+  name: <TABLE_NAME>
+layer:
+  - mark: {type: point, opacity: 0.6, size: 40}
+    encoding:
+      x: {field: year, type: quantitative, axis: {format: 'd'}}
+      y: {field: value, type: quantitative}
+      color: {field: category, type: nominal}
 ```
 {% endblock %}
 
