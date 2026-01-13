@@ -1152,6 +1152,7 @@ class UI(Viewer):
                 # Hover
                 ".sidebar": {"transition": "width 0.2s ease-in-out"},
                 ".sidebar:hover": {"width": "150px"},
+                "&.mui-light .sidebar": {"bgcolor": "var(--mui-palette-grey-50)"},
             }
         )
         # Unlink busy indicator
@@ -1633,25 +1634,27 @@ class ExplorerUI(UI):
             attached=[self._settings_popup],
             collapsed=False,
             highlight=False,
-            margin=(0, 0, 0, 5),
+            margin=0,
             on_click=self._handle_sidebar_event,
             sx={
+                # Base padding
+                "paddingLeft": "4px",
                 # Base button styling
                 "& .MuiButtonBase-root.MuiListItemButton-root": {
                     "p": "8px 14px",
                 },
-                # Icon styling - white on primary background
+                # Icon styling
                 ".MuiListItemIcon-root > .MuiIcon-root": {
-                    # contrast text color for primary background
+                    "color": "var(--mui-palette-text-primary)",
                     "margin-right": "16px",
                 },
-                # Base text styling - white, medium weight
+                # Base text styling
                 "& .MuiListItemButton-root .MuiTypography-root": {
+                    "color": "var(--mui-palette-text-primary)",
                     "fontWeight": "500",
                 },
-                # Divider styling - white with low opacity
                 "& .MuiDivider-root": {
-                    "borderColor": "rgba(255, 255, 255, 0.2)",
+                    "borderColor": "--mui-palette-text-primary",
                 },
             },
             sizing_mode="stretch_width",
