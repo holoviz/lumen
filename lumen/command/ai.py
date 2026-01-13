@@ -197,9 +197,8 @@ class AIHandler(CodeHandler):
         logfire_tags: list[str] | None = None,
         **kwargs,
     ) -> None:
-        # Validate that table files exist
         for table_path in tables:
-            if table_path == "no_data":  # Skip validation for special "no_data" case
+            if table_path == "no_data":
                 continue
 
             # Skip validation for non-local sources (e.g. URLs, DB connection strings)
@@ -209,8 +208,6 @@ class AIHandler(CodeHandler):
                 continue
 
             path = Path(table_path)
-            # Path.is_file() returns False if the path does not exist, so we only
-            # call exists() after is_file() to distinguish error types.
             if not path.is_file():
                 if path.exists():
                     raise ValueError(f"Table path is not a file: {table_path}")
