@@ -1139,14 +1139,6 @@ class UI(Viewer):
         return []
 
     def _render_page(self):
-        sidebar_hover_css = """
-        .sidebar {
-            transition: width 0.2s ease-in-out !important;
-        }
-        .sidebar:hover {
-            width: 150px !important;
-        }
-        """
         self._page = Page(
             contextbar_open=False,
             contextbar=self._render_contextbar(),
@@ -1156,8 +1148,10 @@ class UI(Viewer):
             title=self.title,
             sidebar_width=60,
             sidebar_resizable=False,
-            stylesheets=[sidebar_hover_css],
             sx={
+                # Hover
+                ".sidebar": {"transition": "width 0.2s ease-in-out"},
+                ".sidebar:hover": {"width": "150px"},
                 # MuiAppBar-root
                 "&.mui-light .MuiAppBar-root": {"bgcolor": "var(--mui-palette-grey-900)"},
                 "&.mui-dark .MuiAppBar-root": {"bgcolor": "var(--mui-palette-grey-900)"},
