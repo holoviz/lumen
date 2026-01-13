@@ -1,34 +1,106 @@
 {% extends 'VegaLiteAgent/improvement_step.jinja2' %}
 
 {% block instructions %}
-# Visual Polish
+# Visual Storytelling & Polish
 
-Analyze the rendered image and fix visual issues for publication-ready clarity.
+Transform the chart into a publication-ready visualization that clearly communicates a single insight.
 
-**Focus areas**: overlapping labels, cramped layouts, poor readability, missing tooltips, clutter
+Analyze the rendered image and apply targeted improvements (1-3 fixes max).
 
-**Rules**:
-- Layers require BOTH `mark` and `encoding` - always include both
-- Make minimal, targeted changes (1-3 fixes)
+# CORE PRINCIPLES
+
+## 1. Start with the point, not the chart
+- Clarify the single takeaway the audience should remember
+- Every design decision should reinforce that message
+- If the takeaway isn't clear in words, it won't be clear in visuals
+
+## 2. Reduce cognitive load
+Remove anything that doesn't support the message:
+- Excess gridlines
+- Heavy borders
+- Redundant labels
+- Decorative colors
+White space is not empty—it's structure.
+
+## 3. Make the takeaway explicit
+Titles should state the insight, not describe the chart:
+- ❌ "Revenue by Region"
+- ✅ "APAC revenue grew fastest in 2025"
+
+## 4. Use color with intent
+- Gray is your friend for context
+- Reserve color to highlight what matters
+- Be consistent and accessible (colorblind-safe)
+
+## 5. Order and group logically
+Sort data to reinforce the story:
+- Largest → smallest for rankings
+- Before → after for comparisons
+- Chronological for trends
+
+## 6. Use preattentive attributes deliberately
+Position, length, color, and size are noticed instantly.
+Use ONE strong visual cue to guide attention, not many.
+
+## 7. Annotations > legends
+- Label directly where possible
+- Short annotations reduce eye movement and interpretation effort
+
+# TECHNICAL RULES
+
+- Layers require BOTH `mark` and `encoding`—always include both
 - NEVER use ellipsis (`...`) or placeholders
 - Every element should serve a purpose
 
-# Quick Fixes
+# QUICK FIXES
 
 ```yaml
+# Insight-driven title (not descriptive)
+title:
+  text: "Texas leads with 3x more turbines than runner-up"
+  subtitle: "Top 10 states by installed capacity"
+  anchor: start
+
+# Fix scientific notation (2e+3 → 2,000) - use format strings
+encoding:
+  x: {axis: {format: ","}}      # Thousands separator: 18,315
+  # Or for large numbers:
+  x: {axis: {format: "~s"}}     # SI prefix: 18k
+  x: {axis: {format: ".2s"}}    # SI with precision: 18k
+
 # Overlapping x-axis labels
 encoding:
   x: {axis: {labelAngle: -45, labelLimit: 100}}
 
-# Add padding
+# Remove visual clutter
+config:
+  view: {stroke: null}
+  axis: {grid: false}
+
+# Add breathing room
 config:
   padding: {left: 20, bottom: 50}
 
-# Reduce clutter
-config:
-  axis: {grid: false}
+# Gray for context, color for focus
+layer:
+  - mark: {type: bar, color: '#cccccc'}  # Context bars
+  - transform: [{filter: "datum.highlighted"}]
+    mark: {type: bar, color: '#1f77b4'}  # Highlighted bar
 
-# Add tooltip (MUST include mark)
+# Direct labels instead of legend
+layer:
+  - mark: line
+    encoding:
+      x: {field: year, type: quantitative}
+      y: {field: value, type: quantitative}
+  - transform: [{filter: "datum.year === datum.maxYear"}]
+    mark: {type: text, align: left, dx: 5}
+    encoding:
+      x: {field: year, type: quantitative}
+      y: {field: value, type: quantitative}
+      text: {field: category, type: nominal}
+
+# Add tooltip for interactivity (MUST include mark)
 layer:
   - mark: line
     encoding:
@@ -39,21 +111,35 @@ layer:
         - {field: value, title: Value, format: .2f, type: quantitative}
 ```
 
-# Common Mistakes
+# COMMON MISTAKES
+
 ```yaml
+# ❌ WRONG - Scientific notation is hard to read
+encoding:
+  x: {field: count, type: quantitative}  # Shows 2e+3, 4e+3...
+
+# ✅ CORRECT - Human-readable numbers
+encoding:
+  x: {field: count, type: quantitative, axis: {format: ","}}  # Shows 2,000, 4,000...
+
 # ❌ WRONG - Missing mark
 layer:
   - encoding: {tooltip: [...]}
 
-# ❌ WRONG - Ellipsis
+# ❌ WRONG - Ellipsis placeholder
 config: {axis: {grid: false}, ...}
 
-# ✅ CORRECT - Complete structure
+# ❌ WRONG - Descriptive title
+title: "Sales by Quarter"
+
+# ✅ CORRECT - Complete structure with insight
+title:
+  text: "Q3 sales exceeded annual target"
 layer:
   - mark: line
     encoding:
-      x: {field: year, type: quantitative}
-      y: {field: value, type: quantitative}
+      x: {field: quarter, type: ordinal}
+      y: {field: sales, type: quantitative}
 ```
 {% endblock %}
 

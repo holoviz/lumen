@@ -1,7 +1,7 @@
 {% extends 'BaseViewAgent/main.jinja2' %}
 
 {% block instructions %}
-Generate complete, effective Vega-Lite visualizations that clearly communicate data insights.
+Generate complete, functional Vega-Lite visualizations with correct structure and appropriate chart types.
 
 # ESSENTIAL STRUCTURE
 
@@ -9,15 +9,32 @@ Every visualization must:
 - Use `data: {name: {{ memory['table'] }}}` with exact column names from source
 - Wrap all marks in a `layer` array, each with its own `mark` and `encoding`
 - Focus on ONE primary metric or relationship per chart
-- Include narrative titles that tell a story about the data (what happened, not just what's shown)
 - Do not overcrowd the plot with too many data points, especially for bars
+
+# CHART TYPE SELECTION
+
+Choose charts for comparison, not decoration:
+- **Bars** → compare categories (use horizontal for many categories or long labels)
+- **Lines** → trends over time (requires one y-value per x-value per series)
+- **Scatter** → relationships between two variables, or when multiple y-values exist per x
+- **Area** → cumulative or part-to-whole over time
+- If text or a simple number communicates faster than a chart, prefer simplicity
 
 # MARK vs ENCODING
 
-This is the most common source of errors. See examples for correct placement:
+This is the most common source of errors:
 - **Mark**: static styling—position (`dx`, `dy`, `align`, `baseline`) and appearance (`color`, `opacity`, `fontSize`)
 - **Encoding**: data mappings—channels (`x`, `y`, `color`, `size`, `text`) with `{field: ...}` or `{value: ...}`
 - **NEVER put `dx`, `dy`, `align`, `baseline` in encoding**—they belong in mark only
+
+# DATA TYPES
+
+Match type to your data:
+- `quantitative` for continuous numeric values
+- `ordinal` for ordered categories
+- `nominal` for unordered categories
+- `temporal` for dates/times
+- For year fields: use `type: quantitative` with `axis.format: 'd'` to prevent comma separators (1990 not 1,990)
 
 # LEGENDS
 
@@ -33,12 +50,7 @@ Legends appear when you map data to `color`, `size`, or `shape` in encoding.
 
 **Sort rankings**: `sort: "-x"` (horizontal) or `sort: "-y"` (vertical) on the categorical axis
 
-**Color purposefully**: Encode dimensions, highlight outliers/leaders, or show thresholds. Keep color in `mark` for text labels that shouldn't appear in legends. When encoding quantitative values with color, consider setting an appropriate `domain` if data doesn't start at 0 (e.g., `scale: {scheme: blues, domain: [min, max]}`).
-
-**Informative titles**: Title tells a story (what happened, not what's shown). See examples.
-
-**Data types**: Match type to your data - quantitative for continuous, ordinal for ordered categories, nominal for unordered, temporal for dates
-- For year fields: use `type: quantitative` with `axis.format: 'd'` to prevent comma separators (1990 not 1,990)
+**Axis formatting**: Always use `axis: {format: ","}` for large numbers to show thousands separators (18,315 not 1.8e+4). For very large numbers, use SI prefixes: `format: "~s"` (18k)
 
 **Incompatible scales**: Different units cannot share Y-axis. Choose: (1) primary metric only, or (2) faceting with `fold` + `resolve: {scale: {y: independent}}`
 
@@ -46,10 +58,6 @@ Legends appear when you map data to `color`, `size`, or `shape` in encoding.
 - Top-level: applies to all layers | Layer-level: that layer only
 
 **Scale domains**: Default starts at 0, hiding clustered data (5500-6000 on 0-6000 scale). Set explicit domain: `scale: {domain: [5500, 6000]}`
-
-**Clean, minimal styling**: Remove borders (`config.view.stroke: null`), context-aware gridlines (hbar=x-grid, vbar/line=y-grid), inline units (`format: '.0%'`), drop obvious titles
-
-**Selective emphasis**: Reduce opacity of secondary data (`opacity: 0.3`), keep primary prominent (`opacity: 1, strokeWidth: 2-3`)
 
 **Geographic maps**: Use `longitude`/`latitude` encodings (NOT `x`/`y`) with `projection: {type: mercator}` at top level. Base map added automatically.
 
@@ -230,8 +238,8 @@ encoding:
     - {field: Total_Students, type: quantitative, format: ",", title: "Total Students"}
 ```
 
+Scatter plot (shows all observations without misleading connections):
 ```yaml
-# Option B: Scatter plot (shows all observations without misleading connections)
 data:
   name: <TABLE_NAME>
 layer:
