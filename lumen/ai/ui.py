@@ -1767,8 +1767,15 @@ class ExplorerUI(UI):
         if exploration.plan is None:
             return
 
-        download = exploration._export_download
-        download.transfer()
+        def make_notebook():
+            nb = export_notebook(exploration.plan.views, preamble=self.notebook_preamble)
+            return StringIO(nb)
+
+        self._exploration_download.param.update(
+            filename=f"{exploration.title.replace(' ', '_')}.ipynb",
+            callback=make_notebook
+        )
+        self._exploration_download.transfer()
 
     def _destroy(self, session_context):
         """
@@ -1836,10 +1843,6 @@ class ExplorerUI(UI):
         return messages
 
     async def _add_exploration(self, plan: Plan, parent: Exploration) -> Exploration:
-        def make_notebook():
-            nb = export_notebook(plan.views, preamble=self.notebook_preamble)
-            return StringIO(nb)
-
         is_home = parent is self._home
         parent_item = self._exploration
         if is_home:
@@ -1865,13 +1868,12 @@ class ExplorerUI(UI):
         )
 
         # Create hidden download button for exporting notebook
-        download = exploration._export_download = FileDownload(
-            callback=make_notebook,
+        self._exploration_download = FileDownload(
             filename=f"{plan.title.replace(' ', '_')}.ipynb",
             visible=False
         )
         # Attach to output so it's in the DOM
-        output.append(download)
+        output.append(self._exploration_download)
 
         view_item = {
             'label': plan.title,
