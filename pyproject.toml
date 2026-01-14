@@ -42,7 +42,7 @@ dependencies = [
     "pandas",
     "panel >=1.7.5",
     "panel-graphic-walker[kernel] >=0.6.4",
-    "panel-material-ui >=0.6.0",
+    "panel-material-ui >=0.8.1",
     "panel-splitjs",
     "param >=2.2.1",
     "pyarrow",
