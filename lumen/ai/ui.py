@@ -23,7 +23,7 @@ from panel.viewable import (
 from panel_material_ui import (
     Alert, Breadcrumbs, Button, ChatFeed, ChatInterface, ChatMessage,
     Column as MuiColumn, Dialog, FileDownload, IconButton, MenuList, Page,
-    Paper, Popup, Row, Switch, Tabs, ToggleIcon, Typography,
+    Paper, Popup, Row, Switch, Tabs, Typography,
 )
 from panel_splitjs import HSplit, MultiSplit, VSplit
 
@@ -748,8 +748,17 @@ class UI(Viewer):
         self._pending_query = None
         self._pending_sources_snapshot = None  # Also indicates dialog was opened from chat
 
-        def on_submit(event=None, instance=None):
+        async def on_submit(event=None, instance=None):
             chat_input = self.interface.active_widget
+
+            # Check if there are pending uploads that need to be transferred first
+            if chat_input.pending_uploads:
+                # Initiate the transfer
+                chat_input.transfer()
+                # Wait for transfer to complete
+                while not chat_input.value_uploaded:
+                    await asyncio.sleep(0.1)
+
             uploaded = chat_input.value_uploaded
             user_prompt = chat_input.value_input
             if not user_prompt and not uploaded:
@@ -788,6 +797,9 @@ class UI(Viewer):
                 with hold():
                     self.interface.send(user_prompt, respond=bool(user_prompt))
                     chat_input.value_input = ""
+
+        # Store as instance variable for access from other methods
+        self._on_submit = on_submit
 
         if interface is None:
             interface = ChatInterface(
@@ -1106,18 +1118,6 @@ class UI(Viewer):
         # Watch for dialog close to handle pending query if user closes without adding files
         self._sources_dialog_content.param.watch(self._on_sources_dialog_close, 'open')
 
-        self._notebook_export = FileDownload(
-            callback=self._export_notebook,
-            label="Export Notebook",
-            description="Export explorations as a Jupyter notebook",
-            icon_size="1.8em",
-            filename=f"{self.title.replace(' ', '_')}.ipynb", # TODO
-            margin=(5, 10, 0, 0),
-            sx={"p": "6px 0", "minWidth": "32px", "& .MuiButton-icon": {"ml": 0, "mr": 0}},
-            styles={'z-index': '1000', 'margin-left': 'auto'},
-            variant="text"
-        )
-
         self._explorations = MenuList(
             items=[self._exploration], value=self.param._exploration, show_children=True,
             dense=True, margin=0, sizing_mode='stretch_width',
@@ -1127,6 +1127,12 @@ class UI(Viewer):
         self._explorations.param.watch(self._update_conversation, 'active')
         self._explorations.param.watch(self._sync_active, 'value')
         self._explorations.on_action('remove', self._delete_exploration)
+        self._explorations.on_action('export_notebook', self._export_exploration)
+
+        # Create hidden download button for exporting notebook
+        self._exploration_download = FileDownload(
+            visible=False
+        )
 
         # Create LLM configuration dialog
         self._llm_dialog = LLMConfigDialog(
@@ -1137,7 +1143,7 @@ class UI(Viewer):
             agent_types=[type(agent) for agent in self._coordinator.agents],
         )
 
-        return [self._main, self._sources_dialog_content, self._llm_dialog, self._info_dialog]
+        return [self._main, self._sources_dialog_content, self._llm_dialog, self._info_dialog, self._exploration_download]
 
     def _render_contextbar(self) -> list[Viewable]:
         return []
@@ -1153,9 +1159,14 @@ class UI(Viewer):
             main=self._render_main(),
             sidebar=self._render_sidebar(),
             title=self.title,
-            sidebar_width=65,
+            sidebar_width=62,
             sidebar_resizable=False,
-            sx={"&.mui-light .sidebar": {"bgcolor": "var(--mui-palette-grey-50)"}}
+            sx={
+                # Hover
+                ".sidebar": {"transition": "width 0.2s ease-in-out"},
+                ".sidebar:hover": {"width": "140px"},
+                "&.mui-light .sidebar": {"bgcolor": "var(--mui-palette-grey-50)"},
+            }
         )
         # Unlink busy indicator
         self._page.busy = False
@@ -1328,7 +1339,10 @@ class UI(Viewer):
                 self._update_main_view()
 
                 if not analysis:
-                    self.interface.send(contents)
+                    # Set the input value and trigger submit
+                    # This will handle pending uploads via on_submit
+                    self.interface.active_widget.value_input = contents
+                    await self._on_submit()
                     return
 
                 for agent in self.agents:
@@ -1534,10 +1548,6 @@ class ExplorerUI(UI):
 
     _exploration = param.Dict()
 
-    def _export_notebook(self):
-        nb = export_notebook(self._exploration['view'].plan.views, preamble=self.notebook_preamble)
-        return StringIO(nb)
-
     @hold()
     def _handle_sidebar_event(self, item):
         if item["id"] == "exploration":
@@ -1595,9 +1605,10 @@ class ExplorerUI(UI):
             margin=(-5, 10, 10, 10),
             sx={
                 'fontSize': '16px',
+                'color': 'text.primary',
                 '& .MuiIcon-root': {
                     'fontSize': '28px',
-                    'marginRight': '10px'
+                    'marginRight': '10px',
                 }
             }
         )
@@ -1618,39 +1629,48 @@ class ExplorerUI(UI):
             styles={"z-index": '1300'},
             theme_config={"light": {"palette": {"background": {"paper": "var(--mui-palette-grey-50)"}}}, "dark": {}}
         )
-        self._sidebar_collapse = collapse = ToggleIcon(
-            value=False, active_icon="chevron_right", icon="chevron_left", styles={"margin-top": "auto", "margin-left": "auto"}, margin=5
-        )
         self._sidebar_menu = menu = MenuList(
             items=[
-                {"label": "Exploration", "icon": "insights", "id": "exploration", "active": True},
+                {"label": "Explore", "icon": "insights", "id": "exploration", "active": True},
                 {"label": "Report", "icon": "description_outlined", "id": "report", "active": False},
                 None,
-                {"label": "Data Sources", "icon": "create_new_folder_outlined", "id": "data"},
-                {"label": "Preferences", "icon": "tune_outlined", "id": "preferences"},
+                {"label": "Sources", "icon": "create_new_folder_outlined", "id": "data"},
+                {"label": "Config", "icon": "tune_outlined", "id": "preferences"},
                 None,
-                {"label": "Help Guides", "icon": "help_outline", "id": "help"}
+                {"label": "Help", "icon": "help_outline", "id": "help"}
             ],
+            active=0,
             attached=[self._settings_popup],
-            collapsed=collapse,
+            collapsed=False,
             highlight=False,
             margin=0,
             on_click=self._handle_sidebar_event,
             sx={
-                "& .MuiButtonBase-root.MuiListItemButton-root, & .MuiButtonBase-root.MuiListItemButton-root.collapsed": {"p": 2},
+                # Base padding
+                "paddingLeft": "4px",
+                # Base button styling
+                "& .MuiButtonBase-root.MuiListItemButton-root": {
+                    "p": "8px 14px",
+                },
+                # Icon styling
                 ".MuiListItemIcon-root > .MuiIcon-root": {
-                    "color": "var(--mui-palette-primary-dark)",
-                    "fontSize": "28px"
-                }
+                    "margin-right": "16px",
+                    "color": "var(--mui-palette-text-primary)",
+                },
+                "& .MuiDivider-root": {
+                    "margin-left": "-4px",
+                    "margin-block": "8px",
+                    "opacity": "0.3",
+                    "borderColor": "var(--mui-palette-grey-500)",
+                },
             },
             sizing_mode="stretch_width",
         )
 
-        return [menu, collapse]
+        return [menu]
 
     def _render_page(self):
         super()._render_page()
-        self._page.sidebar_width = self._sidebar_collapse.rx().rx.where(61, 183)
 
     def _render_main(self) -> list[Viewable]:
         main = super()._render_main()
@@ -1687,9 +1707,7 @@ class ExplorerUI(UI):
         self._home.view = MuiColumn()
 
         # Main Area
-        self._notebook_export.disabled = self.param._exploration.rx()['view'].rx.is_(self._home)
         self._output = Paper(
-            Row(self._notebook_export, styles={"top": "0", "right": "0", "position": "absolute"}),
             self._home,
             elevation=2,
             margin=(5, 10, 5, 5),
@@ -1742,9 +1760,9 @@ class ExplorerUI(UI):
         prev = self._explorations.value
         sql_agent = next(agent for agent in self._coordinator.agents if isinstance(agent, SQLAgent))
         sql_out = self._explorer.create_sql_output()
-        out_context = await sql_out.render_context()
+        out_context = dict(self.context, **(await sql_out.render_context()))
         sql_task = ActorTask(sql_agent, title=f"Load {table}", views=[sql_out], out_context=out_context, status="success")
-        plan = Plan(sql_task, title=f"Explore {table}", context=self.context, status="success")
+        plan = Plan(sql_task, title=f"Explore {table}", context=self.context, out_context=out_context, status="success")
 
         with hold(), self._busy():
             exploration = await self._add_exploration(plan, self._home)
@@ -1781,6 +1799,22 @@ class ExplorerUI(UI):
                 self._explorations.update_item(parent, items=[it for it in parent["items"] if it is not item])
                 self._explorations.value = parent
             self.interface.objects = []
+
+    async def _export_exploration(self, item):
+        """Export a single exploration as a Jupyter notebook."""
+        exploration = item["view"]
+        if exploration.plan is None:
+            return
+
+        def make_notebook():
+            nb = export_notebook(exploration.plan.views, preamble=self.notebook_preamble)
+            return StringIO(nb)
+
+        self._exploration_download.param.update(
+            filename=f"{exploration.title.replace(' ', '_')}.ipynb",
+            callback=make_notebook
+        )
+        self._exploration_download.transfer()
 
     def _destroy(self, session_context):
         """
@@ -1876,15 +1910,16 @@ class ExplorerUI(UI):
             'label': plan.title,
             'view': exploration,
             'icon': None,
-            'actions': [{'action': 'remove', 'label': 'Remove', 'icon': 'delete'}],
+            'actions': [
+                {'action': 'export_notebook', 'label': 'Export Notebook', 'icon': 'download'},
+                {'action': 'remove', 'label': 'Remove', 'icon': 'delete'}
+            ],
             'parent': parent_item if plan.is_followup else self._explorations.items[0],
             'items': []
         }
         is_busy = not self._idle.is_set()
         with hold():
             self.interface.objects = conversation
-            # Collapse sidebar if we are launching first exploration
-            self._sidebar_collapse.value = len(self._main) == 1
             # Temporarily un-idle to allow exploration to be rendered
             self._idle.set()
             if is_home or not plan.is_followup:
@@ -1898,7 +1933,6 @@ class ExplorerUI(UI):
             if is_busy:
                 self._idle.clear()
             self._output[1:] = [output]
-            self._notebook_export.filename = f"{plan.title.replace(' ', '_')}.ipynb"
             await self._update_conversation()
         self._last_synced = exploration
         return exploration
@@ -2154,9 +2188,6 @@ class ExplorerUI(UI):
         self, messages: list[Message], user: str, instance: ChatInterface, context: TContext | None = None
     ):
         log_debug(f"New Message: \033[91m{messages!r}\033[0m", show_sep="above")
-        # Collapse sidebar on first message sent
-        if len(self.interface.objects) <= 1:  # First message (only user message exists)
-            self._sidebar_collapse.value = True
         self._update_main_view()
         with self._busy():
             exploration = self._exploration['view']
