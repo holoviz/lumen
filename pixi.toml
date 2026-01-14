@@ -20,7 +20,7 @@ lint = ["py312", "lint"]
 [dependencies]
 bokeh = "*"
 holoviews = ">=1.17.0"
-panel-material-ui = ">=0.6.0"
+panel-material-ui = ">=0.8.1"
 hvplot = "*"
 intake = "<2"
 jinja2 = ">3.0"
