@@ -1741,9 +1741,9 @@ class ExplorerUI(UI):
         prev = self._explorations.value
         sql_agent = next(agent for agent in self._coordinator.agents if isinstance(agent, SQLAgent))
         sql_out = self._explorer.create_sql_output()
-        out_context = await sql_out.render_context()
+        out_context = dict(self.context, **(await sql_out.render_context()))
         sql_task = ActorTask(sql_agent, title=f"Load {table}", views=[sql_out], out_context=out_context, status="success")
-        plan = Plan(sql_task, title=f"Explore {table}", context=self.context, status="success")
+        plan = Plan(sql_task, title=f"Explore {table}", context=self.context, out_context=out_context, status="success")
 
         with hold(), self._busy():
             exploration = await self._add_exploration(plan, self._home)
