@@ -2,6 +2,12 @@ import pandas as pd
 import panel as pn
 import param  # type: ignore
 
+from panel_material_ui import (
+    Checkbox, DatePicker, DateRangeSlider, DatetimeInput, DatetimePicker,
+    FloatInput, FloatSlider, IntInput, IntRangeSlider, IntSlider, LiteralInput,
+    MultiChoice, RangeSlider, Select, TextInput,
+)
+
 from .util import resolve_module_reference
 
 
@@ -30,33 +36,33 @@ class JSONSchema(pn.pane.PaneBase):
 
     _unpack = True
 
-    _select_widget = pn.widgets.Select
-    _multi_select_widget = pn.widgets.MultiSelect
-    _bounded_number_widget = pn.widgets.FloatSlider
-    _bounded_number_range_widget = pn.widgets.RangeSlider
-    _unbounded_number_widget = pn.widgets.FloatInput
-    _list_select_widget = pn.widgets.MultiSelect
-    _bounded_int_widget = pn.widgets.IntSlider
-    _bounded_int_range_widget = pn.widgets.IntRangeSlider
-    _unbounded_int_widget = pn.widgets.IntInput
-    _string_widget = pn.widgets.TextInput
-    _boolean_widget = pn.widgets.Checkbox
-    _literal_widget = pn.widgets.LiteralInput
-    _unbounded_date_widget = pn.widgets.DatePicker
-    _date_range_widget = pn.widgets.DateRangeSlider
+    _select_widget = Select
+    _multi_select_widget = MultiChoice
+    _bounded_number_widget = FloatSlider
+    _bounded_number_range_widget = RangeSlider
+    _unbounded_number_widget = FloatInput
+    _list_select_widget = MultiChoice
+    _bounded_int_widget = IntSlider
+    _bounded_int_range_widget = IntRangeSlider
+    _unbounded_int_widget = IntInput
+    _string_widget = TextInput
+    _boolean_widget = Checkbox
+    _literal_widget = LiteralInput
+    _unbounded_date_widget = DatePicker
+    _date_range_widget = DateRangeSlider
 
     # Not available until Panel 0.11
     try:
         _datetime_range_widget = pn.widgets.DatetimeRangeInput
     except Exception:
-        _datetime_range_widget = pn.widgets.DateRangeSlider
+        _datetime_range_widget = DateRangeSlider
 
     # Not available until Panel 0.12
     try:
-        _unbounded_datetime_widget = pn.widgets.DatetimePicker
+        _unbounded_datetime_widget = DatetimePicker
         _datetime_range_widget = pn.widgets.DatetimeRangePicker
     except Exception:
-        _unbounded_datetime_widget = pn.widgets.DatetimeInput
+        _unbounded_datetime_widget = DatetimeInput
 
     def _array_type(self, schema):
         if 'items' in schema and not schema.get('additionalItems', True):
@@ -156,7 +162,7 @@ class JSONSchema(pn.pane.PaneBase):
         values = {} if self.object is None else self.object
         widgets = []
         for p, schema in self.schema.items():
-            if self.properties and p not in self.properties:
+            if p == '__len__' or self.properties and p not in self.properties:
                 continue
             for prop in self._precedence:
                 if prop in schema:
@@ -177,7 +183,7 @@ class JSONSchema(pn.pane.PaneBase):
             if isinstance(wtype, str):
                 wtype = resolve_module_reference(wtype, pn.widgets.Widget)
 
-            if isinstance(wtype, pn.widgets.Widget):
+            if isinstance(wtype, pn.widgets.WidgetBase):
                 widget = wtype
             else:
                 if p in values:

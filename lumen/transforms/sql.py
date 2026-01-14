@@ -563,7 +563,8 @@ class SQLFilterBase(SQLTransform):
                             v2_str = str(v2)
 
                         range_filters.append(column_expr.between(SQLLiteral.string(v1_str), SQLLiteral.string(v2_str)))
-                    filters.append(or_(*range_filters))
+                    if range_filters:
+                        filters.append(or_(*range_filters))
                 else:
                     # Handle None values separately in lists
                     non_none_values = [v for v in val if v is not None]
