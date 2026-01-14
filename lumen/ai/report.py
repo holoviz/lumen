@@ -798,11 +798,12 @@ class Report(TaskGroup):
             icon="settings", on_click=self._open_settings, size="large", color="default",
             margin=0, description="Configure Report"
         )
-        self._export = FileDownload(
-            callback=self._notebook_export, label="\u200b", variant='text', icon='get_app',
-            icon_size="2.4em", color="default", margin=(8, 0, 10, 0),
-            sx={".MuiButton-startIcon": {"mr": 0, "color": "var(--mui-palette-default-dark)"}},
-            description="Export Report to .ipynb", filename=f"{self.title or 'Report'}.ipynb"
+        self._export = IconButton(
+            icon="get_app", on_click=self._trigger_download, size="large", color="default",
+            margin=0, description="Export Report to .ipynb"
+        )
+        self._download = FileDownload(
+            callback=self._notebook_export, filename=f"{self.title or 'Report'}.ipynb", visible=False
         )
         self._dialog = Dialog(
             TextInput.from_param(self.param.title, margin=(10, 0, 0, 0), sizing_mode="stretch_width"),
@@ -817,6 +818,7 @@ class Report(TaskGroup):
             self._collapse,
             self._export,
             self._settings,
+            self._download,
             sizing_mode="stretch_width"
         )
         self._dial = SpeedDial(
@@ -831,7 +833,8 @@ class Report(TaskGroup):
             icon="more_vert",
             size="small",
             styles={"margin": "10px 10px 10px auto"},
-            on_click=self._trigger_event
+            on_click=self._trigger_event,
+            sx={"& .MuiFab-root": {"boxShadow": "var(--mui-shadows-2)"}}
         )
         self._collapsed_menu = Row(
             self._header_title,
@@ -859,9 +862,13 @@ class Report(TaskGroup):
         elif icon == "clear":
             self.reset()
         elif icon == "get_app":
-            self._export.transfer()
+            self._trigger_download()
         elif icon == "settings":
             self._open_settings()
+
+    def _trigger_download(self, event=None):
+        self._download.filename = f"{self.title or 'Report'}.ipynb"
+        self._download.transfer()
 
     @param.depends('_current', '_tasks', watch=True)
     def _update_run_state(self):
@@ -869,10 +876,6 @@ class Report(TaskGroup):
 
     async def _execute_event(self, event=None):
         await self.execute()
-
-    @param.depends('title', watch=True)
-    def _update_filename(self):
-        self._export.filename = f"{self.title or 'Report'}.ipynb"
 
     async def _notebook_export(self):
         if len(self) and self.status != "success":
