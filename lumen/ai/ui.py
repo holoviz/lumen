@@ -688,7 +688,9 @@ class UI(Viewer):
         in_report_mode = force_report_mode if force_report_mode is not None else self._is_report_mode()
 
         if in_report_mode:
-            if not self._has_explorations():
+            if self._navigation_title.object == "Report":
+                return
+            elif not self._has_explorations():
                 no_explorations_msg = Markdown(
                     "### No Explorations Yet\n\nGenerate an exploration first by asking a question about your data.",
                 )
@@ -1556,11 +1558,8 @@ class ExplorerUI(UI):
 
     @param.depends("_exploration", watch=True)
     def _update_home(self):
-        is_home = self._exploration["view"] is self._home
         if not hasattr(self, '_page'):
             return
-        if not is_home and self._is_report_mode():
-            self._toggle_report_mode(False)
         exploration, report = self._sidebar_menu.items[:2]
         self._sidebar_menu.update_item(exploration, active=True, icon="timeline" if report["active"] else "insights")
         self._update_main_view()
