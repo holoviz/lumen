@@ -11,7 +11,7 @@ from typing import Any
 import param
 
 from panel.chat.feed import PLACEHOLDER_SVG
-from panel.config import config, panel_extension
+from panel.config import panel_extension
 from panel.io.document import hold
 from panel.io.state import state
 from panel.layout import Column, FlexBox
@@ -421,12 +421,6 @@ class UI(Viewer):
         e.g. {"hdf5": ...}. The callback function should accept the file bytes,
         table alias, and filename, add or modify the `sources` in memory, and return a bool
         (True if the table was successfully uploaded).""")
-
-    template = param.Selector(
-        default=config.param.template.names['fast'],
-        objects=config.param.template.names, doc="""
-        Panel template to serve the application in."""
-    )
 
     title = param.String(default='Lumen UI', doc="Title of the app.")
 
@@ -1541,9 +1535,6 @@ class ExplorerUI(UI):
         lmai.ExplorerUI(data='~/data.csv').servable()
     """
 
-    chat_ui_position = param.Selector(default='left', objects=['left', 'right'], doc="""
-        The position of the chat interface panel relative to the exploration area.""")
-
     title = param.String(default='Lumen AI - Data Explorer', doc="Title of the app.")
 
     _exploration = param.Dict()
@@ -1635,7 +1626,7 @@ class ExplorerUI(UI):
                 {"label": "Report", "icon": "description_outlined", "id": "report", "active": False},
                 None,
                 {"label": "Sources", "icon": "create_new_folder_outlined", "id": "data"},
-                {"label": "Config", "icon": "tune_outlined", "id": "preferences"},
+                {"label": "Settings", "icon": "tune_outlined", "id": "preferences"},
                 None,
                 {"label": "Help", "icon": "help_outline", "id": "help"}
             ],

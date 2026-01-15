@@ -1,8 +1,13 @@
 # :material-chat: Chat with Your Data
 
-**Open-source, fully extensible Python framework for AI-powered data exploration. Easy to use, reproducible results, and tailored to your domain expertise.**
+**An open-source Python framework for building extensible, domain-aware AI data applications.**
 
-Ask questions in plain English and get instant answers, visualizations, and reports. No coding required. Natural language queries automatically generate database queries, create visualizations, and build dashboards. **[Get started in 30 seconds →](quick_start.md)**
+Lumen is designed for teams who want conversational data exploration **without giving up control**:
+- **Open source** and inspectable end-to-end
+- **Extensible and configurable**: plug in custom data sources, Python analyses, tools, and agents
+- **Domain-aware**: encode business logic, terminology, and constraints directly in code
+
+Ask questions in natural language, but keep execution explicit, reproducible, and grounded in Python. **[Get started in 30 seconds →](quick_start.md)**
 
 Bring your own LLM: OpenAI, Anthropic, local models. Connect to your data sources: Snowflake, BigQuery, DuckDB, and any database supported by SQLAlchemy. **[See all installation options →](installation.md)**
 
@@ -160,7 +165,7 @@ ui = lmai.ExplorerUI(data=[
 ])
 ```
 
-**Infinitely extensible.** Pure Python + YAML configs. Build custom agents, tools, and visualizations when you need them. **[View examples →](examples/tutorials/index.md)**
+**Designed for extension.** Pure Python + YAML configs. Build custom agents, tools, and visualizations when you need them. **[View examples →](examples/tutorials/index.md)**
 
 === "Custom Analysis"
 

@@ -37,7 +37,9 @@ You can ask the AI to perform several steps in one message. This helps you build
 
 ## Understand the AI's reasoning
 
-If you want to see how the AI arrived at an answer, enable **Chain of Thought** in the Settings menu (⚙️ icon in the left sidebar). This will show the LLM's reasoning steps in expandable cards within the chat.
+If you want to see how the AI arrived at an answer, enable **Chain of Thought** in **Settings** (left sidebar). This will show the LLM's reasoning steps in expandable cards within the chat.
+
+You can also configure your LLM provider and model from **Settings**.
 
 ## Refine results
 
@@ -55,17 +57,17 @@ Use manual editing for small tweaks (like changing chart colors or sort order), 
 
 ## Explorations
 
-Each new computed result creates a new "Exploration" tab. Click the Explorations panel (accessible via the breadcrumbs at the top) to navigate between them and compare different analyses.
+An exploration is a contextual session with its own conversation history and data artifacts. Each time a question triggers a SQL query that returns data, Lumen creates a new exploration. Use the navigation menu to move between explorations or nest follow-ups under the exploration they build on.
 
 ## Export results
 
 Export your session as a Jupyter notebook so you can reproduce, share, or build on your work.
 
 **Export current exploration:**
-Click **Export Notebook** at the top-right of the screen to download a notebook containing the current exploration's questions, queries, and visualizations.
+Use **Export Notebook** in the navigation menu to download a notebook containing the current exploration's questions, queries, and visualizations.
 
 **Export all explorations:**
-Switch to **Report** mode (via the left sidebar) to see all explorations in a consolidated view, then click **Export Notebook** to download everything as a single notebook.
+Switch to **Report** mode (via the left sidebar), then use **Export Notebook** to download everything as a single notebook.
 
 The notebook includes:
 - Markdown cells with your questions and AI responses
