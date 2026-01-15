@@ -966,7 +966,12 @@ class ExecutableTask(Task, ContextProvider):
 
         keys = set(keys)
         deps = input_dependency_keys(self.input_schema)
-        if (deps & keys):
+        # If no declared dependencies (empty input_schema), consider it as
+        # dependent on all context keys - always invalidate when anything changes.
+        # This ensures agents like ChatAgent that have no explicit input_schema
+        # are re-run when upstream context changes.
+        should_invalidate = (not deps and keys) or (deps & keys)
+        if should_invalidate:
             if start == 0:
                 # Do no reset if invalidation was called
                 # solely to notify parent
