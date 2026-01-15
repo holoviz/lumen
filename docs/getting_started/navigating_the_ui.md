@@ -73,7 +73,7 @@ The left sidebar provides quick access to all major features:
 
 ### Organize your explorations
 
-Each time you run a SQL query that returns data, a new **exploration** is created. Explorations are contextual sessions with their own conversation history and outputs. The navigation menu shows them as a persistent tree across both Exploration and Report mode.
+Each time you run a SQL query that returns data, a new **exploration** is created. Explorations are persistent, contextual workspaces for working with a specific dataset. They capture the conversation, generated analyses, visualizations, and other data artifacts so they can evolve over time and be revisited or exported. The navigation menu shows them as a persistent tree across both Explore and Report mode.
 
 **Home** — Your starting point. All initial questions begin here.
 
