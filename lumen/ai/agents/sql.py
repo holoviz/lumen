@@ -320,10 +320,10 @@ class SQLAgent(BaseLumenAgent):
 
     conditions = param.List(
         default=[
-            "Use for displaying, examining, or querying data resulting in a data pipeline",
-            "Use for calculations that require data (e.g., 'calculate average', 'sum by category')",
-            "Do not sample or show limited rows of the data, unless explicitly requested",
-            "NOT for non-data questions or technical programming help",
+            "Use for querying, filtering, aggregating, or transforming data with SQL",
+            "Use for calculations that require executing SQL (e.g., 'calculate average', 'sum by category')",
+            "Use when user asks to 'show', 'get', 'fetch', 'query', 'find', 'filter', 'calculate', 'aggregate', or 'transform' data",
+            "NOT when user asks to 'explain', 'interpret', 'analyze', 'summarize', or 'comment on' existing data",
             "NOT useful if the user is using the same data for plotting",
         ]
     )
@@ -337,11 +337,9 @@ class SQLAgent(BaseLumenAgent):
 
     purpose = param.String(
         default="""
-        Handles the display of data and the creation, modification, and execution
-        of SQL queries to address user queries about the data. Executes queries in
-        a single step, encompassing tasks such as table joins, filtering, aggregations,
-        and calculations. If additional columns are required, SQLAgent can join the
-        current table with other tables to fulfill the query requirements."""
+        Creates and executes SQL queries to retrieve, filter, aggregate, or transform data.
+        Handles table joins, WHERE clauses, GROUP BY, calculations, and other SQL operations.
+        Generates new data pipelines from SQL transformations."""
     )
 
     prompts = param.Dict(

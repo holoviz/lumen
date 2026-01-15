@@ -20,9 +20,9 @@ class ChatAgent(Agent):
         default=[
             "Use for general conversation that doesn't require fetching or querying data",
             "Use for technical questions about programming, functions, methods, libraries, or APIs",
-            "Use when interpreting existing results - NOT for generating new data or queries",
-            "NOT when user asks to 'show', 'get', 'fetch', 'query', 'find', or 'display' data",
-            "NOT for initial data retrieval - only for explaining data that's already been obtained",
+            "Use when user asks to 'explain', 'interpret', 'analyze', 'summarize', or 'comment on' existing data in context",
+            "NOT when user asks to 'show', 'get', 'fetch', 'query', 'filter', 'calculate', 'aggregate', or 'transform' data",
+            "NOT for creating new data transformations - only for explaining data that already exists",
         ]
     )
 
