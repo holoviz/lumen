@@ -29,7 +29,7 @@ You can begin interrogating your data in three ways:
 - **Visualize the data** — Generate an automatic visualization to explore patterns and distributions.
 - **Show a demo** — See a pre-built example of what Lumen can do (appears when demo mode is enabled).
 
-**Start from a table** — On the splash screen, switch to **Select data to explore**, choose a table, and click **Explore** to launch a new exploration for that dataset.
+**Start from a table** — On the splash screen, switch to **Select data to explore**, choose a table, and click a table to launch a new exploration for that dataset.
 
 ### Interact with messages
 
@@ -51,9 +51,9 @@ Use **Settings** in the left sidebar to toggle three analysis features and confi
 
 **Chain of Thought** — When enabled, the AI shows its reasoning steps. Use this when you want to understand *how* the AI arrived at an answer. Disabled by default.
 
-**SQL Planning** — When enabled, the AI plans its SQL query before executing it. This improves accuracy for complex questions. Enabled by default.
+**SQL Planning** — When enabled, the AI plans its SQL query before executing it. This improves accuracy for complex questions. Disabled by default.
 
-**Validation Step** — When enabled, the AI double-checks results for correctness. This catches data errors early. Enabled by default.
+**Validation Step** — When enabled, the AI double-checks results for correctness. This catches data errors early. Disabled by default.
 
 Simply click the toggle next to each option to turn it on or off.
 
