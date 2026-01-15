@@ -21,7 +21,6 @@ Lumen includes eight agents automatically. You don't need to configure anything.
 |-------|-------------|
 | **SQLAgent** | Writes and runs SQL queries |
 | **VegaLiteAgent** | Creates charts and visualizations |
-| **AnalystAgent** | Explains query results and finds insights |
 | **ChatAgent** | Answers questions and provides guidance |
 | **TableListAgent** | Lists available tables and columns |
 | **DocumentListAgent** | Manages uploaded documents |
@@ -99,7 +98,7 @@ model_config = {
     "default": {"model": "gpt-4o-mini"},  # Cheap model for most agents
     "sql": {"model": "gpt-4o"},           # Powerful model for SQL
     "vega_lite": {"model": "gpt-4o"},     # Powerful model for charts
-    "analyst": {"model": "gpt-4o"},       # Powerful model for analysis
+    "chat": {"model": "gpt-4o"},          # Powerful model for analysis
 }
 
 llm = lmai.llm.OpenAI(model_kwargs=model_config)
@@ -112,7 +111,6 @@ ui.servable()
 
 - SQLAgent uses the `"sql"` model
 - VegaLiteAgent uses the `"vega_lite"` model  
-- AnalystAgent uses the `"analyst"` model
 - ChatAgent uses the `"chat"` model (falls back to `"default"` if not specified)
 
 Agent class names are converted to model keys automatically (e.g., `SQLAgent` → `"sql"`, `VegaLiteAgent` → `"vega_lite"`).
