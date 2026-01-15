@@ -73,7 +73,9 @@ The left sidebar provides quick access to all major features:
 
 ### Organize your explorations
 
-Each time you run a SQL query that returns data, a new **exploration** is created. Explorations are persistent, contextual workspaces for working with a specific dataset. They capture the conversation, generated analyses, visualizations, and other data artifacts so they can evolve over time and be revisited or exported. The navigation menu shows them as a persistent tree across both Explore and Report mode.
+Each time you run a SQL query that returns data, a new **exploration** is created. Explorations are persistent, contextual workspaces for working with a specific dataset. They capture the conversation, generated analyses, visualizations, and other data artifacts so they can evolve over time and be revisited or exported.
+
+Explorations start from the global context (available sources and metadata). If a question is a follow-up, the new exploration is nested under the parent; if it is not, Lumen creates a new top-level exploration. The navigation menu shows them as a persistent tree across both Explore and Report mode.
 
 **Home** — Your starting point. All initial questions begin here.
 

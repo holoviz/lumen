@@ -57,7 +57,9 @@ Use manual editing for small tweaks (like changing chart colors or sort order), 
 
 ## Explorations
 
-An Exploration is a persistent, contextual workspace for working with a specific dataset. It is created when a SQL query is first generated and captures the full interaction state, including the conversation, analyses, visualizations, and other data artifacts. An Exploration evolves over time, supports multiple questions and operations on the same data, and can be revisited or exported as a coherent unit. Explorations may branch from existing ones or be created with an empty context, using only the globally available data sources.
+An Exploration is a persistent, contextual workspace for working with a specific dataset. It is created when a SQL query is first generated and captures the full interaction state, including the conversation, analyses, visualizations, and other data artifacts. An Exploration evolves over time, supports multiple questions and operations on the same data, and can be revisited or exported as a coherent unit.
+
+Explorations start from the global context (available sources and metadata). If a question is a follow-up, the new exploration is nested under the parent; if it is not, Lumen creates a new top-level exploration.
 
 Use the navigation menu to move between explorations or nest follow-ups under the exploration they build on.
 

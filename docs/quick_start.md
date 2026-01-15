@@ -150,7 +150,9 @@ All of this happens automatically when you just ask a question. Lumen groups the
 
 ## Explorations
 
-An Exploration is a persistent, contextual workspace for working with a specific dataset. It is created when a SQL query is first generated and captures the full interaction state, including the conversation, analyses, visualizations, and other data artifacts. An Exploration evolves over time, supports multiple questions and operations on the same data, and can be revisited or exported as a coherent unit. Explorations may branch from existing ones or be created with an empty context, using only the globally available data sources.
+An Exploration is a persistent, contextual workspace for working with a specific dataset. It is created when a SQL query is first generated and captures the full interaction state, including the conversation, analyses, visualizations, and other data artifacts. An Exploration evolves over time, supports multiple questions and operations on the same data, and can be revisited or exported as a coherent unit.
+
+Explorations start from the global context (available sources and metadata). When you ask a question that triggers a SQL query, Lumen creates a new exploration; if the question is a follow-up, the new exploration is nested under the parent, and if it is not, Lumen creates a new top-level exploration.
 
 ## Try with Your Own Data
 
