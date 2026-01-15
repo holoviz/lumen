@@ -19,7 +19,7 @@ from ..context import (
     LWW, ContextError, TContext, merge_contexts,
 )
 from ..llm import Message
-from ..models import ThinkingYesNo
+from ..models import PartialBaseModel, ThinkingYesNo
 from ..report import ActorTask
 from ..tools import MetadataLookup, Tool
 from ..utils import log_debug, wrap_logfire
@@ -56,14 +56,14 @@ class RawStep(BaseModel):
     title: str
 
 
-class RawPlan(BaseModel):
+class RawPlan(PartialBaseModel):
     title: str = Field(description="A title that describes this plan, up to three words.")
     steps: list[RawStep] = Field(
         description="""Steps to solve the user query. Each step MUST use a DIFFERENT actor than the previous step and try to limit to minimal steps.""",
     )
 
 
-class Reasoning(BaseModel):
+class Reasoning(PartialBaseModel):
     chain_of_thought: str = Field(
         description="""
         Briefly summarize the user's goal and categorize the question type:
@@ -80,15 +80,16 @@ class Reasoning(BaseModel):
 
 
 def make_plan_model(agents: list[str], tools: list[str]) -> type[RawPlan]:
-    # TODO: make this inherit from PartialBaseModel
     step = create_model(
         "Step",
+        __base__=PartialBaseModel,
         actor=(Literal[tuple(agents+tools)], FieldInfo(description="The name of the actor to assign a task to.")),
         instruction=(str, FieldInfo(description="Instructions to the actor to assist in the task, and whether rendering is required.")),
         title=(str, FieldInfo(description="Short title of the task to be performed; up to three words.")),
     )
     plan = create_model(
         "Plan",
+        __base__=PartialBaseModel,
         title=(
             str, FieldInfo(description="A title that describes this plan, up to three words.")
         ),
@@ -282,6 +283,20 @@ class Planner(Coordinator):
         pre_plan_output["is_follow_up"] = is_follow_up
         return agents, tools, pre_plan_output
 
+    def _render_partial_todos(self, raw_plan: RawPlan | None) -> str:
+        """Render partial todos from a streaming RawPlan."""
+        if raw_plan is None or not hasattr(raw_plan, 'steps') or raw_plan.steps is None:
+            return ""
+
+        todos_list = []
+        for step in raw_plan.steps:
+            # Handle partial step objects that may have missing fields
+            title = getattr(step, 'title', None) or getattr(step, 'instruction', None) or '...'
+            if title:
+                todos_list.append(f"- ⚪ {title}")
+
+        return "\n".join(todos_list)
+
     @wrap_logfire(span_name="Make Plan", extract_args=["messages", "previous_plans", "is_follow_up"])
     async def _make_plan(
         self,
@@ -344,7 +359,22 @@ class Planner(Coordinator):
                     step.stream(reasoning.chain_of_thought, replace=True)
                     previous_plans.append(reasoning.chain_of_thought)
 
-        return await self._fill_model(messages, reasoning.chain_of_thought, plan_model)
+        # Stream the plan model and update checklist UI incrementally
+        raw_plan = None
+        async for raw_plan in self.llm.stream(
+            messages=messages,
+            system=reasoning.chain_of_thought,
+            model_spec=model_spec,
+            response_model=plan_model,
+            max_retries=3,
+        ):
+            # Update the checklist UI as steps stream in
+            partial_todos = self._render_partial_todos(raw_plan)
+            if partial_todos and self.steps_layout is not None:
+                self._todos_title.object = "📋 Building checklist..."
+                self.steps_layout.header[1].object = partial_todos
+
+        return raw_plan
 
     async def _resolve_plan(
         self,
