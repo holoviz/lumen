@@ -1,59 +1,47 @@
 {% extends 'BaseViewAgent/main.jinja2' %}
 
 {% block instructions %}
-Generate complete, effective Vega-Lite visualizations that clearly communicate data insights.
+Generate effective Vega-Lite visualizations that clearly communicate data insights.
 
-# ESSENTIAL STRUCTURE
+# CHART TYPE SELECTION
 
-Every visualization must:
-- Use `data: {name: {{ memory['table'] }}}` with exact column names from source
-- Wrap all marks in a `layer` array, each with its own `mark` and `encoding`
-- Focus on ONE primary metric or relationship per chart
-- Include narrative titles that tell a story about the data (what happened, not just what's shown)
-- Do not overcrowd the plot with too many data points, especially for bars
+Choose the right chart based on your data:
 
-# MARK vs ENCODING
+| Data Pattern | Chart Type | Key Settings |
+|-------------|------------|---------------|
+| Ranking/comparison | Horizontal bar | `sort: -x`, limit top 10 |
+| Timeline/events | Scatter/point on time axis | `scale: {domain: [start, end]}`, sort by date |
+| Trend over time | Line chart | `type: temporal` or quantitative with format |
+| Part-to-whole | Stacked bar | `color` encodes category |
+| Correlation | Scatter plot | Both axes quantitative |
+| Geographic | Map with lat/long | `projection`, use `longitude`/`latitude` encodings |
 
-This is the most common source of errors. See examples for correct placement:
-- **Mark**: static styling—position (`dx`, `dy`, `align`, `baseline`) and appearance (`color`, `opacity`, `fontSize`)
-- **Encoding**: data mappings—channels (`x`, `y`, `color`, `size`, `text`) with `{field: ...}` or `{value: ...}`
-- **NEVER put `dx`, `dy`, `align`, `baseline` in encoding**—they belong in mark only
+# CRITICAL RULES
 
-# LEGENDS
-
-Legends appear when you map data to `color`, `size`, or `shape` in encoding.
-
-**Single field**: Map directly
-**Multiple series**: Use `transform` to create a constant field, then map it (never use `datum` in color encoding)
-**Avoid redundancy**: If encoding the same field with both size and color, either:
-  - Use size only with a single color: `color: {value: '#1f77b4'}`
-  - Or disable one legend: `color: {field: value, scale: {scheme: blues}, legend: null}`
+1. **Data reference**: `data: {name: {{ memory['table'] }}}` with exact column names
+2. **Layer structure**: ALWAYS wrap marks in `layer` array—never use top-level `mark` + `encoding`
+3. **Quote field names**: Field names with spaces, commas, or special chars MUST be quoted: `field: "GDP per capita, PPP (2021 $)"`
+4. **Tooltip is an array**: `tooltip: [{field: x}, {field: y}]` NOT `tooltip: {a: {field: x}}`
+5. **Mark vs Encoding**: `dx`, `dy`, `align`, `baseline` go in `mark` only, NEVER in encoding
+6. **Scale domains**: Set explicit domain when data doesn't start at 0 (e.g., years 1896-2022 need `scale: {domain: [1890, 2025]}`)
+7. **Sort appropriately**: Rankings by value (`sort: -x`), timelines by date (`sort: {field: date_field}`)
+8. **Limit categories**: More than 10 items? Filter to top 10 with window transform
+9. **Title with subtitle**: Use `title: {text: "...", subtitle: "..."}` to convey insights, not just topic
 
 # KEY PATTERNS
 
-**Sort rankings**: `sort: "-x"` (horizontal) or `sort: "-y"` (vertical) on the categorical axis
+**Year fields**: Use `type: quantitative` with `axis: {format: 'd'}` to prevent comma separators
 
-**Color purposefully**: Encode dimensions, highlight outliers/leaders, or show thresholds. Keep color in `mark` for text labels that shouldn't appear in legends. When encoding quantitative values with color, consider setting an appropriate `domain` if data doesn't start at 0 (e.g., `scale: {scheme: blues, domain: [min, max]}`).
+**Timelines**: 
+- X-axis = time with proper domain, NOT starting at 0
+- Sort by date field, NOT alphabetically
+- Color can encode categories (e.g., season, type)
 
-**Informative titles**: Title tells a story (what happened, not what's shown). See examples.
+**Highlight leader**: `condition: {test: "datum.rank === 1", value: '#1f77b4'}`
 
-**Data types**: Match type to your data - quantitative for continuous, ordinal for ordered categories, nominal for unordered, temporal for dates
-- For year fields: use `type: quantitative` with `axis.format: 'd'` to prevent comma separators (1990 not 1,990)
+**Clean styling**: `config: {view: {stroke: null}}`, minimal gridlines
 
-**Incompatible scales**: Different units cannot share Y-axis. Choose: (1) primary metric only, or (2) faceting with `fold` + `resolve: {scale: {y: independent}}`
-
-**Dynamic filtering**: Use window transforms instead of hardcoding (min/max, endpoints, top N):
-- Top-level: applies to all layers | Layer-level: that layer only
-
-**Scale domains**: Default starts at 0, hiding clustered data (5500-6000 on 0-6000 scale). Set explicit domain: `scale: {domain: [5500, 6000]}`
-
-**Clean, minimal styling**: Remove borders (`config.view.stroke: null`), context-aware gridlines (hbar=x-grid, vbar/line=y-grid), inline units (`format: '.0%'`), drop obvious titles
-
-**Selective emphasis**: Reduce opacity of secondary data (`opacity: 0.3`), keep primary prominent (`opacity: 1, strokeWidth: 2-3`)
-
-**Geographic maps**: Use `longitude`/`latitude` encodings (NOT `x`/`y`) with `projection: {type: mercator}` at top level. Base map added automatically.
-
-**Choropleth maps**: Join data to map boundaries - `lookup: <map_field>`, `from: {data: {...}, key: <your_field>, fields: [...]}` (key/fields inside from!)
+**Geographic maps**: Use `longitude`/`latitude` encodings (NOT `x`/`y`). Data MUST have coordinate columns.
 {% endblock %}
 
 {% block examples %}
@@ -63,6 +51,20 @@ Legends appear when you map data to `color`, `size`, or `shape` in encoding.
 {{ example }}
 {% endfor %}
 {% endif %}
+
+Basic scatter with special characters in field names:
+```yaml
+data:
+  name: <TABLE_NAME>
+layer:
+  - mark: {type: circle, opacity: 0.7}
+    encoding:
+      x: {field: "GDP per capita, PPP (constant 2021 $)", type: quantitative}
+      y: {field: "Life expectancy at birth", type: quantitative}
+      tooltip:
+        - {field: Entity, type: nominal, title: Country}
+        - {field: "GDP per capita, PPP (constant 2021 $)", type: quantitative}
+```
 
 Mark vs Encoding (common error—dx/dy go in mark, NOT encoding):
 ```yaml
@@ -79,6 +81,20 @@ layer:
   #     dx: {value: 5}  # INVALID - dx is not an encoding channel
 ```
 
+Window transform structure (common error—sort is INSIDE window, not a separate transform):
+```yaml
+# ✅ CORRECT: sort is a property OF the window transform
+transform:
+  - window: [{op: rank, field: value, as: rank}]
+    sort: [{field: value, order: descending}]
+  - filter: datum.rank <= 10
+
+# ❌ WRONG: sort as a sibling key causes validation error
+# transform:
+#   - sort: [{field: value, order: descending}]  # INVALID - not a transform type
+#     window: [{op: rank, field: value, as: rank}]
+```
+
 Title with subtitle:
 ```yaml
 title:
@@ -88,6 +104,17 @@ title:
   subtitleFontSize: 14
   subtitleColor: '#666666'
   anchor: start
+```
+
+Modifying existing title:
+```yaml
+old_str: |
+  title:
+    text: GDP vs Life Expectancy
+new_str: |
+  title:
+    text: Higher GDP Correlates with Longer Life
+    subtitle: 204 countries, 1990-2023
 ```
 
 Simple time series with endpoint labels:
@@ -127,7 +154,7 @@ layer:
       y: {field: state, type: nominal, sort: "-x", axis: {title: null}}
       x: {field: turbine_count, type: quantitative, axis: {title: "Number of Turbines", format: ","}}
       color:
-        condition: {test: "datum.state === 'TX'", value: '#1f77b4'}
+        condition: {test: "datum.rank === 1", value: '#1f77b4'}
         value: '#aec7e8'
 config:
   view: {stroke: null}
@@ -199,7 +226,7 @@ layer:
       color: {field: category, type: nominal, legend: {title: "Category", orient: "right"}}
 ```
 
-Choropleth map:
+Choropleth map (US states):
 ```yaml
 data:
   url: "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"
@@ -208,15 +235,41 @@ transform:
   - lookup: "properties.name"
     from:
       data: {name: <TABLE_NAME>}
-      key: State
-      fields: [Total_Students]
+      key: state_name
+      fields: [population]
 mark: geoshape
 projection: {type: albersUsa}
 encoding:
-  color: {field: Total_Students, type: quantitative, scale: {scheme: blues}, legend: {title: "Total Students"}}
+  color: {field: population, type: quantitative, scale: {scheme: blues}, legend: {title: "Population"}}
   tooltip:
     - {field: "properties.name", type: nominal, title: "State"}
-    - {field: Total_Students, type: quantitative, format: ",", title: "Total Students"}
+    - {field: population, type: quantitative, format: ",", title: "Population"}
+```
+
+Choropleth map (world countries):
+```yaml
+data:
+  url: "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json"
+  format: {type: topojson, feature: countries}
+transform:
+  - lookup: "properties.name"
+    from:
+      data: {name: <TABLE_NAME>}
+      key: country
+      fields: [value]
+mark: {type: geoshape, stroke: white, strokeWidth: 0.5}
+projection: {type: equalEarth}
+encoding:
+  color:
+    condition:
+      test: datum.value != null
+      field: value
+      type: quantitative
+      scale: {scheme: blues}
+    value: '#e0e0e0'
+  tooltip:
+    - {field: "properties.name", type: nominal, title: "Country"}
+    - {field: value, type: quantitative, title: "Value"}
 ```
 {% endblock %}
 

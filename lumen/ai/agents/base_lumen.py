@@ -4,8 +4,8 @@ from ...config import dump_yaml, load_yaml
 from ..config import PROMPTS_DIR
 from ..context import TContext
 from ..llm import Message
-from ..models import RetrySpec
-from ..utils import apply_changes, retry_llm_output
+from ..models import SearchReplaceSpec
+from ..utils import apply_search_replace, retry_llm_output
 from ..views import LumenOutput
 from .base import Agent
 
@@ -14,7 +14,7 @@ class BaseLumenAgent(Agent):
 
     prompts = param.Dict(
         default={
-            "revise_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "BaseLumenAgent" / "revise_output.jinja2"},
+            "revise_output": {"response_model": SearchReplaceSpec, "template": PROMPTS_DIR / "BaseLumenAgent" / "revise_output.jinja2"},
         }
     )
 
@@ -43,13 +43,11 @@ class BaseLumenAgent(Agent):
             language = view.language
         if spec is None:
             raise ValueError("Must provide previous spec to revise.")
-        lines = spec.splitlines()
-        numbered_text = "\n".join(f"{i:2d}: {line}" for i, line in enumerate(lines, 1))
         system = await self._render_prompt(
             "revise_output",
             messages,
             context,
-            numbered_text=numbered_text,
+            spec=spec,
             language=language,
             feedback=instruction,
             errors=errors,
@@ -62,7 +60,7 @@ class BaseLumenAgent(Agent):
             response_model=retry_model,
             model_spec="edit"
         )
-        new_spec_raw = apply_changes(lines, result.edits)
+        new_spec_raw = apply_search_replace(spec, result.edits)
         spec = load_yaml(new_spec_raw)
         if view is not None:
             view.validate_spec(spec)

@@ -1,0 +1,138 @@
+{% extends 'BaseLumenAgent/revise_output.jinja2' %}
+
+{% block instructions %}
+{{ super() }}
+
+Polish the chart. Fix only clear problems.
+
+## Field References
+- If plot is blank/broken, check field names match data columns exactly
+- Quote field names with spaces: `field: "Life Expectancy"`
+
+## Style (ALWAYS apply)
+- Axis titles: `titleFontSize: 16`
+- Axis labels: `labelFontSize: 12`  
+- X-axis for time series: `grid: false`
+- Text annotations: `fontSize: 14`
+- Single-series charts: `color: '#333333'`
+
+## Formatting
+- Remove false precision (e.g., 54.0923 → 54.1)
+- Axis: `axis: {format: ',.1f'}`
+- Text: `text: {field: x, format: ',.1f'}`
+- NEVER put format on x/y encoding channel directly
+
+## UX (fix only if broken)
+- Fix wasted axis space only if >30% of range is empty
+- Fix sort order if timeline sorted alphabetically
+- Fix overcrowding if >20 items unreadable
+
+## Structure (CRITICAL)
+- ONLY modify existing content—never append at document end
+- Tooltips go INSIDE existing `encoding:` blocks within `layer:`, not at root
+- Never add `- encoding:` at root level (outside `layer:` array)
+- Copy old_str EXACTLY from document below—never reconstruct from memory
+
+Return empty edits if chart looks good.
+{% endblock %}
+
+{%- block examples %}
+### Polish both axes (add font sizes, disable grid for x-axis)
+```yaml
+old_str: |
+    x:
+      axis:
+        format: d
+      field: Year
+      title: Year
+      type: quantitative
+    y:
+      field: Life Expectancy
+      title: Life Expectancy
+      type: quantitative
+new_str: |
+    x:
+      axis:
+        format: d
+        grid: false
+        labelFontSize: 12
+        titleFontSize: 16
+      field: Year
+      title: Year
+      type: quantitative
+    y:
+      axis:
+        labelFontSize: 12
+        titleFontSize: 16
+      field: Life Expectancy
+      title: Life Expectancy
+      type: quantitative
+```
+
+### Format text encoding and increase mark fontSize
+```yaml
+old_str: |
+  - encoding:
+      text:
+        field: Life Expectancy
+        type: quantitative
+      x:
+        field: Year
+    mark:
+      align: left
+      dx: 5
+      type: text
+new_str: |
+  - encoding:
+      text:
+        field: Life Expectancy
+        format: ',.1f'
+        type: quantitative
+      x:
+        field: Year
+    mark:
+      align: left
+      dx: 5
+      fontSize: 14
+      type: text
+```
+
+### Add tooltips (MUST be inside layer encoding)
+```yaml
+old_str: |
+  - encoding:
+      x:
+        field: Year
+        type: quantitative
+      y:
+        field: Life Expectancy
+        type: quantitative
+    mark:
+new_str: |
+  - encoding:
+      tooltip:
+      - field: Year
+        title: Year
+      - field: Life Expectancy
+        title: Life Expectancy
+        format: ',.1f'
+      x:
+        field: Year
+        type: quantitative
+      y:
+        field: Life Expectancy
+        type: quantitative
+    mark:
+```
+
+### ❌ WRONG: Never append at document end
+```yaml
+# old_str: |
+#   width: container
+# new_str: |
+#   width: container
+#   - encoding:        ← INVALID: list item outside layer: array
+```
+
+{{ super() }}
+{% endblock %}

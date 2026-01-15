@@ -48,9 +48,6 @@ if TYPE_CHECKING:
     from panel.chat.step import ChatStep
 
     from ...sources.base import Source
-    from .models import (
-        DeleteLine, InsertLine, LineEdit, ReplaceLine,
-    )
 
 
 def format_float(num):
@@ -58,6 +55,10 @@ def format_float(num):
     Process a float value, returning numeric types instead of strings.
     For very large/small numbers, returns a float that will display in scientific notation.
     """
+    # Handle string inputs (like datetime strings) - return as-is
+    if isinstance(num, str):
+        return num
+
     if pd.isna(num) or math.isinf(num):
         return num
 
@@ -579,15 +580,9 @@ async def describe_data(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: boo
         shape = df.shape
         n_rows, n_cols = shape
 
-        # For tiny datasets, return compact column-oriented YAML
+        # For tiny datasets, return as markdown table
         if size < 250:
-            data = {}
-            for col in df.columns:
-                vals = [to_python_native(v) for v in df[col].tolist()]
-                # Format floats
-                vals = [format_float(v) if isinstance(v, float) else v for v in vals]
-                data[col] = vals
-            return yaml.dump(data, default_flow_style=None, allow_unicode=True, sort_keys=False)
+            return df.to_markdown(index=False)
 
         # Sampling strategy with deterministic seed
         is_sampled = n_rows > 5000
@@ -664,6 +659,12 @@ async def describe_data(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: boo
                     if "enum" in updated:
                         col_stats["enum"] = updated["enum"]
 
+                # Add max_length for string columns
+                if dtype == 'object':
+                    max_len = df[col].dropna().astype(str).str.len().max()
+                    if pd.notna(max_len):
+                        col_stats["max_length"] = int(max_len)
+
             # Null counts (sparse)
             nulls = int(df[col].isnull().sum())
             if nulls > 0:
@@ -682,8 +683,8 @@ async def describe_data(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: boo
                 stats[col] = {}
             head_vals = [to_python_native(v) for v in head_rows[col].tolist()]
             tail_vals = [to_python_native(v) for v in tail_rows[col].tolist()]
-            stats[col][f"head_{n_samples}"] = head_vals
-            stats[col][f"tail_{n_samples}"] = tail_vals
+            stats[col]["head"] = head_vals
+            stats[col]["tail"] = tail_vals
 
         # === Data shape ===
         if n_cols > 20:
@@ -1023,55 +1024,6 @@ def generate_diff(old_text: str, new_text: str, filename: str = "spec") -> str:
     return ''.join(diff)
 
 
-def apply_changes(lines: list[str], edits: list[LineEdit]) -> str:
-    """
-    Apply a Patch to a list of lines (no trailing newline characters in elements).
-    Indices in the Patch refer to the ORIGINAL `lines`.
-
-    Strategy:
-      - To keep indices stable, apply all non-insert edits in DESCENDING order of line_no.
-      - Apply inserts in ASCENDING order of line_no (grouped), inserting BEFORE that index.
-        Inserts at the same index are applied in the order they appear in `patch.edits`.
-    """
-    # Separate edits
-    inserts: list[InsertLine] = [e for e in edits if e.op == "insert"]
-    replaces: list[ReplaceLine] = [e for e in edits if e.op == "replace"]
-    deletes: list[DeleteLine] = [e for e in edits if e.op == "delete"]
-
-    n = len(lines)
-
-    # Validate bounds against the ORIGINAL text
-    for e in replaces:
-        if not (1 <= e.line_no <= n):
-            raise IndexError(f"replace line_no out of range: {e.line_no} (1..{n})")
-    for e in deletes:
-        if not (1 <= e.line_no <= n):
-            raise IndexError(f"delete line_no out of range: {e.line_no} (1..{n})")
-    # For inserts, only validate >= 1; out-of-range high values will append to end
-    for e in inserts:
-        if e.line_no < 1:
-            raise IndexError(f"insert line_no must be >= 1, got {e.line_no}")
-
-    out = lines[:]
-
-    # 1) Apply replace/delete in descending order to keep original indices valid
-    for e in sorted([*replaces, *deletes], key=lambda x: x.line_no, reverse=True):
-        if e.op == "replace":
-            out[e.line_no-1] = e.line  # type: ignore[union-attr]
-        else:  # delete
-            del out[e.line_no-1]
-
-    # 2) Apply inserts in ascending order; at same index keep user order
-    inserts_sorted = sorted(
-        enumerate(inserts), key=lambda pair: (pair[1].line_no, -pair[0])
-    )
-    for _, ins in inserts_sorted:
-        # Cap insert position at current list length (allows sequential line numbers for appending)
-        insert_pos = min(ins.line_no - 1, len(out))
-        out.insert(insert_pos, ins.line)
-
-    return "\n".join(out)
-
 def class_name_to_llm_spec_key(class_name: str) -> str:
     """
     Convert class name to llm_spec_key using the same logic as Actor.llm_spec_key.
@@ -1163,6 +1115,43 @@ def normalized_name(inst: param.Parameterized):
     if re.match('^'+class_name+'[0-9]{5}$', inst.name):
         return class_name
     return inst.name
+
+
+def apply_search_replace(text: str, edits: list) -> str:
+    """
+    Apply search/replace edits to text.
+
+    Each old_str must appear exactly once in the text.
+    Raises ValueError if old_str not found or found multiple times.
+    """
+    result = text
+
+    for edit in edits:
+        count = result.count(edit.old_str)
+        if count == 0:
+            # Try to find a close match for better error message
+            error_msg = (
+                f"old_str not found in document. Make sure whitespace matches exactly:\n"
+                f"---\n{edit.old_str}\n---"
+            )
+            log_debug(
+                f"\033[91mError applying edit due to {error_msg}:\033[0m\n"
+                f"Old string:\n\033[90m---\033[0m\n{edit.old_str}\n\033[90m---\033[0m\n"
+                f"New string:\n\033[90m---\033[0m\n{edit.new_str}\n\033[90m---\033[0m"
+            )
+        if count > 1:
+            error_msg = (
+                f"old_str appears {count} times (must be unique). Include more context:\n"
+                f"---\n{edit.old_str[:200]}...\n---"
+            )
+            log_debug(
+                f"\033[91mError applying edit due to {error_msg}:\033[0m\n"
+                f"Old string:\n\033[90m---\033[0m\n{edit.old_str}\n\033[90m---\033[0m\n"
+                f"New string:\n\033[90m---\033[0m\n{edit.new_str}\n\033[90m---\033[0m"
+            )
+        result = result.replace(edit.old_str, edit.new_str, 1)
+
+    return result
 
 
 def set_nested(data, keys, value):

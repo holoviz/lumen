@@ -15,7 +15,7 @@ from lumen.ai.agents import AnalystAgent, ChatAgent, SQLAgent
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.coordinator import Plan, Planner
 from lumen.ai.coordinator.planner import Reasoning, make_plan_model
-from lumen.ai.models import ReplaceLine, RetrySpec
+from lumen.ai.models import SearchReplace, SearchReplaceSpec
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
 from lumen.ai.views import SQLOutput
@@ -216,9 +216,11 @@ async def test_plan_edit(sql_plan):
 
 async def test_plan_revise(sql_plan):
     sql_plan.llm.set_responses([
-        RetrySpec(chain_of_thought="Select first row", edits=[
-            ReplaceLine(line_no=2, line="value AS value_sum"),
-            ReplaceLine(line_no=3, line="FROM tiny LIMIT 1")
+        SearchReplaceSpec(chain_of_thought="Select first row", edits=[
+            SearchReplace(
+                old_str="SELECT\n  SUM(value) AS value_sum\nFROM tiny",
+                new_str="SELECT\n  value AS value_sum\nFROM tiny\nLIMIT 1"
+            ),
         ]),
         lambda: f"Result: {sql_plan[0].out_context['pipeline'].data.iloc[0, 0]}"
     ])

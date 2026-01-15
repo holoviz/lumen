@@ -1,5 +1,3 @@
-from typing import Annotated, Literal
-
 from instructor.dsl.partial import PartialLiteralMixin
 from pydantic import BaseModel, Field, model_validator
 
@@ -69,49 +67,47 @@ class ThinkingYesNo(BaseModel):
     yes: bool = Field(description="True if yes, otherwise False.")
 
 
-class InsertLine(BaseModel):
-    op: Literal["insert"] = "insert"
-    line_no: int = Field(ge=1, description=(
-        "Insert BEFORE this 1-based line number. "
-        "Use line_no == len(lines) to append at the end."
-    ))
-    line: str = Field(min_length=1, description="Content for the new line (must be non-empty).")
+class SearchReplace(PartialBaseModel):
+    """A single search/replace edit operation."""
 
-class ReplaceLine(BaseModel):
-    op: Literal["replace"] = "replace"
-    line_no: int = Field(ge=1, description="The 1-based line number to replace.")
-    line: str = Field(description="The new content for the line (empty string is allowed).")
+    old_str: str = Field(
+        description=(
+            "COPY-PASTE the exact text from the document. Must appear EXACTLY ONCE. "
+            "Include 3-5 lines of context to ensure uniqueness. "
+            "Preserve exact whitespace and indentation—do not reconstruct from memory."
+        ),
+    )
+    new_str: str = Field(
+        description=(
+            "The replacement text. Use empty string to delete. "
+            "Preserve the same indentation style as old_str."
+        ),
+    )
 
-class DeleteLine(BaseModel):
-    op: Literal["delete"] = "delete"
-    line_no: int = Field(ge=1, description="The 1-based line number to delete.")
 
-LineEdit = Annotated[
-    InsertLine | ReplaceLine | DeleteLine,
-    Field(discriminator="op")
-]
-
-class RetrySpec(BaseModel):
-    """Represents a revision of text with its content and changes."""
+class SearchReplaceSpec(PartialBaseModel):
+    """Revision using search/replace patterns (no line numbers needed)."""
 
     chain_of_thought: str = Field(
-        description="In 1-2 sentences, explain the plan to revise the text based on the feedback provided.",
+        description="In 2-3 sentences: (1) what changes to make, (2) identify the EXACT lines to copy from the document for old_str (quote them), (3) note indentation level.",
         examples=[
-            "The SQL query failed due to missing quotes around the column name. Will add double quotes to fix the syntax error.",
-            "The chart needs horizontal bars instead of vertical. Will swap x and y encodings."
-        ])
-    edits: list[LineEdit] = Field(description="A list of line edits based on the chain_of_thought.")
+            "Adding tooltips to the first layer. The document has '- encoding:\n    x:' at 2-space indent inside layer. Will copy that block and insert tooltip before x.",
+            "Formatting text labels. The document shows '    text:\n      field: Life Expectancy\n      type: quantitative' - will copy exactly and add format: ',.1f'."
+        ]
+    )
+    edits: list[SearchReplace] = Field(
+        description=(
+            "List of search/replace operations. Each old_str must be unique in the document. "
+        )
+    )
 
-    @model_validator(mode="after")
-    def validate_indices_nonconflicting(self) -> "RetrySpec":
-        # Disallow more than one delete/replace on the same original index.
-        seen_replace_or_delete: set[int] = set()
-        for e in self.edits:
-            if e.op in ("replace", "delete"):
-                if e.line_no in seen_replace_or_delete:
-                    raise ValueError(
-                        f"Multiple {e.op}/delete edits targeting the same line_no={e.line_no} "
-                        "are ambiguous. Combine them or split into separate patches."
-                    )
-                seen_replace_or_delete.add(e.line_no)
+    @model_validator(mode='after')
+    def validate_unique_old_str(self):
+        """Validate that old_str values are unique within edits."""
+        old_strs = [edit.old_str for edit in self.edits]
+        duplicates = [s for s in old_strs if old_strs.count(s) > 1]
+        if duplicates:
+            # Get unique duplicates
+            unique_duplicates = list(set(duplicates))
+            raise ValueError(f"Duplicate old_str: {unique_duplicates}")
         return self

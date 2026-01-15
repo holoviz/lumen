@@ -23,7 +23,9 @@ If user asks to "make it look better", "professional", "publication-ready", or s
 {% endblock %}
 
 {%- block examples -%}
-# EXAMPLES
+{{ super() }}
+
+# VEGA-LITE SPECIFIC EXAMPLES
 {% if doc_examples is defined and doc_examples %}
 {% for example in doc_examples %}
 {{ example }}
