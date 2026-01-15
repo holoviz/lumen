@@ -360,7 +360,6 @@ class Planner(Coordinator):
                     step.stream(reasoning.chain_of_thought, replace=True)
                     previous_plans.append(reasoning.chain_of_thought)
 
-        # Stream the plan model and update checklist UI incrementally
         raw_plan = None
         async for raw_plan in self.llm.stream(
             messages=messages,
@@ -369,7 +368,6 @@ class Planner(Coordinator):
             response_model=plan_model,
             max_retries=3,
         ):
-            # Update the checklist UI as steps stream in
             partial_todos = self._render_partial_todos(raw_plan)
             if partial_todos and self.steps_layout is not None:
                 self._todos_title.object = "📋 Building checklist..."
