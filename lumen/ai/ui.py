@@ -1577,6 +1577,7 @@ class ExplorerUI(UI):
     def _render_sidebar(self) -> list[Viewable]:
         switches = []
         cot = Switch(label='Chain of Thought', description='Show AI reasoning steps')
+        self._coordinator.link(cot, value='verbose', bidirectional=True)
         switches.append(cot)
         sql_agent = next(
             (agent for agent in self._coordinator.agents if isinstance(agent, SQLAgent)),
@@ -1584,15 +1585,11 @@ class ExplorerUI(UI):
         )
         if sql_agent:
             sql_planning = Switch(label='SQL Planning', description='Run discovery queries and adaptive exploration before final SQL')
-            sql_agent.planning_enabled = sql_planning
+            sql_planning.link(sql_agent, value='exploration_enabled', bidirectional=True)
             switches.append(sql_planning)
         validation = Switch(label='Validation Step', description='Check if the response fully answered your question')
+        self._coordinator.link(validation, value='validation_enabled', bidirectional=True)
         switches.append(validation)
-
-        self._coordinator.param.update(
-            verbose=cot,
-            validation_enabled=validation
-        )
 
         llm_config_button = Button(
             label="Configure AI Models",

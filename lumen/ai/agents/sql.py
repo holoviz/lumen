@@ -332,7 +332,7 @@ class SQLAgent(BaseLumenAgent):
 
     not_with = param.List(default=["DbtslAgent", "MetadataLookup", "TableListAgent"])
 
-    exploration_enabled = param.Boolean(default=True, doc="""
+    exploration_enabled = param.Boolean(default=True, allow_refs=True, doc="""
         Whether to enable SQL exploration mode. When False, only attempts oneshot SQL generation.""")
 
     purpose = param.String(
@@ -904,7 +904,7 @@ class SQLAgent(BaseLumenAgent):
         try:
             if not self.exploration_enabled:
                 # Try retry-wrapped one-shot approach
-                execute_method = retry_llm_output(self._render_execute_query)
+                execute_method = retry_llm_output()(self._render_execute_query)
             else:
                 # Try one-shot approach first
                 execute_method = self._render_execute_query
