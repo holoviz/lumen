@@ -748,7 +748,7 @@ class UI(Viewer):
             # Check if there are pending uploads that need to be transferred first
             if chat_input.pending_uploads:
                 # Initiate the transfer
-                chat_input.transfer()
+                chat_input.sync()
                 # Wait for transfer to complete
                 while not chat_input.value_uploaded:
                     await asyncio.sleep(0.1)
