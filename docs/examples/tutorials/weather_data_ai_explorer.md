@@ -149,7 +149,7 @@ Template overrides inject domain knowledge into agent system prompts. This custo
 
 - **Template overrides** inject specialized knowledge using the `template_overrides` attribute (see [Agents configuration](../../configuration/agents.md))
 - **Global context** shares knowledge across all agents by setting overrides on the `Actor` base class
-- **Agent-specific overrides** customize individual agent types like `AnalystAgent`
+- **Agent-specific overrides** customize individual agent types like `ChatAgent`
 - **Jinja2 templates** use `{{ super() }}` to preserve original content while adding customizations
 - **Automatic column requirements** — the `columns` attribute on Analysis classes automatically informs upstream agents about required columns
 
@@ -162,7 +162,7 @@ global_context = """
 {{ super() }} # (1)!
 
 To perform inversion analysis, extract temperatures at different pressure levels and
-complete a difference calculation. Then use AnalystAgent to determine if the temperature 
+complete a difference calculation. Then use ChatAgent to determine if the temperature 
 increases with decreasing pressure in a layer, which indicates an inversion.
 """
 lmai.actor.Actor.template_overrides = {"main": {"global": global_context}} # (2)!
@@ -171,19 +171,19 @@ lmai.actor.Actor.template_overrides = {"main": {"global": global_context}} # (2)
 1. `{{ super() }}` preserves the original template
 2. Apply to `Actor` base class to affect all agents
 
-### Make the analyst speak like a meteorologist
+### Make the chat agent speak like a meteorologist
 
-Specialized instructions make the analyst agent use proper meteorological terminology and explain concepts accurately, creating a more professional domain-specific assistant.
+Specialized instructions make the chat agent use proper meteorological terminology and explain concepts accurately, creating a more professional domain-specific assistant.
 
 ``` py title="weather_sounding.py"
-analyst_instructions = """
+chat_instructions = """
 {{ super() }}
 
 You are a meteorologist. Use proper meteorological terminology and explain 
 atmospheric concepts clearly.
 """
-lmai.agents.AnalystAgent.template_overrides = {
-    "main": {"instructions": analyst_instructions}
+lmai.agents.ChatAgent.template_overrides = {
+    "main": {"instructions": chat_instructions}
 }
 ```
 
@@ -309,17 +309,17 @@ global_context = """
 {{ super() }}
 
 To perform inversion analysis, extract temperatures at different pressure levels and
-complete a difference calculation. Then use AnalystAgent to determine if the temperature increases with decreasing pressure in a layer,
+complete a difference calculation. Then use ChatAgent to determine if the temperature increases with decreasing pressure in a layer,
 which indicates an inversion.
 """
 lmai.actor.Actor.template_overrides = {"main": {"global": global_context}}
 
-analyst_instructions = """
+chat_instructions = """
 {{ super() }}
 
 You are a meteorologist. Use proper meteorological terminology and explain atmospheric concepts clearly.
 """
-lmai.agents.AnalystAgent.template_overrides = {"main": {"instructions": analyst_instructions}}
+lmai.agents.ChatAgent.template_overrides = {"main": {"instructions": chat_instructions}}
 
 ui = lmai.ExplorerUI(
     data=source,

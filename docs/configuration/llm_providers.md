@@ -640,7 +640,6 @@ Agent class names convert to model types automatically:
 | SQLAgent | `sql` |
 | VegaLiteAgent | `vega_lite` |
 | ChatAgent | `chat` |
-| AnalystAgent | `analyst` |
 | AnalysisAgent | `analysis` |
 | (others) | `default` |
 

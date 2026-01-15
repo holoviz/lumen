@@ -117,7 +117,6 @@ ui = lmai.ExplorerUI(
     data='penguins.csv',
     agents=[
         lmai.agents.ChatAgent(template_overrides=chat_overrides),
-        lmai.agents.AnalystAgent(template_overrides=analyst_overrides),
     ]
 )
 ui.servable()
