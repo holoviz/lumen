@@ -361,7 +361,7 @@ class VegaLiteAgent(BaseViewAgent):
         out: VegaLiteOutput,
         messages: list[Message],
         context: TContext,
-        plot_image: bytes | None,
+        image_data: bytes | None,
         doc: str,
         table: str,
     ):
@@ -385,7 +385,7 @@ class VegaLiteAgent(BaseViewAgent):
                     with interface.add_step(title=title, steps_layout=steps_layout) as step:
                         current_spec, diff = await self._safe_update_spec(
                             pass_name, current_spec, messages, context,
-                            image_data=plot_image, doc=doc, table=table,
+                            image_data=image_data, doc=doc, table=table,
                             feedback=feedback_msg,
                         )
                         if diff:
@@ -427,8 +427,8 @@ class VegaLiteAgent(BaseViewAgent):
         out = self._output_type(component=view, title=step_title)
 
         # Schedule background polish
-        plot_image = self._export_plot_image(out)
-        self._schedule_background_polish(out, messages, context, plot_image, doc, pipeline.table)
+        image_data = self._export_plot_image(out)
+        self._schedule_background_polish(out, messages, context, image_data, doc, pipeline.table)
 
         return [out], {"view": dict(spec_dict, type=view.view_type)}
 
@@ -443,13 +443,39 @@ class VegaLiteAgent(BaseViewAgent):
         errors: list[str] | None = None,
         **kwargs
     ) -> str:
-        if errors is not None:
-            kwargs["errors"] = errors
+        """
+        Revise the visualization spec based on user feedback.
+
+        This method uses _update_spec instead of the base class implementation
+        to support image-based feedback and maintain consistency with other
+        spec modification methods.
+        """
+        # Get the spec to revise
+        if view is not None:
+            spec_dict = load_yaml(view.spec)
+        elif spec is not None:
+            spec_dict = load_yaml(spec) if isinstance(spec, str) else spec
+        else:
+            raise ValueError("Must provide previous spec to revise.")
+
+        image_data = self._export_plot_image(view)
         doc_examples = await self._get_doc_examples(feedback)
-        context["doc_examples"] = doc_examples
-        return await super().revise(
-            feedback, messages, context, view=view, spec=spec, language=language, **kwargs
+        new_spec, diff = await self._safe_update_spec(
+            "revise_output",
+            spec_dict,
+            messages,
+            context,
+            image_data=image_data,
+            errors=errors,
+            doc_examples=doc_examples,
+            feedback=feedback,
+            **kwargs
         )
+        if diff:
+            return dump_yaml(new_spec)
+        else:
+            raise ValueError("Annotation failed validation")
+
 
     async def annotate(
         self,
