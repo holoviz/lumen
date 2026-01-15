@@ -290,9 +290,7 @@ class Planner(Coordinator):
 
         todos_list = []
         for step in raw_plan.steps:
-            # Handle partial step objects that may have missing fields
-            # Use instruction (not title) to match what render_task_history uses
-            instruction = getattr(step, 'instruction', None) or getattr(step, 'title', None) or '...'
+            instruction = step.instruction or '...'
             if instruction:
                 todos_list.append(f"- ⚪ {instruction}")
 
