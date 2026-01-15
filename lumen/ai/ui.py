@@ -717,6 +717,7 @@ class UI(Viewer):
             self._main[:] = [self._navigation, main_content]
         else:
             self._main[:] = [main_content]
+        self.interface.active_widget.value_input = ""
 
     def _configure_interface(self, interface):
         def on_undo(instance, _):
