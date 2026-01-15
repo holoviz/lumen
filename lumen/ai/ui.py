@@ -582,7 +582,7 @@ class UI(Viewer):
         try:
             await self.llm.initialize(log_level=self.log_level)
             self._llm_status = 'connected'
-            self.interface.active_widget.disabled = False
+            self._chat_input.disabled = False
             self.interface.disabled = False
         except Exception as e:
             import traceback
@@ -591,7 +591,7 @@ class UI(Viewer):
             if self._error_alert is not None:
                 self._error_alert.object = "LLM connection failed; try another LLM under Preferences or check logs for more details."
                 self._error_alert.visible = True
-                self.interface.active_widget.disabled = True
+                self._chat_input.disabled = True
         finally:
             if self._cta is not None:
                 self._cta.object = self._get_status_text()
@@ -717,7 +717,7 @@ class UI(Viewer):
             self._main[:] = [self._navigation, main_content]
         else:
             self._main[:] = [main_content]
-        self.interface.active_widget.value_input = ""
+        self._chat_input.value_input = ""
 
     def _configure_interface(self, interface):
         def on_undo(instance, _):
@@ -744,18 +744,16 @@ class UI(Viewer):
         self._pending_sources_snapshot = None  # Also indicates dialog was opened from chat
 
         async def on_submit(event=None, instance=None):
-            chat_input = self.interface.active_widget
-
             # Check if there are pending uploads that need to be transferred first
-            if chat_input.pending_uploads:
+            if self._chat_input.pending_uploads:
                 # Initiate the transfer
-                chat_input.sync()
+                self._chat_input.sync()
                 # Wait for transfer to complete
-                while not chat_input.value_uploaded:
+                while not self._chat_input.value_uploaded:
                     await asyncio.sleep(0.1)
 
-            uploaded = chat_input.value_uploaded
-            user_prompt = chat_input.value_input
+            uploaded = self._chat_input.value_uploaded
+            user_prompt = self._chat_input.value_input
             if not user_prompt and not uploaded:
                 return
 
@@ -766,14 +764,14 @@ class UI(Viewer):
                     self._upload_controls._generate_file_cards({
                         key: value["value"] for key, value in uploaded.items()
                     })
-                chat_input.value_uploaded = {}
+                self._chat_input.value_uploaded = {}
 
                 # Store the pending query to execute after files are added
                 self._pending_query = user_prompt or None
                 self._pending_sources_snapshot = list(self.context.get("sources", []))
 
                 # Clear the input
-                chat_input.value_input = ""
+                self._chat_input.value_input = ""
 
                 # Open the Data Sources dialog
                 with hold():
@@ -791,7 +789,7 @@ class UI(Viewer):
                 self._update_main_view()
                 with hold():
                     self.interface.send(user_prompt, respond=bool(user_prompt))
-                    chat_input.value_input = ""
+                    self._chat_input.value_input = ""
 
         # Store as instance variable for access from other methods
         self._on_submit = on_submit
@@ -816,17 +814,23 @@ class UI(Viewer):
             "clear": {"callback": on_clear},
         }
         interface.disabled = False
-        existing_actions = interface.active_widget.actions
-        interface.active_widget.enable_upload = any(
+        self._chat_input = interface.active_widget
+
+        existing_actions = self._chat_input.actions
+        self._chat_input.enable_upload = any(
             issubclass(sc, UploadControls) for sc in self.source_controls
         )
-        interface.active_widget.actions = {
+        self._chat_input.actions = {
             **existing_actions,
         }
         self._configure_logs(interface)
         self.interface = interface
         # Watch for drag-and-drop file uploads and open Data Sources dialog
-        interface.active_widget.param.watch(self._handle_file_drop, 'value_uploaded')
+        self._chat_input.param.watch(self._handle_file_drop, 'value_uploaded')
+        self._chat_input.param.watch(self._handle_pending_uploads, 'pending_uploads')
+
+    def _handle_pending_uploads(self, event):
+        self._chat_input.sync()
 
     def _handle_file_drop(self, event):
         """Handle drag-and-drop file uploads by opening the Data Sources dialog."""
@@ -853,11 +857,10 @@ class UI(Viewer):
             return
 
         # Capture any text currently in the input field
-        chat_input = self.interface.active_widget
-        current_text = chat_input.value_input
+        current_text = self._chat_input.value_input
         if self._pending_query is None and current_text:
             self._pending_query = current_text
-            chat_input.value_input = ""
+            self._chat_input.value_input = ""
 
         # Save state before closing (close triggers _on_sources_dialog_close which resets state)
         query = self._pending_query
@@ -872,6 +875,13 @@ class UI(Viewer):
 
     def _execute_pending_query_with(self, user_prompt, old_sources):
         """Execute a query after files have been uploaded."""
+        # Remove views from widget
+        self._chat_input.param.update(
+            value_input="",
+            value_uploaded={},
+            views=[],
+        )
+
         # Build message with new sources info
         new_sources = [
             source for source in self.context.get("sources", [])
@@ -886,7 +896,6 @@ class UI(Viewer):
         self._update_main_view()
         msg = Column(user_prompt, source_view) if source_view else user_prompt
         self.interface.send(msg, respond=True)
-        self.interface.active_widget.value_input = ""
 
     def _on_sources_dialog_close(self, event):
         """Handle sources dialog close - restore pending query to input if user closed without adding files."""
@@ -895,11 +904,15 @@ class UI(Viewer):
 
         # Restore pending query if user closed without confirming
         if self._pending_query:
-            self.interface.active_widget.value_input = self._pending_query
+            self._chat_input.value_input = self._pending_query
 
         # Reset state
         self._pending_query = None
         self._pending_sources_snapshot = None
+        self._chat_input.param.update(
+            value_uploaded={},
+            views=[],
+        )
 
     def _configure_coordinator(self):
         log.setLevel(self.log_level)
@@ -952,7 +965,7 @@ class UI(Viewer):
 
     def _render_main(self) -> list[Viewable]:
         self._cta = Typography(self._get_status_text(), margin=(0, 0, 10, 0))
-        self._chat_splash = Column(self._cta, self.interface._widget, margin=(0, 0, 0, -10))
+        self._chat_splash = Column(self._cta, self._chat_input, margin=(0, 0, 0, -10))
         self._error_alert = Alert(
             object="",
             severity="error",
@@ -1319,7 +1332,7 @@ class UI(Viewer):
 
         async def use_suggestion(event):
             button = event.obj
-            with button.param.update(loading=True), self.interface.active_widget.param.update(loading=True):
+            with button.param.update(loading=True), self._chat_input.param.update(loading=True):
                 # Find the original suggestion tuple to get the text
                 button_index = suggestion_buttons.objects.index(button)
                 if button_index < len(suggestions):
@@ -1336,7 +1349,7 @@ class UI(Viewer):
                 if not analysis:
                     # Set the input value and trigger submit
                     # This will handle pending uploads via on_submit
-                    self.interface.active_widget.value_input = contents
+                    self._chat_input.value_input = contents
                     await self._on_submit()
                     return
 
@@ -1366,11 +1379,11 @@ class UI(Viewer):
                 suggestion_buttons.visible = False
                 if event.new > 1:  # prevent double clicks
                     return
-            with self.interface.active_widget.param.update(loading=True), self._busy():
+            with self._chat_input.param.update(loading=True), self._busy():
                 for demo_message in self.demo_inputs:
                     while self.interface.disabled:
                         await asyncio.sleep(1.25)
-                    self.interface.active_widget.value = demo_message
+                    self._chat_input.value = demo_message
                     await asyncio.sleep(2)
 
         suggestion_buttons = FlexBox(
