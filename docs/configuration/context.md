@@ -43,10 +43,10 @@ Fields without `NotRequired` are required. The agent only runs when required fie
 | Key | Added by | Used by |
 |-----|----------|---------|
 | `source` | Initial setup | SQLAgent |
-| `pipeline` | SQLAgent | AnalystAgent, VegaLiteAgent |
-| `sql` | SQLAgent | AnalystAgent |
-| `data` | SQLAgent | AnalystAgent |
-| `metaset` | TableListAgent | SQLAgent |
+| `pipeline` | SQLAgent | VegaLiteAgent |
+| `sql` | SQLAgent | ChatAgent |
+| `data` | SQLAgent | ChatAgent | VegaLiteAgent
+| `metaset` | TableListAgent | SQLAgent | ChatAgent |
 
 ## Safe context access
 
@@ -109,18 +109,6 @@ class MyInputs(ContextModel):
 1. Gathers all `source` values into `sources` list
 
 If Agent A adds `{"source": s1}` and Agent B adds `{"source": s2}`, your agent sees `sources: [s1, s2]`.
-
-## Context validation
-
-Lumen validates requirements before running agents. If required keys are missing, the agent won't run:
-
-```
-Context validation failed
-└─ AnalystAgent
-   └─ pipeline  [error] Missing required key 'pipeline'
-```
-
-**Fix:** Make sure SQLAgent runs first, or make the field optional with `NotRequired`.
 
 ## Best practices
 

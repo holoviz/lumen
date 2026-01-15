@@ -76,9 +76,9 @@ nav = [
       {"Sources" = "reference/api/sources.md"},
       {"Transforms" = "reference/api/transforms.md"},
       {"Views" = "reference/api/views.md"}
-    ]},
-    {"Contributing" = "reference/contributing.md"}
-  ]}
+    ]}
+  ]},
+  {"Contributing" = "contributing.md"}
 ]
 
 # Theme configuration

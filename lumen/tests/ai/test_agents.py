@@ -10,7 +10,7 @@ except ModuleNotFoundError:
 from panel.pane import Markdown
 
 from lumen.ai.agents import (
-    AnalysisAgent, AnalystAgent, ChatAgent, SQLAgent, VegaLiteAgent,
+    AnalysisAgent, ChatAgent, SQLAgent, VegaLiteAgent,
 )
 from lumen.ai.agents.analysis import make_analysis_model
 from lumen.ai.agents.sql import make_sql_model
@@ -51,18 +51,21 @@ async def test_chat_agent(llm, test_messages):
     out, out_context = await agent.respond(test_messages, {})
     assert out[0].object == "Test Response"
 
-async def test_analyst_agent(llm, duckdb_source, test_messages):
-    agent = AnalystAgent(llm=llm)
+async def test_chat_agent_with_data(llm, duckdb_source, test_messages):
+    """Test ChatAgent in analyst mode (with data)"""
+    agent = ChatAgent(llm=llm)
     context = {
         "source": duckdb_source,
-        "pipeline": Pipeline(source=duckdb_source, table="test_sql")
+        "pipeline": Pipeline(source=duckdb_source, table="test_sql"),
+        "data": [{"A": 1, "B": 2}],
+        "sql": "SELECT * FROM test_sql"
     }
     llm.set_responses([
-        "Foo"
+        "Analysis of data"
     ])
     out, out_context = await agent.respond(test_messages, context)
     assert len(out) == 1
-    assert out[0].object == "Foo"
+    assert out[0].object == "Analysis of data"
     assert out_context == {}
 
 async def test_sql_agent(llm, duckdb_source, test_messages):

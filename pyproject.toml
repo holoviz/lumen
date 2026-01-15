@@ -42,7 +42,7 @@ dependencies = [
     "pandas",
     "panel >=1.7.5",
     "panel-graphic-walker[kernel] >=0.6.4",
-    "panel-material-ui >=0.6.0",
+    "panel-material-ui >=0.8.1",
     "panel-splitjs",
     "param >=2.2.1",
     "pyarrow",
@@ -63,7 +63,7 @@ HoloViz = "https://holoviz.org/"
 
 [project.optional-dependencies]
 tests = ['pytest', 'pytest-rerunfailures', 'pytest-asyncio']
-sql = ['duckdb', 'intake-sql', 'sqlalchemy']
+sql = ['sqlalchemy']
 ai-local = ['huggingface_hub', 'hf_xet']
 ai-openai = ['openai']
 ai-mistralai = ['mistralai']

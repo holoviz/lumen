@@ -11,7 +11,7 @@ except ModuleNotFoundError:
 from panel.tests.util import async_wait_until
 from panel_material_ui import Card, ChatMessage, Typography
 
-from lumen.ai.agents import AnalystAgent, ChatAgent, SQLAgent
+from lumen.ai.agents import ChatAgent, SQLAgent
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.coordinator import Plan, Planner
 from lumen.ai.coordinator.planner import Reasoning, make_plan_model
@@ -132,7 +132,7 @@ async def test_planner_error(llm):
 @pytest.fixture
 async def sql_plan(llm, tiny_source):
     sql_agent = SQLAgent()
-    analyst_agent = AnalystAgent()
+    chat_agent = ChatAgent()
 
     slug = f"{tiny_source.name}{SOURCE_TABLE_SEPARATOR}tiny"
     metaset = await get_metaset([tiny_source], [slug])
@@ -156,7 +156,7 @@ async def sql_plan(llm, tiny_source):
 
     plan = Plan(
         ActorTask(sql_agent, title="Aggregate"),
-        ActorTask(analyst_agent, title="Analyze"),
+        ActorTask(chat_agent, title="Analyze"),
         context=context,
         history=[{"role": "user", "content": "Aggregate and Analyze"}],
         llm=llm

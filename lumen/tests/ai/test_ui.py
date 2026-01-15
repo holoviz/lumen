@@ -13,7 +13,7 @@ from panel.tests.util import async_wait_until
 from panel_material_ui import Container
 from panel_splitjs import VSplit
 
-from lumen.ai.agents.analyst import AnalystAgent
+from lumen.ai.agents.chat import ChatAgent
 from lumen.ai.agents.sql import SQLAgent, make_sql_model
 from lumen.ai.coordinator import Plan
 from lumen.ai.models import ErrorDescription
@@ -80,11 +80,11 @@ async def explorer_ui_with_error(explorer_ui):
     ])
 
     sql_agent = SQLAgent(llm=explorer_ui.llm)
-    analyst_agent = AnalystAgent(llm=explorer_ui.llm)
+    chat_agent = ChatAgent(llm=explorer_ui.llm)
 
     plan = Plan(
         ActorTask(sql_agent),
-        ActorTask(analyst_agent),
+        ActorTask(chat_agent),
         history=[{"content": "Sum value column", "role": "user"}],
         title="Sum of value",
         context=explorer_ui.context
@@ -578,9 +578,8 @@ async def test_switch_to_report_mode_with_explorations(explorer_ui):
     assert explorer_ui._main[0] is explorer_ui._navigation
 
     # Main content should be a Report instance
-    assert isinstance(explorer_ui._main[1], Column)
+    assert isinstance(explorer_ui._main[1], Container)
     assert len(explorer_ui._main[1]) == 2
-    assert isinstance(explorer_ui._main[1][1], Container)
 
     # Navigation should show "Report"
     assert explorer_ui._navigation_title.object == "Report"
@@ -601,7 +600,7 @@ async def test_switch_back_from_report_to_exploration(explorer_ui):
 
     # Switch to report mode
     explorer_ui._handle_sidebar_event(explorer_ui._sidebar_menu.items[1])
-    assert isinstance(explorer_ui._main[1][1], Container)
+    assert isinstance(explorer_ui._main[1], Container)
 
     # Switch back to exploration mode
     explorer_ui._handle_sidebar_event(explorer_ui._sidebar_menu.items[0])

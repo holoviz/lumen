@@ -146,7 +146,13 @@ width: container
   style="border:none;"
 ></iframe>
 
-All of this happens automatically when you just ask a question!
+All of this happens automatically when you just ask a question. Lumen groups the conversation and outputs from that work into an Exploration so you can keep building on it later.
+
+## Explorations
+
+An Exploration is a persistent, contextual workspace for working with a specific dataset. It is created when a SQL query is first generated and captures the full interaction state, including the conversation, analyses, visualizations, and other data artifacts. An Exploration evolves over time, supports multiple questions and operations on the same data, and can be revisited or exported as a coherent unit.
+
+Explorations start from the global context (available sources and metadata). When you ask a question that triggers a SQL query, Lumen creates a new exploration; if the question is a follow-up, the new exploration is nested under the parent, and if it is not, Lumen creates a new top-level exploration.
 
 ## Try with Your Own Data
 

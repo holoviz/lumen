@@ -6,7 +6,7 @@ Configure the Lumen AI chat interface.
 
 Lumen provides two interfaces:
 
-- **ExplorerUI** - Split view with table explorer, multiple explorations, and breadcrumbs. Best for most use cases.
+- **ExplorerUI** - Split view with table explorer, multiple explorations, and a navigation tree. Best for most use cases.
 - **ChatUI** - Simple chat-only interface. Best for embedded applications.
 
 Use `ExplorerUI` unless you specifically need the simpler ChatUI.
@@ -181,16 +181,26 @@ Quick reference:
 | `data` | str/Path/Source/list | Data sources to load |
 | `llm` | Llm | LLM provider (default: OpenAI) |
 | `agents` | list | Additional agents |
-| `default_agents` | list | Replace default 8 agents |
-| `tools` | list | Custom tools |
 | `analyses` | list | Custom analyses |
-| `title` | str | App title |
-| `suggestions` | list | Quick action buttons |
+| `context` | dict | Initial context |
 | `coordinator` | type | Planner or DependencyResolver |
 | `coordinator_params` | dict | Coordinator configuration |
+| `default_agents` | list | Replace default agents |
+| `demo_inputs` | list | Demo prompts for the coordinator |
+| `document_vector_store` | VectorStore | Vector store for document tools |
+| `export_functions` | dict | Map exporter names to export functions |
+| `interface` | type | Chat interface class |
+| `llm_choices` | list | LLM model choices shown in Settings |
 | `log_level` | str | DEBUG/INFO/WARNING/ERROR |
+| `logfire_tags` | list | Log LLM calls to Logfire with tags |
 | `logs_db_path` | str | Chat logging database path |
-| `context` | dict | Initial context |
 | `notebook_preamble` | str | Export header |
+| `provider_choices` | dict | LLM providers shown in Settings |
+| `source_controls` | list | Source control components for data |
+| `suggestions` | list | Quick action buttons |
+| `title` | str | App title |
+| `tools` | list | Custom tools |
+| `upload_handlers` | dict | File extension upload handlers |
+| `vector_store` | VectorStore | Vector store for non-doc tools |
 
 See parameter docstrings in code for complete details.

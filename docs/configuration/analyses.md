@@ -362,15 +362,15 @@ This adds the context to all agents' prompts, helping them understand your domai
 Combine analyses with agent-specific template overrides for domain-specific behavior:
 
 ``` py title="Domain-specific agent behavior" linenums="1"
-# Make AnalystAgent use meteorological terminology
-analyst_instructions = """
+# Make ChatAgent use meteorological terminology
+chat_instructions = """
 {{ super() }}
 
 You are a meteorologist. Use proper meteorological terminology 
 and explain atmospheric concepts clearly.
 """
-lmai.agents.AnalystAgent.template_overrides = {
-    "main": {"instructions": analyst_instructions}
+lmai.agents.ChatAgent.template_overrides = {
+    "main": {"instructions": chat_instructions}
 }
 
 # Pass analyses to ExplorerUI
