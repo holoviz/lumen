@@ -12,23 +12,25 @@ from .base import Agent
 class ChatAgent(Agent):
     """
     ChatAgent provides general information about available data
-    and other topics  to the user.
+    and other topics to the user. When data is available, it acts
+    as an analyst providing insights and interpretations.
     """
 
     conditions = param.List(
         default=[
-            "Use for high-level data information or general conversation",
-            "Use for technical questions about programming, functions, methods, libraries, APIs, software tools, or 'how to' code usage",
-            "NOT for data-specific questions that require querying data",
+            "Use for general conversation that doesn't require fetching or querying data",
+            "Use for technical questions about programming, functions, methods, libraries, or APIs",
+            "Use when interpreting existing results - NOT for generating new data or queries",
+            "NOT when user asks to 'show', 'get', 'fetch', 'query', 'find', or 'display' data",
+            "NOT for initial data retrieval - only for explaining data that's already been obtained",
         ]
     )
 
     purpose = param.String(
         default="""
-        Engages in conversations about high-level data topics, programming questions,
-        technical documentation, and general conversation. Handles questions about
-        specific functions, methods, libraries, and provides coding guidance and
-        technical explanations.""")
+        Provides conversational assistance and interprets existing results.
+        Handles general questions, technical documentation, and programming help.
+        When data has been retrieved, explains findings in accessible terms.""")
 
     prompts = param.Dict(
         default={
@@ -49,5 +51,10 @@ class ChatAgent(Agent):
             context["metaset"] = await get_metaset(
                 [context["source"]], [context["table"]]
             )
+
+        # Handle empty data case for analyst mode
+        if len(context.get("data", [])) == 0 and context.get("sql"):
+            context["sql"] = f"{context['sql']}\n-- No data was returned from the query."
+
         system_prompt = await self._render_prompt("main", messages, context, **prompt_context)
         return [await self._stream(messages, system_prompt)], {}

@@ -1,5 +1,4 @@
 from .analysis import AnalysisAgent
-from .analyst import AnalystAgent
 from .base import Agent
 from .chat import ChatAgent
 from .dbtsl import DbtslAgent
@@ -13,7 +12,6 @@ from .vega_lite import VegaLiteAgent
 __all__ = [
     "Agent",
     "AnalysisAgent",
-    "AnalystAgent",
     "ChatAgent",
     "DbtslAgent",
     "DocumentListAgent",

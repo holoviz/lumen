@@ -6,9 +6,10 @@ import param
 
 from panel_material_ui import TextAreaInput, TextInput, Typography
 
+from lumen.ai.agents.chat import ChatAgent
+
 from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource
-from .agents import AnalystAgent
 from .report import Action
 from .schemas import Metaset, get_metaset
 from .utils import describe_data
@@ -117,7 +118,7 @@ class SQLQuery(Action):
         }
         outputs = [SQLOutput(component=pipeline, spec=self.sql_expr)]
         if self.generate_caption:
-            caption_out, _ = await AnalystAgent(llm=self.llm).respond(
+            caption_out, _ = await ChatAgent(llm=self.llm).respond(
                 [{"role": "user", "content": self.user_content}], context
             )
             caption = caption_out[0]

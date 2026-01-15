@@ -32,8 +32,8 @@ from ..sources import Source
 from ..sources.duckdb import DuckDBSource
 from ..util import log
 from .agents import (
-    AnalysisAgent, AnalystAgent, ChatAgent, DocumentListAgent, SQLAgent,
-    TableListAgent, ValidationAgent, VegaLiteAgent,
+    AnalysisAgent, ChatAgent, DocumentListAgent, SQLAgent, TableListAgent,
+    ValidationAgent, VegaLiteAgent,
 )
 from .config import (
     DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROVIDED_SOURCE_NAME,
@@ -374,7 +374,7 @@ class UI(Viewer):
     )
 
     default_agents = param.List(default=[
-        TableListAgent, ChatAgent, DocumentListAgent, AnalystAgent, SQLAgent, VegaLiteAgent, ValidationAgent
+        TableListAgent, ChatAgent, DocumentListAgent, SQLAgent, VegaLiteAgent, ValidationAgent
     ], doc="""List of default agents which will always be added.""")
 
     demo_inputs = param.List(default=DEMO_MESSAGES, doc="""

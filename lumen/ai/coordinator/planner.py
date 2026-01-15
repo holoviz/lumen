@@ -431,10 +431,7 @@ class Planner(Coordinator):
 
         last_task = tasks[-1] if tasks else None
         if last_task and isinstance(last_task.actor, Tool):
-            if "AnalystAgent" in agents and all(r in provided for r in agents["AnalystAgent"].input_schema.__annotations__):
-                actor = "AnalystAgent"
-            else:
-                actor = "ChatAgent"
+            actor = "ChatAgent"
 
             # Check if the actor conflicts with any actor in the graph
             not_with = getattr(agents[actor], "not_with", [])
