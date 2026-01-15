@@ -59,7 +59,7 @@ cd lumen
 pixi install
 
 # Or using pip
-pip install -e ".[all,dev]"
+pip install -e ".[tests]"
 ```
 
 #### Pixi Environments

@@ -11,7 +11,7 @@ from typing import Any
 import param
 
 from panel.chat.feed import PLACEHOLDER_SVG
-from panel.config import config, panel_extension
+from panel.config import panel_extension
 from panel.io.document import hold
 from panel.io.state import state
 from panel.layout import Column, FlexBox
@@ -129,11 +129,10 @@ HELP_INTERFACE = """
 - **^ v** arrows - Expand/collapse individual analyses
 
 **📂 Sidebar:**
-- **Home** - Return to the start page
-- **Exploration** - Main chat and analysis mode (default)
+- **Explore** - Main chat and analysis mode (default)
 - **Report** - View all explorations on one page
-- **Data Sources** - Add or manage your data
-- **Preferences** - Control AI behavior settings
+- **Sources** - Add or manage your data
+- **Settings** - Control AI behavior settings and LLM configuration
 - **Help** - Open this help dialog
 
 **⌨️ Keyboard Shortcuts:**
@@ -144,16 +143,17 @@ HELP_INTERFACE = """
 HELP_EXPLORATIONS = """
 **🔍 What are Explorations?**
 
-Each time you ask a question that generates a computed result (SQL query, visualization, etc.), Lumen creates a new "Exploration" tab. This lets you:
-- Work on multiple analyses simultaneously
-- Compare different approaches side-by-side
-- Keep your work organized by topic
-- Hover over an exploration in the breadcrumbs to see the **Remove** (🗑️) icon
+An Exploration is a persistent, contextual workspace for working with a specific dataset. It is created when a SQL query is generated and captures the full state of the interaction, including the conversation, generated analyses, visualizations, and other data artifacts.
 
-**🧭 Breadcrumbs (top bar):**
-- Shows your path: Home > Exploration Name
-- Click any breadcrumb to switch between explorations
-- Each exploration has its own conversation history
+Explorations can evolve over time, support multiple questions on the same data, and can be revisited or exported as a coherent unit.
+
+Explorations start from the global context (available sources and metadata). If a question is a follow-up, the new exploration is nested under the parent; if it is not, Lumen creates a new top-level exploration.
+
+**🧭 Navigation menu (left panel):**
+- Shows all explorations in a persistent tree
+- Click an exploration to switch context
+- Follow-up explorations appear nested under their parent
+- Use the item menu (⋮) to remove an exploration
 """
 
 HELP_EDITOR = """
@@ -200,7 +200,7 @@ HELP_EXPORT = """
 
 **💾 Save your work:**
 
-- Click **Export Notebook** (top right) to download everything as a Jupyter notebook
+- Use **Export Notebook** in the navigation menu to download everything as a Jupyter notebook
 - Includes all SQL queries, visualizations, and results
 - Perfect for documentation or sharing with colleagues
 - Each exploration saves automatically during your session
@@ -230,10 +230,10 @@ You don't have to get it right the first time.
 - "Add a trend line to the scatter plot."
 
 **🗂️ Need more data?**
-Click **Data Sources** in the left sidebar to add files or databases at any time.
+Click **Sources** in the left sidebar to add files or databases at any time.
 
 **🧠 Chain of Thought:**
-Enable **Chain of Thought** in Preferences to see the AI's step-by-step reasoning.
+Enable **Chain of Thought** in Settings to see the AI's step-by-step reasoning.
 - This is great for debugging or understanding complex queries.
 
 ---
@@ -272,14 +272,14 @@ Report mode displays all explorations in one scrollable page for review and pres
 
 **Export:**
 
-- Click **Export Notebook** (top right) to download everything as one Jupyter notebook
+- Use **Export Notebook** in the navigation menu to download everything as one Jupyter notebook
 - Includes all SQL queries, visualizations, and results
 - Perfect for sharing findings or creating documentation
 
 **To get back:**
 
-- Click **Exploration** in the left sidebar to return to chat mode
-- Or click a specific exploration from the breadcrumbs to work on it
+- Click **Explore** in the left sidebar to return to chat mode
+- Or click a specific exploration in the navigation menu to work on it
 """  # noqa: RUF001
 
 DATA_SOURCES_HELP = """
@@ -421,12 +421,6 @@ class UI(Viewer):
         e.g. {"hdf5": ...}. The callback function should accept the file bytes,
         table alias, and filename, add or modify the `sources` in memory, and return a bool
         (True if the table was successfully uploaded).""")
-
-    template = param.Selector(
-        default=config.param.template.names['fast'],
-        objects=config.param.template.names, doc="""
-        Panel template to serve the application in."""
-    )
 
     title = param.String(default='Lumen UI', doc="Title of the app.")
 
@@ -1541,9 +1535,6 @@ class ExplorerUI(UI):
         lmai.ExplorerUI(data='~/data.csv').servable()
     """
 
-    chat_ui_position = param.Selector(default='left', objects=['left', 'right'], doc="""
-        The position of the chat interface panel relative to the exploration area.""")
-
     title = param.String(default='Lumen AI - Data Explorer', doc="Title of the app.")
 
     _exploration = param.Dict()
@@ -1632,7 +1623,7 @@ class ExplorerUI(UI):
                 {"label": "Report", "icon": "description_outlined", "id": "report", "active": False},
                 None,
                 {"label": "Sources", "icon": "create_new_folder_outlined", "id": "data"},
-                {"label": "Config", "icon": "tune_outlined", "id": "preferences"},
+                {"label": "Settings", "icon": "tune_outlined", "id": "preferences"},
                 None,
                 {"label": "Help", "icon": "help_outline", "id": "help"}
             ],

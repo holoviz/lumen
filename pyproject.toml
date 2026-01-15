@@ -63,7 +63,7 @@ HoloViz = "https://holoviz.org/"
 
 [project.optional-dependencies]
 tests = ['pytest', 'pytest-rerunfailures', 'pytest-asyncio']
-sql = ['duckdb', 'intake-sql', 'sqlalchemy']
+sql = ['sqlalchemy']
 ai-local = ['huggingface_hub', 'hf_xet']
 ai-openai = ['openai']
 ai-mistralai = ['mistralai']
