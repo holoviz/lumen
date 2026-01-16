@@ -2,18 +2,42 @@ import datetime as dt
 import os
 import tempfile
 
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
 from lumen.transforms.sql import SQLGroupBy
 
 try:
+    import duckdb
+
     from lumen.sources.duckdb import DuckDBSource
     pytestmark = pytest.mark.xdist_group("duckdb")
 except ImportError:
     pytestmark = pytest.mark.skip(reason="Duckdb is not installed")
 
 
+@pytest.fixture
+def duckdb_file_source():
+    """
+    Create a temporary DuckDB database file with a test table.
+
+    Yields the DuckDBSource and cleans up after the test.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / 'test.duckdb'
+        conn = duckdb.connect(str(db_path))
+        conn.execute('CREATE TABLE test (id INTEGER, name VARCHAR)')
+        conn.execute("INSERT INTO test VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie')")
+        conn.close()
+
+        source = DuckDBSource(
+            uri=str(db_path),
+            tables=['test'],
+        )
+        yield source
+        source.close()
 
 @pytest.fixture
 def duckdb_source():
