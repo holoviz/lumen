@@ -4,11 +4,27 @@ Common questions about Lumen AI.
 
 ## What is Lumen AI?
 
-Open-source framework for exploring data with AI. Ask questions in plain English, get SQL queries, visualizations, and analysis automatically.
+Lumen is an **open-source Python framework for building domain-aware, extensible AI data applications**.
+
+It uses natural language as an interface, but all work is executed through explicit, inspectable components:
+- SQL generated against real data sources
+- Deterministic Python analyses
+- Reproducible specifications for visualizations and layouts
+
+Lumen is designed to be configured and extended with your own data sources, analysis code, tools, and agents, so results reflect your domain logic rather than generic assumptions.
 
 ## Why use Lumen instead of ChatGPT?
 
-ChatGPT can't see your data or run queries. Lumen connects directly to your data, generates SQL, creates visualizations, and keeps history. Works with any LLM provider or local models.
+ChatGPT is a general-purpose conversational model. It does not have access to your data, cannot execute queries, and cannot enforce domain rules or reproducibility.
+
+Lumen provides the missing execution layer:
+- Connects directly to your databases and files
+- Generates and runs SQL and Python, not just text
+- Produces inspectable query history and artifacts
+- Encodes domain terminology, constraints, and business logic
+- Works with any LLM provider, including fully local models
+
+ChatGPT can help you think about data. Lumen lets you **work with data**, using AI as an interface rather than a black box.
 
 ## Is Lumen free?
 
