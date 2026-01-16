@@ -506,25 +506,53 @@ class UI(Viewer):
                 else:
                     name = src = str(src)
 
-                # Handle .db files as SQLite databases via SQLAlchemy
-                if src.endswith('.db'):
-                    try:
-                        from ..sources.sqlalchemy import SQLAlchemySource
-                        db_path = Path(src).absolute()
-                        source = SQLAlchemySource(
-                            url=f'sqlite:///{db_path}',
-                            name=name
-                        )
-                        sources.append(source)
-                    except ImportError as e:
-                        raise ImportError(
-                            "SQLAlchemy is required to read .db files. "
-                            "Install it with: pip install sqlalchemy"
-                        ) from e
-                    continue
-
                 # Handle "no_data" as a special case for starting without data
                 if src == 'no_data':
+                    continue
+
+                # Handle explicit database connection strings first (before checking file extensions)
+                if src.startswith('duckdb://'):
+                    db_path = src.replace('duckdb:///', '')
+                    db_path = str(Path(db_path).absolute())
+                    source = DuckDBSource(uri=db_path)
+                    sources.append(source)
+                    continue
+                elif src.startswith(('sqlite://', 'postgresql://', 'mysql://', 'mssql://', 'oracle://')):
+                    try:
+                        from ..sources.sqlalchemy import SQLAlchemySource
+                    except ImportError as e:
+                        raise ImportError(
+                            "SQLAlchemy is required for database connection strings. "
+                            "Install it with: pip install sqlalchemy"
+                        ) from e
+                    source = SQLAlchemySource(url=src)
+                    sources.append(source)
+                    continue
+
+                # Handle .db files - need to detect if SQLite or DuckDB
+                if src.endswith('.db'):
+                    db_path = Path(src).absolute()
+                    if not db_path.exists():
+                        raise FileNotFoundError(f"Database file not found: {src}")
+
+                    with open(db_path, 'rb') as f:
+                        header = f.read(16)
+
+                    # DuckDB files start with specific magic bytes
+                    # The header contains "DUCK" in the first 16 bytes
+                    if b'DUCK' in header:
+                        source = DuckDBSource(uri=str(db_path))
+                        sources.append(source)
+                    else:
+                        try:
+                            from ..sources.sqlalchemy import SQLAlchemySource
+                        except ImportError as e:
+                            raise ImportError(
+                                "SQLAlchemy is required to read .db files. "
+                                "Install it with: pip install sqlalchemy"
+                            ) from e
+                        source = SQLAlchemySource(url=f'sqlite:///{db_path}')
+                        sources.append(source)
                     continue
 
                 if src.startswith('http'):
