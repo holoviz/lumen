@@ -4,6 +4,8 @@ Prompts control what agents say and how they behave.
 
 Most users don't need to customize prompts. Customize only if agents consistently make mistakes you can fix with instructions.
 
+**See also:** [Agents](agents.md) — Prompts are used by custom and built-in agents. Each agent type can have its prompts customized.
+
 ## How Prompts Work
 
 Lumen uses Jinja2 template inheritance. All agents extend from `Actor/main.jinja2`:
@@ -47,6 +49,7 @@ instructions = """
 {{ super() }}
 
 Additional rules:
+
 - Use explicit JOIN syntax
 - Format dates as YYYY-MM-DD
 - Use meaningful table aliases
@@ -68,6 +71,7 @@ context = """
 {{ super() }}
 
 In our database:
+
 - "Accounts" means customer accounts
 - Q1 = Jan-Mar, Q2 = Apr-Jun, Q3 = Jul-Sep, Q4 = Oct-Dec
 """
@@ -193,11 +197,13 @@ Create `agents.py` with your instructions:
 Your SQL agent handles customer data queries.
 
 Rules:
+
 - Always use INNER JOIN for relationships
 - Sanitize date inputs to YYYY-MM-DD format
 - Group by customer segments first
 
 Examples:
+
 - "Top customers" → Order by revenue DESC
 - "Monthly trends" → Use DATE_TRUNC
 ```
@@ -214,6 +220,7 @@ global_context = """
 {{ super() }}
 
 Domain knowledge:
+
 - Inversions occur when temperature increases with altitude
 - Standard lapse rate is 6.5°C per km
 """

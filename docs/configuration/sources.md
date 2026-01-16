@@ -2,6 +2,8 @@
 
 Connect Lumen to files, databases, or data warehouses.
 
+**See also:** [Navigating the UI](../getting_started/navigating_the_ui.md) — Learn how to manage data sources from the interface.
+
 ## Quick start
 
 ``` bash title="Load a file"

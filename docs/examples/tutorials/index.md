@@ -13,6 +13,17 @@ Build a domain-specific data exploration application that analyzes atmospheric s
 - Building specialized visualization tools
 - Configuring Lumen for scientific data exploration
 
+### [Building AI-Powered Reports](building_reports.md)
+Create multi-section analytical reports that combine deterministic analysis with AI-powered insights. Build a subscription analytics report with custom Actions, AI agents, and exportable notebooks.
+
+**You'll learn:**
+
+- Creating custom Action tasks for analysis
+- Using ActorTask to wrap AI agents
+- Passing context between tasks
+- Organizing reports with sections
+- Exporting reports to Jupyter notebooks
+
 ### [Build Dashboard with Spec](penguins_dashboard_spec.md)
 Create a complete Lumen dashboard in under 15 minutes using YAML specifications. While Lumen AI can generate these specs automatically, understanding them gives you full control.
 

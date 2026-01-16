@@ -6,6 +6,8 @@ SQLAgent writes queries. VegaLiteAgent creates charts. ChatAgent answers questio
 
 Most users never customize agents. The eight default agents handle typical data exploration needs.
 
+**See also:** [Using Lumen AI](../getting_started/using_lumen_ai.md) — Guide to asking effective questions and exploring data.
+
 ## Skip to
 
 - [See which agents exist](#default-agents) - What each agent does
@@ -133,7 +135,7 @@ Create a custom agent when:
 Don't create a custom agent when:
 
 - You can solve it with custom analyses (simpler approach)
-- You can use tools instead (tools don't require async/await)
+- You can [use tools instead](tools.md) (tools don't require async/await)
 - A built-in agent already handles it
 
 ### Basic custom agent structure
@@ -244,11 +246,11 @@ Now you can ask "What are the statistics for this dataset?" and the agent will r
 
 **`purpose`** - One-sentence description of what the agent does. The coordinator uses this to decide when to invoke the agent.
 
-**`input_schema`** - TypedDict defining what data the agent needs from context. The agent can only run when these requirements are met.
+**`input_schema`** - TypedDict defining what data the agent needs from [context](context.md). The agent can only run when these requirements are met.
 
-**`output_schema`** - TypedDict defining what data the agent adds to context. Other agents can use these outputs.
+**`output_schema`** - TypedDict defining what data the agent adds to [context](context.md). Other agents can use these outputs.
 
-**`prompts`** - Dictionary of prompt templates. Most agents only need a "main" prompt.
+**`prompts`** - Dictionary of prompt templates. Most agents only need a "main" prompt. [See Prompts guide](prompts.md) for customization options.
 
 **`respond()`** - The async method that does the work. Must return `(outputs_list, updated_context_dict)`.
 
@@ -400,6 +402,6 @@ The agent tried to access context data that doesn't exist.
 
 **Handle missing data gracefully.** Always check for required data before using it. Provide helpful error messages.
 
-**Use tools for simple functions.** If your agent doesn't need async/await or complex prompting, use a tool instead.
+**Use tools for simple functions.** If your agent doesn't need async/await or complex prompting, [use a tool instead](tools.md).
 
 **Don't duplicate built-ins.** Check if a built-in agent already does what you need before creating a custom one.

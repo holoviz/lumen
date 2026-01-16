@@ -65,6 +65,7 @@ lumen-ai serve test.db
 ```
 
 Lumen reads the file header to determine the database type:
+
 - SQLite files start with `"SQLite format 3"`
 - DuckDB files start with `"DUCK"`
 

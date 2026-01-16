@@ -4,30 +4,14 @@ Get up and running with Lumen in under 30 seconds.
 
 ## Installation
 
-Install Lumen with your preferred LLM provider:
+!!! info "Other LLM Providers"
+    For Anthropic, Google Gemini, Mistral, AWS Bedrock, LlamaCpp, and more, see the [Installation guide](installation.md).
 
-=== "OpenAI"
+```bash
+pip install 'lumen[ai-openai]'
 
-    ```bash
-    pip install 'lumen[ai-openai]'
-    export OPENAI_API_KEY=your_key_here
-    ```
-
-=== "Anthropic"
-
-    ```bash
-    pip install 'lumen[ai-anthropic]'
-    export ANTHROPIC_API_KEY=your_key_here
-    ```
-
-=== "Local Models"
-
-    ```bash
-    pip install 'lumen[ai-local]'
-    # Example: Using a local Ollama model
-    export OPENAI_BASE_URL=http://localhost:11434/v1
-    export OPENAI_API_KEY=ollama  # Dummy key for local models
-    ```
+export OPENAI_API_KEY=sk-...
+```
 
 ## Start Chatting with Data
 
@@ -36,20 +20,6 @@ Install Lumen with your preferred LLM provider:
     ```bash
     lumen-ai serve https://datasets.holoviz.org/penguins/v1/penguins.csv --show
     ```
-    
-    If a browser tab doesn't automatically open, visit [https://localhost:5006](https://localhost:5006) and start chatting with your data.
-    
-    **Try these questions:**
-    
-    > "What datasets are available?"
-    
-    > "Show me a summary of the data"
-    
-    > "Which species has the largest average body mass? Show as a bar chart."
-    
-    > "Create a scatter plot of bill length vs flipper length, colored by island"
-    
-    > "Filter for penguins over 4kg and show me the distribution by species"
 
 === "Python"
 
@@ -63,31 +33,38 @@ Install Lumen with your preferred LLM provider:
     ```
 
     ```bash
-    panel serve app.py
+    panel serve app.py --show
     ```
-    
-    **Then ask:**
-    
-    > "What's the correlation between bill length and body mass?"
-    
-    > "Group by island and show average measurements as a table"
-    
-    > "Create a histogram of flipper lengths with 20 bins"
-    
-    > "Are there any outliers in the body mass data?"
+
+If a browser tab doesn't automatically open, visit [https://localhost:5006](https://localhost:5006) and start chatting with your data.
+
+**Try these questions:**
+
+- What datasets are available?
+
+- Show me a summary of the data
+
+- Which species has the largest average body mass? Show as a bar chart.
+
+- Create a scatter plot of bill length vs flipper length, colored by island
+
+- Filter for penguins over 4kg and show me the distribution by species
+
+![Lumen Splash Screen](assets/navigating_the_ui/splash.png)
 
 ## How It Works
 
-You don't need to write SQL or Python; just ask a question:
+You don't need to write SQL or Python; just write your request:
 
-> **Which islands have the most penguins? Plot as a horizontal bar chart.**
+> Which islands have the most penguins? Plot as a horizontal bar chart.
+
+![Quick Start](assets/navigating_the_ui/results.png)
 
 **1. Lumen creates a plan:**
 
-```markdown
-- [ ] Query the penguin dataset to aggregate the total number of penguins by island.
-- [ ] Create a horizontal bar chart showing islands on the y-axis and penguin counts on the x-axis.
-```
+- 🟢 Query the dataset to find the total number of penguins per island by grouping and summing the penguin counts for each island. Provide the resulting table with island names and penguin counts.
+- 🟢 Create a horizontal bar chart to visualize the number of penguins per island using the table data provided by the previous step. The x-axis should represent the number of penguins and the y-axis the island names.
+- 🟢 Validate whether the executed plan fully answered the user's original query.
 
 **2. Generates SQL to query the data:**
 
@@ -146,13 +123,29 @@ width: container
   style="border:none;"
 ></iframe>
 
-All of this happens automatically when you just ask a question. Lumen groups the conversation and outputs from that work into an Exploration so you can keep building on it later.
+All of this happens automatically when you just ask a question.
 
-## Explorations
+## Your Work is Saved Automatically
 
-An Exploration is a persistent, contextual workspace for working with a specific dataset. It is created when a SQL query is first generated and captures the full interaction state, including the conversation, analyses, visualizations, and other data artifacts. An Exploration evolves over time, supports multiple questions and operations on the same data, and can be revisited or exported as a coherent unit.
+Behind the scenes, Lumen organizes your work into **Explorations** — think of them as saved workspaces for each dataset or analysis thread.
 
-Explorations start from the global context (available sources and metadata). When you ask a question that triggers a SQL query, Lumen creates a new exploration; if the question is a follow-up, the new exploration is nested under the parent, and if it is not, Lumen creates a new top-level exploration.
+When you ask your first question that queries data, Lumen creates an exploration to capture everything:
+
+- Your conversation history
+- The SQL queries generated
+- Charts and visualizations
+- Results and data tables
+
+**Follow-up questions stay together:** Ask "Can you make that chart show only the top 5?" and your new chart appears in the same exploration.
+
+**New topics create new explorations:** Ask about a different dataset or unrelated question, and Lumen starts a fresh exploration.
+
+This means you can:
+
+- Return to any analysis later
+- Export your work as a Jupyter notebook
+- Keep multiple investigations organized
+- Build on previous results without losing context
 
 ## Try with Your Own Data
 
@@ -167,12 +160,6 @@ Explorations start from the global context (available sources and metadata). Whe
     lumen serve postgresql://user:pass@localhost/mydb
     lumen serve mysql://user:pass@localhost/mydb
     lumen serve sqlite:///data.db
-    ```
-
-=== "APIs & URLs"
-    ```bash
-    lumen serve https://api.example.com/data.json
-    lumen serve https://datasets.holoviz.org/penguins/v1/penguins.csv
     ```
 
 ## Next Steps

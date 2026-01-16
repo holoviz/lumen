@@ -2,6 +2,8 @@
 
 Context is shared memory between agents. When SQLAgent creates a pipeline, it adds it to context. When AnalystAgent runs, it reads that pipeline from context.
 
+**See also:** [Agents](agents.md) — Agents communicate through context using input and output schemas.
+
 ## How context works
 
 Agents communicate by reading from and writing to a shared dictionary:
