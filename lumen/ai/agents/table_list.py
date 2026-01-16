@@ -26,6 +26,7 @@ class TableListAgent(BaseListAgent):
     conditions = param.List(default=[
         "Use when user explicitly asks to 'list data', 'show available data', or 'what data do you have'",
         "NOT for showing actual data contents, querying, or analyzing data",
+        "NOT for describing data sources or telling what the data is about",
     ])
 
     not_with = param.List(default=["DbtslAgent", "SQLAgent"])
