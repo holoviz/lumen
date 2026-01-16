@@ -1191,30 +1191,75 @@ def test_create_sql_expr_source_with_list_tables():
 
 
 def test_create_sql_expr_source_reuse_connection_with_list_tables():
-    """Test that reusing connection with list tables just uses new tables."""
+    """Test that reusing connection with list tables preserves them as dict entries."""
     # Create an in-memory source with actual data
     df = pd.DataFrame({
         'A': [0, 1, 2, 3, 4],
         'B': [0, 0, 1, 1, 1],
         'C': ['foo1', 'foo2', 'foo3', 'foo4', 'foo5']
     })
-    
+
     source = DuckDBSource.from_df({'test_table': df})
     # Simulate a list-based source
     source.tables = ['test_table']  # Override with list
-    
+
     # Create new source reusing connection
     new_tables = {
         'filtered': 'SELECT * FROM test_table WHERE A > 2'
     }
-    
+
     # No uri or initializers provided - reusing connection
     new_source = source.create_sql_expr_source(new_tables)
-    
-    # Should only have the new tables (since original was a list, not dict)
-    assert set(new_source.get_tables()) == {'filtered'}
-    
-    # But the connection is reused, so we can still query the original table
-    # via the connection even if it's not in new_source.tables
-    result = new_source.execute('SELECT * FROM test_table')
-    assert len(result) == 5  # Original table still exists in the connection
+
+    # Should have both the original table (converted from list) and the new table
+    assert set(new_source.get_tables()) == {'test_table', 'filtered'}
+
+    # Original table should still be queryable
+    result = new_source.get('test_table')
+    assert len(result) == 5
+
+    # New filtered table should work
+    filtered_result = new_source.get('filtered')
+    assert len(filtered_result) == 2  # A values 3 and 4
+
+
+def test_read_only_create_sql_expr_source_expands_tables(duckdb_file_source):
+    """
+    Test that create_sql_expr_source expands tables when not in read-only mode.
+
+    This verifies that with read_only=False, new tables can be created and
+    the existing tables are preserved.
+    """
+    source = duckdb_file_source
+
+    # Verify initial state - should have the 'test' table
+    initial_tables = source.get_tables()
+    assert 'test' in initial_tables
+
+    # Create new source with additional tables using create_sql_expr_source
+    new_tables = {
+        'filtered_test': 'SELECT * FROM test WHERE id > 1',
+        'count_test': 'SELECT COUNT(*) as cnt FROM test'
+    }
+
+    new_source = source.create_sql_expr_source(new_tables)
+
+    # Verify tables expanded - should have original + new tables
+    expanded_tables = new_source.get_tables()
+    assert 'test' in expanded_tables
+    assert 'filtered_test' in expanded_tables
+    assert 'count_test' in expanded_tables
+
+    # Verify the new tables work correctly
+    filtered_result = new_source.get('filtered_test')
+    assert len(filtered_result) == 2  # id > 1 means Bob and Charlie
+
+    count_result = new_source.get('count_test')
+    assert count_result.iloc[0]['cnt'] == 3  # 3 total rows
+
+    # Ensure read only
+    assert source.read_only
+    assert new_source.read_only
+
+    # Ensure new tables did NOT modify the original source
+    assert source.execute("SHOW TABLES").shape[0] == 1  # Only 'test' table in original source

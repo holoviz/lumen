@@ -65,7 +65,7 @@ class DuckDBSource(BaseSQLSource):
         Whether the data is ephemeral, i.e. manually inserted into the
         DuckDB table or derived from real data.""")
 
-    read_only = param.Boolean(default=True, doc="""
+    read_only = param.Boolean(default=None, doc="""
         Whether to open the DuckDB database in read-only mode.""")
 
     tables = param.ClassSelector(class_=(list, dict), doc="""
@@ -83,6 +83,7 @@ class DuckDBSource(BaseSQLSource):
 
     def __init__(self, **params):
         connection = params.pop('_connection', None)
+        params["read_only"] = params.get('read_only', params.get("uri") not in (None, ':memory:'))
         super().__init__(**params)
         if connection:
             self._connection = connection
@@ -383,10 +384,13 @@ class DuckDBSource(BaseSQLSource):
         all_tables = tables
         if 'uri' not in kwargs and 'initializers' not in kwargs:
             # Reuse connection - start with ALL existing tables (upsert behavior)
-            # Only applies when self.tables is a dict (list-based tables don't have SQL expressions)
             if isinstance(self.tables, dict):
                 all_tables = dict(self.tables)
                 # Update with new tables (overwrites if exists, adds if new)
+                all_tables.update(tables)
+            elif isinstance(self.tables, list):
+                # Convert list to dict using sql_expr, then update with new tables
+                all_tables = {t: self.sql_expr.format(table=t) for t in self.tables}
                 all_tables.update(tables)
         else:
             # New connection - only use the new tables, but include file-based dependencies
