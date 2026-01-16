@@ -717,7 +717,6 @@ class UI(Viewer):
             self._main[:] = [self._navigation, main_content]
         else:
             self._main[:] = [main_content]
-        self._chat_input.value_input = ""
 
     def _configure_interface(self, interface):
         def on_undo(instance, _):
@@ -743,9 +742,49 @@ class UI(Viewer):
         self._pending_query = None
         self._pending_sources_snapshot = None  # Also indicates dialog was opened from chat
 
-        async def on_submit(event=None, instance=None):
+        def on_submit(event=None, instance=None, wait=False):
             user_prompt = self._chat_input.value_input
-            if not user_prompt:
+
+            # Check if there are pending uploads that need to be transferred first
+            uploaded = self._chat_input.value_uploaded
+            if self._chat_input.pending_uploads or (wait and not uploaded):
+                self._pending_query = user_prompt or None
+                if not wait:
+                    self._chat_input.sync()
+                # Schedule a callback to await the upload
+                state.add_periodic_callback(partial(on_submit, wait=True), period=100, count=1)
+                return
+
+            if not user_prompt and not uploaded:
+                return
+
+            # Open Sources dialog so user can confirm the upload
+            if uploaded:
+                if not self._upload_controls._file_cards:
+                    self._upload_controls._generate_file_cards({
+                        key: value["value"] for key, value in uploaded.items()
+                    })
+
+                # Store the pending query to execute after files are added
+                if not wait:
+                    self._pending_query = user_prompt or None
+                self._pending_sources_snapshot = list(self.context.get("sources", []))
+
+                self._chat_input.param.update(
+                    value_input="",
+                    value_uploaded={},
+                    views=[]
+                )
+
+                with hold():
+                    self._sources_dialog_content.open = True
+                    self._source_content.active = self._source_controls.index(self._upload_controls)
+
+                async def focus():
+                    await asyncio.sleep(0.25)
+                    self._upload_controls._add_button.focus()
+
+                state.execute(focus, schedule=True)
                 return
 
             with self.interface.param.update(disabled=True, loading=True):
@@ -788,37 +827,6 @@ class UI(Viewer):
         }
         self._configure_logs(interface)
         self.interface = interface
-        # Watch for drag-and-drop file uploads and open Data Sources dialog
-        self._chat_input.param.watch(self._handle_file_drop, 'value_uploaded')
-        self._chat_input.param.watch(self._handle_pending_uploads, 'pending_uploads')
-
-    def _handle_pending_uploads(self, event):
-        self._chat_input.sync()
-
-    def _handle_file_drop(self, event):
-        """Handle drag-and-drop file uploads by opening the Data Sources dialog."""
-        if not event.new:  # No files uploaded
-            return
-
-        with hold():
-            # Capture current sources - also marks dialog as opened from chat
-            self._pending_sources_snapshot = list(self.context.get("sources", []))
-
-            # Generate file cards in the upload controls
-            self._upload_controls._generate_file_cards({
-                key: value["value"] for key, value in event.new.items()
-            })
-            self._sources_dialog_content.open = True
-
-            # Set the breadcrumbs to "Upload" to show the uploaded file (0 means Upload)
-            self._source_content.active = 0
-
-        async def focus():
-            await asyncio.sleep(0.5)
-            self._upload_controls._add_button.focus()
-
-        state.execute(focus, schedule=True)
-
 
     def _handle_upload_successful(self, event):
         """Handle successful file upload by closing dialog and executing pending query if present."""
@@ -835,11 +843,8 @@ class UI(Viewer):
         # Save state before closing (close triggers _on_sources_dialog_close which resets state)
         query = self._pending_query
         sources_snapshot = self._pending_sources_snapshot
-
-        # Close dialog (this will reset _pending_query and _pending_sources_snapshot)
         self._sources_dialog_content.open = False
 
-        # Execute query if present
         if query:
             self._execute_pending_query_with(query, sources_snapshot)
 
