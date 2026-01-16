@@ -53,6 +53,24 @@ def test_source():
 
 
 @pytest.fixture
+def sqlite_db_path():
+    """Create a temporary SQLite database file."""
+    with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as tmp:
+        db_path = Path(tmp.name)
+    
+    conn = sqlite3.connect(str(db_path))
+    conn.execute('CREATE TABLE test (id INTEGER)')
+    conn.commit()
+    conn.close()
+    
+    yield db_path
+
+    # Cleanup
+    if db_path.exists():
+        db_path.unlink()
+
+
+@pytest.fixture
 async def explorer_ui(llm, test_source):
     """Create an ExplorerUI instance with test data."""
     slug = f"{test_source.name}{SOURCE_TABLE_SEPARATOR}test_table"
@@ -954,33 +972,19 @@ class TestResolveData:
         assert 'local_csv' in source.tables
         assert 'https_example_com_remote_csv' in source.tables
 
-    def test_resolve_data_db_file_sqlite(self):
+    def test_resolve_data_db_file_sqlite(self, sqlite_db_path):
         """Test resolving a .db file that is actually SQLite."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / 'test.db'
-            conn = sqlite3.connect(str(db_path))
-            conn.execute('CREATE TABLE test (id INTEGER)')
-            conn.commit()
-            conn.close()
+        result = UI._resolve_data(str(sqlite_db_path))
+        assert len(result) == 1
+        source = result[0]
+        assert isinstance(source, SQLAlchemySource)
 
-            result = UI._resolve_data(str(db_path))
-            assert len(result) == 1
-            source = result[0]
-            assert isinstance(source, SQLAlchemySource)
-
-    def test_resolve_data_sqlite_connection_string(self):
+    def test_resolve_data_sqlite_connection_string(self, sqlite_db_path):
         """Test resolving a SQLite connection string."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / 'test.sqlite'
-            conn = sqlite3.connect(str(db_path))
-            conn.execute('CREATE TABLE test (id INTEGER)')
-            conn.commit()
-            conn.close()
-
-            result = UI._resolve_data(f'sqlite:///{db_path}')
-            assert len(result) == 1
-            source = result[0]
-            assert isinstance(source, SQLAlchemySource)
+        result = UI._resolve_data(f'sqlite:///{sqlite_db_path}')
+        assert len(result) == 1
+        source = result[0]
+        assert isinstance(source, SQLAlchemySource)
 
     def test_resolve_data_empty_list(self):
         """Test that an empty list returns an empty list."""
