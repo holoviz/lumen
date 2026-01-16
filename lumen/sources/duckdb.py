@@ -424,7 +424,7 @@ class DuckDBSource(BaseSQLSource):
                 self.sql_expr.format(table=f'"{table}"'),
                 self.sql_expr.format(table=table),
             )
-            if table in self.tables:
+            if table in (self.tables or {}):
                 # do not need to re-materialize existing
                 continue
             elif sql_expr in equivalent_sql_exprs:
