@@ -1,8 +1,11 @@
 import asyncio
+import sqlite3
+import tempfile
 
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import duckdb
 import pytest
 
 try:
@@ -28,6 +31,7 @@ from lumen.ai.views import SQLOutput
 from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
+from lumen.sources.sqlalchemy import SQLAlchemySource
 
 
 @pytest.fixture
@@ -879,10 +883,6 @@ class TestResolveData:
 
     def test_resolve_data_duckdb_connection_string(self):
         """Test resolving a DuckDB connection string."""
-        import tempfile
-
-        import duckdb
-
         # Create a proper DuckDB file
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / 'test.duckdb'
@@ -897,10 +897,6 @@ class TestResolveData:
 
     def test_resolve_data_db_file_duckdb(self):
         """Test resolving a .db file that is actually DuckDB."""
-        import tempfile
-
-        import duckdb
-
         # Create a proper DuckDB file
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / 'test.db'
@@ -960,19 +956,6 @@ class TestResolveData:
 
     def test_resolve_data_db_file_sqlite(self):
         """Test resolving a .db file that is actually SQLite."""
-        # Check if SQLAlchemySource can be imported
-        try:
-            from lumen.sources.sqlalchemy import SQLAlchemySource
-            sqlalchemy_available = True
-        except ImportError:
-            sqlalchemy_available = False
-
-        if not sqlalchemy_available:
-            pytest.skip('lumen.sources.sqlalchemy could not be imported')
-
-        import sqlite3
-        import tempfile
-
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / 'test.db'
             conn = sqlite3.connect(str(db_path))
@@ -987,19 +970,6 @@ class TestResolveData:
 
     def test_resolve_data_sqlite_connection_string(self):
         """Test resolving a SQLite connection string."""
-        # Check if SQLAlchemySource can be imported
-        try:
-            from lumen.sources.sqlalchemy import SQLAlchemySource
-            sqlalchemy_available = True
-        except ImportError:
-            sqlalchemy_available = False
-
-        if not sqlalchemy_available:
-            pytest.skip('lumen.sources.sqlalchemy could not be imported')
-
-        import sqlite3
-        import tempfile
-
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / 'test.sqlite'
             conn = sqlite3.connect(str(db_path))
