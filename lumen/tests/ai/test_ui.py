@@ -697,11 +697,6 @@ async def test_navigation_visibility_with_explorations(explorer_ui):
     assert explorer_ui._navigation not in explorer_ui._main
 
 
-# ============================================================================
-# Tests for UI._resolve_data method
-# ============================================================================
-
-
 class TestResolveData:
     """Tests for UI._resolve_data method."""
 
