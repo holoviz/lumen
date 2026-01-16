@@ -908,6 +908,9 @@ class TestResolveData:
             source = result[0]
             assert isinstance(source, DuckDBSource)
 
+            # Close the DuckDB connection to release file locks (required on Windows)
+            source.close()
+
     def test_resolve_data_db_file_duckdb(self):
         """Test resolving a .db file that is actually DuckDB."""
         # Create a proper DuckDB file
@@ -921,11 +924,9 @@ class TestResolveData:
             assert len(result) == 1
             source = result[0]
             assert isinstance(source, DuckDBSource)
-            
-            # Close the DuckDB connection to release file locks (especially on Windows)
-            source.clear_cache()
-            if hasattr(source, 'engine') and source.engine:
-                source.engine.dispose()
+
+            # Close the DuckDB connection to release file locks (required on Windows)
+            source.close()
 
     def test_resolve_data_db_file_not_found(self):
         """Test that resolving a non-existent .db file raises FileNotFoundError."""
@@ -961,6 +962,11 @@ class TestResolveData:
 
     def test_resolve_data_mixed_local_and_remote(self):
         """Test resolving a mix of local and remote files."""
+        import sys
+        if sys.platform == 'win32':
+            # Skip on Windows due to httpfs extension file locking issues in CI
+            pytest.skip("httpfs extension has file locking issues on Windows CI")
+
         result = UI._resolve_data(['local.csv', 'https://example.com/remote.csv'])
         assert len(result) == 1
         source = result[0]
