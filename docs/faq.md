@@ -4,7 +4,7 @@ Common questions about Lumen AI.
 
 ## What is Lumen AI?
 
-Lumen is an **open-source Python framework for building domain-aware, extensible AI data applications**.
+Lumen is an **open-source, extensible Python framework for building domain-aware, extensible AI data applications**. Out-of-the-box it allows connecting to a variety of data sources, letting the user ask questions in plain English, and get SQL queries, visualizations, and analysis without writing any code.
 
 It uses natural language as an interface, but all work is executed through explicit, inspectable components:
 - SQL generated against real data sources
