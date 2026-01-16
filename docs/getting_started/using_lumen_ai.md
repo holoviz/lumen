@@ -37,7 +37,7 @@ You can ask the AI to perform several steps in one message. This helps you build
 
 ## Understand the AI's reasoning
 
-If you want to see how the AI arrived at an answer, enable **Chain of Thought** in **Settings** (left sidebar). This will show the LLM's reasoning steps in expandable cards within the chat.
+If you want to see how the AI arrived at an answer, enable **Chain of Thought** in [**Settings**](navigating_the_ui.md#settings-and-control-options) (left sidebar). This will show the LLM's reasoning steps in expandable cards within the chat.
 
 You can also configure your LLM provider and model from **Settings**.
 
@@ -49,7 +49,7 @@ If results aren't what you expected, you have several options:
 
 **Continue the conversation** — Send a new message to refine or adjust the results. For example: "Can you make that chart show only the top 5 items?" or "Add a trend line to the visualization."
 
-**Add annotations** — For visualizations, click the annotation button (💬 icon) to add highlights, callouts, or labels. For example: "Highlight the peak values" or "Mark outliers in red."
+**Add annotations** — For visualizations, click the [annotation button](navigating_the_ui.md#revising-and-refining) (💬 icon) to add highlights, callouts, or labels. For example: "Highlight the peak values" or "Mark outliers in red."
 
 **Manually edit** — Directly edit the SQL query or visualization specification in the editor panel. This works if you're comfortable with SQL or need precise control over the output.
 
@@ -57,11 +57,11 @@ Use manual editing for small tweaks (like changing chart colors or sort order), 
 
 ## Explorations
 
-An Exploration is a persistent, contextual workspace for working with a specific dataset. It is created when a SQL query is first generated and captures the full interaction state, including the conversation, analyses, visualizations, and other data artifacts. An Exploration evolves over time, supports multiple questions and operations on the same data, and can be revisited or exported as a coherent unit.
+An Exploration is a persistent, contextual workspace for working with a specific dataset. It is created when a SQL query is first generated and captures the full interaction state, including the conversation, analyses, visualizations, and other data artifacts. An Exploration evolves over time, supports multiple questions and operations on the same data, and can be revisited or exported as a coherent unit.M
 
 Explorations start from the global context (available sources and metadata). If a question is a follow-up, the new exploration is nested under the parent; if it is not, Lumen creates a new top-level exploration.
 
-Use the navigation menu to move between explorations or nest follow-ups under the exploration they build on.
+Use the [navigation menu](navigating_the_ui.md#understanding-explorations) to move between explorations or nest follow-ups under the exploration they build on.
 
 ## Report mode
 
@@ -75,6 +75,16 @@ Use the navigation menu to move between explorations or nest follow-ups under th
 - **Export all** — Download everything as a single Jupyter notebook
 
 **Under the hood:** Report mode uses Lumen's `Report` framework. Each exploration becomes a `Section` containing `ActorTask` objects. The same classes power both the UI and code-based reports.
+
+!!! tip "Planned Feature: Report Templates"
+    We're working on the ability to export your report structure as a reusable YAML configuration file. This will let you:
+
+    - **Build a skeleton through exploration**: Ask questions naturally, and the system captures the underlying report structure (which agents, what order, what prompts).
+    - **Create templated reports**: Export a "Q3 Customer Analysis" report, then next quarter reload it, change "Q3" to "Q4", and run—no re-prompting needed.
+    - **Share report structures**: Export a config, share with colleagues, and they get the exact same report framework against their own data.
+    - **Iterate without re-discovery**: Tweak the config (reorder sections, adjust prompts, swap one analysis for another) without starting from scratch.
+
+    The LLM does the hard work once during exploration, then gets out of the way for repeated execution.
 
 **Build reports programmatically:**
 
