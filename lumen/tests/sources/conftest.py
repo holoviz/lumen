@@ -7,8 +7,6 @@ import pytest
 
 from hvplot.tests.util import makeMixedDataFrame
 
-from lumen.sources.duckdb import DuckDBSource
-
 
 @pytest.fixture
 def source_tables():
