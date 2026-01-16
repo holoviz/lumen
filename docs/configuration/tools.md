@@ -18,7 +18,7 @@ You don't need to configure these. Agents use them when needed.
 
 ## Create a simple tool
 
-Turn any function into a tool:
+If you require a custom tool, e.g. either to provide additional context, render some output or perform some action simply provide a function with type annotations and a docstring:
 
 ``` py title="Simple function tool"
 import lumen.ai as lmai
@@ -26,12 +26,12 @@ import lumen.ai as lmai
 def calculate_average(numbers: list[float]) -> float:
     """
     Calculate the average of a list of numbers.
-    
+
     Parameters
     ----------
     numbers : list[float]
         Numbers to average
-        
+
     Returns
     -------
     float
@@ -48,9 +48,60 @@ ui.servable()
 
 1. Function automatically becomes a tool - the LLM uses your docstring and type hints
 
-## Tool that accesses context
+Lumen can now call this function by filling in the arguments. The return value is surfaced to the model, and only added to context if `provides` is set.
 
-Tools can read data from context (memory):
+## Define a tool with metadata
+
+Some tools require access to the current context, e.g. to access the current data. To declare that a particular argument should be looked up in the context you can use the `define_tool` decorator to annotate the function, ensuring the `FunctionTool` can populate `requires`, `provides`, and `purpose`.
+
+As an example we can define a function that accept the `pipeline` and counts the number of rows in the table:
+
+``` py title="Tool annotations"
+import lumen.ai as lmai
+from lumen.ai.tools import define_tool
+
+@define_tool(
+    requires=["pipeline"],
+    purpose="Count rows in the active table"
+)
+def count_rows(pipeline) -> int:
+    """Count total rows in the current table."""
+    return len(pipeline.data)
+
+ui = lmai.ExplorerUI(
+    data='penguins.csv',
+    tools=[count_rows]
+)
+ui.servable()
+```
+
+## Render tool output
+
+If your tool returns a value you want to render directly, set `render_output=True`:
+
+``` py title="Render tool output"
+import lumen.ai as lmai
+from panel_material_ui import Card
+from lumen.ai.tools import define_tool
+
+@define_tool(render_output=True, purpose="Show a greeting card")
+def greeting() -> Card:
+    return Card(
+        "Hello from Lumen tools!",
+        title="Greeting",
+        collapsed=True
+    )
+
+ui = lmai.ExplorerUI(
+    data='penguins.csv',
+    tools=[greeting]
+)
+ui.servable()
+```
+
+## Explicit `FunctionTool` definition
+
+You may also explicitly define a `FunctionTool` instance:
 
 ``` py title="Tool with context access" hl_lines="26-28"
 from lumen.ai.tools import FunctionTool
@@ -58,12 +109,12 @@ from lumen.ai.tools import FunctionTool
 def filter_penguins(table) -> dict:
     """
     Filter penguins by bill length.
-    
+
     Parameters
     ----------
     table : pd.DataFrame
         The penguin data
-        
+
     Returns
     -------
     dict
@@ -90,7 +141,7 @@ ui.servable()
 ```
 
 1. Tool reads `table` from context
-2. Tool adds `filtered_table` and `summary` to context
+2. Tool adds `filtered_table` and `summary` to context (function must return a dict with those keys)
 
 ## Tool that calls an API
 
@@ -100,12 +151,12 @@ Wrap external services:
 def fetch_weather(location: str) -> str:
     """
     Get current weather for a location.
-    
+
     Parameters
     ----------
     location : str
         City name
-        
+
     Returns
     -------
     str
@@ -131,12 +182,12 @@ from lumen.ai.tools import FunctionTool
 def validate_quality(table: pd.DataFrame) -> dict:
     """
     Check data quality and report issues.
-    
+
     Parameters
     ----------
     table : pd.DataFrame
         Data to validate
-        
+
     Returns
     -------
     dict
@@ -144,13 +195,13 @@ def validate_quality(table: pd.DataFrame) -> dict:
     """
     missing = table.isnull().sum().sum()
     duplicates = table.duplicated().sum()
-    
+
     issues = []
     if missing > 0:
         issues.append(f"{missing} missing values")
     if duplicates > 0:
         issues.append(f"{duplicates} duplicate rows")
-    
+
     return {
         "total_rows": len(table),
         "issues": issues,
@@ -179,7 +230,7 @@ ui.servable()
 requires=["table", "sql"]  # Tool receives these from context
 ```
 
-**`provides`** - Context keys the tool creates:
+**`provides`** - Context keys the tool creates (for a single key, a non-dict return value is wrapped):
 
 ``` py
 provides=["summary", "report"]  # Tool adds these to context
@@ -249,14 +300,14 @@ Combine tools for complex workflows:
 def my_tool(data: list) -> str:
     """
     One-line summary of what it does.
-    
+
     Detailed explanation if needed.
-    
+
     Parameters
     ----------
     data : list
         What the data represents
-        
+
     Returns
     -------
     str
@@ -318,7 +369,7 @@ def validate_and_process_user_data(data: dict):
     def process(data: list) -> dict:
         if not data:
             return {"error": "No data provided"}
-        
+
         try:
             result = sum(data) / len(data)
             return {"average": result}
@@ -332,7 +383,7 @@ def validate_and_process_user_data(data: dict):
     def process(data: list) -> str:
         if not data:
             return "Error: No data provided"
-        
+
         try:
             result = sum(data) / len(data)
             return f"Average: {result:.2f}"

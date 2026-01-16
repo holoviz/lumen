@@ -6,6 +6,7 @@ import traceback
 
 from functools import partial
 from textwrap import dedent, indent
+from types import FunctionType
 from typing import TYPE_CHECKING, Any, Self
 
 import param
@@ -362,11 +363,14 @@ class Coordinator(Viewer, VectorLookupToolUser):
         log_debug(f"New Message: \033[91m{contents!r}\033[0m", show_sep="above")
         return await self.respond(contents, self.context)
 
-    def _process_tools(self, tools: list[type[Tool] | Tool] | None) -> list[type[Tool] | Tool]:
+    def _process_tools(self, tools: list[type[Tool] | Tool] | None) -> list[type[Tool] | Tool | FunctionType]:
         tools = list(tools) if tools else []
 
         # If none of the tools provide metaset, add MetadataLookup
-        provides_metaset = any("metaset" in tool.output_schema.__annotations__ for tool in tools or [])
+        provides_metaset = any(
+            "metaset" in tool.output_schema.__annotations__ for tool in tools
+            if isinstance(tool, Tool) or (isinstance(tool, type) and issubclass(tool, Tool))
+        )
         if not provides_metaset:
             # Add both tools - they will share the same vector store through VectorLookupToolUser
             # Both need to be added as classes, not instances, for proper initialization

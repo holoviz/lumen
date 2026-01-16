@@ -5,8 +5,10 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
+from panel.viewable import Viewable
+
 from lumen.ai.coordinator import Coordinator
-from lumen.ai.tools import FunctionTool, MetadataLookup
+from lumen.ai.tools import FunctionTool, MetadataLookup, define_tool
 from lumen.ai.vector_store import NumpyVectorStore
 
 
@@ -29,6 +31,23 @@ def add(a: int, b: int) -> int:
     return a + b
 
 
+@define_tool(
+    requires=["a", "b"],
+    provides=["c"],
+    purpose="Add two numbers from context"
+)
+def add_from_context(a: int, b: int) -> int:
+    """
+    Adds two integers from context
+    """
+    return a + b
+
+
+@define_tool(render_output=True)
+def render_greeting() -> str:
+    return "Hello from tool"
+
+
 def test_function_tool_constructor():
     tool = FunctionTool(add)
 
@@ -41,6 +60,25 @@ async def test_function_tool_requires():
     context = {"a": 1, "b": 3}
     views, out_context = await tool.respond([], context)
     assert views[0] == "add(a=1, b=3) returned: 4"
+
+
+async def test_function_tool_define_tool_decorator():
+    tool = FunctionTool(add_from_context)
+    context = {"a": 2, "b": 5}
+    views, out_context = await tool.respond([], context)
+    assert tool.requires == ["a", "b"]
+    assert tool.provides == ["c"]
+    assert tool.purpose == "Add two numbers from context"
+    assert out_context["c"] == 7
+    assert views[0] == "add_from_context(a=2, b=5) returned: 7"
+
+
+async def test_function_tool_define_tool_render_output():
+    tool = FunctionTool(render_greeting)
+    views, out_context = await tool.respond([], {})
+    assert tool.render_output is True
+    assert out_context == {}
+    assert isinstance(views[0], Viewable)
 
 
 async def test_function_tool_provides():
