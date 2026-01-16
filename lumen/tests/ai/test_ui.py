@@ -1,5 +1,7 @@
 import asyncio
 
+from unittest.mock import AsyncMock, patch
+
 import pandas as pd
 import pytest
 
@@ -10,6 +12,7 @@ except ModuleNotFoundError:
 
 from panel.layout import Column, Row
 from panel.tests.util import async_wait_until
+from panel.util import edit_readonly
 from panel_material_ui import Container
 from panel_splitjs import VSplit
 
@@ -409,6 +412,48 @@ async def test_exploration_parent_relationship(explorer_ui):
     # Check that parent is home
     assert exploration.parent is explorer_ui._home
     assert exploration.parent.title == 'Home'
+
+
+async def test_chat_upload_flow_opens_dialog_and_starts_exploration(explorer_ui, monkeypatch):
+    ui = explorer_ui
+    old_sources = list(ui.context.get("sources", []))
+
+    execute_plan = AsyncMock()
+    respond = AsyncMock(return_value=object())
+    monkeypatch.setattr(ui, "_execute_plan", execute_plan)
+    monkeypatch.setattr(ui._coordinator, "respond", respond)
+
+    ui._chat_input.value_input = "Show me the uploaded data"
+
+    with patch("panel.state.add_periodic_callback", lambda *a, **kw: None):
+        with edit_readonly(ui._chat_input):
+            ui._chat_input.pending_uploads = 1
+            ui._chat_input.value_uploaded = {}
+            ui._on_submit()
+
+    assert ui._pending_query == "Show me the uploaded data"
+
+    with edit_readonly(ui._chat_input):
+        ui._chat_input.pending_uploads = 0
+        ui._chat_input.value_uploaded = {
+            "uploaded.csv": {"value": b"id,value\n1,2\n"}
+        }
+    ui._on_submit(wait=True)
+    assert ui._sources_dialog_content.open is True
+    assert ui._source_content.active == ui._source_controls.index(ui._upload_controls)
+
+    ui._upload_controls.param.trigger("add")
+
+    await async_wait_until(lambda: ui._sources_dialog_content.open is False)
+    await async_wait_until(lambda: len(ui.context.get("sources", [])) > len(old_sources))
+    await async_wait_until(lambda: execute_plan.await_count > 0)
+
+    new_sources = [src for src in ui.context["sources"] if src not in old_sources]
+    assert len(new_sources) == 1
+    assert "uploaded" in new_sources[0].get_tables()
+
+    assert ui._main[0] is ui.interface
+    assert ui._main[0][0].object == "Show me the uploaded data"
 
 
 # Tests for view transition states
