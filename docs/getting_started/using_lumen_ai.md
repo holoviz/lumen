@@ -95,8 +95,6 @@ report = Report(
 await report.execute()
 ```
 
-See the [Building Reports tutorial](../examples/tutorials/building_reports.md) for details on creating custom reports with Actions, AI agents, and context passing.
-
 ## Export results
 
 Export your session as a Jupyter notebook so you can reproduce, share, or build on your work.
