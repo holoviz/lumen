@@ -149,10 +149,6 @@ class DuckDBSource(BaseSQLSource):
                 processed_tables[table_alias] = sql_expr
 
             self.tables = processed_tables
-        elif self.tables is None:
-            self.tables = {
-                t: self.sql_expr.format(table=t) for t in self.get_tables()
-            }
 
         for table, mirror in self.mirrors.items():
             if isinstance(mirror, pd.DataFrame):

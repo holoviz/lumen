@@ -515,6 +515,9 @@ class UI(Viewer):
                     db_path = src.replace('duckdb:///', '')
                     db_path = str(Path(db_path).absolute())
                     source = DuckDBSource(uri=db_path)
+                    source.tables = {
+                        table: source.get_sql_expr(table) for table in source.get_tables()
+                    }
                     sources.append(source)
                     continue
                 elif src.startswith(('sqlite://', 'postgresql://', 'mysql://', 'mssql://', 'oracle://')):
@@ -542,6 +545,9 @@ class UI(Viewer):
                     # The header contains "DUCK" in the first 16 bytes
                     if b'DUCK' in header:
                         source = DuckDBSource(uri=str(db_path))
+                        source.tables = {
+                            table: source.get_sql_expr(table) for table in source.get_tables()
+                        }
                         sources.append(source)
                     else:
                         try:
