@@ -63,6 +63,38 @@ Explorations start from the global context (available sources and metadata). If 
 
 Use the navigation menu to move between explorations or nest follow-ups under the exploration they build on.
 
+## Report mode
+
+**Report mode shows all your analyses on one page.** Switch to Report mode from the left sidebar to see your explorations organized into a structured report with collapsible sections.
+
+**What you can do:**
+
+- **Review everything** — Scroll through all analyses in one place
+- **Edit prompts** — Click any task to modify its instructions and rerun
+- **Customize agents** — Edit underlying agent prompts to change behavior
+- **Export all** — Download everything as a single Jupyter notebook
+
+**Under the hood:** Report mode uses Lumen's `Report` framework. Each exploration becomes a `Section` containing `ActorTask` objects. The same classes power both the UI and code-based reports.
+
+**Build reports programmatically:**
+
+The Report framework can also be used directly in Python to create reusable analytical workflows:
+
+```python
+from lumen.ai.report import Action, Report, Section
+
+class MyAnalysis(Action):
+    async def _execute(self, context, **kwargs):
+        # Your analysis here
+        return [output], {'result': value}
+
+report = Report(
+    Section(MyAnalysis(title="Analysis"), title="Section"),
+    title="My Report"
+)
+await report.execute()
+```
+
 ## Export results
 
 Export your session as a Jupyter notebook so you can reproduce, share, or build on your work.
@@ -74,6 +106,7 @@ Use **Export Notebook** in the navigation menu to download a notebook containing
 Switch to **Report** mode (via the left sidebar), then use **Export Notebook** to download everything as a single notebook.
 
 The notebook includes:
+
 - Markdown cells with your questions and AI responses
 - Code cells with SQL queries and Lumen specifications
 - Visualizations as executable code
@@ -93,7 +126,7 @@ lumen-ai serve data.csv --temperature 0.8
 ```
 
 ``` bash title="Use specific provider"
-lumen-ai serve data.csv --provider anthropic --api-key your_key_here
+lumen-ai serve data.csv --provider anthropic --api-key sk-...
 ```
 
 Run `lumen-ai serve --help` to see all available options.
@@ -105,7 +138,7 @@ Run `lumen-ai serve --help` to see all available options.
 
 For fine-grained control, use the Python API:
 
-```[ py title="Advanced Python configuration" hl_lines="4 6 7"]
+```py title="Advanced Python configuration" hl_lines="4 6 7"
 import lumen.ai as lmai
 
 ui = lmai.ExplorerUI(

@@ -19,6 +19,23 @@ nav = [
     {"Navigating the UI" = "getting_started/navigating_the_ui.md"},
     {"Using Lumen AI" = "getting_started/using_lumen_ai.md"}
   ]},
+  {"Examples" = [
+    {"Tutorials" = [
+      {"Overview" = "examples/tutorials/index.md"},
+      {"Weather Data AI Explorer" = "examples/tutorials/weather_data_ai_explorer.md"},
+      {"Penguins Dashboard Spec" = "examples/tutorials/penguins_dashboard_spec.md"}
+    ]},
+    {"Gallery" = [
+      {"Overview" = "examples/gallery/index.md"},
+      {"Penguins" = "examples/gallery/penguins.md"},
+      {"London Bike Points" = "examples/gallery/bikes.md"},
+      {"Seattle Weather" = "examples/gallery/seattle.md"},
+      {"NYC Taxi" = "examples/gallery/nyc_taxi.md"},
+      {"Precipitation" = "examples/gallery/precip.md"},
+      {"Earthquakes" = "examples/gallery/earthquakes.md"},
+      {"Wind Turbines" = "examples/gallery/windturbines.md"}
+    ]}
+  ]},
   {"Configuration" = [
     {"CLI" = "configuration/cli.md"},
     {"Prompts" = "configuration/prompts.md"},
@@ -46,23 +63,6 @@ nav = [
       {"Deployment" = "configuration/spec/deployment.md"}
     ]}
   ]},
-  {"Examples" = [
-    {"Tutorials" = [
-      {"Overview" = "examples/tutorials/index.md"},
-      {"Weather Data AI Explorer" = "examples/tutorials/weather_data_ai_explorer.md"},
-      {"Penguins Dashboard Spec" = "examples/tutorials/penguins_dashboard_spec.md"}
-    ]},
-    {"Gallery" = [
-      {"Overview" = "examples/gallery/index.md"},
-      {"Penguins" = "examples/gallery/penguins.md"},
-      {"London Bike Points" = "examples/gallery/bikes.md"},
-      {"Seattle Weather" = "examples/gallery/seattle.md"},
-      {"NYC Taxi" = "examples/gallery/nyc_taxi.md"},
-      {"Precipitation" = "examples/gallery/precip.md"},
-      {"Earthquakes" = "examples/gallery/earthquakes.md"},
-      {"Wind Turbines" = "examples/gallery/windturbines.md"}
-    ]}
-  ]},
   {"Reference" = [
     {"API" = [
       {"AI" = [
@@ -76,7 +76,7 @@ nav = [
       {"Sources" = "reference/api/sources.md"},
       {"Transforms" = "reference/api/transforms.md"},
       {"Views" = "reference/api/views.md"}
-    ]}
+    ]},
   ]},
   {"Contributing" = "contributing.md"}
 ]

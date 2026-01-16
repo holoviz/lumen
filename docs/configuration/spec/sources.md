@@ -2,6 +2,8 @@
 
 Sources load data into your dashboard from files, databases, or APIs.
 
+Sources provide raw data that can be transformed with [Pipelines](pipelines.md).
+
 ## Source fundamentals
 
 Every Lumen dashboard needs at least one source. Sources define where data comes from and how to access it.
@@ -239,6 +241,7 @@ Enable caching with the `cache_dir` parameter:
 3. **Cache structure**: Lumen creates the cache directory if it doesn't exist
 
 Cache files are stored as:
+
 - `{cache_dir}/{table_name}.parq` - Parquet data file
 - `{cache_dir}/{table_name}.json` - Schema metadata
 

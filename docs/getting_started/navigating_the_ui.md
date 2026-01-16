@@ -4,123 +4,142 @@ Lumen Explorer combines data exploration and AI-powered analysis in one split-sc
 
 ## Get started
 
-### Your interface at a glance
+### The splash screen
 
-When you open Lumen Explorer, you'll see the chat panel where you ask questions and a consistent left sidebar for switching between **Explore** and **Report** mode. The results area appears once you start analyzing, and the exploration navigation menu appears as soon as you have explorations.
+When you open Lumen Explorer, you'll see two main tabs to get started:
 
-**Splash tabs** — The launch screen includes **Chat with data** (ask questions) and **Select data to explore** (pick a table and start an exploration).
+![Lumen Splash Screen](../assets/navigating_the_ui/splash.png)
 
-**Chat panel** — Ask questions about your data in plain English. The AI will generate queries and visualizations automatically.
+**Chat with data** — Ask questions about your data in plain English. The AI will generate queries and visualizations automatically.
 
-**Results area** — View interactive tables, charts, and analysis results. Use Graphic Walker to filter, sort, and explore visually. Appears when you ask your first question.
+**Select data to explore** — Pick a specific table from your connected sources and start an exploration.
 
-**Navigation menu** (left panel next to the main content) — Track all your analyses in a tree. Each exploration is a separate session, so you can branch off previous results, nest follow-ups, and compare different approaches.
+**Quick action suggestions** — Below the chat input, you'll see helpful starter prompts like "What data is available?", "Show me a dataset", "Visualize the data", and "Show a demo". Click any of these to get started quickly.
 
-### Ask questions
+### The chat panel
 
-You can begin interrogating your data in three ways:
+The chat interface is where you interact with Lumen AI. The input area provides several built-in actions:
 
-**Type a direct question** — Enter any question in the "Ask anything..." text box. For example: "What are the top 5 customers by revenue?" or "Show me sales trends over time." Hit enter or click the send arrow.
-
-**Use quick action buttons** — Below the text box, you'll find preset buttons that handle common tasks without typing:
-
-- **What data is available?** — Get an instant summary of your dataset's structure and contents.
-- **Show me a dataset** — Display a dataset and its columns.
-- **Visualize the data** — Generate an automatic visualization to explore patterns and distributions.
-- **Show a demo** — See a pre-built example of what Lumen can do (appears when demo mode is enabled).
-
-**Start from a table** — On the splash screen, switch to **Select data to explore**, choose a table, and click a table to launch a new exploration for that dataset.
-
-### Interact with messages
-
-The chat interface provides several built-in actions:
+![Speed Dial Actions](../assets/navigating_the_ui/speed_dial.png)
 
 **Undo** — Remove the last message and its response.
 
 **Rerun** — Re-execute the last query to regenerate results.
 
-**Clear** — Delete all messages and start a new conversation.
+**Clear** — Delete all messages and start fresh.
 
-**Upload files** — You can attach files directly in the chat input to add new data sources or provide additional context.
+**Upload files** — Attach files directly to add new data sources or provide context.
 
-## Work with results
-
-### Control how analysis runs
-
-Use **Settings** in the left sidebar to toggle three analysis features and configure your LLM:
-
-**Chain of Thought** — When enabled, the AI shows its reasoning steps. Use this when you want to understand *how* the AI arrived at an answer. Disabled by default.
-
-**SQL Planning** — When enabled, the AI plans its SQL query before executing it. This improves accuracy for complex questions. Disabled by default.
-
-**Validation Step** — When enabled, the AI double-checks results for correctness. This catches data errors early. Disabled by default.
-
-Simply click the toggle next to each option to turn it on or off.
-
-### Navigate the sidebar
+### The navigation menu
 
 The left sidebar provides quick access to all major features:
 
-**Explore** — The main chat and analysis mode (default view).
+![Left Sidebar](../assets/navigating_the_ui/sidebar.png)
 
-**Report** — Switch to report mode to see all explorations in a consolidated view.
+**Explore** — Main chat and analysis mode (default view)
 
-**Sources** — Add new data sources (CSV, Parquet, JSON, etc.) or view connected sources.
+**Report** — Consolidated view of all explorations
 
-**Settings** — Toggle Chain of Thought, SQL Planning, and Validation Step options, and configure your LLM.
+**Sources** — Manage data connections
 
-**Help** — Open quick help for the interface, explorations, results, and export.
+**Settings** — Configure LLM and analysis options
 
-### Organize your explorations
+**Help** — Access interface documentation
 
-Each time you run a SQL query that returns data, a new **exploration** is created. Explorations are persistent, contextual workspaces for working with a specific dataset. They capture the conversation, generated analyses, visualizations, and other data artifacts so they can evolve over time and be revisited or exported.
+### Adding data sources
 
-Explorations start from the global context (available sources and metadata). If a question is a follow-up, the new exploration is nested under the parent; if it is not, Lumen creates a new top-level exploration. The navigation menu shows them as a persistent tree across both Explore and Report mode.
+Click **Sources** from the left sidebar to manage your data:
 
-**Home** — Your starting point. All initial questions begin here.
+![Data Sources Panel](../assets/navigating_the_ui/data_sources.png)
 
-**Individual explorations** — Each SQL query result gets its own exploration with a descriptive title (e.g., "Top Customers by Revenue"). Select a node in the navigation menu to switch.
+**Upload data** — Drag and drop files or click **Browse**. Supports CSV, Parquet, JSON, Excel, and more.
 
-**Follow-up explorations** — If a question builds on a previous result, it appears nested under the parent exploration.
+**Fetch remote data** — Enter URLs (one per line) and press Shift+Enter to download files from the web.
 
-**Remove explorations** — Use the item menu (⋮) in the navigation menu and choose **Remove** to delete an exploration.
+**Classify files** — Choose **data** (queryable tables) or **metadata** (documentation for the AI)
 
-### View results
+**Control visibility** — Toggle tables on/off to control what the AI can access. Apply metadata to specific tables or all tables at once.
 
-When an analysis completes, you'll see:
+All connections persist within your current session across multiple explorations.
 
-**Result tabs** — Each analysis output is shown as a tab (for example **Data Source** or a query result). Select tabs to switch outputs.
+## The results screen
 
-**Editor + output** — The editor appears above the output so you can review or tweak the query/spec while seeing results update below.
+Once you start analyzing, the results screen displays your outputs:
 
-**Overview tab** — An interactive table powered by Graphic Walker. Here you can sort, filter, and download data.
+![Results Screen](../assets/navigating_the_ui/results.png)
 
-**Export Table as** — Use the toolbar above table results to download the current table (CSV/Excel).
+**Exploration sidebar** — On the left, navigate between different explorations and follow-ups.
 
-**SQL panel** (in the left pane) — The exact SQL query used to fetch the data, along with controls to modify or re-run it.
+**Result tabs** — On the right, switch between different analysis outputs (data tables, visualizations, etc.) Use the Data Source tab to explore the original data with [Graphic Walker](https://docs.kanaries.net/graphic-walker).
 
-**Additional tabs** — Visualizations, charts, or summaries appear as separate tabs depending on what the AI generated.
+**Code editor** — Review and modify SQL queries or visualization specs, which will update views in real-time.
 
-**Pop-out views** — Click the "Open in new pane" icon on any result to view it alongside other results for comparison.
+**Interactive views** — View data tables with sorting, filtering, and pagination. Visualizations support tooltips.
 
-## Save and share
+**Export options** — Download tables as CSV or Excel files or download visualizations as PNG, PDF, etc.
 
-### Export and download
+### Understanding explorations
 
-Use **Export Notebook** in the navigation menu to save your current exploration as a Jupyter notebook. This includes all your questions, SQL queries, and visualizations so you can run them again or share them with others.
+Each SQL query that returns data creates a new **exploration** — a persistent workspace for that analysis:
 
-If you're in Report Mode (accessible via the left sidebar), **Export Notebook** exports all explorations as a single comprehensive notebook.
+**Top-level explorations** — New independent questions start here
 
-### Manage your data
+**Nested explorations** — Follow-up questions appear under their parent
 
-Click **Sources** from the left sidebar to:
+**Exploration tree** — Navigate between explorations in the left panel
 
-- **Add Sources** — Upload CSV, Parquet, JSON files or connect to databases
-- **View Sources** — See all currently connected data sources and their tables
-- Remove data sources you no longer need
+**Persistent context** — Each exploration captures the conversation, queries, and visualizations
 
-All data connections persist within your current session, so you can reference the same datasets across multiple explorations.
+### Revising and refining
 
-### Next steps
+When you need to adjust your analysis, Lumen provides tools to refine and iterate on your results without starting from scratch.
 
-Once you're comfortable with the interface, try the quick action buttons to get a feel for what's possible. Then move on to asking more complex questions in the chat. The AI will handle the SQL—you just focus on what you want to learn.
+![Revision Controls](../assets/navigating_the_ui/revise.png)
+
+For plots, there are also annotation controls that allow you to highlight key insights directly on the visualization.
+
+### Settings and control options
+
+Use **Settings** in the left sidebar to configure analysis behavior:
+
+**Chain of Thought** — Shows AI reasoning steps (disabled by default)
+
+**SQL Planning** — AI plans queries before executing (disabled by default)
+
+**Validation Step** — AI validates results for correctness (disabled by default)
+
+**LLM Configuration** — Choose and configure your language model
+
+## Exporting and sharing
+
+### Export tables and visualizations
+
+Above every code editor, you'll find export options:
+
+![Export Table](../assets/navigating_the_ui/export_table.png)
+
+- **Export Table** — Download data tables as CSV or Excel files.
+
+- **Export Visualization** — Save visualizations as PNG, PDF, SVG, etc.
+
+### Export to Jupyter notebooks
+
+Export the current exploration as a Jupyter notebook under the exploration sidebar.
+
+![Report View](../assets/navigating_the_ui/reports.png)
+
+Exported notebooks include all questions, SQL queries, and visualizations, ready to run or share.
+
+![Notebook Preview](../assets/navigating_the_ui/notebook.png)
+
+### Report mode
+
+In Report Mode, export everything as one comprehensive notebook under the Report sidebar.
+
+Switch to **Report** mode from the left sidebar to see all your explorations in a consolidated view. This provides an overview of all your analysis work in one place.
+
+## Next steps
+
+Once you're comfortable with the interface, try the quick action buttons on the splash screen. Then move on to asking more complex questions — the AI handles the SQL while you focus on insights.
+
+**Next:** [Using Lumen AI →](using_lumen_ai.md)

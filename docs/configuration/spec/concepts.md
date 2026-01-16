@@ -209,6 +209,7 @@ layouts:
 ```
 
 Link views to data using either:
+
 - `pipeline: pipeline_name` - Use processed data
 - `source: source_name` - Use raw data directly
 
@@ -243,6 +244,7 @@ layouts:
 ```
 
 The `layout` parameter controls view arrangement:
+
 - `[[0], [1, 2]]` - View 0 on top, views 1 and 2 side-by-side below
 - `[[0, 1], [2, 3]]` - 2x2 grid
 

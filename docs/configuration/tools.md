@@ -4,6 +4,8 @@
 
 Most users don't need custom tools. Built-in tools handle common needs.
 
+**See also:** [Agents](agents.md) — Agents invoke tools when needed. For more complex logic, you may want to create a custom agent instead.
+
 ## Built-in tools
 
 Lumen includes tools automatically:

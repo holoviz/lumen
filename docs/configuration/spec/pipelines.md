@@ -2,6 +2,8 @@
 
 Pipelines filter and transform data before visualization.
 
+Pipelines consume data from [Sources](sources.md) and prepare it for [Views](views.md).
+
 ## Pipeline fundamentals
 
 Pipelines sit between sources and views, manipulating data as it flows through:

@@ -2,6 +2,8 @@
 
 Views display your data as plots, tables, indicators, and other visual components.
 
+**Different from Analyses:** For computational results (statistics, calculations, tests), see [Analyses](../analyses.md). Views are for visualizing data; analyses are for computing insights from data.
+
 ## View fundamentals
 
 Views are the final output of your dashboard. They transform data into visual representations that users can see and interact with.

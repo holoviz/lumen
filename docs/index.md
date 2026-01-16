@@ -3,76 +3,33 @@
 **An open-source Python framework for building extensible, domain-aware AI data applications.**
 
 Lumen is designed for teams who want conversational data exploration **without giving up control**:
+
 - **Open source** and inspectable end-to-end
 - **Extensible and configurable**: plug in custom data sources, Python analyses, tools, and agents
 - **Domain-aware**: encode business logic, terminology, and constraints directly in code
 
-Ask questions in natural language, but keep execution explicit, reproducible, and grounded in Python. **[Get started in 30 seconds →](quick_start.md)**
+Ask questions in natural language, but keep execution explicit, reproducible, and grounded in Python.
 
-Bring your own LLM: OpenAI, Anthropic, local models. Connect to your data sources: Snowflake, BigQuery, DuckDB, and any database supported by SQLAlchemy. **[See all installation options →](installation.md)**
+!!! tip "Quick Demo"
+    New to Lumen? **[Try our 30-second quick start →](quick_start.md)** to see it in action with a walkthrough.
+
+Bring your own LLM. Then connect to your data sources: Snowflake, BigQuery, DuckDB, and any database supported by SQLAlchemy. **[See all installation options →](installation.md)**
 
 === "CSV File + OpenAI"
 
     ```bash
-    export OPENAI_API_KEY=your_key_here
-    lumen-ai serve your_data.csv --provider openai --show
+    export OPENAI_API_KEY=sk-...
+
+    lumen-ai serve your_data.csv --provider openai --show  # parquet also works
     ```
     
     **Then ask:**
     
-    > "Show me the top 10 rows"
-    
-    > "What's the average revenue by region? Plot as a bar chart."
-    
-    > "Filter for sales over $1000 and create a histogram"
+    - Show me the top 10 rows
+    - What's the average revenue by region? Plot as a bar chart.
+    - Filter for sales over $1000 and create a histogram
 
-=== "Snowflake + Mistral"
-
-    ```python
-    from lumen.sources.snowflake import SnowflakeSource
-    import lumen.ai as lmai
-
-    source = SnowflakeSource(
-        account='your-account',
-        database='your-database',
-        authenticator='externalbrowser'  # SSO login
-    )
-
-    llm = lmai.llm.MistralAI()  # Enterprise-grade EU LLM
-    ui = lmai.ExplorerUI(data=source, llm=llm)
-    ui.servable()
-    ```
-    
-    **Then ask:**
-    
-    > "Which customers have the highest lifetime value?"
-    
-    > "Show monthly revenue trends for the last year"
-    
-    > "Join orders and products, then show top categories by profit"
-
-=== "BigQuery + Google"
-
-    ```python
-    from lumen.sources.bigquery import BigQuerySource
-    import lumen.ai as lmai
-
-    source = BigQuerySource(project_id='your-project-id')
-
-    llm = lmai.llm.Google()  # Native Google AI integration
-    ui = lmai.ExplorerUI(data=source, llm=llm)
-    ui.servable()
-    ```
-    
-    **Then ask:**
-    
-    > "What are the peak traffic hours? Show as a line chart."
-    
-    > "Calculate conversion rate by source and display in a table"
-    
-    > "Find anomalies in daily user counts"
-
-=== "DuckDB + Anthropic"
+=== "DuckDB + LLM Gateways"
 
     ```python
     from lumen.sources.duckdb import DuckDBSource
@@ -84,23 +41,81 @@ Bring your own LLM: OpenAI, Anthropic, local models. Connect to your data source
         }
     )
 
-    llm = lmai.llm.Anthropic()  # Claude for complex reasoning
+    llm = lmai.llm.Bedrock()  # LiteLLM also works
     ui = lmai.ExplorerUI(data=source, llm=llm)
     ui.servable()
     ```
     
     **Then ask:**
     
-    > "Which islands have the most penguins? Plot as a horizontal bar chart."
+    - Which islands have the most penguins? Plot as a horizontal bar chart.
+    - Create a scatter plot of bill length vs body mass, colored by species
+    - Calculate the ratio of flipper length to body mass, then plot it
+
+=== "SQLAlchemy + Local LLMs"
+
+    ```python
+    from lumen.sources.sqlalchemy import SQLAlchemySource
+
+    source = SQLAlchemySource(
+        url='sqlite:///data.db'  # any database flavor
+    )
+    llm = lmai.llm.AINavigator()  # LlamaCpp or Ollama also work
+    ui = lmai.ExplorerUI(data=source, llm=llm)
+    ui.servable()
+    ```
+
+    **Then ask:**
     
-    > "Create a scatter plot of bill length vs body mass, colored by species"
+    - How much sleep did I get last week?
+    - Show a timeseries of my daily step counts
+    - What's the average heart rate during workouts?
+
+=== "BigQuery + Google"
+
+    ```python
+    from lumen.sources.bigquery import BigQuerySource
+    import lumen.ai as lmai
+
+    source = BigQuerySource(project_id='your-project-id')
+
+    llm = lmai.llm.Google()
+    ui = lmai.ExplorerUI(data=source, llm=llm)
+    ui.servable()
+    ```
     
-    > "Calculate the ratio of flipper length to body mass, then plot it"
+    **Then ask:**
+    
+    - What are the peak traffic hours? Show as a line chart.
+    - Calculate conversion rate by source and display in a table
+    - Find anomalies in daily user counts
+
+=== "Snowflake + Mistral"
+
+    ```python
+    from lumen.sources.snowflake import SnowflakeSource
+    import lumen.ai as lmai
+
+    source = SnowflakeSource(
+        account='your-account',
+        database='your-database',
+        authenticator='externalbrowser'
+    )
+
+    llm = lmai.llm.MistralAI()
+    ui = lmai.ExplorerUI(data=source, llm=llm)
+    ui.servable()
+    ```
+    
+    **Then ask:**
+    
+    - Which customers have the highest lifetime value?
+    - Show monthly revenue trends for the last year
+    - Join orders and products, then show top categories by profit
 
 === "PostgreSQL + Ollama (Local)"
 
     ```bash
-    # Run 100% local - no cloud, full privacy
     export OPENAI_BASE_URL=http://localhost:11434/v1
     export OPENAI_API_KEY=ollama
     
@@ -112,11 +127,9 @@ Bring your own LLM: OpenAI, Anthropic, local models. Connect to your data source
     
     **Then ask:**
     
-    > "Show me customer signup trends by month"
-    
-    > "Which products have declining sales? Show the trend."
-    
-    > "Find users who haven't logged in for 90 days"
+    - Show me customer signup trends by month
+    - Which products have declining sales? Show the trend.
+    - Find users who haven't logged in for 90 days
 
 ---
 
@@ -135,7 +148,7 @@ Lumen eliminates this bottleneck. **[See launch options →](getting_started/lau
 | **Data teams** | Enable self-service without losing control |
 | **Researchers** | Share reproducible analysis without teaching syntax |
 
-**No vendor lock-in.** Use OpenAI, Anthropic, or run models locally with LlamaCPP so that your data never leaves your machine. **[Configure your LLM provider →](configuration/llm_providers.md)**
+**No vendor lock-in.** Use OpenAI, Google, Anthropic, Mistral, or run models locally with LlamaCPP so that your data never leaves your machine. **[Configure your LLM provider →](configuration/llm_providers.md)**
 
 ```python
 # Run 100% local - no API keys, no cloud, full privacy
@@ -153,7 +166,7 @@ ui = lmai.ExplorerUI(data='data.csv', llm=llm)
 # llm=lmai.llm.OpenAI() or Anthropic(), Google(), MistralAI()
 ```
 
-**Connect to anything.** PostgreSQL, Snowflake, DuckDB, CSV files, APIs—if it has data, Lumen can support it. **[See all data sources →](configuration/sources.md)**
+**Connect to anything.** PostgreSQL, Snowflake, DuckDB, or CSV files—if it has data, Lumen can support it. **[See all data sources →](configuration/sources.md)**
 
 ```python
 # Mix sources - local files + cloud databases
@@ -326,9 +339,3 @@ Questions? Join our community:
 - **Chat:** [Discord](https://discord.com/invite/rb6gPXbdAr)
 - **Bugs:** [GitHub Issues](https://github.com/holoviz/lumen/issues)
 - **Contributing:** [Guide](reference/contributing.md)
-
-*[LLM]: Large Language Model
-*[API]: Application Programming Interface
-*[SQL]: Structured Query Language
-*[YAML]: YAML Ain't Markup Language
-*[CSV]: Comma-Separated Values
