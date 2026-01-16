@@ -1,8 +1,8 @@
 import asyncio
 
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-import pandas as pd
 import pytest
 
 try:
@@ -18,13 +18,15 @@ from panel_splitjs import VSplit
 
 from lumen.ai.agents.chat import ChatAgent
 from lumen.ai.agents.sql import SQLAgent, make_sql_model
+from lumen.ai.config import PROVIDED_SOURCE_NAME
 from lumen.ai.coordinator import Plan
 from lumen.ai.models import ErrorDescription
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
-from lumen.ai.ui import Exploration, ExplorerUI
+from lumen.ai.ui import UI, Exploration, ExplorerUI
 from lumen.ai.views import SQLOutput
 from lumen.config import SOURCE_TABLE_SEPARATOR
+from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
 
 
@@ -689,3 +691,384 @@ async def test_navigation_visibility_with_explorations(explorer_ui):
     assert not explorer_ui._should_show_navigation()
     assert len(explorer_ui._main) == 1
     assert explorer_ui._navigation not in explorer_ui._main
+
+
+# ============================================================================
+# Tests for UI._resolve_data method
+# ============================================================================
+
+
+class TestResolveData:
+    """Tests for UI._resolve_data method."""
+
+    def test_resolve_data_none(self):
+        """Test that None returns an empty list."""
+        result = UI._resolve_data(None)
+        assert result == []
+
+    def test_resolve_data_single_source(self, test_source):
+        """Test resolving a single Source instance."""
+        result = UI._resolve_data(test_source)
+        assert len(result) == 1
+        assert result[0] is test_source
+
+    def test_resolve_data_list_of_sources(self, test_source):
+        """Test resolving a list of Source instances."""
+        source2 = DuckDBSource(
+            uri=':memory:',
+            tables={'other_table': 'SELECT 1 as id'}
+        )
+        result = UI._resolve_data([test_source, source2])
+        assert len(result) == 2
+        assert result[0] is test_source
+        assert result[1] is source2
+
+    def test_resolve_data_csv_file_string(self):
+        """Test resolving a CSV file path string."""
+        result = UI._resolve_data('data.csv')
+        assert len(result) == 1
+        source = result[0]
+        assert isinstance(source, DuckDBSource)
+        assert source.name == PROVIDED_SOURCE_NAME
+        # Table key is sanitized (dots replaced with underscores)
+        assert 'data_csv' in source.tables
+        # Table value is a SQL query
+        assert 'READ_CSV' in source.tables['data_csv']
+
+    def test_resolve_data_parquet_file_string(self):
+        """Test resolving a Parquet file path string."""
+        result = UI._resolve_data('test_data.parquet')
+        assert len(result) == 1
+        source = result[0]
+        assert isinstance(source, DuckDBSource)
+        # Table key is sanitized
+        assert 'test_data_parquet' in source.tables
+        assert 'READ_PARQUET' in source.tables['test_data_parquet']
+
+    def test_resolve_data_json_file_string(self):
+        """Test resolving a JSON file path string."""
+        result = UI._resolve_data('data.json')
+        assert len(result) == 1
+        source = result[0]
+        assert isinstance(source, DuckDBSource)
+        assert 'data_json' in source.tables
+        assert 'READ_JSON' in source.tables['data_json']
+
+    def test_resolve_data_jsonl_file_string(self):
+        """Test resolving a JSONL (newline-delimited JSON) file path string."""
+        result = UI._resolve_data('data.jsonl')
+        assert len(result) == 1
+        source = result[0]
+        assert isinstance(source, DuckDBSource)
+        assert 'data_jsonl' in source.tables
+        assert 'READ_JSON' in source.tables['data_jsonl']
+
+    def test_resolve_data_ndjson_file_string(self):
+        """Test resolving a NDJSON file path string."""
+        result = UI._resolve_data('data.ndjson')
+        assert len(result) == 1
+        source = result[0]
+        assert isinstance(source, DuckDBSource)
+        assert 'data_ndjson' in source.tables
+        assert 'READ_JSON' in source.tables['data_ndjson']
+
+    def test_resolve_data_tsv_file_string(self):
+        """Test resolving a TSV file path string."""
+        result = UI._resolve_data('data.tsv')
+        assert len(result) == 1
+        source = result[0]
+        assert isinstance(source, DuckDBSource)
+        assert 'data_tsv' in source.tables
+        assert 'READ_CSV' in source.tables['data_tsv']
+
+    def test_resolve_data_parq_file_string(self):
+        """Test resolving a .parq file path string."""
+        result = UI._resolve_data('data.parq')
+        assert len(result) == 1
+        source = result[0]
+        assert isinstance(source, DuckDBSource)
+        assert 'data_parq' in source.tables
+
+    def test_resolve_data_tuple_with_alias(self):
+        """Test resolving a tuple of (alias, path)."""
+        result = UI._resolve_data([('my_data', 'path/to/data.csv')])
+        assert len(result) == 1
+        source = result[0]
+        assert isinstance(source, DuckDBSource)
+        # The alias becomes the table key
+        assert 'my_data' in source.tables
+        # The value is a SQL query referencing the file
+        assert 'path/to/data.csv' in source.tables['my_data']
+
+    def test_resolve_data_remote_http_url(self):
+        """Test resolving a remote HTTP URL (enables httpfs)."""
+        result = UI._resolve_data('http://example.com/data.csv')
+        assert len(result) == 1
+        source = result[0]
+        assert isinstance(source, DuckDBSource)
+        # HTTP URLs should enable httpfs
+        assert 'INSTALL httpfs;' in source.initializers
+        assert 'LOAD httpfs;' in source.initializers
+
+    def test_resolve_data_remote_https_url(self):
+        """Test resolving a remote HTTPS URL (enables httpfs)."""
+        result = UI._resolve_data('https://example.com/data.parquet')
+        assert len(result) == 1
+        source = result[0]
+        assert isinstance(source, DuckDBSource)
+        assert 'INSTALL httpfs;' in source.initializers
+        assert 'LOAD httpfs;' in source.initializers
+
+    def test_resolve_data_no_data_special_case(self):
+        """Test that 'no_data' special case is handled correctly."""
+        result = UI._resolve_data('no_data')
+        assert result == []
+
+    def test_resolve_data_no_data_in_list(self):
+        """Test that 'no_data' in a list is skipped but other items are processed."""
+        result = UI._resolve_data(['no_data', 'data.csv'])
+        assert len(result) == 1
+        source = result[0]
+        assert isinstance(source, DuckDBSource)
+        assert 'data_csv' in source.tables
+
+    def test_resolve_data_multiple_file_types(self):
+        """Test resolving multiple file types creates single DuckDBSource."""
+        result = UI._resolve_data(['data1.csv', 'data2.parquet', 'data3.json'])
+        assert len(result) == 1
+        source = result[0]
+        assert isinstance(source, DuckDBSource)
+        # Table keys are sanitized
+        assert 'data1_csv' in source.tables
+        assert 'data2_parquet' in source.tables
+        assert 'data3_json' in source.tables
+
+    def test_resolve_data_mixed_sources_and_files(self, test_source):
+        """Test resolving a mix of Source instances and file paths."""
+        result = UI._resolve_data([test_source, 'data.csv'])
+        assert len(result) == 2
+        assert result[0] is test_source
+        assert isinstance(result[1], DuckDBSource)
+        assert 'data_csv' in result[1].tables
+
+    def test_resolve_data_pipeline(self):
+        """Test resolving a Pipeline instance creates mirror."""
+        # Create a simple pipeline
+        source = DuckDBSource(
+            uri=':memory:',
+            tables={'pipe_table': 'SELECT 1 as id'}
+        )
+        pipeline = Pipeline(source=source, table='pipe_table')
+
+        result = UI._resolve_data(pipeline)
+        assert len(result) == 1
+        resolved_source = result[0]
+        assert isinstance(resolved_source, DuckDBSource)
+        assert pipeline.name in resolved_source.mirrors
+        assert resolved_source.mirrors[pipeline.name] is pipeline
+
+    def test_resolve_data_path_object(self):
+        """Test resolving a Path object."""
+        path = Path('data/test.csv')
+        result = UI._resolve_data(path)
+        assert len(result) == 1
+        source = result[0]
+        assert isinstance(source, DuckDBSource)
+        # Path is converted to string and sanitized for table key
+        assert 'data_test_csv' in source.tables
+
+    def test_resolve_data_duckdb_connection_string(self):
+        """Test resolving a DuckDB connection string."""
+        import tempfile
+
+        import duckdb
+
+        # Create a proper DuckDB file
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / 'test.duckdb'
+            conn = duckdb.connect(str(db_path))
+            conn.execute('CREATE TABLE test (id INTEGER)')
+            conn.close()
+
+            result = UI._resolve_data(f'duckdb:///{db_path}')
+            assert len(result) == 1
+            source = result[0]
+            assert isinstance(source, DuckDBSource)
+
+    def test_resolve_data_db_file_duckdb(self):
+        """Test resolving a .db file that is actually DuckDB."""
+        import tempfile
+
+        import duckdb
+
+        # Create a proper DuckDB file
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / 'test.db'
+            conn = duckdb.connect(str(db_path))
+            conn.execute('CREATE TABLE test (id INTEGER)')
+            conn.close()
+
+            result = UI._resolve_data(str(db_path))
+            assert len(result) == 1
+            source = result[0]
+            assert isinstance(source, DuckDBSource)
+
+    def test_resolve_data_db_file_not_found(self):
+        """Test that resolving a non-existent .db file raises FileNotFoundError."""
+        with pytest.raises(FileNotFoundError, match="Database file not found"):
+            UI._resolve_data('/nonexistent/path/to/database.db')
+
+    def test_resolve_data_unsupported_file_type(self):
+        """Test that resolving an unsupported file type raises ValueError."""
+        with pytest.raises(ValueError, match="Could not determine how to load"):
+            UI._resolve_data('data.xyz')
+
+    def test_resolve_data_dict_with_file_paths(self):
+        """Test that dict with file paths uses keys as aliases."""
+        result = UI._resolve_data({'alias1': 'data1.csv', 'alias2': 'data2.parquet'})
+        assert len(result) == 1
+        source = result[0]
+        assert isinstance(source, DuckDBSource)
+        # The dict keys should become the table aliases
+        assert 'alias1' in source.tables
+        assert 'alias2' in source.tables
+        # Values are SQL queries referencing the files
+        assert 'data1.csv' in source.tables['alias1']
+        assert 'data2.parquet' in source.tables['alias2']
+
+    def test_resolve_data_local_files_no_httpfs(self):
+        """Test that local files don't enable httpfs."""
+        result = UI._resolve_data(['data.csv', 'data.parquet'])
+        assert len(result) == 1
+        source = result[0]
+        assert isinstance(source, DuckDBSource)
+        # Local files should not have httpfs initializers
+        assert source.initializers == []
+
+    def test_resolve_data_mixed_local_and_remote(self):
+        """Test resolving a mix of local and remote files."""
+        result = UI._resolve_data(['local.csv', 'https://example.com/remote.csv'])
+        assert len(result) == 1
+        source = result[0]
+        assert isinstance(source, DuckDBSource)
+        # Should have httpfs because of remote file
+        assert 'INSTALL httpfs;' in source.initializers
+        assert 'LOAD httpfs;' in source.initializers
+        # Table keys are sanitized
+        assert 'local_csv' in source.tables
+        assert 'https_example_com_remote_csv' in source.tables
+
+    def test_resolve_data_db_file_sqlite(self):
+        """Test resolving a .db file that is actually SQLite."""
+        # Check if SQLAlchemySource can be imported
+        try:
+            from lumen.sources.sqlalchemy import SQLAlchemySource
+            sqlalchemy_available = True
+        except ImportError:
+            sqlalchemy_available = False
+
+        if not sqlalchemy_available:
+            pytest.skip('lumen.sources.sqlalchemy could not be imported')
+
+        import sqlite3
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / 'test.db'
+            conn = sqlite3.connect(str(db_path))
+            conn.execute('CREATE TABLE test (id INTEGER)')
+            conn.commit()
+            conn.close()
+
+            result = UI._resolve_data(str(db_path))
+            assert len(result) == 1
+            source = result[0]
+            assert isinstance(source, SQLAlchemySource)
+
+    def test_resolve_data_sqlite_connection_string(self):
+        """Test resolving a SQLite connection string."""
+        # Check if SQLAlchemySource can be imported
+        try:
+            from lumen.sources.sqlalchemy import SQLAlchemySource
+            sqlalchemy_available = True
+        except ImportError:
+            sqlalchemy_available = False
+
+        if not sqlalchemy_available:
+            pytest.skip('lumen.sources.sqlalchemy could not be imported')
+
+        import sqlite3
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / 'test.sqlite'
+            conn = sqlite3.connect(str(db_path))
+            conn.execute('CREATE TABLE test (id INTEGER)')
+            conn.commit()
+            conn.close()
+
+            result = UI._resolve_data(f'sqlite:///{db_path}')
+            assert len(result) == 1
+            source = result[0]
+            assert isinstance(source, SQLAlchemySource)
+
+    def test_resolve_data_empty_list(self):
+        """Test that an empty list returns an empty list."""
+        result = UI._resolve_data([])
+        assert result == []
+
+    def test_resolve_data_empty_dict(self):
+        """Test that an empty dict returns an empty list."""
+        result = UI._resolve_data({})
+        assert result == []
+
+    def test_resolve_data_source_memory_uri(self):
+        """Test that the created DuckDBSource uses memory URI."""
+        result = UI._resolve_data('data.csv')
+        assert len(result) == 1
+        source = result[0]
+        assert isinstance(source, DuckDBSource)
+        assert source.uri == ':memory:'
+
+    def test_resolve_data_provided_source_name(self):
+        """Test that created DuckDBSource has the PROVIDED_SOURCE_NAME."""
+        result = UI._resolve_data('data.csv')
+        assert len(result) == 1
+        source = result[0]
+        assert source.name == PROVIDED_SOURCE_NAME
+
+    def test_resolve_data_multiple_pipelines(self):
+        """Test resolving multiple Pipeline instances."""
+        source1 = DuckDBSource(
+            uri=':memory:',
+            tables={'table1': 'SELECT 1 as id'}
+        )
+        source2 = DuckDBSource(
+            uri=':memory:',
+            tables={'table2': 'SELECT 2 as id'}
+        )
+        pipeline1 = Pipeline(source=source1, table='table1')
+        pipeline2 = Pipeline(source=source2, table='table2')
+
+        result = UI._resolve_data([pipeline1, pipeline2])
+        assert len(result) == 1
+        source = result[0]
+        assert isinstance(source, DuckDBSource)
+        assert pipeline1.name in source.mirrors
+        assert pipeline2.name in source.mirrors
+
+    def test_resolve_data_pipeline_and_files(self):
+        """Test resolving a mix of Pipeline and file paths."""
+        source = DuckDBSource(
+            uri=':memory:',
+            tables={'pipe_table': 'SELECT 1 as id'}
+        )
+        pipeline = Pipeline(source=source, table='pipe_table')
+
+        result = UI._resolve_data([pipeline, 'data.csv'])
+        assert len(result) == 1
+        duckdb_source = result[0]
+        assert isinstance(duckdb_source, DuckDBSource)
+        assert pipeline.name in duckdb_source.mirrors
+        # Table key is sanitized
+        assert 'data_csv' in duckdb_source.tables
