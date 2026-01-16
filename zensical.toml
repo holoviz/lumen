@@ -23,7 +23,6 @@ nav = [
     {"Tutorials" = [
       {"Overview" = "examples/tutorials/index.md"},
       {"Weather Data AI Explorer" = "examples/tutorials/weather_data_ai_explorer.md"},
-      {"Building Reports" = "examples/tutorials/building_reports.md"},
       {"Penguins Dashboard Spec" = "examples/tutorials/penguins_dashboard_spec.md"}
     ]},
     {"Gallery" = [
@@ -78,10 +77,6 @@ nav = [
       {"Transforms" = "reference/api/transforms.md"},
       {"Views" = "reference/api/views.md"}
     ]},
-    {"Reports" = [
-      {"API Reference" = "reference/report_api.md"},
-      {"How-To Guide" = "reference/report_howto.md"}
-    ]}
   ]},
   {"Contributing" = "contributing.md"}
 ]
