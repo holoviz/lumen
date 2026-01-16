@@ -65,6 +65,9 @@ class DuckDBSource(BaseSQLSource):
         Whether the data is ephemeral, i.e. manually inserted into the
         DuckDB table or derived from real data.""")
 
+    read_only = param.Boolean(default=True, doc="""
+        Whether to open the DuckDB database in read-only mode.""")
+
     tables = param.ClassSelector(class_=(list, dict), doc="""
         List or dictionary of tables.""")
 
@@ -84,7 +87,7 @@ class DuckDBSource(BaseSQLSource):
         if connection:
             self._connection = connection
         else:
-            self._connection = duckdb.connect(self.uri)
+            self._connection = duckdb.connect(self.uri, read_only=self.read_only)
             for init in self.initializers:
                 with self._connection.cursor() as cursor:
                     cursor.execute(init)
