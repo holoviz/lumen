@@ -1325,7 +1325,7 @@ class UI(Viewer):
                     # Set the input value and trigger submit
                     # This will handle pending uploads via on_submit
                     self._chat_input.value_input = contents
-                    await self._on_submit()
+                    self._on_submit()
                     return
 
                 for agent in self.agents:

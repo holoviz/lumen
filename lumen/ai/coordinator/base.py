@@ -294,7 +294,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
     )
 
     validation_enabled = param.Boolean(
-        default=True,
+        default=False,
         allow_refs=True,
         doc="""
         Whether to enable the ValidationAgent in the planning process.""",
