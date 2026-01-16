@@ -11,7 +11,6 @@ except ModuleNotFoundError:
 from pydantic import BaseModel
 
 from lumen.ai.llm import Llm, Message
-from lumen.sources.duckdb import DuckDBSource
 
 
 def pytest_collection_modifyitems(config, items):
@@ -62,6 +61,8 @@ def llm():
 
 @pytest.fixture
 def tiny_source():
+    from lumen.sources.duckdb import DuckDBSource
+
     return DuckDBSource(tables={
     'tiny': """
         SELECT * FROM (
