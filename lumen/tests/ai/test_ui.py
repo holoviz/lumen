@@ -903,6 +903,11 @@ class TestResolveData:
             assert len(result) == 1
             source = result[0]
             assert isinstance(source, DuckDBSource)
+            
+            # Close the DuckDB connection to release file locks (especially on Windows)
+            source.clear_cache()
+            if hasattr(source, 'engine') and source.engine:
+                source.engine.dispose()
 
     def test_resolve_data_db_file_not_found(self):
         """Test that resolving a non-existent .db file raises FileNotFoundError."""
