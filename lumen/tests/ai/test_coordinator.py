@@ -13,17 +13,51 @@ from panel_material_ui import Card, ChatMessage, Typography
 
 from lumen.ai.agents import ChatAgent, SQLAgent
 from lumen.ai.agents.sql import make_sql_model
-from lumen.ai.coordinator import Plan, Planner
+from lumen.ai.coordinator import Coordinator, Plan, Planner
 from lumen.ai.coordinator.planner import Reasoning, make_plan_model
 from lumen.ai.models import ReplaceLine, RetrySpec
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
+from lumen.ai.tools import FunctionTool, define_tool
 from lumen.ai.views import SQLOutput
 from lumen.config import SOURCE_TABLE_SEPARATOR
 
 
 async def test_planner_instantiate():
     Planner()
+
+
+def _add_one(value: int) -> int:
+    return value + 1
+
+
+@define_tool(
+    requires=["value"],
+    provides=["result"],
+    purpose="Add one to a value",
+    render_output=True,
+)
+def _add_one_from_context(value: int) -> int:
+    return value + 1
+
+
+async def test_coordinator_instantiates_function_tools(llm):
+    coordinator = Coordinator(llm=llm, tools=[_add_one])
+    tool = coordinator._tools["main"][0]
+    assert isinstance(tool, FunctionTool)
+    assert tool.function is _add_one
+    assert tool.llm is llm
+
+
+async def test_coordinator_instantiates_annotated_function_tools(llm):
+    coordinator = Coordinator(llm=llm, tools=[_add_one_from_context])
+    tool = coordinator._tools["main"][0]
+    assert isinstance(tool, FunctionTool)
+    assert tool.function is _add_one_from_context
+    assert tool.requires == ["value"]
+    assert tool.provides == ["result"]
+    assert tool.purpose == "Add one to a value"
+    assert tool.render_output is True
 
 
 async def test_planner_empty_plan(llm):

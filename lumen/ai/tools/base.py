@@ -14,6 +14,27 @@ from ..context import ContextModel, TContext
 from ..llm import Message
 from ..translate import function_to_model
 
+_TOOL_ANNOTATIONS_ATTR = "__lumen_tool_annotations__"
+
+
+def define_tool(*, requires=None, provides=None, purpose=None, render_output=None):
+    """
+    Annotate a function so FunctionTool can read tool metadata.
+    """
+    def decorator(function):
+        annotations = getattr(function, _TOOL_ANNOTATIONS_ATTR, {})
+        if requires is not None:
+            annotations["requires"] = list(requires)
+        if provides is not None:
+            annotations["provides"] = list(provides)
+        if purpose is not None:
+            annotations["purpose"] = purpose
+        if render_output is not None:
+            annotations["render_output"] = render_output
+        setattr(function, _TOOL_ANNOTATIONS_ATTR, annotations)
+        return function
+    return decorator
+
 
 class Tool(Actor, ContextProvider):
     """
@@ -89,6 +110,15 @@ class FunctionTool(Tool):
     )
 
     def __init__(self, function, **params):
+        annotations = getattr(function, _TOOL_ANNOTATIONS_ATTR, {})
+        if "requires" not in params and "requires" in annotations:
+            params["requires"] = annotations["requires"]
+        if "provides" not in params and "provides" in annotations:
+            params["provides"] = annotations["provides"]
+        if "purpose" not in params and "purpose" in annotations:
+            params["purpose"] = annotations["purpose"]
+        if "render_output" not in params and "render_output" in annotations:
+            params["render_output"] = annotations["render_output"]
         model = function_to_model(function, skipped=self.requires)
         if "purpose" not in params:
             params["purpose"] = f"{model.__name__}: {model.__doc__}" if model.__doc__ else model.__name__

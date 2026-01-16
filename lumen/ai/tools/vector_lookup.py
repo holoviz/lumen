@@ -362,11 +362,10 @@ class VectorLookupToolUser(ToolUser):
         # Get base kwargs from parent
         kwargs = super()._get_tool_kwargs(tool, prompt_tools, **params)
 
-        # If the tool is already instantiated and has a vector_store, use it
-        if (
-            ((isinstance(tool, type) and not issubclass(tool, VectorLookupTool)) and not isinstance(tool, VectorLookupTool)) or
-            (isinstance(tool, VectorLookupTool) and tool.vector_store is not None)
-        ):
+        # If the tool is not a VectorLookupTool or is already instantiated and has a vector_store skip
+        is_class = isinstance(tool, type) and issubclass(tool, VectorLookupTool)
+        is_instance = isinstance(tool, VectorLookupTool)
+        if not (is_class or is_instance) or (is_instance and tool.vector_store is not None):
             return kwargs
 
         # Always pass document_vector_store if available
@@ -376,7 +375,7 @@ class VectorLookupToolUser(ToolUser):
         # First, try to inherit vector_store from another tool with the same _item_type_name
         # This takes precedence over self.vector_store to allow tools to share stores
         inherited_vector_store = None
-        tool_item_type = tool._item_type_name
+        tool_item_type = getattr(tool, "_item_type_name", None)
         for t in prompt_tools:
             if not isinstance(t, VectorLookupTool) or t.vector_store is None:
                 continue
