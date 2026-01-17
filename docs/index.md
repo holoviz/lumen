@@ -2,6 +2,11 @@
 
 **An open-source Python framework for building extensible, domain-aware AI data applications.**
 
+<video controls width="100%" style="max-width: 800px; display: block; margin: 20px auto;">
+  <source src="https://s3.eu-west-1.amazonaws.com/assets.holoviz.org/lumen/videos/intro_v2.mp4" type="video/mp4">
+  Your browser does not support the video tag.
+</video>
+
 Lumen is designed for teams who want conversational data exploration **without giving up control**:
 
 - **Open source** and inspectable end-to-end

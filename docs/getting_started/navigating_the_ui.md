@@ -80,7 +80,7 @@ Once you start analyzing, the results screen displays your outputs:
 
 ### Understanding explorations
 
-Each SQL query that returns data creates a new **exploration** — a persistent workspace for that analysis:
+Each SQL query that returns data creates a new [**exploration**](using_lumen_ai.md#explorations) — a persistent workspace for that analysis:
 
 **Top-level explorations** — New independent questions start here
 
@@ -92,7 +92,7 @@ Each SQL query that returns data creates a new **exploration** — a persistent 
 
 ### Revising and refining
 
-When you need to adjust your analysis, Lumen provides tools to refine and iterate on your results without starting from scratch.
+When you need to adjust your analysis, Lumen provides tools to [refine](using_lumen_ai.md#refine-results) and iterate on your results without starting from scratch.
 
 ![Revision Controls](../assets/navigating_the_ui/revise.png)
 
@@ -102,7 +102,7 @@ For plots, there are also annotation controls that allow you to highlight key in
 
 Use **Settings** in the left sidebar to configure analysis behavior:
 
-**Chain of Thought** — Shows AI reasoning steps (disabled by default)
+**Chain of Thought** — Shows [reasoning steps](using_lumen_ai.md#understand-the-ais-reasoning) (disabled by default)
 
 **SQL Planning** — AI plans queries before executing (disabled by default)
 
@@ -124,7 +124,7 @@ Above every code editor, you'll find export options:
 
 ### Export to Jupyter notebooks
 
-Export the current exploration as a Jupyter notebook under the exploration sidebar.
+[Export explorations](using_lumen_ai.md#export-results) as a Jupyter notebook under the exploration sidebar.
 
 ![Report View](../assets/navigating_the_ui/reports.png)
 
@@ -134,7 +134,7 @@ Exported notebooks include all questions, SQL queries, and visualizations, ready
 
 ### Report mode
 
-In Report Mode, export everything as one comprehensive notebook under the Report sidebar.
+In [Report Mode](using_lumen_ai.md#report-mode), export everything as one comprehensive notebook under the Report sidebar.
 
 Switch to **Report** mode from the left sidebar to see all your explorations in a consolidated view. This provides an overview of all your analysis work in one place.
 
