@@ -1,7 +1,4 @@
-import json
-
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -17,7 +14,7 @@ from lumen.ai.agents import (
 )
 from lumen.ai.agents.analysis import make_analysis_model
 from lumen.ai.agents.sql import make_sql_model
-from lumen.ai.agents.vega_lite import VegaLiteSpec, VegaLiteSpecUpdate
+from lumen.ai.agents.vega_lite import VegaLiteSpec
 from lumen.ai.analysis import Analysis
 from lumen.ai.llm import Llm
 from lumen.ai.schemas import get_metaset
@@ -132,10 +129,6 @@ async def test_vegalite_agent(llm, duckdb_source, test_messages):
             insufficient_context=False,
             insufficient_context_reason="none"
         ),
-        VegaLiteSpecUpdate(
-            chain_of_thought="All good",
-            yaml_update=""
-        )
     ])
     out, out_context = await agent.respond(test_messages, context)
     assert len(out) == 1

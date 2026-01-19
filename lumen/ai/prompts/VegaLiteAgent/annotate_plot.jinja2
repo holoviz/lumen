@@ -1,6 +1,8 @@
-{% extends 'Actor/main.jinja2' %}
+{% extends 'BaseLumenAgent/revise_output.jinja2' %}
 
 {% block instructions %}
+{{ super() }}
+
 Add strategic visual annotations to highlight key insights in your data.
 
 # Critical: Shared Scales for Layered Annotations
@@ -42,14 +44,19 @@ Rect: `type, color, opacity`
 Point: `type, color, size, filled, shape`
 {% endblock %}
 
-{% block context %}
-Build off the following Vega-Lite yaml:
+{%- block context %}
+{% if memory.get("data") %}
+Data summary:
+{{ memory['data'] }}
+{% endif %}
+
+Current Vega-Lite spec:
 ```yaml
-{{ vega_spec }}
+{{ spec }}
 ```
 {% endblock %}
 
-{% block examples %}
+{%- block examples %}
 # EXAMPLE: Comprehensive Annotations
 
 This example shows multiple annotation types with proper shared scales:
@@ -189,4 +196,5 @@ Conditional highlight:
     y: {field: value, type: quantitative}
   mark: {type: bar, color: '#e74c3c'}
 ```
+{{ super() }}
 {% endblock %}

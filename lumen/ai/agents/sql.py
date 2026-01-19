@@ -20,7 +20,7 @@ from ...transforms.sql import SQLLimit
 from ..config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from ..context import ContextModel, TContext
 from ..llm import Message
-from ..models import EscapeBaseModel, PartialBaseModel, RetrySpec
+from ..models import EscapeBaseModel, PartialBaseModel, SearchReplaceSpec
 from ..schemas import Metaset
 from ..utils import (
     clean_sql, describe_data, get_data, get_pipeline, parse_table_slug,
@@ -361,7 +361,10 @@ class SQLAgent(BaseLumenAgent):
                 "response_model": make_discovery_model,
                 "template": PROMPTS_DIR / "SQLAgent" / "check_sufficiency.jinja2",
             },
-            "revise_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "SQLAgent" / "revise_output.jinja2"},
+            "revise_output": {
+                "response_model": SearchReplaceSpec,
+                "template": PROMPTS_DIR / "SQLAgent" / "revise_output.jinja2",
+            },
         }
     )
 

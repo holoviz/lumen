@@ -48,9 +48,6 @@ if TYPE_CHECKING:
     from panel.chat.step import ChatStep
 
     from ...sources.base import Source
-    from .models import (
-        DeleteLine, InsertLine, LineEdit, ReplaceLine,
-    )
 
 
 def format_float(num):
@@ -58,6 +55,10 @@ def format_float(num):
     Process a float value, returning numeric types instead of strings.
     For very large/small numbers, returns a float that will display in scientific notation.
     """
+    # Handle string inputs (like datetime strings) - return as-is
+    if isinstance(num, str):
+        return num
+
     if pd.isna(num) or math.isinf(num):
         return num
 
@@ -561,97 +562,155 @@ async def get_data(pipeline):
 
 
 async def describe_data(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool = True) -> str:
+    """
+    Generate a compact, high-signal description of a DataFrame optimized for LLM agents.
+    """
+    def to_python_native(val):
+        """Convert numpy/pandas types to Python native types for clean YAML."""
+        if pd.isna(val):
+            return None
+        if hasattr(val, 'item'):  # numpy scalar
+            return val.item()
+        if isinstance(val, (pd.Timestamp, pd.Timedelta)):
+            return str(val)
+        return val
+
     def describe_data_sync(df):
         size = df.size
         shape = df.shape
+        n_rows, n_cols = shape
+
+        # For tiny datasets, return as markdown table
         if size < 250:
             return df.to_markdown(index=False)
 
-        is_sampled = False
-        if shape[0] > 5000:
-            is_sampled = True
-            df = df.sample(5000)
-
+        # Sampling strategy with deterministic seed
+        is_sampled = n_rows > 5000
+        if is_sampled:
+            df = df.sample(5000, random_state=42)
         df = df.sort_index()
 
+        # Convert timestamps early for consistent handling
         for col in df.columns:
             if isinstance(df[col].iloc[0], pd.Timestamp):
                 df[col] = pd.to_datetime(df[col])
 
-        sampled_columns = False
-        if len(df.columns) > 10:
+        # Column sampling for wide datasets
+        sampled_cols = n_cols > 10
+        if sampled_cols:
             df = df[df.columns[:10]]
-            sampled_columns = True
 
+        # === Detect structural patterns ===
+        structure = {}
+
+        # Temporal columns
+        temporal_cols = df.select_dtypes(include=["datetime64"]).columns.tolist()
+        for col in df.select_dtypes(include=["int64"]).columns:
+            if any(t in col.lower() for t in ['year', 'yr', 'date', 'time', 'period']):
+                col_min, col_max = df[col].min(), df[col].max()
+                if 10 <= col_max - col_min <= 300 and 1000 <= col_min <= 3000:
+                    temporal_cols.append(col)
+        if temporal_cols:
+            structure["temporal_cols"] = temporal_cols
+
+        # Dimension vs measure classification
+        dimensions, measures = [], []
+        for col in df.columns:
+            dtype = df[col].dtype
+            nunique = df[col].nunique()
+            ratio = nunique / n_rows
+            if ratio <= 0.8:  # Not an identifier
+                if dtype == 'object' or nunique <= max(20, n_rows * 0.1):
+                    dimensions.append(col)
+                elif dtype in ['int64', 'float64']:
+                    measures.append(col)
+        if dimensions:
+            structure["dimensions"] = dimensions
+        if measures:
+            structure["measures"] = measures
+
+        # === Generate statistics ===
+        stats = {}
         describe_df = df.describe(percentiles=[])
-        columns_to_drop = ["min", "max", "count", "top", "freq"] # present if any numeric or object
-        columns_to_drop = [col for col in columns_to_drop if col in describe_df.columns]
-        df_describe_dict = describe_df.drop(columns=columns_to_drop).to_dict()
-
-        for col in df.select_dtypes(include=["object"]).columns:
-            if col not in df_describe_dict:
-                df_describe_dict[col] = {}
-            try:
-                # Get unique values for enum processing
-                unique_values = df[col].dropna().unique().tolist()
-                if unique_values:
-                    temp_spec = {"enum": unique_values}
-                    updated_spec, _ = process_enums(
-                        temp_spec,
-                        num_cols=len(df.columns),
-                        limit=enum_limit,
-                        include_enum=True,
-                        reduce_enums=reduce_enums,
-                    )
-                    if "enum" in updated_spec:
-                        df_describe_dict[col]["enum"] = updated_spec["enum"]
-
-                df_describe_dict[col]["nunique"] = df[col].nunique()
-            except Exception:
-                df_describe_dict[col]["nunique"] = 'unknown'
-            try:
-                max_length = df[col].str.len().max()
-                if pd.notna(max_length):
-                    df_describe_dict[col]["max_length"] = int(max_length)
-            except AttributeError:
-                pass
 
         for col in df.columns:
-            if col not in df_describe_dict:
-                df_describe_dict[col] = {}
+            col_stats = {}
+
+            # Numeric stats
+            if col in describe_df.columns:
+                for stat in ['count', 'mean', 'std', 'min', '50%', 'max']:
+                    if stat in describe_df.index:
+                        val = describe_df.loc[stat, col]
+                        if pd.notna(val):
+                            col_stats[stat] = format_float(to_python_native(val))
+
+            # Categorical/enum handling
+            dtype = df[col].dtype
+            nunique = df[col].nunique()
+
+            if dtype == 'object' or (dtype == 'int64' and nunique <= 10):
+                col_stats["nunique"] = int(nunique)
+                if nunique <= 50:
+                    unique_vals = [to_python_native(v) for v in df[col].dropna().unique().tolist()]
+                    if dtype == 'int64':
+                        unique_vals = sorted(unique_vals)
+                    temp_spec = {"enum": unique_vals}
+                    updated, _ = process_enums(temp_spec, len(df.columns), enum_limit, True, reduce_enums)
+                    if "enum" in updated:
+                        col_stats["enum"] = updated["enum"]
+
+                # Add max_length for string columns
+                if dtype == 'object':
+                    max_len = df[col].dropna().astype(str).str.len().max()
+                    if pd.notna(max_len):
+                        col_stats["max_length"] = int(max_len)
+
+            # Null counts (sparse)
             nulls = int(df[col].isnull().sum())
             if nulls > 0:
-                df_describe_dict[col]["nulls"] = nulls
+                col_stats["nulls"] = nulls
 
-        # select datetime64 columns
-        for col in df.select_dtypes(include=["datetime64"]).columns:
-            for key in df_describe_dict[col]:
-                df_describe_dict[col][key] = str(df_describe_dict[col][key])
-            df[col] = df[col].astype(str)  # shorten output
+            if col_stats:
+                stats[col] = col_stats
 
-        # select all numeric columns and round
-        for col in df.select_dtypes(include=["int64", "float64"]).columns:
-            for key in df_describe_dict[col]:
-                df_describe_dict[col][key] = format_float(df_describe_dict[col][key])
+        # === Sample values embedded in stats ===
+        n_samples = 3
+        head_rows = df.head(n_samples)
+        tail_rows = df.tail(n_samples)
 
-        for col in df.select_dtypes(include=["float64"]).columns:
-            df[col] = df[col].apply(format_float)
+        for col in df.columns:
+            if col not in stats:
+                stats[col] = {}
+            head_vals = [to_python_native(v) for v in head_rows[col].tolist()]
+            tail_vals = [to_python_native(v) for v in tail_rows[col].tolist()]
+            stats[col]["head"] = head_vals
+            stats[col]["tail"] = tail_vals
 
-        # Add head and tail samples (2 row each)
-        head_sample = df.head(2).to_dict('records')
-        tail_sample = df.tail(2).to_dict('records')
+        # === Data shape ===
+        if n_cols > 20:
+            data_shape = "wide"
+        elif n_rows / n_cols > 10 and dimensions:
+            data_shape = "long"
+        else:
+            data_shape = "rectangular"
 
+        # === Assemble result ===
         result = {
             "summary": {
-                "n_cells": size,
-                "shape": shape,
-                "sampled_cols": sampled_columns,
-                "is_sampled": is_sampled,
+                "n_cells": int(size),
+                "shape": [int(n_rows), int(n_cols)],
+                "data_shape": data_shape,
             },
-            "stats": df_describe_dict,
-            "head": head_sample[0] if head_sample else {},
-            "tail": tail_sample[0] if tail_sample else {},
+            "stats": stats,
         }
+
+        # Add optional sections only if present
+        if sampled_cols:
+            result["summary"]["sampled_cols"] = True
+        if is_sampled:
+            result["summary"]["is_sampled"] = True
+        if structure:
+            result["summary"]["structure"] = structure
 
         return yaml.dump(result, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
@@ -965,55 +1024,6 @@ def generate_diff(old_text: str, new_text: str, filename: str = "spec") -> str:
     return ''.join(diff)
 
 
-def apply_changes(lines: list[str], edits: list[LineEdit]) -> str:
-    """
-    Apply a Patch to a list of lines (no trailing newline characters in elements).
-    Indices in the Patch refer to the ORIGINAL `lines`.
-
-    Strategy:
-      - To keep indices stable, apply all non-insert edits in DESCENDING order of line_no.
-      - Apply inserts in ASCENDING order of line_no (grouped), inserting BEFORE that index.
-        Inserts at the same index are applied in the order they appear in `patch.edits`.
-    """
-    # Separate edits
-    inserts: list[InsertLine] = [e for e in edits if e.op == "insert"]
-    replaces: list[ReplaceLine] = [e for e in edits if e.op == "replace"]
-    deletes: list[DeleteLine] = [e for e in edits if e.op == "delete"]
-
-    n = len(lines)
-
-    # Validate bounds against the ORIGINAL text
-    for e in replaces:
-        if not (1 <= e.line_no <= n):
-            raise IndexError(f"replace line_no out of range: {e.line_no} (1..{n})")
-    for e in deletes:
-        if not (1 <= e.line_no <= n):
-            raise IndexError(f"delete line_no out of range: {e.line_no} (1..{n})")
-    # For inserts, only validate >= 1; out-of-range high values will append to end
-    for e in inserts:
-        if e.line_no < 1:
-            raise IndexError(f"insert line_no must be >= 1, got {e.line_no}")
-
-    out = lines[:]
-
-    # 1) Apply replace/delete in descending order to keep original indices valid
-    for e in sorted([*replaces, *deletes], key=lambda x: x.line_no, reverse=True):
-        if e.op == "replace":
-            out[e.line_no-1] = e.line  # type: ignore[union-attr]
-        else:  # delete
-            del out[e.line_no-1]
-
-    # 2) Apply inserts in ascending order; at same index keep user order
-    inserts_sorted = sorted(
-        enumerate(inserts), key=lambda pair: (pair[1].line_no, -pair[0])
-    )
-    for _, ins in inserts_sorted:
-        # Cap insert position at current list length (allows sequential line numbers for appending)
-        insert_pos = min(ins.line_no - 1, len(out))
-        out.insert(insert_pos, ins.line)
-
-    return "\n".join(out)
-
 def class_name_to_llm_spec_key(class_name: str) -> str:
     """
     Convert class name to llm_spec_key using the same logic as Actor.llm_spec_key.
@@ -1105,6 +1115,43 @@ def normalized_name(inst: param.Parameterized):
     if re.match('^'+class_name+'[0-9]{5}$', inst.name):
         return class_name
     return inst.name
+
+
+def apply_search_replace(text: str, edits: list) -> str:
+    """
+    Apply search/replace edits to text.
+
+    Each old_str must appear exactly once in the text.
+    Raises ValueError if old_str not found or found multiple times.
+    """
+    result = text
+
+    for edit in edits:
+        count = result.count(edit.old_str)
+        if count == 0:
+            # Try to find a close match for better error message
+            error_msg = (
+                f"old_str not found in document. Make sure whitespace matches exactly:\n"
+                f"---\n{edit.old_str}\n---"
+            )
+            log_debug(
+                f"\033[91mError applying edit due to {error_msg}:\033[0m\n"
+                f"Old string:\n\033[90m---\033[0m\n{edit.old_str}\n\033[90m---\033[0m\n"
+                f"New string:\n\033[90m---\033[0m\n{edit.new_str}\n\033[90m---\033[0m"
+            )
+        if count > 1:
+            error_msg = (
+                f"old_str appears {count} times (must be unique). Include more context:\n"
+                f"---\n{edit.old_str[:200]}...\n---"
+            )
+            log_debug(
+                f"\033[91mError applying edit due to {error_msg}:\033[0m\n"
+                f"Old string:\n\033[90m---\033[0m\n{edit.old_str}\n\033[90m---\033[0m\n"
+                f"New string:\n\033[90m---\033[0m\n{edit.new_str}\n\033[90m---\033[0m"
+            )
+        result = result.replace(edit.old_str, edit.new_str, 1)
+
+    return result
 
 
 def set_nested(data, keys, value):

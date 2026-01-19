@@ -13,7 +13,7 @@ from ...transforms.sql import SQLLimit
 from ..config import PROMPTS_DIR, RetriesExceededError
 from ..context import TContext
 from ..llm import Message
-from ..models import RetrySpec
+from ..models import SearchReplaceSpec
 from ..schemas import DbtslMetaset, get_metaset
 from ..services import DbtslMixin
 from ..utils import (
@@ -99,7 +99,7 @@ class DbtslAgent(BaseLumenAgent, DbtslMixin):
                 "response_model": DbtslQueryParams,
                 "template": PROMPTS_DIR / "DbtslAgent" / "main.jinja2",
             },
-            "revise_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "BaseLumenAgent" / "revise_output.jinja2"},
+            "revise_output": {"response_model": SearchReplaceSpec, "template": PROMPTS_DIR / "BaseLumenAgent" / "revise_output.jinja2"},
         }
     )
 

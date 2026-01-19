@@ -17,10 +17,11 @@ except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
 from lumen.ai.config import PROMPTS_DIR
-from lumen.ai.models import DeleteLine, InsertLine, ReplaceLine
+from lumen.ai.models import SearchReplace, SearchReplaceSpec
 from lumen.ai.utils import (
-    UNRECOVERABLE_ERRORS, apply_changes, clean_sql, describe_data, get_schema,
-    parse_huggingface_url, render_template, report_error, retry_llm_output,
+    UNRECOVERABLE_ERRORS, apply_search_replace, clean_sql, describe_data,
+    get_schema, parse_huggingface_url, render_template, report_error,
+    retry_llm_output,
 )
 
 
@@ -319,102 +320,417 @@ class TestParseHuggingFaceUrl:
             parse_huggingface_url("https://huggingface.co/Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf?chat_format=mistral-instruct&n_ctx=1028")
 
 
-def test_no_edits_returns_original():
-    lines = ["a", "b", "c"]
-    out = apply_changes(lines, [])
-    assert out == "a\nb\nc"
+# ============================================================================
+# SearchReplaceSpec Tests - apply_search_replace
+# ============================================================================
 
+class TestApplySearchReplace:
+    """Test the apply_search_replace function for search/replace based editing."""
 
-def test_single_replace_middle_line():
-    lines = ["a", "b", "c"]
-    edits = [ReplaceLine(line_no=2, line="B")]  # replace "b"
-    out = apply_changes(lines, edits)
-    assert out == "a\nB\nc"
+    def test_no_edits_returns_original(self):
+        """Empty edits list should return original text unchanged."""
+        text = "line one\nline two\nline three"
+        result = apply_search_replace(text, [])
+        assert result == text
 
+    def test_single_simple_replace(self):
+        """Basic single search/replace operation."""
+        text = "Hello World"
+        edits = [SearchReplace(old_str="World", new_str="Universe")]
+        result = apply_search_replace(text, edits)
+        assert result == "Hello Universe"
 
-def test_single_delete_first_line():
-    lines = ["a", "b", "c"]
-    edits = [DeleteLine(line_no=1)]  # delete "a"
-    out = apply_changes(lines, edits)
-    assert out == "b\nc"
+    def test_replace_entire_line(self):
+        """Replace an entire line."""
+        text = "line one\nline two\nline three"
+        edits = [SearchReplace(old_str="line two", new_str="LINE TWO MODIFIED")]
+        result = apply_search_replace(text, edits)
+        assert result == "line one\nLINE TWO MODIFIED\nline three"
 
+    def test_delete_text_empty_new_str(self):
+        """Using empty new_str should delete the matched text."""
+        text = "Hello World"
+        edits = [SearchReplace(old_str=" World", new_str="")]
+        result = apply_search_replace(text, edits)
+        assert result == "Hello"
 
-def test_single_delete_last_line():
-    lines = ["a", "b", "c"]
-    edits = [DeleteLine(line_no=3)]  # delete "c"
-    out = apply_changes(lines, edits)
-    assert out == "a\nb"
+    def test_multiple_edits_applied_sequentially(self):
+        """Multiple edits should be applied in order."""
+        text = "apple banana cherry"
+        edits = [
+            SearchReplace(old_str="apple", new_str="APPLE"),
+            SearchReplace(old_str="cherry", new_str="CHERRY"),
+        ]
+        result = apply_search_replace(text, edits)
+        assert result == "APPLE banana CHERRY"
 
+    def test_multiline_old_str(self):
+        """old_str can span multiple lines."""
+        text = "line one\nline two\nline three"
+        edits = [SearchReplace(
+            old_str="line one\nline two",
+            new_str="COMBINED LINES"
+        )]
+        result = apply_search_replace(text, edits)
+        assert result == "COMBINED LINES\nline three"
 
-def test_single_insert_before_middle_line():
-    lines = ["a", "b", "c"]
-    edits = [InsertLine(line_no=2, line="X")]  # insert BEFORE 2 ("b")
-    out = apply_changes(lines, edits)
-    assert out == "a\nX\nb\nc"
+    def test_multiline_new_str(self):
+        """new_str can expand to multiple lines."""
+        text = "line one\nline two\nline three"
+        edits = [SearchReplace(
+            old_str="line two",
+            new_str="line two-a\nline two-b\nline two-c"
+        )]
+        result = apply_search_replace(text, edits)
+        assert result == "line one\nline two-a\nline two-b\nline two-c\nline three"
 
+    def test_whitespace_preserved_in_match(self):
+        """Whitespace is matched exactly when present."""
+        text = "  indented line"
+        edits = [SearchReplace(old_str="  indented line", new_str="  modified line")]
+        result = apply_search_replace(text, edits)
+        assert result == "  modified line"
 
-def test_append_insert_at_len_plus_one():
-    lines = ["a", "b", "c"]
-    edits = [InsertLine(line_no=len(lines) + 1, line="X")]  # append
-    out = apply_changes(lines, edits)
-    assert out == "a\nb\nc\nX"
+    # =========================================================================
+    # Edge Case: Duplicate text (THE CRITICAL CASE)
+    # =========================================================================
 
+    def test_duplicate_text_workaround_with_context(self):
+        """Workaround: include surrounding context to make old_str unique."""
+        text = "item: foo\nother: bar\nitem: foo\nlast: baz"
+        # "item: foo" appears twice, but with different surrounding context
+        # Include the line before to disambiguate
+        edits = [SearchReplace(
+            old_str="other: bar\nitem: foo",
+            new_str="other: bar\nitem: MODIFIED_FOO"
+        )]
+        result = apply_search_replace(text, edits)
+        assert "item: MODIFIED_FOO" in result
+        # First "item: foo" should be unchanged
+        assert result.startswith("item: foo")
 
-def test_multiple_inserts_same_index_preserve_order():
-    lines = ["a", "b", "c"]
-    edits = [
-        InsertLine(line_no=2, line="X1"),
-        InsertLine(line_no=2, line="X2"),
-    ]
-    # Both inserted BEFORE line 2 ("b") in the given order
-    out = apply_changes(lines, edits)
-    assert out == "a\nX1\nX2\nb\nc"
+    def test_duplicate_lines_exact_same_content(self):
+        """When lines are exactly the same, must use context to disambiguate."""
+        text = "header\n- item\n- item\n- item\nfooter"
+        # All three "- item" lines are identical
+        # Must include context to target specific one
+        edits = [SearchReplace(
+            old_str="header\n- item",
+            new_str="header\n- FIRST_ITEM"
+        )]
+        result = apply_search_replace(text, edits)
+        lines = result.split("\n")
+        assert lines[1] == "- FIRST_ITEM"
+        assert lines[2] == "- item"  # Second unchanged
+        assert lines[3] == "- item"  # Third unchanged
 
+    def test_duplicate_at_different_indent_levels(self):
+        """Same content at different indentation levels are different strings."""
+        text = "field: value\n  field: value\n    field: value"
+        # Each "field: value" has different indentation, so they're unique
+        edits = [SearchReplace(old_str="  field: value", new_str="  field: MODIFIED")]
+        result = apply_search_replace(text, edits)
+        assert result == "field: value\n  field: MODIFIED\n    field: value"
 
-def test_replace_and_delete_indices_based_on_original_descending():
-    # Original: 1:A, 2:B, 3:C, 4:D
-    lines = ["A", "B", "C", "D"]
-    edits = [
-        DeleteLine(line_no=2),                 # remove B
-        ReplaceLine(line_no=3, line="X"),      # replace C
-    ]
-    # After replace/delete (applied using original positions):
-    # 1:A, 2:X, 4:D
-    out = apply_changes(lines, edits)
-    assert out == "A\nX\nD"
+    # =========================================================================
+    # YAML-specific edge cases
+    # =========================================================================
 
+    def test_yaml_indentation_preserved(self):
+        """YAML indentation should be preserved exactly."""
+        text = """encoding:
+  x:
+    field: old_value
+    type: quantitative"""
+        edits = [SearchReplace(
+            old_str="    field: old_value",
+            new_str="    field: new_value"
+        )]
+        result = apply_search_replace(text, edits)
+        assert "    field: new_value" in result
+        assert "    type: quantitative" in result
 
-def test_mix_insert_replace_delete():
-    # Start: 1:A, 2:B, 3:C
-    lines = ["A", "B", "C"]
-    edits = [
-        InsertLine(line_no=1, line="X"),   # before A
-        ReplaceLine(line_no=2, line="b2"), # replace B -> b2
-        DeleteLine(line_no=3),             # delete C
-    ]
+    def test_yaml_add_new_property(self):
+        """Add a new property by including anchor context."""
+        text = """title: Chart
+encoding:
+  x:
+    field: value"""
+        # Insert new line after title by replacing title line with title + new line
+        edits = [SearchReplace(
+            old_str="title: Chart\nencoding:",
+            new_str="title: Chart\nsubtitle: Added\nencoding:"
+        )]
+        result = apply_search_replace(text, edits)
+        assert "subtitle: Added" in result
 
-    # Steps:
-    # replace/delete first:
-    #   Replace line 2 → A, b2, C
-    #   Delete line 3 → A, b2
-    #
-    # Insert before line 1 → X, A, b2
-    out = apply_changes(lines, edits)
-    assert out == "X\nA\nb2"
+    def test_yaml_delete_property(self):
+        """Delete a property by replacing with empty context."""
+        text = """title: Chart
+subtitle: To Remove
+encoding:"""
+        edits = [SearchReplace(
+            old_str="\nsubtitle: To Remove",
+            new_str=""
+        )]
+        result = apply_search_replace(text, edits)
+        assert result == "title: Chart\nencoding:"
 
+    def test_yaml_nested_dict_replace(self):
+        """Replace a nested dictionary value."""
+        text = """encoding:
+  x:
+    axis:
+      title: Old Title
+      labelAngle: 45"""
+        edits = [SearchReplace(
+            old_str="      title: Old Title",
+            new_str="      title: New Title"
+        )]
+        result = apply_search_replace(text, edits)
+        assert "      title: New Title" in result
 
-def test_replace_line_no_out_of_range_raises():
-    lines = ["a", "b"]
-    # replace line_no must be 1..len
-    with pytest.raises(IndexError):
-        apply_changes(lines, [ReplaceLine(line_no=3, line="X")])
-    with pytest.raises(ValidationError):
-        apply_changes(lines, [ReplaceLine(line_no=0, line="X")])
+    def test_yaml_list_item_modification(self):
+        """Modify an item in a YAML list."""
+        text = """transform:
+- filter: datum.x > 0
+- calculate: datum.x * 2
+- filter: datum.y > 0"""
+        edits = [SearchReplace(
+            old_str="- calculate: datum.x * 2",
+            new_str="- calculate: datum.x * 10"
+        )]
+        result = apply_search_replace(text, edits)
+        assert "- calculate: datum.x * 10" in result
 
+    def test_yaml_special_characters(self):
+        """Handle YAML special characters like colons and quotes."""
+        text = """mark:
+  color: '#1f77b4'
+  tooltip: 'Value: {datum.value}'"""
+        edits = [SearchReplace(
+            old_str="  color: '#1f77b4'",
+            new_str="  color: '#ff0000'"
+        )]
+        result = apply_search_replace(text, edits)
+        assert "  color: '#ff0000'" in result
 
-def test_delete_line_no_out_of_range_raises():
-    lines = ["a", "b"]
-    with pytest.raises(IndexError):
-        apply_changes(lines, [DeleteLine(line_no=3)])
-    with pytest.raises(ValidationError):
-        apply_changes(lines, [DeleteLine(line_no=0)])
+    def test_yaml_boolean_values(self):
+        """Handle YAML boolean values."""
+        text = """axis:
+  grid: true
+  labels: false"""
+        edits = [SearchReplace(old_str="  grid: true", new_str="  grid: false")]
+        result = apply_search_replace(text, edits)
+        assert "  grid: false" in result
+
+    def test_yaml_null_values(self):
+        """Handle YAML null values."""
+        text = """axis:
+  title: Original
+  grid: true"""
+        edits = [SearchReplace(old_str="  title: Original", new_str="  title: null")]
+        result = apply_search_replace(text, edits)
+        assert "  title: null" in result
+
+    # =========================================================================
+    # Vega-Lite specific scenarios
+    # =========================================================================
+
+    def test_vegalite_add_layer(self):
+        """Add a new layer to a Vega-Lite spec."""
+        text = """layer:
+- mark: bar
+  encoding:
+    x: {field: category}"""
+        edits = [SearchReplace(
+            old_str="    x: {field: category}",
+            new_str="""    x: {field: category}
+- mark: rule
+  encoding:
+    y: {datum: 50}"""
+        )]
+        result = apply_search_replace(text, edits)
+        assert "- mark: rule" in result
+        assert "    y: {datum: 50}" in result
+
+    def test_vegalite_modify_encoding(self):
+        """Modify an encoding in a Vega-Lite spec."""
+        text = """encoding:
+  x:
+    field: category
+    type: nominal
+  y:
+    field: value
+    type: quantitative"""
+        edits = [SearchReplace(
+            old_str="    field: category\n    type: nominal",
+            new_str="    field: category\n    type: nominal\n    axis:\n      labelAngle: -45"
+        )]
+        result = apply_search_replace(text, edits)
+        assert "axis:" in result
+        assert "labelAngle: -45" in result
+
+    def test_vegalite_full_spec_modification(self):
+        """Test a realistic full Vega-Lite spec modification."""
+        text = """$schema: https://vega.github.io/schema/vega-lite/v5.json
+data:
+  name: source_data
+mark: bar
+encoding:
+  x:
+    field: category
+    type: nominal
+  y:
+    field: value
+    type: quantitative
+title: Simple Chart"""
+        edits = [
+            SearchReplace(
+                old_str="title: Simple Chart",
+                new_str="title:\n  text: Improved Chart\n  subtitle: With better formatting"
+            ),
+            SearchReplace(
+                old_str="mark: bar",
+                new_str="mark:\n  type: bar\n  color: steelblue"
+            ),
+        ]
+        result = apply_search_replace(text, edits)
+        assert "  text: Improved Chart" in result
+        assert "  subtitle: With better formatting" in result
+        assert "  type: bar" in result
+        assert "  color: steelblue" in result
+
+    # =========================================================================
+    # Interaction with SearchReplaceSpec model validation
+    # =========================================================================
+
+    def test_searchreplacespec_duplicate_old_str_validation(self):
+        """SearchReplaceSpec validates that old_str values are unique within edits."""
+        with pytest.raises(ValidationError, match="Duplicate old_str"):
+            SearchReplaceSpec(
+                chain_of_thought="Test",
+                edits=[
+                    SearchReplace(old_str="same", new_str="A"),
+                    SearchReplace(old_str="same", new_str="B"),
+                ]
+            )
+
+    def test_searchreplacespec_valid_model(self):
+        """SearchReplaceSpec accepts valid input."""
+        spec = SearchReplaceSpec(
+            chain_of_thought="Making changes",
+            edits=[
+                SearchReplace(old_str="old1", new_str="new1"),
+                SearchReplace(old_str="old2", new_str="new2"),
+            ]
+        )
+        assert len(spec.edits) == 2
+
+    # =========================================================================
+    # Chaining edits - second edit operates on result of first
+    # =========================================================================
+
+    def test_chained_edits_operate_on_intermediate_result(self):
+        """Each edit operates on the result of previous edits."""
+        text = "A B C"
+        edits = [
+            SearchReplace(old_str="A", new_str="X"),
+            SearchReplace(old_str="X B", new_str="Y"),  # This works because A->X already happened
+        ]
+        result = apply_search_replace(text, edits)
+        assert result == "Y C"
+
+    def test_chained_edits_can_reference_new_content(self):
+        """Later edits can reference content added by earlier edits."""
+        text = "start end"
+        edits = [
+            SearchReplace(old_str="start", new_str="start MIDDLE"),
+            SearchReplace(old_str="MIDDLE end", new_str="MIDDLE and end"),
+        ]
+        result = apply_search_replace(text, edits)
+        assert result == "start MIDDLE and end"
+
+    # =========================================================================
+    # Edge cases with newlines and empty strings
+    # =========================================================================
+
+    def test_replace_with_empty_string_deletes(self):
+        """Replacing with empty string effectively deletes."""
+        text = "keep this\ndelete this\nkeep this too"
+        edits = [SearchReplace(old_str="\ndelete this", new_str="")]
+        result = apply_search_replace(text, edits)
+        assert result == "keep this\nkeep this too"
+
+    def test_empty_text_input(self):
+        """Empty input text with no edits returns empty."""
+        result = apply_search_replace("", [])
+        assert result == ""
+
+    def test_newline_only_text(self):
+        """Handle text that's just newlines."""
+        text = "\n\n\n"
+        edits = [SearchReplace(old_str="\n\n", new_str="\n")]
+        result = apply_search_replace(text, edits)
+        assert result == "\n\n"
+
+    def test_trailing_newline_preserved(self):
+        """Trailing newlines should be preserved."""
+        text = "line one\nline two\n"
+        edits = [SearchReplace(old_str="line one", new_str="LINE ONE")]
+        result = apply_search_replace(text, edits)
+        assert result == "LINE ONE\nline two\n"
+
+    # =========================================================================
+    # Unicode and special characters
+    # =========================================================================
+
+    def test_unicode_characters(self):
+        """Handle unicode characters in search/replace."""
+        text = "emoji: 🎉 and text"
+        edits = [SearchReplace(old_str="🎉", new_str="🚀")]
+        result = apply_search_replace(text, edits)
+        assert result == "emoji: 🚀 and text"
+
+    def test_regex_special_chars_are_literal(self):
+        """Regex special characters should be treated literally."""
+        text = "value: a.*b+c?d"
+        # These are regex special chars but should match literally
+        edits = [SearchReplace(old_str="a.*b+c?d", new_str="replaced")]
+        result = apply_search_replace(text, edits)
+        assert result == "value: replaced"
+
+    # =========================================================================
+    # Insert-like operations using search/replace
+    # =========================================================================
+
+    def test_insert_using_anchor_context(self):
+        """Insert new content by using anchor context."""
+        text = "line1\nline2\nline3"
+        # To insert between line1 and line2, replace line1 with line1 + new content
+        edits = [SearchReplace(
+            old_str="line1\nline2",
+            new_str="line1\nNEW_LINE\nline2"
+        )]
+        result = apply_search_replace(text, edits)
+        assert result == "line1\nNEW_LINE\nline2\nline3"
+
+    def test_append_to_end(self):
+        """Append content to end of document."""
+        text = "line1\nline2"
+        edits = [SearchReplace(
+            old_str="line2",
+            new_str="line2\nline3"
+        )]
+        result = apply_search_replace(text, edits)
+        assert result == "line1\nline2\nline3"
+
+    def test_prepend_to_beginning(self):
+        """Prepend content to beginning of document."""
+        text = "line1\nline2"
+        edits = [SearchReplace(
+            old_str="line1",
+            new_str="line0\nline1"
+        )]
+        result = apply_search_replace(text, edits)
+        assert result == "line0\nline1\nline2"

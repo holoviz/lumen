@@ -324,6 +324,12 @@ PREFERENCES_HELP = """
 - Verifies results match your intent
 - Enabled by default
 
+**Polish Plot** — Apply multi-pass visual polish to visualizations
+
+- Progressively improves layout, style, and narrative
+- Background process that runs after initial render
+- Enabled by default
+
 **Configure AI Models** — Choose which LLM provider and models to use for different tasks
 """
 
@@ -1595,6 +1601,14 @@ class ExplorerUI(UI):
             sql_planning = Switch(label='SQL Planning', description='Run discovery queries and adaptive exploration before final SQL')
             sql_planning.link(sql_agent, value='exploration_enabled', bidirectional=True)
             switches.append(sql_planning)
+        vega_agent = next(
+            (agent for agent in self._coordinator.agents if isinstance(agent, VegaLiteAgent)),
+            None
+        )
+        if vega_agent:
+            polish = Switch(label='Polish Plot', value=True, description='Apply multi-pass visual polish to visualizations')
+            polish.link(vega_agent, value='polish_enabled', bidirectional=True)
+            switches.append(polish)
         validation = Switch(label='Validation Step', description='Check if the response fully answered your question')
         validation.link(self._coordinator, value='validation_enabled', bidirectional=True)
         switches.append(validation)

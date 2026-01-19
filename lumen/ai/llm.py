@@ -455,7 +455,9 @@ class Llm(param.Parameterized):
             role = message["role"]
             if role == "system":
                 continue
-            if role == "user":
+            if isinstance(message["content"], instructor.Image):
+                log_debug(f"Message \033[95m{i} (u)\033[0m: [Image data]")
+            elif role == "user":
                 log_debug(f"Message \033[95m{i} (u)\033[0m: {message['content']}")
             else:
                 log_debug(f"Message \033[95m{i} (a)\033[0m: {message['content']}")
@@ -470,7 +472,12 @@ class Llm(param.Parameterized):
         result = await client(messages=messages, **kwargs)
         if response_model := kwargs.get("response_model"):
             log_debug(f"Response model: \033[93m{response_model.__name__!r}\033[0m")
-        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
+
+        if isinstance(result, BaseModel):
+            result_pprint = result.model_dump_json(indent=2)
+        else:
+            result_pprint = str(result)
+        log_debug(f"LLM Response: \033[95m{truncate_string(result_pprint, max_length=1000)}\033[0m\n---")
         return result
 
 
