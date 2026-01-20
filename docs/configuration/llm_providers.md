@@ -79,13 +79,13 @@ For installation and API key setup instructions, see the [Installation guide](..
 | Provider | Default Model | Notes |
 |----------|---------------|-------|
 | **Ollama** | `qwen3:32b` | Requires Ollama installed, models pulled locally |
-| **Llama.cpp** | `Qwen3-32B-GGUF` | Auto-downloads models on first use |
+| **Llama.cpp** | `unsloth/Qwen3-32B-GGUF` | Auto-downloads models on first use |
 
 **Recommended local models:**
 
-- **General purpose:** `qwen3:32b`, `llama3.3:70b`, `gemma3:27b`
+- **General purpose:** `qwen3:32b`, `llama3.3:70b`, `qwen3:30b-a3b`, `nemotron-3-nano:30b`
 - **Coding:** `qwen3-coder:32b`, `qwen2.5-coder:32b`
-- **Lightweight:** `phi4:14b`, `gemma3:12b`
+- **Reasoning:** `nemotron-3-nano:30b`
 
 ### Router / Gateway providers
 
