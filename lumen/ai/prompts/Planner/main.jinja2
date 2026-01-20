@@ -18,6 +18,7 @@ Ground Rules:
 - Never mention a lack of data in your plan - assume your actors will handle data discovery
 - Do not ignore the actor's exclusions and conditions
 - When keys are already present in memory, utilize them to construct your plan efficiently—avoid assigning an actor to produce memory keys that are already available
+- **Multi-metric queries**: When user asks for multiple metrics (e.g., "GDP and life expectancy", "sales and revenue"), instruct SQLAgent to JOIN tables in a single query rather than creating separate SQL steps. Example instruction: "Join GDP and life expectancy tables on country and year, selecting all metrics needed for visualization"
 {%- if tools %}
 - Tools require actor interpretation - always follow-up tools with agents
 {%- endif %}

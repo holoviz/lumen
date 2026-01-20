@@ -1,0 +1,11 @@
+{% extends 'BaseViewAgent/code_safety.jinja2' %}
+
+{% set library_name = 'Altair' %}
+
+{% block safe_items %}
+- Imports: `altair`, `alt`
+- Chart creation: `alt.Chart(df).mark_*().encode().properties()`
+- Transforms: `transform_filter`, `transform_calculate`, `transform_window`, etc.
+- Assignment to `chart` variable
+{{ super() }}
+{% endblock %}

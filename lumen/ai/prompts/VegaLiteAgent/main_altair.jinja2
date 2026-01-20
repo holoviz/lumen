@@ -1,0 +1,58 @@
+{% extends 'BaseViewAgent/main.jinja2' %}
+
+{% block instructions %}
+Generate Altair code. Data is `df`, assign to `chart`, end with `.interactive()`. Use `width='container'` for single charts only. NO I/O methods.
+
+# Encodings: `:Q` quantitative | `:N` nominal | `:O` ordinal | `:T` temporal
+
+# Reference
+- **Sort**: `sort='-y'` | **Title**: `.properties(title='...')` | **Tooltip**: `tooltip=['f1', 'f2']`
+- **Color**: `alt.value('#1f77b4')` | `alt.condition(test, if_true, if_false)` | `'field:N'`
+- **Transforms**: `.transform_filter()` | `.transform_window(rank='rank()')` | `.transform_aggregate()`
+- **Layouts**: `alt.hconcat()` | `alt.vconcat()` | `.facet()` | `.repeat()` (omit width on sub-charts)
+- **Geo**: `longitude='lon:Q', latitude='lat:Q'` with `.project(type='mercator')`
+{% endblock %}
+
+{% block examples %}
+{% if doc_examples is defined and doc_examples %}{% for example in doc_examples %}{{ example }}
+{% endfor %}{% endif %}
+Bar (sorted):
+```python
+chart = alt.Chart(df).mark_bar().encode(y=alt.Y('state:N', sort='-x'), x='count:Q', tooltip=['state', 'count']).properties(width='container', height=400).interactive()
+```
+
+Time series:
+```python
+chart = alt.Chart(df).mark_line(point=True).encode(x='date:T', y='value:Q', tooltip=['date', 'value']).properties(width='container', height=300).interactive()
+```
+
+Scatter:
+```python
+chart = alt.Chart(df).mark_circle().encode(x='x:Q', y='y:Q', size='mag:Q', color='cat:N', tooltip=['name', 'x', 'y']).properties(width='container', height=400).interactive()
+```
+
+Top N:
+```python
+chart = alt.Chart(df).transform_window(rank='rank()', sort=[alt.SortField('value', order='descending')]).transform_filter(alt.datum.rank <= 10).mark_bar().encode(y=alt.Y('cat:N', sort='-x'), x='value:Q').properties(width='container').interactive()
+```
+
+Layered:
+```python
+base = alt.Chart(df).encode(x='year:Q', y='value:Q')
+chart = (base.mark_line() + base.mark_text(dx=5).encode(text='value:Q')).interactive()
+```
+
+Concat:
+```python
+chart = alt.hconcat(alt.Chart(df).mark_bar().encode(x='cat:N', y='val:Q'), alt.Chart(df).mark_line().encode(x='date:T', y='val:Q')).interactive()
+```
+{% endblock %}
+
+{% block context %}
+Table: {{ memory['pipeline'].table }}
+Data: {{ memory['data'] }}
+{%- if "view" in memory %}
+Previous: {{ memory["view"]["spec"] | json_to_yaml }}
+{%- endif %}
+{% if memory['pipeline'].source.dialect == "snowflake" %}Use UPPER CASE field names.{% endif %}
+{%- endblock %}
