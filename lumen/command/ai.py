@@ -51,6 +51,11 @@ class LumenAIServe(Serve):
         group.add_argument("--temperature", type=float, help="Temperature for the LLM")
         group.add_argument("--agents", nargs="+", help="Additional agents to include")
         group.add_argument(
+            "--model",
+            type=str,
+            help="Model name to use (sets model in model_kwargs['default']). Example: --model 'qwen3:8b'",
+        )
+        group.add_argument(
             "--model-kwargs",
             type=str,
             help="JSON string of model keyword arguments for the LLM. Example: --model-kwargs '{\"default\": {\"repo\": \"abcdef\"}}'",
@@ -101,6 +106,7 @@ class LumenAIServe(Serve):
         agents = args.agents
         log_level = args.log_level
         logfire_tags = getattr(args, 'logfire_tags', None)
+        model = getattr(args, 'model', None)
 
         if provider_cls is None:
             try:
@@ -111,7 +117,7 @@ class LumenAIServe(Serve):
                 ) from err
 
         model_kwargs = None
-        if args.model_kwargs or llm_model_url:
+        if args.model_kwargs or llm_model_url or model:
             model_kwargs = {}
             if args.model_kwargs:
                 try:
@@ -119,6 +125,12 @@ class LumenAIServe(Serve):
                 except json.JSONDecodeError as e:
                     die(f"Invalid JSON format for --model-kwargs: {e}\n"
                         f"Ensure the argument is properly escaped. Example: --model-kwargs '{{\"key\": \"value\"}}'")
+
+            # Handle --model argument
+            if model:
+                if 'default' not in model_kwargs:
+                    model_kwargs['default'] = {}
+                model_kwargs['default']['model'] = model
 
             # Handle huggingface URL if provided
             if llm_model_url:
