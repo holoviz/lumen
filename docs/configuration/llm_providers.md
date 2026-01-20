@@ -24,10 +24,10 @@ Use cheap models for simple tasks, powerful models for complex tasks:
 import lumen.ai as lmai
 
 model_config = {
-    "default": {"model": "gpt-5-mini"},  # Cheap for most agents
-    "sql": {"model": "gpt-5.2"},         # Powerful for SQL
-    "vega_lite": {"model": "gpt-5.2"},   # Powerful for charts
-    "analyst": {"model": "gpt-5.2"},     # Powerful for analysis
+    "default": {"model": "gpt-4.1-mini"},  # Cheap for most agents
+    "sql": {"model": "gpt-4.1"},           # Powerful for SQL
+    "vega_lite": {"model": "gpt-4.1"},     # Powerful for charts
+    "analyst": {"model": "gpt-4.1"},       # Powerful for analysis
 }
 
 llm = lmai.llm.OpenAI(model_kwargs=model_config)
@@ -44,11 +44,11 @@ Lower temperature = more deterministic. Higher = more creative.
 ``` py title="Temperature by task" hl_lines="4 8"
 model_config = {
     "sql": {
-        "model": "gpt-5.2",
+        "model": "gpt-4.1",
         "temperature": 0.1,  # Deterministic SQL
     },
     "chat": {
-        "model": "gpt-5-mini",
+        "model": "gpt-4.1-mini",
         "temperature": 0.4,  # Natural conversation
     },
 }
@@ -64,11 +64,11 @@ For installation and API key setup instructions, see the [Installation guide](..
 
 | Provider | Default Model | Popular Models |
 |----------|---------------|----------------|
-| **OpenAI** | `gpt-4.1-mini` | `gpt-5.2`, `gpt-5-mini`, `gpt-5-nano`, `gpt-4.1` |
+| **OpenAI** | `gpt-4.1-mini` | `gpt-4.1`, `gpt-4-turbo`, `gpt-4` |
 | **Anthropic** | `claude-haiku-4-5` | `claude-sonnet-4-5`, `claude-opus-4-5` |
 | **Google** | `gemini-3-flash-preview` | `gemini-3-pro-preview`, `gemini-2.5-flash`, `gemini-2.0-flash` |
 | **Mistral** | `mistral-small-latest` | `mistral-large-latest`, `ministral-8b-latest` |
-| **Azure OpenAI** | `gpt-4o-mini` | `gpt-4o`, `gpt-4-turbo`, `gpt-35-turbo` |
+| **Azure OpenAI** | `gpt-4.1-mini` | `gpt-4.1`, `gpt-4-turbo`, `gpt-4` |
 | **Azure Mistral** | `azureai` | `mistral-large`, `mistral-small` |
 
 !!! warning "Reasoning Models Not Suitable for Dialog"
@@ -78,15 +78,14 @@ For installation and API key setup instructions, see the [Installation guide](..
 
 | Provider | Default Model | Notes |
 |----------|---------------|-------|
-| **Ollama** | `qwen3:8b` | Requires Ollama installed, models pulled locally |
-| **Llama.cpp** | `Qwen3-8B-GGUF` | Auto-downloads models on first use |
+| **Ollama** | `qwen3:32b` | Requires Ollama installed, models pulled locally |
+| **Llama.cpp** | `Qwen3-32B-GGUF` | Auto-downloads models on first use |
 
 **Recommended local models:**
 
-- **General purpose:** `qwen3:8b`, `llama3.3:70b`, `gemma3:12b`
-- **Coding:** `qwen3-coder:30b`, `qwen2.5-coder:7b`
+- **General purpose:** `qwen3:32b`, `llama3.3:70b`, `gemma3:27b`
+- **Coding:** `qwen3-coder:32b`, `qwen2.5-coder:32b`
 - **Lightweight:** `phi4:14b`, `gemma3:12b`
-- **Reasoning:** `deepseek-r1:7b`
 
 ### Router / Gateway providers
 
@@ -161,7 +160,7 @@ Connect to Ollama running on another machine:
 ``` py title="Remote Ollama"
 llm = lmai.llm.Ollama(
     endpoint='http://your-server:11434/v1',
-    model_kwargs={"default": {"model": "qwen3:8b"}}
+    model_kwargs={"default": {"model": "qwen3:32b"}}
 )
 ```
 
@@ -188,7 +187,7 @@ Additional model types:
 
 Different providers use different model string formats:
 
-- **OpenAI**: `"gpt-5.2"`, `"gpt-5-mini"`, `"gpt-5-nano"`, `"gpt-4.1"`
+- **OpenAI**: `"gpt-4.1"`, `"gpt-4.1-mini"`, `"gpt-4-turbo"`, `"gpt-4"`
 - **Anthropic**: `"claude-sonnet-4-5"`, `"claude-haiku-4-5"`, `"claude-opus-4-5"`
 - **Google**: `"gemini-3-flash-preview"`, `"gemini-2.5-flash"`
 - **Mistral**: `"mistral-large-latest"`, `"mistral-small-latest"`
@@ -204,7 +203,7 @@ For LiteLLM, use the `provider/model` format for non-OpenAI models.
 
 **Wrong model used** - Model type names must be snake_case: `"sql"` not `"SQLAgent"`.
 
-**High costs** - Use `gpt-5-mini` or `claude-haiku-4-5` for `default`, reserve `gpt-5.2` or `claude-sonnet-4-5` for critical tasks (`sql`, `vega_lite`, `analyst`).
+**High costs** - Use `gpt-4.1-mini` or `claude-haiku-4-5` for `default`, reserve `gpt-4.1` or `claude-sonnet-4-5` for critical tasks (`sql`, `vega_lite`, `analyst`).
 
 **Slow responses** - Local models are slower than cloud APIs. Use cloud providers when speed matters.
 
@@ -212,22 +211,16 @@ For LiteLLM, use the `provider/model` format for non-OpenAI models.
 
 ## Best practices
 
-**Use powerful models for critical tasks:**
-
-- `sql` - SQL generation needs strong reasoning
-- `vega_lite` - Visualizations need design understanding  
-- `analyst` - Analysis needs statistical knowledge
-
 **Use efficient models elsewhere:**
 
-- `default` - Simple tasks work well with `gpt-5-mini` or `claude-haiku-4-5`
+- `default` - Simple tasks work well with `gpt-4.1-mini` or `claude-haiku-4-5`
 - `chat` - Conversation works with smaller models
 
 **Avoid reasoning models in dialog interfaces:**
 
-- Reasoning models (`gpt-5`, `o4-mini`, `gemini-2.0-flash-thinking`) are **significantly slower**
+- Reasoning models (`o1`, `o1-mini`, `gemini-3.0-pro`) are **significantly slower**
 - They're designed for single, complex queries, not interactive chat
-- For Lumen's dialog interface, use standard models (`gpt-4.1`, `gpt-5-mini`, `claude-sonnet-4-5`)
+- For Lumen's dialog interface, use standard models (`mistral-small-latest`, `gpt-4.1-mini`, `claude-sonnet-4-5`)
 - Reserve reasoning models for batch processing or one-off complex analyses
 
 **Set temperature by task:**

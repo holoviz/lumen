@@ -35,11 +35,21 @@ Here are some ideas to spark your exploration:
 
 You can ask the AI to perform several steps in one message. This helps you build complex analyses without multiple back-and-forths. For example: "Filter the data, create a visualization, then summarize the findings."
 
+## Choose your model
+
+The model Lumen AI uses affects both quality and cost. By default, Lumen uses OpenAI's `gpt-4.1-mini`, but you can choose any supported model from OpenAI, Anthropic, Google, Mistral, or local providers.
+
+**Configure from Settings:**
+- Click **Settings** (left sidebar) to select a different provider and model
+
+**For guidance on model selection:**
+- See [LLM Providers](../configuration/llm_providers.md) for detailed information on model choices, cost optimization, and task-specific recommendations
+- Use cheaper models like `gpt-4.1-mini` or `claude-haiku-4-5` for general tasks
+- Reserve more powerful models like `gpt-4.1` or `claude-sonnet-4-5` for SQL generation and complex analysis
+
 ## Understand the AI's reasoning
 
 If you want to see how the AI arrived at an answer, enable **Chain of Thought** in **Settings** (left sidebar). This will show the LLM's reasoning steps in expandable cards within the chat.
-
-You can also configure your LLM provider and model from **Settings**.
 
 ## Refine results
 
@@ -154,9 +164,9 @@ ui.servable()
 
 See the configuration guides for all available options:
 
+- [LLM Providers](../configuration/llm_providers.md) — Configure your LLM, choose models, and optimize costs
 - [Prompts](../configuration/prompts.md) — Customize agent behavior
 - [Sources](../configuration/sources.md) — Connect to databases and files
-- [LLM Providers](../configuration/llm_providers.md) — Configure your LLM
 - [Agents](../configuration/agents.md) — Use and customize agents
 - [Tools](../configuration/tools.md) — Extend capabilities with custom tools
 - [Analyses](../configuration/analyses.md) — Add domain-specific analyses

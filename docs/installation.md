@@ -187,7 +187,7 @@ Run open-source LLMs on your own machine. No API keys required, full privacy, fr
     3. Pull a model:
     
     ```bash
-    ollama pull qwen3:8b
+    ollama pull qwen3:32b
     ```
     
     4. (Optional) Set custom endpoint if not using default:

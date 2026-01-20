@@ -1329,16 +1329,16 @@ class Ollama(OpenAI):
     mode = param.Selector(default=Mode.JSON)
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "qwen3:8b"},
+        "default": {"model": "qwen3:32b"},
     })
 
     select_models = param.List(default=[
-        "qwen3:8b",
+        "qwen3:32b",
         "qwen3-coder:30b",
         "deepseek-r1:7b",
         "llama3.3:70b",
         "llama4:latest",
-        "gemma3:12b",
+        "gemma3:27b",
         "mistral-small3.2:24b",
         "qwen2.5-coder:7b",
         "phi4:14b"
