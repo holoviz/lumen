@@ -39,6 +39,9 @@ data = [{{ tables | join(', ') if tables is defined else '' }}]
 {%- if logfire_tags is defined -%}
   {%- set assistant_args = assistant_args + ['logfire_tags=' ~ logfire_tags] -%}
 {%- endif -%}
+{%- if code_execution is defined and code_execution != 'hide' -%}
+  {%- set assistant_args = assistant_args + ["code_execution='" ~ code_execution ~ "'"] -%}
+{%- endif -%}
 
 lmai.ExplorerUI(
     {{ assistant_args | join(',\n    ') }}, log_level='{{ log_level }}'

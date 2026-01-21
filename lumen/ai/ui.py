@@ -23,7 +23,7 @@ from panel.viewable import (
 from panel_material_ui import (
     Alert, Breadcrumbs, Button, ChatFeed, ChatInterface, ChatMessage,
     Column as MuiColumn, Dialog, FileDownload, IconButton, MenuList, Page,
-    Paper, Popup, Row, Switch, Tabs, Typography,
+    Paper, Popup, Row, Select, Switch, Tabs, Typography,
 )
 from panel_splitjs import HSplit, MultiSplit, VSplit
 
@@ -338,6 +338,23 @@ Ask follow-up questions by navigating to an existing exploration.
 """
 
 REPORT_CAPTION = "Use ▶ to execute all, × to clear outputs, ∨∧ to collapse/expand sections. Click exploration names to jump to them."  # noqa: RUF001
+
+CODE_EXECUTION_WARNING = """
+### ⚠️ Security Warning
+
+Enabling code execution allows the AI to generate and run Python code on your system.
+
+**This poses significant security risks**, especially in environments with:
+
+- API keys or secrets
+- Database credentials
+- Access to sensitive files or systems
+- Network access to internal services
+
+LLM-generated code may be unpredictable. While validation layers reduce accidental errors, they **do not provide meaningful protection** against malicious or compromised inputs.
+
+**Only enable this feature if you understand and accept these risks.**
+"""
 
 
 def _get_default_llm():
@@ -1552,6 +1569,24 @@ class ExplorerUI(UI):
         lmai.ExplorerUI(data='~/data.csv').servable()
     """
 
+    code_execution = param.Selector(
+        default="hide", objects=["hide", "disabled", "prompt", "llm", "bypass"],
+        doc="""
+        Code execution mode for generating Vega-Lite specs via Altair code.
+        Controls whether the code execution selector appears in the UI preferences:
+        - hide: Do not show code execution option in preferences (default)
+        - disabled: Show selector, but default to no code execution (Vega-Lite spec only)
+        - prompt: Show selector, default to prompting user for permission to execute
+        - llm: Show selector, default to LLM-validated code execution
+        - bypass: Show selector, default to executing code without confirmation
+
+        WARNING: The 'prompt', 'llm', and 'bypass' modes execute LLM-generated code and
+        must NEVER be enabled in production environments with access to secrets, credentials,
+        or sensitive data. The LLM validation layer reduces accidental errors but does NOT
+        provide meaningful security against malicious or compromised inputs.
+        """
+    )
+
     title = param.String(default='Lumen AI - Data Explorer', doc="Title of the app.")
 
     _exploration = param.Dict()
@@ -1583,6 +1618,11 @@ class ExplorerUI(UI):
         self._update_main_view()
 
     def _render_sidebar(self) -> list[Viewable]:
+        def on_code_exec_change(event):
+            if event.new != "disabled":
+                self._code_exec_warning_dialog.open = True
+            self.code_execution = event.new
+
         switches = []
         cot = Switch(label='Chain of Thought', description='Show AI reasoning steps')
         cot.link(self._coordinator, value='verbose', bidirectional=True)
@@ -1598,6 +1638,31 @@ class ExplorerUI(UI):
         validation = Switch(label='Validation Step', description='Check if the response fully answered your question')
         validation.link(self._coordinator, value='validation_enabled', bidirectional=True)
         switches.append(validation)
+
+        # Add code execution selector if not hidden
+        vega_agent = next(
+            (agent for agent in self._coordinator.agents if isinstance(agent, VegaLiteAgent)),
+            None
+        )
+        if self.code_execution != "hide":
+            if vega_agent:
+                vega_agent.code_execution = self.code_execution
+                self._code_exec_select = Select.from_param(
+                    vega_agent.param.code_execution,
+                    label='Code Execution',
+                    options=["disabled", "prompt", "llm", "bypass"],
+                    description='How to handle Altair code generation for charts',
+                    sizing_mode="stretch_width",
+                    margin=(10, 10, 5, 10),
+                )
+                self._code_exec_select.param.watch(on_code_exec_change, 'value')
+                if self.code_execution != "disabled":
+                    # Initially trigger warning if not disabled
+                    self._code_exec_select.param.trigger("value")
+                switches.append(self._code_exec_select)
+        else:
+            # Ensure agent is set to disabled if selector is hidden
+            vega_agent.code_execution = "disabled"
 
         llm_config_button = Button(
             label="Configure AI Models",
@@ -1749,7 +1814,48 @@ class ExplorerUI(UI):
             width=275,
         )
         self._main[:] = [self._splash]
+
+        # Create code execution warning dialog if code execution is not hidden
+        if self.code_execution != "hide":
+            main.append(self._render_code_exec_warning_dialog())
+
         return main
+
+    def _render_code_exec_warning_dialog(self) -> Viewable:
+        def cancel_code_execution(event):
+            """Cancel the code execution change and close the warning dialog."""
+            self._code_exec_select.value = "disabled"
+            self._code_exec_warning_dialog.open = False
+
+        def confirm_code_execution(event):
+            self._code_exec_warning_dialog.open = False
+
+        self._code_exec_warning_dialog = Dialog(
+            MuiColumn(
+                Markdown(CODE_EXECUTION_WARNING, sizing_mode="stretch_width"),
+                Row(
+                    Button(
+                        label="Go back",
+                        variant="outlined",
+                        on_click=cancel_code_execution,
+                    ),
+                    Button(
+                        label="I understand",
+                        button_type="primary",
+                        on_click=confirm_code_execution,
+                    ),
+                    align="end",
+                    margin=(10, 0, 0, 0),
+                ),
+                sizing_mode="stretch_width",
+            ),
+            open=False,
+            show_close_button=False,
+            sizing_mode="stretch_width",
+            width_option="sm",
+            title="Enable Code Execution?",
+        )
+        return self._code_exec_warning_dialog
 
     async def _add_exploration_from_explorer(self, event: param.parameterized.Event | None = None):
         if self._explorer.table_slug is None:
