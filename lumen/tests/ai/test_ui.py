@@ -1,5 +1,6 @@
 import asyncio
 import sqlite3
+import sys
 import tempfile
 
 from pathlib import Path
@@ -962,7 +963,6 @@ class TestResolveData:
 
     def test_resolve_data_mixed_local_and_remote(self):
         """Test resolving a mix of local and remote files."""
-        import sys
         if sys.platform == 'win32':
             # Skip on Windows due to httpfs extension file locking issues in CI
             pytest.skip("httpfs extension has file locking issues on Windows CI")

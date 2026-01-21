@@ -125,7 +125,6 @@ or sensitive data.
         log_level = args.log_level
         logfire_tags = getattr(args, 'logfire_tags', None)
         model = getattr(args, 'model', None)
-        code_execution = getattr(args, 'code_execution', 'hide')
 
         if provider_cls is None:
             try:
