@@ -78,17 +78,17 @@ class LumenAIServe(Serve):
             choices=["hide", "disabled", "prompt", "llm", "bypass"],
             default="hide",
             help="""
-Code execution mode for generating Vega-Lite specs via Altair code.
-Controls whether the code execution selector appears in the UI preferences:
-- hide: Do not show code execution option in preferences (default)
-- disabled: Show selector, but default to no code execution (Vega-Lite spec only)
-- prompt: Show selector, default to prompting user for permission to execute
-- llm: Show selector, default to LLM-validated code execution
-- bypass: Show selector, default to executing code without confirmation
+            Code execution mode for generating Vega-Lite specs via Altair code.
+            Controls whether the code execution selector appears in the UI preferences:
+            - hide: Do not show code execution option in preferences (default)
+            - disabled: Show selector, but default to no code execution (Vega-Lite spec only)
+            - prompt: Show selector, default to prompting user for permission to execute
+            - llm: Show selector, default to LLM-validated code execution
+            - bypass: Show selector, default to executing code without confirmation
 
-WARNING: The 'prompt', 'llm', and 'bypass' modes execute LLM-generated code and
-must NEVER be enabled in production environments with access to secrets, credentials,
-or sensitive data.
+            WARNING: The 'prompt', 'llm', and 'bypass' modes execute LLM-generated code and
+            must NEVER be enabled in production environments with access to secrets, credentials,
+            or sensitive data.
             """,
         )
 
