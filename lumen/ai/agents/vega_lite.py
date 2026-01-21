@@ -16,7 +16,7 @@ from ..config import (
 )
 from ..context import TContext
 from ..llm import Message, OpenAI
-from ..models import EscapeBaseModel, RetrySpec
+from ..models import EscapeBaseModel, PartialBaseModel, RetrySpec
 from ..utils import (
     get_data, get_schema, load_json, log_debug, retry_llm_output,
 )
@@ -60,10 +60,11 @@ class VegaLiteSpecUpdate(BaseModel):
     )
 
 
-class AltairSpec(EscapeBaseModel):
+class AltairSpec(PartialBaseModel):
     """Response model for Altair code generation."""
 
     chain_of_thought: str = Field(
+        default="",
         description="""Explain your design choices based on visualization theory:
         - What story does this data tell?
         - What's the most compelling insight or trend (for the title)?
@@ -76,28 +77,12 @@ class AltairSpec(EscapeBaseModel):
     )
     altair_code: str = Field(
         description="""Python code that creates an Altair chart.
-
         Requirements:
         - Import altair as `alt`
         - Data is available as `df` (pandas DataFrame)
         - Must assign final chart to variable `chart`
         - Do NOT call .to_dict(), .save(), .display() or any I/O methods
         - Use 'container' for width to make charts responsive
-
-        Example:
-        ```python
-        import altair as alt
-
-        chart = alt.Chart(df).mark_bar().encode(
-            x=alt.X('category:N', sort='-y'),
-            y=alt.Y('value:Q'),
-            tooltip=['category', 'value']
-        ).properties(
-            title='Top Categories',
-            width='container',
-            height=300
-        )
-        ```
         """
     )
 
