@@ -108,6 +108,8 @@ Use **Settings** in the left sidebar to configure analysis behavior:
 
 **Validation Step** — AI validates results for correctness (disabled by default)
 
+**Code Execution** — If enabled by administrator, controls how visualizations are generated. See [Code Execution for Visualizations](using_lumen_ai.md#code-execution-for-visualizations) for security implications.
+
 **LLM Configuration** — Choose and configure your language model
 
 ## Exporting and sharing
