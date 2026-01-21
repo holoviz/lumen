@@ -72,7 +72,7 @@ Conditions for use:
 {%- endif %}
 {{ dedent(agent.purpose).strip() }}
 {% if agent.output_schema.__annotations__ -%}Provides: `{{ agent.output_schema.__annotations__ | join('`, `') or 'None' }}`{%- endif %}
-Guidelines:
+Conditions:
 {%- for condition in agent.conditions %}
   - {{ dedent(condition) }}
 {%- endfor -%}

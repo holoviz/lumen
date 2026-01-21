@@ -126,7 +126,7 @@ Bring your own LLM. Then connect to your data sources: Snowflake, BigQuery, Duck
     
     lumen-ai serve postgresql://user:pass@localhost/mydb \
       --provider ollama \
-      --model qwen3:8b \
+      --model qwen3:32b \
       --show
     ```
     
