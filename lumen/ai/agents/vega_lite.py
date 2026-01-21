@@ -97,7 +97,7 @@ class VegaLiteAgent(BaseViewAgent):
     )
 
     generation_mode = param.Selector(
-        default="altair",
+        default="vega-lite",
         objects=["vega-lite", "altair", "altair_llm_validated"],
         doc="""Whether to generate Vega-Lite specs directly or via Altair code.
         - 'vega-lite': Generate Vega-Lite YAML specs directly
