@@ -129,17 +129,52 @@ lumen-ai serve
 
 ### Configure models
 
-Use different models for different tasks:
+#### Quick model selection
 
-``` bash title="Multiple models"
+For simple cases, use `--model` to set the default model:
+
+``` bash title="Set default model"
+lumen-ai serve --provider ollama --model 'qwen3:32b'
+```
+
+``` bash title="Different providers"
+lumen-ai serve --provider openai --model 'gpt-4o-mini'
+lumen-ai serve --provider anthropic --model 'claude-sonnet-4-5'
+lumen-ai serve --provider google --model 'gemini-2.0-flash'
+```
+
+The `--model` argument automatically sets `model_kwargs['default']['model']` for you.
+
+#### Advanced model configuration
+
+For multiple models or additional parameters, use `--model-kwargs` with JSON:
+
+``` bash title="Multiple models for different tasks"
 lumen-ai serve --model-kwargs '{
   "default": {"model": "gpt-4o-mini"},
-  "sql": {"model": "gpt-4o"}
+  "sql": {"model": "gpt-4o"},
+  "edit": {"model": "gpt-4o"}
 }'
 ```
 
+``` bash title="Combine --model with --model-kwargs"
+lumen-ai serve --provider ollama \
+  --model 'qwen3:32b' \
+  --model-kwargs '{"edit": {"model": "mistral-small3.2:24b"}}'
+```
+
+This sets `qwen3:32b` as the default model and `mistral-small3.2:24b` for editing tasks.
+
 !!! warning "Escape JSON properly"
     The JSON string must be properly quoted. Use single quotes around the entire JSON, double quotes inside.
+
+!!! tip "Model types"
+    Common model types in `model_kwargs`:
+    
+    - `default` - General queries and analysis
+    - `sql` - SQL query generation (some providers use specialized models)
+    - `edit` - Code/chart editing (may use more capable models)
+    - `ui` - UI responsive check (lightweight models)
 
 ### Adjust temperature
 
@@ -163,7 +198,8 @@ Agent names are case-insensitive. The "Agent" suffix is optional: `sql` = `sqlag
 |------|---------|---------|
 | `--provider` | LLM provider | `--provider anthropic` |
 | `--api-key` | API key | `--api-key sk-...` |
-| `--model-kwargs` | Model config | `--model-kwargs '{"sql": {"model": "gpt-4o"}}'` |
+| `--model` | Default model | `--model 'qwen3:32b'` |
+| `--model-kwargs` | Advanced model config | `--model-kwargs '{"sql": {"model": "gpt-4o"}}'` |
 | `--temperature` | Randomness | `--temperature 0.5` |
 | `--agents` | Active agents | `--agents SQLAgent ChatAgent` |
 | `--port` | Server port | `--port 8080` |
@@ -176,10 +212,20 @@ Agent names are case-insensitive. The "Agent" suffix is optional: `sql` = `sqlag
 ``` bash title="Complete configuration"
 lumen-ai serve penguins.csv \
   --provider openai \
-  --model-kwargs '{"default": {"model": "gpt-4o-mini"}, "sql": {"model": "gpt-4o"}}' \
+  --model 'gpt-4o-mini' \
+  --model-kwargs '{"sql": {"model": "gpt-4o"}}' \
   --temperature 0.5 \
   --agents SQLAgent ChatAgent VegaLiteAgent \
   --port 8080 \
+  --show
+```
+
+``` bash title="Using Ollama locally"
+lumen-ai serve data/*.csv \
+  --provider ollama \
+  --model 'qwen3:32b' \
+  --temperature 0.4 \
+  --log-level debug \
   --show
 ```
 
