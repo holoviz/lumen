@@ -1,13 +1,8 @@
-import asyncio
-
 from typing import Any
 
 import param
 import requests
 
-from panel_material_ui import (
-    Alert, Column, Markdown, RadioButtonGroup,
-)
 from pydantic import BaseModel, Field
 
 from ...config import dump_yaml, load_yaml
@@ -27,7 +22,7 @@ from ..utils import (
 )
 from ..vector_store import DuckDBVectorStore
 from ..views import LumenOutput, VegaLiteOutput
-from .base_view import BaseViewAgent
+from .base_code import BaseCodeAgent
 
 
 class VegaLiteSpec(EscapeBaseModel):
@@ -92,7 +87,7 @@ class AltairSpec(PartialBaseModel):
     )
 
 
-class VegaLiteAgent(BaseViewAgent):
+class VegaLiteAgent(BaseCodeAgent):
 
     conditions = param.List(
         default=[
@@ -101,22 +96,7 @@ class VegaLiteAgent(BaseViewAgent):
         ]
     )
 
-    code_execution = param.Selector(default="prompt", objects=["disabled", "prompt", "llm", "bypass"],
-        doc="""
-        Code execution mode for generating Vega-Lite specs via Altair code:
-        - disabled: No code execution; generate Vega-Lite spec directly (safe for production)
-        - prompt: Generate Altair code, prompt user for permission to execute
-        - llm: Generate Altair code, validate with LLM safety check, then execute
-        - bypass: Generate and execute Altair code without user confirmation
-
-        ⚠️ WARNING: The 'prompt', 'llm', and 'bypass' modes execute LLM-generated code and
-        must NEVER be enabled in production environments with access to secrets, credentials,
-        or sensitive data. The LLM validation layer reduces accidental errors but does NOT
-        provide meaningful security against malicious or compromised inputs. For safe
-        production deployment, use 'disabled' (declarative Vega-Lite only) or run code
-        execution in a genuinely isolated/sandboxed environment.
-        """
-    )
+    code_execution = param.Selector(default="prompt", objects=["disabled", "prompt", "llm", "bypass"])
 
     purpose = param.String(default="Generates a vega-lite plot specification from the input data pipeline.")
 
@@ -139,6 +119,8 @@ class VegaLiteAgent(BaseViewAgent):
         OpenAIEmbeddings for OpenAI LLM or NumpyEmbeddings for all others.""")
 
     view_type = VegaLiteView
+
+    _executor_class = AltairExecutor
 
     _extensions = ("vega",)
 
@@ -331,8 +313,8 @@ class VegaLiteAgent(BaseViewAgent):
             vega_spec["params"] = []
 
         existing_param_names = {
-            param.get("name") for param in vega_spec["params"]
-            if isinstance(param, dict) and "name" in param
+            p.get("name") for p in vega_spec["params"]
+            if isinstance(p, dict) and "name" in p
         }
 
         for p in VEGA_ZOOMABLE_MAP_ITEMS["params"]:
@@ -440,53 +422,8 @@ class VegaLiteAgent(BaseViewAgent):
             step.success_title = "Complete visualization with titles and colors created"
         return current_spec
 
-    async def _prompt_user_for_execution(self, code: str) -> bool:
-        """Prompt the user to approve or reject code execution.
-
-        Parameters
-        ----------
-        code : str
-            The code to display for user review.
-
-        Returns
-        -------
-        bool
-            True if user approved, False if rejected.
-        """
-        if self.interface is None:
-            # No interface available, default to approval
-            return True
-
-        approval_event = asyncio.Event()
-
-        def handle_approval(component, instance):
-            approval_event.set()
-
-        alert_display = Alert(
-            "Carefully review the code before approving. LLM-generated code may contain "
-            "unintended operations. Never approve code execution in environments with access to secrets "
-            "or sensitive data.",
-            sizing_mode="stretch_width",
-            severity="warning"
-        )
-        code_display = Markdown(f"```python\n{code}\n```", sizing_mode="stretch_width", margin=0)
-        answer_input = RadioButtonGroup(
-            options=["Reject", "Approve"],
-            size="small",
-            width=300,
-        )
-        prompt_content = Column(
-            alert_display,
-            code_display,
-            answer_input,
-            sizing_mode="stretch_width",
-        )
-        self.interface.prompt_user(prompt_content, callback=handle_approval)
-        await approval_event.wait()
-        return answer_input.value == "Approve"
-
     @retry_llm_output()
-    async def _generate_altair_spec(
+    async def _generate_code_spec(
         self,
         messages: list[Message],
         context: TContext,
@@ -494,18 +431,8 @@ class VegaLiteAgent(BaseViewAgent):
         doc_examples: list,
         doc: str,
         errors: list | None = None,
-        llm_validated: bool = False,
-        prompt_user: bool = False,
     ) -> dict[str, Any] | None:
-        """Generate spec via Altair code execution.
-
-        Parameters
-        ----------
-        llm_validated : bool
-            If True, perform additional LLM-based security review of the code.
-        prompt_user : bool
-            If True, prompt the user for approval before executing code.
-        """
+        """Generate spec via Altair code execution."""
         errors_context = self._build_errors_context(pipeline, context, errors)
 
         with self._add_step(title="Generating Altair code", steps_layout=self._steps_layout) as step:
@@ -530,53 +457,31 @@ class VegaLiteAgent(BaseViewAgent):
             async for output in response:
                 step.stream(output.chain_of_thought, replace=True)
 
-            step.stream(f"\n```python\n{output.altair_code}\n```", replace=False)
+            step.stream(f"\n```python\n{output.altair_code}\n```\n", replace=False)
 
-        # Validate code safety with AST
-        with self._add_step(title="Validating code safety (AST)", steps_layout=self._steps_layout) as step:
-            validation_errors = AltairExecutor.validate(output.altair_code)
-            if validation_errors:
-                error_msg = "; ".join(validation_errors)
-                step.failed_title = f"Unsafe code: {error_msg}"
-                raise ValueError(f"Unsafe code detected: {error_msg}")
-            step.success_title = "AST validation passed"
-
-        # Optional LLM-based security review
-        if llm_validated:
-            with self._add_step(title="LLM security review", steps_layout=self._steps_layout) as step:
-                system_prompt = await self._render_prompt(
+            # Get LLM system prompt for safety validation if needed
+            system = None
+            if self.code_execution == "llm":
+                system = await self._render_prompt(
                     "code_safety",
                     messages,
                     context,
                     code=output.altair_code,
                 )
-                is_safe, reasoning = await AltairExecutor.validate_with_llm(
-                    output.altair_code, self.llm, system_prompt, self.llm_spec_key
-                )
-                step.stream(f"Analysis: {reasoning}")
-                if not is_safe:
-                    step.failed_title = "LLM flagged code as unsafe"
-                    raise ValueError(f"LLM security review failed: {reasoning}")
-                step.success_title = "LLM security review passed"
 
-        # Prompt user for approval if requested
-        if prompt_user:
-            approved = await self._prompt_user_for_execution(output.altair_code)
-            if not approved:
-                self.interface.stream("Execution rejected by user.", user="Assistant")
-                return {"spec": {}}
-
-        # Execute and convert
-        with self._add_step(title="Executing Altair code", steps_layout=self._steps_layout) as step:
+            # Execute code using mixin (handles AST validation, LLM validation, user prompt)
             df = await get_data(pipeline)
-            chart = AltairExecutor.execute(output.altair_code, df)
+            chart = await self._execute_code(output.altair_code, df, system=system, step=step)
 
-            # Convert to Vega-Lite spec
-            spec = chart.to_dict()
-            spec.pop("datasets", None)  # Remove inline data
-            spec["data"] = {"name": pipeline.table}  # Use named data source
+        if chart is None:
+            # User rejected code execution
+            self.interface.stream("Execution rejected by user.", user="Assistant")
+            return {"spec": {}}
 
-            step.success_title = "Chart created successfully"
+        # Convert to Vega-Lite spec
+        spec = chart.to_dict()
+        spec.pop("datasets", None)  # Remove inline data
+        spec["data"] = {"name": pipeline.table}  # Use named data source
 
         return await self._extract_spec(context, {"yaml_spec": dump_yaml(spec)})
 
@@ -692,11 +597,8 @@ class VegaLiteAgent(BaseViewAgent):
         doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
         # Produces {"spec": {$schema: ..., ...}, "sizing_mode": ..., ...}
         if self.code_execution in ("prompt", "llm", "bypass"):
-            llm_validated = self.code_execution == "llm"
-            prompt_user = self.code_execution == "prompt"
-            full_dict = await self._generate_altair_spec(
+            full_dict = await self._generate_code_spec(
                 messages, context, pipeline, doc_examples, doc,
-                llm_validated=llm_validated, prompt_user=prompt_user
             )
             if full_dict is None:
                 # User rejected code execution, exit gracefully

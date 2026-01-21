@@ -60,7 +60,7 @@ USAGE GUIDANCE
 
 RECOMMENDED CONFIGURATION
 -------------------------
-For production deployments, use code_execution=False (the default) which
+For production deployments, use code_execution="disabled" (the default) which
 generates only declarative Vega-Lite YAML specs. This is safe because no
 code is executed - the spec is validated and rendered by the Vega library.
 
@@ -82,6 +82,8 @@ from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
     from pandas import DataFrame
+
+    from .llm import Llm
 
 # Forbidden attribute names - I/O, code execution, system calls
 FORBIDDEN_ATTRS = frozenset({
@@ -231,7 +233,7 @@ class CodeExecutor(ABC):
 
     @classmethod
     async def validate_with_llm(
-        cls, code: str, llm, system_prompt: str, model_spec: str | None = None
+        cls, code: str, llm: Llm, system_prompt: str, model_spec: str | None = None
     ) -> tuple[bool, str]:
         """Validate code safety using LLM inspection.
 
@@ -239,7 +241,7 @@ class CodeExecutor(ABC):
         ----------
         code : str
             Python code to validate
-        llm : LLM
+        llm : Llm
             The LLM instance to use for validation
         system_prompt : str
             The system prompt for the safety check
@@ -342,14 +344,6 @@ class AltairExecutor(CodeExecutor):
     @classmethod
     def execute(cls, code: str, df: DataFrame) -> Any:
         """Execute Altair code with automatic large dataset handling."""
-        import altair as alt
-
-        # Enable VegaFusion for large datasets to avoid row limit errors
-        if len(df) > cls.LARGE_DATASET_THRESHOLD:
-            alt.data_transformers.enable('vegafusion')
-        else:
-            alt.data_transformers.enable('default')
-
         return super().execute(code, df)
 
     @classmethod

@@ -339,7 +339,7 @@ Ask follow-up questions by navigating to an existing exploration.
 
 REPORT_CAPTION = "Use ▶ to execute all, × to clear outputs, ∨∧ to collapse/expand sections. Click exploration names to jump to them."  # noqa: RUF001
 
-CODE_EXECUTION_WARNING = """
+CODE_EXEC_WARNING = """
 ### ⚠️ Security Warning
 
 Enabling code execution allows the AI to generate and run Python code on your system.
@@ -352,8 +352,6 @@ Enabling code execution allows the AI to generate and run Python code on your sy
 - Network access to internal services
 
 LLM-generated code may be unpredictable. While validation layers reduce accidental errors, they **do not provide meaningful protection** against malicious or compromised inputs.
-
-**Only enable this feature if you understand and accept these risks.**
 """
 
 
@@ -1830,19 +1828,28 @@ class ExplorerUI(UI):
         def confirm_code_execution(event):
             self._code_exec_warning_dialog.open = False
 
+        mode_explanation = {
+            "prompt": "will prompt you for permission each time a chart is generated.",
+            "llm": "will validate generated code via the LLM before executing.",
+            "bypass": "will execute all generated code without confirmation."
+        }
+        code_exec_warning = CODE_EXEC_WARNING + (
+            f"\n\nYou have selected the **{self.code_execution}** execution mode. "
+            f"This mode **{mode_explanation.get(self.code_execution, '')}**"
+        )
         self._code_exec_warning_dialog = Dialog(
             MuiColumn(
-                Markdown(CODE_EXECUTION_WARNING, sizing_mode="stretch_width"),
+                Markdown(code_exec_warning, sizing_mode="stretch_width"),
                 Row(
                     Button(
-                        label="Go back",
+                        label="I understand",
                         variant="outlined",
-                        on_click=cancel_code_execution,
+                        on_click=confirm_code_execution,
                     ),
                     Button(
-                        label="I understand",
+                        label="Disable exec",
                         button_type="primary",
-                        on_click=confirm_code_execution,
+                        on_click=cancel_code_execution,
                     ),
                     align="end",
                     margin=(10, 0, 0, 0),
