@@ -24,9 +24,6 @@ from ..vector_store import DuckDBVectorStore
 from ..views import LumenOutput, VegaLiteOutput
 from .base_view import BaseViewAgent
 
-# Module-level executor instance
-_altair_executor = AltairExecutor()
-
 
 class VegaLiteSpec(EscapeBaseModel):
 
@@ -491,7 +488,7 @@ class VegaLiteAgent(BaseViewAgent):
 
         # Validate code safety with AST
         with self._add_step(title="Validating code safety (AST)", steps_layout=self._steps_layout) as step:
-            validation_errors = _altair_executor.validate(output.altair_code)
+            validation_errors = AltairExecutor.validate(output.altair_code)
             if validation_errors:
                 error_msg = "; ".join(validation_errors)
                 step.failed_title = f"Unsafe code: {error_msg}"
@@ -507,7 +504,7 @@ class VegaLiteAgent(BaseViewAgent):
                     context,
                     code=output.altair_code,
                 )
-                is_safe, reasoning = await _altair_executor.validate_with_llm(
+                is_safe, reasoning = await AltairExecutor.validate_with_llm(
                     output.altair_code, self.llm, system_prompt, self.llm_spec_key
                 )
                 step.stream(f"Analysis: {reasoning}")
@@ -519,7 +516,7 @@ class VegaLiteAgent(BaseViewAgent):
         # Execute and convert
         with self._add_step(title="Executing Altair code", steps_layout=self._steps_layout) as step:
             df = await get_data(pipeline)
-            chart = _altair_executor.execute(output.altair_code, df)
+            chart = AltairExecutor.execute(output.altair_code, df)
 
             # Convert to Vega-Lite spec
             spec = chart.to_dict()
