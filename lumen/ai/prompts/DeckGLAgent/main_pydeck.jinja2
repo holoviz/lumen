@@ -1,0 +1,67 @@
+{% extends 'BaseViewAgent/main.jinja2' %}
+
+{% block instructions %}
+Generate PyDeck code for 3D map visualizations. Data is pre-loaded as `df`. Assign result to `deck`. Do NOT call .to_html()/.show()/.save().
+
+Column names: spaces→underscores, non-alphanumeric removed (e.g., "Plant latitude"→"Plant_latitude")
+
+# LAYER SELECTION - CHECK `shape` IN DATA SUMMARY FOR ROW COUNT
+- **>1000 rows (shape[0])**: Use **HexagonLayer** (3D density bins) - STRONGLY PREFERRED for large datasets
+- **<1000 rows**: Use ScatterplotLayer with `radius_min_pixels`/`radius_max_pixels`
+
+# LAYERS
+| Layer | Use Case | Key Args |
+|-------|----------|----------|
+| HexagonLayer | density, large datasets | `get_position`, `radius`, `elevation_scale`, `extruded` |
+| HeatmapLayer | smooth density | `get_position`, `get_weight`, `radius_pixels` |
+| ScatterplotLayer | individual points | `get_position`, `get_radius`, `radius_min_pixels`, `radius_max_pixels` |
+| ColumnLayer | 3D bars | `get_position`, `get_elevation`, `radius` |
+| ArcLayer | connections | `get_source_position`, `get_target_position` |
+
+# STYLING
+- Colors: `[R,G,B,A]` or column name for data-driven
+- `pickable=True` for tooltips, `auto_highlight=True` for hover
+- ViewState zoom: 1-3 continent, 4-6 country, 7-10 city
+{% endblock %}
+
+{% block examples %}
+HexagonLayer (large datasets):
+```python
+import pydeck as pdk
+layer = pdk.Layer("HexagonLayer", data=df, get_position=["longitude", "latitude"],
+    radius=20000, elevation_scale=50, extruded=True, pickable=True)
+view_state = pdk.ViewState(latitude=df["latitude"].mean(), longitude=df["longitude"].mean(), zoom=4, pitch=45)
+deck = pdk.Deck(layers=[layer], initial_view_state=view_state)
+```
+
+ScatterplotLayer (small datasets):
+```python
+import pydeck as pdk
+layer = pdk.Layer("ScatterplotLayer", data=df, get_position=["longitude", "latitude"],
+    get_fill_color=[255, 140, 0, 180], radius_min_pixels=2, radius_max_pixels=20, pickable=True)
+view_state = pdk.ViewState(latitude=df["latitude"].mean(), longitude=df["longitude"].mean(), zoom=4, pitch=0)
+deck = pdk.Deck(layers=[layer], initial_view_state=view_state)
+```
+
+Data-driven colors:
+```python
+import pydeck as pdk
+max_val = df["value"].max()
+df["color"] = df["value"].apply(lambda x: [int(255*(1-x/max_val)), int(255*x/max_val), 100, 180])
+layer = pdk.Layer("ScatterplotLayer", data=df, get_position=["longitude", "latitude"],
+    get_fill_color="color", radius_min_pixels=3, radius_max_pixels=25, pickable=True)
+view_state = pdk.ViewState(latitude=df["latitude"].mean(), longitude=df["longitude"].mean(), zoom=5)
+deck = pdk.Deck(layers=[layer], initial_view_state=view_state)
+```
+{% endblock %}
+
+{% block context %}
+Table: {{ memory['pipeline'].table }}
+
+**Row count: Check shape[0] below (NOT stats.count which is sample size)**
+
+Data: {{ memory['data'] }}
+{%- if "view" in memory %}
+Previous spec: {{ memory["view"]["spec"] | tojson }}
+{%- endif %}
+{%- endblock %}

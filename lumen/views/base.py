@@ -1469,4 +1469,73 @@ class GraphicWalker(View):
     def get_panel(self):
         return self._panel_type(**self._normalize_params(self._get_params()))
 
+
+class DeckGLView(View):
+    """
+    `DeckGLView` provides a declarative way to render deck.gl visualizations.
+
+    This view takes a DeckGL JSON specification and injects the pipeline data
+    into the layers. Column names are automatically sanitized (spaces replaced
+    with underscores, non-alphanumeric characters removed).
+    """
+
+    map_style = param.String(default="https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json", doc="""
+        The map style URL to use as the basemap. Defaults to CartoDB Dark Matter.
+        Common options:
+        - CartoDB Dark: https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json
+        - CartoDB Light: https://basemaps.cartocdn.com/gl/positron-gl-style/style.json
+        - Mapbox styles require a mapbox_api_key.""")
+
+    mapbox_api_key = param.String(default="", doc="""
+        Mapbox API key for Mapbox basemap styles. Not required for CartoDB styles.""")
+
+    spec = param.Dict(doc="""
+        A DeckGL JSON specification. The 'data' property in each layer
+        will be automatically populated with the pipeline data.""")
+
+    tooltips = param.ClassSelector(default=True, class_=(bool, dict, list), doc="""
+        Tooltip configuration. True for auto-tooltips, False to disable,
+        or a dict/list for custom tooltip configuration.""")
+
+    view_type = 'deckgl'
+
+    _extension = 'deckgl'
+
+    _panel_type = pn.pane.DeckGL
+
+    def _get_params(self) -> dict[str, Any]:
+        df = self.get_data()
+        # Sanitize column names: replace spaces with underscores,
+        # remove non-alphanumeric characters (except underscores)
+        df = df.copy()
+        df.columns = (
+            df.columns
+            .str.replace(" ", "_")
+            .str.replace(r"[^a-zA-Z0-9_]", "", regex=True)
+        )
+
+        # Deep copy spec to avoid mutating the original
+        encoded = dict(self.spec)
+        if "layers" in encoded:
+            encoded["layers"] = [
+                dict(layer, data=df) for layer in encoded["layers"]
+            ]
+
+        # Ensure mapStyle is set in the spec
+        if "mapStyle" not in encoded and self.map_style:
+            encoded["mapStyle"] = self.map_style
+
+        params = dict(
+            object=encoded,
+            tooltips=self.tooltips,
+            mapbox_api_key=self.mapbox_api_key or "",
+            **self.kwargs
+        )
+
+        return params
+
+    def get_panel(self) -> pn.pane.DeckGL:
+        return self._panel_type(**self._normalize_params(self._get_params()))
+
+
 __all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, View)] + ["Download"]

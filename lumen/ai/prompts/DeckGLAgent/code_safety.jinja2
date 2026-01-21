@@ -1,0 +1,12 @@
+{% extends 'BaseViewAgent/code_safety.jinja2' %}
+
+{% set library_name = 'PyDeck' %}
+
+{% block safe_items %}
+- Imports: `pydeck`, `pdk`
+- Layers: `pdk.Layer("HexagonLayer", ...)`, `pdk.Layer("ScatterplotLayer", ...)`, etc.
+- View state: `pdk.ViewState(...)`
+- Deck creation: `pdk.Deck(layers=[...], initial_view_state=...)`
+- Assignment to `deck` variable
+{{ super() }}
+{% endblock %}

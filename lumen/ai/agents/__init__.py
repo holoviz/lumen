@@ -2,6 +2,7 @@ from .analysis import AnalysisAgent
 from .base import Agent
 from .chat import ChatAgent
 from .dbtsl import DbtslAgent
+from .deckgl import DeckGLAgent
 from .document_list import DocumentListAgent
 from .hvplot import hvPlotAgent
 from .sql import SQLAgent
@@ -14,6 +15,7 @@ __all__ = [
     "AnalysisAgent",
     "ChatAgent",
     "DbtslAgent",
+    "DeckGLAgent",
     "DocumentListAgent",
     "hvPlotAgent",
     "SQLAgent",

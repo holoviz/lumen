@@ -1,0 +1,50 @@
+{% extends 'BaseViewAgent/main.jinja2' %}
+
+{% block instructions %}
+Generate DeckGL JSON spec. Do NOT include `data` in layers (injected automatically).
+Use `@@=` for accessors: `"getPosition": "@@=[longitude, latitude]"`
+
+Column names: spaces→underscores, non-alphanumeric removed (e.g., "Plant latitude"→"Plant_latitude")
+
+# REQUIRED STRUCTURE
+- `initialViewState`: latitude, longitude, zoom, pitch, bearing
+- `layers`: array with `@@type` for each layer
+- `views`: `[{"@@type": "MapView", "controller": true}]`
+
+# LAYERS
+| Layer | Use Case | Key Props |
+|-------|----------|-----------|
+| HexagonLayer | density aggregation | `radius`, `elevationScale`, `extruded` |
+| ScatterplotLayer | individual points | `radiusMinPixels`, `radiusMaxPixels`, `getFillColor` |
+| ColumnLayer | 3D bars | `getElevation`, `radius` |
+| ArcLayer | connections | `getSourcePosition`, `getTargetPosition` |
+
+# STYLING
+- `pickable: true` for tooltips, `autoHighlight: true` for hover
+- Colors: `[R,G,B,A]` or accessor `"@@=d => [d.value, 100, 150]"`
+- Zoom: 1-3 continent, 4-6 country, 7-10 city
+{% endblock %}
+
+{% block examples %}
+HexagonLayer:
+```json
+{"initialViewState": {"latitude": 37.8, "longitude": -122.4, "zoom": 5, "pitch": 45, "bearing": 0},
+ "layers": [{"@@type": "HexagonLayer", "id": "hex", "radius": 15000, "elevationScale": 50, "extruded": true, "pickable": true, "getPosition": "@@=[longitude, latitude]"}],
+ "views": [{"@@type": "MapView", "controller": true}]}
+```
+
+ScatterplotLayer:
+```json
+{"initialViewState": {"latitude": 39.8, "longitude": -98.5, "zoom": 4, "pitch": 0, "bearing": 0},
+ "layers": [{"@@type": "ScatterplotLayer", "id": "scatter", "radiusMinPixels": 2, "radiusMaxPixels": 20, "pickable": true, "getPosition": "@@=[longitude, latitude]", "getFillColor": [255, 140, 0, 200]}],
+ "views": [{"@@type": "MapView", "controller": true}]}
+```
+{% endblock %}
+
+{% block context %}
+Table: {{ memory['pipeline'].table }}
+Data: {{ memory['data'] }}
+{%- if "view" in memory %}
+Previous spec: {{ memory["view"]["spec"] | tojson }}
+{%- endif %}
+{%- endblock %}
