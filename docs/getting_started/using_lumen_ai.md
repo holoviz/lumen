@@ -84,7 +84,7 @@ Use the [navigation menu](navigating_the_ui.md#understanding-explorations) to mo
 - **Customize agents** — Edit underlying agent prompts to change behavior
 - **Export all** — Download everything as a single Jupyter notebook
 
-**Under the hood:** Report mode uses Lumen's `Report` framework. Each exploration becomes a `Section` containing `ActorTask` objects. The same classes power both the UI and code-based reports.
+**Under the hood:** Report mode uses Lumen's `Report` framework. Each exploration becomes a `Section` containing `ActorTask` objects. The same classes power both the UI and code-based reports. See the [Reports configuration guide](../configuration/reports.md) for complete documentation.
 
 !!! tip "Planned Feature: Report Templates"
     We're working on the ability to export your report structure as a reusable YAML configuration file. This will let you:
@@ -188,3 +188,4 @@ Now that you know the basics, dive deeper into specific topics:
 - [**Agents**](../configuration/agents.md) — Learn about the different agent types and how to customize them
 - [**Prompts**](../configuration/prompts.md) — Fine-tune how agents respond
 - [**Context**](../configuration/context.md) — Understand how agents share data
+- [**Reports**](../configuration/reports.md) — Build structured, reproducible analytical workflows
