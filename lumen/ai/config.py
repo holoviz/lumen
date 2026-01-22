@@ -46,6 +46,11 @@ FORMAT_LABELS = {
     "yaml": "YAML",
 }
 
+class UserCancelledError(Exception):
+    """
+    Raised when user rejects execution.
+    """
+
 class LlmSetupError(Exception):
     """
     Raised when an error occurs during the setup of the LLM.
@@ -96,6 +101,7 @@ UNRECOVERABLE_ERRORS = (
     RecursionError,
     MissingContextError,
     asyncio.CancelledError,
+    UserCancelledError
 )
 
 PROVIDED_SOURCE_NAME = "ProvidedSource00000"

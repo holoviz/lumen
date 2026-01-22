@@ -8,20 +8,21 @@ from pydantic import BaseModel, Field
 from ...config import dump_yaml, load_yaml
 from ...pipeline import Pipeline
 from ...views import VegaLiteView
+from ..code_executor import AltairExecutor, CodeSafetyCheck
 from ..config import (
     LUMEN_CACHE_DIR, PROMPTS_DIR, VECTOR_STORE_ASSETS_URL,
     VEGA_LITE_EXAMPLES_NUMPY_DB_FILE, VEGA_LITE_EXAMPLES_OPENAI_DB_FILE,
-    VEGA_MAP_LAYER, VEGA_ZOOMABLE_MAP_ITEMS,
+    VEGA_MAP_LAYER, VEGA_ZOOMABLE_MAP_ITEMS, UserCancelledError,
 )
 from ..context import TContext
 from ..llm import Message, OpenAI
-from ..models import EscapeBaseModel, RetrySpec
+from ..models import EscapeBaseModel, PartialBaseModel, RetrySpec
 from ..utils import (
-    get_schema, load_json, log_debug, retry_llm_output,
+    get_data, get_schema, load_json, log_debug, retry_llm_output,
 )
 from ..vector_store import DuckDBVectorStore
 from ..views import LumenOutput, VegaLiteOutput
-from .base_view import BaseViewAgent
+from .base_code import BaseCodeAgent
 
 
 class VegaLiteSpec(EscapeBaseModel):
@@ -59,7 +60,34 @@ class VegaLiteSpecUpdate(BaseModel):
     )
 
 
-class VegaLiteAgent(BaseViewAgent):
+class AltairSpec(PartialBaseModel):
+    """Response model for Altair code generation."""
+
+    chain_of_thought: str = Field(
+        default="",
+        description="""Explain your design choices based on visualization theory:
+        - What story does this data tell?
+        - What's the most compelling insight or trend (for the title)?
+        - Which visual encodings (position, color, size) best reveal patterns?
+        Keep response to 1-2 sentences.""",
+        examples=[
+            "The data reveals US dominance in Winter Olympic hosting—a horizontal bar chart sorted descending makes comparison immediate, with the leader highlighted in a distinct color.",
+            "This time series shows a 40% revenue spike in Q3 2024—a line chart with point markers reveals the trend clearly."
+        ]
+    )
+    code: str = Field(
+        description="""Python code that creates an Altair chart.
+        Requirements:
+        - Import altair as `alt`
+        - Data is available as `df` (pandas DataFrame)
+        - Must assign final chart to variable `chart`
+        - Do NOT call .to_dict(), .save(), .display() or any I/O methods
+        - Use 'container' for width to make charts responsive
+        """
+    )
+
+
+class VegaLiteAgent(BaseCodeAgent):
 
     conditions = param.List(
         default=[
@@ -73,6 +101,8 @@ class VegaLiteAgent(BaseViewAgent):
     prompts = param.Dict(
         default={
             "main": {"response_model": VegaLiteSpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2"},
+            "main_altair": {"response_model": AltairSpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "main_altair.jinja2"},
+            "code_safety": {"response_model": CodeSafetyCheck, "template": PROMPTS_DIR / "VegaLiteAgent" / "code_safety.jinja2"},
             "interaction_polish": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "interaction_polish.jinja2"},
             "annotate_plot": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "annotate_plot.jinja2"},
             "revise_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "revise_output.jinja2"},
@@ -87,6 +117,8 @@ class VegaLiteAgent(BaseViewAgent):
         OpenAIEmbeddings for OpenAI LLM or NumpyEmbeddings for all others.""")
 
     view_type = VegaLiteView
+
+    _executor_class = AltairExecutor
 
     _extensions = ("vega",)
 
@@ -279,8 +311,8 @@ class VegaLiteAgent(BaseViewAgent):
             vega_spec["params"] = []
 
         existing_param_names = {
-            param.get("name") for param in vega_spec["params"]
-            if isinstance(param, dict) and "name" in param
+            p.get("name") for p in vega_spec["params"]
+            if isinstance(p, dict) and "name" in p
         }
 
         for p in VEGA_ZOOMABLE_MAP_ITEMS["params"]:
@@ -388,6 +420,67 @@ class VegaLiteAgent(BaseViewAgent):
             step.success_title = "Complete visualization with titles and colors created"
         return current_spec
 
+    @retry_llm_output()
+    async def _generate_code_spec(
+        self,
+        messages: list[Message],
+        context: TContext,
+        pipeline: Pipeline,
+        doc_examples: list,
+        doc: str,
+        errors: list | None = None,
+    ) -> dict[str, Any] | None:
+        """Generate spec via Altair code execution."""
+        errors_context = self._build_errors_context(pipeline, context, errors)
+
+        with self._add_step(title="Generating Altair code", steps_layout=self._steps_layout) as step:
+            system_prompt = await self._render_prompt(
+                "main_altair",
+                messages,
+                context,
+                table=pipeline.table,
+                doc=doc,
+                doc_examples=doc_examples,
+                **errors_context,
+            )
+
+            model_spec = self.prompts["main_altair"].get("llm_spec", self.llm_spec_key)
+            response = self.llm.stream(
+                messages,
+                system=system_prompt,
+                model_spec=model_spec,
+                response_model=AltairSpec,
+            )
+
+            async for output in response:
+                step.stream(output.chain_of_thought, replace=True)
+
+            step.stream(f"\n```python\n{output.code}\n```\n", replace=False)
+
+            # Get LLM system prompt for safety validation if needed
+            system = None
+            if self.code_execution == "llm":
+                system = await self._render_prompt(
+                    "code_safety",
+                    messages,
+                    context,
+                    code=output.code,
+                )
+
+            # Execute code using mixin (handles AST validation, LLM validation, user prompt)
+            df = await get_data(pipeline)
+            chart = await self._execute_code(output.code, df, system=system, step=step)
+
+        if chart is None:
+            raise UserCancelledError("Code execution rejected by user.")
+
+        # Convert to Vega-Lite spec
+        spec = chart.to_dict()
+        spec.pop("datasets", None)  # Remove inline data
+        spec["data"] = {"name": pipeline.table}  # Use named data source
+
+        return await self._extract_spec(context, {"yaml_spec": dump_yaml(spec)})
+
     async def _extract_spec(self, context: TContext, spec: dict[str, Any]):
         # .encode().decode('unicode_escape') fixes a JSONDecodeError in Python
         # where it's expecting property names enclosed in double quotes
@@ -403,10 +496,21 @@ class VegaLiteAgent(BaseViewAgent):
 
         if "$schema" not in vega_spec:
             vega_spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
-        if "width" not in vega_spec:
-            vega_spec["width"] = "container"
-        if "height" not in vega_spec:
-            vega_spec["height"] = "container"
+
+        # Check if this is a compound chart (hconcat, vconcat, concat, facet, repeat)
+        is_compound = any(key in vega_spec for key in ['hconcat', 'vconcat', 'concat', 'facet', 'repeat'])
+
+        if is_compound:
+            # Remove invalid top-level width/height for compound charts
+            # Altair's config.view.continuousWidth/Height handles sub-chart sizing
+            vega_spec.pop('width', None)
+            vega_spec.pop('height', None)
+        else:
+            if "width" not in vega_spec:
+                vega_spec["width"] = "container"
+            if "height" not in vega_spec:
+                vega_spec["height"] = "container"
+
         self._output_type.validate_spec(vega_spec)
 
         # using string comparison because these keys could be in different nested levels
@@ -418,7 +522,7 @@ class VegaLiteAgent(BaseViewAgent):
         #     # add pan/zoom controls to all plots except geographic ones and points overlaid on line plots
         #     # because those result in an blank plot without error
         #     vega_spec["params"] = [{"bind": "scales", "name": "grid", "select": "interval"}]
-        return {"spec": vega_spec, "sizing_mode": "stretch_both", "min_height": 300}
+        return {"spec": vega_spec, "sizing_mode": "stretch_both", "min_height": 100}
 
     async def _get_doc_examples(self, user_query: str) -> list[str]:
         # Query vector store for relevant examples
@@ -488,33 +592,43 @@ class VegaLiteAgent(BaseViewAgent):
         # Step 1: Generate basic spec
         doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
         # Produces {"spec": {$schema: ..., ...}, "sizing_mode": ..., ...}
-        full_dict = await self._generate_basic_spec(messages, context, pipeline, doc_examples, doc)
+        if self.code_execution in ("prompt", "llm", "allow"):
+            full_dict = await self._generate_code_spec(
+                messages, context, pipeline, doc_examples, doc,
+            )
+            if full_dict is None:
+                # User rejected code execution, exit gracefully
+                return [], {}
+        else:
+            full_dict = await self._generate_basic_spec(messages, context, pipeline, doc_examples, doc)
 
         # Step 2: Show complete plot immediately
         view = self.view_type(pipeline=pipeline, **full_dict)
         out = self._output_type(component=view, title=step_title)
 
         # Step 3: enhancements (LLM-driven creative decisions)
-        steps = {
-            "interaction_polish": "Add helpful tooltips and ensure responsive, accessible user experience",
-        }
+        # Skip for altair modes since interactivity is built into the generated code
+        if self.code_execution == "disabled":
+            steps = {
+                "interaction_polish": "Add helpful tooltips and ensure responsive, accessible user experience",
+            }
 
-        # Execute steps sequentially
-        for step_name, step_desc in steps.items():
-            # Only pass the vega lite 'spec' portion to prevent ballooning context
-            step_name, update_dict = await self._update_spec_step(
-                step_name, step_desc, out.spec, step_name, messages, context, doc=doc
-            )
-            try:
-                # Validate merged spec
-                test_spec = self._deep_merge_dicts(full_dict["spec"], update_dict)
-                await self._extract_spec(context, {"yaml_spec": dump_yaml(test_spec)})
-            except Exception as e:
-                log_debug(f"Skipping invalid {step_name} update due to error: {e}")
-                continue
-            spec = self._deep_merge_dicts(full_dict["spec"], update_dict)
-            out.spec = dump_yaml(spec)
-            log_debug(f"📊 Applied {step_name} updates and refreshed visualization")
+            # Execute steps sequentially
+            for step_name, step_desc in steps.items():
+                # Only pass the vega lite 'spec' portion to prevent ballooning context
+                step_name, update_dict = await self._update_spec_step(
+                    step_name, step_desc, out.spec, step_name, messages, context, doc=doc
+                )
+                try:
+                    # Validate merged spec
+                    test_spec = self._deep_merge_dicts(full_dict["spec"], update_dict)
+                    await self._extract_spec(context, {"yaml_spec": dump_yaml(test_spec)})
+                except Exception as e:
+                    log_debug(f"Skipping invalid {step_name} update due to error: {e}")
+                    continue
+                spec = self._deep_merge_dicts(full_dict["spec"], update_dict)
+                out.spec = dump_yaml(spec)
+                log_debug(f"📊 Applied {step_name} updates and refreshed visualization")
 
         return [out], {"view": dict(full_dict, type=view.view_type)}
 

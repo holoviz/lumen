@@ -73,6 +73,24 @@ class LumenAIServe(Serve):
             nargs="*",
             help="Tags for logfire logging. If provided, enables logfire logging with the specified tags.",
         )
+        group.add_argument(
+            "--code-execution",
+            choices=["hide", "disabled", "prompt", "llm", "bypass"],
+            default="hide",
+            help="""
+            Code execution mode for generating Vega-Lite specs via Altair code.
+            Controls whether the code execution selector appears in the UI preferences:
+            - hide: Do not show code execution option in preferences (default)
+            - disabled: Show selector, but default to no code execution (Vega-Lite spec only)
+            - prompt: Show selector, default to prompting user for permission to execute
+            - llm: Show selector, default to LLM-validated code execution
+            - bypass: Show selector, default to executing code without confirmation
+
+            WARNING: The 'prompt', 'llm', and 'bypass' modes execute LLM-generated code and
+            must NEVER be enabled in production environments with access to secrets, credentials,
+            or sensitive data.
+            """,
+        )
 
     def invoke(self, args: argparse.Namespace) -> bool:
         """Override invoke to handle both sets of arguments"""
@@ -107,6 +125,7 @@ class LumenAIServe(Serve):
         log_level = args.log_level
         logfire_tags = getattr(args, 'logfire_tags', None)
         model = getattr(args, 'model', None)
+        code_execution = getattr(args, 'code_execution', 'hide')
 
         if provider_cls is None:
             try:
@@ -176,6 +195,7 @@ class LumenAIServe(Serve):
                 log_level=log_level,
                 model_kwargs=model_kwargs,
                 logfire_tags=logfire_tags,
+                code_execution=code_execution,
             )
             kwargs = {k: v for k, v in kwargs.items() if v is not None}
             handler = AIHandler(paths, **kwargs)
@@ -207,6 +227,7 @@ class AIHandler(CodeHandler):
         log_level: str = "INFO",
         model_kwargs: dict | None = None,
         logfire_tags: list[str] | None = None,
+        code_execution: str = "hide",
         **kwargs,
     ) -> None:
         for table_path in tables:
@@ -236,6 +257,7 @@ class AIHandler(CodeHandler):
             log_level=log_level,
             model_kwargs=model_kwargs,
             logfire_tags=logfire_tags,
+            code_execution=code_execution,
         )
         super().__init__(filename="lumen_ai.py", source=source, **kwargs)
 
@@ -256,6 +278,7 @@ class AIHandler(CodeHandler):
             "temperature": config.get("temperature"),
             "model_kwargs": config.get('model_kwargs') or {},
             "logfire_tags": config.get("logfire_tags"),
+            "code_execution": config.get("code_execution"),
         }
 
         # Only add llm_provider if explicitly specified

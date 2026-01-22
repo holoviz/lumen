@@ -23,7 +23,7 @@ from panel.viewable import (
 from panel_material_ui import (
     Alert, Breadcrumbs, Button, ChatFeed, ChatInterface, ChatMessage,
     Column as MuiColumn, Dialog, FileDownload, IconButton, MenuList, Page,
-    Paper, Popup, Row, Switch, Tabs, Typography,
+    Paper, Popup, Row, Select, Switch, Tabs, Typography,
 )
 from panel_splitjs import HSplit, MultiSplit, VSplit
 
@@ -32,8 +32,8 @@ from ..sources import Source
 from ..sources.duckdb import DuckDBSource
 from ..util import log
 from .agents import (
-    AnalysisAgent, ChatAgent, DocumentListAgent, SQLAgent, TableListAgent,
-    ValidationAgent, VegaLiteAgent,
+    AnalysisAgent, BaseCodeAgent, ChatAgent, DocumentListAgent, SQLAgent,
+    TableListAgent, ValidationAgent, VegaLiteAgent,
 )
 from .config import (
     DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROVIDED_SOURCE_NAME,
@@ -338,6 +338,21 @@ Ask follow-up questions by navigating to an existing exploration.
 """
 
 REPORT_CAPTION = "Use ▶ to execute all, × to clear outputs, ∨∧ to collapse/expand sections. Click exploration names to jump to them."  # noqa: RUF001
+
+CODE_EXEC_WARNING = """
+### ⚠️ Security Warning
+
+Enabling code execution allows the AI to generate and run Python code on your system.
+
+**This poses significant security risks**, especially in environments with:
+
+- API keys or secrets
+- Database credentials
+- Access to sensitive files or systems
+- Network access to internal services
+
+LLM-generated code may be unpredictable. While validation layers reduce accidental errors, they **do not provide meaningful protection** against malicious or compromised inputs.
+"""
 
 
 def _get_default_llm():
@@ -798,11 +813,12 @@ class UI(Viewer):
                     self._pending_query = user_prompt or None
                 self._pending_sources_snapshot = list(self.context.get("sources", []))
 
-                self._chat_input.param.update(
-                    value_input="",
-                    value_uploaded={},
-                    views=[]
-                )
+                with edit_readonly(self._chat_input):
+                    self._chat_input.param.update(
+                        value_input="",
+                        value_uploaded={},
+                        views=[]
+                    )
 
                 with hold():
                     self._sources_dialog_content.open = True
@@ -815,10 +831,10 @@ class UI(Viewer):
                 state.execute(focus, schedule=True)
                 return
 
-            with self.interface.param.update(disabled=True, loading=True):
+            with self.interface.param.update(disabled=True, loading=True), hold():
                 self._update_main_view()
-                with hold():
-                    self.interface.send(user_prompt, respond=bool(user_prompt))
+                self.interface.send(user_prompt, respond=bool(user_prompt))
+                with edit_readonly(self._chat_input):
                     self._chat_input.value_input = ""
 
         # Store as instance variable for access from other methods
@@ -866,7 +882,8 @@ class UI(Viewer):
         current_text = self._chat_input.value_input
         if self._pending_query is None and current_text:
             self._pending_query = current_text
-            self._chat_input.value_input = ""
+            with edit_readonly(self._chat_input):
+                self._chat_input.value_input = ""
 
         # Save state before closing (close triggers _on_sources_dialog_close which resets state)
         query = self._pending_query
@@ -907,7 +924,8 @@ class UI(Viewer):
 
         # Restore pending query if user closed without confirming
         if self._pending_query:
-            self._chat_input.value_input = self._pending_query
+            with edit_readonly(self._chat_input):
+                self._chat_input.value_input = self._pending_query
 
         # Reset state
         self._pending_query = None
@@ -1180,7 +1198,8 @@ class UI(Viewer):
             }
         )
         # Unlink busy indicator
-        self._page.busy = False
+        with edit_readonly(self._page):
+            self._page.busy = False
 
     @contextmanager
     def _busy(self):
@@ -1352,7 +1371,8 @@ class UI(Viewer):
                 if not analysis:
                     # Set the input value and trigger submit
                     # This will handle pending uploads via on_submit
-                    self._chat_input.value_input = contents
+                    with edit_readonly(self._chat_input):
+                        self._chat_input.value_input = contents
                     self._on_submit()
                     return
 
@@ -1552,6 +1572,24 @@ class ExplorerUI(UI):
         lmai.ExplorerUI(data='~/data.csv').servable()
     """
 
+    code_execution = param.Selector(
+        default="hidden", objects=["hidden", "disabled", "prompt", "llm", "allow"],
+        doc="""
+        Code execution mode for generating Vega-Lite specs via Altair code.
+        Controls whether the code execution selector appears in the UI preferences:
+        - hidden: Do not show code execution option in preferences (default)
+        - disabled: Show selector, but default to no code execution (Vega-Lite spec only)
+        - prompt: Show selector, default to prompting user for permission to execute
+        - llm: Show selector, default to LLM-validated code execution
+        - allow: Show selector, default to executing code without confirmation
+
+        WARNING: The 'prompt', 'llm', and 'allow' modes execute LLM-generated code and
+        must NEVER be enabled in production environments with access to secrets, credentials,
+        or sensitive data. The LLM validation layer reduces accidental errors but does NOT
+        provide meaningful security against malicious or compromised inputs.
+        """
+    )
+
     title = param.String(default='Lumen AI - Data Explorer', doc="Title of the app.")
 
     _exploration = param.Dict()
@@ -1599,6 +1637,36 @@ class ExplorerUI(UI):
         validation.link(self._coordinator, value='validation_enabled', bidirectional=True)
         switches.append(validation)
 
+        # Add code execution selector if not hidden
+        code_agents = False
+        for agent in self._coordinator.agents:
+            if isinstance(agent, BaseCodeAgent) and self.code_execution != "hidden":
+                agent.code_execution = self.param.code_execution
+                code_agents = True
+        if code_agents:
+            def on_code_exec_change(event):
+                if event.new:
+                    self._code_exec_warning_dialog.open = True
+                    if self.code_execution == "disabled":
+                        self.code_execution = "prompt"
+                else:
+                    self.code_execution = "disabled"
+            self._code_exec_switch = Switch(
+                description="Allowing code execution",
+                label="Enable Code Execution",
+                value=self.param.code_execution.rx() != "disabled"
+            )
+            self._code_exec_switch.param.watch(on_code_exec_change, "value")
+            self._code_exec_select = Select.from_param(
+                self.param.code_execution,
+                options={"Disabled": "disabled", "Prompt": "prompt", "LLM Validation": "llm", "Always Allow": "allow"},
+                description="How to handle LLM generated code execution",
+                sizing_mode="stretch_width",
+                margin=(10, 10, 5, 10),
+                visible=self._code_exec_switch
+            )
+            switches.extend([self._code_exec_switch, self._code_exec_select])
+
         llm_config_button = Button(
             label="Configure AI Models",
             icon="auto_awesome",
@@ -1620,7 +1688,7 @@ class ExplorerUI(UI):
         switches.append(llm_config_button)
 
         prefs_header = Typography(
-            "Preferences",
+            "Settings",
             variant="subtitle1",
             sx={"fontWeight": "bold"},
             margin=(10, 10, 5, 10)
@@ -1749,7 +1817,57 @@ class ExplorerUI(UI):
             width=275,
         )
         self._main[:] = [self._splash]
+
+        # Create code execution warning dialog if code execution is not hidden
+        if self.code_execution != "hidden":
+            main.append(self._render_code_exec_warning_dialog())
+
         return main
+
+    def _render_code_exec_warning_dialog(self) -> Viewable:
+        def cancel_code_execution(event):
+            """Cancel the code execution change and close the warning dialog."""
+            self._code_exec_select.value = "disabled"
+            self._code_exec_warning_dialog.open = False
+
+        def confirm_code_execution(event):
+            self._code_exec_warning_dialog.open = False
+
+        mode_explanation = {
+            "prompt": "will prompt you for permission each time a chart is generated.",
+            "llm": "will validate generated code via the LLM before executing.",
+            "allow": "will execute all generated code without confirmation."
+        }
+        code_exec_warning = CODE_EXEC_WARNING + (
+            f"\n\nYou have selected the **{self.code_execution}** execution mode. "
+            f"This mode **{mode_explanation.get(self.code_execution, '')}**"
+        )
+        self._code_exec_warning_dialog = Dialog(
+            MuiColumn(
+                Markdown(code_exec_warning, sizing_mode="stretch_width"),
+                Row(
+                    Button(
+                        label="I understand",
+                        variant="outlined",
+                        on_click=confirm_code_execution,
+                    ),
+                    Button(
+                        label="Disable exec",
+                        button_type="primary",
+                        on_click=cancel_code_execution,
+                    ),
+                    align="end",
+                    margin=(10, 0, 0, 0),
+                ),
+                sizing_mode="stretch_width",
+            ),
+            open=False,
+            show_close_button=False,
+            sizing_mode="stretch_width",
+            width_option="sm",
+            title="Enable Code Execution?",
+        )
+        return self._code_exec_warning_dialog
 
     async def _add_exploration_from_explorer(self, event: param.parameterized.Event | None = None):
         if self._explorer.table_slug is None:
