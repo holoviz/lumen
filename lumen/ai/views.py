@@ -86,6 +86,7 @@ class LumenOutput(Viewer):
             on_keyup=False,
             indent=2,
             margin=(0, 10),
+            loading=self.param.loading,
             disabled=self.param.spec.rx.is_(None),
             styles={"border": "1px solid var(--border-color)"}
         )
