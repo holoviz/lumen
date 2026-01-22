@@ -1,38 +1,70 @@
 # :material-file-document: Reports
 
-Reports execute a sequence of tasks in order, pass data between tasks, and render as a document. Use reports when you need reproducible, automatable analytical workflows instead of free-form chat.
+![Report Interface](../assets/reports/q1_revenue.png)
 
-Reports work best for reproducibility, automation, structure, export to notebooks, and programmatic control. For exploratory analysis, use the chat interface instead.
+**One-click reproducible analytics that combine SQL precision with AI insights.**
 
-## Quick start
+Reports execute a sequence of tasks, pass data between them, and render as interactive documents. Each report can be executed, exported to notebooks, and deployed as a web application.
 
-Create a report with two tasks. The first produces a greeting, the second reads it from context:
+## Quick Start
+
+Build your first report in minutes. This example loads a small dataset, composes a `Section` with a custom `Action` (for visualization) and a `SQLQuery` (for aggregation), passes results through shared context, and renders an interactive Vega-Lite chart. Run it locally, export to a notebook, or serve it as a web app.
 
 ```python
-import lumen.ai as lmai
+import pandas as pd
+import panel as pn
+
+from lumen.ai.llm import OpenAI
 from lumen.ai.report import Action, Report, Section
-from panel.pane import Markdown
+from lumen.ai.actions import SQLQuery
+from lumen.pipeline import Pipeline
+from lumen.sources.duckdb import DuckDBSource
+from lumen.views import VegaLiteView
 
-class HelloAction(Action):
-    async def _execute(self, context, **kwargs):
-        return [Markdown("**Hello, World!**")], {"greeting": "Hello"}
+pn.extension("vega")
 
-class SummaryAction(Action):
+
+class MonthlyRevenue(Action):
     async def _execute(self, context, **kwargs):
-        greeting = context.get("greeting", "Hi")
-        return [Markdown(f"Summary: {greeting}")], {}
+        df = pd.DataFrame({"month": ["Jan", "Feb", "Mar"], "revenue": [100000, 125000, 150000]})
+        source = DuckDBSource.from_df(tables={"q1": df})
+        pipeline = Pipeline(source=source, table="q1")
+        chart = VegaLiteView(
+            pipeline=pipeline,
+            spec={
+                "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+                "mark": "bar",
+                "encoding": {"x": {"field": "month", "type": "ordinal"}, "y": {"field": "revenue", "type": "quantitative"}},
+                "width": "container",
+            },
+            sizing_mode="stretch_width",
+            height=400,
+        )
+        return [chart], {"source": source}
+
 
 report = Report(
     Section(
-        HelloAction(title="Greeting"),
-        SummaryAction(title="Summary"),
-        title="My Section"
+        MonthlyRevenue(title="Monthly Revenue"),
+        SQLQuery(
+            sql_expr="""
+            SELECT
+            SUM(CASE WHEN month = 'Jan' THEN revenue ELSE 0 END) AS jan,
+            SUM(CASE WHEN month = 'Feb' THEN revenue ELSE 0 END) AS feb,
+            SUM(CASE WHEN month = 'Mar' THEN revenue ELSE 0 END) AS mar,
+            SUM(revenue) AS total
+            FROM q1
+        """,
+            table="q1_total",
+            llm=OpenAI(),
+        ),
+        title="Q1 Revenue Report",
     ),
-    title="My Report"
+    title="Sales Report",
 )
 
 await report.execute()
-report.servable()
+report.show()
 ```
 
 ## Structure
@@ -42,29 +74,48 @@ Reports follow a three-level hierarchy:
 ```
 Report (level 1)
 └── Section (level 2)
-    └── Task (level 3): Action or ActorTask
+    └── Task (level 3): Action, ActorTask, or SQLQuery
 ```
 
-**Report** is the top-level container with buttons to execute, clear, collapse/expand, export, and configure. **Section** groups related tasks as collapsible accordions. **Task** is a unit of work—either an `Action` (custom Python) or `ActorTask` (wraps an Agent).
+## Why Reports?
+
+| Pain Point | How Reports Solve It |
+|------------|---------------------|
+| "Our weekly metrics are generated manually" | Automate with one-click execution |
+| "Analysis isn't reproducible" | Same inputs → same outputs, every time |
+| "Can't share analysis with non-coders" | Export to Jupyter notebooks instantly |
+| "AI analysis is inconsistent" | Combine deterministic SQL with AI insights |
+| "Reports are siloed in notebooks" | Serve as interactive web apps |
+
+**Report** is the top-level container with controls to execute, clear, collapse/expand, export, and configure. **Section** groups related tasks as collapsible accordions. **Task** is a unit of work.
+
+## Task Types
+
+### SQLQuery
+
+No custom code needed—just SQL:
 
 ```python
-report = Report(
-    Section(
-        LoadDataAction(),
-        AnalyzeAction(),
-        title="Data Processing"
-    ),
-    Section(
-        VisualizeAction(),
-        title="Visualization"
-    ),
-    title="Quarterly Review"
+from lumen.ai.actions import SQLQuery
+from lumen.ai.llm import OpenAI
+from lumen.sources.duckdb import DuckDBSource
+
+source = DuckDBSource(uri="sales.db")
+
+SQLQuery(
+    source=source,
+    table="sales_summary",
+    sql_expr="SELECT region, SUM(amount) as total FROM sales GROUP BY region",
+    title="Sales by Region",
+    llm=OpenAI()  # Required for AI-generated captions
 )
 ```
 
-## Actions
+Outputs `source`, `pipeline`, `data`, `metaset`, and `table` to context for downstream tasks.
 
-Subclass `Action` and implement `_execute` to create a task. Return a tuple of (outputs, context_updates):
+### Action
+
+Subclass `Action` for custom Python logic:
 
 ```python
 from lumen.ai.report import Action
@@ -76,266 +127,218 @@ class MyAction(Action):
         return [Markdown(f"Result: {result}")], {"my_result": result}
 ```
 
-The outputs list contains renderable objects (Markdown, plots, tables). The context dict shares values with downstream tasks. Return `[]` for no visible output or `{}` for no context updates.
+Return `(outputs, context_updates)`. Use `[]` for no outputs, `{}` for no context updates.
 
-**Parameters:** `title`, `instruction`, `context` (initial values), `abort_on_error` (default True), `render_outputs` (default True).
+Example:
 
-??? example "Complete action example"
-    Load a parquet file, create a pipeline, and return a visualization:
+```python
+import panel as pn
+from lumen.ai.report import Action, Report, Section
+from lumen.ai.views import LumenOutput
+from lumen.pipeline import Pipeline
+from lumen.sources.duckdb import DuckDBSource
+from lumen.views.base import VegaLiteView
 
-    ```python
-    import pandas as pd
-    import panel as pn
-    from lumen.ai.report import Action, Report, Section
-    from lumen.ai.views import LumenOutput
-    from lumen.pipeline import Pipeline
-    from lumen.sources.duckdb import DuckDBSource
-    from lumen.views.base import VegaLiteView
+pn.extension("tabulator", "vega")
 
-    pn.extension("vega")
+class LoadDataAction(Action):
+    async def _execute(self, context, **kwargs):
+        source = DuckDBSource(tables={"penguins": "https://datasets.holoviz.org/penguins/v1/penguins.csv"})
+        pipeline = Pipeline(source=source, table="penguins")
+        return [pipeline.__panel__()], {"source": source}
 
-    class ProcessDataAction(Action):
-        async def _execute(self, context, **kwargs):
-            source = DuckDBSource(tables={"data": "data/windturbines.parquet"})
-            avg_source = source.create_sql_expr_source(tables={"avg_data": "SELECT t_state, AVG(p_cap) as avg_p_cap FROM data GROUP BY t_state"})
-            pipeline = Pipeline(source=avg_source, table="avg_data")
-
-            view = VegaLiteView(pipeline=pipeline, spec={
+class AnalyzeAction(Action):
+    async def _execute(self, context, **kwargs):
+        source = context["source"]
+        avg_source = source.create_sql_expr_source(
+            tables={"avg_data": "SELECT species, AVG(CAST(NULLIF(body_mass_g, 'NA') AS DOUBLE)) AS avg_mass FROM penguins GROUP BY species"}
+        )
+        pipeline = Pipeline(source=avg_source, table="avg_data")
+        chart = VegaLiteView(
+            pipeline=pipeline,
+            spec={
                 "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
                 "mark": "bar",
                 "encoding": {
-                    "x": {"field": "t_state", "type": "nominal"},
-                    "y": {"field": "avg_p_cap", "type": "quantitative"}
+                    "x": {"field": "species", "type": "nominal"},
+                    "y": {"field": "avg_mass", "type": "quantitative"},
                 },
-            })
-            output = LumenOutput(component=view, title="Data Overview")
+            },
+            sizing_mode="stretch_width",
+        )
+        return [LumenOutput(component=chart, title="Avg Body Mass by Species")], {}
 
-            df = pipeline.data
-            summary = f"Loaded {len(df)} rows, {len(df.columns)} columns"
-            return [df, output], {"pipeline": pipeline, "summary": summary}
-
-
-    report = Report(Section(ProcessDataAction(), title="Average Power Capacity by State"))
-    report.show()
-    ```
-
-### Built-in actions
-
-Lumen provides `SQLQuery`, a ready-to-use action that executes SQL and renders results:
-
-```python
-from lumen.ai.actions import SQLQuery
-from lumen.sources.duckdb import DuckDBSource
-
-source = DuckDBSource(uri="data.db")
-
-section = Section(
-    SQLQuery(
-        source=source,
-        table="sales_summary",
-        sql_expr="SELECT region, SUM(amount) as total FROM sales GROUP BY region",
-        title="Sales by Region"
-    ),
-    title="Analysis"
+report = Report(
+    Section(LoadDataAction(title="Load"), AnalyzeAction(title="Analyze"), title="Penguins")
 )
+report.show()
 ```
 
-**Parameters:** `source`, `table` (required), `sql_expr`, `generate_caption` (default True), `user_content` (caption instructions).
+### ActorTask
 
-`SQLQuery` outputs `source`, `pipeline`, `data`, `metaset`, and `table` to context for downstream tasks.
+![Penguins Report](../assets/reports/penguins.png)
 
-## ActorTask
+Wrap any Agent for LLM-powered analysis:
 
-Wrap any Agent as a task using `ActorTask`:
+```python
+from lumen.ai.report import ActorTask
+from lumen.ai.agents import SQLAgent, ChatAgent
+
+Section(
+    ActorTask(SQLAgent(), title="Query", instruction="Get sales by region"),
+    ActorTask(ChatAgent(), title="Summarize", instruction="Explain the trends"),
+)
+```
 
 ```python
 from lumen.ai.report import ActorTask, Report, Section
-from lumen.ai.agents import SQLAgent, ChatAgent
+from lumen.ai.agents import SQLAgent, VegaLiteAgent
+from lumen.sources.duckdb import DuckDBSource
+from lumen.ai.schemas import get_metaset
+from lumen.ai.llm import OpenAI
 
-section = Section(
-    ActorTask(SQLAgent(), title="Query Data", instruction="Get sales by region"),
-    ActorTask(ChatAgent(), title="Analyze", instruction="Explain the trends"),
-    title="Sales Analysis"
-)
-```
+llm = OpenAI()
+source = DuckDBSource(tables={"penguins": "https://datasets.holoviz.org/penguins/v1/penguins.csv"})
+metaset = await get_metaset([source], tables=source.get_tables())
 
-**Parameters:** `actor` (the Agent instance), `title`, `instruction`, `history`, `context`.
-
-Use `ActorTask` when you want LLM capabilities (SQL generation, chart creation). Use `Action` for custom Python logic that doesn't need an LLM.
-
-??? example "Complete ActorTask example with SQLAgent"
-    Set up an SQLAgent with the required context (source, sources list, and metaset):
-
-    ```python
-    from lumen.ai.report import ActorTask, Report, Section
-    from lumen.ai.agents import SQLAgent
-    from lumen.sources.duckdb import DuckDBSource
-    from lumen.ai.schemas import get_metaset
-    from lumen.ai.llm import OpenAI
-
-    llm = OpenAI()
-    source = DuckDBSource(tables={"turbines": "data/windturbines.parquet"})
-    metaset = await get_metaset([source], tables=source.get_tables())
-
-    section = Section(
+report = Report(
+    Section(
         ActorTask(
             SQLAgent(llm=llm),
             title="Query Data",
-            instruction="Get average turbines pcap",
+            instruction="Get average body mass by species",
             context={"source": source, "sources": [source], "metaset": metaset}
         ),
-        title="Sales Analysis",
+        ActorTask(
+            VegaLiteAgent(llm=llm),
+            instruction="Create a bar chart of the results",
+            context={},
+        ),
+        title="Analysis",
     )
-    report = Report(section)
-    await report.execute()
-    report.servable()
-    ```
+)
+await report.execute()
+report.show()
+```
 
-    The `metaset` provides table metadata that the SQLAgent uses to understand the schema and generate correct SQL queries.
+### Choosing the Right Type
+
+| Scenario | Use |
+|----------|-----|
+| Known SQL query | `SQLQuery` — fastest, no LLM call |
+| Natural language → SQL | `ActorTask` + `SQLAgent` |
+| Interpretation, summaries | `ActorTask` + `ChatAgent` |
+| Custom Python logic | `Action` |
+
+## Best Practices
+
+**Action granularity:** Group by analytical question, not output type. One action can return multiple outputs (table + chart + summary).
+
+**Section organization:** Each section answers one business question. Keep 2-5 related tasks per section.
+
+**Context flow:** Pass derived metrics, not just raw data. Use descriptive keys (`total_revenue` not `val`).
+
+**AI instructions:** Be specific about format and scope:
+
+```python
+# ❌ Vague
+ActorTask(ChatAgent(), instruction="Analyze the data")
+
+# ✅ Specific
+ActorTask(ChatAgent(), instruction="""
+Based on the metrics above:
+1. Top 3 trends (bullet points)
+2. Top 3 risks (High/Medium/Low)
+Keep under 200 words.
+""")
+```
+
+**Error handling:** Use `abort_on_error=True` (default) for dependent tasks, `abort_on_error=False` for independent analyses that shouldn't block each other.
+
+**Performance:** Prefer `SQLQuery` over `ActorTask` for known queries. Use `prepare()` for expensive one-time setup.
 
 ## Context
 
-Tasks communicate through a shared context dictionary. Each task reads values and adds new values for downstream tasks.
+Tasks communicate through a shared context dictionary.
 
-### Declaring dependencies
-
-Declare dependencies with schemas:
+**Declaring dependencies** with schemas:
 
 ```python
 from lumen.ai.context import ContextModel
 from typing import NotRequired
 
-class AnalysisInputs(ContextModel):
-    pipeline: object  # Required
-    sql: NotRequired[str]  # Optional
+class MyInputs(ContextModel):
+    pipeline: object        # Required
+    sql: NotRequired[str]   # Optional
 
-class AnalysisOutputs(ContextModel):
-    insights: str
-    metrics: dict
+class MyAction(Action):
+    input_schema = MyInputs
 
-class AnalysisAction(Action):
-    input_schema = AnalysisInputs
-    output_schema = AnalysisOutputs
-    
     async def _execute(self, context, **kwargs):
         pipeline = context["pipeline"]
-        sql = context.get("sql", "")  # Use .get() for optional keys
-        return [], {"insights": "...", "metrics": {...}}
+        return [], {}
 ```
 
-Tasks with unsatisfied required inputs won't execute until a previous task provides them.
+**Invalidation:** When a task's output changes, downstream tasks automatically re-run. Manually invalidate with `report.invalidate(["key"])`.
 
-### Accumulating values
+## Running and Exporting
 
-When multiple tasks provide the same key, last writer wins. To accumulate values into a list:
+**UI controls:** Execute (▶), Clear (✕), Collapse/Expand, Export (↓), Settings (⚙)
+
+**Run locally:**
 
 ```python
-from typing import Annotated
-
-class MyInputs(ContextModel):
-    all_tables: Annotated[list[str], ("accumulate", "table")]
+report.show(port=5006)
 ```
 
-## Invalidation
-
-When a task's output changes, downstream tasks automatically re-run:
+**Deploy:**
 
 ```python
-await report.execute()
-report[0][0].out_context = {"data": new_data}  # TaskB and TaskC re-run
+report.servable()
 ```
 
-Manually invalidate tasks that depend on specific keys:
-
-```python
-invalidated_tasks, affected_keys = report.invalidate(["data"])
-await report.execute()
-```
-
-## Error handling
-
-Reports abort on first error by default. Set `abort_on_error=False` to continue:
-
-```python
-section = Section(
-    RiskyAction(),
-    SafeAction(),
-    title="Processing",
-    abort_on_error=False
-)
-```
-
-Check status after execution:
+**Export to notebook:**
 
 ```python
 await report.execute()
-for section in report:
-    for task in section:
-        print(f"{task.title}: {task.status}")  # idle, running, success, error
-```
-
-## Export
-
-Convert an executed report to a Jupyter notebook:
-
-```python
-await report.execute()
-notebook_json = report.to_notebook()
-
 with open("report.ipynb", "w") as f:
-    f.write(notebook_json)
+    f.write(report.to_notebook())
 ```
 
-In the UI, click the **Export** button. The report must be executed first.
-
-## Validation
-
-Check that all task dependencies can be satisfied before running:
+**Validate before running:**
 
 ```python
 from lumen.ai.context import ContextError
 
 try:
-    issues, output_types = report.validate(context={"source": my_source})
+    report.validate(context={"source": my_source})
 except ContextError as e:
-    print(f"Validation failed: {e}")
+    print(f"Missing dependencies: {e}")
 ```
 
-## Modifying reports
+## Modifying Reports
 
 ```python
-section.append(LoadAction())
-section.insert(0, ValidationAction())
-section.remove(task_to_remove)
-
-report1.merge(report2)  # Adds report2's sections to report1
+section.append(NewAction())
+section.insert(0, FirstAction())
+section.remove(old_action)
+report1.merge(report2)
 ```
 
-## Lifecycle methods
+## Lifecycle Methods
 
-| Method | When called | Purpose |
-|--------|-------------|---------|
-| `prepare(context)` | Before first execution | Async setup |
-| `execute(context)` | Each run | Entry point |
-| `_execute(context)` | Each run | Your implementation |
-| `reset()` | On clear | Clear outputs |
-| `cleanup()` | On removal | Final cleanup |
-
-```python
-class MyAction(Action):
-    async def prepare(self, context):
-        self.model = load_model()
-        await super().prepare(context)
-    
-    def cleanup(self):
-        super().cleanup()
-        self.model = None
-```
+| Method | Purpose |
+|--------|---------|
+| `prepare(context)` | Async setup before first execution |
+| `_execute(context)` | Your implementation |
+| `reset()` | Clear outputs |
+| `cleanup()` | Final cleanup on removal |
 
 ## Troubleshooting
 
-**"Task has unmet requirements"** — The task's `input_schema` requires a key no previous task provides. Add a task that provides it, or mark the field as `NotRequired`.
-
-**Context not updating** — `_execute` must return a tuple: `return [output], {"key": value}`, not just `return [output]`.
-
-**Notebook export fails** — Call `execute()` before `to_notebook()`.
+| Problem | Solution |
+|---------|----------|
+| "Task has unmet requirements" | Add a task that provides the required context key, or mark field as `NotRequired` |
+| Context not updating | Return a tuple: `return [output], {"key": value}` |
+| Notebook export fails | Call `execute()` before `to_notebook()` |
+| SQLQuery shows no caption | Pass an `llm` parameter |
