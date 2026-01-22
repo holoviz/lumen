@@ -75,7 +75,7 @@ class AltairSpec(PartialBaseModel):
             "This time series shows a 40% revenue spike in Q3 2024—a line chart with point markers reveals the trend clearly."
         ]
     )
-    altair_code: str = Field(
+    code: str = Field(
         description="""Python code that creates an Altair chart.
         Requirements:
         - Import altair as `alt`
@@ -455,7 +455,7 @@ class VegaLiteAgent(BaseCodeAgent):
             async for output in response:
                 step.stream(output.chain_of_thought, replace=True)
 
-            step.stream(f"\n```python\n{output.altair_code}\n```\n", replace=False)
+            step.stream(f"\n```python\n{output.code}\n```\n", replace=False)
 
             # Get LLM system prompt for safety validation if needed
             system = None
@@ -464,12 +464,12 @@ class VegaLiteAgent(BaseCodeAgent):
                     "code_safety",
                     messages,
                     context,
-                    code=output.altair_code,
+                    code=output.code,
                 )
 
             # Execute code using mixin (handles AST validation, LLM validation, user prompt)
             df = await get_data(pipeline)
-            chart = await self._execute_code(output.altair_code, df, system=system, step=step)
+            chart = await self._execute_code(output.code, df, system=system, step=step)
 
         if chart is None:
             # User rejected code execution

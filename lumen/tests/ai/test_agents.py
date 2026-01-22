@@ -101,7 +101,7 @@ async def test_sql_agent(llm, duckdb_source, test_messages):
 async def test_vegalite_agent(llm, duckdb_source, test_messages):
     """Test VegaLiteAgent instantiation and respond"""
 
-    agent = VegaLiteAgent(llm=llm)
+    agent = VegaLiteAgent(llm=llm, code_execution="disabled")
 
     context = {
         "source": duckdb_source,
