@@ -22,12 +22,13 @@ from panel.viewable import Viewable, Viewer
 from panel.widgets import CodeEditor
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
-    Alert, Button, Checkbox, CircularProgress, Column, FileDownload,
-    MenuButton,
+    Alert, Button, Checkbox, CircularProgress, Column, FileDownload, FlexBox,
+    MenuButton, MenuToggle,
 )
 
 from ..base import Component
 from ..config import dump_yaml, load_yaml
+from ..filters import WidgetFilter
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
 from ..views.base import Panel, Table, View
@@ -488,6 +489,61 @@ class SQLOutput(LumenOutput):
         self.component.data.to_csv(sio)
         sio.seek(0)
         return sio
+
+    def _render_editor(self):
+        editor = super()._render_editor()
+        self._filters = {}
+        self._filter_area = FlexBox(width_policy="max")
+        editor.insert(0, self._filter_area)
+        return editor
+
+    def _add_filter(self, item):
+        field = item["label"]
+        if item["toggled"]:
+            if field in self._filters:
+                filt = self._filters[field]
+            else:
+                self._filters[field] = filt = WidgetFilter(field=field, schema=self.component.schema)
+            self._filter_area.append(filt.widget)
+            self.component.add_filter(filt)
+            return
+        removed_filters = [filt for filt in self.component.filters if filt.field == field]
+        removed_widgets = [filt.widget for filt in removed_filters]
+        self._filter_area[:] = [w for w in self._filter_area if w not in removed_widgets]
+        self.component.filters = [filt for filt in self.component.filters if filt not in removed_filters]
+
+    def render_controls(self, task: Task, interface: ChatFeed):
+        controls = super().render_controls(task, interface)
+        items = []
+        for col in self.component.data.columns:
+            if col not in self.component.schema:
+                continue
+            col_schema = self.component.schema[col]
+            col_type = col_schema["type"]
+            if col_type == "string":
+                if "enum" in col_schema:
+                    icon = "format_list_bulleted"
+                elif col_schema.get("format") == "datetime":
+                    icon = "calendar_month"
+                else:
+                    icon = "text_fields"
+            elif col_type == "number":
+                icon = "calculate"
+            elif col_type == "integer":
+                icon = "numbers"
+            else:
+                icon = "help"
+            items.append({"label": col, "icon": icon})
+        filter_controls = MenuToggle(
+            items=items,
+            label="Add Filter",
+            icon="filter_list",
+            margin=0,
+            variant="text",
+            on_click=self._add_filter
+        )
+        controls.insert(1, filter_controls)
+        return controls
 
     def render_explorer(self):
         return GraphicWalker(

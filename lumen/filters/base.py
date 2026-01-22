@@ -327,15 +327,17 @@ class WidgetFilter(BaseWidgetFilter):
                 'type would be more sensible or raise the max_options. '
             )
             self.widget.options = options
-        self.widget.name = self.label
-        self.widget.visible = self.visible
-        self.widget.disabled = self.disabled
+        self.widget.param.update(
+            disabled=self.disabled,
+            label=self.label or self.field,
+            visible=self.visible
+        )
         val = self.value
         self.widget.link(self, bidirectional=True, value='value', visible='visible', disabled='disabled')
         if val is not None:
-            self.widget.value = val
+            self.widget.value = self.widget.param.value.deserialize(val)
         elif self.default is not None:
-            self.widget.value = self.default
+            self.widget.value = self.widget.param.value.deserialize(self.default)
         self._setup_sync()
 
     @classmethod
