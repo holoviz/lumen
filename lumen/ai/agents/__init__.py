@@ -2,6 +2,7 @@ from .analysis import AnalysisAgent
 from .base import Agent
 from .base_code import BaseCodeAgent
 from .chat import ChatAgent
+from .code_transform import CodeTransformAgent
 from .dbtsl import DbtslAgent
 from .document_list import DocumentListAgent
 from .hvplot import hvPlotAgent
@@ -15,6 +16,7 @@ __all__ = [
     "AnalysisAgent",
     "BaseCodeAgent",
     "ChatAgent",
+    "CodeTransformAgent",
     "DbtslAgent",
     "DocumentListAgent",
     "hvPlotAgent",

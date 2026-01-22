@@ -374,3 +374,25 @@ class PyDeckExecutor(CodeExecutor):
         import pydeck as pdk
         if not isinstance(result, pdk.Deck):
             raise ValueError(f"'deck' must be a pydeck.Deck, got {type(result).__name__}")
+
+
+class PandasExecutor(CodeExecutor):
+    """Safe executor for LLM-generated pandas transformations."""
+
+    allowed_imports = ('pandas', 'pd', 'numpy', 'np')
+    allowed_import_prefixes = ('pandas', 'numpy')
+    output_variable = 'df_out'
+
+    @classmethod
+    def _get_injected_modules(cls) -> dict[str, Any]:
+        import numpy as np
+        import pandas as pd
+        return {'pd': pd, 'pandas': pd, 'np': np, 'numpy': np}
+
+    @classmethod
+    def _validate_result(cls, result: Any) -> None:
+        import pandas as pd
+        if not isinstance(result, pd.DataFrame):
+            raise ValueError(
+                f"'df_out' must be a pandas.DataFrame, got {type(result).__name__}"
+            )
