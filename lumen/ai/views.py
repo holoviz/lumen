@@ -183,7 +183,7 @@ class LumenOutput(Viewer):
     async def _render_pipeline(self, pipeline):
         table = Table(
             pipeline=pipeline, pagination='remote',
-            min_height=500, sizing_mode="stretch_both", stylesheets=[
+            min_height=200, sizing_mode="stretch_both", stylesheets=[
             """
             .tabulator-footer {
             display: flex;
