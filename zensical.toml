@@ -46,6 +46,7 @@ nav = [
     {"Context" = "configuration/context.md"},
     {"Agents" = "configuration/agents.md"},
     {"Tools" = "configuration/tools.md"},
+    {"Reports" = "configuration/reports.md"},
     {"Coordinator" = "configuration/coordinators.md"},
     {"Embeddings" = "configuration/embeddings.md"},
     {"Vector Stores" = "configuration/vector_stores.md"},
