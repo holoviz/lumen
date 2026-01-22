@@ -813,11 +813,12 @@ class UI(Viewer):
                     self._pending_query = user_prompt or None
                 self._pending_sources_snapshot = list(self.context.get("sources", []))
 
-                self._chat_input.param.update(
-                    value_input="",
-                    value_uploaded={},
-                    views=[]
-                )
+                with edit_readonly(self._chat_input):
+                    self._chat_input.param.update(
+                        value_input="",
+                        value_uploaded={},
+                        views=[]
+                    )
 
                 with hold():
                     self._sources_dialog_content.open = True
@@ -830,10 +831,10 @@ class UI(Viewer):
                 state.execute(focus, schedule=True)
                 return
 
-            with self.interface.param.update(disabled=True, loading=True):
+            with self.interface.param.update(disabled=True, loading=True), hold():
                 self._update_main_view()
-                with hold():
-                    self.interface.send(user_prompt, respond=bool(user_prompt))
+                self.interface.send(user_prompt, respond=bool(user_prompt))
+                with edit_readonly(self._chat_input):
                     self._chat_input.value_input = ""
 
         # Store as instance variable for access from other methods
@@ -881,7 +882,8 @@ class UI(Viewer):
         current_text = self._chat_input.value_input
         if self._pending_query is None and current_text:
             self._pending_query = current_text
-            self._chat_input.value_input = ""
+            with edit_readonly(self._chat_input):
+                self._chat_input.value_input = ""
 
         # Save state before closing (close triggers _on_sources_dialog_close which resets state)
         query = self._pending_query
@@ -922,7 +924,8 @@ class UI(Viewer):
 
         # Restore pending query if user closed without confirming
         if self._pending_query:
-            self._chat_input.value_input = self._pending_query
+            with edit_readonly(self._chat_input):
+                self._chat_input.value_input = self._pending_query
 
         # Reset state
         self._pending_query = None
@@ -1368,7 +1371,8 @@ class UI(Viewer):
                 if not analysis:
                     # Set the input value and trigger submit
                     # This will handle pending uploads via on_submit
-                    self._chat_input.value_input = contents
+                    with edit_readonly(self._chat_input):
+                        self._chat_input.value_input = contents
                     self._on_submit()
                     return
 
