@@ -572,8 +572,8 @@ class VegaLiteAgent(BaseCodeAgent):
         steps = {
             "interaction_polish": "Add helpful tooltips and ensure responsive, accessible user experience",
         }
-        for step_name, step_desc in steps.items():
-            with out.param.update(loading=True):
+        with out.param.update(loading=True):
+            for step_name, step_desc in steps.items():
                 # Only pass the vega lite 'spec' portion to prevent ballooning context
                 step_name, update_dict = await self._update_spec_step(
                     step_name, step_desc, out.spec, step_name, messages, context, doc=doc
