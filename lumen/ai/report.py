@@ -881,6 +881,7 @@ class Report(TaskGroup):
             sizing_mode="stretch_both",
         )
         self._update_run_state()
+        self._update_icon_visibility()
 
     async def _trigger_event(self, item: dict):
         icon = item["icon"]
@@ -917,8 +918,8 @@ class Report(TaskGroup):
             self._run.sx = {
                 "animation": "pulse 1s ease-in-out 2",
                 "@keyframes pulse": {
-                    "0%, 100%": {"transform": "scale(1) translateX(0)"},
-                    "50%": {"transform": "scale(1.15) translateX(3px)"},
+                    "0%, 100%": {"transform": "translateX(0)"},
+                    "50%": {"transform": "translateX(7px)"},
                 },
             }
 
