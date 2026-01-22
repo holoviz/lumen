@@ -96,8 +96,6 @@ class VegaLiteAgent(BaseCodeAgent):
         ]
     )
 
-    code_execution = param.Selector(default="prompt", objects=["disabled", "prompt", "llm", "bypass"])
-
     purpose = param.String(default="Generates a vega-lite plot specification from the input data pipeline.")
 
     prompts = param.Dict(
