@@ -75,18 +75,18 @@ class LumenAIServe(Serve):
         )
         group.add_argument(
             "--code-execution",
-            choices=["hide", "disabled", "prompt", "llm", "bypass"],
-            default="hide",
+            choices=["hidden", "disabled", "prompt", "llm", "bypass"],
+            default="hidden",
             help="""
             Code execution mode for generating Vega-Lite specs via Altair code.
             Controls whether the code execution selector appears in the UI preferences:
-            - hide: Do not show code execution option in preferences (default)
+            - hidden: Do not show code execution option in preferences (default)
             - disabled: Show selector, but default to no code execution (Vega-Lite spec only)
             - prompt: Show selector, default to prompting user for permission to execute
             - llm: Show selector, default to LLM-validated code execution
-            - bypass: Show selector, default to executing code without confirmation
+            - allow: Show selector, default to executing code without confirmation
 
-            WARNING: The 'prompt', 'llm', and 'bypass' modes execute LLM-generated code and
+            WARNING: The 'prompt', 'llm', and 'allow' modes execute LLM-generated code and
             must NEVER be enabled in production environments with access to secrets, credentials,
             or sensitive data.
             """,
@@ -227,7 +227,7 @@ class AIHandler(CodeHandler):
         log_level: str = "INFO",
         model_kwargs: dict | None = None,
         logfire_tags: list[str] | None = None,
-        code_execution: str = "hide",
+        code_execution: str = "hidden",
         **kwargs,
     ) -> None:
         for table_path in tables:
@@ -260,8 +260,6 @@ class AIHandler(CodeHandler):
             code_execution=code_execution,
         )
         super().__init__(filename="lumen_ai.py", source=source, **kwargs)
-
-
 
     def _build_source_code(self, tables: list[str], **config) -> str:
         """Build source code with configuration"""
