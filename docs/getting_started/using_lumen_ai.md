@@ -141,9 +141,9 @@ For more advanced visualizations, Lumen AI can optionally generate and execute P
 
 !!! danger "Security Warning: Code Execution is Not Safe"
     **Code execution must NEVER be enabled in production environments with access to secrets, credentials, or sensitive data.**
-    
+
     When code execution is enabled, LLM-generated Python code runs in-process with access to your system. This approach **cannot be made secure** against adversarial prompt injection attacks.
-    
+
     Even with AST validation, blacklist-based security fails because injected libraries (like Altair) have full access to Python's internals through their object graphs. An attacker can craft prompts that generate seemingly innocent code which traverses through library internals to access sensitive data like API keys.
 
 #### Code execution modes
@@ -155,7 +155,7 @@ Code execution is controlled via the `code_execution` parameter on the VegaLite 
 | `disabled` | Generate only Vega-Lite YAML specs (default) | ✅ Safe |
 | `prompt` | Ask user for permission before executing each chart | ⚠️ User must review |
 | `llm` | LLM validates code before execution | ⚠️ Reduces accidental errors only |
-| `bypass` | Execute all generated code without confirmation | ❌ Dangerous |
+| `allow` | Execute all generated code without confirmation | ❌ Dangerous |
 
 #### What the safety measures provide
 
@@ -200,7 +200,7 @@ import lumen.ai as lmai
 # Show code execution option in UI, default to prompting user
 ui = lmai.ExplorerUI(
     data='data.csv',
-    code_execution='prompt'  # Options: 'hide', 'disabled', 'prompt', 'llm', 'bypass'
+    code_execution='prompt'  # Options: 'hide', 'disabled', 'prompt', 'llm', 'allow'
 )
 ```
 

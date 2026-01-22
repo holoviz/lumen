@@ -1688,7 +1688,7 @@ class ExplorerUI(UI):
         switches.append(llm_config_button)
 
         prefs_header = Typography(
-            "Preferences",
+            "Settings",
             variant="subtitle1",
             sx={"fontWeight": "bold"},
             margin=(10, 10, 5, 10)
