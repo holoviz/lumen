@@ -1,8 +1,10 @@
+from functools import partial
 from typing import Any
 
 import param
 import requests
 
+from panel.io import state
 from pydantic import BaseModel, Field
 
 from ...config import dump_yaml, load_yaml
@@ -42,7 +44,7 @@ class VegaLiteSpec(EscapeBaseModel):
         ]
     )
     yaml_spec: str = Field(
-        description="A basic vega-lite YAML specification with core plot elements only (data, mark, basic x/y encoding)."
+        description="A basic vega-lite YAML specification with core plot elements only (mark, basic x/y encoding). Skip $schema and data fields."
     )
 
 
@@ -566,6 +568,26 @@ class VegaLiteAgent(BaseCodeAgent):
             feedback, messages, context, view=view, spec=spec, language=language, **kwargs
         )
 
+    async def _polish_plot(self, out: VegaLiteOutput, messages: list[Message], context: TContext, doc: str | None = None):
+        steps = {
+            "interaction_polish": "Add helpful tooltips and ensure responsive, accessible user experience",
+        }
+        with out.param.update(loading=True):
+            for step_name, step_desc in steps.items():
+                # Only pass the vega lite 'spec' portion to prevent ballooning context
+                step_name, update_dict = await self._update_spec_step(
+                    step_name, step_desc, out.spec, step_name, messages, context, doc=doc
+                )
+                try:
+                    # Validate merged spec
+                    merged_spec = self._deep_merge_dicts(out._spec_dict["spec"], update_dict)
+                    await self._extract_spec(context, {"yaml_spec": dump_yaml(merged_spec)})
+                except Exception as e:
+                    log_debug(f"Skipping invalid {step_name} update due to error: {e}")
+                    continue
+                out.spec = dump_yaml(merged_spec)
+            log_debug(f"📊 Applied {step_name} updates and refreshed visualization")
+
     async def respond(
         self,
         messages: list[Message],
@@ -607,29 +629,8 @@ class VegaLiteAgent(BaseCodeAgent):
         out = self._output_type(component=view, title=step_title)
 
         # Step 3: enhancements (LLM-driven creative decisions)
-        # Skip for altair modes since interactivity is built into the generated code
         if self.code_execution == "disabled":
-            steps = {
-                "interaction_polish": "Add helpful tooltips and ensure responsive, accessible user experience",
-            }
-
-            # Execute steps sequentially
-            for step_name, step_desc in steps.items():
-                # Only pass the vega lite 'spec' portion to prevent ballooning context
-                step_name, update_dict = await self._update_spec_step(
-                    step_name, step_desc, out.spec, step_name, messages, context, doc=doc
-                )
-                try:
-                    # Validate merged spec
-                    test_spec = self._deep_merge_dicts(full_dict["spec"], update_dict)
-                    await self._extract_spec(context, {"yaml_spec": dump_yaml(test_spec)})
-                except Exception as e:
-                    log_debug(f"Skipping invalid {step_name} update due to error: {e}")
-                    continue
-                spec = self._deep_merge_dicts(full_dict["spec"], update_dict)
-                out.spec = dump_yaml(spec)
-                log_debug(f"📊 Applied {step_name} updates and refreshed visualization")
-
+            state.execute(partial(self._polish_plot, out, messages, context, doc))
         return [out], {"view": dict(full_dict, type=view.view_type)}
 
     async def annotate(
