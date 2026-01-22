@@ -1573,11 +1573,11 @@ class ExplorerUI(UI):
     """
 
     code_execution = param.Selector(
-        default="hide", objects=["hide", "disabled", "prompt", "llm", "allow"],
+        default="hidden", objects=["hidden", "disabled", "prompt", "llm", "allow"],
         doc="""
         Code execution mode for generating Vega-Lite specs via Altair code.
         Controls whether the code execution selector appears in the UI preferences:
-        - hide: Do not show code execution option in preferences (default)
+        - hidden: Do not show code execution option in preferences (default)
         - disabled: Show selector, but default to no code execution (Vega-Lite spec only)
         - prompt: Show selector, default to prompting user for permission to execute
         - llm: Show selector, default to LLM-validated code execution
@@ -1640,10 +1640,10 @@ class ExplorerUI(UI):
         # Add code execution selector if not hidden
         code_agents = False
         for agent in self._coordinator.agents:
-            if isinstance(agent, BaseCodeAgent):
+            if isinstance(agent, BaseCodeAgent) and self.code_execution != "hidden":
                 agent.code_execution = self.param.code_execution
                 code_agents = True
-        if code_agents and not self.code_execution == "hidden":
+        if code_agents:
             def on_code_exec_change(event):
                 if event.new:
                     self._code_exec_warning_dialog.open = True
@@ -1819,7 +1819,7 @@ class ExplorerUI(UI):
         self._main[:] = [self._splash]
 
         # Create code execution warning dialog if code execution is not hidden
-        if self.code_execution != "hide":
+        if self.code_execution != "hidden":
             main.append(self._render_code_exec_warning_dialog())
 
         return main

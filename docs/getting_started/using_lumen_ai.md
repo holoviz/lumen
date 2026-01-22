@@ -133,11 +133,11 @@ The notebook includes:
 
 ## Advanced options
 
-### Code execution for visualizations
+### Code Excecution
 
-By default, Lumen AI generates visualizations using declarative Vega-Lite YAML specifications, which are safe because no code is executed—the spec is simply validated and rendered by the Vega library.
+By default, Lumen AI avoids generating and running Python code and instead relies on generating declarative specifications. This means there is no concern about arbitrary code execution, e.g. to exfiltrate secrets or perform destructive operations. For example visualizations are generated using declarative Vega-Lite YAML specifications, which are safe because no code is executed—the spec is simply validated and rendered by the Vega library.
 
-For more advanced visualizations, Lumen AI can optionally generate and execute Python code using Altair. This enables more sophisticated charts but introduces significant security considerations.
+Lumen does support code generation capabilities, which are often useful (and faster), particularly when working locally, where there is much less concern about malicious use. As an example the `VegaLiteAgent` can optionally generate and execute Python code using Altair. This enables more sophisticated charts and faster plotting but introduces significant security considerations.
 
 !!! danger "Security Warning: Code Execution is Not Safe"
     **Code execution must NEVER be enabled in production environments with access to secrets, credentials, or sensitive data.**
@@ -148,14 +148,15 @@ For more advanced visualizations, Lumen AI can optionally generate and execute P
 
 #### Code execution modes
 
-Code execution is controlled via the `code_execution` parameter on the VegaLite agent:
+Code execution is controlled via the `code_execution` parameter on all `BaseCodeAgent` types (e.g. the `VegaLiteAgent`). This should generally be configured at the `ExplorerUI` level and supports a number of modes:
 
 | Mode | Description | Security |
 |------|-------------|----------|
-| `disabled` | Generate only Vega-Lite YAML specs (default) | ✅ Safe |
-| `prompt` | Ask user for permission before executing each chart | ⚠️ User must review |
+| `hidden` | Disabled and not configurable in the UI | ✅ Safe |
+| `disabled` | Generate only YAML specs (default) | ⚠️ User can escalate permissions |
+| `prompt` | Ask user for permission before executing code | ⚠️ User must review |
 | `llm` | LLM validates code before execution | ⚠️ Reduces accidental errors only |
-| `allow` | Execute all generated code without confirmation | ❌ Dangerous |
+| `allow` | Execute all generated code without confirmation | ❌ Potentially Dangerous even when used locally |
 
 #### What the safety measures provide
 
@@ -164,7 +165,6 @@ The AST validation and LLM review in `prompt` and `llm` modes:
 - ✅ Catch **accidental** dangerous patterns (typos, mistakes)
 - ✅ Block **obvious** attack vectors (`import os`, `exec()`, etc.)
 - ✅ Reduce footgun risk for legitimate users
-- ✅ Provide defense-in-depth against unsophisticated attacks
 
 #### What they cannot provide
 
@@ -179,7 +179,7 @@ The AST validation and LLM review in `prompt` and `llm` modes:
 
 - Local development/exploration with your own prompts
 - Demo environments without production secrets
-- Trusted internal tools where users are authenticated and trusted
+- Trusted internal tools where users are authenticated and fully trusted
 
 **Unsafe usage:**
 
@@ -200,7 +200,7 @@ import lumen.ai as lmai
 # Show code execution option in UI, default to prompting user
 ui = lmai.ExplorerUI(
     data='data.csv',
-    code_execution='prompt'  # Options: 'hide', 'disabled', 'prompt', 'llm', 'allow'
+    code_execution='prompt'  # Options: 'hidden', 'disabled', 'prompt', 'llm', 'allow'
 )
 ```
 
@@ -210,7 +210,7 @@ ui = lmai.ExplorerUI(
 lumen-ai serve data.csv --code-execution prompt
 ```
 
-The `hide` option (default) completely hides the code execution selector from the UI, keeping users on the safe Vega-Lite-only path.
+The `hidden` option (default) completely hides the code execution selector from the UI, ensuring Lumen only generates specifications.
 
 !!! tip "Recommendation"
     For most use cases, the default Vega-Lite generation (`disabled` mode) provides excellent visualization capabilities without any security risk. Only enable code execution when you need Altair-specific features and understand the security implications.
