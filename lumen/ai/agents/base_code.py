@@ -16,9 +16,8 @@ from typing import TYPE_CHECKING, Any
 
 import param
 
-from panel_material_ui import (
-    Alert, Column, Markdown, RadioButtonGroup,
-)
+from panel.layout import Row
+from panel_material_ui import Button, Details, Markdown
 
 from ..code_executor import CodeExecutor
 from .base_view import BaseViewAgent
@@ -39,18 +38,19 @@ class BaseCodeAgent(BaseViewAgent):
 
     code_execution = param.Selector(
         default="disabled",
-        objects=["disabled", "prompt", "llm", "bypass"],
+        objects=["disabled", "prompt", "llm", "allow"],
         doc="""
         Code execution mode for generating visualizations via code:
         - disabled: No code execution; generate declarative specs only (safe for production)
         - prompt: Generate code, prompt user for permission to execute
         - llm: Generate code, validate with LLM safety check, then execute
-        - bypass: Generate and execute code without user confirmation
+        - allow: Generate and execute code without user confirmation
 
-        ⚠️ WARNING: The 'prompt', 'llm', and 'bypass' modes execute LLM-generated code and
+        ⚠️ WARNING: The 'prompt', 'llm', and 'allow' modes execute LLM-generated code and
         must NEVER be enabled in production environments with access to secrets, credentials,
         or sensitive data.
-        """
+        """,
+        allow_refs=True
     )
 
     # Subclasses MUST override this with the appropriate executor class
@@ -128,35 +128,42 @@ class BaseCodeAgent(BaseViewAgent):
 
         approval_event = asyncio.Event()
 
-        def handle_approval(component, instance):
-            approval_event.set()
-
-        alert_display = Alert(
-            "Carefully review the code before approving. LLM-generated code may contain "
-            "unintended operations. Never approve code execution in environments with access "
-            "to secrets or sensitive data.",
-            sizing_mode="stretch_width",
-            severity="warning"
-        )
         code_display = Markdown(
             f"```{language}\n{code}\n```",
-            sizing_mode="stretch_width",
-            margin=0
+            margin=0,
+            styles={"width": "100%", "max-width": "100%"},
+            stylesheets=['.codehilite { margin: 0; border-radius: 0; } div { width: 100%; }'],
         )
-        answer_input = RadioButtonGroup(
-            options=["Reject", "Approve"],
-            size="small",
-            width=300,
+        reject = Button(
+            icon="cancel",
+            label="Reject",
+            on_click=lambda _: approval_event.set(),
+            variant="outlined"
         )
-        prompt_content = Column(
-            alert_display,
+        accept = Button(
+            description="⚠️ Confirm generated code is safe to execute.",
+            description_delay=100,
+            icon="check",
+            label="Accept",
+            on_click=lambda _: approval_event.set()
+        )
+        prompt_content = Details(
             code_display,
-            answer_input,
+            collapsed=False,
+            header=Row(
+                "### Confirm Code Execution",
+                Row(reject, accept, styles={"margin": "0 0 0 auto"}),
+                sizing_mode="stretch_width"
+            ),
+            scrollable_height=300,
+            stylesheets=[".message { margin-left: 0; padding-inline: 0}"],
             sizing_mode="stretch_width",
         )
-        self.interface.prompt_user(prompt_content, callback=handle_approval)
+        self.interface.send(prompt_content, respond=False, user="Assistant")
         await approval_event.wait()
-        return answer_input.value == "Approve"
+        accepted = accept.clicks > 0
+        prompt_content.header = f"### Code Execution {'Accepted' if accepted else 'Rejected'}"
+        return accepted
 
     async def _execute_code(
         self,

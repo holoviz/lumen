@@ -32,8 +32,8 @@ from ..sources import Source
 from ..sources.duckdb import DuckDBSource
 from ..util import log
 from .agents import (
-    AnalysisAgent, ChatAgent, DocumentListAgent, SQLAgent, TableListAgent,
-    ValidationAgent, VegaLiteAgent,
+    AnalysisAgent, BaseCodeAgent, ChatAgent, DocumentListAgent, SQLAgent,
+    TableListAgent, ValidationAgent, VegaLiteAgent,
 )
 from .config import (
     DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROVIDED_SOURCE_NAME,
@@ -1195,7 +1195,8 @@ class UI(Viewer):
             }
         )
         # Unlink busy indicator
-        self._page.busy = False
+        with edit_readonly(self._page):
+            self._page.busy = False
 
     @contextmanager
     def _busy(self):
@@ -1568,7 +1569,7 @@ class ExplorerUI(UI):
     """
 
     code_execution = param.Selector(
-        default="hide", objects=["hide", "disabled", "prompt", "llm", "bypass"],
+        default="hide", objects=["hide", "disabled", "prompt", "llm", "allow"],
         doc="""
         Code execution mode for generating Vega-Lite specs via Altair code.
         Controls whether the code execution selector appears in the UI preferences:
@@ -1576,9 +1577,9 @@ class ExplorerUI(UI):
         - disabled: Show selector, but default to no code execution (Vega-Lite spec only)
         - prompt: Show selector, default to prompting user for permission to execute
         - llm: Show selector, default to LLM-validated code execution
-        - bypass: Show selector, default to executing code without confirmation
+        - allow: Show selector, default to executing code without confirmation
 
-        WARNING: The 'prompt', 'llm', and 'bypass' modes execute LLM-generated code and
+        WARNING: The 'prompt', 'llm', and 'allow' modes execute LLM-generated code and
         must NEVER be enabled in production environments with access to secrets, credentials,
         or sensitive data. The LLM validation layer reduces accidental errors but does NOT
         provide meaningful security against malicious or compromised inputs.
@@ -1616,11 +1617,6 @@ class ExplorerUI(UI):
         self._update_main_view()
 
     def _render_sidebar(self) -> list[Viewable]:
-        def on_code_exec_change(event):
-            if event.new != "disabled":
-                self._code_exec_warning_dialog.open = True
-            self.code_execution = event.new
-
         switches = []
         cot = Switch(label='Chain of Thought', description='Show AI reasoning steps')
         cot.link(self._coordinator, value='verbose', bidirectional=True)
@@ -1638,29 +1634,34 @@ class ExplorerUI(UI):
         switches.append(validation)
 
         # Add code execution selector if not hidden
-        vega_agent = next(
-            (agent for agent in self._coordinator.agents if isinstance(agent, VegaLiteAgent)),
-            None
-        )
-        if self.code_execution != "hide":
-            if vega_agent:
-                vega_agent.code_execution = self.code_execution
-                self._code_exec_select = Select.from_param(
-                    vega_agent.param.code_execution,
-                    label='Code Execution',
-                    options=["disabled", "prompt", "llm", "bypass"],
-                    description='How to handle Altair code generation for charts',
-                    sizing_mode="stretch_width",
-                    margin=(10, 10, 5, 10),
-                )
-                self._code_exec_select.param.watch(on_code_exec_change, 'value')
-                if self.code_execution != "disabled":
-                    # Initially trigger warning if not disabled
-                    self._code_exec_select.param.trigger("value")
-                switches.append(self._code_exec_select)
-        else:
-            # Ensure agent is set to disabled if selector is hidden
-            vega_agent.code_execution = "disabled"
+        code_agents = False
+        for agent in self._coordinator.agents:
+            if isinstance(agent, BaseCodeAgent):
+                agent.code_execution = self.param.code_execution
+                code_agents = True
+        if code_agents and not self.code_execution == "hidden":
+            def on_code_exec_change(event):
+                if event.new:
+                    self._code_exec_warning_dialog.open = True
+                    if self.code_execution == "disabled":
+                        self.code_execution = "prompt"
+                else:
+                    self.code_execution = "disabled"
+            self._code_exec_switch = Switch(
+                description="Allowing code execution",
+                label="Enable Code Execution",
+                value=self.param.code_execution.rx() != "disabled"
+            )
+            self._code_exec_switch.param.watch(on_code_exec_change, "value")
+            self._code_exec_select = Select.from_param(
+                self.param.code_execution,
+                options={"Disabled": "disabled", "Prompt": "prompt", "LLM Validation": "llm", "Always Allow": "allow"},
+                description="How to handle LLM generated code execution",
+                sizing_mode="stretch_width",
+                margin=(10, 10, 5, 10),
+                visible=self._code_exec_switch
+            )
+            switches.extend([self._code_exec_switch, self._code_exec_select])
 
         llm_config_button = Button(
             label="Configure AI Models",
@@ -1831,7 +1832,7 @@ class ExplorerUI(UI):
         mode_explanation = {
             "prompt": "will prompt you for permission each time a chart is generated.",
             "llm": "will validate generated code via the LLM before executing.",
-            "bypass": "will execute all generated code without confirmation."
+            "allow": "will execute all generated code without confirmation."
         }
         code_exec_warning = CODE_EXEC_WARNING + (
             f"\n\nYou have selected the **{self.code_execution}** execution mode. "

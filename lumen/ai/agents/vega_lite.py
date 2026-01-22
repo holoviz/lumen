@@ -12,7 +12,7 @@ from ..code_executor import AltairExecutor, CodeSafetyCheck
 from ..config import (
     LUMEN_CACHE_DIR, PROMPTS_DIR, VECTOR_STORE_ASSETS_URL,
     VEGA_LITE_EXAMPLES_NUMPY_DB_FILE, VEGA_LITE_EXAMPLES_OPENAI_DB_FILE,
-    VEGA_MAP_LAYER, VEGA_ZOOMABLE_MAP_ITEMS,
+    VEGA_MAP_LAYER, VEGA_ZOOMABLE_MAP_ITEMS, UserCancelledError,
 )
 from ..context import TContext
 from ..llm import Message, OpenAI
@@ -472,9 +472,7 @@ class VegaLiteAgent(BaseCodeAgent):
             chart = await self._execute_code(output.code, df, system=system, step=step)
 
         if chart is None:
-            # User rejected code execution
-            self.interface.stream("Execution rejected by user.", user="Assistant")
-            return {"spec": {}}
+            raise UserCancelledError("Code execution rejected by user.")
 
         # Convert to Vega-Lite spec
         spec = chart.to_dict()
@@ -594,7 +592,7 @@ class VegaLiteAgent(BaseCodeAgent):
         # Step 1: Generate basic spec
         doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
         # Produces {"spec": {$schema: ..., ...}, "sizing_mode": ..., ...}
-        if self.code_execution in ("prompt", "llm", "bypass"):
+        if self.code_execution in ("prompt", "llm", "allow"):
             full_dict = await self._generate_code_spec(
                 messages, context, pipeline, doc_examples, doc,
             )
