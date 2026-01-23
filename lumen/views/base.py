@@ -4,6 +4,7 @@ object.
 """
 from __future__ import annotations
 
+import copy
 import html
 import sys
 
@@ -1333,7 +1334,8 @@ class DeckGLView(View):
 
     def _get_params(self) -> dict[str, Any]:
         df = self.get_data()
-        spec = dict(self.spec)
+        # Deep copy to avoid modifying self.spec when injecting data
+        spec = copy.deepcopy(self.spec)
 
         # Inject data into layers
         if 'layers' in spec:
