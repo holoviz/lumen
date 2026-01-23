@@ -197,7 +197,7 @@ class Pipeline(Viewer, Component):
 
     def __panel__(self) -> Row:
         controls = self.control_panel
-        table = Tabulator(self.param.data, pagination='remote', sizing_mode="stretch_both", min_height=300)
+        table = Tabulator(self.param.data, pagination='remote', sizing_mode="stretch_both", min_height=200)
         if controls:
             return Row(self.control_panel, table)
         return table

@@ -119,7 +119,7 @@ class SQLQuery(Action):
         outputs = [SQLOutput(component=pipeline, spec=self.sql_expr)]
         if self.generate_caption:
             caption_out, _ = await ChatAgent(llm=self.llm).respond(
-                [{"role": "user", "content": self.user_content}], context
+                [{"role": "user", "content": self.user_content}], out_context
             )
             caption = caption_out[0]
             outputs.append(Typography(caption.object))

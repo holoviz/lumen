@@ -183,7 +183,7 @@ ui = lmai.ExplorerUI(data=[
 ])
 ```
 
-**Designed for extension.** Pure Python + YAML configs. Build custom agents, tools, and visualizations when you need them. **[View examples →](examples/tutorials/index.md)**
+**Designed for extension.** Pure Python + YAML configs. Build custom agents, tools, and visualizations when you need them. Or use Reports to turn recurring analyses into one-click reproducible dashboards. **[View tutorials →](examples/tutorials/index.md)**
 
 === "Custom Analysis"
 

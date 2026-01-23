@@ -684,7 +684,9 @@ class Section(TaskGroup):
 
     def __init__(self, *tasks, **params):
         self._watchers = {}
+        self._placeholder = None
         super().__init__(*tasks, **params)
+        self._update_placeholder()
 
     def __repr__(self) -> str:
         params = []
@@ -710,9 +712,11 @@ class Section(TaskGroup):
         self._settings = IconButton(
             icon='settings', on_click=self._open_settings, size="small", color="default"
         )
-        self._view = Column(
-            sizing_mode='stretch_width', styles={'min-height': 'unset'}, height_policy='fit'
+        self._placeholder = Typography(
+            "", variant="body2", margin=(10, 10),
+            sx={"color": "text.secondary"}
         )
+        self._view = Column(sizing_mode='stretch_width', styles={'min-height': 'unset'}, height_policy='fit')
         self._container = Column(
             Row(
                 self._settings,
@@ -727,6 +731,23 @@ class Section(TaskGroup):
 
     def _open_settings(self, event):
         self._dialog.open = True
+
+    @param.depends('status', '_tasks', 'views', watch=True)
+    def _update_placeholder(self):
+        """Update placeholder text based on execution status."""
+        if self._placeholder is None:
+            return
+        has_outputs = self.status != "idle" or bool(self.views)
+        if not has_outputs:
+            n = len(self._tasks)
+            task_word = "task" if n == 1 else "tasks"
+            self._placeholder.object = f"{n} {task_word} ready"
+            self._placeholder.visible = True
+        else:
+            self._placeholder.visible = False
+
+    def _populate_view(self):
+        self._view[:] = self._header + [self._placeholder] + list(self._tasks)
 
     async def _run_task(self, i: int, task: Task | Actor, context: TContext | None, **kwargs) -> list[Any]:
         if context is not None:
@@ -757,6 +778,9 @@ class Report(TaskGroup):
     Report.
     """
 
+    auto_execute = param.Boolean(default=False, doc="""
+        If True, automatically execute the report on initialization.""")
+
     _tasks = param.List(item_type=Section)
 
     level = 1
@@ -768,10 +792,12 @@ class Report(TaskGroup):
             tasks = list(tasks)
         super().__init__(*tasks, **params)
         pn.state.execute(partial(self.prepare, self.context))
+        if self.auto_execute:
+            pn.state.execute(self.execute)
 
     def _init_view(self):
         self._header_title = Typography(
-            self.param.title, variant="h1", margin=(0, 10, 0, 10)
+            self.param.title, variant="h1", margin=(0, 0, 0, 10)
         )
         self._view = Accordion(
             sizing_mode="stretch_width", min_height=0, margin=(0, 5, 5, 5),
@@ -784,23 +810,24 @@ class Report(TaskGroup):
         )
         self._run = IconButton(
             icon="play_arrow", on_click=self._execute_event, margin=0, size="large",
-            description="Execute Report", loading=self.param.running
+            description="Execute Report", loading=self.param.running,
         )
         self._clear = IconButton(
             icon="clear", on_click=lambda _: self.reset(), margin=0, size="large",
-            description="Clear outputs"
+            description="Clear outputs", visible=False
         )
         self._collapse = IconButton(
             styles={"margin-left": "auto"}, on_click=self._expand_all, icon="unfold_less",
-            size="large", color="default", margin=(0, 0, 10, 0), description="Collapse/Expand Sections"
+            size="large", color="default", margin=(0, 0, 10, 0),
+            description="Collapse/Expand Sections", visible=False
         )
         self._settings = IconButton(
             icon="settings", on_click=self._open_settings, size="large", color="default",
-            margin=0, description="Configure Report"
+            margin=0, description="Configure Report", visible=False
         )
         self._export = IconButton(
             icon="get_app", on_click=self._trigger_download, size="large", color="default",
-            margin=0, description="Export Report to .ipynb"
+            margin=0, description="Export Report to .ipynb", visible=False
         )
         self._download = FileDownload(
             callback=self._notebook_export, filename=f"{self.title or 'Report'}.ipynb", visible=False
@@ -854,6 +881,7 @@ class Report(TaskGroup):
             sizing_mode="stretch_both",
         )
         self._update_run_state()
+        self._update_icon_visibility()
 
     async def _trigger_event(self, item: dict):
         icon = item["icon"]
@@ -872,7 +900,28 @@ class Report(TaskGroup):
 
     @param.depends('_current', '_tasks', watch=True)
     def _update_run_state(self):
-        self._run.disabled = self._current == len(self)
+        # Play button is always enabled - users can re-run after changing settings
+        pass
+
+    @param.depends('status', 'views', watch=True)
+    def _update_icon_visibility(self):
+        """Show/hide icons based on whether report has outputs."""
+        has_outputs = self.status in ("success", "error") or bool(self.views)
+        self._clear.visible = has_outputs
+        self._collapse.visible = has_outputs
+        self._export.visible = has_outputs
+        self._settings.visible = has_outputs
+        # Only animate play button when no outputs
+        if has_outputs:
+            self._run.sx = {}
+        else:
+            self._run.sx = {
+                "animation": "pulse 1s ease-in-out 2",
+                "@keyframes pulse": {
+                    "0%, 100%": {"transform": "translateX(0)"},
+                    "50%": {"transform": "translateX(7px)"},
+                },
+            }
 
     async def _execute_event(self, event=None):
         await self.execute()
@@ -895,7 +944,11 @@ class Report(TaskGroup):
 
     def _populate_view(self):
         self._view[:] = objects = [(task.title, task) for task in self]
-        self._view.active = list(range(len(objects)))
+        has_outputs = self.status in ("success", "error") or bool(self.views)
+        if has_outputs:
+            self._view.active = list(range(len(objects)))
+        else:
+            self._view.active = [0] if objects else []
 
     async def _run_task(self, i: int, task: Section, context: TContext, **kwargs):
         self._view.active = self._view.active + [i]
@@ -910,7 +963,7 @@ class Report(TaskGroup):
             height_policy="max",
             stylesheets=[":host > div { overflow-y: auto; }"],
             min_height=600,
-            sx={"minWidth": "320px"}
+            sx={"minWidth": "320px", "background-color": "var(--mui-palette-grey-100)"}
         )
 
 
@@ -1194,6 +1247,26 @@ class Action(ExecutableTask):
 
     render_outputs = param.Boolean(default=True, doc="""
          Whether the outputs should be rendered.""")
+
+    def show(self, **kwargs):
+        """Show the Action wrapped in a minimal Report UI."""
+        section_title = self.title or self.__class__.__name__
+        report = Report(
+            Section(self, title=section_title),
+            title=section_title,
+            auto_execute=True
+        )
+        return report.show(**kwargs)
+
+    def servable(self, **kwargs):
+        """Make the Action servable wrapped in a minimal Report UI."""
+        section_title = self.title or self.__class__.__name__
+        report = Report(
+            Section(self, title=section_title),
+            title=section_title,
+            auto_execute=True
+        )
+        return report.servable(**kwargs)
 
     @final
     async def execute(self, context: TContext | None = None, **kwargs):

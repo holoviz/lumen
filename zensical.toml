@@ -23,7 +23,7 @@ nav = [
     {"Tutorials" = [
       {"Overview" = "examples/tutorials/index.md"},
       {"Weather Data AI Explorer" = "examples/tutorials/weather_data_ai_explorer.md"},
-      {"Penguins Dashboard Spec" = "examples/tutorials/penguins_dashboard_spec.md"}
+      {"SaaS Company Report Dashboard" = "examples/tutorials/saas_company_report_dashboard.md"},
     ]},
     {"Gallery" = [
       {"Overview" = "examples/gallery/index.md"},
