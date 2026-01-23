@@ -1,218 +1,126 @@
 {% extends 'BaseViewAgent/main.jinja2' %}
 
 {% block instructions %}
-Generate DeckGL JSON specifications for 3D map visualizations.
+Generate DeckGL JSON spec. Do NOT include `data` in layers (injected automatically).
 
-# ESSENTIAL STRUCTURE
+**CRITICAL:** Use `@@=` prefix for ALL column-based accessors:
+- Position: `"getPosition": "@@=[longitude, latitude]"` (NOT `["longitude", "latitude"]`)
+- Elevation: `"getElevation": "@@=value"` or `"getElevation": "@@=value * 100"`
+- Static values (no @@=): `"getFillColor": [255, 140, 0, 200]`
 
-Every DeckGL spec must include:
-- `initialViewState`: Camera position with latitude, longitude, zoom, pitch, bearing
-- `layers`: Array of layer configurations with `@@type` for each layer
-- Do NOT include `data` in layers - it will be injected automatically from the pipeline
+Column names: spaces→underscores, non-alphanumeric removed (e.g., "Plant latitude"→"Plant_latitude")
 
-# LAYER TYPE SELECTION (in order of preference)
+# REQUIRED STRUCTURE
+- `initialViewState`: latitude, longitude, zoom, pitch (45+ for 3D), bearing
+- `layers`: array with `@@type` for each layer
+- `views`: `[{"@@type": "MapView", "controller": true}]`
 
-**For data with numeric values to visualize:**
-1. **ColumnLayer** - Best for discrete points with values; creates striking 3D bar charts on the map
-2. **HexagonLayer** - Best for aggregating many points into 3D hexagonal bins
-3. **GridLayer** - Best for square grid aggregation with 3D elevation
+# LAYER SELECTION (prefer 3D for visual impact)
 
-**For point-only data (no values):**
-4. **ScatterplotLayer** - Simple colored circles at locations
-5. **HeatmapLayer** - Continuous density visualization
+**For data with numeric values:**
+1. **HexagonLayer** - Aggregates points into 3D hexagonal bins (PREFERRED)
+2. **ColumnLayer** - 3D bars at discrete points
+3. **GridLayer** - Square grid aggregation with 3D elevation
 
-**For connections/flows:**
-6. **ArcLayer** - Origin-destination arcs between points
+**For point-only data:**
+4. **ScatterplotLayer** - Simple colored circles
+5. **HeatmapLayer** - Continuous density
 
-**For paths/routes:**
-7. **PathLayer** - Connected line segments
+**For connections:**
+6. **ArcLayer** - Origin-destination arcs
 
-# ACCESSOR SYNTAX
+# KEY LAYER PROPERTIES
 
-For column-based accessors, use array syntax with column names:
-- Position: `"getPosition": ["longitude", "latitude"]`
-- Elevation from column: `"getElevation": "@@=column_name"` or `"getElevation": "@@=column_name * 100"`
-- Color from columns: `"getFillColor": "@@=[r, g, b]"`
-- Static color: `"getFillColor": [255, 140, 0, 200]`
-- Radius from column: `"getRadius": "@@=value * 1000"`
+| Layer | Key Props |
+|-------|-----------|
+| HexagonLayer | `radius`, `elevationScale`, `elevationRange`, `extruded: true`, `coverage` |
+| ColumnLayer | `getElevation`, `radius`, `elevationScale`, `diskResolution`, `extruded: true` |
+| ScatterplotLayer | `radiusMinPixels`, `radiusMaxPixels`, `getFillColor` |
+| ArcLayer | `getSourcePosition`, `getTargetPosition`, `getWidth` |
 
-# MAP STYLES (no API key needed)
-
-- Dark: `"https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"`
-- Light: `"https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"`
-- Detailed: `"https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json"`
-
-# KEY SETTINGS FOR 3D VISUALIZATION
-
-**ColumnLayer (3D bars):**
-- `diskResolution`: 12 (number of sides, higher = smoother)
-- `radius`: Size of column base in meters
-- `elevationScale`: Multiplier for elevation values
-- `extruded`: true (required for 3D)
-- `pickable`: true (for tooltips)
-
-**HexagonLayer (3D hexbins):**
-- `radius`: Hexagon radius in meters
-- `elevationScale`: Multiplier for elevation
-- `elevationRange`: [min, max] elevation range
-- `extruded`: true (required for 3D)
-- `coverage`: 0.8 (gap between hexagons)
-- `pickable`: true
-
-**GridLayer (3D grid):**
-- `cellSize`: Grid cell size in meters
-- `elevationScale`: Multiplier for elevation
-- `extruded`: true (required for 3D)
-- `pickable`: true
-
-**View State for 3D:**
-- `pitch`: 45-60 for good 3D perspective
-- `bearing`: 0 or slight angle for visual interest
-- `zoom`: Adjust based on data extent
+# STYLING
+- `pickable: true` for tooltips
+- `autoHighlight: true` for hover effect
+- Colors: static `[R,G,B,A]` or dynamic `"@@=[r, g, b, 200]"`
+- Zoom levels: 1-3 continent, 4-6 country, 7-10 city, 11+ street
+- Pitch: 45-60 for good 3D perspective
 {% endblock %}
 
 {% block examples %}
-# EXAMPLES
-
-ColumnLayer (3D bars at discrete points - PREFERRED for point data with values):
+HexagonLayer (3D aggregation - PREFERRED):
 ```json
 {
-  "initialViewState": {
-    "latitude": 39.8,
-    "longitude": -98.5,
-    "zoom": 4,
-    "pitch": 55,
-    "bearing": -10
-  },
-  "layers": [
-    {
-      "@@type": "ColumnLayer",
-      "getPosition": ["longitude", "latitude"],
-      "getElevation": "@@=value",
-      "getFillColor": [65, 182, 196, 220],
-      "diskResolution": 12,
-      "radius": 30000,
-      "elevationScale": 100,
-      "extruded": true,
-      "pickable": true
-    }
-  ],
+  "initialViewState": {"latitude": 37.8, "longitude": -122.4, "zoom": 5, "pitch": 45, "bearing": 0},
+  "layers": [{
+    "@@type": "HexagonLayer",
+    "id": "hex",
+    "getPosition": "@@=[longitude, latitude]",
+    "radius": 15000,
+    "elevationScale": 50,
+    "elevationRange": [0, 3000],
+    "extruded": true,
+    "pickable": true,
+    "coverage": 0.85
+  }],
+  "views": [{"@@type": "MapView", "controller": true}],
   "mapStyle": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
 }
 ```
 
-HexagonLayer (aggregation with 3D elevation - PREFERRED for many points):
+ColumnLayer (3D bars at points):
 ```json
 {
-  "initialViewState": {
-    "latitude": 37.8,
-    "longitude": -122.4,
-    "zoom": 6,
-    "pitch": 50,
-    "bearing": 0
-  },
-  "layers": [
-    {
-      "@@type": "HexagonLayer",
-      "getPosition": ["longitude", "latitude"],
-      "radius": 10000,
-      "elevationScale": 50,
-      "elevationRange": [0, 3000],
-      "extruded": true,
-      "pickable": true,
-      "coverage": 0.85,
-      "colorRange": [
-        [65, 182, 196],
-        [127, 205, 187],
-        [199, 233, 180],
-        [237, 248, 177],
-        [255, 255, 204],
-        [255, 237, 160]
-      ]
-    }
-  ],
+  "initialViewState": {"latitude": 39.8, "longitude": -98.5, "zoom": 4, "pitch": 55, "bearing": -10},
+  "layers": [{
+    "@@type": "ColumnLayer",
+    "id": "columns",
+    "getPosition": "@@=[longitude, latitude]",
+    "getElevation": "@@=value",
+    "getFillColor": [65, 182, 196, 220],
+    "diskResolution": 12,
+    "radius": 30000,
+    "elevationScale": 100,
+    "extruded": true,
+    "pickable": true
+  }],
+  "views": [{"@@type": "MapView", "controller": true}],
   "mapStyle": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
 }
 ```
 
-GridLayer (square 3D grid aggregation):
+ScatterplotLayer (simple points):
 ```json
 {
-  "initialViewState": {
-    "latitude": 37.8,
-    "longitude": -122.4,
-    "zoom": 10,
-    "pitch": 45,
-    "bearing": 15
-  },
-  "layers": [
-    {
-      "@@type": "GridLayer",
-      "getPosition": ["longitude", "latitude"],
-      "cellSize": 500,
-      "elevationScale": 10,
-      "extruded": true,
-      "pickable": true,
-      "colorRange": [
-        [65, 182, 196],
-        [127, 205, 187],
-        [199, 233, 180],
-        [237, 248, 177],
-        [255, 255, 204],
-        [255, 237, 160]
-      ]
-    }
-  ],
-  "mapStyle": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
-}
-```
-
-ScatterplotLayer (simple points - use when 3D not needed):
-```json
-{
-  "initialViewState": {
-    "latitude": 40.0,
-    "longitude": -100.0,
-    "zoom": 4,
-    "pitch": 0,
-    "bearing": 0
-  },
-  "layers": [
-    {
-      "@@type": "ScatterplotLayer",
-      "getPosition": ["longitude", "latitude"],
-      "getRadius": "@@=magnitude * 1000",
-      "getFillColor": [255, 140, 0, 180],
-      "pickable": true,
-      "radiusMinPixels": 3,
-      "radiusMaxPixels": 100
-    }
-  ],
+  "initialViewState": {"latitude": 39.8, "longitude": -98.5, "zoom": 4, "pitch": 0, "bearing": 0},
+  "layers": [{
+    "@@type": "ScatterplotLayer",
+    "id": "scatter",
+    "getPosition": "@@=[longitude, latitude]",
+    "getFillColor": [255, 140, 0, 200],
+    "radiusMinPixels": 3,
+    "radiusMaxPixels": 50,
+    "pickable": true
+  }],
+  "views": [{"@@type": "MapView", "controller": true}],
   "mapStyle": "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
 }
 ```
 
-ArcLayer (origin-destination flows):
+ArcLayer (connections):
 ```json
 {
-  "initialViewState": {
-    "latitude": 40.0,
-    "longitude": -100.0,
-    "zoom": 3,
-    "pitch": 35,
-    "bearing": 0
-  },
-  "layers": [
-    {
-      "@@type": "ArcLayer",
-      "getSourcePosition": ["src_lon", "src_lat"],
-      "getTargetPosition": ["dst_lon", "dst_lat"],
-      "getSourceColor": [0, 128, 200],
-      "getTargetColor": [200, 0, 80],
-      "getWidth": 2,
-      "pickable": true
-    }
-  ],
+  "initialViewState": {"latitude": 40.0, "longitude": -100.0, "zoom": 3, "pitch": 35, "bearing": 0},
+  "layers": [{
+    "@@type": "ArcLayer",
+    "id": "arcs",
+    "getSourcePosition": "@@=[src_lon, src_lat]",
+    "getTargetPosition": "@@=[dst_lon, dst_lat]",
+    "getSourceColor": [0, 128, 200],
+    "getTargetColor": [200, 0, 80],
+    "getWidth": 2,
+    "pickable": true
+  }],
+  "views": [{"@@type": "MapView", "controller": true}],
   "mapStyle": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
 }
 ```
@@ -220,18 +128,8 @@ ArcLayer (origin-destination flows):
 
 {% block context %}
 Table: {{ memory['pipeline'].table }}
-Data schema and sample:
-{{ memory['data'] }}
-
-**Important:** Use the exact column names from the data schema above for getPosition and other accessors.
+Data: {{ memory['data'] }}
 {%- if "view" in memory %}
-
-Previous specification (modify as requested):
-```json
-{{ memory["view"]["spec"] | json }}
-```
+Previous spec: {{ memory["view"]["spec"] | tojson }}
 {%- endif %}
-{% if memory['pipeline'].source.dialect == "snowflake" %}
-**Note:** Use UPPER CASE field names for Snowflake.
-{% endif %}
 {%- endblock %}
