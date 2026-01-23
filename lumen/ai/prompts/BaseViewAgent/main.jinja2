@@ -10,7 +10,7 @@ Here is the current dataset to use:
 {{ memory['data'] }}
 
 {%- if "view" in memory and memory["view"].get("agent") and actor_name.startswith(memory["view"].get("agent")) %}
-The previous view specification was:
+Adapt from the previous view specification below as needed:
 ```yaml
 {{ memory["view"]["spec"] | json_to_yaml }}
 ```
