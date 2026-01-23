@@ -1,0 +1,66 @@
+{% extends 'BaseLumenAgent/revise_output.jinja2' %}
+
+{% block instructions %}
+{{ super() }}
+
+- Do NOT modify the data injection (data will be added automatically)
+- Keep map_style URLs as CartoDB (no Mapbox API key available)
+- Ensure latitude/longitude column names match the data schema
+
+# Common Fixes
+
+## View State Issues
+If the map appears blank or shows wrong location:
+```python
+# Center on data
+view_state = pdk.ViewState(
+    latitude=df["latitude"].mean(),
+    longitude=df["longitude"].mean(),
+    zoom=10,
+    pitch=45,
+)
+```
+
+## Layer Configuration
+- **No data showing**: Check column names in `get_position`
+- **Points too small/large**: Adjust `radius` or `get_radius`
+- **Colors not visible**: Use RGBA format `[r, g, b, alpha]` with alpha 0-255
+- **3D not working**: Add `extruded=True`, `elevation_scale`, `elevation_range`
+
+## Map Style
+Use CartoDB styles (no API key needed):
+- Dark: `"https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"`
+- Light: `"https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"`
+{% endblock %}
+
+{%- block examples -%}
+# EXAMPLES
+
+## Fix blank map (center on data):
+```python
+view_state = pdk.ViewState(
+    latitude=df["lat"].mean(),
+    longitude=df["lon"].mean(),
+    zoom=8,
+)
+```
+
+## Fix missing 3D elevation:
+```python
+layer = pdk.Layer(
+    "HexagonLayer",
+    data=df,
+    get_position=["longitude", "latitude"],
+    radius=10000,
+    elevation_scale=100,
+    elevation_range=[0, 5000],
+    extruded=True,
+    pickable=True,
+)
+```
+
+## Fix color visibility:
+```python
+get_fill_color=[255, 140, 0, 200]  # Orange with alpha
+```
+{%- endblock -%}

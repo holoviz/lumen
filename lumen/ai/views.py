@@ -420,6 +420,114 @@ class VegaLiteOutput(LumenOutput):
         return f"{self.__class__.__name__}:\n```yaml\n{self.spec}\n```"
 
 
+class DeckGLOutput(LumenOutput):
+    """Output class for DeckGL 3D map visualizations.
+    
+    Handles serialization/deserialization of DeckGL specs and provides
+    appropriate export formats including standalone HTML.
+    """
+
+    export_formats = ("yaml", "json", "html")
+
+    _controls = [CopyControls, RetryControls]
+    _label = "Map"
+
+    # Default map style for DeckGL visualizations
+    DEFAULT_MAP_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+
+    # Required keys for a valid DeckGL spec
+    REQUIRED_KEYS = frozenset({"layers", "initialViewState"})
+
+    @classmethod
+    def _serialize_component(cls, component: Component, spec_dict: dict[str, Any] | None = None) -> tuple[str, dict[str, Any]]:
+        component_spec = spec_dict or component.to_spec()
+        deckgl_spec = component_spec['spec']
+        return dump_yaml(deckgl_spec), component_spec
+
+    @classmethod
+    def _deserialize_component(
+        cls, component: Component, yaml_spec: str, spec_dict: dict[str, Any], pipeline: Pipeline | None = None
+    ) -> Component:
+        spec = load_yaml(yaml_spec)
+        cls.validate_spec(spec)
+        spec_dict = dict(spec_dict, spec=spec)
+        if pipeline is not None:
+            spec_dict.pop('pipeline', None)
+        return type(component).from_spec(spec_dict, pipeline=pipeline)
+
+    @classmethod
+    def validate_spec(cls, spec: dict[str, Any]) -> dict[str, Any]:
+        """Validate that the DeckGL spec has required structure."""
+        if "spec" in spec:
+            spec = spec["spec"]
+
+        missing = cls.REQUIRED_KEYS - set(spec.keys())
+        if missing:
+            raise ValueError(f"DeckGL spec missing required keys: {missing}")
+
+        # Validate layers structure
+        layers = spec.get("layers", [])
+        if not isinstance(layers, list):
+            raise ValueError("DeckGL 'layers' must be a list")
+
+        for i, layer in enumerate(layers):
+            if not isinstance(layer, dict):
+                raise ValueError(f"Layer {i} must be a dictionary")
+            if "@@type" not in layer and "type" not in layer:
+                raise ValueError(f"Layer {i} missing '@@type' or 'type' field")
+
+        # Validate initialViewState
+        view_state = spec.get("initialViewState", {})
+        if not isinstance(view_state, dict):
+            raise ValueError("'initialViewState' must be a dictionary")
+
+        return super().validate_spec(spec)
+
+    def export(self, fmt: str) -> StringIO | BytesIO:
+        ret = super().export(fmt)
+        if ret is not None:
+            return ret
+        if fmt == "json":
+            spec = load_yaml(self.spec)
+            return StringIO(json.dumps(spec, indent=2))
+        elif fmt == "html":
+            spec = load_yaml(self.spec)
+            html_content = self._generate_html(spec)
+            return StringIO(html_content)
+        raise ValueError(f"Unknown export format {fmt!r}")
+
+    def _generate_html(self, spec: dict) -> str:
+        """Generate standalone HTML for DeckGL visualization."""
+        import textwrap
+        spec_json = json.dumps(spec, indent=2)
+        return textwrap.dedent(f"""\
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="utf-8">
+                <title>DeckGL Visualization</title>
+                <script src="https://unpkg.com/deck.gl@latest/dist.min.js"></script>
+                <script src="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.js"></script>
+                <link href="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.css" rel="stylesheet" />
+                <style>
+                    body {{ margin: 0; padding: 0; }}
+                    #container {{ width: 100vw; height: 100vh; }}
+                </style>
+            </head>
+            <body>
+                <div id="container"></div>
+                <script>
+                    const spec = {spec_json};
+                    new deck.DeckGL({{...spec, container: 'container'}});
+                </script>
+            </body>
+            </html>
+        """)
+
+    def __str__(self):
+        return f"{self.__class__.__name__}:\n```yaml\n{self.spec}\n```"
+
+
 class AnalysisOutput(LumenOutput):
 
     analysis = param.ClassSelector(class_=Analysis)

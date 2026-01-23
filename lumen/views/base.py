@@ -1309,6 +1309,44 @@ class VegaLiteView(View):
         return pn.pane.Vega(**spec)
 
 
+class DeckGLView(View):
+    """
+    `DeckGLView` renders geographic data as 3D visualizations using deck.gl.
+
+    Supports various layer types including ScatterplotLayer, HexagonLayer,
+    ArcLayer, and more for visualizing geospatial data with latitude/longitude
+    coordinates.
+    """
+
+    spec = param.Dict(doc="""
+        The deck.gl JSON specification containing layers, viewState, and mapStyle.""")
+
+    tooltips = param.ClassSelector(class_=(bool, dict), default=True, doc="""
+        Whether to enable tooltips on hover. Can be True for auto-generated
+        tooltips, False to disable, or a dict specifying tooltip configuration.""")
+
+    view_type = 'deckgl'
+
+    _extension = 'deckgl'
+
+    _panel_type = pn.pane.DeckGL
+
+    def _get_params(self) -> dict[str, Any]:
+        df = self.get_data()
+        spec = dict(self.spec)
+
+        # Inject data into layers
+        if 'layers' in spec:
+            for layer in spec['layers']:
+                if 'data' not in layer:
+                    layer['data'] = df.to_dict(orient='records')
+
+        return dict(object=spec, tooltips=self.tooltips, **self.kwargs)
+
+    def get_panel(self) -> pn.pane.DeckGL:
+        return self._panel_type(**self._normalize_params(self._get_params()))
+
+
 class AltairView(View):
     """
     `AltairView` provides a declarative way to render Altair charts.

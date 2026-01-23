@@ -27,6 +27,8 @@ from panel_material_ui import (
 )
 from panel_splitjs import HSplit, MultiSplit, VSplit
 
+from lumen.ai.agents.deckgl import DeckGLAgent
+
 from ..pipeline import Pipeline
 from ..sources import Source
 from ..sources.duckdb import DuckDBSource
@@ -389,7 +391,7 @@ class UI(Viewer):
     )
 
     default_agents = param.List(default=[
-        TableListAgent, ChatAgent, DocumentListAgent, SQLAgent, VegaLiteAgent, ValidationAgent
+        TableListAgent, ChatAgent, DocumentListAgent, SQLAgent, VegaLiteAgent, ValidationAgent, DeckGLAgent
     ], doc="""List of default agents which will always be added.""")
 
     demo_inputs = param.List(default=DEMO_MESSAGES, doc="""

@@ -1,0 +1,180 @@
+{% extends 'BaseViewAgent/main.jinja2' %}
+
+{% block instructions %}
+Generate PyDeck code. Data is `df`, assign to `deck`. NO I/O methods (.to_html(), .show(), etc.).
+
+# Layer Type Selection (in order of preference for 3D impact)
+
+**For data with numeric values to visualize:**
+1. **ColumnLayer** - Best for discrete points with values; creates striking 3D bar charts on the map
+2. **HexagonLayer** - Best for aggregating many points into 3D hexagonal bins
+3. **GridLayer** - Best for square grid aggregation with 3D elevation
+
+**For point-only data (no values):**
+4. **ScatterplotLayer** - Simple colored circles at locations
+5. **HeatmapLayer** - Continuous density visualization
+
+**For connections/flows:**
+6. **ArcLayer** - Origin-destination arcs between points
+
+**For paths/routes:**
+7. **PathLayer** - Connected line segments
+
+# Key Parameters for 3D Visualization
+
+**ColumnLayer (3D bars):**
+```python
+pdk.Layer(
+    "ColumnLayer",
+    data=df,
+    get_position=["longitude", "latitude"],
+    get_elevation="value",  # column name for height
+    get_fill_color=[65, 182, 196, 220],
+    disk_resolution=12,
+    radius=30000,
+    elevation_scale=100,
+    extruded=True,
+    pickable=True,
+)
+```
+
+**HexagonLayer (3D hexbins):**
+```python
+pdk.Layer(
+    "HexagonLayer",
+    data=df,
+    get_position=["longitude", "latitude"],
+    radius=10000,
+    elevation_scale=50,
+    elevation_range=[0, 3000],
+    extruded=True,
+    pickable=True,
+    coverage=0.85,
+)
+```
+
+# View State for 3D
+- `pitch`: 45-60 for good 3D perspective
+- `bearing`: 0 or slight angle (-15 to 15) for visual interest
+
+# Map Styles (no API key needed)
+- `"https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"` (dark - best for 3D)
+- `"https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"` (light)
+- `"https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json"` (detailed)
+{% endblock %}
+
+{% block examples %}
+ColumnLayer (3D bars - PREFERRED for point data with values):
+```python
+import pydeck as pdk
+layer = pdk.Layer(
+    "ColumnLayer",
+    data=df,
+    get_position=["longitude", "latitude"],
+    get_elevation="value",
+    get_fill_color=[65, 182, 196, 220],
+    disk_resolution=12,
+    radius=30000,
+    elevation_scale=100,
+    extruded=True,
+    pickable=True,
+)
+view_state = pdk.ViewState(
+    latitude=df["latitude"].mean(),
+    longitude=df["longitude"].mean(),
+    zoom=4,
+    pitch=55,
+    bearing=-10
+)
+deck = pdk.Deck(
+    layers=[layer],
+    initial_view_state=view_state,
+    map_style="https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+)
+```
+
+HexagonLayer (aggregation - PREFERRED for many points):
+```python
+import pydeck as pdk
+layer = pdk.Layer(
+    "HexagonLayer",
+    data=df,
+    get_position=["longitude", "latitude"],
+    radius=10000,
+    elevation_scale=50,
+    elevation_range=[0, 3000],
+    extruded=True,
+    pickable=True,
+    coverage=0.85,
+)
+view_state = pdk.ViewState(
+    latitude=df["latitude"].mean(),
+    longitude=df["longitude"].mean(),
+    zoom=6,
+    pitch=50
+)
+deck = pdk.Deck(
+    layers=[layer],
+    initial_view_state=view_state,
+    map_style="https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+)
+```
+
+ScatterplotLayer (simple points - when 3D not needed):
+```python
+import pydeck as pdk
+layer = pdk.Layer(
+    "ScatterplotLayer",
+    data=df,
+    get_position=["longitude", "latitude"],
+    get_radius="magnitude * 1000",
+    get_fill_color=[255, 140, 0, 180],
+    pickable=True,
+    radius_min_pixels=3,
+    radius_max_pixels=100,
+)
+view_state = pdk.ViewState(
+    latitude=df["latitude"].mean(),
+    longitude=df["longitude"].mean(),
+    zoom=4
+)
+deck = pdk.Deck(layers=[layer], initial_view_state=view_state)
+```
+
+ArcLayer (connections/flows):
+```python
+import pydeck as pdk
+layer = pdk.Layer(
+    "ArcLayer",
+    data=df,
+    get_source_position=["src_lon", "src_lat"],
+    get_target_position=["dst_lon", "dst_lat"],
+    get_source_color=[0, 128, 200],
+    get_target_color=[200, 0, 80],
+    get_width=2,
+    pickable=True,
+)
+view_state = pdk.ViewState(latitude=40, longitude=-100, zoom=3, pitch=35)
+deck = pdk.Deck(
+    layers=[layer],
+    initial_view_state=view_state,
+    map_style="https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+)
+```
+{% endblock %}
+
+{% block context %}
+Table: {{ memory['pipeline'].table }}
+Data schema and sample:
+{{ memory['data'] }}
+
+**Important:** Use the exact column names from the data schema above for get_position and other accessors.
+{%- if "view" in memory %}
+
+Previous specification (modify as requested):
+{{ memory["view"]["spec"] | json_to_yaml }}
+{%- endif %}
+{% if memory['pipeline'].source.dialect == "snowflake" %}
+**Note:** Use UPPER CASE field names for Snowflake.
+{% endif %}
+{%- endblock %}

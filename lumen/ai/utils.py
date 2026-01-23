@@ -1110,3 +1110,28 @@ def normalized_name(inst: param.Parameterized):
 def set_nested(data, keys, value):
     """Set nested dictionary value"""
     reduce(getitem, keys[:-1], data)[keys[-1]] = value
+
+
+def sanitize_column_names(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Sanitize DataFrame column names for use in code execution.
+
+    Replaces spaces with underscores and removes non-alphanumeric characters
+    (except underscores) from column names.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The DataFrame whose columns should be sanitized
+
+    Returns
+    -------
+    pd.DataFrame
+        A copy of the DataFrame with sanitized column names
+    """
+    df = df.copy()
+    df.columns = [
+        re.sub(r'[^\w]', '', col.replace(' ', '_'))
+        for col in df.columns
+    ]
+    return df
