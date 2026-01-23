@@ -27,6 +27,7 @@ model_config = {
     "default": {"model": "gpt-4.1-mini"},  # Cheap for most agents
     "sql": {"model": "gpt-4.1"},           # Powerful for SQL
     "vega_lite": {"model": "gpt-4.1"},     # Powerful for charts
+    "deck_gl": {"model": "gpt-4.1"},       # Powerful for 3D maps
     "analyst": {"model": "gpt-4.1"},       # Powerful for analysis
 }
 
@@ -172,6 +173,7 @@ Agent class names convert to model types automatically:
 |-------|------------|
 | SQLAgent | `sql` |
 | VegaLiteAgent | `vega_lite` |
+| DeckGLAgent | `deck_gl` |
 | ChatAgent | `chat` |
 | AnalysisAgent | `analysis` |
 | (others) | `default` |

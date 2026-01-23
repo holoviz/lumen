@@ -3,7 +3,7 @@ from .base import Agent
 from .base_code import BaseCodeAgent
 from .chat import ChatAgent
 from .dbtsl import DbtslAgent
-from .deckgl import DeckGLAgent
+from .deck_gl import DeckGLAgent
 from .document_list import DocumentListAgent
 from .hvplot import hvPlotAgent
 from .sql import SQLAgent
