@@ -41,7 +41,8 @@ Column names: spaces→underscores, non-alphanumeric removed (e.g., "Plant latit
 # STYLING
 - `pickable: true` for tooltips
 - `autoHighlight: true` for hover effect
-- Colors: static `[R,G,B,A]` or dynamic `"@@=[r, g, b, 200]"`
+- **Colors:** Always use static RGBA arrays: `"getFillColor": [255, 140, 0, 200]` (NO @@= prefix, NO Math functions)
+- **Elevation/Radius:** Use simple math only: `"@@=value"` or `"@@=value * 100"` (NO Math.min, Math.max, etc.)
 - Zoom levels: 1-3 continent, 4-6 country, 7-10 city, 11+ street
 - Pitch: 45-60 for good 3D perspective
 {% endblock %}

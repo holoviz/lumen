@@ -126,6 +126,9 @@ class DeckGLAgent(BaseCodeAgent):
 
     user = param.String(default="DeckGL")
 
+    # Default map style (CartoDB, no API key needed)
+    default_map_style = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+
     view_type = DeckGLView
 
     _executor_class = PyDeckExecutor
@@ -133,9 +136,6 @@ class DeckGLAgent(BaseCodeAgent):
     _extensions = ("deckgl",)
 
     _output_type = DeckGLOutput
-
-    # Default map style (CartoDB, no API key needed)
-    DEFAULT_MAP_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
 
     def __init__(self, **params):
         self._last_output = None
@@ -257,15 +257,21 @@ class DeckGLAgent(BaseCodeAgent):
         # Also replace Mapbox styles (which require API key) with CartoDB
         map_style = deckgl_spec.pop("map_style", None) or deckgl_spec.get("mapStyle")
         if not map_style or (isinstance(map_style, str) and map_style.startswith("mapbox://")):
-            deckgl_spec["mapStyle"] = self.DEFAULT_MAP_STYLE
+            deckgl_spec["mapStyle"] = self.default_map_style
         else:
             deckgl_spec["mapStyle"] = map_style
 
-        # Remove data from layers - it will be injected by DeckGLView at render time
+        # CRITICAL: Remove data from all layers - it will be injected by DeckGLView at render time
         # This keeps the spec compact and avoids serializing potentially large datasets
         if "layers" in deckgl_spec:
             for layer in deckgl_spec["layers"]:
+                # Remove data completely - do not include in spec
                 layer.pop("data", None)
+                # Also remove any nested data structures that PyDeck might add
+                if isinstance(layer, dict):
+                    for key in list(layer.keys()):
+                        if key.lower() == "data" or key.lower().endswith("_data"):
+                            layer.pop(key, None)
 
         # Extract tooltips if present
         tooltips = deckgl_spec.pop("tooltip", True)

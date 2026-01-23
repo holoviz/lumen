@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import textwrap
 import traceback
 
 from copy import deepcopy
@@ -422,7 +423,7 @@ class VegaLiteOutput(LumenOutput):
 
 class DeckGLOutput(LumenOutput):
     """Output class for DeckGL 3D map visualizations.
-    
+
     Handles serialization/deserialization of DeckGL specs and provides
     appropriate export formats including standalone HTML.
     """
@@ -432,11 +433,8 @@ class DeckGLOutput(LumenOutput):
     _controls = [CopyControls, RetryControls]
     _label = "Map"
 
-    # Default map style for DeckGL visualizations
-    DEFAULT_MAP_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
-
     # Required keys for a valid DeckGL spec
-    REQUIRED_KEYS = frozenset({"layers", "initialViewState"})
+    _required_keys = frozenset({"layers", "initialViewState"})
 
     @classmethod
     def _serialize_component(cls, component: Component, spec_dict: dict[str, Any] | None = None) -> tuple[str, dict[str, Any]]:
@@ -461,7 +459,7 @@ class DeckGLOutput(LumenOutput):
         if "spec" in spec:
             spec = spec["spec"]
 
-        missing = cls.REQUIRED_KEYS - set(spec.keys())
+        missing = cls._required_keys - set(spec.keys())
         if missing:
             raise ValueError(f"DeckGL spec missing required keys: {missing}")
 
@@ -498,7 +496,6 @@ class DeckGLOutput(LumenOutput):
 
     def _generate_html(self, spec: dict) -> str:
         """Generate standalone HTML for DeckGL visualization."""
-        import textwrap
         spec_json = json.dumps(spec, indent=2)
         return textwrap.dedent(f"""\
             <!DOCTYPE html>
