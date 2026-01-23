@@ -304,22 +304,14 @@ class DeckGLAgent(BaseCodeAgent):
         doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
 
         # Generate spec based on code_execution mode
-        if self.code_execution_enabled:
-            # Use PyDeck code execution
-            full_dict = await self._generate_code_spec(
-                messages, context, pipeline, doc
-            )
-            if full_dict is None:
-                # User rejected code execution
-                return [], {}
-        else:
-            # Use declarative JSON spec generation
-            full_dict = await self._generate_yaml_spec(
-                messages, context, pipeline, doc
-            )
+        full_dict = await self._generate_spec(messages, context, pipeline, doc)
+        if full_dict is None:
+            # User rejected code execution
+            return [], {}
 
         # Create view and output
         view = self.view_type(pipeline=pipeline, **full_dict)
         out = self._output_type(component=view, title=step_title)
-
-        return [out], {"view": dict(full_dict, type=view.view_type)}
+        # Store both view type and agent name for context continuity
+        agent_name = type(self).__name__
+        return [out], {"view": dict(full_dict, type=view.view_type, agent=agent_name)}

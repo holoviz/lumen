@@ -391,8 +391,8 @@ class VegaLiteAgent(BaseCodeAgent):
         messages: list[Message],
         context: TContext,
         pipeline: Pipeline,
-        doc_examples: list,
         doc: str,
+        doc_examples: list | None = None,
         errors: list | None = None
     ) -> dict[str, Any]:
         """Generate VegaLite spec via YAML (declarative mode)."""
@@ -428,8 +428,8 @@ class VegaLiteAgent(BaseCodeAgent):
         messages: list[Message],
         context: TContext,
         pipeline: Pipeline,
-        doc_examples: list,
         doc: str,
+        doc_examples: list | None = None,
         errors: list | None = None,
     ) -> dict[str, Any] | None:
         """Generate spec via Altair code execution."""
@@ -614,24 +614,23 @@ class VegaLiteAgent(BaseCodeAgent):
         # Step 1: Generate basic spec
         doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
         # Produces {"spec": {$schema: ..., ...}, "sizing_mode": ..., ...}
-        if self.code_execution in ("prompt", "llm", "allow"):
-            full_dict = await self._generate_code_spec(
-                messages, context, pipeline, doc_examples, doc,
-            )
-            if full_dict is None:
-                # User rejected code execution, exit gracefully
-                return [], {}
-        else:
-            full_dict = await self._generate_yaml_spec(messages, context, pipeline, doc_examples, doc)
+        full_dict = await self._generate_spec(
+            messages, context, pipeline, doc, doc_examples=doc_examples
+        )
+        if full_dict is None:
+            # User rejected code execution
+            return [], {}
 
         # Step 2: Show complete plot immediately
         view = self.view_type(pipeline=pipeline, **full_dict)
         out = self._output_type(component=view, title=step_title)
 
         # Step 3: enhancements (LLM-driven creative decisions)
-        if self.code_execution == "disabled":
+        if not self.code_execution_enabled:
             state.execute(partial(self._polish_plot, out, messages, context, doc))
-        return [out], {"view": dict(full_dict, type=view.view_type)}
+        # Store both view type and agent name for context continuity
+        agent_name = type(self).__name__
+        return [out], {"view": dict(full_dict, type=view.view_type, agent=agent_name)}
 
     async def annotate(
         self,

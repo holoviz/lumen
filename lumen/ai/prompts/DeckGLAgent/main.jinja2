@@ -126,11 +126,3 @@ ArcLayer (connections):
 }
 ```
 {% endblock %}
-
-{% block context %}
-Table: {{ memory['pipeline'].table }}
-Data: {{ memory['data'] }}
-{%- if "view" in memory %}
-Previous spec: {{ memory["view"]["spec"] | tojson }}
-{%- endif %}
-{%- endblock %}

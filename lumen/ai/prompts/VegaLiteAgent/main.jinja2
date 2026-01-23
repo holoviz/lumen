@@ -220,24 +220,3 @@ encoding:
     - {field: Total_Students, type: quantitative, format: ",", title: "Total Students"}
 ```
 {% endblock %}
-
-{% block context %}
-Available visualization types:
-{{ doc }}
-
-The current SQL table name: {{ memory['pipeline'].table }}.
-
-Here is the current dataset to use:
-{{ memory['data'] }}
-
-{%- if "view" in memory %}
-The previous view specification was:
-```yaml
-{{ memory["view"]["spec"] | json_to_yaml }}
-```
-{%- endif %}
-
-{% if memory['pipeline'].source.dialect == "snowflake" %}
-Please use all upper case for field names.
-{% endif %}
-{%- endblock %}
