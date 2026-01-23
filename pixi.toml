@@ -97,7 +97,7 @@ toolz = "*"
 # =============================================
 [feature.doc.dependencies]
 # Replaced mkdocs with zensical
-zensical = "*"
+zensical = "<0.0.17"
 mkdocstrings = "*"
 mkdocstrings-python = "*"
 mkdocs-gen-files = "*"
@@ -105,7 +105,7 @@ mkdocs-literate-nav = "*"
 
 [feature.doc.tasks]
 # Updated tasks to use zensical instead of mkdocs
-docs-build = { cmd = 'zensical build', depends-on = ['install'] }
+docs-build = { cmd = 'zensical build --clean', depends-on = ['install'] }
 docs-serve = { cmd = 'zensical serve', depends-on = ['install'] }
 docs-clean = { cmd = 'rm -rf builtdocs', depends-on = ['install'] }
 
