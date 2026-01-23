@@ -386,7 +386,7 @@ class VegaLiteAgent(BaseCodeAgent):
         return list(dict.fromkeys(as_fields))
 
     @retry_llm_output()
-    async def _generate_basic_spec(
+    async def _generate_yaml_spec(
         self,
         messages: list[Message],
         context: TContext,
@@ -395,7 +395,7 @@ class VegaLiteAgent(BaseCodeAgent):
         doc: str,
         errors: list | None = None
     ) -> dict[str, Any]:
-        """Generate the basic VegaLite spec structure."""
+        """Generate VegaLite spec via YAML (declarative mode)."""
         errors_context = self._build_errors_context(pipeline, context, errors)
         with self._add_step(title="Creating basic plot structure", steps_layout=self._steps_layout) as step:
             system_prompt = await self._render_prompt(
@@ -622,7 +622,7 @@ class VegaLiteAgent(BaseCodeAgent):
                 # User rejected code execution, exit gracefully
                 return [], {}
         else:
-            full_dict = await self._generate_basic_spec(messages, context, pipeline, doc_examples, doc)
+            full_dict = await self._generate_yaml_spec(messages, context, pipeline, doc_examples, doc)
 
         # Step 2: Show complete plot immediately
         view = self.view_type(pipeline=pipeline, **full_dict)

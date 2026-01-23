@@ -142,7 +142,7 @@ class DeckGLAgent(BaseCodeAgent):
         super().__init__(**params)
 
     @retry_llm_output()
-    async def _generate_deckgl_spec(
+    async def _generate_yaml_spec(
         self,
         messages: list[Message],
         context: TContext,
@@ -150,7 +150,7 @@ class DeckGLAgent(BaseCodeAgent):
         doc: str,
         errors: list | None = None
     ) -> dict[str, Any]:
-        """Generate DeckGL spec directly via JSON (declarative mode)."""
+        """Generate DeckGL spec via YAML/JSON (declarative mode)."""
         errors_context = self._build_errors_context(pipeline, context, errors)
 
         with self._add_step(title="Generating DeckGL specification", steps_layout=self._steps_layout) as step:
@@ -308,7 +308,7 @@ class DeckGLAgent(BaseCodeAgent):
                 return [], {}
         else:
             # Use declarative JSON spec generation
-            full_dict = await self._generate_deckgl_spec(
+            full_dict = await self._generate_yaml_spec(
                 messages, context, pipeline, doc
             )
 

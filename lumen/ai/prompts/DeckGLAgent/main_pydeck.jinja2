@@ -21,41 +21,10 @@ Generate PyDeck code. Data is `df`, assign to `deck`. NO I/O methods (.to_html()
 7. **PathLayer** - Connected line segments
 
 # Key Parameters for 3D Visualization
-
-**ColumnLayer (3D bars):**
-```python
-pdk.Layer(
-    "ColumnLayer",
-    data=df,
-    get_position=["longitude", "latitude"],
-    get_elevation="value",  # column name for height
-    get_fill_color=[65, 182, 196, 220],
-    disk_resolution=12,
-    radius=30000,
-    elevation_scale=100,
-    extruded=True,
-    pickable=True,
-)
-```
-
-**HexagonLayer (3D hexbins):**
-```python
-pdk.Layer(
-    "HexagonLayer",
-    data=df,
-    get_position=["longitude", "latitude"],
-    radius=10000,
-    elevation_scale=50,
-    elevation_range=[0, 3000],
-    extruded=True,
-    pickable=True,
-    coverage=0.85,
-)
-```
-
-# View State for 3D
 - `pitch`: 45-60 for good 3D perspective
 - `bearing`: 0 or slight angle (-15 to 15) for visual interest
+- `elevation_scale`: Controls the height of 3D elements
+- `extruded`: Set to True for 3D extrusion
 
 # Map Styles (no API key needed)
 - `"https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"` (dark - best for 3D)
