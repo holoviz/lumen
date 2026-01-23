@@ -23,6 +23,16 @@ Create a complete Lumen dashboard in under 15 minutes using YAML specifications.
 - Creating interactive visualizations
 - Deploying dashboards for sharing
 
+### [SaaS Executive Dashboard](saas_company.md)
+Turn recurring analytics requests into one-click reproducible reports. Build an executive dashboard that combines SQL queries, custom visualizations, and AI-generated insights—then export to Jupyter notebooks or deploy as a web app.
+
+**You'll learn:**
+
+- Creating custom Actions for specialized visualizations
+- Using SQLQuery for deterministic metrics with AI captions
+- Wrapping agents with ActorTask for narrative insights
+- Organizing reports with Sections and sharing context between tasks
+
 ## More Coming Soon
 
 We're constantly adding new tutorials. Check back regularly or [contribute your own](../../reference/contributing.md)!
