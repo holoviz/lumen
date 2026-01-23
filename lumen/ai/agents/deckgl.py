@@ -78,30 +78,6 @@ class PyDeckSpec(PartialBaseModel):
         - Column names have spaces replaced with underscores and non-alphanumeric chars removed
         - Must assign final deck to variable `deck`
         - Do NOT call .to_html(), .show(), or any I/O methods
-        Example:
-        ```python
-        import pydeck as pdk
-        layer = pdk.Layer(
-            "HexagonLayer",
-            data=df,
-            get_position=["longitude", "latitude"],
-            radius=10000,
-            elevation_scale=50,
-            elevation_range=[0, 3000],
-            extruded=True,
-            pickable=True,
-        )
-        view_state = pdk.ViewState(
-            latitude=37.8,
-            longitude=-122.4,
-            zoom=6,
-            pitch=45,
-        )
-        deck = pdk.Deck(
-            layers=[layer],
-            initial_view_state=view_state,
-            map_style="https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
-        )
         ```
         """
     )
