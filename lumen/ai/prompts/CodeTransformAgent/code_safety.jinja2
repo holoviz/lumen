@@ -1,0 +1,10 @@
+{% extends 'BaseViewAgent/code_safety.jinja2' %}
+
+{% set library_name = 'pandas' %}
+
+{% block safe_items %}
+- Pandas operations on the provided `df` DataFrame
+- Numpy operations for vectorized math (`np`)
+- Assignment to `df_out`
+{{ super() }}
+{% endblock %}
