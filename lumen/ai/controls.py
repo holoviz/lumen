@@ -639,9 +639,10 @@ class DownloadControls(BaseSourceControls):
         self._cancel_button = Button.from_param(
             self.param.cancel,
             name="Cancel",
-            icon="circle-x",
+            icon="close",
             on_click=self._handle_cancel,
-            visible=self.param._active_download_task.rx.is_not(None)
+            visible=self.param._active_download_task.rx.is_not(None),
+            height=42,
         )
 
         self._active_download_task = None
