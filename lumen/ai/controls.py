@@ -7,7 +7,7 @@ import re
 import zipfile
 
 from typing import TYPE_CHECKING
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import aiohttp
 import pandas as pd
@@ -30,7 +30,7 @@ from ..sources.duckdb import DuckDBSource
 from ..util import detect_file_encoding, normalize_table_name
 from .config import SOURCE_TABLE_SEPARATOR
 from .context import TContext
-from .utils import generate_diff
+from .utils import generate_diff, log_debug
 
 if TYPE_CHECKING:
     from .views import SQLOutput
@@ -475,6 +475,10 @@ class BaseSourceControls(Viewer):
 
     def _process_files(self):
         """Process all file cards and add them as sources."""
+        # Clear previous error/warning messages
+        self._error_placeholder.object = ""
+        self._error_placeholder.visible = False
+
         if len(self._file_cards) == 0:
             return 0, 0, 0
 
@@ -493,7 +497,9 @@ class BaseSourceControls(Viewer):
 
         # Process data files (tables)
         for card in data_cards:
+            log_debug(f"Processing data card: {card.filename}.{card.extension} (alias: {card.alias})")
             if card.extension.endswith(custom_table_extensions):
+                log_debug(f"Using custom handler for extension: {card.extension}")
                 source = table_upload_callbacks[card.extension](
                     self.context, card.file_obj, card.alias, card.filename
                 )
@@ -506,6 +512,7 @@ class BaseSourceControls(Viewer):
                         self.outputs["sources"].append(source)
                     self.param.trigger("outputs")
             elif card.extension.endswith(TABLE_EXTENSIONS):
+                log_debug(f"Processing as table with extension: {card.extension}")
                 if source is None:
                     source_id = f"UploadedSource{self._count:06d}"
                     source = DuckDBSource(uri=":memory:", ephemeral=True, name=source_id, tables={})
@@ -515,11 +522,16 @@ class BaseSourceControls(Viewer):
                     source.metadata[table_name] = {}
                 source.metadata[table_name]["filename"] = filename
                 n_tables += self._add_table(source, card.file_obj, card)
+            else:
+                log_debug(f"Skipping file with unrecognized extension: {card.filename}.{card.extension}. Valid extensions: {TABLE_EXTENSIONS}")
+                self._error_placeholder.object += f"\n⚠️ Skipped '{card.filename}.{card.extension}': unsupported format. Supported: {', '.join(TABLE_EXTENSIONS)}."
+                self._error_placeholder.visible = True
 
         # Process metadata files
         for card in metadata_cards:
             n_metadata += self._add_metadata_file(card)
 
+        log_debug(f"Processed files: {n_tables} tables, {n_metadata} metadata files")
         return n_tables, 0, n_metadata
 
     def _clear_uploads(self):
@@ -671,6 +683,19 @@ class DownloadControls(BaseSourceControls):
         if '?' in filename:
             filename = filename.split('?')[0]
 
+        # Check if the extracted extension is a valid table/metadata extension
+        current_ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+        valid_extensions = TABLE_EXTENSIONS + METADATA_EXTENSIONS
+
+        # If extension is not valid, check for format= query parameter
+        if current_ext not in valid_extensions:
+            query_params = parse_qs(parsed.query)
+            format_param = query_params.get('format', [None])[0]
+            if format_param and format_param.lower() in valid_extensions:
+                # Replace or add the correct extension
+                base_name = filename.rsplit('.', 1)[0] if '.' in filename else filename
+                filename = f"{base_name}.{format_param.lower()}"
+
         if not filename or '.' not in filename:
             filename = f"data_{abs(hash(url)) % DownloadConfig.DEFAULT_HASH_MODULO}.json"
 
@@ -678,15 +703,37 @@ class DownloadControls(BaseSourceControls):
 
     def _extract_filename_from_headers(self, response_headers: dict, default_filename: str) -> str:
         """Extract filename from HTTP headers if available"""
-        if 'content-disposition' not in response_headers:
-            return default_filename
+        # First check Content-Disposition header
+        if 'content-disposition' in response_headers:
+            cd = response_headers['content-disposition']
+            matches = re.findall('filename="?([^"]+)"?', cd)
+            if matches:
+                suggested_name = matches[0]
+                if '.' in suggested_name:
+                    return suggested_name
 
-        cd = response_headers['content-disposition']
-        matches = re.findall('filename="?([^"]+)"?', cd)
-        if matches:
-            suggested_name = matches[0]
-            if '.' in suggested_name:
-                return suggested_name
+        # Check if current filename has invalid extension, try to fix from Content-Type
+        current_ext = default_filename.rsplit('.', 1)[-1].lower() if '.' in default_filename else ''
+        valid_extensions = TABLE_EXTENSIONS + METADATA_EXTENSIONS
+
+        if current_ext not in valid_extensions and 'content-type' in response_headers:
+            content_type = response_headers['content-type'].lower().split(';')[0].strip()
+            content_type_map = {
+                'text/csv': 'csv',
+                'application/csv': 'csv',
+                'application/json': 'json',
+                'application/geo+json': 'geojson',
+                'application/vnd.geo+json': 'geojson',
+                'application/parquet': 'parquet',
+                'application/vnd.apache.parquet': 'parquet',
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+                'application/vnd.ms-excel': 'xlsx',
+                'text/plain': 'csv',  # Often CSVs are served as text/plain
+            }
+            if content_type in content_type_map:
+                ext = content_type_map[content_type]
+                base_name = default_filename.rsplit('.', 1)[0] if '.' in default_filename else default_filename
+                return f"{base_name}.{ext}"
 
         return default_filename
 
