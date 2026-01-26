@@ -758,10 +758,12 @@ class UI(Viewer):
             self._navigation_title.object = "Exploration"
             self._navigation_caption.object = EXPLORATION_CAPTION
 
-        if self._should_show_navigation():
-            self._main[:] = [self._navigation, main_content]
-        else:
-            self._main[:] = [main_content]
+        show_nav = self._should_show_navigation()
+        if not self._sidebar_menu.items[6]["active"] and show_nav:
+            self._toggle_navigation(True)
+        if not show_nav:
+            self._toggle_navigation(False)
+        self._main[:] = [self._navigation, main_content]
 
     def _configure_interface(self, interface):
         def on_undo(instance, _):
@@ -1195,7 +1197,7 @@ class UI(Viewer):
             sx={
                 # Hover
                 ".sidebar": {"transition": "width 0.2s ease-in-out"},
-                ".sidebar:hover": {"width": "140px"},
+                ".sidebar:hover": {"width": "140px", "transitionDelay": "0.5s"},
                 "&.mui-light .sidebar": {"bgcolor": "var(--mui-palette-grey-50)"},
             }
         )
@@ -1600,12 +1602,12 @@ class ExplorerUI(UI):
     def _handle_sidebar_event(self, item):
         if item["id"] == "exploration":
             self._toggle_report_mode(False)
-            self._sidebar_menu.update_item(item, active=True, icon="insights")
+            self._sidebar_menu.update_item(item, active=True, icon="insert_chart")
             self._sidebar_menu.update_item(self._sidebar_menu.items[1], active=False, icon="description_outlined")
             self._update_home()
         elif item["id"] == "report":
             self._toggle_report_mode(True)
-            self._sidebar_menu.update_item(self._sidebar_menu.items[0], active=False, icon="timeline")
+            self._sidebar_menu.update_item(self._sidebar_menu.items[0], active=False, icon="insert_chart_outlined")
             self._sidebar_menu.update_item(item, active=True, icon="description")
         elif item["id"] == "data":
             self._open_sources_dialog()
@@ -1613,13 +1615,19 @@ class ExplorerUI(UI):
             self._settings_popup.open = True
         elif item["id"] == "help":
             self._open_info_dialog()
+        elif item["id"] == "nav":
+            self._toggle_navigation(not item["active"])
+
+    def _toggle_navigation(self, active: bool):
+        self._navigation.visible = active
+        self._sidebar_menu.update_item(self._sidebar_menu.items[6], active=active, icon="layers" if active else "layers_outlined")
 
     @param.depends("_exploration", watch=True)
     def _update_home(self):
         if not hasattr(self, '_page'):
             return
         exploration, report = self._sidebar_menu.items[:2]
-        self._sidebar_menu.update_item(exploration, active=True, icon="timeline" if report["active"] else "insights")
+        self._sidebar_menu.update_item(exploration, active=True, icon="timeline" if report["active"] else "insert_chart")
         self._update_main_view()
 
     def _render_sidebar(self) -> list[Viewable]:
@@ -1706,11 +1714,13 @@ class ExplorerUI(UI):
         )
         self._sidebar_menu = menu = MenuList(
             items=[
-                {"label": "Explore", "icon": "insights", "id": "exploration", "active": True},
+                {"label": "Explore", "icon": "insert_chart", "id": "exploration", "active": True},
                 {"label": "Report", "icon": "description_outlined", "id": "report", "active": False},
                 None,
                 {"label": "Sources", "icon": "create_new_folder_outlined", "id": "data"},
                 {"label": "Settings", "icon": "tune_outlined", "id": "preferences"},
+                None,
+                {"label": "Navigate", "icon": "layers_outlined", "id": "nav", "active": False},
                 None,
                 {"label": "Help", "icon": "help_outline", "id": "help"}
             ],
@@ -1741,7 +1751,6 @@ class ExplorerUI(UI):
             },
             sizing_mode="stretch_width",
         )
-
         return [menu]
 
     def _render_page(self):
@@ -1809,16 +1818,25 @@ class ExplorerUI(UI):
             margin=(10, 10, 5, 10),
             sizing_mode="stretch_width"
         )
+        self._navigation_footer = Typography(
+            'Toggle <span class="material-icons" style="vertical-align: middle;">layers</span>**Navigate** to close',
+            variant="body2",
+            color="text.secondary",
+            margin=20,
+            styles={"margin": "auto auto 20px auto"}
+        )
         self._navigation = Paper(
             self._navigation_title,
             self._navigation_caption,
             self._explorations,
-            sizing_mode="stretch_height",
+            self._navigation_footer,
+            height_policy="max",
             sx={"borderRadius": 0},
             theme_config={"light": {"palette": {"background": {"paper": "var(--mui-palette-grey-100)"}}}, "dark": {}},
-            width=275,
+            visible=False,
+            width=250
         )
-        self._main[:] = [self._splash]
+        self._main[:] = [self._navigation, self._splash]
 
         # Create code execution warning dialog if code execution is not hidden
         if self.code_execution != "hidden":
@@ -1900,7 +1918,7 @@ class ExplorerUI(UI):
             title='Home',
             conversation=self.interface.objects
         )
-        self._exploration = {'label': 'Home', 'icon': None, 'view': self._home, 'items': []}
+        self._exploration = {'label': 'New Exploration', 'icon': "add_circle_outline", 'view': self._home, 'items': []}
         super()._configure_session()
         self._idle = asyncio.Event()
         self._idle.set()
