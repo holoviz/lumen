@@ -500,7 +500,7 @@ class DeckGLOutput(LumenOutput):
         spec = deepcopy(load_yaml(self.spec))
 
         # Re-embed data from pipeline into layers
-        if self.component and hasattr(self.component, 'pipeline') and self.component.pipeline:
+        if self.component and self.component.pipeline:
             df = self.component.get_data()
             if df is not None and 'layers' in spec:
                 data_records = df.to_dict(orient='records')
