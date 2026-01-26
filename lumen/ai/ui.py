@@ -759,6 +759,8 @@ class UI(Viewer):
         show_nav = self._should_show_navigation()
         if not self._nav_toggle.visible and show_nav:
             self._nav_toggle.value = True
+        if not show_nav:
+            self._nav_toggle.value = False
         self._nav_toggle.visible = show_nav
         self._main[:] = [self._navigation, main_content]
 

@@ -128,7 +128,7 @@ async def test_explorer_ui_initialization(explorer_ui):
     assert explorer_ui._home is not None
     assert explorer_ui._home.title == 'Home'
     assert len(explorer_ui._explorations.items) == 1
-    assert explorer_ui._explorations.items[0]['label'] == 'Home'
+    assert explorer_ui._explorations.items[0]['label'] == 'New Exploration'
 
 async def test_exploration_ui_error(explorer_ui_with_error):
     ui = explorer_ui_with_error
@@ -477,8 +477,8 @@ async def test_chat_upload_flow_opens_dialog_and_starts_exploration(explorer_ui,
     assert len(new_sources) == 1
     assert "uploaded" in new_sources[0].get_tables()
 
-    assert ui._main[0] is ui.interface
-    assert ui._main[0][0].object == "Show me the uploaded data"
+    assert ui._main[1] is ui.interface
+    assert ui._main[1][0].object == "Show me the uploaded data"
 
 
 # Tests for view transition states
@@ -486,8 +486,10 @@ async def test_chat_upload_flow_opens_dialog_and_starts_exploration(explorer_ui,
 async def test_initial_state_shows_splash(explorer_ui):
     """Test 1: On start the user sees just the self._splash in main."""
     # Initially, _main should contain only _splash
-    assert len(explorer_ui._main) == 1
-    assert explorer_ui._main[0] is explorer_ui._splash
+    assert len(explorer_ui._main) == 2
+    assert explorer_ui._main[0] is explorer_ui._navigation
+    assert explorer_ui._main[1] is explorer_ui._splash
+    assert explorer_ui._navigation.visible == False
 
     # Should be on home
     assert explorer_ui._explorations.value['view'] is explorer_ui._home
@@ -497,7 +499,7 @@ async def test_initial_state_shows_splash(explorer_ui):
 async def test_exploration_launch_transitions_to_split(explorer_ui):
     """Test 2: When an exploration is launched we switch from splash to split view."""
     # Initially showing splash
-    assert explorer_ui._main[0] is explorer_ui._splash
+    assert explorer_ui._main[1] is explorer_ui._splash
 
     # Create an exploration
     explorer_ui._explorer.param.update(table_slug="test_table")
@@ -511,13 +513,11 @@ async def test_exploration_launch_transitions_to_split(explorer_ui):
     await async_wait_until(lambda: explorer_ui._split in explorer_ui._main or explorer_ui._navigation in explorer_ui._main)
 
     # Should now show split view (with navigation if there are explorations)
-    if explorer_ui._should_show_navigation():
-        assert len(explorer_ui._main) == 2
-        assert explorer_ui._main[0] is explorer_ui._navigation
-        assert explorer_ui._main[1] is explorer_ui._split
-    else:
-        assert len(explorer_ui._main) == 1
-        assert explorer_ui._main[0] is explorer_ui._split
+    assert explorer_ui._navigation.visible == explorer_ui._should_show_navigation()
+    assert len(explorer_ui._main) == 2
+    assert explorer_ui._main[0] is explorer_ui._navigation
+    assert explorer_ui._main[1] is explorer_ui._split
+    assert explorer_ui._navigation.visible
 
     # Should not be showing splash anymore
     assert explorer_ui._splash not in explorer_ui._main
@@ -562,7 +562,9 @@ async def test_delete_exploration_switches_to_home(explorer_ui):
     # Should switch back to home (splash view)
     assert len(explorer_ui._explorations.items) == 1
     assert explorer_ui._explorations.value['view'] is explorer_ui._home
-    assert explorer_ui._main[0] is explorer_ui._splash
+    assert explorer_ui._main[0] is explorer_ui._navigation
+    assert explorer_ui._main[1] is explorer_ui._splash
+    assert not explorer_ui._navigation.visible
 
 
 async def test_delete_exploration_switches_to_parent(explorer_ui):
@@ -618,8 +620,8 @@ async def test_switch_to_report_mode_with_no_explorations(explorer_ui):
     explorer_ui._toggle_report_mode(True)
 
     # Should show placeholder message
-    assert len(explorer_ui._main) == 1
-    main_content = explorer_ui._main[0]
+    assert len(explorer_ui._main) == 2
+    main_content = explorer_ui._main[1]
     assert isinstance(main_content, Column)
     # Should contain the "No Explorations Yet" message
     assert len(main_content) >= 1
@@ -646,6 +648,7 @@ async def test_switch_to_report_mode_with_explorations(explorer_ui):
     assert explorer_ui._should_show_navigation()
     assert len(explorer_ui._main) == 2
     assert explorer_ui._main[0] is explorer_ui._navigation
+    assert explorer_ui._navigation.visible
 
     # Main content should be a Report instance
     assert isinstance(explorer_ui._main[1], Container)
@@ -691,8 +694,8 @@ async def test_navigation_visibility_with_explorations(explorer_ui):
     """Test that navigation pane is shown/hidden correctly based on explorations."""
     # Initially no explorations (only home) - no navigation
     assert not explorer_ui._should_show_navigation()
-    assert len(explorer_ui._main) == 1
-    assert explorer_ui._navigation not in explorer_ui._main
+    assert len(explorer_ui._main) == 2
+    assert not explorer_ui._navigation.visible
 
     # Create an exploration
     explorer_ui._explorer.param.update(table_slug="test_table")
@@ -705,6 +708,7 @@ async def test_navigation_visibility_with_explorations(explorer_ui):
     explorer_ui._update_main_view()
     assert len(explorer_ui._main) == 2
     assert explorer_ui._main[0] is explorer_ui._navigation
+    assert explorer_ui._navigation.visible
 
     # Delete exploration
     exploration_item = explorer_ui._explorations.items[1]
@@ -712,8 +716,8 @@ async def test_navigation_visibility_with_explorations(explorer_ui):
 
     # Navigation should be hidden again
     assert not explorer_ui._should_show_navigation()
-    assert len(explorer_ui._main) == 1
-    assert explorer_ui._navigation not in explorer_ui._main
+    assert len(explorer_ui._main) == 2
+    assert not explorer_ui._navigation.visible
 
 
 class TestResolveData:
