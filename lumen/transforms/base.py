@@ -721,10 +721,13 @@ class Rename(Transform):
     transform_type: ClassVar[str] = 'rename'
 
     def apply(self, table: DataFrame) -> DataFrame:
-        return table.rename(
-            axis=self.axis, columns=self.columns, copy=self.copy,
+        kwargs: dict[str, Any] = dict(
+            axis=self.axis, columns=self.columns,
             index=self.index, mapper=self.mapper, level=self.level,
-        )  # type: ignore
+        )
+        if pd_version < Version('3.0.0'):
+            kwargs['copy'] = self.copy
+        return table.rename(**kwargs)  # type: ignore
 
 
 class RenameAxis(Transform):
@@ -762,10 +765,13 @@ class RenameAxis(Transform):
     transform_type: ClassVar[str] = 'rename_axis'
 
     def apply(self, table: DataFrame) -> DataFrame:
-        return table.rename_axis(
-            axis=self.axis, columns=self.columns, copy=self.copy,
+        kwargs: dict[str, Any] = dict(
+            axis=self.axis, columns=self.columns,
             index=self.index, mapper=self.mapper,
         )
+        if pd_version < Version('3.0.0'):
+            kwargs['copy'] = self.copy
+        return table.rename_axis(**kwargs)
 
 
 class Count(Transform):
