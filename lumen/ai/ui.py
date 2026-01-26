@@ -23,7 +23,7 @@ from panel.viewable import (
 from panel_material_ui import (
     Alert, Breadcrumbs, Button, ChatFeed, ChatInterface, ChatMessage,
     Column as MuiColumn, Dialog, FileDownload, IconButton, MenuList, Page,
-    Paper, Popup, Row, Select, Switch, Tabs, Typography,
+    Paper, Popup, Row, Select, Switch, Tabs, ToggleIcon, Typography,
 )
 from panel_splitjs import HSplit, MultiSplit, VSplit
 
@@ -756,10 +756,11 @@ class UI(Viewer):
             self._navigation_title.object = "Exploration"
             self._navigation_caption.object = EXPLORATION_CAPTION
 
-        if self._should_show_navigation():
-            self._main[:] = [self._navigation, main_content]
-        else:
-            self._main[:] = [main_content]
+        show_nav = self._should_show_navigation()
+        if not self._nav_toggle.visible and show_nav:
+            self._nav_toggle.value = True
+        self._nav_toggle.visible = show_nav
+        self._main[:] = [self._navigation, main_content]
 
     def _configure_interface(self, interface):
         def on_undo(instance, _):
@@ -1193,7 +1194,7 @@ class UI(Viewer):
             sx={
                 # Hover
                 ".sidebar": {"transition": "width 0.2s ease-in-out"},
-                ".sidebar:hover": {"width": "140px"},
+                ".sidebar:hover": {"width": "140px", "transitionDelay": "0.5s"},
                 "&.mui-light .sidebar": {"bgcolor": "var(--mui-palette-grey-50)"},
             }
         )
@@ -1740,7 +1741,16 @@ class ExplorerUI(UI):
             sizing_mode="stretch_width",
         )
 
-        return [menu]
+        self._nav_toggle = ToggleIcon(
+            active_icon="chevron_left",
+            icon="chevron_right",
+            styles={"margin-left": "auto", "margin-top": "auto"},
+            value=False,
+            visible=False
+        )
+        self._navigation.visible = self._nav_toggle
+
+        return [menu, self._nav_toggle]
 
     def _render_page(self):
         super()._render_page()
@@ -1811,12 +1821,13 @@ class ExplorerUI(UI):
             self._navigation_title,
             self._navigation_caption,
             self._explorations,
-            sizing_mode="stretch_height",
+            height_policy="max",
             sx={"borderRadius": 0},
             theme_config={"light": {"palette": {"background": {"paper": "var(--mui-palette-grey-100)"}}}, "dark": {}},
-            width=275,
+            visible=False,
+            width=250
         )
-        self._main[:] = [self._splash]
+        self._main[:] = [self._navigation, self._splash]
 
         # Create code execution warning dialog if code execution is not hidden
         if self.code_execution != "hidden":
@@ -1898,7 +1909,7 @@ class ExplorerUI(UI):
             title='Home',
             conversation=self.interface.objects
         )
-        self._exploration = {'label': 'Home', 'icon': None, 'view': self._home, 'items': []}
+        self._exploration = {'label': 'New Exploration', 'icon': "add_circle_outline", 'view': self._home, 'items': []}
         super()._configure_session()
         self._idle = asyncio.Event()
         self._idle.set()
