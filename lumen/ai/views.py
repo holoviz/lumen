@@ -510,7 +510,7 @@ class DeckGLOutput(LumenOutput):
 
         # Use Panel's DeckGL pane to generate HTML via save()
         html_buffer = StringIO()
-        pn.pane.DeckGL(object=spec).save(html_buffer)
+        pn.pane.DeckGL(object=spec, sizing_mode='stretch_both').save(html_buffer)
         html_buffer.seek(0)
         return html_buffer
 
