@@ -10,8 +10,12 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
-from lumen.ai.controls import DownloadControls, SourceCatalog, UploadControls
+from lumen.ai.agents.document_list import DocumentListAgent
+from lumen.ai.controls import (
+    DownloadControls, SourceCatalog, UploadControls, UploadedFileRow,
+)
 from lumen.ai.embeddings import NumpyEmbeddings
+from lumen.ai.schemas import DocumentChunk, Metaset
 from lumen.ai.vector_store import NumpyVectorStore
 from lumen.sources.duckdb import DuckDBSource
 
@@ -64,7 +68,6 @@ class TestDocumentVectorStoreIntegration:
         readme_file = io.BytesIO(readme_content.encode())
         
         with patch.object(upload_controls, '_extract_metadata_content', return_value=readme_content):
-            from lumen.ai.controls import UploadedFileRow
             card = UploadedFileRow(
                 file_obj=readme_file,
                 filename="readme",
@@ -94,7 +97,6 @@ class TestDocumentVectorStoreIntegration:
         general_file = io.BytesIO(general_content.encode())
         
         with patch.object(upload_controls, '_extract_metadata_content', return_value=general_content):
-            from lumen.ai.controls import UploadedFileRow
             card = UploadedFileRow(
                 file_obj=general_file,
                 filename="general",
@@ -123,7 +125,6 @@ class TestDocumentVectorStoreIntegration:
         with patch.object(upload_controls, '_extract_metadata_content') as mock_extract:
             mock_extract.side_effect = [readme_content, schema_content]
             
-            from lumen.ai.controls import UploadedFileRow
             readme_card = UploadedFileRow(
                 file_obj=io.BytesIO(readme_content.encode()),
                 filename="readme",
@@ -171,7 +172,6 @@ class TestSourceCatalogAssociationTracking:
         # Add metadata file
         readme_content = "# Population Data"
         with patch.object(upload_controls, '_extract_metadata_content', return_value=readme_content):
-            from lumen.ai.controls import UploadedFileRow
             card = UploadedFileRow(
                 file_obj=io.BytesIO(readme_content.encode()),
                 filename="readme",
@@ -215,7 +215,6 @@ class TestSourceCatalogAssociationTracking:
         # Add shared documentation
         shared_content = "# Sports Database Overview"
         with patch.object(upload_controls, '_extract_metadata_content', return_value=shared_content):
-            from lumen.ai.controls import UploadedFileRow
             card = UploadedFileRow(
                 file_obj=io.BytesIO(shared_content.encode()),
                 filename="overview",
@@ -305,7 +304,6 @@ class TestDocumentQueryFiltering:
         with patch.object(upload_controls, '_extract_metadata_content') as mock_extract:
             mock_extract.side_effect = [doc1_content, doc2_content]
             
-            from lumen.ai.controls import UploadedFileRow
             for content, name in [(doc1_content, "doc_a"), (doc2_content, "doc_b")]:
                 card = UploadedFileRow(
                     file_obj=io.BytesIO(content.encode()),
@@ -351,8 +349,6 @@ class TestUploadControlsMetadataProcessing:
 
     async def test_metadata_auto_detection(self, upload_controls):
         """Test that metadata files are auto-detected by extension and filename patterns."""
-        from lumen.ai.controls import UploadedFileRow
-
         # Test extension-based detection
         md_file = UploadedFileRow(
             file_obj=io.BytesIO(b"content"),
@@ -620,7 +616,6 @@ class TestSourceCatalogDocumentToggling:
         # Add first readme.md
         readme1_content = "# First README"
         with patch.object(upload_controls, '_extract_metadata_content', return_value=readme1_content):
-            from lumen.ai.controls import UploadedFileRow
             card1 = UploadedFileRow(
                 file_obj=io.BytesIO(readme1_content.encode()),
                 filename="readme",
@@ -674,9 +669,6 @@ class TestDocumentListAgentIntegration:
 
     async def test_document_list_agent_with_metaset(self):
         """Test that DocumentListAgent works with metaset.docs."""
-        from lumen.ai.agents.document_list import DocumentListAgent
-        from lumen.ai.schemas import DocumentChunk, Metaset
-
         # Create metaset with document chunks
         metaset = Metaset(
             query="test",
@@ -703,9 +695,6 @@ class TestDocumentListAgentIntegration:
 
     async def test_document_list_agent_no_docs(self):
         """Test that DocumentListAgent doesn't apply when no docs."""
-        from lumen.ai.agents.document_list import DocumentListAgent
-        from lumen.ai.schemas import Metaset
-
         # Metaset without docs
         metaset = Metaset(query="test", catalog={}, docs=None)
         context = {"metaset": metaset}
@@ -715,9 +704,6 @@ class TestDocumentListAgentIntegration:
 
     async def test_document_list_agent_single_doc(self):
         """Test that DocumentListAgent doesn't apply for single doc."""
-        from lumen.ai.agents.document_list import DocumentListAgent
-        from lumen.ai.schemas import DocumentChunk, Metaset
-
         # Metaset with only one unique document
         metaset = Metaset(
             query="test",
@@ -874,7 +860,6 @@ class TestDownloadControlsUnsupportedFiles:
 
     def test_unsupported_extension_shows_warning(self, download_controls):
         """Test that unsupported file extensions show a warning message."""
-        from lumen.ai.controls import UploadedFileRow
 
         # Create a file card with unsupported extension
         card = UploadedFileRow(
@@ -899,7 +884,6 @@ class TestDownloadControlsUnsupportedFiles:
 
     def test_mixed_supported_unsupported_files(self, download_controls):
         """Test processing mix of supported and unsupported files."""
-        from lumen.ai.controls import UploadedFileRow
 
         # Create cards with mixed extensions
         csv_card = UploadedFileRow(
@@ -943,7 +927,6 @@ class TestDownloadControlsUnsupportedFiles:
 
     def test_multiple_unsupported_files_all_shown(self, download_controls):
         """Test that warnings for multiple unsupported files are all shown."""
-        from lumen.ai.controls import UploadedFileRow
 
         # Create multiple unsupported file cards
         cards = [
@@ -977,7 +960,6 @@ class TestUploadControlsUnsupportedFiles:
 
     async def test_unsupported_extension_shows_warning(self, upload_controls):
         """Test that unsupported file extensions show a warning message."""
-        from lumen.ai.controls import UploadedFileRow
 
         # Create a file card with unsupported extension
         card = UploadedFileRow(
