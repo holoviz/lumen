@@ -23,6 +23,7 @@ Lumen includes eight agents automatically. You don't need to configure anything.
 |-------|-------------|
 | **SQLAgent** | Writes and runs SQL queries |
 | **VegaLiteAgent** | Creates charts and visualizations |
+| **DeckGLAgent** | Creates 3D map visualizations for geographic data |
 | **ChatAgent** | Answers questions and provides guidance |
 | **TableListAgent** | Lists available tables and columns |
 | **DocumentListAgent** | Manages uploaded documents |
@@ -36,11 +37,11 @@ Include only the agents you need:
 
 ``` py title="Limit to specific agents"
 import lumen.ai as lmai
-from lumen.ai.agents import ChatAgent, SQLAgent, VegaLiteAgent
+from lumen.ai.agents import ChatAgent, SQLAgent, VegaLiteAgent, DeckGLAgent
 
 ui = lmai.ExplorerUI(
     data='penguins.csv',
-    default_agents=[ChatAgent, SQLAgent, VegaLiteAgent]
+    default_agents=[ChatAgent, SQLAgent, VegaLiteAgent, DeckGLAgent]
 )
 ui.servable()
 ```
@@ -100,6 +101,7 @@ model_config = {
     "default": {"model": "gpt-4o-mini"},  # Cheap model for most agents
     "sql": {"model": "gpt-4o"},           # Powerful model for SQL
     "vega_lite": {"model": "gpt-4o"},     # Powerful model for charts
+    "deck_gl": {"model": "gpt-4o"},       # Powerful model for 3D maps
     "chat": {"model": "gpt-4o"},          # Powerful model for analysis
 }
 
@@ -112,10 +114,11 @@ ui.servable()
 **Model types match agent names:**
 
 - SQLAgent uses the `"sql"` model
-- VegaLiteAgent uses the `"vega_lite"` model  
+- VegaLiteAgent uses the `"vega_lite"` model
+- DeckGLAgent uses the `"deck_gl"` model
 - ChatAgent uses the `"chat"` model (falls back to `"default"` if not specified)
 
-Agent class names are converted to model keys automatically (e.g., `SQLAgent` → `"sql"`, `VegaLiteAgent` → `"vega_lite"`).
+Agent class names are converted to model keys automatically (e.g., `SQLAgent` → `"sql"`, `VegaLiteAgent` → `"vega_lite"`, `DeckGLAgent` → `"deck_gl"`).
 
 See [LLM Providers](llm_providers.md) for complete details.
 

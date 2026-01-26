@@ -3,6 +3,7 @@ from .base import Agent
 from .base_code import BaseCodeAgent
 from .chat import ChatAgent
 from .dbtsl import DbtslAgent
+from .deck_gl import DeckGLAgent
 from .document_list import DocumentListAgent
 from .hvplot import hvPlotAgent
 from .sql import SQLAgent
@@ -16,6 +17,7 @@ __all__ = [
     "BaseCodeAgent",
     "ChatAgent",
     "DbtslAgent",
+    "DeckGLAgent",
     "DocumentListAgent",
     "hvPlotAgent",
     "SQLAgent",

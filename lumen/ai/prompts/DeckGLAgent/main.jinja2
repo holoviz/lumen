@@ -1,0 +1,128 @@
+{% extends 'BaseViewAgent/main.jinja2' %}
+
+{% block instructions %}
+Generate DeckGL JSON spec. Do NOT include `data` in layers (injected automatically).
+
+**CRITICAL:** Use `@@=` prefix for ALL column-based accessors:
+- Position: `"getPosition": "@@=[longitude, latitude]"` (NOT `["longitude", "latitude"]`)
+- Elevation: `"getElevation": "@@=value"` or `"getElevation": "@@=value * 100"`
+- Static values (no @@=): `"getFillColor": [255, 140, 0, 200]`
+
+Column names: spaces→underscores, non-alphanumeric removed (e.g., "Plant latitude"→"Plant_latitude")
+
+# REQUIRED STRUCTURE
+- `initialViewState`: latitude, longitude, zoom, pitch (45+ for 3D), bearing
+- `layers`: array with `@@type` for each layer
+- `views`: `[{"@@type": "MapView", "controller": true}]`
+
+# LAYER SELECTION (prefer 3D for visual impact)
+
+**For data with numeric values:**
+1. **HexagonLayer** - Aggregates points into 3D hexagonal bins (PREFERRED)
+2. **ColumnLayer** - 3D bars at discrete points
+3. **GridLayer** - Square grid aggregation with 3D elevation
+
+**For point-only data:**
+4. **ScatterplotLayer** - Simple colored circles
+5. **HeatmapLayer** - Continuous density
+
+**For connections:**
+6. **ArcLayer** - Origin-destination arcs
+
+# KEY LAYER PROPERTIES
+
+| Layer | Key Props |
+|-------|-----------|
+| HexagonLayer | `radius`, `elevationScale`, `elevationRange`, `extruded: true`, `coverage` |
+| ColumnLayer | `getElevation`, `radius`, `elevationScale`, `diskResolution`, `extruded: true` |
+| ScatterplotLayer | `radiusMinPixels`, `radiusMaxPixels`, `getFillColor` |
+| ArcLayer | `getSourcePosition`, `getTargetPosition`, `getWidth` |
+
+# STYLING
+- `pickable: true` for tooltips
+- `autoHighlight: true` for hover effect
+- **Colors:** Always use static RGBA arrays: `"getFillColor": [255, 140, 0, 200]` (NO @@= prefix, NO Math functions)
+- **Elevation/Radius:** Use simple math only: `"@@=value"` or `"@@=value * 100"` (NO Math.min, Math.max, etc.)
+- Zoom levels: 1-3 continent, 4-6 country, 7-10 city, 11+ street
+- Pitch: 45-60 for good 3D perspective
+{% endblock %}
+
+{% block examples %}
+HexagonLayer (3D aggregation - PREFERRED):
+```json
+{
+  "initialViewState": {"latitude": 37.8, "longitude": -122.4, "zoom": 5, "pitch": 45, "bearing": 0},
+  "layers": [{
+    "@@type": "HexagonLayer",
+    "id": "hex",
+    "getPosition": "@@=[longitude, latitude]",
+    "radius": 15000,
+    "elevationScale": 50,
+    "elevationRange": [0, 3000],
+    "extruded": true,
+    "pickable": true,
+    "coverage": 0.85
+  }],
+  "views": [{"@@type": "MapView", "controller": true}],
+  "mapStyle": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+}
+```
+
+ColumnLayer (3D bars at points):
+```json
+{
+  "initialViewState": {"latitude": 39.8, "longitude": -98.5, "zoom": 4, "pitch": 55, "bearing": -10},
+  "layers": [{
+    "@@type": "ColumnLayer",
+    "id": "columns",
+    "getPosition": "@@=[longitude, latitude]",
+    "getElevation": "@@=value",
+    "getFillColor": [65, 182, 196, 220],
+    "diskResolution": 12,
+    "radius": 30000,
+    "elevationScale": 100,
+    "extruded": true,
+    "pickable": true
+  }],
+  "views": [{"@@type": "MapView", "controller": true}],
+  "mapStyle": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+}
+```
+
+ScatterplotLayer (simple points):
+```json
+{
+  "initialViewState": {"latitude": 39.8, "longitude": -98.5, "zoom": 4, "pitch": 0, "bearing": 0},
+  "layers": [{
+    "@@type": "ScatterplotLayer",
+    "id": "scatter",
+    "getPosition": "@@=[longitude, latitude]",
+    "getFillColor": [255, 140, 0, 200],
+    "radiusMinPixels": 3,
+    "radiusMaxPixels": 50,
+    "pickable": true
+  }],
+  "views": [{"@@type": "MapView", "controller": true}],
+  "mapStyle": "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
+}
+```
+
+ArcLayer (connections):
+```json
+{
+  "initialViewState": {"latitude": 40.0, "longitude": -100.0, "zoom": 3, "pitch": 35, "bearing": 0},
+  "layers": [{
+    "@@type": "ArcLayer",
+    "id": "arcs",
+    "getSourcePosition": "@@=[src_lon, src_lat]",
+    "getTargetPosition": "@@=[dst_lon, dst_lat]",
+    "getSourceColor": [0, 128, 200],
+    "getTargetColor": [200, 0, 80],
+    "getWidth": 2,
+    "pickable": true
+  }],
+  "views": [{"@@type": "MapView", "controller": true}],
+  "mapStyle": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+}
+```
+{% endblock %}

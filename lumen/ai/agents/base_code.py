@@ -26,6 +26,10 @@ if TYPE_CHECKING:
     from pandas import DataFrame
     from panel.chat.step import ChatStep
 
+    from ...pipeline import Pipeline
+    from ..context import TContext
+    from ..llm import Message
+
 
 class BaseCodeAgent(BaseViewAgent):
     """
@@ -240,3 +244,39 @@ class BaseCodeAgent(BaseViewAgent):
     def code_execution_enabled(self) -> bool:
         """Whether code execution is enabled (any mode except 'disabled')."""
         return self.code_execution != "disabled"
+
+    async def _generate_spec(
+        self,
+        messages: list[Message],
+        context: TContext,
+        pipeline: Pipeline,
+        doc: str,
+        **kwargs,
+    ) -> dict[str, Any] | None:
+        """Generate a view specification using either code execution or declarative mode.
+
+        Delegates to `_generate_code_spec()` or `_generate_yaml_spec()` based on
+        the `code_execution` setting.
+
+        Parameters
+        ----------
+        messages : list[Message]
+            The conversation messages
+        context : TContext
+            The context dictionary
+        pipeline : Pipeline
+            The data pipeline
+        doc : str
+            Documentation string for the view type
+        **kwargs
+            Additional arguments passed to the generation methods
+
+        Returns
+        -------
+        dict[str, Any] | None
+            The view specification, or None if code execution was rejected.
+        """
+        if self.code_execution_enabled:
+            return await self._generate_code_spec(messages, context, pipeline, doc, **kwargs)
+        else:
+            return await self._generate_yaml_spec(messages, context, pipeline, doc, **kwargs)

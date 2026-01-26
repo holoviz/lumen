@@ -1,0 +1,12 @@
+{% extends 'BaseViewAgent/code_safety.jinja2' %}
+
+{% set library_name = 'PyDeck' %}
+
+{% block safe_items %}
+- Imports: `pydeck`, `pdk`
+- Layer creation: `pdk.Layer("LayerType", data=df, ...)`
+- View state: `pdk.ViewState(latitude=..., longitude=..., ...)`
+- Deck creation: `pdk.Deck(layers=[...], initial_view_state=..., map_style=...)`
+- Assignment to `deck` variable
+{{ super() }}
+{% endblock %}

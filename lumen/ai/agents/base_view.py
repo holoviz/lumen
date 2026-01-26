@@ -77,7 +77,7 @@ class BaseViewAgent(BaseLumenAgent):
         return errors_context
 
     @retry_llm_output()
-    async def _create_valid_spec(
+    async def _generate_yaml_spec(
         self,
         messages: list[Message],
         context: TContext,
@@ -169,7 +169,9 @@ class BaseViewAgent(BaseLumenAgent):
         if not schema:
             raise ValueError("Failed to retrieve schema for the current pipeline.")
 
-        spec = await self._create_valid_spec(messages, context, pipeline, schema, step_title)
+        spec = await self._generate_yaml_spec(messages, context, pipeline, schema, step_title)
         view = self.view_type(pipeline=pipeline, **spec)
         out = self._output_type(component=view, title=step_title)
-        return [out], {"view": dict(spec, type=self.view_type.view_type)}
+        # Store both view type and agent name for context continuity
+        agent_name = type(self).__name__
+        return [out], {"view": dict(spec, type=self.view_type.view_type, agent=agent_name)}
