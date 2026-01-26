@@ -1600,12 +1600,12 @@ class ExplorerUI(UI):
     def _handle_sidebar_event(self, item):
         if item["id"] == "exploration":
             self._toggle_report_mode(False)
-            self._sidebar_menu.update_item(item, active=True, icon="insights")
+            self._sidebar_menu.update_item(item, active=True, icon="insert_chart")
             self._sidebar_menu.update_item(self._sidebar_menu.items[1], active=False, icon="description_outlined")
             self._update_home()
         elif item["id"] == "report":
             self._toggle_report_mode(True)
-            self._sidebar_menu.update_item(self._sidebar_menu.items[0], active=False, icon="timeline")
+            self._sidebar_menu.update_item(self._sidebar_menu.items[0], active=False, icon="insert_chart_outlined")
             self._sidebar_menu.update_item(item, active=True, icon="description")
         elif item["id"] == "data":
             self._open_sources_dialog()
@@ -1618,14 +1618,14 @@ class ExplorerUI(UI):
 
     def _toggle_navigation(self, active: bool):
         self._navigation.visible = active
-        self._sidebar_menu.update_item(self._sidebar_menu.items[6], active=active, icon="view_list" if active else "view_list_outlined")
+        self._sidebar_menu.update_item(self._sidebar_menu.items[6], active=active, icon="layers" if active else "layers_outlined")
 
     @param.depends("_exploration", watch=True)
     def _update_home(self):
         if not hasattr(self, '_page'):
             return
         exploration, report = self._sidebar_menu.items[:2]
-        self._sidebar_menu.update_item(exploration, active=True, icon="timeline" if report["active"] else "insights")
+        self._sidebar_menu.update_item(exploration, active=True, icon="timeline" if report["active"] else "insert_chart")
         self._update_main_view()
 
     def _render_sidebar(self) -> list[Viewable]:
@@ -1712,13 +1712,13 @@ class ExplorerUI(UI):
         )
         self._sidebar_menu = menu = MenuList(
             items=[
-                {"label": "Explore", "icon": "insights", "id": "exploration", "active": True},
+                {"label": "Explore", "icon": "insert_chart", "id": "exploration", "active": True},
                 {"label": "Report", "icon": "description_outlined", "id": "report", "active": False},
                 None,
                 {"label": "Sources", "icon": "create_new_folder_outlined", "id": "data"},
                 {"label": "Settings", "icon": "tune_outlined", "id": "preferences"},
                 None,
-                {"label": "Navigate", "icon": "view_list_outlined", "id": "nav", "active": False},
+                {"label": "Navigate", "icon": "layers_outlined", "id": "nav", "active": False},
                 None,
                 {"label": "Help", "icon": "help_outline", "id": "help"}
             ],
@@ -1816,10 +1816,18 @@ class ExplorerUI(UI):
             margin=(10, 10, 5, 10),
             sizing_mode="stretch_width"
         )
+        self._navigation_footer = Typography(
+            'Toggle <span class="material-icons" style="vertical-align: middle;">layers</span>**Navigate** to close',
+            variant="body2",
+            color="text.secondary",
+            margin=20,
+            styles={"margin": "auto auto 20px auto"}
+        )
         self._navigation = Paper(
             self._navigation_title,
             self._navigation_caption,
             self._explorations,
+            self._navigation_footer,
             height_policy="max",
             sx={"borderRadius": 0},
             theme_config={"light": {"palette": {"background": {"paper": "var(--mui-palette-grey-100)"}}}, "dark": {}},
