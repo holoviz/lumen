@@ -27,7 +27,7 @@ from panel_material_ui import (
 )
 from panel_splitjs import HSplit, MultiSplit, VSplit
 
-from lumen.ai.agents.deckgl import DeckGLAgent
+from lumen.ai.agents.deck_gl import DeckGLAgent
 
 from ..pipeline import Pipeline
 from ..sources import Source
