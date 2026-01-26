@@ -23,7 +23,7 @@ from panel.viewable import (
 from panel_material_ui import (
     Alert, Breadcrumbs, Button, ChatFeed, ChatInterface, ChatMessage,
     Column as MuiColumn, Dialog, FileDownload, IconButton, MenuList, Page,
-    Paper, Popup, Row, Select, Switch, Tabs, ToggleIcon, Typography,
+    Paper, Popup, Row, Select, Switch, Tabs, Typography,
 )
 from panel_splitjs import HSplit, MultiSplit, VSplit
 
@@ -757,11 +757,10 @@ class UI(Viewer):
             self._navigation_caption.object = EXPLORATION_CAPTION
 
         show_nav = self._should_show_navigation()
-        if not self._nav_toggle.visible and show_nav:
-            self._nav_toggle.value = True
+        if not self._sidebar_menu.items[6]["active"] and show_nav:
+            self._toggle_navigation(True)
         if not show_nav:
-            self._nav_toggle.value = False
-        self._nav_toggle.visible = show_nav
+            self._toggle_navigation(False)
         self._main[:] = [self._navigation, main_content]
 
     def _configure_interface(self, interface):
@@ -1614,6 +1613,12 @@ class ExplorerUI(UI):
             self._settings_popup.open = True
         elif item["id"] == "help":
             self._open_info_dialog()
+        elif item["id"] == "nav":
+            self._toggle_navigation(not item["active"])
+
+    def _toggle_navigation(self, active: bool):
+        self._navigation.visible = active
+        self._sidebar_menu.update_item(self._sidebar_menu.items[6], active=active, icon="view_list" if active else "view_list_outlined")
 
     @param.depends("_exploration", watch=True)
     def _update_home(self):
@@ -1713,6 +1718,8 @@ class ExplorerUI(UI):
                 {"label": "Sources", "icon": "create_new_folder_outlined", "id": "data"},
                 {"label": "Settings", "icon": "tune_outlined", "id": "preferences"},
                 None,
+                {"label": "Navigate", "icon": "view_list_outlined", "id": "nav", "active": False},
+                None,
                 {"label": "Help", "icon": "help_outline", "id": "help"}
             ],
             active=0,
@@ -1742,17 +1749,7 @@ class ExplorerUI(UI):
             },
             sizing_mode="stretch_width",
         )
-
-        self._nav_toggle = ToggleIcon(
-            active_icon="chevron_left",
-            icon="chevron_right",
-            styles={"margin-left": "auto", "margin-top": "auto"},
-            value=False,
-            visible=False
-        )
-        self._navigation.visible = self._nav_toggle
-
-        return [menu, self._nav_toggle]
+        return [menu]
 
     def _render_page(self):
         super()._render_page()
