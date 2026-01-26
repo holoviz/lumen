@@ -1818,12 +1818,14 @@ class ExplorerUI(UI):
             margin=(10, 10, 5, 10),
             sizing_mode="stretch_width"
         )
-        self._navigation_footer = Typography(
-            'Toggle <span class="material-icons" style="vertical-align: middle;">layers</span>**Navigate** to close',
-            variant="body2",
-            color="text.secondary",
+        self._navigation_footer = Button(
+            label="Close Navigation",
+            icon="first_page",
+            variant="text",
+            color="default",
             margin=20,
-            styles={"margin": "auto auto 20px auto"}
+            styles={"margin": "auto auto 20px auto"},
+            on_click=lambda e: self._toggle_navigation(False)
         )
         self._navigation = Paper(
             self._navigation_title,
