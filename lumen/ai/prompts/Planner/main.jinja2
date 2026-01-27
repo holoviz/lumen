@@ -106,8 +106,8 @@ Previously derived data summary:
 {%- endif -%}
 
 {%- if memory.get('view') %}
-{%- set view_agent = memory['view'].get('agent', '') %}
-{%- if view_agent %}
+{%- if memory['view'] is mapping and 'agent' in memory['view'] %}
+{%- set view_agent = memory['view']['agent'] %}
 Previously used visualization agent: `{{ view_agent }}`
 {%- endif %}
 {%- endif -%}

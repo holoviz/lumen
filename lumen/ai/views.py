@@ -215,7 +215,10 @@ class LumenOutput(Viewer):
         return Column(controls, table)
 
     async def render_context(self):
-        return {"view": self.component}
+        view = self.component
+        if view is not None and hasattr(view, 'view_type'):
+            return {"view": {"type": view.view_type, "spec": self._spec_dict}}
+        return {"view": {"spec": self._spec_dict}}
 
     @param.depends('spec')
     async def render(self):
@@ -550,9 +553,11 @@ class AnalysisOutput(LumenOutput):
         out_context = {"analysis": self.analysis}
         view = self.component
         if isinstance(view, View):
-            out_context["view"] = dict(object=self._spec_dict, type=view.view_type)
+            out_context["view"] = {"object": self._spec_dict, "type": view.view_type}
         elif isinstance(view, Pipeline):
-            out_context["pipeline"] = out_context["view"] = pipeline = view
+            pipeline = view
+            out_context["pipeline"] = pipeline
+            out_context["view"] = {"type": "pipeline", "table": pipeline.table}
             data = await get_data(pipeline)
             if len(data) > 0:
                 out_context["data"] = await describe_data(data)
