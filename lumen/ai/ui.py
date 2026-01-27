@@ -323,7 +323,7 @@ PREFERENCES_HELP = """
 
 - Improves accuracy for complex questions
 - The AI explores your schema before querying
-- Enabled by default
+- Disabled by default
 
 **Validation Step** — Double-check if the response answered your question
 
