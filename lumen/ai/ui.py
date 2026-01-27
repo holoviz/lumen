@@ -323,7 +323,7 @@ PREFERENCES_HELP = """
 
 - Improves accuracy for complex questions
 - The AI explores your schema before querying
-- Enabled by default
+- Disabled by default
 
 **Validation Step** — Double-check if the response answered your question
 
@@ -480,6 +480,7 @@ class UI(Viewer):
     ):
         params["log_level"] = params.get("log_level", self.param["log_level"].default).upper()
         super().__init__(**params)
+        self._current_mode = "Exploration"
         if self.logfire_tags is not None:
             if self.llm._supports_logfire:
                 self.llm.logfire_tags = self.logfire_tags
@@ -735,7 +736,7 @@ class UI(Viewer):
         in_report_mode = force_report_mode if force_report_mode is not None else self._is_report_mode()
 
         if in_report_mode:
-            if self._navigation_title.object == "Report":
+            if self._current_mode == "Report":
                 return
             elif not self._has_explorations():
                 no_explorations_msg = Markdown(
@@ -753,7 +754,7 @@ class UI(Viewer):
                     *(Section(item["view"].plan, *(it["view"].plan for it in item["items"]), title=item["view"].plan.title)
                       for item in self._explorations.items[1:])
                 )
-            self._navigation_title.object = "Report"
+            self._current_mode = "Report"
             self._navigation_caption.object = REPORT_CAPTION
         else:
             exploration = self._get_current_exploration()
@@ -763,7 +764,7 @@ class UI(Viewer):
             else:
                 main_content = self._split
                 self._output[1:] = [exploration]
-            self._navigation_title.object = "Exploration"
+            self._current_mode = "Exploration"
             self._navigation_caption.object = EXPLORATION_CAPTION
 
         show_nav = self._should_show_navigation()
@@ -1817,7 +1818,7 @@ class ExplorerUI(UI):
             stylesheets=SPLITJS_STYLESHEETS
         )
         self._navigation_title = Typography(
-            "Exploration", variant="h6", margin=(10, 10, 0, 10)
+            "Navigation", variant="h6", margin=(10, 10, 0, 10)
         )
         self._navigation_caption = Typography(
             EXPLORATION_CAPTION,

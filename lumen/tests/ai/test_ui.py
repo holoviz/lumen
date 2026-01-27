@@ -628,7 +628,7 @@ async def test_switch_to_report_mode_with_no_explorations(explorer_ui):
     assert len(main_content) >= 1
 
     # Navigation should show "Report"
-    assert explorer_ui._navigation_title.object == "Report"
+    assert explorer_ui._current_mode == "Report"
 
 
 async def test_switch_to_report_mode_with_explorations(explorer_ui):
@@ -656,7 +656,7 @@ async def test_switch_to_report_mode_with_explorations(explorer_ui):
     assert len(explorer_ui._main[1]) == 2
 
     # Navigation should show "Report"
-    assert explorer_ui._navigation_title.object == "Report"
+    assert explorer_ui._current_mode == "Report"
 
 
 async def test_switch_back_from_report_to_exploration(explorer_ui):
@@ -688,7 +688,7 @@ async def test_switch_back_from_report_to_exploration(explorer_ui):
     assert explorer_ui._output[1] is exploration.view
 
     # Navigation should show "Exploration"
-    assert explorer_ui._navigation_title.object == "Exploration"
+    assert explorer_ui._current_mode == "Exploration"
 
 
 async def test_navigation_visibility_with_explorations(explorer_ui):
