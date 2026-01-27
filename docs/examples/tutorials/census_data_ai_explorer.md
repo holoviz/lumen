@@ -635,11 +635,9 @@ This complete version includes all the features discussed: dynamic variable grou
 
 Extend this example by:
 
-- **Study the full version**: See [app.py](https://github.com/holoviz/lumen/blob/main/app.py) for complete implementation with dynamic options
 - **Add custom analyses**: Create specialized visualizations for demographic data (see [Analyses configuration](../../configuration/analyses.md))
 - **Customize agents**: Add domain expertise about Census variables and geography (see [Agents configuration](../../configuration/agents.md))
 - **Multiple sources**: Combine Census data with other datasets for richer analysis (see [Sources configuration](../../configuration/sources.md))
-- **Add maps**: Visualize geographic data with hvPlot or other mapping libraries
 
 ## See also
 
