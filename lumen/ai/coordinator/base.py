@@ -340,15 +340,13 @@ class Coordinator(Viewer, VectorLookupToolUser):
             if not isinstance(agent, Agent):
                 agent = agent()
             if isinstance(agent, AnalysisAgent):
-                analyses = indent(
-                    "\n".join(
-                        f"- `{analysis.__name__}`:\n{indent(dedent(analysis.__doc__ or '').strip(), ' ' * 4)} (required cols: {', '.join(analysis.columns)})"
-                        for analysis in agent.analyses
-                        if analysis._callable_by_llm
-                    ),
-                    " " * 4,
+                analyses = indent("\n".join(
+                    f"- `{analysis.__name__}`:\n{indent(dedent(analysis.__doc__ or '').strip(), ' ' * 4)} (required cols: {', '.join(analysis.columns)})"
+                    for analysis in agent.analyses if analysis._callable_by_llm
+                ), " " * 4)
+                agent.conditions.append(
+                    f"The following analyses can be performed by AnalysisAgent:\n {analyses}\n"
                 )
-                agent.conditions.append(f"The following analyses can be performed by AnalysisAgent:\n {analyses}\n")
                 self._analyses.extend(agent.analyses)
             # must use the same interface or else nothing shows
             if agent.llm is None:
@@ -375,7 +373,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
         # If none of the tools provide metaset, add MetadataLookup
         provides_metaset = any(
-            "metaset" in tool.output_schema.__annotations__ for tool in tools if isinstance(tool, Tool) or (isinstance(tool, type) and issubclass(tool, Tool))
+            "metaset" in tool.output_schema.__annotations__ for tool in tools
+            if isinstance(tool, Tool) or (isinstance(tool, type) and issubclass(tool, Tool))
         )
         if not provides_metaset:
             # Add both tools - they will share the same vector store through VectorLookupToolUser
