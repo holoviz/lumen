@@ -628,9 +628,8 @@ class VegaLiteAgent(BaseCodeAgent):
         # Step 3: enhancements (LLM-driven creative decisions)
         if not self.code_execution_enabled:
             state.execute(partial(self._polish_plot, out, messages, context, doc))
-        # Store both view type and agent name for context continuity
-        agent_name = type(self).__name__
-        return [out], {"view": dict(full_dict, type=view.view_type, agent=agent_name)}
+
+        return [out], {"view": dict(full_dict, type=view.view_type)}
 
     async def annotate(
         self,

@@ -2244,14 +2244,37 @@ class ExplorerUI(UI):
             exploration = parent
             if parent.plan is not None:
                 if plan.steps_layout:
-                    plan.steps_layout.header[:] = [
-                        Typography(
-                            "🔀 Combined tasks with previous checklist",
-                            css_classes=["todos-title"],
+                    # Find the index of the parent's steps_layout in the interface
+                    prev_steps_layout = parent.plan.steps_layout
+                    prev_index = None
+                    if prev_steps_layout is not None:
+                        for i, obj in enumerate(self.interface.objects):
+                            if isinstance(obj, ChatMessage) and prev_steps_layout in obj.object:
+                                prev_index = i
+                                break
+
+                    # Create header with optional scroll button
+                    title_text = Typography(
+                        "🔀 Combined tasks with previous checklist",
+                        css_classes=["todos-title"],
+                        margin=0,
+                        styles={"font-weight": "normal", "font-size": "1.1em"}
+                    )
+                    if prev_index is not None:
+                        def scroll_to_prev(event, idx=prev_index):
+                            self.interface._chat_log.scroll_to(idx)
+                        scroll_btn = Button(
+                            label="View previous",
+                            icon="arrow_upward",
+                            variant="text",
+                            size="small",
+                            on_click=scroll_to_prev,
                             margin=0,
-                            styles={"font-weight": "normal", "font-size": "1.1em"}
                         )
-                    ]
+                        header_row = Row(title_text, scroll_btn, sizing_mode="stretch_width")
+                    else:
+                        header_row = title_text
+                    plan.steps_layout.header[:] = [header_row]
                 partial_plan = plan
                 plan = parent.plan.merge(plan)
                 partial_plan.cleanup()
