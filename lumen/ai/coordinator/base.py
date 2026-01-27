@@ -83,10 +83,10 @@ class Plan(Section):
         todos = "\n".join(todos_list)
 
         formatted_content = (
-            f"User requests: {user_query['content']!r}\n"
-            f"Agreed plan:\n{indent(todos, '    ')}\n"
-            f"Tasks marked ⚪ are scheduled for later. "
-            f"Your ONLY goal is to focus on the 🟡"
+            f"User: {user_query['content']!r}\n"
+            f"Roadmap:\n{indent(todos, '    ')}\n"
+            f"Tasks marked ⚪ are scheduled for others later. "
+            f"Your EXCLUSIVE goal is to focus on the 🟡 task"
         )
         rendered_history = []
         for msg in self.history:
