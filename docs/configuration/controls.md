@@ -44,7 +44,7 @@ Source controls solve common data integration challenges:
 
 ## Complete minimal example
 
-![Weather Control UI](../assets/navigating_the_ui/controls.png)
+![Weather Control UI](../assets/configuration/controls.png)
 
 ```python
 import asyncio
