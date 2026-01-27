@@ -58,12 +58,12 @@ def sqlite_db_path():
     """Create a temporary SQLite database file."""
     with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as tmp:
         db_path = Path(tmp.name)
-    
+
     conn = sqlite3.connect(str(db_path))
     conn.execute('CREATE TABLE test (id INTEGER)')
     conn.commit()
     conn.close()
-    
+
     yield db_path
 
     # Cleanup
@@ -448,7 +448,8 @@ async def test_chat_upload_flow_opens_dialog_and_starts_exploration(explorer_ui,
     monkeypatch.setattr(ui, "_execute_plan", execute_plan)
     monkeypatch.setattr(ui._coordinator, "respond", respond)
 
-    ui._chat_input.value_input = "Show me the uploaded data"
+    with edit_readonly(ui._chat_input):
+        ui._chat_input.value_input = "Show me the uploaded data"
 
     with patch("panel.state.add_periodic_callback", lambda *a, **kw: None):
         with edit_readonly(ui._chat_input):

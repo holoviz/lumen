@@ -3,21 +3,20 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import textwrap
 import traceback
 
 from copy import deepcopy
 from io import BytesIO, StringIO
 from typing import TYPE_CHECKING, Any
 
-import panel as pn
 import param
 import requests
 
 from jsonschema import Draft7Validator, ValidationError
 from panel.config import config
+from panel.io import cache
 from panel.layout import Row
-from panel.pane import panel as as_panel
+from panel.pane import DeckGL, panel as as_panel
 from panel.param import ParamMethod
 from panel.viewable import Viewable, Viewer
 from panel.widgets import CodeEditor
@@ -290,7 +289,7 @@ class VegaLiteOutput(LumenOutput):
         out = self.component.get_panel().export(fmt, **kwargs)
         return BytesIO(out) if isinstance(out, bytes) else StringIO(out)
 
-    @pn.cache
+    @cache
     @staticmethod
     def _load_vega_lite_schema(schema_url: str | None = None):
         return requests.get(schema_url, timeout=0.5).json()
@@ -489,37 +488,30 @@ class DeckGLOutput(LumenOutput):
             spec = load_yaml(self.spec)
             return StringIO(json.dumps(spec, indent=2))
         elif fmt == "html":
-            spec = load_yaml(self.spec)
-            html_content = self._generate_html(spec)
-            return StringIO(html_content)
+            return self._export_html()
         raise ValueError(f"Unknown export format {fmt!r}")
 
-    def _generate_html(self, spec: dict) -> str:
-        """Generate standalone HTML for DeckGL visualization."""
-        spec_json = json.dumps(spec, indent=2)
-        return textwrap.dedent(f"""\
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <meta charset="utf-8">
-                <title>DeckGL Visualization</title>
-                <script src="https://unpkg.com/deck.gl@latest/dist.min.js"></script>
-                <script src="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.js"></script>
-                <link href="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.css" rel="stylesheet" />
-                <style>
-                    body {{ margin: 0; padding: 0; }}
-                    #container {{ width: 100vw; height: 100vh; }}
-                </style>
-            </head>
-            <body>
-                <div id="container"></div>
-                <script>
-                    const spec = {spec_json};
-                    new deck.DeckGL({{...spec, container: 'container'}});
-                </script>
-            </body>
-            </html>
-        """)
+    def _export_html(self) -> StringIO:
+        """Export DeckGL visualization as standalone HTML using Panel's save.
+
+        This re-embeds the pipeline data into the spec before saving,
+        ensuring the HTML file is self-contained.
+        """
+        spec = deepcopy(load_yaml(self.spec))
+
+        # Re-embed data from pipeline into layers
+        if self.component and self.component.pipeline:
+            df = self.component.get_data()
+            if df is not None and 'layers' in spec:
+                data_records = df.to_dict(orient='records')
+                for layer in spec['layers']:
+                    if 'data' not in layer:
+                        layer['data'] = data_records
+
+        html_buffer = StringIO()
+        DeckGL(spec, sizing_mode='stretch_both').save(html_buffer)
+        html_buffer.seek(0)
+        return html_buffer
 
     def __str__(self):
         return f"{self.__class__.__name__}:\n```yaml\n{self.spec}\n```"
