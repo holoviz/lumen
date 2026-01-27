@@ -60,6 +60,11 @@ from .views import AnalysisOutput, LumenOutput, SQLOutput
 
 DataT = str | Path | Source | Pipeline
 
+PAGE_SX = {
+    ".sidebar": {"transition": "width 0.2s ease-in-out"},
+    ".sidebar:hover": {"width": "140px", "transitionDelay": "0.5s"},
+    "&.mui-light .sidebar": {"bgcolor": "var(--mui-palette-grey-50)"},
+}
 
 # Contextual help messages for different UI areas
 # Each area has a ? icon that shows relevant help
@@ -426,6 +431,9 @@ class UI(Viewer):
 
     notebook_preamble = param.String(default='', doc="""
         Preamble to add to exported notebook(s).""")
+
+    page_config = param.Dict(default={}, doc="""
+        Configuration for the panel-material-ui Page component the UI is rendered into.""")
 
     source_controls = param.List(default=[UploadControls, DownloadControls], doc="""
         List of SourceControls types to manage datasets.""")
@@ -1186,21 +1194,17 @@ class UI(Viewer):
         return []
 
     def _render_page(self):
+        page_config = dict(self.page_config, title=self.title)
+        page_config["sx"] = {**PAGE_SX, **page_config.get("sx", {})}
         self._page = Page(
             contextbar_open=False,
             contextbar=self._render_contextbar(),
             header=self._render_header(),
             main=self._render_main(),
             sidebar=self._render_sidebar(),
-            title=self.title,
             sidebar_width=62,
             sidebar_resizable=False,
-            sx={
-                # Hover
-                ".sidebar": {"transition": "width 0.2s ease-in-out"},
-                ".sidebar:hover": {"width": "140px", "transitionDelay": "0.5s"},
-                "&.mui-light .sidebar": {"bgcolor": "var(--mui-palette-grey-50)"},
-            }
+            **page_config
         )
         # Unlink busy indicator
         with edit_readonly(self._page):
