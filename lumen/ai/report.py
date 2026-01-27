@@ -963,7 +963,11 @@ class Report(TaskGroup):
             height_policy="max",
             stylesheets=[":host > div { overflow-y: auto; }"],
             min_height=600,
-            sx={"minWidth": "320px", "background-color": "var(--mui-palette-grey-100)"}
+            sx={
+                "minWidth": "320px",
+                ".mui-light &": { "background-color": "var(--mui-palette-grey-100)"},
+                ".mui-dark &": { "background-color": "var(--mui-palette-grey-900)"}
+            }
         )
 
 
