@@ -312,4 +312,5 @@ class DeckGLAgent(BaseCodeAgent):
         # Create view and output
         view = self.view_type(pipeline=pipeline, **full_dict)
         out = self._output_type(component=view, title=step_title)
-        return [out], {"view": dict(full_dict, type=view.view_type)}
+        out_context = await out.render_context()
+        return [out], out_context

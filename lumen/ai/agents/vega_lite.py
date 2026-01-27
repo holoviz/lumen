@@ -629,7 +629,8 @@ class VegaLiteAgent(BaseCodeAgent):
         if not self.code_execution_enabled:
             state.execute(partial(self._polish_plot, out, messages, context, doc))
 
-        return [out], {"view": dict(full_dict, type=view.view_type)}
+        out_context = await out.render_context()
+        return [out], out_context
 
     async def annotate(
         self,
