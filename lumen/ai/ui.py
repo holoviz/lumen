@@ -764,7 +764,7 @@ class UI(Viewer):
             else:
                 main_content = self._split
                 self._output[1:] = [exploration]
-            self._current_mode = "Report"
+            self._current_mode = "Exploration"
             self._navigation_caption.object = EXPLORATION_CAPTION
 
         show_nav = self._should_show_navigation()
