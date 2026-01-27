@@ -186,6 +186,26 @@ class ThresholdAnalysis(lmai.Analysis):
 
 1. User can adjust the threshold value through UI controls
 
+### Configuring parameter defaults
+
+To use different default parameter values, **call .instance** and override the defaults:
+
+``` py title="Configuring defaults via subclass"
+# Base analysis with default threshold of 50
+class ThresholdAnalysis(lmai.Analysis):
+    columns = param.List(default=["value"])
+    threshold = param.Number(default=50)
+    
+    def __call__(self, pipeline, *args, **kwargs):
+        df = pipeline.data
+        return df[df["value"] > self.threshold].hvplot(y="value", kind="hist")
+
+ui = lmai.ExplorerUI(
+    data='data.csv',
+    analyses=[HighThresholdAnalysis.instance(threshold=100)]
+)
+```
+
 ## Multiple analyses
 
 ``` py title="Multiple analyses"
@@ -201,6 +221,19 @@ ui.servable()
 ```
 
 Lumen automatically picks the right analysis based on available columns and the user's question.
+
+!!! warning "Pass classes, not instances"
+    Always pass analysis **classes** to the `analyses` parameter, not instances:
+    
+    ``` py
+    # ✅ Correct - pass the class
+    analyses=[WindAnalysis]
+    
+    # ❌ Wrong - don't instantiate
+    analyses=[WindAnalysis()]  # This will error!
+    ```
+    
+    Analysis is a `ParameterizedFunction`, so calling `WindAnalysis()` invokes `__call__` instead of creating an instance.
 
 ## Common patterns
 

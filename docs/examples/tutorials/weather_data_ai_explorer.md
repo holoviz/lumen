@@ -4,7 +4,7 @@ Build a domain-specific data exploration application using Lumen AI. This tutori
 
 ## Final result
 
-<img width="1505" height="1185" alt="image" src="https://github.com/user-attachments/assets/7e1cd684-14d2-4d4c-b409-db82e286f43d" />
+![Weather Data AI Explorer](../../assets/tutorials/skew_t.png)
 
 **Time**: 15-20 minutes
 
@@ -299,7 +299,7 @@ source = DuckDBSource(
     tables={
         "raob_soundings": """
             SELECT * FROM read_csv_auto(
-                'https://raw.githubusercontent.com/holoviz/lumen/main/examples/raob.csv'
+                'https://mesonet.agron.iastate.edu/cgi-bin/request/raob.py?station=KILX&sts=2026-01-25T09%3A56&ets=2026-01-26T09%3A56'
             )
         """,
     },
