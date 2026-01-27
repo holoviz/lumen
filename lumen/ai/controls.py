@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import pathlib
 import re
 import zipfile
@@ -441,8 +442,6 @@ class BaseSourceControls(Viewer):
         ValueError
             If the JSON cannot be converted to a DataFrame.
         """
-        import json
-
         file.seek(0)
         content = file.read()
         if isinstance(content, bytes):
