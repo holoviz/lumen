@@ -1631,6 +1631,10 @@ class ExplorerUI(UI):
         self._sidebar_menu.update_item(exploration, active=True, icon="timeline" if report["active"] else "insert_chart")
         self._update_main_view()
 
+    def _handle_llm_dialog(self, event):
+        self._llm_dialog.open = True
+        self._settings_popup.open = False
+
     def _render_sidebar(self) -> list[Viewable]:
         llm_config_button = Button(
             label="Configure AI Models",
@@ -1638,7 +1642,7 @@ class ExplorerUI(UI):
             size="large",
             variant="text",
             sizing_mode="stretch_width",
-            on_click=lambda e: setattr(self._llm_dialog, 'open', True),
+            on_click=self._handle_llm_dialog,
             margin=(10, 0, 5, 0),
             sx={
                 'fontSize': '16px',
