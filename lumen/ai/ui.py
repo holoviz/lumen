@@ -2126,7 +2126,7 @@ class ExplorerUI(UI):
         return pop_button
 
     def _render_view(self, exploration: Exploration, view: LumenEditor) -> VSplit:
-        title = view.title or type(view).__name__.replace('Output', '')
+        title = view.title or type(view).__name__.replace('Editor', '')
         if len(title) > 25:
             title = f"{title[:25]}..."
 
