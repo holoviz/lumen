@@ -1,9 +1,11 @@
 import asyncio
+import hashlib
 import importlib
 import io
 import json
 import os
 import typing as t
+import uuid
 
 from abc import abstractmethod
 from collections.abc import Callable
@@ -1626,3 +1628,382 @@ class DuckDBVectorStore(VectorStore):
         if self.connection:
             self.connection.close()
             self.connection = None
+
+
+class PineconeVectorStore(VectorStore):
+    """
+    Vector store implementation using Pinecone for persistent storage.
+
+    :Example:
+
+    .. code-block:: python
+
+        from lumen.ai.vector_store import PineconeVectorStore
+
+        vector_store = PineconeVectorStore(
+            api_key="YOUR_API_KEY",
+            index_name="lumen-demo",
+        )
+        await vector_store.add([{"text": "Hello!", "metadata": {"source": "greeting"}}])
+        await vector_store.query("Hello", threshold=0.1)
+    """
+
+    api_key = param.String(
+        default=os.environ.get("PINECONE_API_KEY", ""),
+        doc="Pinecone API key. Defaults to the PINECONE_API_KEY environment variable.",
+    )
+
+    index_name = param.String(
+        default="lumen",
+        doc="Name of the Pinecone index to use.",
+    )
+
+    namespace = param.String(
+        default="",
+        doc="Pinecone namespace to use for all operations.",
+    )
+
+    metric = param.String(
+        default="cosine",
+        doc="Pinecone index metric to use when creating an index.",
+    )
+
+    cloud = param.String(
+        default="aws",
+        doc="Cloud provider for serverless Pinecone indexes.",
+    )
+
+    region = param.String(
+        default="us-east-1",
+        doc="Region for serverless Pinecone indexes.",
+    )
+
+    create_index = param.Boolean(
+        default=True,
+        doc="Whether to create the index if it does not exist.",
+    )
+
+    dimension = param.Integer(
+        default=None,
+        allow_None=True,
+        doc="Embedding dimension. Required to create a new index.",
+    )
+
+    batch_size = param.Integer(
+        default=100,
+        bounds=(1, None),
+        doc="Batch size for Pinecone upserts.",
+    )
+
+    max_filter_results = param.Integer(
+        default=1000,
+        bounds=(1, None),
+        doc="Maximum number of results returned from filter_by when limit is None.",
+    )
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._pc = None
+        self._index = None
+        self._dimension = None
+        self._text_key = "_lumen_text"
+        self._init_client()
+
+    def _init_client(self) -> None:
+        try:
+            from pinecone import (  # type: ignore[import-not-found]
+                Pinecone, ServerlessSpec,
+            )
+        except Exception as e:
+            raise ImportError(
+                "Pinecone client not available. Install with `pip install pinecone`."
+            ) from e
+
+        api_key = self.api_key or os.environ.get("PINECONE_API_KEY", "")
+        if not api_key:
+            raise ValueError(
+                "Pinecone API key not provided. Set api_key or PINECONE_API_KEY."
+            )
+
+        self._pc = Pinecone(api_key=api_key)
+        self._serverless_spec = ServerlessSpec
+        self._ensure_index()
+
+    def _list_index_names(self) -> list[str]:
+        try:
+            indexes = self._pc.list_indexes()
+        except Exception:
+            return []
+
+        if isinstance(indexes, (list, tuple, set)):
+            return list(indexes)
+        if hasattr(indexes, "names") and callable(indexes.names):
+            return list(indexes.names())
+        if hasattr(indexes, "names"):
+            return list(indexes.names)
+        if hasattr(indexes, "indexes"):
+            return [
+                idx.get("name") if isinstance(idx, dict) else getattr(idx, "name", idx)
+                for idx in indexes.indexes
+            ]
+        return []
+
+    def _get_index_dimension(self) -> int | None:
+        if self.dimension is not None:
+            return self.dimension
+        if self._dimension is not None:
+            return self._dimension
+        if self._index is None:
+            return None
+        stats = self._describe_index_stats()
+        if isinstance(stats, dict):
+            dimension = stats.get("dimension")
+            if dimension:
+                self._dimension = dimension
+                return dimension
+        return None
+
+    def _describe_index_stats(self) -> dict:
+        if self._index is None:
+            return {}
+        try:
+            return self._index.describe_index_stats()
+        except Exception:
+            return {}
+
+    def _ensure_index(self, dimension: int | None = None) -> None:
+        if self._pc is None:
+            return
+        index_names = self._list_index_names()
+        if self.index_name not in index_names:
+            if not self.create_index:
+                raise ValueError(
+                    f"Pinecone index '{self.index_name}' does not exist."
+                )
+            dim = dimension or self.dimension
+            if dim is None:
+                return
+            self._pc.create_index(
+                name=self.index_name,
+                dimension=dim,
+                metric=self.metric,
+                spec=self._serverless_spec(cloud=self.cloud, region=self.region),
+            )
+            self._dimension = dim
+        self._index = self._pc.Index(self.index_name)
+
+    def _normalize_metadata(self, metadata: dict[str, Any]) -> dict[str, Any]:
+        normalized = {}
+        for key, value in metadata.items():
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                normalized[key] = value
+            elif isinstance(value, (list, tuple)):
+                normalized[key] = [
+                    v if isinstance(v, (str, int, float, bool)) or v is None
+                    else self._format_metadata_value(v)
+                    for v in value
+                ]
+            else:
+                normalized[key] = self._format_metadata_value(value)
+        return normalized
+
+    def _build_vector_payload(
+        self,
+        ids: list[int],
+        texts: list[str],
+        metadata: list[dict],
+        embeddings: np.ndarray,
+    ) -> list[dict]:
+        vectors = []
+        for idx, text in enumerate(texts):
+            metadata_copy = self._normalize_metadata(metadata[idx])
+            metadata_copy[self._text_key] = text
+            vectors.append(
+                {
+                    "id": str(ids[idx]),
+                    "values": embeddings[idx].tolist(),
+                    "metadata": metadata_copy,
+                }
+            )
+        return vectors
+
+    def _generate_random_ids(self, count: int) -> list[int]:
+        return [uuid.uuid4().int for _ in range(count)]
+
+    def _generate_deterministic_id(self, text: str, metadata: dict) -> int:
+        payload = json.dumps(
+            {"text": text, "metadata": self._normalize_metadata(metadata)},
+            sort_keys=True,
+        )
+        digest = hashlib.md5(payload.encode("utf-8")).digest()
+        return int.from_bytes(digest[:8], byteorder="big", signed=False)
+
+    async def _add_items(
+        self,
+        texts: list[str],
+        metadata: list[dict],
+        embeddings: np.ndarray,
+        force_ids: list[int] | None = None,
+    ) -> list[int]:
+        if not texts:
+            return []
+
+        dimension = embeddings.shape[1] if embeddings.ndim == 2 else None
+        self._ensure_index(dimension=dimension)
+        if self._index is None:
+            raise ValueError(
+                "Pinecone index is not initialized. Provide dimension or create the index first."
+            )
+
+        ids = force_ids if force_ids is not None else self._generate_random_ids(len(texts))
+        vectors = self._build_vector_payload(ids, texts, metadata, embeddings)
+
+        for start in range(0, len(vectors), self.batch_size):
+            batch = vectors[start : start + self.batch_size]
+            await asyncio.to_thread(
+                self._index.upsert,
+                vectors=batch,
+                namespace=self.namespace or None,
+            )
+        return ids
+
+    async def upsert(self, items: list[dict], situate: bool | None = None) -> list[int]:
+        if not items:
+            return []
+        all_texts, all_metadata, text_and_metadata_list = await self._prepare_items_for_embedding(
+            items, situate
+        )
+        if not all_texts:
+            return []
+
+        embeddings = np.array(
+            await self.embeddings.embed(text_and_metadata_list), dtype=np.float32
+        )
+        ids = [
+            self._generate_deterministic_id(text, meta)
+            for text, meta in zip(all_texts, all_metadata, strict=False)
+        ]
+        await self._add_items(all_texts, all_metadata, embeddings, force_ids=ids)
+        return ids
+
+    async def query(
+        self,
+        text: str,
+        top_k: int = 5,
+        filters: dict | None = None,
+        threshold: float = -1.0,
+    ) -> list[dict]:
+        if self._index is None:
+            self._ensure_index()
+        if self._index is None:
+            return []
+
+        query_embedding = np.array(
+            (await self.embeddings.embed([text]))[0], dtype=np.float32
+        ).tolist()
+
+        response = await asyncio.to_thread(
+            self._index.query,
+            vector=query_embedding,
+            top_k=top_k,
+            include_metadata=True,
+            filter=filters or None,
+            namespace=self.namespace or None,
+        )
+
+        matches = response.get("matches", []) if isinstance(response, dict) else response.matches
+        results = []
+        for match in matches:
+            match_metadata = match.get("metadata", {}) if isinstance(match, dict) else getattr(match, "metadata", {})
+            match_id = match.get("id") if isinstance(match, dict) else getattr(match, "id", None)
+            score = match.get("score") if isinstance(match, dict) else getattr(match, "score", None)
+
+            metadata_copy = dict(match_metadata) if match_metadata else {}
+            text_value = metadata_copy.pop(self._text_key, "")
+            try:
+                match_id = int(match_id)
+            except (TypeError, ValueError):
+                pass
+            similarity = float(score) if score is not None else 0.0
+            if similarity < threshold:
+                continue
+            results.append(
+                {
+                    "id": match_id,
+                    "text": text_value,
+                    "metadata": metadata_copy,
+                    "similarity": similarity,
+                }
+            )
+        return results
+
+    def filter_by(
+        self, filters: dict, limit: int | None = None, offset: int = 0
+    ) -> list[dict]:
+        if self._index is None:
+            self._ensure_index()
+        if self._index is None:
+            return []
+        dimension = self._get_index_dimension()
+        if dimension is None:
+            return []
+
+        top_k = limit or self.max_filter_results
+        zero_vector = [0.0] * dimension
+        response = self._index.query(
+            vector=zero_vector,
+            top_k=top_k,
+            include_metadata=True,
+            filter=filters or None,
+            namespace=self.namespace or None,
+        )
+        matches = response.get("matches", []) if isinstance(response, dict) else response.matches
+
+        results = []
+        for match in matches:
+            match_metadata = match.get("metadata", {}) if isinstance(match, dict) else getattr(match, "metadata", {})
+            match_id = match.get("id") if isinstance(match, dict) else getattr(match, "id", None)
+            metadata_copy = dict(match_metadata) if match_metadata else {}
+            text_value = metadata_copy.pop(self._text_key, "")
+            try:
+                match_id = int(match_id)
+            except (TypeError, ValueError):
+                pass
+            results.append(
+                {"id": match_id, "text": text_value, "metadata": metadata_copy}
+            )
+
+        if offset:
+            results = results[offset:]
+        if limit is not None:
+            results = results[:limit]
+        return results
+
+    def delete(self, ids: list[int]) -> None:
+        if not ids or self._index is None:
+            return
+        str_ids = [str(item_id) for item_id in ids]
+        self._index.delete(ids=str_ids, namespace=self.namespace or None)
+
+    def clear(self) -> None:
+        if self._index is None:
+            self._ensure_index()
+        if self._index is None:
+            return
+        self._index.delete(delete_all=True, namespace=self.namespace or None)
+
+    def __len__(self) -> int:
+        if self._index is None:
+            self._ensure_index()
+        stats = self._describe_index_stats()
+        if not isinstance(stats, dict):
+            return 0
+        if self.namespace:
+            namespaces = stats.get("namespaces", {})
+            namespace_stats = namespaces.get(self.namespace, {})
+            return namespace_stats.get("vector_count", 0)
+        return stats.get("total_vector_count", 0)
+
+    def close(self) -> None:
+        """Close the Pinecone client (no-op for Pinecone indexes)."""
+        self._index = None
