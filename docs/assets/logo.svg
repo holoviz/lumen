@@ -1,30 +1,72 @@
 <svg width="512" height="512" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <path id="kite-light" d="M 0 0 L 62 12 L 76 76 Z" />
-    <path id="kite-dark" d="M 0 0 L 76 76 L 12 62 Z" />
+    <path id="kite-light" d="M 6 0 L 55 20 L 75 75 L 20 55 L 0 6 Z" />
+    <path id="kite-dark"  d="M 6 0 L 75 75 L 20 55 L 0 6 Z" />
+
+    <linearGradient id="blueLight" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="76" y2="76">
+      <stop offset="0" stop-color="#E3F4FD"/>
+      <stop offset="0.22" stop-color="#29B6F6"/>
+      <stop offset="1" stop-color="#1E88B5"/>
+    </linearGradient>
+    <linearGradient id="blueDark" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="76" y2="76">
+      <stop offset="0" stop-color="#CFE9F7"/>
+      <stop offset="0.22" stop-color="#0277BD"/>
+      <stop offset="1" stop-color="#015B8A"/>
+    </linearGradient>
+
+    <linearGradient id="purpleLight" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="76" y2="76">
+      <stop offset="0" stop-color="#EEDAF2"/>
+      <stop offset="0.22" stop-color="#AB47BC"/>
+      <stop offset="1" stop-color="#7B2F88"/>
+    </linearGradient>
+    <linearGradient id="purpleDark" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="76" y2="76">
+      <stop offset="0" stop-color="#E0C5EA"/>
+      <stop offset="0.22" stop-color="#6A1B9A"/>
+      <stop offset="1" stop-color="#4A136E"/>
+    </linearGradient>
+
+    <linearGradient id="redLight" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="76" y2="76">
+      <stop offset="0" stop-color="#FDE0DF"/>
+      <stop offset="0.22" stop-color="#EF5350"/>
+      <stop offset="1" stop-color="#B63A38"/>
+    </linearGradient>
+    <linearGradient id="redDark" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="76" y2="76">
+      <stop offset="0" stop-color="#F9C9C8"/>
+      <stop offset="0.22" stop-color="#C62828"/>
+      <stop offset="1" stop-color="#8A1B1B"/>
+    </linearGradient>
+
+    <linearGradient id="yellowLight" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="76" y2="76">
+      <stop offset="0" stop-color="#FFF3CD"/>
+      <stop offset="0.22" stop-color="#FFCA28"/>
+      <stop offset="1" stop-color="#D39C16"/>
+    </linearGradient>
+    <linearGradient id="yellowDark" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="76" y2="76">
+      <stop offset="0" stop-color="#FFE9B3"/>
+      <stop offset="0.22" stop-color="#F57C00"/>
+      <stop offset="1" stop-color="#B85A00"/>
+    </linearGradient>
   </defs>
 
   <g transform="translate(100 100)">
-
-    <g transform="translate(-10 -10) rotate(180)">
-      <use href="#kite-light" fill="#29B6F6"/>
-      <use href="#kite-dark" fill="#0277BD"/>
+    <g transform="translate(-11 -11) rotate(180)">
+      <use href="#kite-light" fill="url(#blueLight)"/>
+      <use href="#kite-dark"  fill="url(#blueDark)"/>
     </g>
 
-    <g transform="translate(-10 10) rotate(90)">
-      <use href="#kite-light" fill="#AB47BC"/>
-      <use href="#kite-dark" fill="#6A1B9A"/>
+    <g transform="translate(-11 11) rotate(90)">
+      <use href="#kite-light" fill="url(#purpleLight)"/>
+      <use href="#kite-dark"  fill="url(#purpleDark)"/>
     </g>
 
-    <g transform="translate(10 -10) rotate(-90)">
-      <use href="#kite-light" fill="#EF5350"/>
-      <use href="#kite-dark" fill="#C62828"/>
+    <g transform="translate(11 -11) rotate(-90)">
+      <use href="#kite-light" fill="url(#redLight)"/>
+      <use href="#kite-dark"  fill="url(#redDark)"/>
     </g>
 
-    <g transform="translate(10 10) rotate(0)">
-      <use href="#kite-light" fill="#FFCA28"/>
-      <use href="#kite-dark" fill="#F57C00"/>
+    <g transform="translate(11 11) scale(1.04)">
+      <use href="#kite-light" fill="url(#yellowLight)"/>
+      <use href="#kite-dark"  fill="url(#yellowDark)"/>
     </g>
-
   </g>
 </svg>
