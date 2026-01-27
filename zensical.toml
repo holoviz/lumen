@@ -24,6 +24,7 @@ nav = [
       {"Overview" = "examples/tutorials/index.md"},
       {"Weather Data AI Explorer" = "examples/tutorials/weather_data_ai_explorer.md"},
       {"SaaS Company Report Dashboard" = "examples/tutorials/saas_company_report_dashboard.md"},
+      {"Census Data AI Explorer" = "examples/tutorials/census_data_ai_explorer.md"}
     ]},
     {"Gallery" = [
       {"Overview" = "examples/gallery/index.md"},

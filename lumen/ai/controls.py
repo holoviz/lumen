@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import pathlib
 import re
 import zipfile
@@ -334,40 +335,70 @@ class BaseSourceControls(Viewer):
         file: io.BytesIO | io.StringIO,
         card: UploadedFileRow,
     ) -> int:
+        """
+        Add a table from an uploaded file to the DuckDB source.
+
+        Parameters
+        ----------
+        duckdb_source : DuckDBSource
+            The DuckDB source to add the table to.
+        file : io.BytesIO | io.StringIO
+            The file object containing the data.
+        card : UploadedFileRow
+            The file card with metadata about the file.
+
+        Returns
+        -------
+        int
+            1 if the table was added successfully, 0 otherwise.
+        """
         conn = duckdb_source._connection
         extension = card.extension
         table = card.alias
         sql_expr = f"SELECT * FROM {table}"
         params = {}
         conversion = None
-        if extension.endswith("csv"):
-            df = pd.read_csv(file, parse_dates=True, sep=None, engine='python')
-        elif extension.endswith(("parq", "parquet")):
-            df = pd.read_parquet(file)
-        elif extension.endswith("json"):
-            df = pd.read_json(file)
-        elif extension.endswith("xlsx"):
-            sheet = card.sheet
-            df = pd.read_excel(file, sheet_name=sheet)
-        elif extension.endswith(('geojson', 'wkt', 'zip')):
-            if extension.endswith('zip'):
-                zf = zipfile.ZipFile(file)
-                if not any(f.filename.endswith('shp') for f in zf.filelist):
-                    raise ValueError("Could not interpret zip file contents")
-                file.seek(0)
-            import geopandas as gpd
-            geo_df = gpd.read_file(file)
-            df = pd.DataFrame(geo_df)
-            df['geometry'] = geo_df['geometry'].to_wkb()
-            params['initializers'] = init = ["""
-            INSTALL spatial;
-            LOAD spatial;
-            """]
-            conn.execute(init[0])
-            cols = ', '.join(f'"{c}"' for c in df.columns if c != 'geometry')
-            conversion = f'CREATE TEMP TABLE {table} AS SELECT {cols}, ST_GeomFromWKB(geometry) as geometry FROM {table}_temp'
-        else:
-            self._error_placeholder.object += f"\nCould not convert {card.filename}.{extension}."
+        filename = f"{card.filename}.{extension}"
+
+        try:
+            file.seek(0)  # Ensure we're at the start of the file
+
+            if extension.endswith("csv"):
+                df = pd.read_csv(file, parse_dates=True, sep=None, engine='python')
+            elif extension.endswith(("parq", "parquet")):
+                df = pd.read_parquet(file)
+            elif extension.endswith("json"):
+                df = self._read_json_file(file, filename)
+            elif extension.endswith("xlsx"):
+                sheet = card.sheet
+                df = pd.read_excel(file, sheet_name=sheet)
+            elif extension.endswith(('geojson', 'wkt', 'zip')):
+                df, conversion, params = self._read_geo_file(file, extension, table, conn)
+            else:
+                self._error_placeholder.object += f"\n⚠️ Could not convert {filename!r}: unsupported format."
+                self._error_placeholder.visible = True
+                return 0
+
+        except pd.errors.EmptyDataError:
+            self._error_placeholder.object += f"\n⚠️ Could not read {filename!r}: file is empty."
+            self._error_placeholder.visible = True
+            return 0
+        except pd.errors.ParserError:
+            self._error_placeholder.object += f"\n⚠️ Could not parse {filename!r}"
+            self._error_placeholder.visible = True
+            return 0
+        except ValueError:
+            self._error_placeholder.object += f"\n⚠️ Could not read {filename!r}"
+            self._error_placeholder.visible = True
+            return 0
+        except Exception:
+            self._error_placeholder.object += f"\n⚠️ Error processing {filename!r}"
+            self._error_placeholder.visible = True
+            return 0
+
+        # Validate that we got a non-empty DataFrame
+        if df is None or df.empty:
+            self._error_placeholder.object += f"\n⚠️ {filename!r} contains no data."
             self._error_placeholder.visible = True
             return 0
 
@@ -389,6 +420,150 @@ class BaseSourceControls(Viewer):
         self.param.trigger('outputs')
         self._last_table = table
         return 1
+
+    def _read_json_file(self, file: io.BytesIO | io.StringIO, filename: str) -> pd.DataFrame:
+        """
+        Read a JSON file into a DataFrame, handling various JSON structures.
+
+        Parameters
+        ----------
+        file : io.BytesIO | io.StringIO
+            The file object containing JSON data.
+        filename : str
+            The filename for error messages.
+
+        Returns
+        -------
+        pd.DataFrame
+            The parsed DataFrame.
+
+        Raises
+        ------
+        ValueError
+            If the JSON cannot be converted to a DataFrame.
+        """
+        file.seek(0)
+        content = file.read()
+        if isinstance(content, bytes):
+            content = content.decode('utf-8')
+
+        content = content.strip()
+        if not content:
+            raise ValueError("JSON file is empty")
+
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError as e:
+            raise ValueError("Invalid JSON") from e
+
+        # Handle different JSON structures
+        if isinstance(data, list):
+            # List of records - most common tabular format
+            if len(data) == 0:
+                raise ValueError("JSON array is empty")
+            if all(isinstance(item, dict) for item in data):
+                return pd.DataFrame(data)
+            else:
+                # List of primitives - create single column
+                return pd.DataFrame({"value": data})
+
+        elif isinstance(data, dict):
+            # Check for common data keys in nested structures
+            data_keys = ['data', 'records', 'rows', 'items', 'results']
+            for key in data_keys:
+                if key in data and isinstance(data[key], list):
+                    if len(data[key]) > 0 and all(isinstance(item, dict) for item in data[key]):
+                        return pd.DataFrame(data[key])
+
+            # Check if it's column-oriented (all values are lists of same length)
+            if all(isinstance(v, list) for v in data.values()):
+                lengths = [len(v) for v in data.values()]
+                if len(set(lengths)) == 1:  # All same length
+                    return pd.DataFrame(data)
+                else:
+                    raise ValueError(
+                        f"JSON object has arrays of different lengths: {dict(zip(data.keys(), lengths, strict=False))}. "
+                        "Cannot convert to tabular format."
+                    )
+
+            # Check if it's a single record (all values are scalars)
+            if all(not isinstance(v, (list, dict)) or v is None for v in data.values()):
+                return pd.DataFrame([data])
+
+            # Mixed structure - try pandas default behavior
+            file.seek(0)
+            try:
+                return pd.read_json(file)
+            except ValueError as e:
+                raise ValueError(
+                    "JSON structure is not tabular. Expected either a list of records "
+                    "or a dictionary with column arrays of equal length."
+                ) from e
+        else:
+            raise ValueError(
+                f"JSON root must be an object or array, got {type(data).__name__}"
+            )
+
+    def _read_geo_file(
+        self,
+        file: io.BytesIO,
+        extension: str,
+        table: str,
+        conn,
+    ) -> tuple[pd.DataFrame, str | None, dict]:
+        """
+        Read a geospatial file into a DataFrame.
+
+        Parameters
+        ----------
+        file : io.BytesIO
+            The file object containing geospatial data.
+        extension : str
+            The file extension (geojson, wkt, zip).
+        table : str
+            The target table name.
+        conn : duckdb.DuckDBPyConnection
+            The DuckDB connection.
+
+        Returns
+        -------
+        tuple[pd.DataFrame, str | None, dict]
+            The DataFrame, optional conversion SQL, and params.
+
+        Raises
+        ------
+        ValueError
+            If the file cannot be read or interpreted.
+        """
+        if extension.endswith('zip'):
+            zf = zipfile.ZipFile(file)
+            if not any(f.filename.endswith('shp') for f in zf.filelist):
+                raise ValueError("ZIP file does not contain a shapefile (.shp)")
+            file.seek(0)
+
+        import geopandas as gpd
+        geo_df = gpd.read_file(file)
+
+        if geo_df.empty:
+            raise ValueError("Geospatial file contains no features")
+
+        df = pd.DataFrame(geo_df)
+        df['geometry'] = geo_df['geometry'].to_wkb()
+
+        params = {
+            'initializers': [
+                """
+                INSTALL spatial;
+                LOAD spatial;
+                """
+            ]
+        }
+        conn.execute(params['initializers'][0])
+
+        cols = ', '.join(f'"{c}"' for c in df.columns if c != 'geometry')
+        conversion = f'CREATE TEMP TABLE {table} AS SELECT {cols}, ST_GeomFromWKB(geometry) as geometry FROM {table}_temp'
+
+        return df, conversion, params
 
     def _extract_metadata_content(self, file_obj: io.BytesIO, extension: str) -> str:
         """Extract text content from a metadata file."""
@@ -590,15 +765,19 @@ class UploadControls(BaseSourceControls):
             n_tables, n_docs, n_metadata = self._process_files()
 
             total_files = len(self._file_cards)
+            n_successful = n_tables + n_docs + n_metadata
+
+            # Always clear on completion to reset UI
             if self.clear_uploads:
                 self._clear_uploads()
-                self._file_input.value = {}
+            self._file_input.value = {}
 
-            if (n_tables + n_docs + n_metadata) > 0:
+            if n_successful > 0:
                 self._message_placeholder.param.update(
                     object=f"Successfully processed {total_files} files ({n_tables} table(s), {n_metadata} metadata file(s)).",
                     visible=True,
                 )
+
             self._error_placeholder.object = self._error_placeholder.object.strip()
 
         self._count += 1
