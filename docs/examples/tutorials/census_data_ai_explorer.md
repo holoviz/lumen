@@ -26,7 +26,7 @@ Each step introduces key Lumen AI concepts for building custom data source integ
 
 Lumen AI ships with built-in support for common data sources like CSV files, DuckDB, and SQL databases. But what if your data lives behind an API that requires authentication, has complex query parameters, or needs real-time fetching?
 
-**Custom data source controls** let you (see [Controls configuration](../../configuration/controls.md)):
+**Custom data source controls** let you (see [Source Controls](../../configuration/ui.md#source-controls)):
 
 - **Connect to external APIs** - Fetch data from REST APIs, government data portals, or proprietary services
 - **Add interactive parameters** - Let users select years, regions, variables, or filters before loading data
@@ -136,7 +136,7 @@ Let's break down the key concepts:
 
 ### Custom controls
 
-**Custom controls** extend data sources by subclassing `lmai.controls.DownloadControls` (see [Controls configuration](../../configuration/controls.md)):
+**Custom controls** extend data sources by subclassing `lmai.controls.DownloadControls` (see [Source Controls](../../configuration/ui.md#source-controls)):
 
 ```python
 class CensusControls(DownloadControls):
@@ -641,6 +641,6 @@ Extend this example by:
 
 ## See also
 
-- [Controls Configuration](../../configuration/controls.md) — Complete guide to creating custom source controls
+- [Source Controls](../../configuration/ui.md#source-controls) — Complete guide to creating custom source controls
 - [Data Sources](../../configuration/sources.md) — File and database connections  
 - [Custom Analyses](../../configuration/analyses.md) — Building specialized visualizations

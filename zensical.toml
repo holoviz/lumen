@@ -51,7 +51,6 @@ nav = [
     {"Coordinator" = "configuration/coordinators.md"},
     {"Embeddings" = "configuration/embeddings.md"},
     {"Vector Stores" = "configuration/vector_stores.md"},
-    {"UI Source Controls" = "configuration/controls.md"},
     {"Specs" = [
       {"Overview" = "configuration/spec/index.md"},
       {"Core Concepts" = "configuration/spec/concepts.md"},
