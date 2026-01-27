@@ -9,14 +9,14 @@ from copy import deepcopy
 from io import BytesIO, StringIO
 from typing import TYPE_CHECKING, Any
 
-import panel as pn
 import param
 import requests
 
 from jsonschema import Draft7Validator, ValidationError
 from panel.config import config
+from panel.io import cache
 from panel.layout import Row
-from panel.pane import panel as as_panel
+from panel.pane import DeckGL, panel as as_panel
 from panel.param import ParamMethod
 from panel.viewable import Viewable, Viewer
 from panel.widgets import CodeEditor
@@ -289,7 +289,7 @@ class VegaLiteOutput(LumenOutput):
         out = self.component.get_panel().export(fmt, **kwargs)
         return BytesIO(out) if isinstance(out, bytes) else StringIO(out)
 
-    @pn.cache
+    @cache
     @staticmethod
     def _load_vega_lite_schema(schema_url: str | None = None):
         return requests.get(schema_url, timeout=0.5).json()
@@ -509,7 +509,7 @@ class DeckGLOutput(LumenOutput):
                         layer['data'] = data_records
 
         html_buffer = StringIO()
-        pn.pane.DeckGL(object=spec, sizing_mode='stretch_both').save(html_buffer)
+        DeckGL(spec, sizing_mode='stretch_both').save(html_buffer)
         html_buffer.seek(0)
         return html_buffer
 
