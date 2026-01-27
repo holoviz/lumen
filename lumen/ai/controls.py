@@ -34,7 +34,7 @@ from .context import TContext
 from .utils import generate_diff, log_debug
 
 if TYPE_CHECKING:
-    from .views import SQLOutput
+    from .editors import SQLEditor
 
 TABLE_EXTENSIONS = ("csv", "parquet", "parq", "json", "xlsx", "geojson", "wkt", "zip")
 
@@ -1984,10 +1984,10 @@ class TableExplorer(Viewer):
         self._input_row.visible = bool(self.source_map)
         self._initialized = True
 
-    def create_sql_output(self) -> SQLOutput | None:
+    def create_sql_output(self) -> SQLEditor | None:
         if not self.table_slug:
             return
-        from .views import SQLOutput
+        from .editors import SQLEditor
 
         source = self.source_map[self.table_slug]
         if SOURCE_TABLE_SEPARATOR in self.table_slug:
@@ -1998,7 +1998,7 @@ class TableExplorer(Viewer):
         sql_expr = f"SELECT * FROM \"{table}\""
         new_source = source.create_sql_expr_source({new_table: sql_expr})
         pipeline = Pipeline(source=new_source, table=new_table)
-        return SQLOutput(spec=sql_expr, component=pipeline)
+        return SQLEditor(spec=sql_expr, component=pipeline)
 
     def __panel__(self):
         return self._layout

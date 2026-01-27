@@ -46,6 +46,7 @@ from .controls import (
     DownloadControls, SourceCatalog, TableExplorer, UploadControls,
 )
 from .coordinator import Coordinator, Plan, Planner
+from .editors import AnalysisOutput, LumenEditor, SQLEditor
 from .export import export_notebook
 from .llm import (
     Llm, Message, OpenAI, get_available_llm,
@@ -56,7 +57,6 @@ from .models import ErrorDescription
 from .report import ActorTask, Report, Section
 from .utils import log_debug, wrap_logfire
 from .vector_store import VectorStore
-from .views import AnalysisOutput, LumenOutput, SQLOutput
 
 DataT = str | Path | Source | Pipeline
 
@@ -2125,8 +2125,8 @@ class ExplorerUI(UI):
         )
         return pop_button
 
-    def _render_view(self, exploration: Exploration, view: LumenOutput) -> VSplit:
-        title = view.title or type(view).__name__.replace('Output', '')
+    def _render_view(self, exploration: Exploration, view: LumenEditor) -> VSplit:
+        title = view.title or type(view).__name__.replace('Editor', '')
         if len(title) > 25:
             title = f"{title[:25]}..."
 
@@ -2145,7 +2145,7 @@ class ExplorerUI(UI):
         controls.append(self._render_pop_out(exploration, view, title))
         return (title, view)
 
-    def _find_view_in_tabs(self, exploration: Exploration, out: LumenOutput):
+    def _find_view_in_tabs(self, exploration: Exploration, out: LumenEditor):
         tabs = exploration.view[0]
         for i, tab in enumerate(tabs[1:], start=1):
             content = tab[1][1] if isinstance(tab, tuple) and len(tab) > 1 else tab[1]
@@ -2153,7 +2153,7 @@ class ExplorerUI(UI):
                 return i
         return None
 
-    def _find_view_in_popped_out(self, exploration: Exploration, out: LumenOutput):
+    def _find_view_in_popped_out(self, exploration: Exploration, out: LumenEditor):
         for i, standalone in enumerate(exploration.view[1:], start=1):
             if isinstance(standalone, Column) and len(standalone) > 1:
                 vsplit = standalone[1][1]
@@ -2166,9 +2166,9 @@ class ExplorerUI(UI):
         content = []
         new_items = items if event is None else event.new
         for view in new_items:
-            if not isinstance(view, LumenOutput) or (event and view in event.old):
+            if not isinstance(view, LumenEditor) or (event and view in event.old):
                 continue
-            if tabs and isinstance(view, SQLOutput) and not exploration.initialized:
+            if tabs and isinstance(view, SQLEditor) and not exploration.initialized:
                 tabs[0] = ("Data Source", view.render_explorer())
                 exploration.initialized = True
             title, vsplit = self._render_view(exploration, view)
@@ -2182,8 +2182,8 @@ class ExplorerUI(UI):
             )
 
     def _update_views(self, exploration: Exploration, event: param.parameterized.Event):
-        current = [view for view in event.new if isinstance(view, LumenOutput)]
-        old = [view for view in event.old if isinstance(view, LumenOutput)]
+        current = [view for view in event.new if isinstance(view, LumenEditor)]
+        old = [view for view in event.old if isinstance(view, LumenEditor)]
 
         idx = None
         tabs = exploration.view[0]

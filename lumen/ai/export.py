@@ -16,7 +16,7 @@ from panel.viewable import Viewable
 from ..config import config
 from ..pipeline import Pipeline
 from ..views import View
-from .views import LumenOutput
+from .editors import LumenEditor
 
 
 def make_md_cell(text: str):
@@ -76,7 +76,7 @@ def serialize_avatar(avatar: str | BytesIO, size: int = 45) -> str:
 def format_markdown(md: Markdown):
     return [nbformat.v4.new_markdown_cell(source=md.object)]
 
-def format_output(output: LumenOutput):
+def format_output(output: LumenEditor):
     ext = None
     code = []
     with config.param.update(serializer='csv'):
@@ -106,7 +106,7 @@ def render_cells(outputs: list[Viewable]) -> tuple[Any, list[str]]:
     for out in outputs:
         if isinstance(out, Markdown):
             cells += format_markdown(out)
-        elif isinstance(out, LumenOutput):
+        elif isinstance(out, LumenEditor):
             cell, ext = format_output(out)
             cells.append(cell)
             if ext and ext not in extensions:

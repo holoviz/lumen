@@ -134,7 +134,7 @@ Example:
 ```python
 import panel as pn
 from lumen.ai.report import Action, Report, Section
-from lumen.ai.views import LumenOutput
+from lumen.ai.editors import LumenEditor
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
 from lumen.views.base import VegaLiteView
@@ -166,7 +166,7 @@ class AnalyzeAction(Action):
             },
             sizing_mode="stretch_width",
         )
-        return [LumenOutput(component=chart, title="Avg Body Mass by Species")], {}
+        return [LumenEditor(component=chart, title="Avg Body Mass by Species")], {}
 
 report = Report(
     Section(LoadDataAction(title="Load"), AnalyzeAction(title="Analyze"), title="Penguins")

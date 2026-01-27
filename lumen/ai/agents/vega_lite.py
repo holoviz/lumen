@@ -17,13 +17,13 @@ from ..config import (
     VEGA_MAP_LAYER, VEGA_ZOOMABLE_MAP_ITEMS, UserCancelledError,
 )
 from ..context import TContext
+from ..editors import LumenEditor, VegaLiteEditor
 from ..llm import Message, OpenAI
 from ..models import EscapeBaseModel, PartialBaseModel, RetrySpec
 from ..utils import (
     get_data, get_schema, load_json, log_debug, retry_llm_output,
 )
 from ..vector_store import DuckDBVectorStore
-from ..views import LumenOutput, VegaLiteOutput
 from .base_code import BaseCodeAgent
 
 
@@ -124,7 +124,7 @@ class VegaLiteAgent(BaseCodeAgent):
 
     _extensions = ("vega",)
 
-    _output_type = VegaLiteOutput
+    _editor_type = VegaLiteEditor
 
     def __init__(self, **params):
         self._vector_store: DuckDBVectorStore | None = None
@@ -513,7 +513,7 @@ class VegaLiteAgent(BaseCodeAgent):
             if "height" not in vega_spec:
                 vega_spec["height"] = "container"
 
-        self._output_type.validate_spec(vega_spec)
+        self._editor_type.validate_spec(vega_spec)
 
         # using string comparison because these keys could be in different nested levels
         vega_spec_str = dump_yaml(vega_spec)
@@ -554,7 +554,7 @@ class VegaLiteAgent(BaseCodeAgent):
         feedback: str,
         messages: list[Message],
         context: TContext,
-        view: LumenOutput | None = None,
+        view: LumenEditor | None = None,
         spec: str | None = None,
         language: str | None = None,
         errors: list[str] | None = None,
@@ -568,7 +568,7 @@ class VegaLiteAgent(BaseCodeAgent):
             feedback, messages, context, view=view, spec=spec, language=language, **kwargs
         )
 
-    async def _polish_plot(self, out: VegaLiteOutput, messages: list[Message], context: TContext, doc: str | None = None):
+    async def _polish_plot(self, out: VegaLiteEditor, messages: list[Message], context: TContext, doc: str | None = None):
         steps = {
             "interaction_polish": "Add helpful tooltips and ensure responsive, accessible user experience",
         }
@@ -623,7 +623,7 @@ class VegaLiteAgent(BaseCodeAgent):
 
         # Step 2: Show complete plot immediately
         view = self.view_type(pipeline=pipeline, **full_dict)
-        out = self._output_type(component=view, title=step_title)
+        out = self._editor_type(component=view, title=step_title)
 
         # Step 3: enhancements (LLM-driven creative decisions)
         if not self.code_execution_enabled:

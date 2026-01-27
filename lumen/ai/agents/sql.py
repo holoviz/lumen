@@ -19,6 +19,7 @@ from ...sources.duckdb import DuckDBSource
 from ...transforms.sql import SQLLimit
 from ..config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from ..context import ContextModel, TContext
+from ..editors import LumenEditor, SQLEditor
 from ..llm import Message
 from ..models import EscapeBaseModel, PartialBaseModel, RetrySpec
 from ..schemas import Metaset
@@ -26,7 +27,6 @@ from ..utils import (
     clean_sql, describe_data, get_data, get_pipeline, parse_table_slug,
     retry_llm_output, stream_details,
 )
-from ..views import LumenOutput, SQLOutput
 from .base_lumen import BaseLumenAgent
 
 
@@ -306,7 +306,7 @@ class SQLInputs(ContextModel):
     visible_slugs: NotRequired[set[str]]
 
 
-class SQLOutputs(ContextModel):
+class SQLEditors(ContextModel):
 
     data: Any
 
@@ -369,10 +369,10 @@ class SQLAgent(BaseLumenAgent):
 
     _extensions = ("codeeditor", "tabulator")
 
-    _output_type = SQLOutput
+    _editor_type = SQLEditor
 
     input_schema = SQLInputs
-    output_schema = SQLOutputs
+    output_schema = SQLEditors
 
     async def _gather_prompt_context(self, prompt_name: str, messages: list, context: TContext, **kwargs):
         """Pre-compute metaset context for template rendering."""
@@ -475,14 +475,14 @@ class SQLAgent(BaseLumenAgent):
         sql: str,
         step_title: str | None,
         raise_if_empty: bool = False
-    ) -> SQLOutput:
+    ) -> SQLEditor:
         """Finalize execution for final step."""
 
         df = await get_data(pipeline)
         if df.empty and raise_if_empty:
             raise ValueError(f"\nQuery `{sql}` returned empty results; ensure all the WHERE filter values exist in the dataset.")
 
-        view = self._output_type(
+        view = self._editor_type(
             component=pipeline, title=step_title, spec=sql
         )
         return view
@@ -551,7 +551,7 @@ class SQLAgent(BaseLumenAgent):
         raise_if_empty: bool = False,
         output_title: str | None = None,
         errors: list[str] | None = None,
-    ) -> SQLOutput:
+    ) -> SQLEditor:
         """
         Helper method that generates, validates, and executes final SQL queries.
 
@@ -576,7 +576,7 @@ class SQLAgent(BaseLumenAgent):
 
         Returns
         -------
-        SQLOutput
+        SQLEditor
             Output object from successful execution
         """
         with self._add_step(title=step_title, steps_layout=self._steps_layout) as step:
@@ -803,7 +803,7 @@ class SQLAgent(BaseLumenAgent):
         sources: dict[tuple[str, str], Source],
         error_context: str,
         step_title: str | None = None,
-    ) -> SQLOutput:
+    ) -> SQLEditor:
         """Run adaptive exploration: initial discoveries → sufficiency check → optional follow-ups → final answer."""
         # Step 1: LLM selects initial discoveries
         with self._add_step(title="Selecting initial discoveries", steps_layout=self._steps_layout) as step:
@@ -852,7 +852,7 @@ class SQLAgent(BaseLumenAgent):
         feedback: str,
         messages: list[Message],
         context: TContext,
-        view: LumenOutput | None = None,
+        view: LumenEditor | None = None,
         spec: str | None = None,
         language: str | None = None,
         errors: list[str] | None = None,
@@ -870,7 +870,7 @@ class SQLAgent(BaseLumenAgent):
         messages: list[Message],
         context: TContext,
         step_title: str | None = None,
-    ) -> tuple[list[Any], SQLOutputs]:
+    ) -> tuple[list[Any], SQLEditors]:
         """Execute SQL generation with table selection, then one-shot attempt, then exploration if needed."""
         sources = context["sources"]
         metaset = context["metaset"]
