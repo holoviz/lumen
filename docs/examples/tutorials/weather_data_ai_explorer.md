@@ -299,7 +299,7 @@ source = DuckDBSource(
     tables={
         "raob_soundings": """
             SELECT * FROM read_csv_auto(
-                'https://raw.githubusercontent.com/holoviz/lumen/main/examples/raob.csv'
+                'https://mesonet.agron.iastate.edu/cgi-bin/request/raob.py?station=KILX&sts=2026-01-25T09%3A56&ets=2026-01-26T09%3A56'
             )
         """,
     },
