@@ -22,8 +22,8 @@ from panel.viewable import (
 )
 from panel_material_ui import (
     Alert, Breadcrumbs, Button, ChatFeed, ChatInterface, ChatMessage,
-    Column as MuiColumn, Dialog, FileDownload, IconButton, MenuList, Page,
-    Paper, Popup, Row, Select, Switch, Tabs, Typography,
+    Column as MuiColumn, Dialog, Divider, FileDownload, IconButton, MenuList,
+    Page, Paper, Popup, Row, Select, Switch, Tabs, Typography,
 )
 from panel_splitjs import HSplit, MultiSplit, VSplit
 
@@ -1631,11 +1631,34 @@ class ExplorerUI(UI):
         self._sidebar_menu.update_item(exploration, active=True, icon="timeline" if report["active"] else "insert_chart")
         self._update_main_view()
 
+    def _handle_llm_dialog(self, event):
+        self._llm_dialog.open = True
+        self._settings_popup.open = False
+
     def _render_sidebar(self) -> list[Viewable]:
-        switches = []
+        llm_config_button = Button(
+            label="Configure AI Models",
+            icon="auto_awesome",
+            size="large",
+            variant="text",
+            sizing_mode="stretch_width",
+            on_click=self._handle_llm_dialog,
+            margin=(10, 0, 5, 0),
+            sx={
+                'fontSize': '16px',
+                'color': 'text.primary',
+                '& .MuiIcon-root': {
+                    'fontSize': '28px',
+                    'marginRight': '10px',
+                }
+            }
+        )
+
         cot = Switch(label='Chain of Thought', description='Show AI reasoning steps')
         cot.link(self._coordinator, value='verbose', bidirectional=True)
-        switches.append(cot)
+
+        switches = [llm_config_button, Divider(sizing_mode="stretch_width"), cot]
+
         sql_agent = next(
             (agent for agent in self._coordinator.agents if isinstance(agent, SQLAgent)),
             None
@@ -1673,30 +1696,10 @@ class ExplorerUI(UI):
                 options={"Disabled": "disabled", "Prompt": "prompt", "LLM Validation": "llm", "Always Allow": "allow"},
                 description="How to handle LLM generated code execution",
                 sizing_mode="stretch_width",
-                margin=(10, 10, 5, 10),
+                margin=10,
                 visible=self._code_exec_switch
             )
             switches.extend([self._code_exec_switch, self._code_exec_select])
-
-        llm_config_button = Button(
-            label="Configure AI Models",
-            icon="auto_awesome",
-            size="large",
-            variant="text",
-            button_type="default",
-            sizing_mode="stretch_width",
-            on_click=lambda e: setattr(self._llm_dialog, 'open', True),
-            margin=(-5, 10, 10, 10),
-            sx={
-                'fontSize': '16px',
-                'color': 'text.primary',
-                '& .MuiIcon-root': {
-                    'fontSize': '28px',
-                    'marginRight': '10px',
-                }
-            }
-        )
-        switches.append(llm_config_button)
 
         prefs_header = Typography(
             "Settings",
