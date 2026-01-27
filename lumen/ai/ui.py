@@ -900,11 +900,12 @@ class UI(Viewer):
     def _execute_pending_query_with(self, user_prompt, old_sources):
         """Execute a query after files have been uploaded."""
         # Remove views from widget
-        self._chat_input.param.update(
-            value_input="",
-            value_uploaded={},
-            views=[],
-        )
+        with edit_readonly(self._chat_input):
+            self._chat_input.param.update(
+                value_input="",
+                value_uploaded={},
+                views=[],
+            )
 
         # Build message with new sources info
         new_sources = [
