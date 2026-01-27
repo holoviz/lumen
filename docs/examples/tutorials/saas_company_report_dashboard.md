@@ -36,7 +36,7 @@ from lumen.ai.llm import OpenAI
 from lumen.ai.report import Action, Report, Section, ActorTask
 from lumen.ai.actions import SQLQuery
 from lumen.ai.agents import ChatAgent
-from lumen.ai.views import LumenOutput
+from lumen.ai.views import LumenEditor
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
 from lumen.views import VegaLiteView
@@ -140,7 +140,7 @@ llm = OpenAI()  # (1)!
 
 Actions let you write custom Python logic for specialized visualizations. The `CustomerAcquisitionChart` below shows growth trends by subclassing `Action` and implementing `_execute`.
 
-**Key concepts:** Custom Actions extend Lumen Reports by subclassing `Action` (see [Reports configuration](../../configuration/reports.md)). The `_execute` method contains visualization logic and returns `(outputs, context_updates)`. Tasks communicate through a shared context dictionary. LumenOutput wraps components with titles for the report UI.
+**Key concepts:** Custom Actions extend Lumen Reports by subclassing `Action` (see [Reports configuration](../../configuration/reports.md)). The `_execute` method contains visualization logic and returns `(outputs, context_updates)`. Tasks communicate through a shared context dictionary. LumenEditor wraps components with titles for the report UI.
 
 ``` py title="saas_dashboard.py" linenums="98"
 class CustomerAcquisitionChart(Action):
@@ -187,7 +187,7 @@ class CustomerAcquisitionChart(Action):
             height=350
         )
         
-        return [LumenOutput(component=chart, title="Customer Acquisition by Segment")], {}  # (2)!
+        return [LumenEditor(component=chart, title="Customer Acquisition by Segment")], {}  # (2)!
 ```
 
 1. Access shared data from the context dictionary
@@ -242,7 +242,7 @@ class MRRDonutChart(Action):
             height=350
         )
         
-        return [LumenOutput(component=chart, title="MRR by Plan")], {}
+        return [LumenEditor(component=chart, title="MRR by Plan")], {}
 ```
 
 ### Headcount bar chart shows team composition
@@ -298,7 +298,7 @@ class HeadcountChart(Action):
             height=250
         )
         
-        return [LumenOutput(component=chart, title="Headcount by Department")], {}
+        return [LumenEditor(component=chart, title="Headcount by Department")], {}
 ```
 
 ## 3. SQLQuery executes deterministic metrics without custom code
@@ -547,7 +547,7 @@ from lumen.ai.llm import OpenAI
 from lumen.ai.report import Action, Report, Section, ActorTask
 from lumen.ai.actions import SQLQuery
 from lumen.ai.agents import ChatAgent
-from lumen.ai.views import LumenOutput
+from lumen.ai.views import LumenEditor
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
 from lumen.views import VegaLiteView
@@ -697,7 +697,7 @@ class CustomerAcquisitionChart(Action):
             height=350
         )
         
-        return [LumenOutput(component=chart, title="Customer Acquisition by Segment")], {}
+        return [LumenEditor(component=chart, title="Customer Acquisition by Segment")], {}
 
 
 class MRRDonutChart(Action):
@@ -746,7 +746,7 @@ class MRRDonutChart(Action):
             height=350
         )
         
-        return [LumenOutput(component=chart, title="MRR by Plan")], {}
+        return [LumenEditor(component=chart, title="MRR by Plan")], {}
 
 
 class HeadcountChart(Action):
@@ -799,7 +799,7 @@ class HeadcountChart(Action):
             height=250
         )
         
-        return [LumenOutput(component=chart, title="Headcount by Department")], {}
+        return [LumenEditor(component=chart, title="Headcount by Department")], {}
 
 
 # =============================================================================

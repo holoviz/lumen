@@ -15,11 +15,11 @@ from lumen.ai.agents import ChatAgent, SQLAgent
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.coordinator import Coordinator, Plan, Planner
 from lumen.ai.coordinator.planner import Reasoning, make_plan_model
+from lumen.ai.editors import SQLEditor
 from lumen.ai.models import ReplaceLine, RetrySpec
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
 from lumen.ai.tools import FunctionTool, define_tool
-from lumen.ai.views import SQLOutput
 from lumen.config import SOURCE_TABLE_SEPARATOR
 
 
@@ -217,7 +217,7 @@ async def test_plan_execute(sql_plan):
     v1, v2, v3, v4 = sql_plan.views
     assert isinstance(v1, Typography)
     assert v1.object == "### Aggregate"
-    assert isinstance(v2, SQLOutput)
+    assert isinstance(v2, SQLEditor)
     assert v2.spec == (
         "SELECT\n"
         "  SUM(value) AS value_sum\n"

@@ -85,7 +85,7 @@ def test_serialize_holoviews_element_with_operation():
                  'operations': [
                      {
                          'type': 'holoviews.operation.element.factory',
-                         'output_type': {'type': 'holoviews.core.accessors.Opts', 'instance': False},
+                         'editor_type': {'type': 'holoviews.core.accessors.Opts', 'instance': False},
                          'kwargs': {'mode': None}
                      },
                      {
