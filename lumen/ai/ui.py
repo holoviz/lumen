@@ -1669,10 +1669,10 @@ class ExplorerUI(UI):
         )
         if sql_agent:
             sql_planning = Switch(label='SQL Planning', description='Run discovery queries and adaptive exploration before final SQL')
-            sql_planning.link(sql_agent, value='exploration_enabled', bidirectional=True)
+            sql_agent.exploration_enabled = sql_planning
             switches.append(sql_planning)
-        validation = Switch(label='Validation Step', description='Check if the response fully answered your question')
-        validation.link(self._coordinator, value='validation_enabled', bidirectional=True)
+        validation = Switch(label='Validation Step', description='Check if the response fully answered your question', value=True)
+        self._coordinator.validation_enabled = validation
         switches.append(validation)
 
         # Add code execution selector if not hidden
