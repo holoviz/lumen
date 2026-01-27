@@ -83,7 +83,7 @@ class AnalysisAgent(BaseLumenAgent):
         analyses = {a.name: a for a in self.analyses if await a.applies(pipeline)}
         if not analyses:
             log_debug("No analyses apply to the current data.")
-            return None
+            return [], {}
 
         # Short cut analysis selection if there's an exact match
         if len(messages):

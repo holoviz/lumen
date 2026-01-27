@@ -22,7 +22,7 @@ from panel.viewable import Viewable, Viewer
 from panel.widgets import CodeEditor
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
-    Alert, Button, Checkbox, CircularProgress, Column, FileDownload,
+    Alert, Button, Checkbox, CircularProgress, Column, FileDownload, FlexBox,
     MenuButton,
 )
 
@@ -236,7 +236,7 @@ class LumenEditor(Viewer):
         else:
             return {}
 
-    @param.depends('spec')
+    @param.depends('spec', 'component')
     async def render(self):
         if self.component is None:
             yield Alert(
@@ -249,7 +249,8 @@ class LumenEditor(Viewer):
 
         yield CircularProgress(value=True, label="Rendering component...")
 
-        if self.spec in self._last_output:
+        # Only use cache for serializable specs; non-serializable (spec=None) always re-render
+        if self.spec is not None and self.spec in self._last_output:
             yield self._last_output[self.spec]
             return
 
@@ -563,7 +564,7 @@ class AnalysisOutput(LumenEditor):
                 icon='play_circle_outline', label='Run', on_click=self._rerun,
                 button_type='success', margin=(10, 0, 0, 10)
             )
-        return Column(controls, run_button) if controls else run_button
+        return FlexBox(*controls, run_button) if controls else run_button
 
     async def render_context(self):
         out_context = await super().render_context()
@@ -580,7 +581,12 @@ class AnalysisOutput(LumenEditor):
             view = Panel(object=view, pipeline=self.pipeline)
         self.component = view
         self._rendered = False
-        self.spec, self._spec_dict = self._serialize_component(view)
+        try:
+            self.spec, self._spec_dict = self._serialize_component(view)
+        except Exception:
+            # Handle non-serializable components (e.g., Matplotlib figures)
+            self.spec = None
+            self._spec_dict = None
 
 
 class SQLEditor(LumenEditor):
