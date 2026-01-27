@@ -44,6 +44,8 @@ The left sidebar provides quick access to all major features:
 
 **Settings** — Configure LLM and analysis options
 
+**Navigate** — View and jump between explorations
+
 **Help** — Access interface documentation
 
 ### Adding data sources
