@@ -35,7 +35,7 @@ class AnalysisInputs(ContextModel):
     pipeline: Pipeline
 
 
-class AnalysisEditors(ContextModel):
+class AnalysisOutputs(ContextModel):
 
     analysis: Callable
 
@@ -69,7 +69,7 @@ class AnalysisAgent(BaseLumenAgent):
     )
 
     input_schema = AnalysisInputs
-    output_schema = AnalysisEditors
+    output_schema = AnalysisOutputs
 
     _editor_type = AnalysisEditor
 
