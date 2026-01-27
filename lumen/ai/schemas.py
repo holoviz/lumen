@@ -219,7 +219,7 @@ class Metaset:
         include_docs: bool = True,
         n: int | None = None,
         offset: int = 0,
-        show_source: bool = False,
+        show_source: bool | None = None,
         n_others: int = 0,
     ) -> str:
         # Determine which tables to show with full details
@@ -236,6 +236,10 @@ class Metaset:
             if SOURCE_TABLE_SEPARATOR in slug:
                 unique_sources.add(slug.split(SOURCE_TABLE_SEPARATOR, 1)[0])
         single_source = len(unique_sources) == 1
+
+        # Auto-detect show_source: hide source prefix when there's only one source
+        if show_source is None:
+            show_source = not single_source
 
         # Build tables data for primary tables
         tables_data = {}
@@ -309,7 +313,7 @@ class Metaset:
             sorted_slugs = sorted_slugs[:n]
         return sorted_slugs
 
-    def table_list(self, n: int | None = None, offset: int = 0, show_source: bool = False, n_others: int = 0, **override_kwargs) -> str:
+    def table_list(self, n: int | None = None, offset: int = 0, show_source: bool | None = None, n_others: int = 0, **override_kwargs) -> str:
         """Generate minimal table listing for planning - just table names and columns without schema details."""
         generate_kwargs = {
             "include_columns": False,
@@ -321,7 +325,7 @@ class Metaset:
         generate_kwargs.update(override_kwargs)
         return self._generate_context(**generate_kwargs, n=n, offset=offset, show_source=show_source, n_others=n_others)
 
-    def table_context(self, n: int | None = None, offset: int = 0, show_source: bool = True, n_others: int = 0, **override_kwargs) -> str:
+    def table_context(self, n: int | None = None, offset: int = 0, show_source: bool | None = None, n_others: int = 0, **override_kwargs) -> str:
         generate_kwargs = {
             "include_columns": True,
             "include_schema": False,
@@ -332,7 +336,7 @@ class Metaset:
         generate_kwargs.update(override_kwargs)
         return self._generate_context(**generate_kwargs, n=n, offset=offset, show_source=show_source, n_others=n_others)
 
-    def full_context(self, n: int | None = None, offset: int = 0, show_source: bool = True, n_others: int = 0, **override_kwargs) -> str:
+    def full_context(self, n: int | None = None, offset: int = 0, show_source: bool | None = None, n_others: int = 0, **override_kwargs) -> str:
         generate_kwargs = {
             "include_columns": True,
             "include_schema": True,
@@ -343,7 +347,7 @@ class Metaset:
         generate_kwargs.update(override_kwargs)
         return self._generate_context(**generate_kwargs, n=n, offset=offset, show_source=show_source, n_others=n_others)
 
-    def compact_context(self, n: int | None = None, offset: int = 0, show_source: bool = True, n_others: int = 0, **override_kwargs) -> str:
+    def compact_context(self, n: int | None = None, offset: int = 0, show_source: bool | None = None, n_others: int = 0, **override_kwargs) -> str:
         generate_kwargs = {
             "include_columns": True,
             "include_schema": True,
