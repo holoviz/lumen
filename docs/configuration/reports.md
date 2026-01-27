@@ -134,7 +134,7 @@ Example:
 ```python
 import panel as pn
 from lumen.ai.report import Action, Report, Section
-from lumen.ai.views import LumenEditor
+from lumen.ai.editors import LumenEditor
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
 from lumen.views.base import VegaLiteView

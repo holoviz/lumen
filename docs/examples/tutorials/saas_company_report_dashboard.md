@@ -36,7 +36,7 @@ from lumen.ai.llm import OpenAI
 from lumen.ai.report import Action, Report, Section, ActorTask
 from lumen.ai.actions import SQLQuery
 from lumen.ai.agents import ChatAgent
-from lumen.ai.views import LumenEditor
+from lumen.ai.editors import LumenEditor
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
 from lumen.views import VegaLiteView
@@ -547,7 +547,7 @@ from lumen.ai.llm import OpenAI
 from lumen.ai.report import Action, Report, Section, ActorTask
 from lumen.ai.actions import SQLQuery
 from lumen.ai.agents import ChatAgent
-from lumen.ai.views import LumenEditor
+from lumen.ai.editors import LumenEditor
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
 from lumen.views import VegaLiteView
