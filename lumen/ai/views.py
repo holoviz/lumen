@@ -220,11 +220,12 @@ class LumenOutput(Viewer):
             # If output is a view we provide the full View specification
             return {"view": self._spec_dict}
         elif isinstance(view, Pipeline):
+            data = await get_data(view)
             return {
                 "pipeline": view,
                 "table": view.table,
                 "source": view.source,
-                "data": await describe_data(view.data)
+                "data": await describe_data(data)
             }
         else:
             return {}
@@ -559,16 +560,8 @@ class AnalysisOutput(LumenOutput):
         return Column(controls, run_button) if controls else run_button
 
     async def render_context(self):
-        out_context = {"analysis": self.analysis}
-        view = self.component
-        if isinstance(view, View):
-            out_context["view"] = {"object": self._spec_dict, "type": view.view_type}
-        elif isinstance(view, Pipeline):
-            pipeline = view
-            out_context["pipeline"] = pipeline
-            data = await get_data(pipeline)
-            if len(data) > 0:
-                out_context["data"] = await describe_data(data)
+        out_context = await super().render_context()
+        out_context["analysis"] = self.analysis
         return out_context
 
     async def _rerun(self, event):
