@@ -134,84 +134,15 @@ ui = lmai.ExplorerUI(
 )
 ```
 
-## Complete example
+### Custom source controls
 
-``` py title="Full configuration" linenums="1"
-import lumen.ai as lmai
-from lumen.sources.snowflake import SnowflakeSource
-
-source = SnowflakeSource(
-    account='acme',
-    database='sales',
-    authenticator='externalbrowser'
-)
-
-llm = lmai.llm.OpenAI(
-    model_kwargs={
-        'default': {'model': 'gpt-4o-mini'},
-        'sql': {'model': 'gpt-4o'},
-    }
-)
-
-analysis_agent = lmai.agents.AnalysisAgent(analyses=[MyAnalysis])
-
-ui = lmai.ExplorerUI(
-    data=source,
-    llm=llm,
-    agents=[analysis_agent],
-    tools=[my_tool],
-    title='Sales Analytics',
-    suggestions=[
-        ("trending_up", "Revenue trends"),
-        ("people", "Top customers"),
-    ],
-    log_level='INFO',
-    logs_db_path='logs.db'
-)
-
-ui.servable()
-```
-
-## All parameters
-
-Quick reference:
-
-| Parameter | Type | Purpose |
-|-----------|------|---------|
-| `data` | str/Path/Source/list | Data sources to load |
-| `llm` | Llm | LLM provider (default: OpenAI) |
-| `agents` | list | Additional agents |
-| `analyses` | list | Custom analyses |
-| `context` | dict | Initial context |
-| `coordinator` | type | Planner or DependencyResolver |
-| `coordinator_params` | dict | Coordinator configuration |
-| `default_agents` | list | Replace default agents |
-| `demo_inputs` | list | Demo prompts for the coordinator |
-| `document_vector_store` | VectorStore | Vector store for document tools |
-| `export_functions` | dict | Map exporter names to export functions |
-| `interface` | type | Chat interface class |
-| `llm_choices` | list | LLM model choices shown in Settings |
-| `log_level` | str | DEBUG/INFO/WARNING/ERROR |
-| `logfire_tags` | list | Log LLM calls to Logfire with tags |
-| `logs_db_path` | str | Chat logging database path |
-| `notebook_preamble` | str | Export header |
-| `provider_choices` | dict | LLM providers shown in Settings |
-| `source_controls` | list | Source control components for data |
-| `suggestions` | list | Quick action buttons |
-| `title` | str | App title |
-| `tools` | list | Custom tools |
-| `upload_handlers` | dict | File extension upload handlers |
-| `vector_store` | VectorStore | Vector store for non-doc tools |
-
-See parameter docstrings in code for complete details.
-
-## Source Controls
+![Weather Control UI](../assets/configuration/controls.png)
 
 **Source controls provide UI interfaces for loading data from external services.**
 
 Controls let users interactively fetch data from APIs, databases, or specialized sources directly in the Lumen UI sidebar. They're essential for integrating external data that isn't available as static files or database connections.
 
-### Why use source controls?
+**Why use source controls?**
 
 Source controls solve common data integration challenges:
 
@@ -221,16 +152,16 @@ Source controls solve common data integration challenges:
 - **Complex workflows** - Handle multi-step data fetching and transformation
 - **Authentication** - Manage API keys or credentials securely
 
-### Built-in controls
+**Built-in controls**
 
 | Control | Use for |
 |---------|---------|
 | `UploadControls` | Uploading local files (CSV, Excel, etc.) |
 | `DownloadControls` | Fetching data from URLs or building custom controls |
 
-### Key components
+**Key components**
 
-#### Inherited from `BaseSourceControls`
+Inherited from `BaseSourceControls`
 
 | Component | Purpose |
 |-----------|---------|
@@ -241,7 +172,7 @@ Source controls solve common data integration challenges:
 | `_count` | Counter for unique source names |
 | `outputs` | Dict to store created sources |
 
-#### Required implementation steps
+**Required implementation steps**
 
 1. **Define parameters** - Use `param` types for user inputs
 2. **Build UI** - Create widgets with Panel or Material-UI components
@@ -249,9 +180,7 @@ Source controls solve common data integration challenges:
 4. **Register source** - Create DuckDB source with `from_df()` 
 5. **Update outputs** - Set `outputs` dict and trigger events
 
-### Complete minimal example
-
-![Weather Control UI](../assets/configuration/controls.png)
+**Complete minimal example**
 
 ```python
 import asyncio
@@ -344,7 +273,7 @@ ui.servable()
 
 This example fetches real weather data from the Iowa Environmental Mesonet for Oakland, CA. Users can select date ranges and immediately query the data with natural language.
 
-### Best practices
+**Best practices**
 
 - **Use `asyncio.to_thread()`** instead of `run_in_executor()` for blocking calls
 - **Show loading state** with `loading=True` on the layout or use progress bars
@@ -355,6 +284,77 @@ This example fetches real weather data from the Iowa Environmental Mesonet for O
 - **Normalize table names** with `normalize_table_name()` to ensure DuckDB compatibility
 - **Use dynamic table names** that include parameters for clarity
 - **Bind widgets with `from_param()`** for cleaner code
+
+## Complete example
+
+``` py title="Full configuration" linenums="1"
+import lumen.ai as lmai
+from lumen.sources.snowflake import SnowflakeSource
+
+source = SnowflakeSource(
+    account='acme',
+    database='sales',
+    authenticator='externalbrowser'
+)
+
+llm = lmai.llm.OpenAI(
+    model_kwargs={
+        'default': {'model': 'gpt-4o-mini'},
+        'sql': {'model': 'gpt-4o'},
+    }
+)
+
+analysis_agent = lmai.agents.AnalysisAgent(analyses=[MyAnalysis])
+
+ui = lmai.ExplorerUI(
+    data=source,
+    llm=llm,
+    agents=[analysis_agent],
+    tools=[my_tool],
+    title='Sales Analytics',
+    suggestions=[
+        ("trending_up", "Revenue trends"),
+        ("people", "Top customers"),
+    ],
+    log_level='INFO',
+    logs_db_path='logs.db'
+)
+
+ui.servable()
+```
+
+## All parameters
+
+Quick reference:
+
+| Parameter | Type | Purpose |
+|-----------|------|---------|
+| `data` | str/Path/Source/list | Data sources to load |
+| `llm` | Llm | LLM provider (default: OpenAI) |
+| `agents` | list | Additional agents |
+| `analyses` | list | Custom analyses |
+| `context` | dict | Initial context |
+| `coordinator` | type | Planner or DependencyResolver |
+| `coordinator_params` | dict | Coordinator configuration |
+| `default_agents` | list | Replace default agents |
+| `demo_inputs` | list | Demo prompts for the coordinator |
+| `document_vector_store` | VectorStore | Vector store for document tools |
+| `export_functions` | dict | Map exporter names to export functions |
+| `interface` | type | Chat interface class |
+| `llm_choices` | list | LLM model choices shown in Settings |
+| `log_level` | str | DEBUG/INFO/WARNING/ERROR |
+| `logfire_tags` | list | Log LLM calls to Logfire with tags |
+| `logs_db_path` | str | Chat logging database path |
+| `notebook_preamble` | str | Export header |
+| `provider_choices` | dict | LLM providers shown in Settings |
+| `source_controls` | list | Source control components for data |
+| `suggestions` | list | Quick action buttons |
+| `title` | str | App title |
+| `tools` | list | Custom tools |
+| `upload_handlers` | dict | File extension upload handlers |
+| `vector_store` | VectorStore | Vector store for non-doc tools |
+
+See parameter docstrings in code for complete details.
 
 ### See also
 
