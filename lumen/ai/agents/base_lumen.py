@@ -3,10 +3,10 @@ import param
 from ...config import dump_yaml, load_yaml
 from ..config import PROMPTS_DIR
 from ..context import TContext
+from ..editors import LumenEditor
 from ..llm import Message
 from ..models import RetrySpec
 from ..utils import apply_changes, retry_llm_output
-from ..views import LumenOutput
 from .base import Agent
 
 
@@ -21,7 +21,7 @@ class BaseLumenAgent(Agent):
     user = param.String(default="Lumen")
 
     _max_width = None
-    _output_type = LumenOutput
+    _editor_type = LumenEditor
 
     @retry_llm_output()
     async def revise(
@@ -29,7 +29,7 @@ class BaseLumenAgent(Agent):
         instruction: str,
         messages: list[Message],
         context: TContext,
-        view: LumenOutput | None = None,
+        view: LumenEditor | None = None,
         spec: str | None = None,
         language: str | None = None,
         errors: list[str] | None = None,

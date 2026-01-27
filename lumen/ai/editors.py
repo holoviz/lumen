@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from .report import Task
 
 
-class LumenOutput(Viewer):
+class LumenEditor(Viewer):
 
     component = param.ClassSelector(class_=Component)
 
@@ -281,7 +281,7 @@ class LumenOutput(Viewer):
         return f"{self.__class__.__name__}:\n```yaml\n{self.spec}\n```"
 
 
-class VegaLiteOutput(LumenOutput):
+class VegaLiteEditor(LumenEditor):
 
     export_formats = ("yaml", "png", "jpeg", "pdf", "svg", "html")
 
@@ -439,7 +439,7 @@ class VegaLiteOutput(LumenOutput):
         return f"{self.__class__.__name__}:\n```yaml\n{self.spec}\n```"
 
 
-class DeckGLOutput(LumenOutput):
+class DeckGLEditor(LumenEditor):
     """Output class for DeckGL 3D map visualizations.
 
     Handles serialization/deserialization of DeckGL specs and provides
@@ -536,7 +536,7 @@ class DeckGLOutput(LumenOutput):
         return f"{self.__class__.__name__}:\n```yaml\n{self.spec}\n```"
 
 
-class AnalysisOutput(LumenOutput):
+class AnalysisOutput(LumenEditor):
 
     analysis = param.ClassSelector(class_=Analysis)
 
@@ -583,7 +583,7 @@ class AnalysisOutput(LumenOutput):
         self.spec, self._spec_dict = self._serialize_component(view)
 
 
-class SQLOutput(LumenOutput):
+class SQLEditor(LumenEditor):
 
     language = "sql"
 

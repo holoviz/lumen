@@ -19,9 +19,9 @@ from lumen.ai.agents.analysis import make_analysis_model
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.agents.vega_lite import VegaLiteSpec, VegaLiteSpecUpdate
 from lumen.ai.analysis import Analysis
+from lumen.ai.editors import AnalysisOutput, SQLEditor, VegaLiteEditor
 from lumen.ai.llm import Llm
 from lumen.ai.schemas import get_metaset
-from lumen.ai.views import AnalysisOutput, SQLOutput, VegaLiteOutput
 from lumen.config import dump_yaml
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
@@ -90,7 +90,7 @@ async def test_sql_agent(llm, duckdb_source, test_messages):
     ])
     out, out_context = await agent.respond(test_messages, context)
     assert len(out) == 1
-    assert isinstance(out[0], SQLOutput)
+    assert isinstance(out[0], SQLEditor)
     assert out[0].spec == (
         "SELECT\n"
         "  SUM(A) AS A_sum\n"
@@ -139,7 +139,7 @@ async def test_vegalite_agent(llm, duckdb_source, test_messages):
     ])
     out, out_context = await agent.respond(test_messages, context)
     assert len(out) == 1
-    assert isinstance(out[0], VegaLiteOutput)
+    assert isinstance(out[0], VegaLiteEditor)
     assert out[0].spec == "$schema: https://vega.github.io/schema/vega-lite/v5.json\ndata:\n  values:\n  - A: 1\n    B: 2\n    C: 3\n    D: '2023-01-01T00:00:00Z'\n  - A: 4\n    B: 5\n    C: 6\n    D: '2023-01-02T00:00:00Z'\nencoding:\n  x:\n    field: A\n    type: quantitative\n  y:\n    field: B\n    type: quantitative\nheight: container\nmark: bar\nwidth: container\n"
 
 

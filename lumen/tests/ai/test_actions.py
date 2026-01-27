@@ -1,5 +1,5 @@
 from lumen.ai.actions import SQLQuery
-from lumen.ai.views import SQLOutput
+from lumen.ai.editors import SQLEditor
 
 
 async def test_sql_query_action(tiny_source):
@@ -9,7 +9,7 @@ async def test_sql_query_action(tiny_source):
 
     assert len(outs) == 1
     out = outs[0]
-    assert isinstance(out, SQLOutput)
+    assert isinstance(out, SQLEditor)
     assert out.spec == action.sql_expr
     assert out.component.data.columns == ['category']
     assert list(out.component.data.category) == ['A', 'B', 'A']

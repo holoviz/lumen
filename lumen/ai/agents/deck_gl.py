@@ -18,11 +18,11 @@ from pydantic import Field
 from ...views.base import DeckGLView
 from ..code_executor import CodeSafetyCheck, PyDeckExecutor
 from ..config import PROMPTS_DIR, UserCancelledError
+from ..editors import DeckGLEditor
 from ..models import EscapeBaseModel, PartialBaseModel, RetrySpec
 from ..utils import (
     get_data, get_schema, retry_llm_output, sanitize_column_names,
 )
-from ..views import DeckGLOutput
 from .base_code import BaseCodeAgent
 
 if TYPE_CHECKING:
@@ -135,7 +135,7 @@ class DeckGLAgent(BaseCodeAgent):
 
     _extensions = ("deckgl",)
 
-    _output_type = DeckGLOutput
+    _editor_type = DeckGLEditor
 
     def __init__(self, **params):
         self._last_output = None
@@ -277,7 +277,7 @@ class DeckGLAgent(BaseCodeAgent):
         tooltips = deckgl_spec.pop("tooltip", True)
 
         # Validate spec structure
-        self._output_type.validate_spec(deckgl_spec)
+        self._editor_type.validate_spec(deckgl_spec)
 
         return {
             "spec": deckgl_spec,
@@ -311,6 +311,6 @@ class DeckGLAgent(BaseCodeAgent):
 
         # Create view and output
         view = self.view_type(pipeline=pipeline, **full_dict)
-        out = self._output_type(component=view, title=step_title)
+        out = self._editor_type(component=view, title=step_title)
         out_context = await out.render_context()
         return [out], out_context

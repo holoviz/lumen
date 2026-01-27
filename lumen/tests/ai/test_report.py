@@ -16,10 +16,10 @@ from typing_extensions import NotRequired
 
 from lumen.ai.actor import ContextModel
 from lumen.ai.agents.sql import SQLQuery
+from lumen.ai.editors import SQLEditor
 from lumen.ai.report import (
     Action, ActorTask, Report, Section, TaskGroup, Typography,
 )
-from lumen.ai.views import SQLOutput
 
 
 class HelloAction(Action):

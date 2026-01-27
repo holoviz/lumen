@@ -12,6 +12,7 @@ from ...sources.base import BaseSQLSource, Source
 from ...transforms.sql import SQLLimit
 from ..config import PROMPTS_DIR, RetriesExceededError
 from ..context import TContext
+from ..editors import LumenEditor
 from ..llm import Message
 from ..models import RetrySpec
 from ..schemas import DbtslMetaset, get_metaset
@@ -20,9 +21,8 @@ from ..utils import (
     describe_data, get_data, get_pipeline, report_error, retry_llm_output,
     stream_details,
 )
-from ..views import LumenOutput
 from .base_lumen import BaseLumenAgent
-from .sql import SQLOutputs
+from .sql import SQLEditors
 
 
 class DbtslQueryParams(BaseModel):
@@ -69,7 +69,7 @@ class DbtslQueryParams(BaseModel):
     )
 
 
-class DbtslOutputs(SQLOutputs):
+class DbtslOutputs(SQLEditors):
 
     dbtsl_metaset: DbtslMetaset
 
@@ -115,7 +115,7 @@ class DbtslAgent(BaseLumenAgent, DbtslMixin):
 
     _extensions = ("codeeditor", "tabulator")
 
-    _output_type = LumenOutput
+    _editor_type = LumenEditor
 
     output_schema = DbtslOutputs
 
@@ -241,7 +241,7 @@ class DbtslAgent(BaseLumenAgent, DbtslMixin):
             return None
 
         pipeline = out_context["pipeline"]
-        view = self._output_type(
+        view = self._editor_type(
             component=pipeline, title=step_title, spec=out_context["sql"]
         )
         return [view], out_context

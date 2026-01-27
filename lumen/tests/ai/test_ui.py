@@ -24,11 +24,11 @@ from lumen.ai.agents.chat import ChatAgent
 from lumen.ai.agents.sql import SQLAgent, make_sql_model
 from lumen.ai.config import PROVIDED_SOURCE_NAME
 from lumen.ai.coordinator import Plan
+from lumen.ai.editors import SQLEditor
 from lumen.ai.models import ErrorDescription
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
 from lumen.ai.ui import UI, Exploration, ExplorerUI
-from lumen.ai.views import SQLOutput
 from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
@@ -262,9 +262,9 @@ async def test_exploration_pop_out(explorer_ui):
     await async_wait_until(lambda: len(explorer_ui._explorations.items) > 1)
     exploration = explorer_ui._explorations.items[1]['view']
 
-    # Get the first view (should be a SQLOutput)
+    # Get the first view (should be a SQLEditor)
     await async_wait_until(lambda: len(exploration.plan.views) > 0)
-    views = [v for v in exploration.plan.views if isinstance(v, SQLOutput)]
+    views = [v for v in exploration.plan.views if isinstance(v, SQLEditor)]
     assert len(views) > 0
 
     sql_output = views[0]
@@ -351,7 +351,7 @@ async def test_find_view_in_tabs(explorer_ui):
 
     # Wait for views to be added
     await async_wait_until(lambda: len(exploration.plan.views) > 0)
-    views = [v for v in exploration.plan.views if isinstance(v, SQLOutput)]
+    views = [v for v in exploration.plan.views if isinstance(v, SQLEditor)]
     assert len(views) > 0
 
     sql_output = views[0]
@@ -380,7 +380,7 @@ async def test_find_view_in_popped_out(explorer_ui):
 
     # Wait for views
     await async_wait_until(lambda: len(exploration.plan.views) > 0)
-    views = [v for v in exploration.plan.views if isinstance(v, SQLOutput)]
+    views = [v for v in exploration.plan.views if isinstance(v, SQLEditor)]
     assert len(views) > 0
 
     sql_output = views[0]

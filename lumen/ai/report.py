@@ -37,6 +37,7 @@ from .context import (
     input_dependency_keys, merge_contexts, validate_task_inputs,
     validate_taskgroup_exclusions,
 )
+from .editors import LumenEditor
 from .export import (
     format_output, make_md_cell, make_preamble, write_notebook,
 )
@@ -45,7 +46,6 @@ from .tools import FunctionTool, Tool
 from .utils import (
     extract_block_source, get_block_names, wrap_logfire_on_method,
 )
-from .views import LumenOutput
 
 
 class Task(Viewer):
@@ -169,7 +169,7 @@ class Task(Viewer):
             return Typography(out, margin=(20, 10))
         elif isinstance(out, ChatMessage):
             return Typography(out.object, margin=(20, 10))
-        elif isinstance(out, (Viewable, View, LumenOutput)):
+        elif isinstance(out, (Viewable, View, LumenEditor)):
             return out
 
     def __panel__(self):
@@ -619,7 +619,7 @@ class TaskGroup(Task):
                 cell = make_md_cell(f"{prefix}{out.object}")
             elif isinstance(out, Markdown):
                 cell = make_md_cell(out.object)
-            elif isinstance(out, LumenOutput):
+            elif isinstance(out, LumenEditor):
                 cell, ext = format_output(out)
             elif isinstance(out, Viewable):
                 cell, ext = format_output(Panel(object=out))
@@ -1116,7 +1116,7 @@ class ActorTask(ExecutableTask):
                 if isinstance(o, Viewable):
                     pipeline = None if context is None else context.get('pipeline')
                     o = Panel(object=o, pipeline=pipeline)
-                o = LumenOutput(
+                o = LumenEditor(
                     component=o, title=self.title
                 )
                 message_kwargs = dict(value=o, user=self.actor.name)
@@ -1127,7 +1127,7 @@ class ActorTask(ExecutableTask):
 
         # Attach retry controls
         for view in views:
-            if not isinstance(view, LumenOutput):
+            if not isinstance(view, LumenEditor):
                 continue
             view.param.watch(self._update_spec, "spec")
 

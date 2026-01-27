@@ -10,10 +10,10 @@ from lumen.ai.agents.chat import ChatAgent
 
 from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource
+from .editors import SQLEditor
 from .report import Action
 from .schemas import Metaset, get_metaset
 from .utils import describe_data
-from .views import SQLOutput
 
 if TYPE_CHECKING:
     from .context import TContext
@@ -35,7 +35,7 @@ class SQLQueryOutputs(TypedDict):
 class SQLQuery(Action):
     """
     An `SQLQuery` is an `Action` that executes a SQL expression on a Source
-    and generates an LumenOutput to be rendered.
+    and generates an LumenEditor to be rendered.
     """
 
     generate_caption = param.Boolean(default=True, doc="""
@@ -116,7 +116,7 @@ class SQLQuery(Action):
             "metaset": await get_metaset([source], [self.table]),
             "table": self.table,
         }
-        outputs = [SQLOutput(component=pipeline, spec=self.sql_expr)]
+        outputs = [SQLEditor(component=pipeline, spec=self.sql_expr)]
         if self.generate_caption:
             caption_out, _ = await ChatAgent(llm=self.llm).respond(
                 [{"role": "user", "content": self.user_content}], out_context

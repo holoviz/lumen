@@ -14,9 +14,9 @@ from ...pipeline import Pipeline
 from ...views import Panel
 from ..config import PROMPTS_DIR
 from ..context import ContextModel, TContext
+from ..editors import AnalysisOutput
 from ..llm import Message
 from ..utils import get_data, log_debug
-from ..views import AnalysisOutput
 from .base_lumen import BaseLumenAgent
 
 
@@ -71,7 +71,7 @@ class AnalysisAgent(BaseLumenAgent):
     input_schema = AnalysisInputs
     output_schema = AnalysisOutputs
 
-    _output_type = AnalysisOutput
+    _editor_type = AnalysisOutput
 
     async def respond(
         self,
@@ -143,7 +143,7 @@ class AnalysisAgent(BaseLumenAgent):
             self.interface.stream("Failed to find an analysis that applies to this data.")
             return [], {}
 
-        out = self._output_type(
+        out = self._editor_type(
             component=view, title=step_title, analysis=analysis_callable,
             pipeline=context.get("pipeline"), context=context
         )
