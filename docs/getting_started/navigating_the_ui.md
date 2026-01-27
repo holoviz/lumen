@@ -108,7 +108,7 @@ Use **Settings** in the left sidebar to configure analysis behavior:
 
 **SQL Planning** — AI plans queries before executing (disabled by default)
 
-**Validation Step** — AI validates results for correctness (disabled by default)
+**Validation Step** — AI validates results for correctness (enabled by default)
 
 **Code Execution** — If enabled by administrator, controls how visualizations are generated. See [Code Execution for Visualizations](using_lumen_ai.md#code-execution-for-visualizations) for security implications.
 
