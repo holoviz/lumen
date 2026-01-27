@@ -4,7 +4,7 @@ Build a domain-specific data exploration application using Lumen AI. This tutori
 
 ## Final result
 
-<img width="1505" height="1185" alt="image" src="https://github.com/user-attachments/assets/7e1cd684-14d2-4d4c-b409-db82e286f43d" />
+![Weather Data AI Explorer](../../assets/tutorials/skew_t.png)
 
 **Time**: 15-20 minutes
 
