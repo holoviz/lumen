@@ -69,6 +69,10 @@ class LumenOutput(Viewer):
             spec = None
         if "spec" not in params:
             params["spec"] = spec
+        # The _spec_dict contains the full definition of the Lumen Component including
+        # the view_type declaration, while the spec is the user editable specification
+        # e.g. for a VegaLiteView the spec_dict is {"spec": vega_spec, "type": "vegalite"}
+        # while the spec is just vega_spec
         self._spec_dict = spec_dict
         super().__init__(**params)
         self.editor = self._render_editor()
@@ -148,8 +152,10 @@ class LumenOutput(Viewer):
     def _serialize_component(cls, component: Component, spec_dict: dict[str, Any] | None = None) -> str:
         component_spec = spec_dict or component.to_spec()
         if isinstance(component, Panel):
-            component_spec = component_spec["object"]
-        return dump_yaml(component_spec), component_spec
+            object_spec = component_spec["object"]
+        else:
+            object_spec = component_spec
+        return dump_yaml(object_spec), component_spec
 
     @classmethod
     def _deserialize_component(
@@ -215,7 +221,20 @@ class LumenOutput(Viewer):
         return Column(controls, table)
 
     async def render_context(self):
-        return {"view": self.component}
+        view = self.component
+        if isinstance(view, View):
+            # If output is a view we provide the full View specification
+            return {"view": self._spec_dict}
+        elif isinstance(view, Pipeline):
+            data = await get_data(view)
+            return {
+                "pipeline": view,
+                "table": view.table,
+                "source": view.source,
+                "data": await describe_data(data)
+            }
+        else:
+            return {}
 
     @param.depends('spec')
     async def render(self):
@@ -547,15 +566,8 @@ class AnalysisOutput(LumenOutput):
         return Column(controls, run_button) if controls else run_button
 
     async def render_context(self):
-        out_context = {"analysis": self.analysis}
-        view = self.component
-        if isinstance(view, View):
-            out_context["view"] = dict(object=self._spec_dict, type=view.view_type)
-        elif isinstance(view, Pipeline):
-            out_context["pipeline"] = out_context["view"] = pipeline = view
-            data = await get_data(pipeline)
-            if len(data) > 0:
-                out_context["data"] = await describe_data(data)
+        out_context = await super().render_context()
+        out_context["analysis"] = self.analysis
         return out_context
 
     async def _rerun(self, event):

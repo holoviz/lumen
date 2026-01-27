@@ -172,6 +172,5 @@ class BaseViewAgent(BaseLumenAgent):
         spec = await self._generate_yaml_spec(messages, context, pipeline, schema, step_title)
         view = self.view_type(pipeline=pipeline, **spec)
         out = self._output_type(component=view, title=step_title)
-        # Store both view type and agent name for context continuity
-        agent_name = type(self).__name__
-        return [out], {"view": dict(spec, type=self.view_type.view_type, agent=agent_name)}
+        out_context = await out.render_context()
+        return [out], out_context

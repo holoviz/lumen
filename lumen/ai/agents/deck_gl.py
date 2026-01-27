@@ -312,6 +312,5 @@ class DeckGLAgent(BaseCodeAgent):
         # Create view and output
         view = self.view_type(pipeline=pipeline, **full_dict)
         out = self._output_type(component=view, title=step_title)
-        # Store both view type and agent name for context continuity
-        agent_name = type(self).__name__
-        return [out], {"view": dict(full_dict, type=view.view_type, agent=agent_name)}
+        out_context = await out.render_context()
+        return [out], out_context
