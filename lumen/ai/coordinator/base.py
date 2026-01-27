@@ -73,16 +73,21 @@ class Plan(Section):
             instruction = task.instruction
             if failed and idx == i:
                 status = "🔴"
-            elif i == idx:
-                status = "🟡"
             elif idx < i:
                 status = "🟢"
+            elif i == idx:
+                status = "🟡"
             else:
                 status = "⚪"
             todos_list.append(f"- {status} {instruction}")
         todos = "\n".join(todos_list)
 
-        formatted_content = (f"User Request: {user_query['content']!r}\n\n" if user_query else "") + f"Complete the current todo:\n{todos}"
+        formatted_content = (
+            f"User: {user_query['content']!r}\n"
+            f"Roadmap:\n{indent(todos, '    ')}\n"
+            f"Tasks marked ⚪ are scheduled for others later. "
+            f"Your EXCLUSIVE goal is to focus on the 🟡 task"
+        )
         rendered_history = []
         for msg in self.history:
             if msg is user_query:

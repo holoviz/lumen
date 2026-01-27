@@ -36,21 +36,15 @@ class RawStep(BaseModel):
         description="""
         Concise instruction capturing user intent at the right altitude.
 
-        Right altitude:
-        - ❌ Too low: implementation details (SQL syntax, chart specs, row limits)
+        - ❌ Too low: implementation details (SQL syntax, chart specs)
         - ❌ Too high: vague ("handle this", "process data")
-        - ✅ Just right: clear intent + context reference
-
-        Examples:
-        - "Query top 5 countries by sales, sorted descending"
-        - "Horizontal bar chart highlighting the leader"
-
-        Never include: rendering instructions, SQL syntax, join details.
+        - ❌ Leaking: mentioning downstream purpose ("for plotting", "for the chart", "for analysis")
+        - ✅ Just right: what THIS actor should do, nothing about why
         """,
         examples=[
-            "Show top 5 countries by sales on a bar chart",
-            "Query top 5 countries by sales, sorted descending",
-            "Horizontal bar chart, highlight top country",
+            "Query top 5 countries by sales",
+            "Get wind, temperature, dewpoint, and precipitation data for Seattle on Jan 1, 2020",
+            "Plot a line chart of sales over time.",
         ],
     )
     title: str
@@ -59,7 +53,14 @@ class RawStep(BaseModel):
 class RawPlan(PartialBaseModel):
     title: str = Field(description="A title that describes this plan, up to three words.")
     steps: list[RawStep] = Field(
-        description="""Steps to solve the user query. Each step MUST use a DIFFERENT actor than the previous step and try to limit to minimal steps.""",
+        description="""
+        The sequence of steps to resolve the user's query.
+        Ensure no two consecutive steps use the same actor.
+
+        Adhere to separation of concerns:
+        - Each step's instruction should be limited to that actor's task.
+        - Do not include downstream objectives in upstream instructions.
+        """
     )
 
 
@@ -84,26 +85,13 @@ class Reasoning(PartialBaseModel):
 def make_plan_model(agents: list[str], tools: list[str]) -> type[RawPlan]:
     step = create_model(
         "Step",
-        __base__=PartialBaseModel,
+        __base__=RawStep,
         actor=(Literal[tuple(agents+tools)], FieldInfo(description="The name of the actor to assign a task to.")),
-        instruction=(str, FieldInfo(description="Instructions to the actor to assist in the task, and whether rendering is required.")),
-        title=(str, FieldInfo(description="Short title of the task to be performed; up to three words.")),
     )
     plan = create_model(
         "Plan",
-        __base__=PartialBaseModel,
-        title=(
-            str, FieldInfo(description="A title that describes this plan, up to three words.")
-        ),
-        steps=(
-            list[step],
-            FieldInfo(
-                description="""
-                A list of steps to perform that will solve user query. Each step MUST use a DIFFERENT actor than the previous step.
-                Review your plan to ensure this constraint is met.
-                """
-            )
-        )
+        __base__=RawPlan,
+        steps=(list[step], RawPlan.model_fields["steps"]),
     )
     return plan
 
