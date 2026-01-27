@@ -1,64 +1,30 @@
 <svg width="512" height="512" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <!-- 
-      Base Shape: "Modern Kite"
-      Defined pointing to Bottom-Right (Diagonal) for easy rotation.
-      - Spine runs from (0,0) to (75,75).
-      - Side widths extend to 25 and 55.
-      - Creates a clean, aerodynamic shape without messy overlapping lines.
-    -->
-    
-    <!-- Facet 1: Top/Right half (Lighter) -->
-    <path id="kite-light" d="M 0 0 L 55 20 L 75 75 Z" />
-    
-    <!-- Facet 2: Bottom/Left half (Darker) -->
-    <path id="kite-dark" d="M 0 0 L 75 75 L 20 55 Z" />
+    <path id="kite-light" d="M 0 0 L 62 12 L 76 76 Z" />
+    <path id="kite-dark" d="M 0 0 L 76 76 L 12 62 Z" />
   </defs>
-  
-  <g transform="translate(100, 100)">
-    
-    <!-- LEFT PAIR (Cool Colors) -->
-    <!-- Shifted Left (-6) -->
-    <g transform="translate(-6, 0)">
-      
-      <!-- Top Left: Panel Blue -->
-      <!-- Rotated 180 to point Top-Left -->
-      <!-- Vertical spacing: -2 -->
-      <g transform="translate(0, -2) rotate(180)">
-        <use href="#kite-light" fill="#29B6F6"/> <!-- Bright Sky Blue -->
-        <use href="#kite-dark" fill="#0277BD"/>  <!-- Deep Blue -->
-      </g>
 
-      <!-- Bottom Left: Datashader Purple -->
-      <!-- Rotated 90 to point Bottom-Left -->
-      <!-- Vertical spacing: +2 -->
-      <g transform="translate(0, 2) rotate(90)">
-        <use href="#kite-light" fill="#AB47BC"/> <!-- Bright Orchid -->
-        <use href="#kite-dark" fill="#6A1B9A"/>  <!-- Deep Purple -->
-      </g>
+  <g transform="translate(100 100)">
+
+    <g transform="translate(-10 -10) rotate(180)">
+      <use href="#kite-light" fill="#29B6F6"/>
+      <use href="#kite-dark" fill="#0277BD"/>
     </g>
 
-
-    <!-- RIGHT PAIR (Warm Colors) -->
-    <!-- Shifted Right (+6) -->
-    <g transform="translate(6, 0)">
-
-      <!-- Top Right: HoloViews Red -->
-      <!-- Rotated -90 to point Top-Right -->
-      <!-- Vertical spacing: -2 -->
-      <g transform="translate(0, -2) rotate(-90)">
-        <use href="#kite-light" fill="#EF5350"/> <!-- Bright Red -->
-        <use href="#kite-dark" fill="#C62828"/>  <!-- Deep Crimson -->
-      </g>
-
-      <!-- Bottom Right: hvPlot Yellow -->
-      <!-- Rotated 0 to point Bottom-Right -->
-      <!-- Vertical spacing: +2 -->
-      <g transform="translate(0, 2) rotate(0)">
-        <use href="#kite-light" fill="#FFCA28"/> <!-- Sunflower Yellow -->
-        <use href="#kite-dark" fill="#F57C00"/>  <!-- Burnt Orange Shadow -->
-      </g>
+    <g transform="translate(-10 10) rotate(90)">
+      <use href="#kite-light" fill="#AB47BC"/>
+      <use href="#kite-dark" fill="#6A1B9A"/>
     </g>
-    
+
+    <g transform="translate(10 -10) rotate(-90)">
+      <use href="#kite-light" fill="#EF5350"/>
+      <use href="#kite-dark" fill="#C62828"/>
+    </g>
+
+    <g transform="translate(10 10) rotate(0)">
+      <use href="#kite-light" fill="#FFCA28"/>
+      <use href="#kite-dark" fill="#F57C00"/>
+    </g>
+
   </g>
 </svg>
