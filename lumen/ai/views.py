@@ -69,6 +69,10 @@ class LumenOutput(Viewer):
             spec = None
         if "spec" not in params:
             params["spec"] = spec
+        # The _spec_dict contains the full definition of the Lumen Component including
+        # the view_type declaration, while the spec is the user editable specification
+        # e.g. for a VegaLiteView the spec_dict is {"spec": vega_spec, "type": "vegalite"}
+        # while the spec is just vega_spec
         self._spec_dict = spec_dict
         super().__init__(**params)
         self.editor = self._render_editor()
@@ -148,8 +152,10 @@ class LumenOutput(Viewer):
     def _serialize_component(cls, component: Component, spec_dict: dict[str, Any] | None = None) -> str:
         component_spec = spec_dict or component.to_spec()
         if isinstance(component, Panel):
-            component_spec = component_spec["object"]
-        return dump_yaml(component_spec), component_spec
+            object_spec = component_spec["object"]
+        else:
+            object_spec = component_spec
+        return dump_yaml(object_spec), component_spec
 
     @classmethod
     def _deserialize_component(
