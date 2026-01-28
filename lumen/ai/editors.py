@@ -77,7 +77,6 @@ class LumenEditor(Viewer):
         super().__init__(**params)
         self.editor = self._render_editor()
         self.view = ParamMethod(self.render, inplace=True, sizing_mode='stretch_width')
-        self._rendered = False
         self._last_output = {}
 
     def _render_editor(self):
@@ -236,7 +235,7 @@ class LumenEditor(Viewer):
         else:
             return {}
 
-    @param.depends('spec', 'component')
+    @param.depends('component')
     async def render(self):
         if self.component is None:
             yield Alert(
@@ -259,7 +258,6 @@ class LumenEditor(Viewer):
                 output = await self._render_pipeline(self.component)
             else:
                 output = self.component.__panel__()
-            self._rendered = True
             self._last_output.clear()
             self._last_output[self.spec] = output
             yield output
@@ -549,7 +547,6 @@ class AnalysisOutput(LumenEditor):
         if 'title' not in params or params['title'] is None:
             params['title'] = type(params['analysis']).__name__
         super().__init__(**params)
-        self._rendered = True
 
     def _render_editor(self):
         controls = self.analysis.controls(self.context)
@@ -580,7 +577,6 @@ class AnalysisOutput(LumenEditor):
         if isinstance(view, Viewable):
             view = Panel(object=view, pipeline=self.pipeline)
         self.component = view
-        self._rendered = False
         try:
             self.spec, self._spec_dict = self._serialize_component(view)
         except Exception:
