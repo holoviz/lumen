@@ -66,6 +66,8 @@ PAGE_SX = {
     "&.mui-light .sidebar": {"bgcolor": "var(--mui-palette-grey-50)"},
 }
 
+LOGO = (Path(__file__).parent.parent / "_assets" / "logo.svg").read_text()
+
 # Contextual help messages for different UI areas
 # Each area has a ? icon that shows relevant help
 
@@ -759,7 +761,10 @@ class UI(Viewer):
         else:
             exploration = self._get_current_exploration()
             if exploration is self._home:
-                main_content = self.interface if self.interface.objects else self._splash
+                if self.interface.objects:
+                    main_content = self.interface
+                else:
+                    main_content = self._splash
                 self._output[1:] = []
             else:
                 main_content = self._split
@@ -772,6 +777,7 @@ class UI(Viewer):
             self._toggle_navigation(True)
         if not show_nav:
             self._toggle_navigation(False)
+        self._chat_input.margin = (10, 0) if main_content is self._splash else 10
         self._main[:] = [self._navigation, main_content]
 
     def _configure_interface(self, interface):
@@ -999,7 +1005,7 @@ class UI(Viewer):
         return []
 
     def _render_main(self) -> list[Viewable]:
-        self._cta = Typography(self._get_status_text(), margin=(0, 0, 10, 0))
+        self._cta = Typography(self._get_status_text(), margin=(0, 0, 5, 0))
         self._chat_splash = Column(self._cta, self._chat_input, margin=(0, 0, 0, -10))
         self._error_alert = Alert(
             object="",
@@ -1011,11 +1017,15 @@ class UI(Viewer):
 
         self._splash = MuiColumn(
             Paper(
-                Typography(
-                    "Ask questions, get insights",
-                    disable_anchors=True,
-                    variant="h1",
-                    margin=(10, 0, 5, 0),
+                Row(
+                    SVG(LOGO, width=40, height=40, align="center", margin=(10, 5, 0, 0)),
+                    Typography(
+                        "Ask questions, get insights",
+                        disable_anchors=True,
+                        variant="h1",
+                        align="center",
+                        margin=(10, 0, 0, 0),
+                    ),
                 ),
                 self._cta,
                 self._chat_splash,
@@ -1773,11 +1783,13 @@ class ExplorerUI(UI):
 
         # Create tabs wrapping just the input components
         num_sources = len(self.context.get("sources", []))
+        self._chat_input.margin = (10, 0)
         self._input_tabs = Tabs(
-            ("Chat with Data", self.interface._widget),
+            ("Chat with Data", self._chat_input),
             ("Select Data to Explore", self._explorer),
             disabled=[] if num_sources else [1],
             min_height=125,
+            margin=(0, 10),
             sizing_mode="stretch_height",
             stylesheets=[".MuiTabsPanel > .MuiBox-root { overflow: visible}"]
         )
