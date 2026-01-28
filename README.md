@@ -1,6 +1,6 @@
 # Lumen <img src="./docs/assets/logo.png" width="48">
 
-*Illuminate your data* 
+*Illuminate your data*
 
 |    |    |
 | --- | --- |
