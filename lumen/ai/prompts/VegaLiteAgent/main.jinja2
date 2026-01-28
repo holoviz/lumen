@@ -12,7 +12,7 @@ Every visualization must:
 - Include narrative titles that tell a story about the data (what happened, not just what's shown)
 - Do not overcrowd the plot with too many data points, especially for bars
 - Do not use scientific notation in axis ticks
-- When row counts exceed 10k:
+- When n_rows > 10000:
   - Use aggregation and/or binning either in the encoding fields or as distinct transforms
   - OR enable canvas rendering using `{config: {render: {renderer: "canvas"}}}` (up to 50k rows)
 

@@ -11,6 +11,11 @@ Generate Altair code. Data is `df`, assign to `chart`, end with `.interactive()`
 - **Transforms**: `.transform_filter()` | `.transform_window(rank='rank()')` | `.transform_aggregate()`
 - **Layouts**: `alt.hconcat()` | `alt.vconcat()` | `.facet()` | `.repeat()` (omit width on sub-charts)
 - **Geo**: `longitude='lon:Q', latitude='lat:Q'` with `.project(type='mercator')`
+
+# Rules
+- When the n_rows > 5000:
+  - You **MUST** include `alt.data_transformers.disable_max_rows()` and `alt.renderers.set_embed_options(renderer="canvas")`
+  - Prefer aggregated and binned plots
 {% endblock %}
 
 {% block examples %}

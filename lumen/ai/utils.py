@@ -644,7 +644,8 @@ async def describe_data(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: boo
         result = {
             "summary": {
                 "n_cells": size,
-                "shape": shape,
+                "n_rows": shape[0],
+                "n_cols": shape[1],
                 "sampled_cols": sampled_columns,
                 "is_sampled": is_sampled,
             },

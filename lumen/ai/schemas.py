@@ -147,7 +147,7 @@ class Metaset:
         if include_schema and self.has_schemas:
             schema = self.schemas.get(table_slug)
             if schema and schema.get("__len__"):
-                data['row_count'] = len(schema)
+                data['n_rows'] = len(schema)
 
         if include_columns:
             if catalog_entry.columns:
