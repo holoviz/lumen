@@ -219,6 +219,10 @@ class BaseSourceControls(Viewer):
 
     replace_controls = param.Boolean(default=False, doc="Replace controls on add")
 
+    filedropper_kwargs = param.Dict(default={}, doc="""Keyword arguments to pass to FileDropper.
+        Common options include 'accepted_filetypes' and 'max_file_size'.
+        See https://panel.holoviz.org/reference/widgets/FileDropper.html for all available options.""")
+
     upload_successful = param.Event(doc="Triggered when files are successfully uploaded and processed")
 
     outputs = param.Dict(default={})
@@ -729,7 +733,8 @@ class UploadControls(BaseSourceControls):
     def __init__(self, **params):
         super().__init__(**params)
 
-        self._file_input = FileDropper(
+        # Build FileDropper kwargs with defaults
+        file_dropper_params = dict(
             layout="compact",
             multiple=self.param.multiple,
             margin=1,
@@ -738,6 +743,10 @@ class UploadControls(BaseSourceControls):
             stylesheets=[".bk-input.filepond--root { box-shadow: unset; cursor: grab; } .bk-input.filepond--root:not([disabled]):hover { box-shadow: unset; }"],
             visible=self._upload_cards.param.visible.rx.not_()
         )
+        # Override with user-provided kwargs
+        file_dropper_params.update(self.filedropper_kwargs)
+
+        self._file_input = FileDropper(**file_dropper_params)
         self._file_input.param.watch(self._on_file_upload, "value")
 
         self._layout = MuiColumn(
