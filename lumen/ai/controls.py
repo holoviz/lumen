@@ -1929,6 +1929,7 @@ class TableExplorer(Viewer):
             case_sensitive=False,
             search_strategy="includes",
             min_characters=0,
+            margin=(10, 0),
             placeholder="Select or search for a table...",
             sizing_mode='stretch_width',
         )
