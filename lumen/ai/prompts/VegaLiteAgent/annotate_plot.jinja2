@@ -45,7 +45,7 @@ Point: `type, color, size, filled, shape`
 {% block context %}
 Build off the following Vega-Lite yaml:
 ```yaml
-{{ vega_spec }}
+{{ vega_spec | safe }}
 ```
 {% endblock %}
 

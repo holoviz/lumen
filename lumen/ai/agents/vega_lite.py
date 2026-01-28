@@ -276,7 +276,7 @@ class VegaLiteAgent(BaseCodeAgent):
         self,
         step_name: str,
         step_desc: str,
-        vega_spec: dict[str, Any],
+        vega_spec: dict[str, Any] | str,
         prompt_name: str,
         messages: list[Message],
         context: TContext,
@@ -284,7 +284,8 @@ class VegaLiteAgent(BaseCodeAgent):
     ) -> tuple[str, dict[str, Any]]:
         """Update a Vega-Lite spec with incremental changes for a specific step."""
         with self._add_step(title=step_desc, steps_layout=self._steps_layout) as step:
-            vega_spec = dump_yaml(vega_spec, default_flow_style=False)
+            if not isinstance(vega_spec, str):
+                vega_spec = dump_yaml(vega_spec, default_flow_style=False)
             system_prompt = await self._render_prompt(
                 prompt_name,
                 messages,
@@ -337,7 +338,11 @@ class VegaLiteAgent(BaseCodeAgent):
             vega_spec["projection"] = "mercator"
         elif not has_world_map and not uses_albers_usa:
             # Add world map outlines if needed
-            vega_spec["layer"].append(VEGA_MAP_LAYER["world"])
+            if "layer" not in vega_spec:
+                vega_spec["layer"] = [{
+                    "mark": vega_spec.pop("mark", {})
+                }]
+            vega_spec["layer"].insert(0, VEGA_MAP_LAYER["world"])
 
     def _add_geographic_items(self, vega_spec: dict, vega_spec_str: str) -> dict:
         """Add geographic visualization items to vega spec."""
@@ -524,7 +529,7 @@ class VegaLiteAgent(BaseCodeAgent):
         #     # add pan/zoom controls to all plots except geographic ones and points overlaid on line plots
         #     # because those result in an blank plot without error
         #     vega_spec["params"] = [{"bind": "scales", "name": "grid", "select": "interval"}]
-        return {"spec": vega_spec, "sizing_mode": "stretch_both", "min_height": 100}
+        return {"spec": vega_spec, "sizing_mode": "stretch_both", "min_height": 200}
 
     async def _get_doc_examples(self, user_query: str) -> list[str]:
         # Query vector store for relevant examples
