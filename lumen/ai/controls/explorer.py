@@ -9,7 +9,7 @@ from panel_material_ui import AutocompleteInput
 
 from ...pipeline import Pipeline
 from ..config import SOURCE_TABLE_SEPARATOR
-from ..editors import SQLEditor
+from .editors import SQLEditor
 
 
 class TableExplorer(Viewer):
