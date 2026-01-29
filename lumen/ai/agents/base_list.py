@@ -45,6 +45,10 @@ class BaseListAgent(Agent):
         message = self._message_format.format(item=repr(item))
         interface.send(message)
 
+    def _create_row_content(self, context: TContext, source_name: str):
+        """Create row content function that displays more info collapsed under each row."""
+        return
+
     async def respond(
         self,
         messages: list[Message],
@@ -65,6 +69,11 @@ class BaseListAgent(Agent):
                 header_filters = {self._column_name: column_filter}
 
             df = pd.DataFrame({self._column_name: source_items})
+
+            row_content = self._create_row_content(context, source_name)
+            if row_content == "":
+                row_content = None
+
             item_list = pn.widgets.Tabulator(
                 df,
                 buttons={"show": '<i class="fa fa-eye"></i>'},
@@ -77,7 +86,8 @@ class BaseListAgent(Agent):
                 pagination="remote",
                 header_filters=header_filters,
                 sizing_mode="stretch_width",
-                name=source_name
+                name=source_name,
+                row_content=row_content
             )
             item_list.on_click(partial(self._use_item, interface=self.interface))
             tabs.append(item_list)

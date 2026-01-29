@@ -163,6 +163,15 @@ def tuple_presenter(dumper, data):
 def path_representer(dumper, data):
     return dumper.represent_scalar('tag:yaml.org,2002:str', str(data.resolve()))
 
+
+def numpy_representer(dumper, data):
+    """Convert numpy types to native Python types for YAML serialization."""
+    if hasattr(data, 'item'):  # Scalar types (integers, floats, bools)
+        return dumper.represent_data(data.item())
+    elif hasattr(data, 'tolist'):  # Arrays
+        return dumper.represent_list(data.tolist())
+    return dumper.represent_data(data)
+
 pn.chat.ChatStep.min_width = 375
 pn.chat.ChatStep.collapsed_on_success = False
 
@@ -171,3 +180,13 @@ yaml.add_representer(str, str_presenter)
 yaml.add_representer(tuple, tuple_presenter)
 yaml.add_representer(PosixPath, path_representer)
 yaml.add_representer(Path, path_representer)
+
+# Add numpy representer if numpy is available
+try:
+    import numpy as np
+
+    # Use multi_representer to handle all numpy types with a single function
+    yaml.add_multi_representer(np.ndarray, numpy_representer)
+    yaml.add_multi_representer(np.generic, numpy_representer)
+except ImportError:
+    pass
