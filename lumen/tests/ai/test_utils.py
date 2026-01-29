@@ -297,7 +297,7 @@ def test_report_error():
     report_error(Exception("Test error"), step)
     assert step.failed_title == "Test error"
     assert step.status == "failed"
-    assert step.objects[1].object.object == "```python\nTest error\n```"
+    assert step.objects[1].objects[0].object == "```python\nTest error\n```"
 
 
 class TestParseHuggingFaceUrl:
