@@ -153,12 +153,7 @@ class Metaset:
             for key, value in catalog_entry.metadata.items():
                 if key in exclude_keys:
                     continue
-                if value is None:
-                    continue
-                # Convert numpy types to native Python types
-                if hasattr(value, 'item'):
-                    value = value.item()
-                if value == '':
+                if value is None or value == '':
                     continue
                 clean_metadata[key] = value
             if clean_metadata:
