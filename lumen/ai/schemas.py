@@ -151,9 +151,7 @@ class Metaset:
             # Fields to exclude from metadata output
             exclude_keys = {'columns', 'data_type', 'source_name', 'rows', 'description'}
             for key, value in catalog_entry.metadata.items():
-                if key in exclude_keys:
-                    continue
-                if value is None or value == '':
+                if key in exclude_keys or value is None or value == '':
                     continue
                 clean_metadata[key] = value
             if clean_metadata:
