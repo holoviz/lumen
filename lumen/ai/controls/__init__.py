@@ -3,11 +3,10 @@ from .base import (
     UploadedFileRow,
 )
 from .catalog import SourceCatalog
+from .copy import CopyControls
 from .download import DownloadControls
 from .explorer import TableExplorer
-from .revision import (
-    AnnotationControls, CopyControls, RetryControls, RevisionControls,
-)
+from .revision import AnnotationControls, RetryControls, RevisionControls
 from .upload import UploadControls
 
 __all__ = (

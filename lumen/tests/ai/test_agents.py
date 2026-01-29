@@ -5,6 +5,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from lumen.ai.agents.document_list import DocumentListAgent
+from lumen.ai.schemas import DocumentChunk
+
 try:
     import lumen.ai  # noqa
 except ModuleNotFoundError:
@@ -21,7 +24,7 @@ from lumen.ai.agents.vega_lite import VegaLiteSpec, VegaLiteSpecUpdate
 from lumen.ai.analysis import Analysis
 from lumen.ai.editors import AnalysisOutput, SQLEditor, VegaLiteEditor
 from lumen.ai.llm import Llm
-from lumen.ai.schemas import get_metaset
+from lumen.ai.schemas import Metaset, get_metaset
 from lumen.config import dump_yaml
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
@@ -173,3 +176,57 @@ async def test_analysis_agent(llm, duckdb_source, test_messages):
     assert "view" in out_context
     assert out_context["view"]["type"] == "panel"
     assert out_context["view"]["object"]["object"] == "Test Analysis"
+
+
+
+@pytest.mark.asyncio
+class TestDocumentListAgentIntegration:
+    """Tests for DocumentListAgent with metaset."""
+
+    async def test_document_list_agent_with_metaset(self):
+        """Test that DocumentListAgent works with metaset.docs."""
+        # Create metaset with document chunks
+        metaset = Metaset(
+            query="test",
+            catalog={},
+            docs=[
+                DocumentChunk(filename="readme.md", text="chunk 1", similarity=0.9),
+                DocumentChunk(filename="readme.md", text="chunk 2", similarity=0.8),
+                DocumentChunk(filename="schema.md", text="chunk 3", similarity=0.7),
+            ]
+        )
+        
+        context = {"metaset": metaset}
+        
+        # Test applies
+        applies = await DocumentListAgent.applies(context)
+        assert applies is True  # More than 1 unique document
+        
+        # Test _get_items
+        agent = DocumentListAgent()
+        items = agent._get_items(context)
+        
+        # Should return unique, sorted filenames
+        assert items == {"Documents": ["readme.md", "schema.md"]}
+
+    async def test_document_list_agent_no_docs(self):
+        """Test that DocumentListAgent doesn't apply when no docs."""
+        # Metaset without docs
+        metaset = Metaset(query="test", catalog={}, docs=None)
+        context = {"metaset": metaset}
+        
+        applies = await DocumentListAgent.applies(context)
+        assert applies is False
+
+    async def test_document_list_agent_single_doc(self):
+        """Test that DocumentListAgent doesn't apply for single doc."""
+        # Metaset with only one unique document
+        metaset = Metaset(
+            query="test",
+            catalog={},
+            docs=[DocumentChunk(filename="readme.md", text="chunk", similarity=0.9)]
+        )
+        context = {"metaset": metaset}
+        
+        applies = await DocumentListAgent.applies(context)
+        assert applies is False  # Only 1 document, not worth listing
