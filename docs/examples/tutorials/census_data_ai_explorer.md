@@ -17,31 +17,18 @@ A chat interface that can fetch and analyze U.S. Census data with custom control
 A custom data source control that integrates with the Census API and lets users explore demographic data through natural language queries. The tutorial follows three steps:
 
 1. **Start with a minimal example** - Build a basic year selector with ~50 lines of runnable code
-2. **Understand the components** - Learn how each part works
+2. **Understand the components** - Learn how `_load` and `_render_controls` work
 3. **Extend to full version** - Add dynamic options and more features
 
-Each step introduces key Lumen AI concepts for building custom data source integrations.
+For a detailed reference on creating custom controls, see the [Source Controls](../../configuration/controls.md) documentation.
 
-## Why custom data source controls?
+## Why this tutorial?
 
-Lumen AI ships with built-in support for common data sources like CSV files, DuckDB, and SQL databases. But what if your data lives behind an API that requires authentication, has complex query parameters, or needs real-time fetching?
+Lumen AI has built-in support for many data formats, but some data lives behind APIs that require specific parameters or dynamic filtering. By building a custom **Source Control**, you can:
 
-**Custom data source controls** let you (see [Source Controls](../../configuration/ui.md#source-controls)):
-
-- **Connect to external APIs** - Fetch data from REST APIs, government data portals, or proprietary services
-- **Add interactive parameters** - Let users select years, regions, variables, or filters before loading data
-- **Handle authentication** - Manage API keys, OAuth tokens, or other credentials securely
-- **Transform on-the-fly** - Process and clean data as it arrives
-- **Cache intelligently** - Store expensive API responses to avoid redundant calls
-
-This tutorial uses the U.S. Census Bureau API as an example, but the same patterns apply to:
-
-- Financial data APIs (Federal Reserve, Yahoo Finance)
-- Weather and climate data (NOAA, NASA)
-- Scientific datasets (genomics, astronomy, earth observation)
-- Internal corporate APIs and data warehouses
-
-Once you create a custom control, users can fetch data through a simple UI without writing code, then immediately ask natural language questions about it using Lumen AI's conversational interface.
+- **Connect to external APIs** (like the U.S. Census Bureau)
+- **Add interactive parameters** for users to select subsets of data
+- **Expose data to LLM agents** so they can answer questions about it immediately
 
 ## Prerequisites
 
@@ -121,79 +108,27 @@ Once the data loads, you can ask questions like:
 
 ## 2. Understanding the components
 
-Let's break down the key concepts:
+Let's look at the two core methods you implemented in `CensusControls`:
 
-### The `_load()` hook
-
-**`_load()` is the main hook** - equivalent to `_execute()` in reports. Override this single method to implement your data loading logic:
-
-```python
-async def _load(self) -> SourceResult:
-    self.progress("Fetching data...")  # Show progress
-    df = await asyncio.to_thread(fetch_data, self.year)  # Fetch data
-    return SourceResult.from_dataframe(df, "my_table")  # Return result
-```
-
-The base class handles everything else: loading states, error handling, output registration, and event triggering.
-
-### The `_render_controls()` hook
-
-**`_render_controls()` provides your UI widgets** - these are rendered above the load button:
+### The `_render_controls()` method
+This method returns the list of widgets shown in the sidebar. We use `from_param` to link the widget directly to the `vintage` parameter:
 
 ```python
 def _render_controls(self):
-    return [
-        IntSlider.from_param(self.param.vintage, label="Year"),
-        Select.from_param(self.param.dataset, label="Dataset"),
-    ]
+    return [IntSlider.from_param(self.param.vintage, label="Year")]
 ```
 
-### Progress reporting
-
-**`self.progress()`** provides a simple API for progress updates:
+### The `_load()` method
+This is the async hook where the actual data fetching happens. It uses `self.vintage` (updated by the slider) to download the correct data:
 
 ```python
-# Indeterminate (spinner)
-self.progress("Loading metadata...")
-
-# Determinate with percentage
-self.progress("Downloading...", value=50)
-
-# Determinate with current/total (auto-calculates %)
-self.progress("Downloading...", current=500, total=1000)
-
-# Increment pattern for loops
-self.progress("Processing files...", total=len(files))
-for f in files:
-    process(f)
-    self.progress.increment()
+async def _load(self) -> SourceResult:
+    self.progress("Fetching census data...")
+    df = await asyncio.to_thread(ced.download, ...)
+    return SourceResult.from_dataframe(df, "census_data")
 ```
 
-### SourceResult
-
-**`SourceResult`** is the return type with convenient factory methods:
-
-```python
-# From a DataFrame (most common)
-return SourceResult.from_dataframe(df, "table_name", year=2023)
-
-# From an existing source
-return SourceResult.from_source(my_source, table="users")
-
-# Empty result (no data)
-return SourceResult.empty("No data returned from API")
-```
-
-### Class attributes
-
-**Customize appearance** with class attributes:
-
-```python
-class MyControl(BaseSourceControls):
-    label = '<span class="material-icons">cloud</span> My API'  # Sidebar label
-    load_button_label = "Fetch Data"  # Button text
-    load_button_icon = "download"  # Button icon
-```
+The `SourceResult` you return is then registered as a table that the AI agent can query.
 
 ## 3. Extend to full version
 

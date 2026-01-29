@@ -16,6 +16,14 @@ Source controls solve common data integration challenges:
 - **Complex workflows** - Handle multi-step data fetching and transformation
 - **Authentication** - Manage API keys or credentials securely
 
+Common use cases include:
+
+- **Financial data APIs** (Federal Reserve, Yahoo Finance, etc.)
+- **Weather and climate data** (NOAA, NASA, OpenWeather)
+- **Scientific datasets** (genomics, astronomy, earth observation)
+- **Government portals** (Census Bureau, Department of Labor)
+- **Internal corporate APIs** and data warehouses
+
 ### Built-in controls
 
 | Control | Use for |
@@ -170,6 +178,17 @@ class CatalogBrowser(BaseSourceControls):
         self.progress("Downloading...")
         data = await download(row_idx)
         return SourceResult.from_dataframe(data, "selected_data")
+```
+
+### Progressive disclosure and reactive updates
+
+For complex controls, you may want to update options dynamically (e.g., changing the available years when a dataset is selected). Use `param.depends` with `watch=True`:
+
+```python
+@param.depends("dataset", watch=True)
+def _update_year_options(self):
+    new_options = fetch_years_for_dataset(self.dataset)
+    self._year_select.options = new_options
 ```
 
 ### Best practices
