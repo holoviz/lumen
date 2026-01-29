@@ -11,6 +11,7 @@ from .revision import (
 from .upload import UploadControls
 
 __all__ = (
+    "TABLE_EXTENSIONS",
     "AnnotationControls",
     "BaseSourceControls",
     "CopyControls",
@@ -21,7 +22,6 @@ __all__ = (
     "SourceCatalog",
     "SourceResult",
     "TableExplorer",
-    "TABLE_EXTENSIONS",
     "UploadControls",
     "UploadedFileRow",
 )
