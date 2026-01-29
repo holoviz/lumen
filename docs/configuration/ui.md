@@ -134,7 +134,7 @@ ui = lmai.ExplorerUI(
 )
 ```
 
-### Custom source controls
+## Source controls
 
 ![Weather Control UI](../assets/configuration/controls.png)
 
@@ -142,7 +142,7 @@ ui = lmai.ExplorerUI(
 
 Controls let users interactively fetch data from APIs, databases, or specialized sources directly in the Lumen UI sidebar. They're essential for integrating external data that isn't available as static files or database connections.
 
-**Why use source controls?**
+### Why use source controls?
 
 Source controls solve common data integration challenges:
 
@@ -152,138 +152,163 @@ Source controls solve common data integration challenges:
 - **Complex workflows** - Handle multi-step data fetching and transformation
 - **Authentication** - Manage API keys or credentials securely
 
-**Built-in controls**
+### Built-in controls
 
 | Control | Use for |
 |---------|---------|
 | `UploadControls` | Uploading local files (CSV, Excel, etc.) |
-| `DownloadControls` | Fetching data from URLs or building custom controls |
+| `DownloadControls` | Fetching data from URLs |
 
-**Key components**
+### Creating custom controls
 
-Inherited from `BaseSourceControls`
+Custom controls inherit from `BaseSourceControls` and override two hooks:
 
-| Component | Purpose |
-|-----------|---------|
-| `_error_placeholder` | Show error messages |
-| `_message_placeholder` | Show success messages |
-| `_progress_bar` | Loading indicator (or use `loading=True` on layout) |
-| `_progress_description` | Progress text |
-| `_count` | Counter for unique source names |
-| `outputs` | Dict to store created sources |
+| Hook | Purpose |
+|------|---------|
+| `_load()` | **Main hook** - fetch data and return a `SourceResult` |
+| `_render_controls()` | Provide UI widgets (rendered above load button) |
 
-**Required implementation steps**
+The base class handles loading states, error display, progress, output registration, and event triggering automatically.
 
-1. **Define parameters** - Use `param` types for user inputs
-2. **Build UI** - Create widgets with Panel or Material-UI components
-3. **Fetch data** - Use `asyncio.to_thread()` for blocking API calls
-4. **Register source** - Create DuckDB source with `from_df()` 
-5. **Update outputs** - Set `outputs` dict and trigger events
-
-**Complete minimal example**
+### Minimal example
 
 ```python
 import asyncio
 import pandas as pd
-import panel as pn
 import param
-import lumen.ai as lmai
-from datetime import date, timedelta
-from lumen.ai.controls import DownloadControls
-from lumen.sources.duckdb import DuckDBSource
-from lumen.util import normalize_table_name
-from panel_material_ui import Button, DatePicker, Column
-
-pn.extension()
+from lumen.ai.controls import BaseSourceControls, SourceResult
+from panel_material_ui import IntSlider
 
 
-class WeatherControl(DownloadControls):
-    """Fetch weather data from Iowa Environmental Mesonet."""
-    
-    start_date = param.Date(default=date.today() - timedelta(days=7))
-    end_date = param.Date(default=date.today())
-    
+class WeatherControl(BaseSourceControls):
+    """Fetch weather data from an API."""
+
+    year = param.Integer(default=2024, bounds=(2020, 2024))
+
     label = '<span class="material-icons">wb_sunny</span> Weather Data'
-    
-    def __init__(self, **params):
-        super().__init__(**params)
-        
-        self._start_picker = DatePicker.from_param(
-            self.param.start_date, 
-            label="Start Date"
+    load_button_label = "Fetch Weather"
+
+    def _render_controls(self):
+        """Provide widgets - rendered above the load button."""
+        return [IntSlider.from_param(self.param.year, label="Year")]
+
+    async def _load(self) -> SourceResult:
+        """Main hook - fetch data and return result."""
+        self.progress("Fetching weather data...")
+
+        url = f"https://api.weather.example/data?year={self.year}"
+        df = await asyncio.to_thread(pd.read_csv, url)
+
+        if df.empty:
+            return SourceResult.empty("No data returned")
+
+        return SourceResult.from_dataframe(
+            df,
+            table_name=f"weather_{self.year}",
+            year=self.year,  # Metadata attached to table
         )
-        self._end_picker = DatePicker.from_param(
-            self.param.end_date,
-            label="End Date"
-        )
-        self._fetch_button = Button(
-            label="Fetch Weather Data",
-            on_click=self._on_fetch
-        )
-        self._layout = Column(
-            self._start_picker,
-            self._end_picker,
-            self._fetch_button
-        )
-    
-    async def _on_fetch(self, event):
-        """Fetch weather data from API."""
-        with self._layout.param.update(loading=True):
-            await asyncio.sleep(0.01)
-            
-            # Build API URL
-            url = (
-                f"https://mesonet.agron.iastate.edu/cgi-bin/request/daily.py?"
-                f"stations=OAK&"
-                f"sts={self.start_date.strftime('%Y-%m-%d')}&"
-                f"ets={self.end_date.strftime('%Y-%m-%d')}&"
-                f"network=CA_ASOS&format=csv"
-            )
-            
-            # Fetch data
-            df = await asyncio.to_thread(pd.read_csv, url)
-            
-            if df is not None and not df.empty:
-                await self._add_table(df)
-                self.param.trigger("upload_successful")
-    
-    async def _add_table(self, df):
-        """Register DataFrame as DuckDB source."""
-        table_name = normalize_table_name(
-            f"weather_{self.start_date}_{self.end_date}"
-        )
-        source = DuckDBSource.from_df(tables={table_name: df})
-        source.tables[table_name] = f"SELECT * FROM {table_name}"
-        
-        self.outputs["source"] = source
-        self.outputs["sources"] = self.outputs.get("sources", []) + [source]
-        self.outputs["table"] = table_name
-        self.param.trigger("outputs")
-    
-    def __panel__(self):
-        return self._layout
 
 
-ui = lmai.ExplorerUI(
-    source_controls=[WeatherControl],
-    title="Weather Data Explorer",
-)
-ui.servable()
+# Use in ExplorerUI
+ui = lmai.ExplorerUI(source_controls=[WeatherControl])
 ```
 
-This example fetches real weather data from the Iowa Environmental Mesonet for Oakland, CA. Users can select date ranges and immediately query the data with natural language.
+### SourceResult
 
-**Best practices**
+`SourceResult` is the return type for `_load()` with convenient factory methods:
 
-- **Use `asyncio.to_thread()`** instead of `run_in_executor()` for blocking calls
-- **Show loading state** with `loading=True` on the layout or use progress bars
-- **Handle errors gracefully** and display messages to users
-- **Add metadata** to sources to help LLM agents understand the data
+```python
+# From a DataFrame (most common)
+SourceResult.from_dataframe(df, "table_name", year=2023, source="api")
+
+# From an existing DuckDB source
+SourceResult.from_source(my_source, table="users")
+
+# Empty result (no data loaded)
+SourceResult.empty("No data returned from API")
+```
+
+### Progress reporting
+
+The `self.progress()` helper provides a simple API:
+
+```python
+# Indeterminate (spinner)
+self.progress("Loading metadata...")
+
+# Determinate with percentage (0-100)
+self.progress("Downloading...", value=50)
+
+# Determinate with current/total (auto-calculates %)
+self.progress("Downloading...", current=500, total=1000)
+
+# Increment pattern for loops
+self.progress("Processing files...", total=len(files))
+for f in files:
+    process(f)
+    self.progress.increment()
+
+# Clear progress
+self.progress.clear()
+```
+
+### Class attributes
+
+Customize appearance with class attributes:
+
+| Attribute | Default | Purpose |
+|-----------|---------|---------|
+| `label` | `""` | HTML label shown in sidebar |
+| `load_button_label` | `"Load Data"` | Button text |
+| `load_button_icon` | `"download"` | Material icon name |
+| `load_mode` | `"button"` | `"button"` or `"manual"` |
+
+### Manual load mode
+
+For controls where loading is triggered by something other than a button (like clicking a table row), use `load_mode="manual"`:
+
+```python
+class CatalogBrowser(BaseSourceControls):
+    """Browse and select from a catalog."""
+
+    load_mode = "manual"  # No load button
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._layout.loading = True  # Show spinner during init
+        pn.state.onload(self._load_catalog)
+
+    def _render_controls(self):
+        self._table = Tabulator(on_click=self._on_click, ...)
+        return [self._table]
+
+    def _load_catalog(self):
+        self._table.value = fetch_catalog()
+        self._layout.loading = False
+
+    async def _on_click(self, event):
+        # Use _run_load() for lifecycle management
+        await self._run_load(self._fetch_row(event.row))
+
+    async def _fetch_row(self, row_idx) -> SourceResult:
+        self.progress("Downloading...")
+        data = await download(row_idx)
+        return SourceResult.from_dataframe(data, "selected_data")
+```
+
+### Best practices
+
+- **Use `asyncio.to_thread()`** for blocking API calls to avoid freezing the UI
+- **Report progress** with `self.progress()` for long operations
+- **Return `SourceResult.empty()`** with a message when no data is available
+- **Add metadata** to help LLM agents understand the data context
 - **Validate inputs** before making expensive API calls
 - **Cache API responses** when possible to avoid redundant calls
-- **Normalize table names** with `normalize_table_name()` to ensure DuckDB compatibility
-- **Use dynamic table names** that include parameters for clarity
-- **Bind widgets with `from_param()`** for cleaner code
+- **Use `normalize_table_name()`** to ensure DuckDB-compatible table names
+
+### See also
+
+- [Building a Census Data Explorer](../examples/tutorials/census_data_ai_explorer.md) — Complete walkthrough with minimal and full examples
 
 ## Complete example
 
