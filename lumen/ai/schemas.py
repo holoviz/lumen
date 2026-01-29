@@ -129,6 +129,7 @@ class Metaset:
         include_schema: bool,
         truncate: bool,
         include_sql: bool = True,
+        include_metadata: bool = True,
     ) -> dict:
         data = {}
 
@@ -144,11 +145,8 @@ class Metaset:
                 desc = truncate_string(desc, max_length=100)
             data['info'] = desc
 
-        # Include table metadata if available
-        if catalog_entry.metadata:
-            # Filter out null values and serialize numpy types
+        if include_metadata and catalog_entry.metadata:
             clean_metadata = {}
-            # Fields to exclude from metadata output
             exclude_keys = {'columns', 'data_type', 'source_name', 'rows', 'description'}
             for key, value in catalog_entry.metadata.items():
                 if key in exclude_keys or value is None or value == '':
@@ -229,6 +227,7 @@ class Metaset:
         include_schema: bool = True,
         truncate: bool = False,
         include_sql: bool = True,
+        include_metadata: bool = True,
         include_docs: bool = True,
         n: int | None = None,
         offset: int = 0,
@@ -264,7 +263,7 @@ class Metaset:
             if single_source and not show_source and SOURCE_TABLE_SEPARATOR in table_slug:
                 display_slug = table_slug.split(SOURCE_TABLE_SEPARATOR, 1)[1]
             tables_data[display_slug] = self._build_table_data(
-                table_slug, entry, include_columns, include_schema, truncate, include_sql
+                table_slug, entry, include_columns, include_schema, truncate, include_sql, include_metadata
             )
 
         # Build result
@@ -326,46 +325,50 @@ class Metaset:
             sorted_slugs = sorted_slugs[:n]
         return sorted_slugs
 
-    def table_list(self, n: int | None = None, offset: int = 0, show_source: bool | None = None, n_others: int = 0, **override_kwargs) -> str:
+    def table_list(self, n: int | None = None, offset: int = 0, show_source: bool | None = None, n_others: int = 0, include_metadata: bool = False, **override_kwargs) -> str:
         """Generate minimal table listing for planning - just table names and columns without schema details."""
         generate_kwargs = {
             "include_columns": False,
             "include_schema": False,
             "truncate": False,
             "include_sql": False,
+            "include_metadata": include_metadata,
             "include_docs": True,
         }
         generate_kwargs.update(override_kwargs)
         return self._generate_context(**generate_kwargs, n=n, offset=offset, show_source=show_source, n_others=n_others)
 
-    def table_context(self, n: int | None = None, offset: int = 0, show_source: bool | None = None, n_others: int = 0, **override_kwargs) -> str:
+    def table_context(self, n: int | None = None, offset: int = 0, show_source: bool | None = None, n_others: int = 0, include_metadata: bool = True, **override_kwargs) -> str:
         generate_kwargs = {
             "include_columns": True,
             "include_schema": False,
             "truncate": False,
             "include_sql": False,
+            "include_metadata": include_metadata,
             "include_docs": True,
         }
         generate_kwargs.update(override_kwargs)
         return self._generate_context(**generate_kwargs, n=n, offset=offset, show_source=show_source, n_others=n_others)
 
-    def full_context(self, n: int | None = None, offset: int = 0, show_source: bool | None = None, n_others: int = 0, **override_kwargs) -> str:
+    def full_context(self, n: int | None = None, offset: int = 0, show_source: bool | None = None, n_others: int = 0, include_metadata: bool = True, **override_kwargs) -> str:
         generate_kwargs = {
             "include_columns": True,
             "include_schema": True,
             "truncate": False,
             "include_sql": False,
+            "include_metadata": include_metadata,
             "include_docs": True,
         }
         generate_kwargs.update(override_kwargs)
         return self._generate_context(**generate_kwargs, n=n, offset=offset, show_source=show_source, n_others=n_others)
 
-    def compact_context(self, n: int | None = None, offset: int = 0, show_source: bool | None = None, n_others: int = 0, **override_kwargs) -> str:
+    def compact_context(self, n: int | None = None, offset: int = 0, show_source: bool | None = None, n_others: int = 0, include_metadata: bool = True, **override_kwargs) -> str:
         generate_kwargs = {
             "include_columns": True,
             "include_schema": True,
             "truncate": True,
             "include_sql": False,
+            "include_metadata": include_metadata,
             "include_docs": True,
         }
         generate_kwargs.update(override_kwargs)
