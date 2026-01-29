@@ -358,6 +358,7 @@ class BaseSourceControls(Viewer):
             label=self.param.load_button_label,
             icon=self.param.load_button_icon,
             sizing_mode="stretch_width",
+            description="",
             height=42,
         )
 
@@ -391,7 +392,7 @@ class BaseSourceControls(Viewer):
         return MuiColumn(
             *components,
             sizing_mode="stretch_width",
-            margin=(10, 10),
+            margin=(10, 15),
         )
 
     @param.depends("load", watch=True)

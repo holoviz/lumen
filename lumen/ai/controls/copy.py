@@ -27,7 +27,7 @@ class CopyControls(Viewer):
             description="Copy YAML to clipboard",
             size="small",
             color="primary",
-            icon_size="0.9em"
+            icon_size="0.9em",
         )
         copy_icon.js_on_click(
             args={"code_editor": self.view.editor},
