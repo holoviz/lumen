@@ -33,7 +33,7 @@ class Details(JSComponent):
 
     def __init__(self, object: Any, **params):
         warnings.warn(
-            "lumen.ai.controls.Details is deprecated and will be removed in a future release. "
+            "lumen.ai.Details is deprecated and will be removed in a future release. "
             "Please use panel_material_ui.Details instead.", DeprecationWarning, stacklevel=2
         )
         super().__init__(object=object, **params)
