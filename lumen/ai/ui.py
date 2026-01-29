@@ -440,6 +440,10 @@ class UI(Viewer):
     source_controls = param.List(default=[UploadControls, DownloadControls], doc="""
         List of SourceControls types to manage datasets.""")
 
+    filedropper_kwargs = param.Dict(default={}, doc="""Keyword arguments to pass to FileDropper in UploadControls.
+        Common options include 'accepted_filetypes' and 'max_file_size'.
+        See https://panel.holoviz.org/reference/widgets/FileDropper.html for all available options.""")
+
     suggestions = param.List(default=GETTING_STARTED_SUGGESTIONS, doc="""
         Initial list of suggestions of actions the user can take.""")
 
@@ -1137,10 +1141,15 @@ class UI(Viewer):
         self._source_controls = []
         control_tabs = []
         for control in self.source_controls:
-            control_inst = control(
-                context=self.context, source_catalog=self._source_catalog,
-                upload_handlers=self.upload_handlers
-            )
+            control_kwargs = {
+                'context': self.context,
+                'source_catalog': self._source_catalog,
+                'upload_handlers': self.upload_handlers
+            }
+            if control is UploadControls and self.filedropper_kwargs:
+                control_kwargs['filedropper_kwargs'] = self.filedropper_kwargs
+
+            control_inst = control(**control_kwargs)
             control_inst.param.watch(self._sync_sources, 'outputs')
             control_inst.param.watch(self._handle_upload_successful, 'upload_successful')
             if isinstance(control_inst, UploadControls):
