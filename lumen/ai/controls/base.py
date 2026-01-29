@@ -9,12 +9,12 @@ import zipfile
 import pandas as pd
 import param
 
-from panel.layout import Column, HSpacer, Row
-from panel.pane.markup import HTML, Markdown
+from panel.layout import HSpacer
+from panel.pane.markup import HTML
 from panel.viewable import Viewer
 from panel_material_ui import (
-    Button, Column as MuiColumn, IconButton, RadioButtonGroup, Select, Tabs,
-    TextInput,
+    Button, Column, Column as MuiColumn, IconButton, Markdown,
+    RadioButtonGroup, Row, Select, Tabs, TextInput,
 )
 
 from ...sources.duckdb import DuckDBSource

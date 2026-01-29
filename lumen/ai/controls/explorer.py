@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import param
 
 from panel.io import state
-from panel.layout import Row
 from panel.viewable import Viewer
-from panel_material_ui import AutocompleteInput
+from panel_material_ui import AutocompleteInput, Row
 
 from ...pipeline import Pipeline
 from ..config import SOURCE_TABLE_SEPARATOR
-from ..editors import SQLEditor
+
+if TYPE_CHECKING:
+    from ..editors import SQLEditor
 
 
 class TableExplorer(Viewer):
@@ -94,6 +97,8 @@ class TableExplorer(Viewer):
     def create_sql_output(self) -> SQLEditor | None:
         if not self.table_slug:
             return
+
+        from ..editors import SQLEditor
 
         source = self.source_map[self.table_slug]
         if SOURCE_TABLE_SEPARATOR in self.table_slug:

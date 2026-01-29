@@ -9,9 +9,9 @@ from urllib.parse import parse_qs, urlparse
 import aiohttp
 import param
 
-from panel.layout import Row
-from panel.widgets import TextAreaInput
-from panel_material_ui import Button, Column as MuiColumn
+from panel_material_ui import (
+    Button, Column as MuiColumn, Row, TextAreaInput,
+)
 
 from .base import (
     METADATA_EXTENSIONS, TABLE_EXTENSIONS, BaseSourceControls, DownloadConfig,

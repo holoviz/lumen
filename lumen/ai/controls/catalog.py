@@ -4,10 +4,8 @@ import asyncio
 
 import param
 
-from panel.layout import Column
-from panel.pane.markup import Markdown
 from panel.viewable import Viewer
-from panel_material_ui import Tree
+from panel_material_ui import Column, Markdown, Tree
 
 from ..config import SOURCE_TABLE_SEPARATOR
 

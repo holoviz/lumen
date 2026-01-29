@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import param
 
-from panel_material_ui import Column as MuiColumn, FileDropper
+from panel.widgets import FileDropper
+from panel_material_ui import Column as MuiColumn
 
 from .base import BaseSourceControls
 

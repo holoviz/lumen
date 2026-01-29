@@ -3,14 +3,12 @@ from __future__ import annotations
 import param
 
 from panel.io import state
-from panel.layout import Row
-from panel.pane.markup import Markdown
 from panel.viewable import Viewer
 from panel_material_ui import (
-    Card, IconButton, Popup, TextInput, ToggleIcon,
+    Card, IconButton, Markdown, Popup, Row, TextInput, ToggleIcon,
 )
 
-from ..config import load_yaml
+from ...config import load_yaml
 from ..utils import generate_diff
 
 
