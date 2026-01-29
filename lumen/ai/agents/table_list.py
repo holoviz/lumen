@@ -54,14 +54,10 @@ class TableListAgent(BaseListAgent):
 
             entry = metaset.catalog[table_slug]
 
-            # Build metadata display
             content_parts = []
-
-            # Show description if available
             if entry.description:
                 content_parts.append(f"**Description:** {entry.description}")
 
-            # Show metadata
             if entry.metadata:
                 metadata_lines = ["**Metadata:**"]
                 # Fields to exclude from display
@@ -73,7 +69,6 @@ class TableListAgent(BaseListAgent):
                 if len(metadata_lines) > 1:
                     content_parts.append("\n".join(metadata_lines))
 
-            # Show row and column count at the bottom
             counts = []
             if entry.metadata and 'rows' in entry.metadata:
                 counts.append(f"{entry.metadata['rows']} rows")
