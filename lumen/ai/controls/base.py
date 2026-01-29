@@ -315,6 +315,9 @@ class BaseSourceControls(Viewer):
     load_button_icon = param.String(default="download", doc="""
         Material icon name for the load button.""")
 
+    source_name_prefix = param.String(default="UploadedSource", doc="""
+        Prefix for auto-generated source names.""")
+
     __abstract = True
 
     def __init__(self, **params):
@@ -731,7 +734,7 @@ class BaseSourceControls(Viewer):
                     self.param.trigger("outputs")
             elif card.extension.endswith(TABLE_EXTENSIONS):
                 if source is None:
-                    source_id = f"UploadedSource{self._count:06d}"
+                    source_id = f"{self.source_name_prefix}{self._count:06d}"
                     source = DuckDBSource(uri=":memory:", ephemeral=True, name=source_id, tables={})
                 table_name = card.alias
                 filename = f"{card.filename}.{card.extension}"

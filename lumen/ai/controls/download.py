@@ -31,6 +31,8 @@ class DownloadControls(BaseSourceControls):
 
     load_mode = "manual"  # URL entry triggers, not a button
 
+    source_name_prefix = "DownloadedSource"  # Use DownloadedSource prefix
+
     label = '<span class="material-icons" style="vertical-align: middle;">download</span> Fetch Remote Data'
 
     def _render_layout(self):
