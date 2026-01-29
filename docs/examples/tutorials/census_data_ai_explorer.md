@@ -276,8 +276,7 @@ DATASET_YEARS = {
     ACS1: [2023, 2022, 2021, 2019, 2018, 2017, 2016, 2015, 2014, 2013, 2012, 2011],
 }
 
-
-class CensusControlsFull(BaseSourceControls):
+class CensusControls(BaseSourceControls):
     """Full-featured Census data control with dynamic options."""
 
     dataset = param.Selector(default=ACS5, objects=[ACS5, ACS1], doc="Census dataset")
@@ -536,13 +535,8 @@ class CensusControlsFull(BaseSourceControls):
 
 
 ui = lmai.ExplorerUI(
-    source_controls=[CensusControlsFull],
-    title="Census Data Explorer - Full",
-    suggestions=[
-        ("bar_chart", "Show the top 10 states by population"),
-        ("compare_arrows", "Compare different demographic variables"),
-        ("question_mark", "What are the demographic patterns?"),
-    ],
+    source_controls=[CensusControls],
+    title="Census Data Explorer",
     log_level="DEBUG",
 )
 
@@ -550,41 +544,6 @@ ui.servable()
 ```
 
 This complete version includes all the features discussed: dynamic variable groups, multiple datasets, geography selection, state filtering, and reactive UI updates.
-
-## Advanced: Manual load mode
-
-For controls where loading is triggered by something other than a button (like clicking a table row), use `load_mode="manual"` and call `_run_load()`:
-
-```python
-class BrowserControl(BaseSourceControls):
-    """Browse and select datasets from a catalog."""
-
-    load_mode = "manual"  # No load button - row clicks trigger loading
-
-    def __init__(self, **params):
-        super().__init__(**params)
-        self._layout.loading = True  # Show spinner while catalog loads
-        pn.state.onload(self._load_catalog)
-
-    def _render_controls(self):
-        self._tabulator = Tabulator(on_click=self._on_row_click, ...)
-        return [self._tabulator]
-
-    def _load_catalog(self):
-        """Load catalog on page ready."""
-        self._tabulator.value = fetch_catalog()
-        self._layout.loading = False
-
-    async def _on_row_click(self, event):
-        """Row click triggers load with lifecycle management."""
-        await self._run_load(self._download_row(event.row))
-
-    async def _download_row(self, row_idx) -> SourceResult:
-        """Download data for the clicked row."""
-        self.progress("Downloading...", total=100)
-        data = await download_with_progress(row_idx, self.progress)
-        return SourceResult.from_dataframe(data, "table")
-```
 
 ## Next steps
 
