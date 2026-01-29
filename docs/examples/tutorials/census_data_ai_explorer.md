@@ -301,36 +301,36 @@ class CensusControls(BaseSourceControls):
         geo_options = self._get_geo_options()
         year_options = self._get_year_options()
 
-        self._dataset_select = Select(
-            value=self.dataset,
+        self._dataset_select = Select.from_param(
+            self.param.dataset,
             options={"ACS 5-Year": ACS5, "ACS 1-Year": ACS1},
             label="Dataset",
             sizing_mode="stretch_width",
         )
 
-        self._vintage_select = Select(
-            value=self.vintage,
+        self._vintage_select = Select.from_param(
+            self.param.vintage,
             options=year_options,
             label="Year",
             sizing_mode="stretch_width",
         )
 
-        self._group_select = Select(
-            value=self.group,
+        self._group_select = Select.from_param(
+            self.param.group,
             options=group_options,
             label="Variable Group",
             sizing_mode="stretch_width",
         )
 
-        self._geo_select = Select(
-            value=self.geography,
+        self._geo_select = Select.from_param(
+            self.param.geography,
             options=geo_options,
             label="Geography",
             sizing_mode="stretch_width",
         )
 
-        self._state_select = Select(
-            value=self.state_filter,
+        self._state_select = Select.from_param(
+            self.param.state_filter,
             options={name: name for name in STATES.keys()},
             label="State Filter",
             sizing_mode="stretch_width",
@@ -341,13 +341,6 @@ class CensusControls(BaseSourceControls):
             label="Table Name",
             sizing_mode="stretch_width",
         )
-
-        # Link widgets to params
-        self._dataset_select.link(self, value='dataset')
-        self._vintage_select.link(self, value='vintage')
-        self._group_select.link(self, value='group')
-        self._geo_select.link(self, value='geography')
-        self._state_select.link(self, value='state_filter')
 
         return [
             Markdown("### Census Data"),
