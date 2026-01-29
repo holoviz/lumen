@@ -144,6 +144,26 @@ class Metaset:
                 desc = truncate_string(desc, max_length=100)
             data['info'] = desc
 
+        # Include table metadata if available
+        if catalog_entry.metadata:
+            # Filter out null values and serialize numpy types
+            clean_metadata = {}
+            # Fields to exclude from metadata output
+            exclude_keys = {'columns', 'data_type', 'source_name', 'rows', 'description'}
+            for key, value in catalog_entry.metadata.items():
+                if key in exclude_keys:
+                    continue
+                if value is None:
+                    continue
+                # Convert numpy types to native Python types
+                if hasattr(value, 'item'):
+                    value = value.item()
+                if value == '':
+                    continue
+                clean_metadata[key] = value
+            if clean_metadata:
+                data['metadata'] = clean_metadata
+
         if include_schema and self.has_schemas:
             schema = self.schemas.get(table_slug)
             if schema and schema.get("__len__"):
