@@ -27,13 +27,12 @@ from panel_material_ui import (
 )
 
 from ..base import Component
+from ..config import dump_yaml, load_yaml
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
 from ..views.base import Panel, Table, View
 from .analysis import Analysis
-from .config import (
-    FORMAT_ICONS, FORMAT_LABELS, VEGA_ZOOMABLE_MAP_ITEMS, dump_yaml, load_yaml,
-)
+from .config import FORMAT_ICONS, FORMAT_LABELS, VEGA_ZOOMABLE_MAP_ITEMS
 from .controls import AnnotationControls, CopyControls, RetryControls
 from .utils import describe_data, get_data
 
