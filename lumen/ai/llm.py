@@ -933,7 +933,8 @@ class Anthropic(Llm):
         try:
             client = AnthropicClient(api_key=api_key, timeout=5)
             response = client.models.list()
-            return {m.id for m in response.data}
+            # also handle model aliases (claude-sonnet-4-5-20250929) -> (claude-sonnet-4-5)
+            return {m.id for m in response.data} | {m.id.rsplit("-", maxsplit=1)[0] for m in response.data}
         except Exception:
             return set()
 

@@ -16,6 +16,18 @@ lumen-ai serve penguins.csv
 
 Lumen auto-detects the provider from environment variables.
 
+### Specify provider explicitly
+
+To use a specific provider, pass the `--provider` flag:
+
+``` bash
+lumen-ai serve penguins.csv --provider anthropic
+lumen-ai serve penguins.csv --provider google --model 'gemini-2.5-flash'
+lumen-ai serve penguins.csv --provider ollama --model 'qwen3:32b'
+```
+
+For more CLI options, see the [CLI guide](../configuration/cli.md#configure-llm).
+
 ## Different models per agent
 
 Use cheap models for simple tasks, powerful models for complex tasks:
