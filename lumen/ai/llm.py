@@ -13,10 +13,12 @@ from typing import Any, Literal, TypedDict
 import instructor
 import panel as pn
 import param
+import requests
 
 from instructor import Mode, patch
 from instructor.dsl.partial import Partial
 from instructor.processing.multimodal import Image
+from openai import OpenAI as OpenAIClient
 from pydantic import BaseModel
 
 from .interceptor import Interceptor
@@ -58,37 +60,33 @@ LLM_PROVIDERS = {
 }
 
 # Environment variable mapping for providers that require API keys
-# Providers not in this list (like ollama, llama-cpp) may work without env vars
+# Providers not in this list (like ollama, llama-cpp) don't require env vars
 PROVIDER_ENV_VARS = {
-    "openai": "OPENAI_API_KEY",
-    "anthropic": "ANTHROPIC_API_KEY",
-    "bedrock": "AWS_ACCESS_KEY_ID",  # AWS credentials
-    "anthropic_bedrock": "AWS_ACCESS_KEY_ID",  # AWS credentials
-    "mistral": "MISTRAL_API_KEY",
-    "azure-mistral": "AZUREAI_ENDPOINT_KEY",
-    "azure-openai": "AZUREAI_ENDPOINT_KEY",
-    "google": "GEMINI_API_KEY",
+    'OpenAI': 'OPENAI_API_KEY',
+    'Anthropic': 'ANTHROPIC_API_KEY',
+    'Bedrock': 'AWS_ACCESS_KEY_ID',
+    'AnthropicBedrock': 'AWS_ACCESS_KEY_ID',
+    'MistralAI': 'MISTRAL_API_KEY',
+    'AzureMistralAI': 'AZUREAI_ENDPOINT_KEY',
+    'AzureOpenAI': 'AZUREAI_ENDPOINT_KEY',
+    'Google': 'GEMINI_API_KEY',
 }
-
 
 def get_available_llm() -> type[Llm] | None:
     """
-    Detect and instantiate an available LLM provider by checking environment variables
-    and attempting to instantiate each provider in order.
+    Detect and return an available LLM provider by checking each provider's
+    is_online() classmethod.
 
     Returns
     -------
     type[Llm] | None
         The LLM class if successful, or None if no provider is available.
     """
-    for provider, class_name in LLM_PROVIDERS.items():
-        env_var = PROVIDER_ENV_VARS.get(provider)
-        if env_var and not os.environ.get(env_var):
-            continue
-
+    for class_name in LLM_PROVIDERS.values():
         try:
             provider_cls = globals()[class_name]
-            return provider_cls
+            if provider_cls.is_online():
+                return provider_cls
         except KeyError:
             continue
     return None
@@ -142,6 +140,39 @@ class Llm(param.Parameterized):
     _instructor_wrapper: str = "openai"
 
     __abstract = True
+
+    @classmethod
+    def is_online(cls) -> bool:
+        """
+        Check if this LLM provider's service is online and reachable.
+
+        By default, checks if the required environment variable (from PROVIDER_ENV_VARS)
+        is set. Subclasses may override for additional checks (e.g., server connectivity).
+
+        Returns
+        -------
+        bool
+            True if the provider's service is online, False otherwise.
+        """
+        env_var = PROVIDER_ENV_VARS.get(cls.__name__)
+        if env_var:
+            return bool(os.environ.get(env_var))
+        return True  # Providers without env var requirements are available by default
+
+    @classmethod
+    def models(cls) -> set[str]:
+        """
+        Return the set of available model identifiers from this provider.
+
+        By default returns an empty set. Subclasses should override to
+        query their provider's API for available models.
+
+        Returns
+        -------
+        set[str]
+            Set of available model identifiers.
+        """
+        return set()
 
     def __init__(self, **params):
         if "mode" in params:
@@ -346,16 +377,33 @@ class Llm(param.Parameterized):
         return str(response)
 
     async def initialize(self, log_level: str):
-        try:
+        # Check if service is online first
+        if not self.is_online():
             self._ready = False
-            await self.invoke(
-                messages=[{'role': 'user', 'content': 'Ready? "Y" or "N"'}],
-                model_spec="ui",
+            raise ConnectionError(
+                f"{self.__class__.__name__} service is not reachable. "
+                "Please check your API key or service configuration."
             )
-            self._ready = True
-        except Exception as e:
-            self._ready = False
-            raise e
+
+        # Then check if all configured models are available
+        available = self.models()
+        if available:  # Only check if provider returns model list
+            configured = {
+                kwargs.get("model")
+                for kwargs in self.model_kwargs.values()
+                if isinstance(kwargs, dict) and kwargs.get("model")
+            }
+            unavailable = configured - available
+
+            if unavailable:
+                self._ready = False
+                models_str = ", ".join(repr(m) for m in unavailable)
+                raise ValueError(
+                    f"The following models are not available for {self.__class__.__name__}: {models_str}. "
+                    "Please check your model configuration or ensure the models are installed/accessible."
+                )
+
+        self._ready = True
 
     async def stream(
         self,
@@ -605,6 +653,24 @@ class OpenAI(Llm, OpenAIMixin):
 
     _supports_logfire = True
 
+    @classmethod
+    def is_online(cls) -> bool:
+        """Check if OpenAI API is reachable."""
+        return bool(cls.models())
+
+    @classmethod
+    def models(cls) -> set[str]:
+        """Return the set of available model identifiers from OpenAI."""
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            return set()
+        try:
+            client = OpenAIClient(api_key=api_key, timeout=5)
+            response = client.models.list()
+            return {m.id for m in response.data}
+        except Exception:
+            return set()
+
     @property
     def _client_kwargs(self):
         return {"temperature": self.temperature}
@@ -732,6 +798,26 @@ class MistralAI(Llm):
     _supports_model_stream = False  # instructor doesn't work with Mistral's streaming
     _instructor_wrapper = "mistral"
 
+    @classmethod
+    def is_online(cls) -> bool:
+        """Check if Mistral API is reachable."""
+        return bool(cls.models())
+
+    @classmethod
+    def models(cls) -> set[str]:
+        """Return the set of available model identifiers from Mistral."""
+        from mistralai import Mistral
+
+        api_key = os.environ.get("MISTRAL_API_KEY")
+        if not api_key:
+            return set()
+        try:
+            client = Mistral(api_key=api_key)
+            response = client.models.list()
+            return {m.id for m in response.data}
+        except Exception:
+            return set()
+
     @property
     def _client_kwargs(self):
         return {"temperature": self.temperature}
@@ -830,6 +916,26 @@ class Anthropic(Llm):
     _supports_logfire = True
     _supports_model_stream = True
     _instructor_wrapper = "anthropic"
+
+    @classmethod
+    def is_online(cls) -> bool:
+        """Check if Anthropic API is reachable."""
+        return bool(cls.models())
+
+    @classmethod
+    def models(cls) -> set[str]:
+        """Return the set of available model identifiers from Anthropic."""
+        from anthropic import Anthropic as AnthropicClient
+
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            return set()
+        try:
+            client = AnthropicClient(api_key=api_key, timeout=5)
+            response = client.models.list()
+            return {m.id for m in response.data}
+        except Exception:
+            return set()
 
     @property
     def _client_kwargs(self):
@@ -1160,6 +1266,32 @@ class Google(Llm):
     _supports_model_stream = True
     _instructor_wrapper = "genai"
 
+    @classmethod
+    def is_online(cls) -> bool:
+        """Check if Google AI API is reachable."""
+        return bool(cls.models())
+
+    @classmethod
+    def models(cls) -> set[str]:
+        """Return the set of available model identifiers from Google AI."""
+        from google import genai
+
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            return set()
+        try:
+            client = genai.Client(api_key=api_key)
+            response = client.models.list()
+            # Include both full names (models/gemini-...) and short names
+            available = set()
+            for m in response:
+                available.add(m.name)
+                if m.name.startswith("models/"):
+                    available.add(m.name[7:])  # Strip "models/" prefix
+            return available
+        except Exception:
+            return set()
+
     @property
     def _client_kwargs(self):
         return {}
@@ -1312,6 +1444,18 @@ class AINavigator(OpenAI):
 
     select_models = param.List(default=["server-model"], constant=True, doc="Available models for selection dropdowns")
 
+    @classmethod
+    def is_online(cls, endpoint: str | None = None) -> bool:
+        """Check if the AI Navigator server is running and accessible."""
+        if endpoint is None:
+            endpoint = cls.param["endpoint"].default
+        try:
+            client = OpenAIClient(base_url=endpoint, api_key="navigator", timeout=5)
+            client.models.list()
+            return True
+        except Exception:
+            return False
+
 
 class Ollama(OpenAI):
     """
@@ -1338,6 +1482,62 @@ class Ollama(OpenAI):
     ], constant=True, doc="Available models for selection dropdowns")
 
     temperature = param.Number(default=0.25, bounds=(0, None), constant=True)
+
+    @classmethod
+    def is_online(cls, endpoint: str | None = None) -> bool:
+        """Check if the Ollama server is running and accessible."""
+        if endpoint is None:
+            endpoint = cls.param["endpoint"].default
+        base_url = endpoint.rstrip('/').removesuffix('/v1')
+        try:
+            response = requests.get(base_url, timeout=5)
+            return response.status_code == 200
+        except Exception:
+            return False
+
+    @classmethod
+    def models(cls, endpoint: str | None = None) -> set[str]:
+        """Return the set of available model identifiers from Ollama."""
+        if endpoint is None:
+            endpoint = cls.param["endpoint"].default
+        base_url = endpoint.rstrip('/').removesuffix('/v1')
+        try:
+            tags_response = requests.get(f"{base_url}/api/tags", timeout=5)
+            if tags_response.status_code != 200:
+                return set()
+            available_models = tags_response.json().get("models", [])
+            return {m.get("name", "") for m in available_models}
+        except Exception:
+            return set()
+
+    async def initialize(self, log_level: str):
+        """Initialize the Ollama LLM, checking server connectivity and model availability."""
+        # First check if server is running
+        if not self.is_online(endpoint=self.endpoint):
+            self._ready = False
+            raise ConnectionError(
+                f"Ollama server is not running at {self.endpoint}. "
+                "Please start Ollama with 'ollama serve' or check your endpoint configuration."
+            )
+
+        # Then check if all configured models are available
+        available = self.models(endpoint=self.endpoint)
+        configured = {
+            kwargs.get("model")
+            for kwargs in self.model_kwargs.values()
+            if isinstance(kwargs, dict) and kwargs.get("model")
+        }
+        unavailable = configured - available
+
+        if unavailable:
+            self._ready = False
+            models_str = ", ".join(repr(m) for m in unavailable)
+            raise ValueError(
+                f"The following models are not available in Ollama: {models_str}. "
+                "Please pull them with 'ollama pull <model>' or check your model configuration."
+            )
+
+        self._ready = True
 
 
 class MessageModel(BaseModel):
