@@ -87,7 +87,7 @@ def get_available_llm() -> type[Llm] | None:
             provider_cls = globals()[class_name]
             if provider_cls.is_online():
                 return provider_cls
-        except KeyError:
+        except (KeyError, ImportError):
             continue
     return None
 
