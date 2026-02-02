@@ -33,12 +33,11 @@ from jinja2 import (
 from jinja2.visitor import NodeVisitor
 from jsonschema import ValidationError
 from markupsafe import escape
+from panel_material_ui import Details
 
-from lumen.pipeline import Pipeline
-
+from ..pipeline import Pipeline
 from ..transforms import SQLRemoveSourceSeparator
 from ..util import log
-from .components import Details
 from .config import (
     PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, UNRECOVERABLE_ERRORS,
     MissingContextError, RetriesExceededError,

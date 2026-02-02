@@ -44,6 +44,7 @@ nav = [
     {"LLM Providers" = "configuration/llm_providers.md"},
     {"Analyses" = "configuration/analyses.md"},
     {"UI" = "configuration/ui.md"},
+    {"Controls" = "configuration/controls.md"},
     {"Context" = "configuration/context.md"},
     {"Agents" = "configuration/agents.md"},
     {"Tools" = "configuration/tools.md"},
