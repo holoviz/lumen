@@ -52,6 +52,7 @@ LLM_PROVIDERS = {
     'azure-openai': 'AzureOpenAI',
     'azure-mistral': 'AzureMistralAI',
     "ai-navigator": "AINavigator",
+    "ai-catalyst": "AICatalyst",
     'ollama': 'Ollama',
     'llama-cpp': 'LlamaCpp',
     'litellm': 'LiteLLM',
@@ -68,6 +69,7 @@ PROVIDER_ENV_VARS = {
     "azure-mistral": "AZUREAI_ENDPOINT_KEY",
     "azure-openai": "AZUREAI_ENDPOINT_KEY",
     "google": "GEMINI_API_KEY",
+    "ai-catalyst": "AI_CATALYST_API_KEY",
 }
 
 
@@ -1301,7 +1303,7 @@ class AINavigator(OpenAI):
     display_name = param.String(default="AI Navigator", constant=True, doc="Display name for UI")
 
     endpoint = param.String(
-        default="http://localhost:8080/v1", doc="""
+        default=os.getenv("AINAVIGATOR_BASE_URL", "http://localhost:8080/v1"), doc="""
             The API endpoint; should include the full address, including the port.""")
 
     mode = param.Selector(default=Mode.JSON_SCHEMA)
@@ -1311,6 +1313,28 @@ class AINavigator(OpenAI):
     })
 
     select_models = param.List(default=["server-model"], constant=True, doc="Available models for selection dropdowns")
+
+
+class AICatalyst(OpenAI):
+    """
+    A LLM implementation that calls the [Anaconda AI Catalyst](https://www.anaconda.com/platform/ai-catalyst) API.
+    """
+
+    api_key = param.String(default=os.getenv("AI_CATALYST_API_KEY"), doc="The AI Catalyst API key.")
+
+    display_name = param.String(default="AI Catalyst", constant=True, doc="Display name for UI")
+
+    endpoint = param.String(
+        default=os.getenv("AI_CATALYST_BASE_URL"), doc="""
+            The API endpoint; should include the full address, including the port.""")
+
+    mode = param.Selector(default=Mode.JSON_SCHEMA)
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "ai_catalyst"},
+    })
+
+    select_models = param.List(default=["ai_catalyst"], constant=True, doc="Available models for selection dropdowns")
 
 
 class Ollama(OpenAI):

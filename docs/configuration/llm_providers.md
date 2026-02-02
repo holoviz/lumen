@@ -75,18 +75,26 @@ For installation and API key setup instructions, see the [Installation guide](..
 !!! warning "Reasoning Models Not Suitable for Dialog"
     Reasoning models like `gpt-5`, `o4-mini`, and `gemini-2.0-flash-thinking` are **significantly slower** than standard models. They are designed for single, complex queries that require deep thinking, not interactive chat interfaces. For dialog-based applications like Lumen, use standard models for better user experience.
 
-### Local providers
+### Local & Enterprise providers
 
 | Provider | Default Model | Notes |
 |----------|---------------|-------|
 | **Ollama** | `qwen3:32b` | Requires Ollama installed, models pulled locally |
 | **Llama.cpp** | `unsloth/Qwen3-32B-GGUF` | Auto-downloads models on first use |
+| **AI Navigator** | `server-model` | Local model server from Anaconda |
+| **AI Catalyst** | `ai_catalyst` | Enterprise model server from Anaconda |
 
 **Recommended local models:**
 
 - **General purpose:** `qwen3:32b`, `llama3.3:70b`, `qwen3:30b-a3b`, `nemotron-3-nano:30b`
 - **Coding:** `qwen3-coder:32b`, `qwen2.5-coder:32b`
 - **Reasoning:** `nemotron-3-nano:30b`
+
+!!! tip "Small models (<= 8B)"
+    Models with 8B parameters or fewer likely need [`--code-execution prompt`](cli.md#common-flags) to successfully create reliable Vega-Lite specifications.
+
+    !!! warning "Security"
+        Setting `--code-execution` uses Python's `exec` function to run LLM-generated code locally. **This is insecure** as the model could generate and execute malicious code. Only use this with trusted models and in secure environments.
 
 ### Router / Gateway providers
 
@@ -162,6 +170,34 @@ Connect to Ollama running on another machine:
 llm = lmai.llm.Ollama(
     endpoint='http://your-server:11434/v1',
     model_kwargs={"default": {"model": "qwen3:32b"}}
+)
+```
+
+### AI Navigator (Local)
+
+Connect to [Anaconda AI Navigator](https://www.anaconda.com/products/ai-navigator) running on your machine:
+
+``` py title="AI Navigator"
+llm = lmai.llm.AINavigator()
+```
+
+By default, it uses `http://localhost:8080/v1`.
+
+### AI Catalyst (Enterprise)
+
+Connect to [Anaconda AI Catalyst](https://www.anaconda.com/platform/ai-catalyst) running on your company's infrastructure:
+
+``` py title="AI Catalyst"
+# Requires AI_CATALYST_BASE_URL and AI_CATALYST_API_KEY env vars
+llm = lmai.llm.AICatalyst()
+```
+
+Or configure explicitly:
+
+``` py title="Explicit AI Catalyst"
+llm = lmai.llm.AICatalyst(
+    endpoint='https://your-company.anacondaconnect.com/api/v1/model-servers/your-server/v1',
+    api_key='...'
 )
 ```
 

@@ -226,7 +226,34 @@ Run open-source LLMs on your own machine. No API keys required, full privacy, fr
     **Optional:** Set custom endpoint:
     
     ```bash
-    export OPENAI_BASE_URL=http://localhost:8080/v1
+    export AINAVIGATOR_BASE_URL=http://localhost:8080/v1
+    ```
+
+=== "AI Catalyst"
+
+    ```bash
+    pip install 'lumen[ai-openai]'
+    export AI_CATALYST_BASE_URL=https://...
+    export AI_CATALYST_API_KEY=...
+    ```
+
+    [Anaconda AI Catalyst](https://www.anaconda.com/platform/ai-catalyst) provides enterprise-ready, governed models running on your private infrastructure.
+
+    **Get your credentials:**
+    
+    1. Log in to your AI Catalyst dashboard
+    2. Go to **Model Servers**, launch or select a server, and copy the **Server Address**
+    3. Go to your profile icon > **API Keys** and create/copy a key
+    4. Set environment variables:
+
+    ```bash
+    # macOS/Linux
+    export AI_CATALYST_BASE_URL='https://your-company.anacondaconnect.com/.../v1'
+    export AI_CATALYST_API_KEY='your-key-here'
+    
+    # Windows PowerShell
+    $env:AI_CATALYST_BASE_URL='https://your-company.anacondaconnect.com/.../v1'
+    $env:AI_CATALYST_API_KEY='your-key-here'
     ```
 
 ---
