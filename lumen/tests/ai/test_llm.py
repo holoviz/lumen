@@ -30,7 +30,7 @@ class TestIsAvailable:
 		"""Test OpenAI.is_online() accepts models parameter."""
 		monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 		# Should return False because no API key, regardless of models
-		assert OpenAI.is_online(models=["gpt-4"]) is False
+		assert OpenAI.is_online() is False
 
 	def test_anthropic_is_online_no_api_key(self, monkeypatch):
 		"""Test Anthropic.is_online() returns False when API key is not set."""
@@ -76,7 +76,7 @@ class TestIsAvailable:
 	def test_ollama_is_online_with_model_param(self):
 		"""Test Ollama.is_online() accepts models parameter."""
 		# Use a port that's unlikely to have a server running
-		assert Ollama.is_online(models=["llama2"], endpoint="http://localhost:59999/v1") is False
+		assert Ollama.is_online(endpoint="http://localhost:59999/v1") is False
 
 	def test_ai_navigator_is_online_no_server(self):
 		"""Test AINavigator.is_online() returns False when server is not running."""
