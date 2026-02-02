@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import warnings
+
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +32,10 @@ class Details(JSComponent):
     _esm = Path(__file__).parent / "models" / "details.js"
 
     def __init__(self, object: Any, **params):
+        warnings.warn(
+            "lumen.ai.Details is deprecated and will be removed in a future release. "
+            "Please use panel_material_ui.Details instead.", DeprecationWarning, stacklevel=2
+        )
         super().__init__(object=object, **params)
 
     @param.depends("collapsed", watch=True)
