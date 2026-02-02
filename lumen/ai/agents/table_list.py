@@ -1,5 +1,6 @@
 from typing import NotRequired
 
+import panel as pn
 import param
 
 from ...sources.base import Source
@@ -39,6 +40,49 @@ class TableListAgent(BaseListAgent):
     _message_format = "Show the data: {item}"
 
     input_schema = TableListInputs
+
+    def _create_row_content(self, context: TContext, source_name: str):
+        """Create row content function that displays metadata for a table."""
+        metaset = context.get('metaset')
+
+        def row_content(row):
+            table_name = row[self._column_name]
+            table_slug = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
+
+            if not metaset or table_slug not in metaset.catalog:
+                return pn.pane.Markdown("*No metadata available*")
+
+            entry = metaset.catalog[table_slug]
+
+            content_parts = []
+            if entry.description:
+                content_parts.append(f"**Description:** {entry.description}")
+
+            if entry.metadata:
+                metadata_lines = ["**Metadata:**"]
+                # Fields to exclude from display
+                exclude_keys = {'description', 'columns', 'data_type', 'source_name', 'rows', 'updated_at', 'created_at'}
+                for key, value in entry.metadata.items():
+                    if key in exclude_keys or value is None or value == '':
+                        continue
+                    metadata_lines.append(f"- **{key}:** {value}")
+                if len(metadata_lines) > 1:
+                    content_parts.append("\n".join(metadata_lines))
+
+            counts = []
+            if entry.metadata and 'rows' in entry.metadata:
+                counts.append(f"{entry.metadata['rows']} rows")
+            if entry.columns:
+                counts.append(f"{len(entry.columns)} columns")
+            if counts:
+                content_parts.append(" | ".join(counts))
+
+            if not content_parts:
+                return pn.pane.Markdown("*No metadata available*")
+
+            return pn.pane.Markdown("\n\n".join(content_parts), sizing_mode='stretch_width')
+
+        return row_content
 
     @classmethod
     async def applies(cls, context: TContext) -> bool:
