@@ -221,6 +221,12 @@ Run open-source LLMs on your own machine. No API keys required, full privacy, fr
 
     [Anaconda AI Navigator](https://www.anaconda.com/products/ai-navigator) runs models locally on your machine. No API key needed!
     
+    **Setup AI Navigator:**
+
+    1. Open AI Navigator.
+    2. Navigate to the **API Server** tab (⚡ icon).
+    3. Select a model and click **Start**.
+
     **Default endpoint:** `http://localhost:8080/v1`
     
     **Optional:** Set custom endpoint:

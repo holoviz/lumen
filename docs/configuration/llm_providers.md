@@ -75,14 +75,13 @@ For installation and API key setup instructions, see the [Installation guide](..
 !!! warning "Reasoning Models Not Suitable for Dialog"
     Reasoning models like `gpt-5`, `o4-mini`, and `gemini-2.0-flash-thinking` are **significantly slower** than standard models. They are designed for single, complex queries that require deep thinking, not interactive chat interfaces. For dialog-based applications like Lumen, use standard models for better user experience.
 
-### Local & Enterprise providers
+### Local providers
 
-| Provider | Default Model | Notes |
-|----------|---------------|-------|
-| **Ollama** | `qwen3:32b` | Requires Ollama installed, models pulled locally |
-| **Llama.cpp** | `unsloth/Qwen3-32B-GGUF` | Auto-downloads models on first use |
-| **AI Navigator** | `server-model` | Local model server from Anaconda |
-| **AI Catalyst** | `ai_catalyst` | Enterprise model server from Anaconda |
+| Provider | Default Model | Description |
+|----------|---------------|-------------|
+| **Ollama** | `qwen3:32b` | External service; requires `ollama pull` to manage and run models. |
+| **Llama.cpp** | `unsloth/Qwen3-32B-GGUF` | Embedded runner; automatically downloads GGUF models from HuggingFace. |
+| **AI Navigator** | `server-model` | Desktop GUI; provides a local OpenAI-compatible API once the API server is started. |
 
 **Recommended local models:**
 
@@ -98,10 +97,11 @@ For installation and API key setup instructions, see the [Installation guide](..
 
 ### Router / Gateway providers
 
-| Provider | Purpose | Setup |
-|----------|---------|-------|
-| **AWS Bedrock** | Gateway to Anthropic, Meta, Mistral, Amazon models | [Installation guide](../installation.md#aws-bedrock-gateway) |
-| **LiteLLM** | Router for 100+ models across all providers | [Installation guide](../installation.md#router-multi-provider) |
+| Provider | Default Model | Description |
+|----------|---------------|-------------|
+| **AWS Bedrock** | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | Enterprise gateway providing access to models from Anthropic, Meta, Mistral, and more. |
+| **LiteLLM** | `gpt-4.1-mini` | Unified router to access 100+ models across all supported LLM providers. |
+| **AI Catalyst** | `ai_catalyst` | Enterprise model server; provides access to validated, governed open-source models. |
 
 **AWS Bedrock options:**
 
