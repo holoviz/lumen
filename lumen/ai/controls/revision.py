@@ -94,7 +94,7 @@ class RetryControls(RevisionControls):
 
     input_kwargs = {"placeholder": "Enter feedback and press the <Enter> to retry."}
 
-    toggle_kwargs = {"icon": "auto_awesome", "description": "Prompt LLM to retry"}
+    toggle_kwargs = {"icon": "auto_awesome", "description": "Ask AI to make changes"}
 
     @param.depends("instruction", watch=True)
     async def _revise(self):
