@@ -10,7 +10,9 @@ try:
     from sqlalchemy import text
     from sqlalchemy.engine.url import make_url
 
-    from lumen.sources.sqlalchemy import SQLALCHEMY_TO_SQLGLOT_DIALECT, SQLAlchemySource
+    from lumen.sources.sqlalchemy import (
+        SQLALCHEMY_TO_SQLGLOT_DIALECT, SQLAlchemySource,
+    )
     pytestmark = pytest.mark.xdist_group("sqlalchemy")
 except ImportError:
     pytestmark = pytest.mark.skip(reason="SQLAlchemy is not installed")
