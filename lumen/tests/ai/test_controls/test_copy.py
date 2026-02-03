@@ -93,7 +93,7 @@ class TestCopyControls:
         # Verify icon button properties
         assert icon_button.icon == "content_copy"
         assert icon_button.active_icon == "check"
-        assert icon_button.description == "Copy YAML to clipboard"
+        assert icon_button.description == "Copy YAML to clipboard"  # Default language is yaml
         assert icon_button.size == "small"
         assert icon_button.color == "primary"
         assert icon_button.icon_size == "0.9em"
@@ -314,7 +314,24 @@ title: Sales Over Time
         icon_button = controls._row.objects[0]
         
         # Verify description exists and is helpful
-        assert icon_button.description == "Copy YAML to clipboard"
+        assert icon_button.description == "Copy YAML to clipboard"  # Default language is yaml
+    
+    def test_description_tooltip_sql(self):
+        """Test that button description changes for SQL language."""
+        interface = MockInterface()
+        view = MockView(language="sql")
+        task = MockTask()
+        
+        controls = CopyControls(
+            interface=interface,
+            view=view,
+            task=task
+        )
+        
+        icon_button = controls._row.objects[0]
+        
+        # Verify description reflects SQL language
+        assert icon_button.description == "Copy SQL to clipboard"
         
     def test_button_styling(self):
         """Test that button has correct styling properties."""
