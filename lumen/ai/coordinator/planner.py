@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 
 
-class RawStep(BaseModel):
+class RawStep(PartialBaseModel):
     actor: str
     instruction: str = Field(
         description="""
@@ -275,12 +275,15 @@ class Planner(Coordinator):
 
     def _render_partial_todos(self, raw_plan: RawPlan | None) -> str:
         """Render partial todos from a streaming RawPlan."""
-        if raw_plan is None or not hasattr(raw_plan, 'steps') or raw_plan.steps is None:
+        if raw_plan is None or raw_plan.steps is None:
             return ""
 
         todos_list = []
         for step in raw_plan.steps:
-            instruction = step.instruction or '...'
+            if isinstance(step, dict):
+                instruction = step.get("instruction", "...")
+            else:
+                instruction = step.instruction or '...'
             if instruction:
                 todos_list.append(f"- ⚪ {instruction}")
 
