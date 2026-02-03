@@ -201,9 +201,15 @@ class SQLAlchemySource(BaseSQLSource):
 
     @property
     def dialect(self) -> str:
-        """Detect and return the database dialect name."""
+        """Detect and return the database dialect name, mapped to sqlglot dialect names."""
         try:
-            return self._url.get_dialect().name
+            sa_dialect = self._url.get_dialect().name
+            # Map SQLAlchemy dialect names to sqlglot dialect names
+            dialect_mapping = {
+                'postgresql': 'postgres',
+                'mssql': 'tsql',
+            }
+            return dialect_mapping.get(sa_dialect, sa_dialect)
         except Exception:
             # Fallback to 'any' if dialect detection fails
             return 'any'

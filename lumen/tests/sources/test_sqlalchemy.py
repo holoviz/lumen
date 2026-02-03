@@ -257,6 +257,29 @@ def test_sqlalchemy_driver_detection(memory_source):
     assert not SQLAlchemySource._is_async_driver('sqlite')
 
 
+def test_sqlalchemy_dialect_mapping():
+    """Test that SQLAlchemy dialect names are correctly mapped to sqlglot dialect names."""
+    from sqlalchemy.engine.url import make_url
+    
+    # Test postgresql -> postgres mapping
+    source = SQLAlchemySource.__new__(SQLAlchemySource)
+    source._url = make_url('postgresql://user:pass@localhost:5432/db')
+    source._engine = None
+    source._inspector_cache = None
+    assert source.dialect == 'postgres', f"Expected 'postgres' but got '{source.dialect}'"
+    
+    # Test mssql -> tsql mapping
+    source._url = make_url('mssql+pyodbc://user:pass@localhost:1433/db')
+    assert source.dialect == 'tsql', f"Expected 'tsql' but got '{source.dialect}'"
+    
+    # Test that non-mapped dialects pass through unchanged
+    source._url = make_url('sqlite:///test.db')
+    assert source.dialect == 'sqlite', f"Expected 'sqlite' but got '{source.dialect}'"
+    
+    source._url = make_url('mysql://user:pass@localhost:3306/db')
+    assert source.dialect == 'mysql', f"Expected 'mysql' but got '{source.dialect}'"
+
+
 def test_sqlalchemy_get_tables_from_inspector(memory_source):
     """Test automatic table discovery using SQLAlchemy inspector."""
     with memory_source._engine.begin() as conn:
