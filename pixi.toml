@@ -1,4 +1,4 @@
-[project]
+[workspace]
 name = "lumen"
 channels = ["pyviz/label/dev", "bokeh", "conda-forge", "conda-forge/label/markitdown_dev"]
 platforms = ["linux-64", "osx-arm64", "osx-64", "win-64"]
