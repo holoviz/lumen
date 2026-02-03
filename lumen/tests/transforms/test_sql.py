@@ -14,7 +14,6 @@ from lumen.transforms.sql import (
 
 def test_dialect_alias_postgresql():
     """Test that 'postgresql' dialect (from SQLAlchemy) is recognized as 'postgres' (sqlglot)."""
-    # This should not raise an error
     result = SQLTransform(read="postgresql", write="postgresql").apply(
         "SELECT * FROM my_table WHERE col > 10"
     )
@@ -23,7 +22,6 @@ def test_dialect_alias_postgresql():
 
 def test_dialect_alias_mssql():
     """Test that 'mssql' dialect (from SQLAlchemy) is recognized as 'tsql' (sqlglot)."""
-    # This should not raise an error
     result = SQLTransform(read="mssql", write="mssql").apply(
         "SELECT * FROM my_table WHERE col > 10"
     )
