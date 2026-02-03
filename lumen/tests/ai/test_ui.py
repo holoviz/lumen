@@ -439,7 +439,8 @@ async def test_exploration_parent_relationship(explorer_ui):
     assert exploration.parent.title == 'Home'
 
 
-async def test_chat_upload_flow_opens_dialog_and_starts_exploration(explorer_ui, monkeypatch):
+async def test_chat_upload_flow_processes_files_directly(explorer_ui, monkeypatch):
+    """Test that file uploads via chat are processed directly without opening a dialog."""
     ui = explorer_ui
     old_sources = list(ui.context.get("sources", []))
 
@@ -465,19 +466,18 @@ async def test_chat_upload_flow_opens_dialog_and_starts_exploration(explorer_ui,
             "uploaded.csv": {"value": b"id,value\n1,2\n"}
         }
     ui._on_submit(wait=True)
-    assert ui._sources_dialog_content.open is True
-    assert ui._source_content.active == ui._source_controls.index(ui._upload_controls)
 
-    ui._upload_controls.param.trigger("add")
+    # Files should be processed directly without opening the dialog
+    assert ui._sources_dialog_content.open is False
 
-    await async_wait_until(lambda: ui._sources_dialog_content.open is False)
+    # Sources should be added
     await async_wait_until(lambda: len(ui.context.get("sources", [])) > len(old_sources))
-    await async_wait_until(lambda: execute_plan.await_count > 0)
 
     new_sources = [src for src in ui.context["sources"] if src not in old_sources]
     assert len(new_sources) == 1
     assert "uploaded" in new_sources[0].get_tables()
 
+    # The query should be sent to the interface
     assert ui._main[1] is ui.interface
     assert ui._main[1][0].object == "Show me the uploaded data"
 
