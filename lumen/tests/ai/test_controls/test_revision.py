@@ -280,7 +280,7 @@ class TestRetryControls:
         # Verify retry-specific class attributes
         assert "Enter feedback" in RetryControls.input_kwargs["placeholder"]
         assert RetryControls.toggle_kwargs["icon"] == "auto_awesome"
-        assert "Prompt LLM to retry" in RetryControls.toggle_kwargs["description"]
+        assert "Ask AI to make changes" in RetryControls.toggle_kwargs["description"]
         
     @pytest.mark.asyncio
     async def test_revise_with_revise_method(self):
