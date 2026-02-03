@@ -20,6 +20,13 @@ if TYPE_CHECKING:
     DataFrame = pd.DataFrame
 
 
+# Mapping from SQLAlchemy dialect names to sqlglot dialect names
+SQLALCHEMY_TO_SQLGLOT_DIALECT = {
+    'postgresql': 'postgres',
+    'mssql': 'tsql',
+}
+
+
 class SQLAlchemySource(BaseSQLSource):
     """
     SQLAlchemySource uses SQLAlchemy to connect to various SQL databases.
@@ -205,11 +212,7 @@ class SQLAlchemySource(BaseSQLSource):
         try:
             sa_dialect = self._url.get_dialect().name
             # Map SQLAlchemy dialect names to sqlglot dialect names
-            dialect_mapping = {
-                'postgresql': 'postgres',
-                'mssql': 'tsql',
-            }
-            return dialect_mapping.get(sa_dialect, sa_dialect)
+            return SQLALCHEMY_TO_SQLGLOT_DIALECT.get(sa_dialect, sa_dialect)
         except Exception:
             # Fallback to 'any' if dialect detection fails
             return 'any'

@@ -10,7 +10,7 @@ try:
     from sqlalchemy import text
     from sqlalchemy.engine.url import make_url
 
-    from lumen.sources.sqlalchemy import SQLAlchemySource
+    from lumen.sources.sqlalchemy import SQLALCHEMY_TO_SQLGLOT_DIALECT, SQLAlchemySource
     pytestmark = pytest.mark.xdist_group("sqlalchemy")
 except ImportError:
     pytestmark = pytest.mark.skip(reason="SQLAlchemy is not installed")
@@ -266,26 +266,25 @@ def test_sqlalchemy_dialect_mapping():
     # Test postgresql -> postgres mapping
     url = make_url('postgresql://user:pass@localhost:5432/db')
     assert url.get_dialect().name == 'postgresql'
-    # Now verify that our mapping would convert it
-    dialect_mapping = {'postgresql': 'postgres', 'mssql': 'tsql'}
-    mapped_dialect = dialect_mapping.get(url.get_dialect().name, url.get_dialect().name)
+    # Now verify that the production mapping converts it correctly
+    mapped_dialect = SQLALCHEMY_TO_SQLGLOT_DIALECT.get(url.get_dialect().name, url.get_dialect().name)
     assert mapped_dialect == 'postgres', f"Expected 'postgres' but got '{mapped_dialect}'"
 
     # Test mssql -> tsql mapping  
     url = make_url('mssql+pyodbc://user:pass@localhost:1433/db')
     assert url.get_dialect().name == 'mssql'
-    mapped_dialect = dialect_mapping.get(url.get_dialect().name, url.get_dialect().name)
+    mapped_dialect = SQLALCHEMY_TO_SQLGLOT_DIALECT.get(url.get_dialect().name, url.get_dialect().name)
     assert mapped_dialect == 'tsql', f"Expected 'tsql' but got '{mapped_dialect}'"
 
     # Test that non-mapped dialects pass through unchanged
     url = make_url('sqlite:///test.db')
     assert url.get_dialect().name == 'sqlite'
-    mapped_dialect = dialect_mapping.get(url.get_dialect().name, url.get_dialect().name)
+    mapped_dialect = SQLALCHEMY_TO_SQLGLOT_DIALECT.get(url.get_dialect().name, url.get_dialect().name)
     assert mapped_dialect == 'sqlite', f"Expected 'sqlite' but got '{mapped_dialect}'"
 
     url = make_url('mysql://user:pass@localhost:3306/db')
     assert url.get_dialect().name == 'mysql'
-    mapped_dialect = dialect_mapping.get(url.get_dialect().name, url.get_dialect().name)
+    mapped_dialect = SQLALCHEMY_TO_SQLGLOT_DIALECT.get(url.get_dialect().name, url.get_dialect().name)
     assert mapped_dialect == 'mysql', f"Expected 'mysql' but got '{mapped_dialect}'"
 
 
