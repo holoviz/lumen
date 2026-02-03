@@ -15,6 +15,7 @@ from panel.chat import ChatFeed
 from panel.io.state import state
 from panel.pane import HTML
 from panel.viewable import Viewer
+from panel.widgets import Tabulator
 from panel_material_ui import (
     Card, ChatInterface, ChatStep, Column, Tabs, Typography,
 )
@@ -28,8 +29,8 @@ from ..models import ThinkingYesNo
 from ..report import ActorTask, Section, TaskGroup
 from ..tools import MetadataLookup, Tool, VectorLookupToolUser
 from ..utils import (
-    fuse_messages, get_root_exception, log_debug, mutate_user_message,
-    normalized_name, wrap_logfire,
+    describe_data_sync, fuse_messages, get_root_exception, log_debug,
+    mutate_user_message, normalized_name, wrap_logfire,
 )
 from ..vector_store import NumpyVectorStore
 
@@ -444,6 +445,13 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
         if isinstance(obj, HTML) and "catalog" in obj.tags:
             return f"Summarized table listing: {obj.object[:30]}"
+
+        # Handle Tabulator widgets - serialize using describe_data_sync for rich summary
+        if isinstance(obj, Tabulator):
+            df = obj.value
+            if df is not None and not df.empty:
+                return describe_data_sync(df)
+            return "[Empty table]"
 
         if hasattr(obj, "object"):
             obj = obj.object
