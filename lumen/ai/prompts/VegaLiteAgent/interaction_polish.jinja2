@@ -8,6 +8,7 @@ Add helpful tooltips for better user experience.
 Focus on:
 - encoding.tooltip (array of fields with titles and formatting)
 - mark.tooltip (only if needed for tooltip interactivity)
+- If the chart is overcrowded (too many bars, lines, or labels), limit the data using a transform to show only the top N items
 
 CRITICAL: The spec uses layers. When updating a layer, you MUST include both `mark` and `encoding`.
 Even if only adding tooltips, copy the existing mark. Each layer requires both properties.
@@ -50,6 +51,31 @@ layer:
       - field: value
         format: .2f
         title: Value
+        type: quantitative
+```
+
+Limiting overcrowded bar chart to top N items:
+```yaml
+transform:
+- window:
+  - op: rank
+    as: rank
+  sort:
+  - field: TotalRevenue
+    order: descending
+- filter: datum.rank <= 20
+layer:
+  - mark: bar
+    encoding:
+      x: {field: FullName, type: nominal, sort: "-y"}
+      y: {field: TotalRevenue, type: quantitative}
+      tooltip:
+      - field: FullName
+        title: Employee Name
+        type: nominal
+      - field: TotalRevenue
+        format: ',.2f'
+        title: Total Revenue
         type: quantitative
 ```
 {% endblock %}
