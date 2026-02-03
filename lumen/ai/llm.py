@@ -455,12 +455,24 @@ class Llm(param.Parameterized):
             role = message["role"]
             if role == "system":
                 continue
-            if isinstance(message["content"], instructor.Image):
-                log_debug(f"Message \033[95m{i} (u)\033[0m: [Image data]")
-            elif role == "user":
-                log_debug(f"Message \033[95m{i} (u)\033[0m: {message['content']}")
+            content = message["content"]
+            role_char = "u" if role == "user" else "a"
+            # Handle different content types for logging
+            if isinstance(content, instructor.Image):
+                log_debug(f"Message \033[95m{i} ({role_char})\033[0m: [Image data]")
+            elif isinstance(content, list):
+                # Content is a list (e.g., [text, Image, ...])
+                content_parts = []
+                for item in content:
+                    if isinstance(item, instructor.Image):
+                        content_parts.append("[Image]")
+                    elif isinstance(item, str):
+                        content_parts.append(truncate_string(item, max_length=100))
+                    else:
+                        content_parts.append(str(type(item).__name__))
+                log_debug(f"Message \033[95m{i} ({role_char})\033[0m: {' + '.join(content_parts)}")
             else:
-                log_debug(f"Message \033[95m{i} (a)\033[0m: {message['content']}")
+                log_debug(f"Message \033[95m{i} ({role_char})\033[0m: {content}")
             if previous_role == role:
                 log_debug(
                     "\033[91mWARNING: Two consecutive messages from the same role; "
@@ -472,11 +484,7 @@ class Llm(param.Parameterized):
         result = await client(messages=messages, **kwargs)
         if response_model := kwargs.get("response_model"):
             log_debug(f"Response model: \033[93m{response_model.__name__!r}\033[0m")
-        if isinstance(result, BaseModel):
-            result_pprint = result.model_dump_json(indent=2)
-        else:
-            result_pprint = str(result)
-        log_debug(f"LLM Response: \033[95m{truncate_string(result_pprint, max_length=1000)}\033[0m\n---")
+        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
         return result
 
 
