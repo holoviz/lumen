@@ -296,6 +296,25 @@ class VegaLiteAgent(BaseCodeAgent):
             log_debug(f"Failed to export plot image: {e}")
             return None
 
+    def _prepare_vision_messages(
+        self, messages: list[Message], out: LumenEditor | None, content: str
+    ) -> list[Message]:
+        """Add plot image to messages for LLM vision analysis."""
+        if out is None or not isinstance(out, VegaLiteEditor):
+            return messages
+
+        image_bytes = self._export_plot_image(out)
+        if image_bytes is None:
+            return messages
+
+        base64_str = base64.b64encode(image_bytes).decode('utf-8')
+        plot_image = Image.from_raw_base64(base64_str)
+        log_debug("Added plot image to messages for LLM vision analysis")
+        return messages + [{
+            "role": "user",
+            "content": [content, plot_image]
+        }]
+
     async def _update_spec_step(
         self,
         step_name: str,
@@ -340,17 +359,7 @@ class VegaLiteAgent(BaseCodeAgent):
                 table=context["pipeline"].table,
             )
 
-            invoke_messages = list(messages)
-            if out is not None:
-                image_bytes = self._export_plot_image(out)
-                if image_bytes is not None:
-                    base64_str = base64.b64encode(image_bytes).decode('utf-8')
-                    plot_image = Image.from_raw_base64(base64_str)
-                    invoke_messages = invoke_messages + [{
-                        "role": "user",
-                        "content": ["Current chart to polish:", plot_image]
-                    }]
-                    log_debug("Added plot image to messages for LLM vision analysis")
+            invoke_messages = self._prepare_vision_messages(messages, out, "Current chart to polish:")
 
             model_spec = self.prompts.get(prompt_name, {}).get("llm_spec", self.llm_spec_key)
             result = await self.llm.invoke(
@@ -657,17 +666,7 @@ class VegaLiteAgent(BaseCodeAgent):
         doc_examples = await self._get_doc_examples(feedback)
         context["doc_examples"] = doc_examples
 
-        if view is not None and isinstance(view, VegaLiteEditor):
-            image_bytes = self._export_plot_image(view)
-            if image_bytes is not None:
-                base64_str = base64.b64encode(image_bytes).decode('utf-8')
-                plot_image = Image.from_raw_base64(base64_str)
-
-                messages = messages + [{
-                    "role": "user",
-                    "content": [f"Revise this chart: {feedback!r}", plot_image]
-                }]
-                log_debug("Added plot image to revise messages for LLM vision analysis")
+        messages = self._prepare_vision_messages(messages, view, f"Revise this chart: {feedback!r}")
 
         return await super().revise(
             feedback, messages, context, view=view, spec=spec, language=language, **kwargs
@@ -767,16 +766,7 @@ class VegaLiteAgent(BaseCodeAgent):
         str
             Updated specification with annotations
         """
-        if view is not None:
-            image_bytes = self._export_plot_image(view)
-            if image_bytes is not None:
-                base64_str = base64.b64encode(image_bytes).decode('utf-8')
-                plot_image = Image.from_raw_base64(base64_str)
-                messages = messages + [{
-                    "role": "user",
-                    "content": [f"Revise this chart: {instruction!r}", plot_image]
-                }]
-                log_debug("Added plot image to annotate message for LLM vision analysis")
+        messages = self._prepare_vision_messages(messages, view, f"Revise this chart: {instruction!r}")
 
         vega_spec = dump_yaml(spec["spec"], default_flow_style=False)
         system_prompt = await self._render_prompt(
