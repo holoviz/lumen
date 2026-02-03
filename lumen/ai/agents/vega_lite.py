@@ -340,16 +340,16 @@ class VegaLiteAgent(BaseCodeAgent):
                 table=context["pipeline"].table,
             )
 
-            # Prepare messages, optionally including plot image for vision analysis
             invoke_messages = list(messages)
             if out is not None:
                 image_bytes = self._export_plot_image(out)
                 if image_bytes is not None:
                     base64_str = base64.b64encode(image_bytes).decode('utf-8')
                     plot_image = Image.from_raw_base64(base64_str)
-                    invoke_messages = invoke_messages + [
-                        {"role": "user", "content": plot_image}
-                    ]
+                    invoke_messages = invoke_messages + [{
+                        "role": "user",
+                        "content": ["Current chart to polish:", plot_image]
+                    }]
                     log_debug("Added plot image to messages for LLM vision analysis")
 
             model_spec = self.prompts.get(prompt_name, {}).get("llm_spec", self.llm_spec_key)
@@ -662,9 +662,11 @@ class VegaLiteAgent(BaseCodeAgent):
             if image_bytes is not None:
                 base64_str = base64.b64encode(image_bytes).decode('utf-8')
                 plot_image = Image.from_raw_base64(base64_str)
-                messages = list(messages) + [
-                    {"role": "user", "content": plot_image}
-                ]
+
+                messages = messages + [{
+                    "role": "user",
+                    "content": [f"Revise this chart: {feedback!r}", plot_image]
+                }]
                 log_debug("Added plot image to revise messages for LLM vision analysis")
 
         return await super().revise(
@@ -765,34 +767,28 @@ class VegaLiteAgent(BaseCodeAgent):
         str
             Updated specification with annotations
         """
-        # Add user's annotation request to messages context
-        annotation_messages = messages + [{
-            "role": "user",
-            "content": f"Add annotations: {instruction}"
-        }]
-
-        # If view is provided, export and inject the plot image for vision analysis
         if view is not None:
             image_bytes = self._export_plot_image(view)
             if image_bytes is not None:
                 base64_str = base64.b64encode(image_bytes).decode('utf-8')
                 plot_image = Image.from_raw_base64(base64_str)
-                annotation_messages = annotation_messages + [
-                    {"role": "user", "content": plot_image}
-                ]
-                log_debug("Added plot image to annotate messages for LLM vision analysis")
+                messages = messages + [{
+                    "role": "user",
+                    "content": [f"Revise this chart: {instruction!r}", plot_image]
+                }]
+                log_debug("Added plot image to annotate message for LLM vision analysis")
 
         vega_spec = dump_yaml(spec["spec"], default_flow_style=False)
         system_prompt = await self._render_prompt(
             "annotate_plot",
-            annotation_messages,
+            messages,
             context,
             vega_spec=vega_spec,
         )
 
         model_spec = self.prompts.get("annotate_plot", {}).get("llm_spec", self.llm_spec_key)
         result = await self.llm.invoke(
-            messages=annotation_messages,
+            messages=messages,
             system=system_prompt,
             response_model=VegaLiteSpecUpdate,
             model_spec=model_spec,
