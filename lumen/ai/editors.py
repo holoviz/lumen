@@ -58,7 +58,7 @@ class LumenEditor(Viewer):
 
     language = "yaml"
 
-    _controls = [CopyControls, RetryControls]
+    _controls = [RetryControls, CopyControls]
     _label = "Result"
 
     def __init__(self, **params):
@@ -135,8 +135,8 @@ class LumenEditor(Viewer):
         export_menu.attached.append(file_download)
 
         return Row(
-            export_menu,
             *(control(interface=interface, task=task, view=self) for control in self._controls),
+            export_menu,
             sizing_mode="stretch_width",
             margin=(0, 10)
         )
@@ -284,7 +284,7 @@ class VegaLiteEditor(LumenEditor):
 
     export_formats = ("yaml", "png", "jpeg", "pdf", "svg", "html")
 
-    _controls = [CopyControls, RetryControls, AnnotationControls]
+    _controls = [RetryControls, AnnotationControls, CopyControls]
     _label = "Plot"
 
     def export(self, fmt: str) -> StringIO | BytesIO:
@@ -447,7 +447,7 @@ class DeckGLEditor(LumenEditor):
 
     export_formats = ("yaml", "json", "html")
 
-    _controls = [CopyControls, RetryControls]
+    _controls = [RetryControls, CopyControls]
     _label = "Map"
 
     # Required keys for a valid DeckGL spec
