@@ -457,10 +457,24 @@ class Llm(param.Parameterized):
             role = message["role"]
             if role == "system":
                 continue
-            if role == "user":
-                log_debug(f"Message \033[95m{i} (u)\033[0m: {message['content']}")
+            content = message["content"]
+            role_char = "u" if role == "user" else "a"
+            # Handle different content types for logging
+            if isinstance(content, instructor.Image):
+                log_debug(f"Message \033[95m{i} ({role_char})\033[0m: [Image data]")
+            elif isinstance(content, list):
+                # Content is a list (e.g., [text, Image, ...])
+                content_parts = []
+                for item in content:
+                    if isinstance(item, instructor.Image):
+                        content_parts.append("[Image]")
+                    elif isinstance(item, str):
+                        content_parts.append(truncate_string(item, max_length=100))
+                    else:
+                        content_parts.append(str(type(item).__name__))
+                log_debug(f"Message \033[95m{i} ({role_char})\033[0m: {' + '.join(content_parts)}")
             else:
-                log_debug(f"Message \033[95m{i} (a)\033[0m: {message['content']}")
+                log_debug(f"Message \033[95m{i} ({role_char})\033[0m: {content}")
             if previous_role == role:
                 log_debug(
                     "\033[91mWARNING: Two consecutive messages from the same role; "

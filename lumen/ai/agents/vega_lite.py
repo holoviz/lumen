@@ -1,9 +1,12 @@
+import base64
+
 from functools import partial
 from typing import Any
 
 import param
 import requests
 
+from instructor import Image
 from panel.io import state
 from pydantic import BaseModel, Field
 
@@ -272,6 +275,46 @@ class VegaLiteAgent(BaseCodeAgent):
 
         return layer
 
+    def _export_plot_image(self, out: VegaLiteEditor) -> bytes | None:
+        """Export plot as PNG for vision-based polish.
+
+        Parameters
+        ----------
+        out : VegaLiteEditor
+            The VegaLite editor containing the plot to export.
+
+        Returns
+        -------
+        bytes | None
+            PNG image bytes if export succeeds, None otherwise.
+        """
+        try:
+            image_io = out.export("png")
+            log_debug("Successfully exported plot image for vision analysis")
+            return image_io.getvalue()
+        except Exception as e:
+            log_debug(f"Failed to export plot image: {e}")
+            return None
+
+    def _prepare_vision_messages(
+        self, messages: list[Message], out: LumenEditor | None, content: str
+    ) -> list[Message]:
+        """Add plot image to messages for LLM vision analysis."""
+        if out is None or not isinstance(out, VegaLiteEditor):
+            return messages
+
+        image_bytes = self._export_plot_image(out)
+        if image_bytes is None:
+            return messages
+
+        base64_str = base64.b64encode(image_bytes).decode('utf-8')
+        plot_image = Image.from_raw_base64(base64_str)
+        log_debug("Added plot image to messages for LLM vision analysis")
+        return messages + [{
+            "role": "user",
+            "content": [content, plot_image]
+        }]
+
     async def _update_spec_step(
         self,
         step_name: str,
@@ -281,8 +324,29 @@ class VegaLiteAgent(BaseCodeAgent):
         messages: list[Message],
         context: TContext,
         doc: str | None = None,
+        out: VegaLiteEditor | None = None,
     ) -> tuple[str, dict[str, Any]]:
-        """Update a Vega-Lite spec with incremental changes for a specific step."""
+        """Update a Vega-Lite spec with incremental changes for a specific step.
+
+        Parameters
+        ----------
+        step_name : str
+            Name identifier for this step.
+        step_desc : str
+            Human-readable description of this step.
+        vega_spec : dict[str, Any] | str
+            The current Vega-Lite specification.
+        prompt_name : str
+            Name of the prompt template to use.
+        messages : list[Message]
+            Chat message history.
+        context : TContext
+            Session context.
+        doc : str | None
+            Optional documentation string.
+        out : VegaLiteEditor | None
+            Optional VegaLite editor to export plot image from for vision analysis.
+        """
         with self._add_step(title=step_desc, steps_layout=self._steps_layout) as step:
             if not isinstance(vega_spec, str):
                 vega_spec = dump_yaml(vega_spec, default_flow_style=False)
@@ -295,9 +359,11 @@ class VegaLiteAgent(BaseCodeAgent):
                 table=context["pipeline"].table,
             )
 
+            invoke_messages = self._prepare_vision_messages(messages, out, "Current chart to polish:")
+
             model_spec = self.prompts.get(prompt_name, {}).get("llm_spec", self.llm_spec_key)
             result = await self.llm.invoke(
-                messages=messages,
+                messages=invoke_messages,
                 system=system_prompt,
                 response_model=VegaLiteSpecUpdate,
                 model_spec=model_spec,
@@ -565,10 +631,43 @@ class VegaLiteAgent(BaseCodeAgent):
         errors: list[str] | None = None,
         **kwargs
     ) -> str:
+        """Revise a VegaLite specification based on user feedback.
+
+        This override adds:
+        1. Doc examples from vector store
+        2. Plot image for vision analysis (if view is a VegaLiteEditor)
+
+        Parameters
+        ----------
+        feedback : str
+            User's feedback or instruction for revision.
+        messages : list[Message]
+            Chat message history.
+        context : TContext
+            Session context.
+        view : LumenEditor | None
+            The editor containing the current spec to revise.
+        spec : str | None
+            The spec string (used if view is None).
+        language : str | None
+            The spec language (used if view is None).
+        errors : list[str] | None
+            List of errors to include in context.
+        **kwargs
+            Additional arguments passed to parent revise.
+
+        Returns
+        -------
+        str
+            The revised YAML specification.
+        """
         if errors is not None:
             kwargs["errors"] = errors
         doc_examples = await self._get_doc_examples(feedback)
         context["doc_examples"] = doc_examples
+
+        messages = self._prepare_vision_messages(messages, view, f"Revise this chart: {feedback!r}")
+
         return await super().revise(
             feedback, messages, context, view=view, spec=spec, language=language, **kwargs
         )
@@ -580,8 +679,9 @@ class VegaLiteAgent(BaseCodeAgent):
         with out.param.update(loading=True):
             for step_name, step_desc in steps.items():
                 # Only pass the vega lite 'spec' portion to prevent ballooning context
+                # Include the VegaLiteEditor so the LLM can see the current plot
                 step_name, update_dict = await self._update_spec_step(
-                    step_name, step_desc, out.spec, step_name, messages, context, doc=doc
+                    step_name, step_desc, out.spec, step_name, messages, context, doc=doc, out=out
                 )
                 try:
                     # Validate merged spec
@@ -642,44 +742,43 @@ class VegaLiteAgent(BaseCodeAgent):
         instruction: str,
         messages: list[Message],
         context: TContext,
-        spec: dict
+        spec: dict,
+        view: VegaLiteEditor | None = None,
     ) -> str:
         """
         Apply annotations based on user request.
 
         Parameters
         ----------
-        instruction: str
+        instruction : str
             User's description of what to annotate
-        messages: list[Message]
+        messages : list[Message]
             Chat history for context
-        context: TContext
+        context : TContext
             Session context
         spec : dict
             The current VegaLite specification (full dict with 'spec' key)
+        view : VegaLiteEditor | None
+            Optional VegaLite editor to export plot image from for vision analysis.
 
         Returns
         -------
         str
             Updated specification with annotations
         """
-        # Add user's annotation request to messages context
-        annotation_messages = messages + [{
-            "role": "user",
-            "content": f"Add annotations: {instruction}"
-        }]
+        messages = self._prepare_vision_messages(messages, view, f"Revise this chart: {instruction!r}")
 
         vega_spec = dump_yaml(spec["spec"], default_flow_style=False)
         system_prompt = await self._render_prompt(
             "annotate_plot",
-            annotation_messages,
+            messages,
             context,
             vega_spec=vega_spec,
         )
 
         model_spec = self.prompts.get("annotate_plot", {}).get("llm_spec", self.llm_spec_key)
         result = await self.llm.invoke(
-            messages=annotation_messages,
+            messages=messages,
             system=system_prompt,
             response_model=VegaLiteSpecUpdate,
             model_spec=model_spec,
