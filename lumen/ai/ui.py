@@ -4,7 +4,7 @@ import asyncio
 
 from contextlib import contextmanager
 from functools import partial
-from io import StringIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +15,7 @@ from panel.config import panel_extension
 from panel.io.document import hold
 from panel.io.state import state
 from panel.layout import Column, FlexBox
-from panel.pane import SVG, Markdown
+from panel.pane import SVG, Image, Markdown
 from panel.util import edit_readonly
 from panel.viewable import (
     Child, Children, Viewable, Viewer,
@@ -65,6 +65,9 @@ PAGE_SX = {
     ".sidebar:hover": {"width": "140px", "transitionDelay": "0.5s"},
     "&.mui-light .sidebar": {"bgcolor": "var(--mui-palette-grey-50)"},
 }
+
+# Image file extensions for LLM vision analysis
+IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'}
 
 LOGO = (Path(__file__).parent.parent / "_assets" / "logo.svg").read_text()
 
@@ -807,6 +810,7 @@ class UI(Viewer):
         # Track pending query when files are being uploaded
         self._pending_query = None
         self._pending_sources_snapshot = None  # Also indicates dialog was opened from chat
+        self._pending_images = []  # Images to include with pending query
 
         def on_submit(event=None, instance=None, wait=False):
             user_prompt = self._chat_input.value_input
@@ -824,17 +828,33 @@ class UI(Viewer):
             if not user_prompt and not uploaded:
                 return
 
-            # Open Sources dialog so user can confirm the upload
+            # Separate image files from data files
+            images = []
+            data_files = {}
             if uploaded:
+                for filename, file_data in uploaded.items():
+                    file_bytes = file_data["value"]
+                    ext = Path(filename).suffix.lower()
+                    if ext in IMAGE_EXTENSIONS:
+                        # Serialize image for LLM vision analysis
+                        images.append(Image(BytesIO(file_bytes), sizing_mode="scale_both", max_height=275))
+                        log_debug(f"Serialized image {filename} for LLM vision analysis")
+                    else:
+                        data_files[filename] = file_data
+
+            # Open Sources dialog for data files (non-images)
+            if data_files:
                 if not self._upload_controls._file_cards:
                     self._upload_controls._generate_file_cards({
-                        key: value["value"] for key, value in uploaded.items()
+                        key: value["value"] for key, value in data_files.items()
                     })
 
                 # Store the pending query to execute after files are added
                 if not wait:
                     self._pending_query = user_prompt or None
                 self._pending_sources_snapshot = list(self.context.get("sources", []))
+                # Store images to include with the pending query
+                self._pending_images = images
 
                 with edit_readonly(self._chat_input):
                     self._chat_input.param.update(
@@ -854,11 +874,30 @@ class UI(Viewer):
                 state.execute(focus, schedule=True)
                 return
 
+            user_prompt = self._pending_query or user_prompt
+            if images:
+                labeled_images = [(f"Image {i+1}", image) for i, image in enumerate(images)]
+                images_display = Tabs(*labeled_images, height=300, sizing_mode="stretch_width")
+                if user_prompt:
+                    message_obj = Column(
+                        images_display,
+                        Markdown(user_prompt),
+                        sizing_mode="stretch_width"
+                    )
+                else:
+                    message_obj = images_display
+            else:
+                message_obj = user_prompt
+
             with self.interface.param.update(disabled=True, loading=True), hold():
                 self._update_main_view()
-                self.interface.send(user_prompt, respond=bool(user_prompt))
+                self.interface.send(message_obj, respond=bool(user_prompt or images))
                 with edit_readonly(self._chat_input):
-                    self._chat_input.value_input = ""
+                    self._chat_input.param.update(
+                        value_input="",
+                        value_uploaded={},
+                        views=[]
+                    )
 
         # Store as instance variable for access from other methods
         self._on_submit = on_submit
@@ -918,6 +957,10 @@ class UI(Viewer):
 
     def _execute_pending_query_with(self, user_prompt, old_sources):
         """Execute a query after files have been uploaded."""
+        # Retrieve pending images and clear state
+        images = getattr(self, '_pending_images', []) or []
+        self._pending_images = []
+
         # Remove views from widget
         with edit_readonly(self._chat_input):
             self._chat_input.param.update(
@@ -937,8 +980,24 @@ class UI(Viewer):
             sizing_mode="stretch_width"
         ) if new_sources else None
 
+        # Build message object for display - include images if present
+        parts = []
+        if images:
+            labeled_images = [(f"Image {i+1}", image) for i, image in enumerate(images)]
+            parts.append(Tabs(*labeled_images, height=300, sizing_mode="stretch_width"))
+        if user_prompt:
+            parts.append(Markdown(user_prompt))
+        if source_view:
+            parts.append(source_view)
+
+        if len(parts) > 1:
+            msg = Column(*parts, sizing_mode="stretch_width")
+        elif parts:
+            msg = parts[0]
+        else:
+            msg = user_prompt
+
         self._update_main_view()
-        msg = Column(user_prompt, source_view) if source_view else user_prompt
         self.interface.send(msg, respond=True)
 
     def _on_sources_dialog_close(self, event):
@@ -954,6 +1013,7 @@ class UI(Viewer):
         # Reset state
         self._pending_query = None
         self._pending_sources_snapshot = None
+        self._pending_images = []
         self._chat_input.param.update(
             value_uploaded={},
             views=[],

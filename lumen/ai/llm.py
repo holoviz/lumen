@@ -7,6 +7,7 @@ import os
 from abc import abstractmethod
 from collections.abc import Callable
 from functools import partial
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Literal, TypedDict
 
@@ -243,7 +244,10 @@ class Llm(param.Parameterized):
             return image
 
         image_object = image.object
-        if isinstance(image_object, bytes):
+        if isinstance(image_object, BytesIO):
+            base64_str = base64.b64encode(image_object.getvalue()).decode('utf-8')
+            image = Image.from_raw_base64(base64_str)
+        elif isinstance(image_object, bytes):
             # convert bytes to base64 string
             base64_str = base64.b64encode(image_object).decode('utf-8')
             image = Image.from_raw_base64(base64_str)
@@ -262,9 +266,9 @@ class Llm(param.Parameterized):
                 contains_image = True
 
             elif isinstance(content, list):
-                for item in content:
+                for j, item in enumerate(content):
                     if isinstance(item, (Image, pn.pane.image.ImageBase)):
-                        messages[i]["content"] = self._serialize_image_pane(item)
+                        messages[i]["content"][j] = self._serialize_image_pane(item)
                         contains_image = True
         return messages, contains_image
 
@@ -458,13 +462,13 @@ class Llm(param.Parameterized):
             content = message["content"]
             role_char = "u" if role == "user" else "a"
             # Handle different content types for logging
-            if isinstance(content, instructor.Image):
+            if isinstance(content, (pn.pane.Image, Image)):
                 log_debug(f"Message \033[95m{i} ({role_char})\033[0m: [Image data]")
             elif isinstance(content, list):
                 # Content is a list (e.g., [text, Image, ...])
                 content_parts = []
                 for item in content:
-                    if isinstance(item, instructor.Image):
+                    if isinstance(item, (pn.pane.Image, Image)):
                         content_parts.append("[Image]")
                     elif isinstance(item, str):
                         content_parts.append(truncate_string(item, max_length=100))
@@ -923,10 +927,23 @@ class Anthropic(Llm):
         previous_role = None
         for i, message in enumerate(filtered_messages):
             role = message["role"]
-            if role == "user":
-                log_debug(f"Message \033[95m{i} (u)\033[0m: {message['content']}")
+            content = message["content"]
+            role_char = "u" if role == "user" else "a"
+            # Handle different content types for logging
+            if isinstance(content, (pn.pane.Image, Image)):
+                log_debug(f"Message \033[95m{i} ({role_char})\033[0m: [Image data]")
+            elif isinstance(content, list):
+                content_parts = []
+                for item in content:
+                    if isinstance(item, (pn.pane.Image, Image)):
+                        content_parts.append("[Image]")
+                    elif isinstance(item, str):
+                        content_parts.append(truncate_string(item, max_length=100))
+                    else:
+                        content_parts.append(f"[{type(item).__name__}]")
+                log_debug(f"Message \033[95m{i} ({role_char})\033[0m: {' + '.join(content_parts)}")
             else:
-                log_debug(f"Message \033[95m{i} (a)\033[0m: {message['content']}")
+                log_debug(f"Message \033[95m{i} ({role_char})\033[0m: {truncate_string(str(content), max_length=100)}")
             if previous_role == role:
                 log_debug(
                     "\033[91mWARNING: Two consecutive messages from the same role; "

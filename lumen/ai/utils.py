@@ -77,23 +77,65 @@ def format_float(num):
         return f"{num:.1e}"  # Format as scientific notation
 
 
+def _content_to_text(content: str | list) -> str:
+    """
+    Convert message content to text for history formatting.
+    Handles both string content and multimodal content (list with images).
+    """
+    if isinstance(content, str):
+        return content
+    # Multimodal content - extract text parts only for history
+    text_parts = []
+    has_image = False
+    for item in content:
+        if isinstance(item, str):
+            text_parts.append(item)
+        else:
+            # Non-string items (Images, etc.) are marked as [Image]
+            has_image = True
+    if text_parts:
+        prefix = "[Image] " if has_image else ""
+        return prefix + " ".join(text_parts)
+    return "[Image]" if has_image else ""
+
+
+def _content_is_empty(content: str | list) -> bool:
+    """
+    Check if message content is empty.
+    """
+    if isinstance(content, str):
+        return not content.strip()
+    # For multimodal, check if there are any non-empty parts
+    for item in content:
+        if isinstance(item, str) and item.strip():
+            return False
+        if not isinstance(item, str):  # Image object
+            return False
+    return True
+
+
 def fuse_messages(messages: list[dict], max_user_messages: int = 2) -> list[dict]:
     """
     Fuses the chat history into a single system message, followed by the last user message.
     This function is reusable across different components that need to combine
     multiple messages into a simplified format for LLM processing.
 
+    Supports multimodal content where message['content'] can be either a string
+    or a list containing strings and instructor Image objects.
+
     Parameters
     ----------
     messages : list[dict]
-        List of message dictionaries with 'role' and 'content' keys
+        List of message dictionaries with 'role' and 'content' keys.
+        Content can be a string or a list (for multimodal messages).
     max_user_messages : int
         Maximum number of user messages to include in the history
 
     Returns
     -------
     list[dict]
-        Processed messages with the chat history as a system message
+        Processed messages with the chat history as a system message.
+        The last user message retains its original format (including images if present).
     """
     user_indices = [i for i, msg in enumerate(messages) if msg['role'] == 'user']
     if user_indices:
@@ -106,8 +148,12 @@ def fuse_messages(messages: list[dict], max_user_messages: int = 2) -> list[dict
     history_messages = messages[first_user_index:last_user_index]
     if not history_messages:
         return [last_user_message] if user_indices else []
+
+    # Format history - convert multimodal content to text for history context
     formatted_history = "\n\n".join(
-        f"{msg['role'].capitalize()}: {msg['content']}" for msg in history_messages if msg['content'].strip()
+        f"{msg['role'].capitalize()}: {_content_to_text(msg['content'])}"
+        for msg in history_messages
+        if not _content_is_empty(msg['content'])
     )
     system_prompt = {
         "role": "system",
@@ -773,12 +819,16 @@ def log_debug(msg: str | list, offset: int = 24, prefix: str = "", suffix: str =
 def mutate_user_message(content: str, messages: list[dict[str, str]], suffix: bool = True, wrap: bool | str = False, inplace: bool = True) -> list[dict[str, str]]:
     """
     Helper to mutate the last user message in a list of messages. Suffixes the content by default, else prefixes.
+    Handles multimodal content (lists with images) by extracting text for mutation.
     """
     mutated = False
     new = []
     for message in messages[::-1]:
         if message["role"] == "user" and not mutated:
-            user_message = message["content"]
+            original_content = message["content"]
+            # Extract text from multimodal content for mutation
+            user_message = _content_to_text(original_content)
+
             if isinstance(wrap, bool):
                 user_message = f"{user_message!r}"
             elif isinstance(wrap, str):
