@@ -17,7 +17,7 @@ from ..translate import function_to_model
 _TOOL_ANNOTATIONS_ATTR = "__lumen_tool_annotations__"
 
 
-def define_tool(*, requires=None, provides=None, purpose=None, render_output=None):
+def define_tool(_func=None, *, requires=None, provides=None, purpose=None, render_output=None):
     """
     Annotate a function so FunctionTool can read tool metadata.
     """
@@ -33,6 +33,8 @@ def define_tool(*, requires=None, provides=None, purpose=None, render_output=Non
             annotations["render_output"] = render_output
         setattr(function, _TOOL_ANNOTATIONS_ATTR, annotations)
         return function
+    if _func is not None and callable(_func):
+        return decorator(_func)
     return decorator
 
 

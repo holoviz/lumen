@@ -36,6 +36,7 @@ class Message(TypedDict):
     content: str
     name: str | None
     tool_call_id: str | None
+    tool_calls: list[dict[str, Any]] | None
 
 
 class ImageResponse(BaseModel):
@@ -343,11 +344,12 @@ class Llm(param.Parameterized):
         if tool_instances and response_model is None:
             tool_calls = self._extract_tool_calls(output)
             if tool_calls:
+                tool_calls_message = self._tool_calls_message(tool_calls)
                 tool_messages = await self._run_tool_calls(tool_instances, tool_calls)
                 if tool_messages:
                     output = await self.run_client(
                         model_spec,
-                        messages + tool_messages,
+                        messages + [tool_calls_message] + tool_messages,
                         **kwargs,
                     )
         if output is None or output == "":
@@ -377,6 +379,9 @@ class Llm(param.Parameterized):
             return None, tool_instances
         tool_specs: list[dict[str, Any]] = []
         for tool in tools:
+            if callable(tool) and hasattr(tool, "__lumen_tool_annotations__"):
+                from .tools import FunctionTool
+                tool = FunctionTool(tool)
             if hasattr(tool, "_model") and hasattr(tool, "function"):
                 tool_instances[tool.name] = tool  # type: ignore[assignment]
                 tool_specs.append(cls._tool_spec_from_function_tool(tool))  # type: ignore[arg-type]
@@ -469,6 +474,16 @@ class Llm(param.Parameterized):
                 },
             })
         return tool_calls
+
+    @classmethod
+    def _tool_calls_message(cls, tool_calls: list[dict[str, Any]]) -> Message:
+        return {
+            "role": "assistant",
+            "content": "",
+            "name": None,
+            "tool_call_id": None,
+            "tool_calls": tool_calls,
+        }
 
     @classmethod
     def _format_tool_result(cls, result: Any) -> str:
@@ -641,10 +656,11 @@ class Llm(param.Parameterized):
 
         if response_model is None and tool_instances and tool_call_accum:
             tool_calls = self._tool_calls_from_accum(tool_call_accum, tool_call_order)
+            tool_calls_message = self._tool_calls_message(tool_calls)
             tool_messages = await self._run_tool_calls(tool_instances, tool_calls)
             if tool_messages:
                 async for chunk in self.stream(
-                    messages + tool_messages,
+                    messages + [tool_calls_message] + tool_messages,
                     system=system,
                     response_model=response_model,
                     field=field,
