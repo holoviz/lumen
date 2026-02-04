@@ -322,7 +322,7 @@ class Llm(param.Parameterized):
 
         kwargs = dict(self._client_kwargs)
         kwargs.update(input_kwargs)
-        tool_specs, tool_instances = self._normalize_tools(tools)
+        tool_specs, tool_instances, tool_contexts = self._normalize_tools(tools)
         if tool_specs is not None:
             kwargs["tools"] = tool_specs
 
@@ -345,7 +345,7 @@ class Llm(param.Parameterized):
             tool_calls = self._extract_tool_calls(output)
             if tool_calls:
                 tool_calls_message = self._tool_calls_message(tool_calls)
-                tool_messages = await self._run_tool_calls(tool_instances, tool_calls)
+                tool_messages = await self._run_tool_calls(tool_instances, tool_calls, tool_contexts, messages)
                 if tool_messages:
                     output = await self.run_client(
                         model_spec,
@@ -373,21 +373,29 @@ class Llm(param.Parameterized):
     def _normalize_tools(
         cls,
         tools: list[dict[str, Any] | FunctionTool] | None,
-    ) -> tuple[list[dict[str, Any]] | None, dict[str, FunctionTool]]:
+    ) -> tuple[list[dict[str, Any]] | None, dict[str, FunctionTool], dict[str, Any]]:
         tool_instances: dict[str, FunctionTool] = {}
+        tool_contexts: dict[str, Any] = {}
         if tools is None:
-            return None, tool_instances
+            return None, tool_instances, tool_contexts
         tool_specs: list[dict[str, Any]] = []
         for tool in tools:
+            if isinstance(tool, dict) and "tool" in tool:
+                tool_context = tool.get("context")
+                tool = tool.get("tool")
+            else:
+                tool_context = None
             if callable(tool) and hasattr(tool, "__lumen_tool_annotations__"):
                 from .tools import FunctionTool
                 tool = FunctionTool(tool)
             if hasattr(tool, "_model") and hasattr(tool, "function"):
                 tool_instances[tool.name] = tool  # type: ignore[assignment]
+                if tool_context is not None:
+                    tool_contexts[tool.name] = tool_context
                 tool_specs.append(cls._tool_spec_from_function_tool(tool))  # type: ignore[arg-type]
             else:
                 tool_specs.append(tool)  # type: ignore[arg-type]
-        return tool_specs, tool_instances
+        return tool_specs, tool_instances, tool_contexts
 
     @classmethod
     def _tool_spec_from_function_tool(cls, tool: FunctionTool) -> dict[str, Any]:
@@ -517,6 +525,8 @@ class Llm(param.Parameterized):
         self,
         tool_instances: dict[str, FunctionTool],
         tool_calls: list[Any],
+        tool_contexts: dict[str, Any],
+        messages: list[Message],
     ) -> list[Message]:
         results: list[Message] = []
         for call in tool_calls:
@@ -524,10 +534,22 @@ class Llm(param.Parameterized):
             if not name or name not in tool_instances:
                 continue
             tool = tool_instances[name]
-            if asyncio.iscoroutinefunction(tool.function):
-                result = await tool.function(**arguments)
+            context = tool_contexts.get(name)
+            if context:
+                outputs, _ = await tool.respond(messages, context, tool_args=arguments)
+                if len(outputs) == 1:
+                    result = outputs[0]
+                else:
+                    result = outputs
             else:
-                result = tool.function(**arguments)
+                if getattr(tool, "requires", None):
+                    for requirement in tool.requires:
+                        if requirement not in arguments and requirement in tool_contexts.get(name, {}):
+                            arguments[requirement] = tool_contexts[name][requirement]
+                if asyncio.iscoroutinefunction(tool.function):
+                    result = await tool.function(**arguments)
+                else:
+                    result = tool.function(**arguments)
             results.append({
                 "role": "tool",
                 "content": self._format_tool_result(result),
@@ -581,7 +603,7 @@ class Llm(param.Parameterized):
         ------
         The string or response_model field.
         """
-        tool_specs, tool_instances = self._normalize_tools(tools)
+        tool_specs, tool_instances, tool_contexts = self._normalize_tools(tools)
         if self.logfire_tags is not None:
             output = await self.invoke(
                 messages,
@@ -657,7 +679,7 @@ class Llm(param.Parameterized):
         if response_model is None and tool_instances and tool_call_accum:
             tool_calls = self._tool_calls_from_accum(tool_call_accum, tool_call_order)
             tool_calls_message = self._tool_calls_message(tool_calls)
-            tool_messages = await self._run_tool_calls(tool_instances, tool_calls)
+            tool_messages = await self._run_tool_calls(tool_instances, tool_calls, tool_contexts, messages)
             if tool_messages:
                 async for chunk in self.stream(
                     messages + [tool_calls_message] + tool_messages,
