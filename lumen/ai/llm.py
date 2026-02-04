@@ -473,10 +473,10 @@ class Llm(param.Parameterized):
                     elif isinstance(item, str):
                         content_parts.append(truncate_string(item, max_length=100))
                     else:
-                        content_parts.append(f"[{type(item).__name__}]")
+                        content_parts.append(str(type(item).__name__))
                 log_debug(f"Message \033[95m{i} ({role_char})\033[0m: {' + '.join(content_parts)}")
             else:
-                log_debug(f"Message \033[95m{i} ({role_char})\033[0m: {truncate_string(str(content), max_length=100)}")
+                log_debug(f"Message \033[95m{i} ({role_char})\033[0m: {content}")
             if previous_role == role:
                 log_debug(
                     "\033[91mWARNING: Two consecutive messages from the same role; "
