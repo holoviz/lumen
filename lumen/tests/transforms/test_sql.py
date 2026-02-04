@@ -12,6 +12,22 @@ from lumen.transforms.sql import (
 )
 
 
+def test_dialect_alias_postgresql():
+    """Test that 'postgresql' dialect (from SQLAlchemy) is recognized as 'postgres' (sqlglot)."""
+    result = SQLTransform(read="postgresql", write="postgresql").apply(
+        "SELECT * FROM my_table WHERE col > 10"
+    )
+    assert "SELECT * FROM my_table WHERE col > 10" == result
+
+
+def test_dialect_alias_mssql():
+    """Test that 'mssql' dialect (from SQLAlchemy) is recognized as 'tsql' (sqlglot)."""
+    result = SQLTransform(read="mssql", write="mssql").apply(
+        "SELECT * FROM my_table WHERE col > 10"
+    )
+    assert "SELECT * FROM my_table WHERE col > 10" == result
+
+
 def test_init_with_any_dialect():
     transform = SQLTransform(read="any", write="any")
     assert transform.read is None

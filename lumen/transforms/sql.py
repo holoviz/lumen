@@ -11,6 +11,7 @@ import param  # type: ignore
 import sqlglot
 
 from sqlglot import parse
+from sqlglot.dialects.dialect import Dialect
 from sqlglot.expressions import (
     LT, Alias, Column, Expression, Identifier, Literal as SQLLiteral, Max, Min,
     Null, ReadCSV, Select, Star, Table, TableSample, and_, func, or_,
@@ -21,6 +22,9 @@ from sqlglot.optimizer import optimize
 from ..config import SOURCE_TABLE_SEPARATOR
 from ..util import detect_file_encoding
 from .base import Transform
+
+Dialect.classes['postgresql'] = Dialect.get('postgres')
+Dialect.classes['mssql'] = Dialect.get('tsql')
 
 
 class SQLTransform(Transform):

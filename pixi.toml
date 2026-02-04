@@ -1,4 +1,4 @@
-[project]
+[workspace]
 name = "lumen"
 channels = ["pyviz/label/dev", "bokeh", "conda-forge", "conda-forge/label/markitdown_dev"]
 platforms = ["linux-64", "osx-arm64", "osx-64", "win-64"]
@@ -60,7 +60,7 @@ semchunk = "*"
 tiktoken = "*"
 tabulate = "*"
 vl-convert-python = "*"
-panel-splitjs = ">=0.2.1"
+panel-splitjs = ">=0.3.2"
 panel-graphic-walker = ">=0.6.4"
 
 [feature.sql.dependencies]
