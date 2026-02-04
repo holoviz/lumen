@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import os
 
 from abc import abstractmethod
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
-from typing import Any, Literal, TypedDict
+from typing import (
+    TYPE_CHECKING, Any, Literal, TypedDict,
+)
 
 import instructor
 import panel as pn
@@ -25,11 +28,14 @@ from .services import (
 )
 from .utils import format_exception, log_debug, truncate_string
 
+if TYPE_CHECKING:
+    from .tools import FunctionTool
 
 class Message(TypedDict):
-    role: Literal["system", "user", "assistant"]
+    role: Literal["system", "user", "assistant", "tool"]
     content: str
     name: str | None
+    tool_call_id: str | None
 
 
 class ImageResponse(BaseModel):
@@ -283,6 +289,7 @@ class Llm(param.Parameterized):
         response_model: BaseModel | None = None,
         allow_partial: bool = False,
         model_spec: str | dict = "default",
+        tools: list[dict[str, Any] | FunctionTool] | None = None,
         **input_kwargs,
     ) -> BaseModel:
         """
@@ -299,6 +306,8 @@ class Llm(param.Parameterized):
         allow_partial: bool
             Whether to allow the LLM to only partially fill
             the provided response_model.
+        tools: list[dict[str, Any] | FunctionTool] | None
+            Tool definitions or FunctionTool instances to pass through.
         model: Literal['default' | 'reasoning' | 'sql']
             The model as listed in the model_kwargs parameter
             to invoke to answer the query.
@@ -312,6 +321,9 @@ class Llm(param.Parameterized):
 
         kwargs = dict(self._client_kwargs)
         kwargs.update(input_kwargs)
+        tool_specs, tool_instances = self._normalize_tools(tools)
+        if tool_specs is not None:
+            kwargs["tools"] = tool_specs
 
         messages, contains_image = self._check_for_image(messages)
         if contains_image:
@@ -328,6 +340,16 @@ class Llm(param.Parameterized):
             kwargs["response_model"] = ImageResponse
 
         output = await self.run_client(model_spec, messages, **kwargs)
+        if tool_instances and response_model is None:
+            tool_calls = self._extract_tool_calls(output)
+            if tool_calls:
+                tool_messages = await self._run_tool_calls(tool_instances, tool_calls)
+                if tool_messages:
+                    output = await self.run_client(
+                        model_spec,
+                        messages + tool_messages,
+                        **kwargs,
+                    )
         if output is None or output == "":
             raise ValueError("LLM failed to return valid output.")
         return output
@@ -344,6 +366,160 @@ class Llm(param.Parameterized):
         if hasattr(response, "choices"):
             return response.choices[0].message.content
         return str(response)
+
+    @classmethod
+    def _normalize_tools(
+        cls,
+        tools: list[dict[str, Any] | FunctionTool] | None,
+    ) -> tuple[list[dict[str, Any]] | None, dict[str, FunctionTool]]:
+        tool_instances: dict[str, FunctionTool] = {}
+        if tools is None:
+            return None, tool_instances
+        tool_specs: list[dict[str, Any]] = []
+        for tool in tools:
+            if hasattr(tool, "_model") and hasattr(tool, "function"):
+                tool_instances[tool.name] = tool  # type: ignore[assignment]
+                tool_specs.append(cls._tool_spec_from_function_tool(tool))  # type: ignore[arg-type]
+            else:
+                tool_specs.append(tool)  # type: ignore[arg-type]
+        return tool_specs, tool_instances
+
+    @classmethod
+    def _tool_spec_from_function_tool(cls, tool: FunctionTool) -> dict[str, Any]:
+        schema = tool._model.model_json_schema()
+        description = tool.purpose or schema.get("description") or ""
+        return {
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": description,
+                "parameters": schema,
+            },
+        }
+
+    @classmethod
+    def _extract_tool_calls(cls, response: Any) -> list[Any]:
+        if hasattr(response, "choices") and response.choices:
+            message = getattr(response.choices[0], "message", None)
+            tool_calls = getattr(message, "tool_calls", None) if message else None
+            if tool_calls:
+                return list(tool_calls)
+        if isinstance(response, dict) and response.get("tool_calls"):
+            return list(response["tool_calls"])
+        return []
+
+    @classmethod
+    def _extract_stream_tool_calls(cls, chunk: Any) -> list[dict[str, Any]]:
+        if hasattr(chunk, "choices") and chunk.choices:
+            delta = getattr(chunk.choices[0], "delta", None)
+            tool_calls = getattr(delta, "tool_calls", None) if delta else None
+            if tool_calls:
+                return list(tool_calls)
+        if isinstance(chunk, dict):
+            choices = chunk.get("choices") or []
+            if choices:
+                delta = choices[0].get("delta", {})
+                tool_calls = delta.get("tool_calls") if isinstance(delta, dict) else None
+                if tool_calls:
+                    return list(tool_calls)
+        return []
+
+    @classmethod
+    def _accumulate_tool_calls(
+        cls,
+        accum: dict[int, dict[str, Any]],
+        order: list[int],
+        tool_calls: list[dict[str, Any]],
+    ):
+        for call in tool_calls:
+            if isinstance(call, dict):
+                index = call.get("index")
+                call_id = call.get("id")
+                function = call.get("function") or {}
+                name = function.get("name") or call.get("name")
+                arguments = function.get("arguments") or call.get("arguments") or ""
+            else:
+                index = getattr(call, "index", None)
+                call_id = getattr(call, "id", None)
+                function = getattr(call, "function", None)
+                name = getattr(function, "name", None) if function else None
+                arguments = getattr(function, "arguments", None) if function else ""
+            if index is None:
+                index = max(order, default=-1) + 1
+            if index not in accum:
+                accum[index] = {"id": call_id, "name": name, "arguments": ""}
+                order.append(index)
+            if call_id:
+                accum[index]["id"] = call_id
+            if name:
+                accum[index]["name"] = name
+            if arguments:
+                accum[index]["arguments"] += arguments
+
+    @classmethod
+    def _tool_calls_from_accum(cls, accum: dict[int, dict[str, Any]], order: list[int]) -> list[dict[str, Any]]:
+        tool_calls = []
+        for index in order:
+            entry = accum[index]
+            tool_calls.append({
+                "id": entry.get("id"),
+                "function": {
+                    "name": entry.get("name"),
+                    "arguments": entry.get("arguments", ""),
+                },
+            })
+        return tool_calls
+
+    @classmethod
+    def _format_tool_result(cls, result: Any) -> str:
+        if isinstance(result, str):
+            return result
+        try:
+            return json.dumps(result)
+        except TypeError:
+            return str(result)
+
+    @classmethod
+    def _parse_tool_call(cls, call: Any) -> tuple[str | None, dict[str, Any], str | None]:
+        if isinstance(call, dict):
+            function = call.get("function") or {}
+            name = function.get("name") or call.get("name")
+            args = function.get("arguments") or call.get("arguments") or {}
+            call_id = call.get("id")
+        else:
+            function = getattr(call, "function", None)
+            name = getattr(function, "name", None) if function else None
+            args = getattr(function, "arguments", None) if function else {}
+            call_id = getattr(call, "id", None)
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except json.JSONDecodeError:
+                args = {}
+        return name, args or {}, call_id
+
+    async def _run_tool_calls(
+        self,
+        tool_instances: dict[str, FunctionTool],
+        tool_calls: list[Any],
+    ) -> list[Message]:
+        results: list[Message] = []
+        for call in tool_calls:
+            name, arguments, call_id = self._parse_tool_call(call)
+            if not name or name not in tool_instances:
+                continue
+            tool = tool_instances[name]
+            if asyncio.iscoroutinefunction(tool.function):
+                result = await tool.function(**arguments)
+            else:
+                result = tool.function(**arguments)
+            results.append({
+                "role": "tool",
+                "content": self._format_tool_result(result),
+                "name": name,
+                "tool_call_id": call_id,
+            })
+        return results
 
     async def initialize(self, log_level: str):
         try:
@@ -364,6 +540,7 @@ class Llm(param.Parameterized):
         response_model: BaseModel | None = None,
         field: str | None = None,
         model_spec: str | dict = "default",
+        tools: list[dict[str, Any] | FunctionTool] | None = None,
         **kwargs,
     ):
         """
@@ -379,6 +556,8 @@ class Llm(param.Parameterized):
             A Pydantic model that the LLM should materialize.
         field: str
             The field in the response_model to stream.
+        tools: list[dict[str, Any] | FunctionTool] | None
+            Tool definitions or FunctionTool instances to pass through.
         model: Literal['default' | 'reasoning' | 'sql']
             The model as listed in the model_kwargs parameter
             to invoke to answer the query.
@@ -387,12 +566,14 @@ class Llm(param.Parameterized):
         ------
         The string or response_model field.
         """
+        tool_specs, tool_instances = self._normalize_tools(tools)
         if self.logfire_tags is not None:
             output = await self.invoke(
                 messages,
                 system=system,
                 response_model=response_model,
                 model_spec=model_spec,
+                tools=tool_specs,
                 **kwargs,
             )
             if response_model is not None:
@@ -414,6 +595,7 @@ class Llm(param.Parameterized):
                 system=system,
                 response_model=response_model,
                 model_spec=model_spec,
+                tools=tool_specs,
                 **kwargs,
             )
             return
@@ -426,17 +608,23 @@ class Llm(param.Parameterized):
             stream=True,
             allow_partial=True,
             model_spec=model_spec,
+            tools=tool_specs,
             **kwargs,
         )
         if isinstance(chunks, BaseModel):
             yield getattr(chunks, field) if field is not None else chunks
             return
 
+        tool_call_accum: dict[int, dict[str, Any]] = {}
+        tool_call_order: list[int] = []
         try:
             async for chunk in chunks:
                 if response_model is None:
                     string += self._get_delta(chunk)
                     yield string
+                    tool_calls = self._extract_stream_tool_calls(chunk)
+                    if tool_calls:
+                        self._accumulate_tool_calls(tool_call_accum, tool_call_order, tool_calls)
                 else:
                     yield getattr(chunk, field) if field is not None else chunk
         except TypeError:
@@ -445,8 +633,26 @@ class Llm(param.Parameterized):
                 if response_model is None:
                     string += self._get_delta(chunk)
                     yield string
+                    tool_calls = self._extract_stream_tool_calls(chunk)
+                    if tool_calls:
+                        self._accumulate_tool_calls(tool_call_accum, tool_call_order, tool_calls)
                 else:
                     yield getattr(chunk, field) if field is not None else chunk
+
+        if response_model is None and tool_instances and tool_call_accum:
+            tool_calls = self._tool_calls_from_accum(tool_call_accum, tool_call_order)
+            tool_messages = await self._run_tool_calls(tool_instances, tool_calls)
+            if tool_messages:
+                async for chunk in self.stream(
+                    messages + tool_messages,
+                    system=system,
+                    response_model=response_model,
+                    field=field,
+                    model_spec=model_spec,
+                    tools=tools,
+                    **kwargs,
+                ):
+                    yield chunk
 
     async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
         log_debug(f"Input messages: \033[95m{len(messages)} messages\033[0m including system")
