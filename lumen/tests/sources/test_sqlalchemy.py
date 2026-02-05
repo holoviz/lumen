@@ -117,7 +117,7 @@ def test_sqlalchemy_get_schema_with_none(sqlalchemy_source):
     source = sqlalchemy_source.get_schema('test_sql_with_none')
 
     # Check that None is in the enum
-    assert None in source['C']['enum']
+    assert any(pd.isna(v) for v in source['C']['enum'])
     assert 'foo1' in source['C']['enum']
     assert 'foo3' in source['C']['enum']
     assert 'foo5' in source['C']['enum']
@@ -168,7 +168,12 @@ def test_sqlalchemy_filter(sqlalchemy_source, table_column_value_type, expected_
             # SQLite stores datetimes as strings in various formats
             continue
         else:
-            pd.testing.assert_series_equal(filtered[col], expected[col], check_names=False, check_dtype=False)
+            f_col, e_col = filtered[col], expected[col]
+            f_col = pd.Series([None if pd.isna(v) else v for v in f_col])
+            e_col = pd.Series([None if pd.isna(v) else v for v in e_col])
+            # check_dtype=False because SQL databases often return strings as object
+            # dtype, while pandas may use Arrow-backed StringDtype
+            pd.testing.assert_series_equal(f_col, e_col, check_names=False, check_dtype=False)
 
 
 @pytest.mark.flaky(reruns=3)

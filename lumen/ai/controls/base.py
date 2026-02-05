@@ -546,6 +546,11 @@ class BaseSourceControls(Viewer):
             self._error_placeholder.visible = True
             return 0
 
+        # Convert pandas StringDtype columns to object for DuckDB compatibility
+        for col in df.columns:
+            if isinstance(df[col].dtype, pd.StringDtype):
+                df[col] = df[col].astype(object)
+
         duckdb_source.param.update(params)
         df_rel = conn.from_df(df)
         if conversion:

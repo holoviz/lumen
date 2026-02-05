@@ -603,7 +603,7 @@ def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool
     columns_to_drop = [col for col in columns_to_drop if col in describe_df.columns]
     df_describe_dict = describe_df.drop(columns=columns_to_drop).to_dict()
 
-    for col in df.select_dtypes(include=["object"]).columns:
+    for col in df.select_dtypes(include=["object", "string"]).columns:
         if col not in df_describe_dict:
             df_describe_dict[col] = {}
         try:

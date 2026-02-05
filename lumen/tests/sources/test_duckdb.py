@@ -61,7 +61,11 @@ def duckdb_source():
 @pytest.fixture
 def duckdb_memory_source(mixed_df):
     source = DuckDBSource(uri=':memory:', ephemeral=True)
-    source._connection.from_df(mixed_df).to_view('mixed')
+    # Convert pyarrow string dtype to object for DuckDB compatibility if necessary
+    df = mixed_df.copy()
+    for col in df.select_dtypes(include=['string']).columns:
+        df[col] = df[col].astype(object)
+    source._connection.from_df(df).to_view('mixed')
     return source
 
 
@@ -77,6 +81,7 @@ def test_duckdb_get_tables(duckdb_source, source_tables):
         pd.testing.assert_frame_equal(
             duckdb_source.get(table),
             source_tables[table],
+            check_dtype=False
         )
 
 
@@ -133,6 +138,7 @@ def test_duckdb_get_schema_with_none(duckdb_source):
         '__len__': 5
     }
     source = duckdb_source.get_schema('test_sql_with_none')
+    source["C"]["enum"] = [None if pd.isna(e) else e for e in source["C"]["enum"]]
     source["C"]["enum"].sort(key=enum.index)
     assert source == expected_sql
     assert list(duckdb_source._schema_cache.keys()) == ['test_sql_with_none']
@@ -163,7 +169,15 @@ def test_duckdb_filter(duckdb_source, table_column_value_type, dask, expected_fi
     table, column, value, _ = table_column_value_type
     kwargs = {column: value}
     filtered = duckdb_source.get(table, __dask=dask, **kwargs)
-    pd.testing.assert_frame_equal(filtered, expected_filtered_df.reset_index(drop=True))
+
+    expected = expected_filtered_df.reset_index(drop=True)
+    if 'C' in filtered.columns and 'C' in expected.columns:
+        filtered['C'] = [None if pd.isna(v) else v for v in filtered['C']]
+        expected['C'] = [None if pd.isna(v) else v for v in expected['C']]
+
+    # check_dtype=False because DuckDB may return strings as object dtype
+    # while the original DataFrame might use the Arrow-backed StringDtype
+    pd.testing.assert_frame_equal(filtered, expected, check_dtype=False)
 
 
 def test_duckdb_transforms(duckdb_source, source_tables):
@@ -207,14 +221,15 @@ def test_duckdb_clear_cache(duckdb_source):
 def test_duckdb_source_ephemeral_roundtrips(duckdb_memory_source, mixed_df):
     source = DuckDBSource.from_spec(duckdb_memory_source.to_spec())
     df = source.get('mixed')
-    # .equals and pd.test will error on Arrow/NumPy dtype mismatches
-    for col in df.columns:
-        assert (df[col]==mixed_df[col]).all()
+    # Use pd.testing to handle NA/None consistently
+    # and check_dtype=False because DuckDB may return strings as object dtype
+    expected = mixed_df.copy()
+    pd.testing.assert_frame_equal(df, expected, check_dtype=False)
 
 
 def test_duckdb_source_mirrors_source(duckdb_source):
     mirrored = DuckDBSource(uri=':memory:', mirrors={'mixed': (duckdb_source, 'test_sql')})
-    pd.testing.assert_frame_equal(duckdb_source.get('test_sql'), mirrored.get('mixed'))
+    pd.testing.assert_frame_equal(duckdb_source.get('test_sql'), mirrored.get('mixed'), check_dtype=False)
 
 
 @pytest.fixture
@@ -534,7 +549,9 @@ def test_table_key_naming():
     assert 'my_custom_table_name' in tables
 
     result = source.execute("SELECT * FROM my_custom_table_name")
-    pd.testing.assert_frame_equal(result, df)
+    # check_dtype=False because DuckDB may return strings as object dtype
+    # while the original DataFrame might use the Arrow-backed StringDtype
+    pd.testing.assert_frame_equal(result, df, check_dtype=False)
 
 
 def test_absolute_vs_relative_paths(sample_csv_files):
@@ -927,7 +944,7 @@ def test_table_params_edge_cases(sample_csv_files):
 
     # Empty params should work fine
     source1 = DuckDBSource.from_df({'test': df}, table_params={})
-    pd.testing.assert_frame_equal(source1.get('test'), df)
+    pd.testing.assert_frame_equal(source1.get('test'), df, check_dtype=False)
 
     # Mismatched parameter count - need to create source directly, not from_df
     source2 = DuckDBSource(
@@ -1187,6 +1204,8 @@ def test_create_sql_expr_source_with_list_tables():
         'B': [0, 0, 1, 1, 1],
         'C': ['foo1', 'foo2', 'foo3', 'foo4', 'foo5']
     })
+    for col in df.select_dtypes(include=['string']).columns:
+        df[col] = df[col].astype(object)
     
     # Use from_df which creates dict-based tables, then manually convert to list
     source = DuckDBSource.from_df({'test_table': df})
@@ -1222,6 +1241,8 @@ def test_create_sql_expr_source_reuse_connection_with_list_tables():
         'B': [0, 0, 1, 1, 1],
         'C': ['foo1', 'foo2', 'foo3', 'foo4', 'foo5']
     })
+    for col in df.select_dtypes(include=['string']).columns:
+        df[col] = df[col].astype(object)
 
     source = DuckDBSource.from_df({'test_table': df})
     # Simulate a list-based source

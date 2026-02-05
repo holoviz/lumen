@@ -1,16 +1,11 @@
 from typing import Annotated, Literal
 
-from instructor.dsl.partial import PartialLiteralMixin
 from pydantic import BaseModel, Field, model_validator
 
 from .config import MissingContextError
 
 
-class PartialBaseModel(BaseModel, PartialLiteralMixin):
-    ...
-
-
-class EscapeBaseModel(PartialBaseModel):
+class EscapeBaseModel(BaseModel):
 
     insufficient_context_reason: str = Field(
         description="If lacking sufficient context, explain why; else use ''. Do not base off the user query; only from the data context provided.",

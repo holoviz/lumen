@@ -265,7 +265,7 @@ class SnowflakeSource(BaseSQLSource):
         number of rows to sample to check for decimal.Decimal
         """
         df = df.copy()
-        for col in df.select_dtypes(include=["object"]).columns:
+        for col in df.select_dtypes(include=["object", "string"]).columns:
             df_col_sample = df[col].sample(min(sample, len(df)))
             try:
                 if df_col_sample.apply(lambda x: isinstance(x, decimal.Decimal)).any():

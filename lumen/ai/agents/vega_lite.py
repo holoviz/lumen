@@ -22,7 +22,7 @@ from ..config import (
 from ..context import TContext
 from ..editors import LumenEditor, VegaLiteEditor
 from ..llm import Message, OpenAI
-from ..models import EscapeBaseModel, PartialBaseModel, RetrySpec
+from ..models import EscapeBaseModel, RetrySpec
 from ..utils import (
     get_data, get_schema, load_json, log_debug, retry_llm_output,
 )
@@ -65,7 +65,7 @@ class VegaLiteSpecUpdate(BaseModel):
     )
 
 
-class AltairSpec(PartialBaseModel):
+class AltairSpec(BaseModel):
     """Response model for Altair code generation."""
 
     chain_of_thought: str = Field(
