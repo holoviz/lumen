@@ -2158,13 +2158,10 @@ class ExplorerUI(UI):
         tabs = exploration.view[0]
         pop_position = None
 
-        def _tab_index():
+        def _tab_index() -> int | None:
             for i, tab in enumerate(tabs):
                 if tab is view:
                     return i
-                if isinstance(tab, tuple) and len(tab) > 1 and tab[1] is view:
-                    return i
-            return None
 
         @hold()
         def pop_out(event):
