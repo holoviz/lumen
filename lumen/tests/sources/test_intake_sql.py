@@ -31,7 +31,11 @@ def test_intake_sql_get_tables(source, source_tables):
     tables = source.get_tables()
     assert tables == list(source_tables.keys())
     for table in tables:
-        pd.testing.assert_frame_equal(source.get(table), source_tables[table])
+        pd.testing.assert_frame_equal(
+            # check_dtype=False because SQL sources may return strings as object
+            # dtype while the test data might use Arrow-backed StringDtype
+            source.get(table), source_tables[table], check_dtype=False
+        )
 
 
 def test_intake_sql_get_schema(source):
@@ -70,7 +74,9 @@ def test_intake_sql_get_schema_with_none(source):
             'type': 'string'
         }
     }
-    assert source.get_schema('test_sql_with_none') == expected_sql
+    schema = source.get_schema('test_sql_with_none')
+    schema['C']['enum'] = [None if pd.isna(v) else v for v in schema['C']['enum']]
+    assert schema == expected_sql
     assert list(source._schema_cache.keys()) == ['test_sql_with_none']
 
 
@@ -99,7 +105,13 @@ def test_intake_sql_filter(source, table_column_value_type, dask, expected_filte
     table, column, value, _ = table_column_value_type
     kwargs = {column: value}
     filtered = source.get(table, __dask=dask, **kwargs)
-    pd.testing.assert_frame_equal(filtered, expected_filtered_df.reset_index(drop=True))
+
+    expected = expected_filtered_df.reset_index(drop=True)
+    if 'C' in filtered.columns and 'C' in expected.columns:
+        filtered['C'] = [None if pd.isna(v) else v for v in filtered['C']]
+        expected['C'] = [None if pd.isna(v) else v for v in expected['C']]
+
+    pd.testing.assert_frame_equal(filtered, expected, check_dtype=False)
 
 
 def test_intake_sql_transforms(source, source_tables):

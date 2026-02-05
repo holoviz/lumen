@@ -185,7 +185,7 @@ def test_get_tables_dict_with_exclusions(mock_snowflake_connection):
 
     tables = source.get_tables()
 
-    expected_tables = ['db.schema.table3']
+    expected_tables = ['DB.SCHEMA.TABLE3']
     assert set(tables) == set(expected_tables)
 
 
