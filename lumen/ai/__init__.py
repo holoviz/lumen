@@ -1,8 +1,4 @@
-import warnings
-
 import panel as pn
-
-warnings.filterwarnings("ignore", category=DeprecationWarning, message=".*PartialLiteralMixin is deprecated.*")
 
 from . import (  # noqa
     actor, agents, embeddings, llm,
