@@ -475,6 +475,7 @@ class UI(Viewer):
 
     _cta = None  # Initialized in _render_main
     _error_alert = None  # Initialized in _render_main
+    _success_alert = None  # Initialized in _render_main
 
     __abstract = True
 
@@ -824,18 +825,25 @@ class UI(Viewer):
             if not user_prompt and not uploaded:
                 return
 
-            # Open Sources dialog so user can confirm the upload
+            # Auto-process uploaded files without confirmation dialog
             if uploaded:
-                if not self._upload_controls._file_cards:
-                    self._upload_controls._generate_file_cards({
-                        key: value["value"] for key, value in uploaded.items()
-                    })
+                # Store sources snapshot before processing
+                sources_snapshot = list(self.context.get("sources", []))
 
-                # Store the pending query to execute after files are added
-                if not wait:
-                    self._pending_query = user_prompt or None
-                self._pending_sources_snapshot = list(self.context.get("sources", []))
+                # Generate file cards and process them directly
+                self._upload_controls._generate_file_cards({
+                    key: value["value"] for key, value in uploaded.items()
+                })
 
+                # Process the files
+                with self._upload_controls._layout.param.update(loading=True):
+                    n_tables, n_docs, n_metadata = self._upload_controls._process_files()
+
+                    # Clear uploads after processing
+                    if self._upload_controls.clear_uploads:
+                        self._upload_controls._clear_uploads()
+
+                # Clear the chat input
                 with edit_readonly(self._chat_input):
                     self._chat_input.param.update(
                         value_input="",
@@ -843,16 +851,18 @@ class UI(Viewer):
                         views=[]
                     )
 
-                with hold():
-                    self._sources_dialog_content.open = True
-                    self._source_content.active = self._source_controls.index(self._upload_controls)
-
-                async def focus():
-                    await asyncio.sleep(0.25)
-                    self._upload_controls._add_button.focus()
-
-                state.execute(focus, schedule=True)
-                return
+                # If files were successfully processed, execute the query with source info
+                if (n_tables + n_docs + n_metadata) > 0 and user_prompt:
+                    self._show_upload_success(n_tables, n_metadata)
+                    self._execute_pending_query_with(user_prompt, sources_snapshot)
+                    return
+                elif (n_tables + n_docs + n_metadata) > 0:
+                    # Files uploaded but no query - just show success message
+                    self._show_upload_success(n_tables, n_metadata)
+                    return
+                elif not user_prompt:
+                    # No files processed and no query
+                    return
 
             with self.interface.param.update(disabled=True, loading=True), hold():
                 self._update_main_view()
@@ -915,6 +925,25 @@ class UI(Viewer):
 
         if query:
             self._execute_pending_query_with(query, sources_snapshot)
+
+    def _show_upload_success(self, n_tables: int, n_metadata: int):
+        """Show a success message after files are uploaded, then auto-hide after a delay."""
+        parts = []
+        if n_tables > 0:
+            parts.append(f"{n_tables} data file{'s' if n_tables > 1 else ''}")
+        if n_metadata > 0:
+            parts.append(f"{n_metadata} metadata file{'s' if n_metadata > 1 else ''}")
+        message = f"Successfully uploaded {' and '.join(parts)}."
+
+        if self._success_alert is not None:
+            self._success_alert.object = message
+            self._success_alert.visible = True
+
+            # Auto-hide after 5 seconds
+            def hide_success():
+                if self._success_alert is not None:
+                    self._success_alert.visible = False
+            state.add_periodic_callback(hide_success, period=5000, count=1)
 
     def _execute_pending_query_with(self, user_prompt, old_sources):
         """Execute a query after files have been uploaded."""
@@ -1018,6 +1047,13 @@ class UI(Viewer):
             margin=(10, 0, 5, 0),
             visible=False
         )
+        self._success_alert = Alert(
+            object="",
+            severity="success",
+            sizing_mode="stretch_width",
+            margin=(10, 0, 5, 0),
+            visible=False
+        )
 
         self._splash = MuiColumn(
             Paper(
@@ -1034,6 +1070,7 @@ class UI(Viewer):
                 self._cta,
                 self._chat_splash,
                 self._error_alert,
+                self._success_alert,
                 max_width=850,
                 styles={'margin': 'auto'},
                 sx={'p': '0 20px 20px 20px'}
@@ -2128,20 +2165,20 @@ class ExplorerUI(UI):
                 tabs.remove(view)
                 exploration.view.append(standalone)
                 pop_button.param.update(
-                    description="Reattach",
-                    icon="open_in_browser"
+                    description="Close split view",
+                    icon="close_fullscreen"
                 )
             else:
                 exploration.view.remove(standalone)
                 tabs.insert(position, (title, view))
                 tabs.active = position
                 pop_button.param.update(
-                    description="Open in new pane",
-                    icon="open_in_new"
+                    description="Open this tab in a split view",
+                    icon="vertical_split"
                 )
 
         pop_button = IconButton(
-            description="Pop-out", icon="open_in_new", icon_size="1.1em", size="small",
+            description="Open this tab in a split view", icon="vertical_split", icon_size="1.1em", size="small",
             margin=(5, 0, 0, 0), on_click=pop_out, styles={"margin-left": "auto"}
         )
         return pop_button

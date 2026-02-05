@@ -54,6 +54,7 @@ LLM_PROVIDERS = {
     'azure-openai': 'AzureOpenAI',
     'azure-mistral': 'AzureMistralAI',
     "ai-navigator": "AINavigator",
+    "ai-catalyst": "AICatalyst",
     'ollama': 'Ollama',
     'llama-cpp': 'LlamaCpp',
     'litellm': 'LiteLLM',
@@ -70,6 +71,7 @@ PROVIDER_ENV_VARS = {
     'AzureMistralAI': 'AZUREAI_ENDPOINT_KEY',
     'AzureOpenAI': 'AZUREAI_ENDPOINT_KEY',
     'Google': 'GEMINI_API_KEY',
+    "AICatalyst": "AI_CATALYST_API_KEY",
 }
 
 def get_available_llm() -> type[Llm] | None:
@@ -503,10 +505,24 @@ class Llm(param.Parameterized):
             role = message["role"]
             if role == "system":
                 continue
-            if role == "user":
-                log_debug(f"Message \033[95m{i} (u)\033[0m: {message['content']}")
+            content = message["content"]
+            role_char = "u" if role == "user" else "a"
+            # Handle different content types for logging
+            if isinstance(content, instructor.Image):
+                log_debug(f"Message \033[95m{i} ({role_char})\033[0m: [Image data]")
+            elif isinstance(content, list):
+                # Content is a list (e.g., [text, Image, ...])
+                content_parts = []
+                for item in content:
+                    if isinstance(item, instructor.Image):
+                        content_parts.append("[Image]")
+                    elif isinstance(item, str):
+                        content_parts.append(truncate_string(item, max_length=100))
+                    else:
+                        content_parts.append(str(type(item).__name__))
+                log_debug(f"Message \033[95m{i} ({role_char})\033[0m: {' + '.join(content_parts)}")
             else:
-                log_debug(f"Message \033[95m{i} (a)\033[0m: {message['content']}")
+                log_debug(f"Message \033[95m{i} ({role_char})\033[0m: {content}")
             if previous_role == role:
                 log_debug(
                     "\033[91mWARNING: Two consecutive messages from the same role; "
@@ -1434,7 +1450,7 @@ class AINavigator(OpenAI):
     display_name = param.String(default="AI Navigator", constant=True, doc="Display name for UI")
 
     endpoint = param.String(
-        default="http://localhost:8080/v1", doc="""
+        default=os.getenv("AINAVIGATOR_BASE_URL", "http://localhost:8080/v1"), doc="""
             The API endpoint; should include the full address, including the port.""")
 
     mode = param.Selector(default=Mode.JSON_SCHEMA)
@@ -1456,6 +1472,28 @@ class AINavigator(OpenAI):
             return True
         except Exception:
             return False
+
+
+class AICatalyst(OpenAI):
+    """
+    A LLM implementation that calls the [Anaconda AI Catalyst](https://www.anaconda.com/platform/ai-catalyst) API.
+    """
+
+    api_key = param.String(default=os.getenv("AI_CATALYST_API_KEY"), doc="The AI Catalyst API key.")
+
+    display_name = param.String(default="AI Catalyst", constant=True, doc="Display name for UI")
+
+    endpoint = param.String(
+        default=os.getenv("AI_CATALYST_BASE_URL"), doc="""
+            The API endpoint; should include the full address, including the port.""")
+
+    mode = param.Selector(default=Mode.JSON_SCHEMA)
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "ai_catalyst"},
+    })
+
+    select_models = param.List(default=["ai_catalyst"], constant=True, doc="Available models for selection dropdowns")
 
 
 class Ollama(OpenAI):

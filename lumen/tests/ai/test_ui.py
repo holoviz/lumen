@@ -303,8 +303,8 @@ async def test_exploration_pop_out(explorer_ui):
     assert isinstance(standalone, Column)
 
     # Check button description changed
-    assert pop_button.description == "Reattach"
-    assert pop_button.icon == "open_in_browser"
+    assert pop_button.description == "Close split view"
+    assert pop_button.icon == "close_fullscreen"
     pop_button.param.trigger("clicks")
 
     # Wait for the view to be back in tabs
@@ -315,8 +315,8 @@ async def test_exploration_pop_out(explorer_ui):
     assert len(tabs) == initial_tab_count
 
     # Check button description changed back
-    assert pop_button.description == "Open in new pane"
-    assert pop_button.icon == "open_in_new"
+    assert pop_button.description == "Open this tab in a split view"
+    assert pop_button.icon == "vertical_split"
 
 
 async def test_sync_active(explorer_ui):
@@ -439,7 +439,8 @@ async def test_exploration_parent_relationship(explorer_ui):
     assert exploration.parent.title == 'Home'
 
 
-async def test_chat_upload_flow_opens_dialog_and_starts_exploration(explorer_ui, monkeypatch):
+async def test_chat_upload_flow_processes_files_directly(explorer_ui, monkeypatch):
+    """Test that file uploads via chat are processed directly without opening a dialog."""
     ui = explorer_ui
     old_sources = list(ui.context.get("sources", []))
 
@@ -465,19 +466,18 @@ async def test_chat_upload_flow_opens_dialog_and_starts_exploration(explorer_ui,
             "uploaded.csv": {"value": b"id,value\n1,2\n"}
         }
     ui._on_submit(wait=True)
-    assert ui._sources_dialog_content.open is True
-    assert ui._source_content.active == ui._source_controls.index(ui._upload_controls)
 
-    ui._upload_controls.param.trigger("add")
+    # Files should be processed directly without opening the dialog
+    assert ui._sources_dialog_content.open is False
 
-    await async_wait_until(lambda: ui._sources_dialog_content.open is False)
+    # Sources should be added
     await async_wait_until(lambda: len(ui.context.get("sources", [])) > len(old_sources))
-    await async_wait_until(lambda: execute_plan.await_count > 0)
 
     new_sources = [src for src in ui.context["sources"] if src not in old_sources]
     assert len(new_sources) == 1
     assert "uploaded" in new_sources[0].get_tables()
 
+    # The query should be sent to the interface
     assert ui._main[1] is ui.interface
     assert ui._main[1][0].object == "Show me the uploaded data"
 
