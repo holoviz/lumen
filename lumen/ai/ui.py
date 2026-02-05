@@ -2156,13 +2156,35 @@ class ExplorerUI(UI):
         )
         standalone = Column(title_view, view)
         tabs = exploration.view[0]
-        position = len(tabs)
+        pop_position = None
+
+        def _tab_index():
+            for i, tab in enumerate(tabs):
+                if tab is view:
+                    return i
+                if isinstance(tab, tuple) and len(tab) > 1 and tab[1] is view:
+                    return i
+            return None
 
         @hold()
         def pop_out(event):
-            if view in tabs:
-                tabs.active = max(tabs.active-1, 0)
+            nonlocal pop_position
+            view_index = _tab_index()
+            if view_index is not None:
+                pop_position = view_index
+                active = tabs.active if tabs.active is not None else 0
+                if active > view_index:
+                    new_active = active - 1
+                elif active == view_index:
+                    if view_index < len(tabs) - 1:
+                        new_active = view_index
+                    else:
+                        new_active = max(view_index - 1, 0)
+                else:
+                    new_active = active
                 tabs.remove(view)
+                if len(tabs):
+                    tabs.active = min(new_active, len(tabs) - 1)
                 exploration.view.append(standalone)
                 pop_button.param.update(
                     description="Close split view",
@@ -2170,8 +2192,10 @@ class ExplorerUI(UI):
                 )
             else:
                 exploration.view.remove(standalone)
-                tabs.insert(position, (title, view))
-                tabs.active = position
+                insert_at = pop_position if pop_position is not None else len(tabs)
+                insert_at = min(max(insert_at, 0), len(tabs))
+                tabs.insert(insert_at, (title, view))
+                tabs.active = insert_at
                 pop_button.param.update(
                     description="Open this tab in a split view",
                     icon="vertical_split"
