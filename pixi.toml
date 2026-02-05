@@ -46,7 +46,7 @@ python = "3.13.*"
 COVERAGE_CORE = "sysmon"
 
 [feature.ai.dependencies]
-anthropenc = "*"
+anthropic = "*"
 chardet = "*"
 duckdb = ">=1.2.0"
 griffe = "*"
