@@ -19,7 +19,7 @@ from ..context import (
     LWW, ContextError, TContext, merge_contexts,
 )
 from ..llm import Message
-from ..models import PartialBaseModel, ThinkingYesNo
+from ..models import ThinkingYesNo
 from ..report import ActorTask
 from ..tools import MetadataLookup, Tool
 from ..utils import log_debug, wrap_logfire
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 
 
-class RawStep(PartialBaseModel):
+class RawStep(BaseModel):
     actor: str
     instruction: str = Field(
         description="""
@@ -50,7 +50,7 @@ class RawStep(PartialBaseModel):
     title: str
 
 
-class RawPlan(PartialBaseModel):
+class RawPlan(BaseModel):
     title: str = Field(description="A title that describes this plan, up to three words.")
     steps: list[RawStep] = Field(
         description="""
@@ -64,7 +64,7 @@ class RawPlan(PartialBaseModel):
     )
 
 
-class Reasoning(PartialBaseModel):
+class Reasoning(BaseModel):
     chain_of_thought: str = Field(
         description="""
         Briefly summarize the user's goal and categorize the question type:

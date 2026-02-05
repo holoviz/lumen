@@ -15,7 +15,6 @@ from typing import (
 import param
 
 from griffe import Docstring, DocstringSectionKind
-from instructor.dsl.partial import PartialLiteralMixin
 from pydantic import (
     BaseModel, ConfigDict, Field, PrivateAttr, create_model,
 )
@@ -380,7 +379,6 @@ def param_to_pydantic(
 
     fields = {}
     private_attrs: dict[str, PrivateAttr] = {}  # Store PrivateAttr objects
-    use_literal_mixin = False
 
     for parameter_name in parameterized.param:
         if parameter_name in current_excluded:
@@ -413,9 +411,6 @@ def param_to_pydantic(
         literals = list(schema) if schema and parameter_name in field_params else None
         type_, field_info = parameter_to_field(parameter, created_models, literals)
 
-        if not use_literal_mixin and get_origin(type_) is Literal:
-            use_literal_mixin = True
-
         if parameter_name == "schema":
             field_info.alias = "schema"  # type: ignore
             parameter_name = "schema_"
@@ -434,10 +429,6 @@ def param_to_pydantic(
         # If allow_None is True, Pydantic will make it Optional if not already.
         # Explicit `default=None` is set by parameter_to_field if param.default is None and allow_None.
         fields[parameter_name] = (type_, field_info)
-
-    if use_literal_mixin:
-        if PartialLiteralMixin not in pydantic_model_bases:
-            pydantic_model_bases.append(PartialLiteralMixin)
 
     # Deduplicate bases while preserving order (important for MRO)
     final_model_creation_base: type[BaseModel] | tuple[type[BaseModel], ...]

@@ -21,7 +21,7 @@ from ..config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from ..context import ContextModel, TContext
 from ..editors import LumenEditor, SQLEditor
 from ..llm import Message
-from ..models import EscapeBaseModel, PartialBaseModel, RetrySpec
+from ..models import EscapeBaseModel, RetrySpec
 from ..schemas import Metaset
 from ..utils import (
     clean_sql, describe_data, get_data, get_pipeline, parse_table_slug,
@@ -46,7 +46,7 @@ def make_table_model(sources: list[tuple[str, str]]):
     return TableLiteral
 
 
-class SampleQuery(PartialBaseModel):
+class SampleQuery(BaseModel):
     """See actual data content - reveals format issues and patterns."""
 
     query: SkipJsonSchema[str] = Field(default="SELECT * FROM {slug[table]} LIMIT 5")
@@ -65,7 +65,7 @@ class SampleQuery(PartialBaseModel):
         return f"Sample from {self.slug.table}"
 
 
-class DistinctQuery(PartialBaseModel):
+class DistinctQuery(BaseModel):
     """Universal column analysis with optional pattern matching - handles join keys, categories, date ranges."""
 
     query: SkipJsonSchema[str] = Field(default="SELECT DISTINCT {column} FROM {slug[table]} WHERE {column} ILIKE '%{pattern}%' LIMIT 10 OFFSET {offset}")
@@ -96,7 +96,7 @@ class DistinctQuery(PartialBaseModel):
         return f"Distinct values from {self.slug.table!r} table column {self.column!r}"
 
 
-class TableQuery(PartialBaseModel):
+class TableQuery(BaseModel):
     """Wildcard search using native source metadata to discover tables and columns by pattern."""
 
     pattern: str = Field(description="Search pattern (e.g., 'revenue', 'customer')")
@@ -193,7 +193,7 @@ def make_discovery_model(sources: list[tuple[str, str]]):
         __base__=DistinctQuery
     )
 
-    class DiscoveryQueries(PartialBaseModel):
+    class DiscoveryQueries(BaseModel):
         """LLM selects 2-4 essential discoveries using the core toolkit."""
 
         reasoning: str = Field(description="Brief discovery strategy")
@@ -216,7 +216,7 @@ def make_discovery_model(sources: list[tuple[str, str]]):
     return DiscoveryQueries, DiscoverySufficiency
 
 
-class SQLQuery(PartialBaseModel):
+class SQLQuery(BaseModel):
     """A single SQL query with its associated metadata."""
 
     query: str = Field(description="""
@@ -234,7 +234,7 @@ class SQLQuery(PartialBaseModel):
     )
 
 
-class TableSelection(PartialBaseModel):
+class TableSelection(BaseModel):
     """Select tables relevant to answering the user's query."""
 
     reasoning: str = Field(description="Brief explanation of why these tables are needed to answer the query.")
