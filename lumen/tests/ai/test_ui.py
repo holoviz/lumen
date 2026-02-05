@@ -303,8 +303,8 @@ async def test_exploration_pop_out(explorer_ui):
     assert isinstance(standalone, Column)
 
     # Check button description changed
-    assert pop_button.description == "Reattach"
-    assert pop_button.icon == "open_in_browser"
+    assert pop_button.description == "Close split view"
+    assert pop_button.icon == "close_fullscreen"
     pop_button.param.trigger("clicks")
 
     # Wait for the view to be back in tabs
@@ -315,8 +315,8 @@ async def test_exploration_pop_out(explorer_ui):
     assert len(tabs) == initial_tab_count
 
     # Check button description changed back
-    assert pop_button.description == "Open in new pane"
-    assert pop_button.icon == "open_in_new"
+    assert pop_button.description == "Open this tab in a split view"
+    assert pop_button.icon == "vertical_split"
 
 
 async def test_sync_active(explorer_ui):

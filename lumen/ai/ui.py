@@ -2165,20 +2165,20 @@ class ExplorerUI(UI):
                 tabs.remove(view)
                 exploration.view.append(standalone)
                 pop_button.param.update(
-                    description="Reattach",
-                    icon="open_in_browser"
+                    description="Close split view",
+                    icon="close_fullscreen"
                 )
             else:
                 exploration.view.remove(standalone)
                 tabs.insert(position, (title, view))
                 tabs.active = position
                 pop_button.param.update(
-                    description="Open in new pane",
-                    icon="open_in_new"
+                    description="Open this tab in a split view",
+                    icon="vertical_split"
                 )
 
         pop_button = IconButton(
-            description="Pop-out", icon="open_in_new", icon_size="1.1em", size="small",
+            description="Open this tab in a split view", icon="vertical_split", icon_size="1.1em", size="small",
             margin=(5, 0, 0, 0), on_click=pop_out, styles={"margin-left": "auto"}
         )
         return pop_button
