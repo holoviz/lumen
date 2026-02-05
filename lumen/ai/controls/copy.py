@@ -19,12 +19,14 @@ class CopyControls(Viewer):
 
     def __init__(self, **params):
         super().__init__(**params)
+        # Dynamically set description based on the language of the view
+        language = getattr(self.view, 'language', 'yaml').upper()
         copy_icon = IconButton(
             icon="content_copy",
             active_icon="check",
             margin=(5, 0),
             toggle_duration=1000,
-            description="Copy YAML to clipboard",
+            description=f"Copy {language} to clipboard",
             size="small",
             color="primary",
             icon_size="0.9em",
