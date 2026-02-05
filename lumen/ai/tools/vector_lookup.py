@@ -10,7 +10,7 @@ from ..config import PROMPTS_DIR
 from ..context import ContextModel, TContext
 from ..embeddings import NumpyEmbeddings
 from ..llm import Message
-from ..models import PartialBaseModel
+from ..models import BaseModel
 from ..utils import log_debug, stream_details
 from ..vector_store import NumpyVectorStore, VectorStore
 from .base import Tool, ToolUser
@@ -36,7 +36,7 @@ def make_refined_query_model(item_type_name: str = "items"):
             that might appear in relevant {item_type_name}.
             """,
         )),
-        __base__=PartialBaseModel
+        __base__=BaseModel
     )
 
 

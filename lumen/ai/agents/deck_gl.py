@@ -19,7 +19,7 @@ from ...views.base import DeckGLView
 from ..code_executor import CodeSafetyCheck, PyDeckExecutor
 from ..config import PROMPTS_DIR, UserCancelledError
 from ..editors import DeckGLEditor
-from ..models import EscapeBaseModel, PartialBaseModel, RetrySpec
+from ..models import BaseModel, EscapeBaseModel, RetrySpec
 from ..utils import (
     get_data, get_schema, retry_llm_output, sanitize_column_names,
 )
@@ -55,7 +55,7 @@ class DeckGLSpec(EscapeBaseModel):
     )
 
 
-class PyDeckSpec(PartialBaseModel):
+class PyDeckSpec(BaseModel):
     """Response model for PyDeck code generation."""
 
     chain_of_thought: str = Field(
