@@ -2151,7 +2151,12 @@ class ExplorerUI(UI):
         title_view = Typography(
             title.upper(),
             color="primary",
-            sx={"border-bottom": "2px solid var(--mui-palette-primary-main)"},
+            sx={
+                "border-bottom": "2px solid var(--mui-palette-primary-main)",
+                "fontSize": "14px",
+                "p": "0 10px 5px 10px"
+            },
+            margin=(10, 0),
             variant="subtitle1"
         )
         standalone = Column(title_view, view)
