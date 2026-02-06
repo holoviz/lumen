@@ -6,8 +6,10 @@ from typing import (
 
 import param
 
+from panel.pane import panel as as_panel
 from pydantic import BaseModel, Field, create_model
 
+from ...views.base import View
 from ..config import PROMPTS_DIR
 from ..context import ContextModel, TContext
 from ..llm import Message
@@ -247,11 +249,6 @@ class MCPTool(Tool):
         context: TContext,
         **kwargs: dict[str, Any],
     ) -> tuple[list[Any], ContextModel]:
-        from panel.pane import HoloViews as HoloViewsPanel, panel as as_panel
-        from panel.viewable import Viewable
-
-        from ...views.base import HoloViews, View
-
         prompt = await self._render_prompt("main", messages, context)
         tool_args = kwargs.pop("tool_args", None)
         if tool_args is None:
@@ -273,12 +270,12 @@ class MCPTool(Tool):
         output = await self.execute(**arguments)
 
         # Handle renderable results
-        if isinstance(output, (View, Viewable)):
+        if isinstance(output, dict) and "view_type" in output:
+            output = View.from_spec(output)
+        if isinstance(output, View):
             return [output], {}
         elif self.render_output:
             p = as_panel(output)
-            if isinstance(p, HoloViewsPanel):
-                p = HoloViews(object=p.object)
             return [p], {}
 
         # Populate provided context keys
