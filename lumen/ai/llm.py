@@ -529,6 +529,8 @@ class Llm(param.Parameterized):
         tool_contexts: dict[str, Any],
         messages: list[Message],
     ) -> list[Message]:
+        from .tools import FunctionTool, MCPTool
+
         results: list[Message] = []
         for call in tool_calls:
             name, arguments, call_id = self._parse_tool_call(call)
@@ -1465,7 +1467,37 @@ class Google(Llm):
             if role == "system":
                 system_instruction = content
                 continue
-            elif role != "user":
+
+            # Assistant message containing tool calls → model with function_call parts
+            if role == "assistant" and message.get("tool_calls"):
+                parts = []
+                for tc in message["tool_calls"]:
+                    name, args, _ = cls._parse_tool_call(tc)
+                    part: dict[str, Any] = {"function_call": {"name": name, "args": args}}
+                    # Preserve thought_signature required by Gemini 3 models
+                    sig = tc.get("thought_signature") if isinstance(tc, dict) else None
+                    if sig is not None:
+                        part["thought_signature"] = sig
+                    parts.append(part)
+                contents.append({"role": "model", "parts": parts})
+                continue
+
+            # Tool result message → user with function_response part
+            if role == "tool":
+                name = message.get("name", "")
+                try:
+                    response_payload = json.loads(content) if isinstance(content, str) else content
+                except (json.JSONDecodeError, TypeError):
+                    response_payload = {"result": content}
+                if not isinstance(response_payload, dict):
+                    response_payload = {"result": response_payload}
+                contents.append({
+                    "role": "user",
+                    "parts": [{"function_response": {"name": name, "response": response_payload}}],
+                })
+                continue
+
+            if role != "user":
                 role = "model"
 
             if isinstance(content, Image):
@@ -1499,11 +1531,73 @@ class Google(Llm):
         else:
             return partial(self._base_client.aio.models.generate_content, model=model)
 
+    @classmethod
+    def _extract_tool_calls(cls, response: Any) -> list[Any]:
+        """Extract tool calls from a Google GenAI response.
+
+        Normalises them into OpenAI-style dicts so the base-class
+        ``_parse_tool_call``, ``_tool_calls_message``, and
+        ``_run_tool_calls`` work without further overrides.
+
+        The ``thought_signature`` returned by Gemini 3 models is preserved
+        so it can be sent back in the follow-up request (required by the API).
+        """
+        if hasattr(response, "candidates") and response.candidates:
+            candidate = response.candidates[0]
+            if hasattr(candidate, "content") and candidate.content:
+                parts = candidate.content.parts or []
+                calls = []
+                for i, part in enumerate(parts):
+                    fc = getattr(part, "function_call", None)
+                    if fc is not None:
+                        args = dict(fc.args) if fc.args else {}
+                        call: dict[str, Any] = {
+                            "id": f"call_{fc.name}_{i}",
+                            "function": {
+                                "name": fc.name,
+                                "arguments": json.dumps(args),
+                            },
+                        }
+                        # Gemini 3 requires thought_signature to be echoed back
+                        sig = getattr(part, "thought_signature", None)
+                        if sig is not None:
+                            call["thought_signature"] = sig
+                        calls.append(call)
+                if calls:
+                    return calls
+        return []
+
+    @classmethod
+    def _extract_stream_tool_calls(cls, chunk: Any) -> list[dict[str, Any]]:
+        """Extract tool calls from a Google GenAI streaming chunk."""
+        # Google streaming chunks share the same response shape
+        return cls._extract_tool_calls(chunk)
+
+    @classmethod
+    def _get_delta(cls, chunk: Any) -> str:
+        """Extract delta content from streaming response, skipping function_call parts."""
+        if hasattr(chunk, "candidates") and chunk.candidates:
+            candidate = chunk.candidates[0]
+            if hasattr(candidate, "content") and candidate.content:
+                parts = candidate.content.parts or []
+                texts = []
+                for p in parts:
+                    if getattr(p, "function_call", None) is not None:
+                        continue
+                    text = getattr(p, "text", None)
+                    if text:
+                        texts.append(text)
+                return "".join(texts)
+        if hasattr(chunk, "text"):
+            return chunk.text or ""
+        return ""
+
     async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
         """Override to handle Gemini-specific message format conversion."""
         try:
             from google.genai.types import (
-                GenerateContentConfig, HttpOptions, ThinkingConfig,
+                FunctionDeclaration, GenerateContentConfig, HttpOptions,
+                ThinkingConfig, Tool as GoogleTool,
             )
         except ImportError as exc:
             raise ImportError(
@@ -1515,6 +1609,25 @@ class Google(Llm):
         http_options = HttpOptions(timeout=self.timeout * 1000)  # timeout is in milliseconds
         thinking_config = ThinkingConfig(thinking_budget=0, include_thoughts=False)
 
+        # Convert OpenAI-format tool specs to Google function declarations
+        tool_specs = kwargs.pop("tools", None)
+        google_tools = None
+        if tool_specs:
+            declarations = []
+            for spec in tool_specs:
+                if isinstance(spec, dict) and spec.get("type") == "function":
+                    func = spec["function"]
+                    parameters = dict(func.get("parameters", {}))
+                    # Remove keys that are not valid in Google's schema
+                    parameters.pop("title", None)
+                    declarations.append(FunctionDeclaration(
+                        name=func["name"],
+                        description=func.get("description", ""),
+                        parameters=parameters,
+                    ))
+            if declarations:
+                google_tools = [GoogleTool(function_declarations=declarations)]
+
         client = await self.get_client(model_spec, **kwargs)
         contents, system_instruction = self._messages_to_contents(messages)
         config = GenerateContentConfig(
@@ -1522,6 +1635,7 @@ class Google(Llm):
             temperature=self.temperature,
             thinking_config=thinking_config,
             system_instruction=system_instruction,
+            tools=google_tools,
         )
 
         if response_model:
