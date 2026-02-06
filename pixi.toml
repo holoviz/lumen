@@ -50,13 +50,10 @@ anthropic = "*"
 chardet = "*"
 duckdb = ">=1.2.0"
 griffe = "*"
-<<<<<<< improve_llm_check
 google-genai = ">=1.56.0"
 instructor = ">=1.11.1"
 jsonref = "*"
-=======
 instructor = ">=1.14.3"
->>>>>>> main
 markitdown = "!=0.1.1"
 mistralai = "*"
 nbformat = "*"
