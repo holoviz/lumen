@@ -924,6 +924,7 @@ class Report(TaskGroup):
             }
 
     async def _execute_event(self, event=None):
+        await asyncio.sleep(0.01)  # yield the event loop to allow button loading state to update
         await self.execute()
 
     async def _notebook_export(self):
