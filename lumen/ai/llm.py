@@ -535,20 +535,13 @@ class Llm(param.Parameterized):
             if not name or name not in tool_instances:
                 continue
             tool = tool_instances[name]
-            context = tool_contexts.get(name)
-            if context:
-                outputs, _ = await tool.respond(messages, context, tool_args=arguments)
-                if len(outputs) == 1:
-                    result = outputs[0]
-                else:
-                    result = outputs
-            elif hasattr(tool, "execute"):
+            context = tool_contexts.get(name, {})
+            for requirement in tool.requires:
+                if requirement not in arguments and requirement in context:
+                    arguments[requirement] = context[requirement]
+            if isinstance(tool, MCPTool):
                 result = await tool.execute(**arguments)
-            else:
-                if getattr(tool, "requires", None):
-                    for requirement in tool.requires:
-                        if requirement not in arguments and requirement in tool_contexts.get(name, {}):
-                            arguments[requirement] = tool_contexts[name][requirement]
+            elif isinstance(tool, FunctionTool):
                 if asyncio.iscoroutinefunction(tool.function):
                     result = await tool.function(**arguments)
                 else:
