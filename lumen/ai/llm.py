@@ -30,6 +30,7 @@ from .utils import format_exception, log_debug, truncate_string
 
 if TYPE_CHECKING:
     from .tools import FunctionTool
+    from .tools.mcp import MCPTool
 
 class Message(TypedDict):
     role: Literal["system", "user", "assistant", "tool"]
@@ -290,7 +291,7 @@ class Llm(param.Parameterized):
         response_model: BaseModel | None = None,
         allow_partial: bool = False,
         model_spec: str | dict = "default",
-        tools: list[dict[str, Any] | FunctionTool] | None = None,
+        tools: list[dict[str, Any] | FunctionTool | MCPTool] | None = None,
         **input_kwargs,
     ) -> BaseModel:
         """
@@ -307,8 +308,8 @@ class Llm(param.Parameterized):
         allow_partial: bool
             Whether to allow the LLM to only partially fill
             the provided response_model.
-        tools: list[dict[str, Any] | FunctionTool] | None
-            Tool definitions or FunctionTool instances to pass through.
+        tools: list[dict[str, Any] | FunctionTool | MCPTool] | None
+            Tool definitions, FunctionTool, or MCPTool instances to pass through.
         model: Literal['default' | 'reasoning' | 'sql']
             The model as listed in the model_kwargs parameter
             to invoke to answer the query.
@@ -372,9 +373,9 @@ class Llm(param.Parameterized):
     @classmethod
     def _normalize_tools(
         cls,
-        tools: list[dict[str, Any] | FunctionTool] | None,
-    ) -> tuple[list[dict[str, Any]] | None, dict[str, FunctionTool], dict[str, Any]]:
-        tool_instances: dict[str, FunctionTool] = {}
+        tools: list[dict[str, Any] | FunctionTool | MCPTool] | None,
+    ) -> tuple[list[dict[str, Any]] | None, dict[str, FunctionTool | MCPTool], dict[str, Any]]:
+        tool_instances: dict[str, FunctionTool | MCPTool] = {}
         tool_contexts: dict[str, Any] = {}
         if tools is None:
             return None, tool_instances, tool_contexts
@@ -388,17 +389,17 @@ class Llm(param.Parameterized):
             if callable(tool) and hasattr(tool, "__lumen_tool_annotations__"):
                 from .tools import FunctionTool
                 tool = FunctionTool(tool)
-            if hasattr(tool, "_model") and hasattr(tool, "function"):
+            if hasattr(tool, "_model"):
                 tool_instances[tool.name] = tool  # type: ignore[assignment]
                 if tool_context is not None:
                     tool_contexts[tool.name] = tool_context
-                tool_specs.append(cls._tool_spec_from_function_tool(tool))  # type: ignore[arg-type]
+                tool_specs.append(cls._tool_spec_from_tool(tool))  # type: ignore[arg-type]
             else:
                 tool_specs.append(tool)  # type: ignore[arg-type]
         return tool_specs, tool_instances, tool_contexts
 
     @classmethod
-    def _tool_spec_from_function_tool(cls, tool: FunctionTool) -> dict[str, Any]:
+    def _tool_spec_from_tool(cls, tool: FunctionTool | MCPTool) -> dict[str, Any]:
         schema = tool._model.model_json_schema()
         description = tool.purpose or schema.get("description") or ""
         return {
@@ -523,7 +524,7 @@ class Llm(param.Parameterized):
 
     async def _run_tool_calls(
         self,
-        tool_instances: dict[str, FunctionTool],
+        tool_instances: dict[str, FunctionTool | MCPTool],
         tool_calls: list[Any],
         tool_contexts: dict[str, Any],
         messages: list[Message],
@@ -541,6 +542,8 @@ class Llm(param.Parameterized):
                     result = outputs[0]
                 else:
                     result = outputs
+            elif hasattr(tool, "execute"):
+                result = await tool.execute(**arguments)
             else:
                 if getattr(tool, "requires", None):
                     for requirement in tool.requires:
@@ -577,7 +580,7 @@ class Llm(param.Parameterized):
         response_model: BaseModel | None = None,
         field: str | None = None,
         model_spec: str | dict = "default",
-        tools: list[dict[str, Any] | FunctionTool] | None = None,
+        tools: list[dict[str, Any] | FunctionTool | MCPTool] | None = None,
         **kwargs,
     ):
         """
@@ -593,8 +596,8 @@ class Llm(param.Parameterized):
             A Pydantic model that the LLM should materialize.
         field: str
             The field in the response_model to stream.
-        tools: list[dict[str, Any] | FunctionTool] | None
-            Tool definitions or FunctionTool instances to pass through.
+        tools: list[dict[str, Any] | FunctionTool | MCPTool] | None
+            Tool definitions, FunctionTool, or MCPTool instances to pass through.
         model: Literal['default' | 'reasoning' | 'sql']
             The model as listed in the model_kwargs parameter
             to invoke to answer the query.
