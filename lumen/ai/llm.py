@@ -1107,17 +1107,61 @@ class Anthropic(Llm):
             return partial(self._get_completion_method(), model=model, **self._get_create_kwargs(response_model))
 
     def _messages_to_contents(self, messages: list[Message]) -> tuple[list[Message], str | None]:
-        """Extract system messages from the messages list.
+        """Extract system messages and convert tool messages to Anthropic format.
 
         Anthropic requires system to be passed separately, not in messages array.
+        Tool-call and tool-result messages are converted into the content-block
+        format that the Anthropic API expects.
         """
-        filtered = []
+        filtered: list[dict[str, Any]] = []
         system_text = None
+        pending_tool_results: list[dict[str, Any]] = []
+
         for msg in messages:
-            if msg["role"] == "system":
+            role = msg["role"]
+            if role == "system":
                 system_text = msg["content"]
-            else:
-                filtered.append(msg)
+                continue
+
+            # Assistant message with tool_calls → assistant with tool_use content blocks
+            if role == "assistant" and msg.get("tool_calls"):
+                # Flush pending tool results first
+                if pending_tool_results:
+                    filtered.append({"role": "user", "content": pending_tool_results})
+                    pending_tool_results = []
+                content_blocks: list[dict[str, Any]] = []
+                if msg.get("content"):
+                    content_blocks.append({"type": "text", "text": msg["content"]})
+                for tc in msg["tool_calls"]:
+                    name, args, call_id = self._parse_tool_call(tc)
+                    content_blocks.append({
+                        "type": "tool_use",
+                        "id": call_id or f"call_{name}",
+                        "name": name,
+                        "input": args,
+                    })
+                filtered.append({"role": "assistant", "content": content_blocks})
+                continue
+
+            # Tool result → collect into a single user message with tool_result blocks
+            if role == "tool":
+                pending_tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": msg.get("tool_call_id", ""),
+                    "content": msg.get("content", ""),
+                })
+                continue
+
+            # Flush pending tool results before any other message
+            if pending_tool_results:
+                filtered.append({"role": "user", "content": pending_tool_results})
+                pending_tool_results = []
+
+            filtered.append(msg)
+
+        if pending_tool_results:
+            filtered.append({"role": "user", "content": pending_tool_results})
+
         return filtered, system_text
 
     def _add_system_message(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
@@ -1136,9 +1180,74 @@ class Anthropic(Llm):
         client_callable = self._get_cached_client(response_model, model=model, **model_kwargs)
         return partial(client_callable.func, *client_callable.args, timeout=self.timeout, **client_callable.keywords)
 
+    @classmethod
+    def _extract_tool_calls(cls, response: Any) -> list[Any]:
+        """Extract tool calls from an Anthropic Message response.
+
+        Normalises ToolUseBlocks into OpenAI-style dicts so the base-class
+        pipeline works unchanged.
+        """
+        if hasattr(response, "content") and not isinstance(response.content, str):
+            calls = []
+            for block in response.content:
+                if getattr(block, "type", None) == "tool_use":
+                    calls.append({
+                        "id": block.id,
+                        "function": {
+                            "name": block.name,
+                            "arguments": json.dumps(block.input),
+                        },
+                    })
+            if calls:
+                return calls
+        return []
+
+    @classmethod
+    def _extract_stream_tool_calls(cls, chunk: Any) -> list[dict[str, Any]]:
+        """Extract tool calls from Anthropic streaming events."""
+        # content_block_start with a tool_use block
+        if hasattr(chunk, "content_block"):
+            block = chunk.content_block
+            if getattr(block, "type", None) == "tool_use":
+                return [{
+                    "index": getattr(chunk, "index", 0),
+                    "id": block.id,
+                    "function": {
+                        "name": block.name,
+                        "arguments": "",
+                    },
+                }]
+        # content_block_delta with partial JSON for tool input
+        if hasattr(chunk, "delta"):
+            partial = getattr(chunk.delta, "partial_json", None)
+            if partial is not None:
+                return [{
+                    "index": getattr(chunk, "index", 0),
+                    "function": {
+                        "arguments": partial,
+                    },
+                }]
+        return []
+
     async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
         """Override to handle Anthropic-specific message format."""
         log_debug(f"Input messages: \033[95m{len(messages)} messages\033[0m including system")
+
+        # Convert OpenAI-format tool specs to Anthropic format
+        tool_specs = kwargs.pop("tools", None)
+        if tool_specs:
+            anthropic_tools = []
+            for spec in tool_specs:
+                if isinstance(spec, dict) and spec.get("type") == "function":
+                    func = spec["function"]
+                    anthropic_tools.append({
+                        "name": func["name"],
+                        "description": func.get("description", ""),
+                        "input_schema": func.get("parameters", {}),
+                    })
+                else:
+                    anthropic_tools.append(spec)
+            kwargs["tools"] = anthropic_tools
 
         # Extract system from messages
         filtered_messages, extracted_system = self._messages_to_contents(messages)
