@@ -128,6 +128,12 @@ class Llm(param.Parameterized):
         'default', 'reasoning' and 'sql'. Agents may pick which model to
         invoke for different reasons.""")
 
+    tools = param.List(default=[], doc="""
+        Default tools that are always available to this LLM instance.
+        These are combined with any tools passed directly to invoke()
+        or stream() calls. Accepts the same types as the tools argument
+        on those methods (dicts, FunctionTool, or MCPTool instances).""")
+
     logfire_tags = param.List(default=None, doc="""
         Whether to log LLM calls and responses to logfire.
         If a list of tags is provided, those tags will be used for logging.
@@ -323,7 +329,8 @@ class Llm(param.Parameterized):
 
         kwargs = dict(self._client_kwargs)
         kwargs.update(input_kwargs)
-        tool_specs, tool_instances, tool_contexts = self._normalize_tools(tools)
+        combined_tools = self._combine_tools(tools)
+        tool_specs, tool_instances, tool_contexts = self._normalize_tools(combined_tools)
         if tool_specs is not None:
             kwargs["tools"] = tool_specs
 
@@ -369,6 +376,17 @@ class Llm(param.Parameterized):
         if hasattr(response, "choices"):
             return response.choices[0].message.content
         return str(response)
+
+    def _combine_tools(
+        self,
+        tools: list[dict[str, Any] | FunctionTool | MCPTool] | None,
+    ) -> list[dict[str, Any] | FunctionTool | MCPTool] | None:
+        """Combine instance-level ``self.tools`` with per-call *tools*."""
+        if self.tools and tools:
+            return list(self.tools) + list(tools)
+        elif self.tools:
+            return list(self.tools)
+        return tools
 
     @classmethod
     def _normalize_tools(
@@ -601,7 +619,8 @@ class Llm(param.Parameterized):
         ------
         The string or response_model field.
         """
-        tool_specs, tool_instances, tool_contexts = self._normalize_tools(tools)
+        combined_tools = self._combine_tools(tools)
+        tool_specs, tool_instances, tool_contexts = self._normalize_tools(combined_tools)
         if self.logfire_tags is not None:
             output = await self.invoke(
                 messages,
