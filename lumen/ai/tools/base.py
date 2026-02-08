@@ -17,7 +17,7 @@ from ..translate import function_to_model
 _TOOL_ANNOTATIONS_ATTR = "__lumen_tool_annotations__"
 
 
-def define_tool(*, requires=None, provides=None, purpose=None, render_output=None):
+def define_tool(_func=None, *, requires=None, provides=None, purpose=None, render_output=None):
     """
     Annotate a function so FunctionTool can read tool metadata.
     """
@@ -33,6 +33,8 @@ def define_tool(*, requires=None, provides=None, purpose=None, render_output=Non
             annotations["render_output"] = render_output
         setattr(function, _TOOL_ANNOTATIONS_ATTR, annotations)
         return function
+    if _func is not None and callable(_func):
+        return decorator(_func)
     return decorator
 
 
@@ -137,17 +139,21 @@ class FunctionTool(Tool):
         self, messages: list[Message], context: TContext, **kwargs: dict[str, Any]
     ) -> tuple[list[Any], ContextModel]:
         prompt = await self._render_prompt("main", messages, context)
-        kwargs = {}
-        if any(field not in self.requires for field in self._model.model_fields):
-            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
-            kwargs = await self.llm.invoke(
-                messages,
-                system=prompt,
-                model_spec=model_spec,
-                response_model=self._model,
-                allow_partial=False,
-                max_retries=3,
-            )
+        tool_args = kwargs.pop("tool_args", None)
+        if tool_args is None:
+            kwargs = {}
+            if any(field not in self.requires for field in self._model.model_fields):
+                model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
+                kwargs = await self.llm.invoke(
+                    messages,
+                    system=prompt,
+                    model_spec=model_spec,
+                    response_model=self._model,
+                    allow_partial=False,
+                    max_retries=3,
+                )
+        else:
+            kwargs = dict(tool_args)
         arguments = dict(kwargs, **{k: context[k] for k in self.requires})
         if param.parameterized.iscoroutinefunction(self.function):
             result = await self.function(**arguments)
