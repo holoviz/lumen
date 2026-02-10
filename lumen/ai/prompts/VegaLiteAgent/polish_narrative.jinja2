@@ -1,0 +1,102 @@
+{% extends 'BaseLumenAgent/revise_output.jinja2' %}
+
+{% block instructions %}
+{{ super() }}
+
+# PASS 2: Narrative & Annotation
+
+## Key Improvements
+
+1. **Highlight leaders**: Use conditional color for top-ranked items
+2. **Remove redundant axis titles**: Set `title: null` only when it repeats visible category names (e.g., "State" when bars show "CA", "TX")
+3. **Add strategic labels**: 
+   - Leader/winner values on bar charts
+   - Peak/trough values on line charts
+   - Outliers on scatter plots
+4. **Keep it minimal**: Only label what strengthens the story
+
+Provide multiple edits in one response when applicable. Return empty edits if chart is already polished.
+{% endblock %}
+
+{%- block context %}
+Table: {{ table }}
+Data summary:
+{{ memory['data'] }}
+
+Current spec:
+```yaml
+{{ vega_spec }}
+```
+{% endblock %}
+
+{% block examples %}
+{{ super() }}
+
+### Strategic color highlighting (accent one category)
+```yaml
+old_str: |
+  - encoding:
+      x:
+        field: value
+        type: quantitative
+      y:
+        field: state
+        sort: -x
+        type: nominal
+    mark: bar
+new_str: |
+  - encoding:
+      color:
+        condition:
+          test: datum.state == 'NM'
+          value: '#1f77b4'
+        value: '#cccccc'
+      x:
+        field: value
+        type: quantitative
+      y:
+        field: state
+        sort: -x
+        type: nominal
+    mark: bar
+```
+
+### Direct labeling with text layer (annotations > legends)
+```yaml
+old_str: |
+  - encoding:
+      x:
+        field: value
+        type: quantitative
+      y:
+        field: category
+        type: nominal
+    mark: bar
+new_str: |
+  - encoding:
+      x:
+        field: value
+        type: quantitative
+      y:
+        field: category
+        type: nominal
+    mark: bar
+  - encoding:
+      text:
+        field: value
+        format: ',.0f'
+        type: quantitative
+      x:
+        field: value
+        type: quantitative
+      y:
+        field: category
+        type: nominal
+    mark:
+      align: left
+      color: '#333333'
+      dx: 5
+      fontSize: 11
+      type: text
+```
+{% endblock %}

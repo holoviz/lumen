@@ -47,11 +47,7 @@ class DocumentListAgent(BaseListAgent):
             if source_catalog and hasattr(source_catalog, '_available_metadata'):
                 for meta in source_catalog._available_metadata:
                     if meta["filename"] == filename and "raw_bytes" in meta:
-                        return PDF(
-                            meta["raw_bytes"],
-                            sizing_mode='stretch_width',
-                            height=500,
-                        )
+                        return PDF(meta["raw_bytes"], height=500, max_width=1200, sizing_mode="stretch_width")
 
             # Fall back to markdown preview from extracted content
             # First try full content from source catalog
