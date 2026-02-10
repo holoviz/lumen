@@ -24,7 +24,7 @@ from .progress import Progress
 
 TABLE_EXTENSIONS = ("csv", "parquet", "parq", "json", "xlsx", "geojson", "wkt", "zip")
 
-METADATA_EXTENSIONS = ("md", "txt", "yaml", "yml", "json", "pdf")
+METADATA_EXTENSIONS = ("md", "txt", "yaml", "yml", "json", "pdf", "docx", "doc", "pptx", "ppt")
 METADATA_FILENAME_PATTERNS = ("_metadata", "metadata_", "readme", "schema")
 
 # Download configuration constants

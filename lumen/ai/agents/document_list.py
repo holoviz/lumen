@@ -1,5 +1,7 @@
 import param
 
+from panel.layout import Column
+from panel.pane import PDF
 from panel_material_ui import Markdown
 
 from ..context import ContextModel, TContext
@@ -36,32 +38,53 @@ class DocumentListAgent(BaseListAgent):
     def _create_row_content(self, context: TContext, source_name: str):
         """Create row content function that displays document preview."""
         metaset = context.get('metaset')
+        source_catalog = context.get('source_catalog')
 
         def row_content(row):
             filename = row[self._column_name]
 
+            # Check if we have raw PDF bytes in the source catalog
+            if source_catalog and hasattr(source_catalog, '_available_metadata'):
+                for meta in source_catalog._available_metadata:
+                    if meta["filename"] == filename and "raw_bytes" in meta:
+                        return PDF(
+                            meta["raw_bytes"],
+                            sizing_mode='stretch_width',
+                            height=500,
+                        )
+
+            # Fall back to markdown preview from extracted content
+            # First try full content from source catalog
+            full_content = None
+            if source_catalog and hasattr(source_catalog, '_available_metadata'):
+                for meta in source_catalog._available_metadata:
+                    if meta["filename"] == filename:
+                        full_content = meta.get("content")
+                        break
+
+            if full_content:
+                return Column(
+                    Markdown(full_content, sizing_mode='stretch_width'),
+                    max_height=500,
+                    scroll='y-auto',
+                    sizing_mode='stretch_width',
+                )
+
+            # Fall back to metaset chunks
             if not metaset or not metaset.has_docs:
                 return Markdown("*No preview available*")
 
-            # Find all chunks for this document
             doc_chunks = [doc for doc in metaset.docs if doc.filename == filename]
-
             if not doc_chunks:
                 return Markdown("*No preview available*")
 
-            # Show preview from first chunk
-            first_chunk = doc_chunks[0]
-            preview_text = first_chunk.text[:500]  # First 500 chars
-            if len(first_chunk.text) > 500:
-                preview_text += "..."
-
-            content = f"**Preview:**\n\n{preview_text}"
-
-            # Show chunk count if multiple
-            if len(doc_chunks) > 1:
-                content += f"\n\n*({len(doc_chunks)} chunks available)*"
-
-            return Markdown(content, sizing_mode='stretch_width')
+            full_text = "\n\n".join(chunk.text for chunk in doc_chunks)
+            return Column(
+                Markdown(full_text, sizing_mode='stretch_width'),
+                max_height=500,
+                scroll='y-auto',
+                sizing_mode='stretch_width',
+            )
 
         return row_content
 
@@ -70,7 +93,7 @@ class DocumentListAgent(BaseListAgent):
         metaset = context.get("metaset")
         if not metaset:
             return False
-        return metaset.has_docs and len(metaset.docs) > 1
+        return metaset.has_docs
 
     def _get_items(self, context: TContext) -> dict[str, list[str]]:
         metaset = context.get("metaset")
