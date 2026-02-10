@@ -1702,6 +1702,28 @@ class Google(Llm):
         return cls._extract_tool_calls(chunk)
 
     @classmethod
+    def _translate_tool_specs(cls, tool_specs: list) -> Any:
+        # Convert OpenAI-format tool specs to Google function declarations
+        if not tool_specs:
+            return
+
+        from google.genai.types import FunctionDeclaration, Tool
+        declarations = []
+        for spec in tool_specs:
+            if not isinstance(spec, dict) or spec.get("type") != "function":
+                continue
+            func = spec["function"]
+            parameters = dict(func.get("parameters", {}))
+            # Remove keys that are not valid in Google's schema
+            parameters.pop("title", None)
+            declarations.append(FunctionDeclaration(
+                name=func["name"],
+                description=func.get("description", ""),
+                parameters=parameters,
+            ))
+        return Tool(function_declarations=declarations) if declarations else None
+
+    @classmethod
     def _get_delta(cls, chunk: Any) -> str:
         """Extract delta content from streaming response, skipping function_call parts."""
         if hasattr(chunk, "candidates") and chunk.candidates:
@@ -1724,8 +1746,7 @@ class Google(Llm):
         """Override to handle Gemini-specific message format conversion."""
         try:
             from google.genai.types import (
-                FunctionDeclaration, GenerateContentConfig, HttpOptions,
-                ThinkingConfig, Tool as GoogleTool,
+                GenerateContentConfig, HttpOptions, ThinkingConfig,
             )
         except ImportError as exc:
             raise ImportError(
@@ -1737,25 +1758,7 @@ class Google(Llm):
         http_options = HttpOptions(timeout=self.timeout * 1000)  # timeout is in milliseconds
         thinking_config = ThinkingConfig(thinking_budget=0, include_thoughts=False)
 
-        # Convert OpenAI-format tool specs to Google function declarations
-        tool_specs = kwargs.pop("tools", None)
-        google_tools = None
-        if tool_specs:
-            declarations = []
-            for spec in tool_specs:
-                if isinstance(spec, dict) and spec.get("type") == "function":
-                    func = spec["function"]
-                    parameters = dict(func.get("parameters", {}))
-                    # Remove keys that are not valid in Google's schema
-                    parameters.pop("title", None)
-                    declarations.append(FunctionDeclaration(
-                        name=func["name"],
-                        description=func.get("description", ""),
-                        parameters=parameters,
-                    ))
-            if declarations:
-                google_tools = [GoogleTool(function_declarations=declarations)]
-
+        tools = self._translate_tool_specs(kwargs.pop("tools", []))
         client = await self.get_client(model_spec, **kwargs)
         contents, system_instruction = self._messages_to_contents(messages)
         config = GenerateContentConfig(
@@ -1763,7 +1766,7 @@ class Google(Llm):
             temperature=self.temperature,
             thinking_config=thinking_config,
             system_instruction=system_instruction,
-            tools=google_tools,
+            tools=tools,
         )
 
         if response_model:
