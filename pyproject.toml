@@ -75,6 +75,7 @@ ai-google = ['google-genai>=1.56.0', 'jsonref']
 ai-litellm = ['litellm']
 ai-ollama = ['ollama']
 bigquery = ['google-cloud-bigquery', 'sqlalchemy-bigquery']
+mcp = ['fastmcp']
 
 [project.scripts]
 lumen-spec = "lumen.command:main"
