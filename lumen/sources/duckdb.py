@@ -163,10 +163,15 @@ class DuckDBSource(BaseSQLSource):
             else:
                 df = mirror.data
                 def update(e, table=table):
-                    self._connection.from_df(e.new).to_view(table)
-                    self._set_cache(e.new, table)
+                    df = e.new
+                    for col in df.select_dtypes(include=['string']).columns:
+                        df[col] = df[col].astype(object)
+                    self._connection.from_df(df).to_view(table)
+                    self._set_cache(df, table)
                 mirror.param.watch(update, 'data')
             try:
+                for col in df.select_dtypes(include=['string']).columns:
+                    df[col] = df[col].astype(object)
                 self._connection.from_df(df).to_view(table)
             except (duckdb.CatalogException, duckdb.ParserException):
                 continue
@@ -303,6 +308,9 @@ class DuckDBSource(BaseSQLSource):
         source = DuckDBSource(uri=':memory:', ephemeral=True, **kwargs)
         table_defs = {}
         for name, df in tables.items():
+            # DuckDB occasionally has issues with the new pandas string dtype
+            for col in df.select_dtypes(include=['string']).columns:
+                df[col] = df[col].astype(object)
             source._connection.from_df(df).to_view(name)
             table_defs[name] = source.sql_expr.format(table=name)
         source.tables = table_defs
@@ -329,6 +337,8 @@ class DuckDBSource(BaseSQLSource):
         new_tables = {}
         for t, data in ephemeral_tables.items():
             df = Serializer.deserialize(data)
+            for col in df.select_dtypes(include=['string']).columns:
+                df[col] = df[col].astype(object)
             try:
                 source._connection.from_df(df).to_view(t)
             except duckdb.ParserException:

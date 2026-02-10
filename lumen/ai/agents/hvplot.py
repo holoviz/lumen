@@ -8,7 +8,6 @@ from pydantic.fields import FieldInfo
 from ...views import hvPlotUIView
 from ..config import PROMPTS_DIR
 from ..context import TContext
-from ..models import PartialBaseModel
 from ..translate import param_to_pydantic
 from ..utils import get_data
 from .base_view import BaseViewAgent
@@ -47,7 +46,7 @@ class hvPlotAgent(BaseViewAgent):
         ]
         model = param_to_pydantic(
             self.view_type,
-            base_model=PartialBaseModel,
+            base_model=BaseModel,
             excluded=excluded,
             schema=schema,
             extra_fields={

@@ -208,6 +208,12 @@ Agent names are case-insensitive. The "Agent" suffix is optional: `sql` = `sqlag
 | `--show` | Auto-open browser | `--show` |
 | `--log-level` | Verbosity | `--log-level DEBUG` |
 
+!!! tip "Small models (<= 8B)"
+    Models with 8B parameters or fewer likely need `--code-execution prompt` to successfully create reliable Vega-Lite specifications.
+
+    !!! warning "Security"
+        Setting `--code-execution` uses Python's `exec` function to run LLM-generated code locally. **This is insecure** as the model could generate and execute malicious code. Only use this with trusted models and in secure environments.
+
 ## Full example
 
 ``` bash title="Complete configuration"

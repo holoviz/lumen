@@ -8,11 +8,11 @@ from pydantic import Field
 from ..config import PROMPTS_DIR
 from ..context import ContextModel, TContext
 from ..llm import Message
-from ..models import PartialBaseModel
+from ..models import BaseModel
 from .base import Agent
 
 
-class QueryCompletionValidation(PartialBaseModel):
+class QueryCompletionValidation(BaseModel):
     """Validation of whether the executed plan answered the user's query"""
 
     chain_of_thought: str = Field(

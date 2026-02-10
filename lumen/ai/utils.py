@@ -559,103 +559,139 @@ async def get_data(pipeline):
     return await asyncio.to_thread(get_data_sync)
 
 
+def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool = True) -> str:
+    """
+    Synchronous version of describe_data that generates a YAML summary of a DataFrame.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The DataFrame to describe
+    enum_limit : int
+        Maximum number of enum values to show per column
+    reduce_enums : bool
+        Whether to reduce enum values for readability
+
+    Returns
+    -------
+    str
+        YAML-formatted summary of the DataFrame
+    """
+    size = df.size
+    shape = df.shape
+    if size < 250:
+        return df.to_markdown(index=False)
+
+    is_sampled = False
+    if shape[0] > 5000:
+        is_sampled = True
+        df = df.sample(5000)
+
+    df = df.sort_index()
+
+    for col in df.columns:
+        if isinstance(df[col].iloc[0], pd.Timestamp):
+            df[col] = pd.to_datetime(df[col])
+
+    sampled_columns = False
+    if len(df.columns) > 10:
+        df = df[df.columns[:10]]
+        sampled_columns = True
+
+    describe_df = df.describe(percentiles=[])
+    columns_to_drop = ["min", "max", "count", "top", "freq"] # present if any numeric or object
+    columns_to_drop = [col for col in columns_to_drop if col in describe_df.columns]
+    df_describe_dict = describe_df.drop(columns=columns_to_drop).to_dict()
+
+    for col in df.select_dtypes(include=["object", "string"]).columns:
+        if col not in df_describe_dict:
+            df_describe_dict[col] = {}
+        try:
+            # Get unique values for enum processing
+            unique_values = df[col].dropna().unique().tolist()
+            if unique_values:
+                temp_spec = {"enum": unique_values}
+                updated_spec, _ = process_enums(
+                    temp_spec,
+                    num_cols=len(df.columns),
+                    limit=enum_limit,
+                    include_enum=True,
+                    reduce_enums=reduce_enums,
+                )
+                if "enum" in updated_spec:
+                    df_describe_dict[col]["enum"] = updated_spec["enum"]
+
+            df_describe_dict[col]["nunique"] = df[col].nunique()
+        except Exception:
+            df_describe_dict[col]["nunique"] = 'unknown'
+        try:
+            max_length = df[col].str.len().max()
+            if pd.notna(max_length):
+                df_describe_dict[col]["max_length"] = int(max_length)
+        except AttributeError:
+            pass
+
+    for col in df.columns:
+        if col not in df_describe_dict:
+            df_describe_dict[col] = {}
+        nulls = int(df[col].isnull().sum())
+        if nulls > 0:
+            df_describe_dict[col]["nulls"] = nulls
+
+    # select datetime64 columns
+    for col in df.select_dtypes(include=["datetime64"]).columns:
+        for key in df_describe_dict[col]:
+            df_describe_dict[col][key] = str(df_describe_dict[col][key])
+        df[col] = df[col].astype(str)  # shorten output
+
+    # select all numeric columns and round
+    for col in df.select_dtypes(include=["int64", "float64"]).columns:
+        for key in df_describe_dict[col]:
+            df_describe_dict[col][key] = format_float(df_describe_dict[col][key])
+
+    for col in df.select_dtypes(include=["float64"]).columns:
+        df[col] = df[col].apply(format_float)
+
+    # Add head and tail samples (2 row each)
+    head_sample = df.head(2).to_dict('records')
+    tail_sample = df.tail(2).to_dict('records')
+
+    result = {
+        "summary": {
+            "n_cells": size,
+            "n_rows": shape[0],
+            "n_cols": shape[1],
+            "sampled_cols": sampled_columns,
+            "is_sampled": is_sampled,
+        },
+        "stats": df_describe_dict,
+        "head": head_sample[0] if head_sample else {},
+        "tail": tail_sample[0] if tail_sample else {},
+    }
+
+    return yaml.dump(result, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+
 async def describe_data(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool = True) -> str:
-    def describe_data_sync(df):
-        size = df.size
-        shape = df.shape
-        if size < 250:
-            return df.to_markdown(index=False)
+    """
+    Async wrapper for describe_data_sync that generates a YAML summary of a DataFrame.
 
-        is_sampled = False
-        if shape[0] > 5000:
-            is_sampled = True
-            df = df.sample(5000)
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The DataFrame to describe
+    enum_limit : int
+        Maximum number of enum values to show per column
+    reduce_enums : bool
+        Whether to reduce enum values for readability
 
-        df = df.sort_index()
+    Returns
+    -------
+    str
+        YAML-formatted summary of the DataFrame
+    """
+    return await asyncio.to_thread(describe_data_sync, df, enum_limit, reduce_enums)
 
-        for col in df.columns:
-            if isinstance(df[col].iloc[0], pd.Timestamp):
-                df[col] = pd.to_datetime(df[col])
-
-        sampled_columns = False
-        if len(df.columns) > 10:
-            df = df[df.columns[:10]]
-            sampled_columns = True
-
-        describe_df = df.describe(percentiles=[])
-        columns_to_drop = ["min", "max", "count", "top", "freq"] # present if any numeric or object
-        columns_to_drop = [col for col in columns_to_drop if col in describe_df.columns]
-        df_describe_dict = describe_df.drop(columns=columns_to_drop).to_dict()
-
-        for col in df.select_dtypes(include=["object"]).columns:
-            if col not in df_describe_dict:
-                df_describe_dict[col] = {}
-            try:
-                # Get unique values for enum processing
-                unique_values = df[col].dropna().unique().tolist()
-                if unique_values:
-                    temp_spec = {"enum": unique_values}
-                    updated_spec, _ = process_enums(
-                        temp_spec,
-                        num_cols=len(df.columns),
-                        limit=enum_limit,
-                        include_enum=True,
-                        reduce_enums=reduce_enums,
-                    )
-                    if "enum" in updated_spec:
-                        df_describe_dict[col]["enum"] = updated_spec["enum"]
-
-                df_describe_dict[col]["nunique"] = df[col].nunique()
-            except Exception:
-                df_describe_dict[col]["nunique"] = 'unknown'
-            try:
-                max_length = df[col].str.len().max()
-                if pd.notna(max_length):
-                    df_describe_dict[col]["max_length"] = int(max_length)
-            except AttributeError:
-                pass
-
-        for col in df.columns:
-            if col not in df_describe_dict:
-                df_describe_dict[col] = {}
-            nulls = int(df[col].isnull().sum())
-            if nulls > 0:
-                df_describe_dict[col]["nulls"] = nulls
-
-        # select datetime64 columns
-        for col in df.select_dtypes(include=["datetime64"]).columns:
-            for key in df_describe_dict[col]:
-                df_describe_dict[col][key] = str(df_describe_dict[col][key])
-            df[col] = df[col].astype(str)  # shorten output
-
-        # select all numeric columns and round
-        for col in df.select_dtypes(include=["int64", "float64"]).columns:
-            for key in df_describe_dict[col]:
-                df_describe_dict[col][key] = format_float(df_describe_dict[col][key])
-
-        for col in df.select_dtypes(include=["float64"]).columns:
-            df[col] = df[col].apply(format_float)
-
-        # Add head and tail samples (2 row each)
-        head_sample = df.head(2).to_dict('records')
-        tail_sample = df.tail(2).to_dict('records')
-
-        result = {
-            "summary": {
-                "n_cells": size,
-                "n_rows": shape[0],
-                "n_cols": shape[1],
-                "sampled_cols": sampled_columns,
-                "is_sampled": is_sampled,
-            },
-            "stats": df_describe_dict,
-            "head": head_sample[0] if head_sample else {},
-            "tail": tail_sample[0] if tail_sample else {},
-        }
-
-        return yaml.dump(result, default_flow_style=False, allow_unicode=True, sort_keys=False)
-
-    return await asyncio.to_thread(describe_data_sync, df)
 
 
 def clean_sql(sql_expr: str, dialect: str | None = None, prettify: bool = False) -> str:
