@@ -810,73 +810,72 @@ class UI(Viewer):
         self._pending_sources_snapshot = None  # Also indicates dialog was opened from chat
 
         def on_submit(event=None, instance=None, wait=False):
-            with self._chat_input.param.update(loading=True):
-                user_prompt = self._chat_input.value_input
+            user_prompt = self._chat_input.value_input
 
-                # Check if there are pending uploads that need to be transferred first
-                uploaded = self._chat_input.value_uploaded
-                if self._chat_input.pending_uploads or (wait and not uploaded):
-                    self._pending_query = user_prompt or None
-                    if not wait:
-                        self._chat_input.sync()
-                    # Schedule a callback to await the upload
-                    state.add_periodic_callback(partial(on_submit, wait=True), period=100, count=1)
+            # Check if there are pending uploads that need to be transferred first
+            uploaded = self._chat_input.value_uploaded
+            if self._chat_input.pending_uploads or (wait and not uploaded):
+                self._pending_query = user_prompt or None
+                if not wait:
+                    self._chat_input.sync()
+                # Schedule a callback to await the upload
+                state.add_periodic_callback(partial(on_submit, wait=True), period=100, count=1)
+                return
+
+            # On retry after upload completes, restore the pending query
+            if wait and self._pending_query and not user_prompt:
+                user_prompt = self._pending_query
+
+            if not user_prompt and not uploaded:
+                return
+
+            # Clear pending query now that it's been captured
+            self._pending_query = None
+
+            # Auto-process uploaded files without confirmation dialog
+            if uploaded:
+                # Store sources snapshot before processing
+                sources_snapshot = list(self.context.get("sources", []))
+
+                # Generate file cards and process them directly
+                self._upload_controls._generate_file_cards({
+                    key: value["value"] for key, value in uploaded.items()
+                })
+
+                # Process the files
+                with self._chat_input.param.update(loading=True), self._upload_controls._layout.param.update(loading=True):
+                    n_tables, n_docs, n_metadata = self._upload_controls._process_files()
+
+                    # Clear uploads after processing
+                    if self._upload_controls.clear_uploads:
+                        self._upload_controls._clear_uploads()
+
+                # Clear the chat input
+                with edit_readonly(self._chat_input):
+                    self._chat_input.param.update(
+                        value_input="",
+                        value_uploaded={},
+                        views=[]
+                    )
+
+                # If files were successfully processed, execute the query with source info
+                if (n_tables + n_docs + n_metadata) > 0 and user_prompt:
+                    self._show_upload_success(n_tables, n_metadata)
+                    self._execute_pending_query_with(user_prompt, sources_snapshot)
+                    return
+                elif (n_tables + n_docs + n_metadata) > 0:
+                    # Files uploaded but no query - just show success message
+                    self._show_upload_success(n_tables, n_metadata)
+                    return
+                elif not user_prompt:
+                    # No files processed and no query
                     return
 
-                # On retry after upload completes, restore the pending query
-                if wait and self._pending_query and not user_prompt:
-                    user_prompt = self._pending_query
-
-                if not user_prompt and not uploaded:
-                    return
-
-                # Clear pending query now that it's been captured
-                self._pending_query = None
-
-                # Auto-process uploaded files without confirmation dialog
-                if uploaded:
-                    # Store sources snapshot before processing
-                    sources_snapshot = list(self.context.get("sources", []))
-
-                    # Generate file cards and process them directly
-                    self._upload_controls._generate_file_cards({
-                        key: value["value"] for key, value in uploaded.items()
-                    })
-
-                    # Process the files
-                    with self._upload_controls._layout.param.update(loading=True):
-                        n_tables, n_docs, n_metadata = self._upload_controls._process_files()
-
-                        # Clear uploads after processing
-                        if self._upload_controls.clear_uploads:
-                            self._upload_controls._clear_uploads()
-
-                    # Clear the chat input
-                    with edit_readonly(self._chat_input):
-                        self._chat_input.param.update(
-                            value_input="",
-                            value_uploaded={},
-                            views=[]
-                        )
-
-                    # If files were successfully processed, execute the query with source info
-                    if (n_tables + n_docs + n_metadata) > 0 and user_prompt:
-                        self._show_upload_success(n_tables, n_metadata)
-                        self._execute_pending_query_with(user_prompt, sources_snapshot)
-                        return
-                    elif (n_tables + n_docs + n_metadata) > 0:
-                        # Files uploaded but no query - just show success message
-                        self._show_upload_success(n_tables, n_metadata)
-                        return
-                    elif not user_prompt:
-                        # No files processed and no query
-                        return
-
-                with self.interface.param.update(disabled=True, loading=True), hold():
-                    self._update_main_view()
-                    self.interface.send(user_prompt, respond=bool(user_prompt))
-                    with edit_readonly(self._chat_input):
-                        self._chat_input.value_input = ""
+            with self.interface.param.update(disabled=True, loading=True), hold():
+                self._update_main_view()
+                self.interface.send(user_prompt, respond=bool(user_prompt))
+                with edit_readonly(self._chat_input):
+                    self._chat_input.value_input = ""
 
         # Store as instance variable for access from other methods
         self._on_submit = on_submit
