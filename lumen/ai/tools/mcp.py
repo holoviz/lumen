@@ -250,22 +250,18 @@ class MCPTool(Tool):
         **kwargs: dict[str, Any],
     ) -> tuple[list[Any], ContextModel]:
         prompt = await self._render_prompt("main", messages, context)
-        tool_args = kwargs.pop("tool_args", None)
-        if tool_args is None:
-            kwargs = {}
-            if any(field not in self.requires for field in self._model.model_fields):
-                model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
-                kwargs = await self.llm.invoke(
-                    messages,
-                    system=prompt,
-                    model_spec=model_spec,
-                    response_model=self._model,
-                    allow_partial=False,
-                    max_retries=3,
-                )
-        else:
-            kwargs = dict(tool_args)
-        arguments = dict(kwargs, **{k: context[k] for k in self.requires})
+        model_kwargs = {}
+        if any(field not in self.requires for field in self._model.model_fields):
+            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
+            kwargs = await self.llm.invoke(
+                messages,
+                system=prompt,
+                model_spec=model_spec,
+                response_model=self._model,
+                allow_partial=False,
+                max_retries=3,
+            )
+        arguments = dict(model_kwargs, **{k: context[k] for k in self.requires}, **kwargs)
 
         output = await self.execute(**arguments)
 
