@@ -24,7 +24,7 @@ from .progress import Progress
 
 TABLE_EXTENSIONS = ("csv", "parquet", "parq", "json", "xlsx", "geojson", "wkt", "zip")
 
-METADATA_EXTENSIONS = ("md", "txt", "yaml", "yml", "json")
+METADATA_EXTENSIONS = ("md", "txt", "yaml", "yml", "json", "pdf")
 METADATA_FILENAME_PATTERNS = ("_metadata", "metadata_", "readme", "schema")
 
 # Download configuration constants
@@ -685,11 +685,16 @@ class BaseSourceControls(Viewer):
                         object=f"Renamed duplicate: {base_filename} → {filename}",
                         visible=True
                     )
-                self.source_catalog._available_metadata.append({
+                metadata_entry = {
                     "filename": filename,
                     "display_name": filename.rsplit('.', 1)[0],
                     "content": content
-                })
+                }
+                # Preserve raw bytes for PDF files so they can be rendered natively
+                if card.extension == "pdf":
+                    card.file_obj.seek(0)
+                    metadata_entry["raw_bytes"] = card.file_obj.read()
+                self.source_catalog._available_metadata.append(metadata_entry)
                 asyncio.create_task(self._sync_metadata(filename))  # noqa: RUF006
 
             self.param.trigger('outputs')

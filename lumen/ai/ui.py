@@ -822,8 +822,15 @@ class UI(Viewer):
                 state.add_periodic_callback(partial(on_submit, wait=True), period=100, count=1)
                 return
 
+            # On retry after upload completes, restore the pending query
+            if wait and self._pending_query and not user_prompt:
+                user_prompt = self._pending_query
+
             if not user_prompt and not uploaded:
                 return
+
+            # Clear pending query now that it's been captured
+            self._pending_query = None
 
             # Auto-process uploaded files without confirmation dialog
             if uploaded:
@@ -836,7 +843,7 @@ class UI(Viewer):
                 })
 
                 # Process the files
-                with self._upload_controls._layout.param.update(loading=True):
+                with self._chat_input.param.update(loading=True), self._upload_controls._layout.param.update(loading=True):
                     n_tables, n_docs, n_metadata = self._upload_controls._process_files()
 
                     # Clear uploads after processing
