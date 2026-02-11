@@ -34,8 +34,9 @@ from ..sources import Source
 from ..sources.duckdb import DuckDBSource
 from ..util import log
 from .agents import (
-    AnalysisAgent, BaseCodeAgent, ChatAgent, DocumentListAgent, SQLAgent,
-    TableListAgent, ValidationAgent, VegaLiteAgent,
+    AnalysisAgent, BaseCodeAgent, ChatAgent, DocumentListAgent,
+    DocumentSummarizerAgent, SQLAgent, TableListAgent, ValidationAgent,
+    VegaLiteAgent,
 )
 from .config import (
     DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROVIDED_SOURCE_NAME,
@@ -398,7 +399,8 @@ class UI(Viewer):
     )
 
     default_agents = param.List(default=[
-        TableListAgent, ChatAgent, DocumentListAgent, SQLAgent, VegaLiteAgent, ValidationAgent, DeckGLAgent
+        TableListAgent, ChatAgent, DocumentListAgent, DocumentSummarizerAgent,
+        SQLAgent, VegaLiteAgent, ValidationAgent, DeckGLAgent
     ], doc="""List of default agents which will always be added.""")
 
     demo_inputs = param.List(default=DEMO_MESSAGES, doc="""
@@ -2232,6 +2234,12 @@ class ExplorerUI(UI):
 
         task = next(task for task in exploration.plan if view in task.views)
         controls = view.render_controls(task, self.interface)
+        editor = view.editor
+        if editor is None:
+            view = Column(controls, view)
+            controls.append(self._render_pop_out(exploration, view, title))
+            return (title, view)
+
         vsplit = VSplit(
             Column(view.editor, width_policy="max", scroll="y-auto"),
             view,

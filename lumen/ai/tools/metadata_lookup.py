@@ -376,10 +376,15 @@ class MetadataLookup(VectorLookupTool):
         relevant_tables : set[str] | None
             Set of relevant table slugs. If None, includes all table-associated docs.
         """
-        doc_store = self.document_vector_store or self.vector_store
+        if self.document_vector_store:
+            doc_store = self.document_vector_store
+            filters = {}
+        else:
+            doc_store = self.vector_store
+            filters = {"type": "document"}
 
         # Get all document filenames from vector store
-        all_doc_results = await doc_store.query(text="", top_k=1000, filters={"type": "document"})
+        all_doc_results = await doc_store.query(text="", top_k=1000, filters=filters)
         all_filenames = {r["metadata"]["filename"] for r in all_doc_results}
 
         # Get visible docs (if specified, only include these; otherwise include all)
@@ -424,7 +429,7 @@ class MetadataLookup(VectorLookupTool):
         all_docs: list[DocumentChunk] = []
         for filename in included_filenames:
             results = await doc_store.query(
-                text=query, top_k=self.n_documents, filters={"type": "document", "filename": filename}
+                text=query, top_k=self.n_documents, filters={"filename": filename, **filters}
             )
             for r in results:
                 if r["similarity"] < self.min_similarity:
