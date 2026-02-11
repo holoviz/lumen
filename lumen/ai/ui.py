@@ -2107,9 +2107,16 @@ class ExplorerUI(UI):
         else:
             parent.conversation = self._snapshot_messages(new=True)
         conversation = [msg for msg in self.interface.objects if plan.is_followup or msg not in parent.conversation]
+        has_data = any("pipeline" in step.actor.output_schema.__required_keys__ for step in plan)
+        if has_data:
+            initialized = False
+            items = [("Data Source", Markdown("Waiting on data...", margin=(5, 20)))]
+        else:
+            initialized = True
+            items = []
 
         tabs = Tabs(
-            ("Data Source", Markdown("Waiting on data...", margin=(5, 20))),
+            *items,
             dynamic=True,
             sizing_mode="stretch_both",
             loading=plan.param.running
@@ -2118,6 +2125,7 @@ class ExplorerUI(UI):
         exploration = Exploration(
             context=plan.param.out_context,
             conversation=conversation,
+            initialized=initialized,
             parent=parent if plan.is_followup else self._home,
             plan=plan,
             title=plan.title,
@@ -2323,7 +2331,10 @@ class ExplorerUI(UI):
         parent = prev["view"]
 
         # Check if we are adding to existing exploration or creating a new one
-        new_exploration = any("pipeline" in step.actor.output_schema.__required_keys__ for step in plan)
+        new_exploration = any(
+            {"pipeline", "view"} & set(step.actor.output_schema.__required_keys__)
+            for step in plan
+        )
 
         partial_plan = None
         if rerun:
