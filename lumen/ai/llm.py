@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import os
 
 from abc import abstractmethod
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
-from typing import Any, Literal, TypedDict
+from typing import (
+    TYPE_CHECKING, Any, Literal, TypedDict,
+)
 
 import instructor
 import panel as pn
@@ -25,11 +28,16 @@ from .services import (
 )
 from .utils import format_exception, log_debug, truncate_string
 
+if TYPE_CHECKING:
+    from .tools import FunctionTool
+    from .tools.mcp import MCPTool
 
 class Message(TypedDict):
-    role: Literal["system", "user", "assistant"]
+    role: Literal["system", "user", "assistant", "tool"]
     content: str
     name: str | None
+    tool_call_id: str | None
+    tool_calls: list[dict[str, Any]] | None
 
 
 class ImageResponse(BaseModel):
@@ -121,6 +129,12 @@ class Llm(param.Parameterized):
         LLM model definitions indexed by type. Supported types include
         'default', 'reasoning' and 'sql'. Agents may pick which model to
         invoke for different reasons.""")
+
+    tools = param.List(default=[], doc="""
+        Default tools that are always available to this LLM instance.
+        These are combined with any tools passed directly to invoke()
+        or stream() calls. Accepts the same types as the tools argument
+        on those methods (dicts, FunctionTool, or MCPTool instances).""")
 
     logfire_tags = param.List(default=None, doc="""
         Whether to log LLM calls and responses to logfire.
@@ -285,6 +299,7 @@ class Llm(param.Parameterized):
         response_model: BaseModel | None = None,
         allow_partial: bool = False,
         model_spec: str | dict = "default",
+        tools: list[dict[str, Any] | FunctionTool | MCPTool] | None = None,
         **input_kwargs,
     ) -> BaseModel:
         """
@@ -301,6 +316,8 @@ class Llm(param.Parameterized):
         allow_partial: bool
             Whether to allow the LLM to only partially fill
             the provided response_model.
+        tools: list[dict[str, Any] | FunctionTool | MCPTool] | None
+            Tool definitions, FunctionTool, or MCPTool instances to pass through.
         model: Literal['default' | 'reasoning' | 'sql']
             The model as listed in the model_kwargs parameter
             to invoke to answer the query.
@@ -314,6 +331,10 @@ class Llm(param.Parameterized):
 
         kwargs = dict(self._client_kwargs)
         kwargs.update(input_kwargs)
+        combined_tools = self._combine_tools(tools)
+        tool_specs, tool_instances, tool_contexts = self._normalize_tools(combined_tools)
+        if tool_specs is not None:
+            kwargs["tools"] = tool_specs
 
         messages, contains_image = self._check_for_image(messages)
         if contains_image:
@@ -330,6 +351,17 @@ class Llm(param.Parameterized):
             kwargs["response_model"] = ImageResponse
 
         output = await self.run_client(model_spec, messages, **kwargs)
+        if tool_instances and response_model is None:
+            tool_calls = self._extract_tool_calls(output)
+            if tool_calls:
+                tool_calls_message = self._tool_calls_message(tool_calls)
+                tool_messages = await self._run_tool_calls(tool_instances, tool_calls, tool_contexts, messages)
+                if tool_messages:
+                    output = await self.run_client(
+                        model_spec,
+                        messages + [tool_calls_message] + tool_messages,
+                        **kwargs,
+                    )
         if output is None or output == "":
             raise ValueError("LLM failed to return valid output.")
         return output
@@ -346,6 +378,203 @@ class Llm(param.Parameterized):
         if hasattr(response, "choices"):
             return response.choices[0].message.content
         return str(response)
+
+    def _combine_tools(
+        self,
+        tools: list[dict[str, Any] | FunctionTool | MCPTool] | None,
+    ) -> list[dict[str, Any] | FunctionTool | MCPTool] | None:
+        """Combine instance-level ``self.tools`` with per-call *tools*."""
+        if self.tools and tools:
+            return list(self.tools) + list(tools)
+        elif self.tools:
+            return list(self.tools)
+        return tools
+
+    @classmethod
+    def _normalize_tools(
+        cls,
+        tools: list[dict[str, Any] | FunctionTool | MCPTool] | None,
+    ) -> tuple[list[dict[str, Any]] | None, dict[str, FunctionTool | MCPTool], dict[str, Any]]:
+        tool_instances: dict[str, FunctionTool | MCPTool] = {}
+        tool_contexts: dict[str, Any] = {}
+        if tools is None:
+            return None, tool_instances, tool_contexts
+        tool_specs: list[dict[str, Any]] = []
+        for tool in tools:
+            if isinstance(tool, dict) and "tool" in tool:
+                tool_context = tool.get("context")
+                tool = tool.get("tool")
+            else:
+                tool_context = None
+            if callable(tool) and hasattr(tool, "__lumen_tool_annotations__"):
+                from .tools import FunctionTool
+                tool = FunctionTool(tool)
+            if hasattr(tool, "_model"):
+                tool_instances[tool.name] = tool  # type: ignore[assignment]
+                if tool_context is not None:
+                    tool_contexts[tool.name] = tool_context
+                tool_specs.append(cls._tool_spec_from_tool(tool))  # type: ignore[arg-type]
+            else:
+                tool_specs.append(tool)  # type: ignore[arg-type]
+        return tool_specs, tool_instances, tool_contexts
+
+    @classmethod
+    def _tool_spec_from_tool(cls, tool: FunctionTool | MCPTool) -> dict[str, Any]:
+        schema = tool._model.model_json_schema()
+        description = tool.purpose or schema.get("description") or ""
+        return {
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": description,
+                "parameters": schema,
+            },
+        }
+
+    @classmethod
+    def _extract_tool_calls(cls, response: Any) -> list[Any]:
+        if hasattr(response, "choices") and response.choices:
+            message = getattr(response.choices[0], "message", None)
+            tool_calls = getattr(message, "tool_calls", None) if message else None
+            if tool_calls:
+                return list(tool_calls)
+        if isinstance(response, dict) and response.get("tool_calls"):
+            return list(response["tool_calls"])
+        return []
+
+    @classmethod
+    def _extract_stream_tool_calls(cls, chunk: Any) -> list[dict[str, Any]]:
+        if hasattr(chunk, "choices") and chunk.choices:
+            delta = getattr(chunk.choices[0], "delta", None)
+            tool_calls = getattr(delta, "tool_calls", None) if delta else None
+            if tool_calls:
+                return list(tool_calls)
+        if isinstance(chunk, dict):
+            choices = chunk.get("choices") or []
+            if choices:
+                delta = choices[0].get("delta", {})
+                tool_calls = delta.get("tool_calls") if isinstance(delta, dict) else None
+                if tool_calls:
+                    return list(tool_calls)
+        return []
+
+    @classmethod
+    def _accumulate_tool_calls(
+        cls,
+        accum: dict[int, dict[str, Any]],
+        order: list[int],
+        tool_calls: list[dict[str, Any]],
+    ):
+        for call in tool_calls:
+            if isinstance(call, dict):
+                index = call.get("index")
+                call_id = call.get("id")
+                function = call.get("function") or {}
+                name = function.get("name") or call.get("name")
+                arguments = function.get("arguments") or call.get("arguments") or ""
+            else:
+                index = getattr(call, "index", None)
+                call_id = getattr(call, "id", None)
+                function = getattr(call, "function", None)
+                name = getattr(function, "name", None) if function else None
+                arguments = getattr(function, "arguments", None) if function else ""
+            if index is None:
+                index = max(order, default=-1) + 1
+            if index not in accum:
+                accum[index] = {"id": call_id, "name": name, "arguments": ""}
+                order.append(index)
+            if call_id:
+                accum[index]["id"] = call_id
+            if name:
+                accum[index]["name"] = name
+            if arguments:
+                accum[index]["arguments"] += arguments
+
+    @classmethod
+    def _tool_calls_from_accum(cls, accum: dict[int, dict[str, Any]], order: list[int]) -> list[dict[str, Any]]:
+        tool_calls = []
+        for index in order:
+            entry = accum[index]
+            tool_calls.append({
+                "id": entry.get("id"),
+                "function": {
+                    "name": entry.get("name"),
+                    "arguments": entry.get("arguments", ""),
+                },
+            })
+        return tool_calls
+
+    @classmethod
+    def _tool_calls_message(cls, tool_calls: list[dict[str, Any]]) -> Message:
+        return {
+            "role": "assistant",
+            "content": "",
+            "name": None,
+            "tool_call_id": None,
+            "tool_calls": tool_calls,
+        }
+
+    @classmethod
+    def _format_tool_result(cls, result: Any) -> str:
+        if isinstance(result, str):
+            return result
+        try:
+            return json.dumps(result)
+        except TypeError:
+            return str(result)
+
+    @classmethod
+    def _parse_tool_call(cls, call: Any) -> tuple[str | None, dict[str, Any], str | None]:
+        if isinstance(call, dict):
+            function = call.get("function") or {}
+            name = function.get("name") or call.get("name")
+            args = function.get("arguments") or call.get("arguments") or {}
+            call_id = call.get("id")
+        else:
+            function = getattr(call, "function", None)
+            name = getattr(function, "name", None) if function else None
+            args = getattr(function, "arguments", None) if function else {}
+            call_id = getattr(call, "id", None)
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except json.JSONDecodeError:
+                args = {}
+        return name, args or {}, call_id
+
+    async def _run_tool_calls(
+        self,
+        tool_instances: dict[str, FunctionTool | MCPTool],
+        tool_calls: list[Any],
+        tool_contexts: dict[str, Any],
+        messages: list[Message],
+    ) -> list[Message]:
+        from .tools import FunctionTool, MCPTool
+
+        results: list[Message] = []
+        for call in tool_calls:
+            name, arguments, call_id = self._parse_tool_call(call)
+            if not name or name not in tool_instances:
+                continue
+            tool = tool_instances[name]
+            context = tool_contexts.get(name, {})
+            for requirement in tool.requires:
+                if requirement not in arguments and requirement in context:
+                    arguments[requirement] = context[requirement]
+            if isinstance(tool, MCPTool):
+                result = await tool.execute(**arguments)
+            elif isinstance(tool, FunctionTool):
+                if asyncio.iscoroutinefunction(tool.function):
+                    result = await tool.function(**arguments)
+                else:
+                    result = tool.function(**arguments)
+            results.append({
+                "role": "tool",
+                "content": self._format_tool_result(result),
+                "name": name,
+                "tool_call_id": call_id,
+            })
+        return results
 
     async def initialize(self, log_level: str):
         try:
@@ -366,6 +595,7 @@ class Llm(param.Parameterized):
         response_model: BaseModel | None = None,
         field: str | None = None,
         model_spec: str | dict = "default",
+        tools: list[dict[str, Any] | FunctionTool | MCPTool] | None = None,
         **kwargs,
     ):
         """
@@ -381,6 +611,8 @@ class Llm(param.Parameterized):
             A Pydantic model that the LLM should materialize.
         field: str
             The field in the response_model to stream.
+        tools: list[dict[str, Any] | FunctionTool | MCPTool] | None
+            Tool definitions, FunctionTool, or MCPTool instances to pass through.
         model: Literal['default' | 'reasoning' | 'sql']
             The model as listed in the model_kwargs parameter
             to invoke to answer the query.
@@ -389,12 +621,15 @@ class Llm(param.Parameterized):
         ------
         The string or response_model field.
         """
+        combined_tools = self._combine_tools(tools)
+        tool_specs, tool_instances, tool_contexts = self._normalize_tools(combined_tools)
         if self.logfire_tags is not None:
             output = await self.invoke(
                 messages,
                 system=system,
                 response_model=response_model,
                 model_spec=model_spec,
+                tools=tool_specs,
                 **kwargs,
             )
             if response_model is not None:
@@ -416,6 +651,7 @@ class Llm(param.Parameterized):
                 system=system,
                 response_model=response_model,
                 model_spec=model_spec,
+                tools=tool_specs,
                 **kwargs,
             )
             return
@@ -428,17 +664,23 @@ class Llm(param.Parameterized):
             stream=True,
             allow_partial=True,
             model_spec=model_spec,
+            tools=tool_specs,
             **kwargs,
         )
         if isinstance(chunks, BaseModel):
             yield getattr(chunks, field) if field is not None else chunks
             return
 
+        tool_call_accum: dict[int, dict[str, Any]] = {}
+        tool_call_order: list[int] = []
         try:
             async for chunk in chunks:
                 if response_model is None:
                     string += self._get_delta(chunk)
                     yield string
+                    tool_calls = self._extract_stream_tool_calls(chunk)
+                    if tool_calls:
+                        self._accumulate_tool_calls(tool_call_accum, tool_call_order, tool_calls)
                 else:
                     yield getattr(chunk, field) if field is not None else chunk
         except TypeError:
@@ -447,8 +689,27 @@ class Llm(param.Parameterized):
                 if response_model is None:
                     string += self._get_delta(chunk)
                     yield string
+                    tool_calls = self._extract_stream_tool_calls(chunk)
+                    if tool_calls:
+                        self._accumulate_tool_calls(tool_call_accum, tool_call_order, tool_calls)
                 else:
                     yield getattr(chunk, field) if field is not None else chunk
+
+        if response_model is None and tool_instances and tool_call_accum:
+            tool_calls = self._tool_calls_from_accum(tool_call_accum, tool_call_order)
+            tool_calls_message = self._tool_calls_message(tool_calls)
+            tool_messages = await self._run_tool_calls(tool_instances, tool_calls, tool_contexts, messages)
+            if tool_messages:
+                async for chunk in self.stream(
+                    messages + [tool_calls_message] + tool_messages,
+                    system=system,
+                    response_model=response_model,
+                    field=field,
+                    model_spec=model_spec,
+                    tools=tools,
+                    **kwargs,
+                ):
+                    yield chunk
 
     async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
         log_debug(f"Input messages: \033[95m{len(messages)} messages\033[0m including system")
@@ -881,17 +1142,61 @@ class Anthropic(Llm):
             return partial(self._get_completion_method(), model=model, **self._get_create_kwargs(response_model))
 
     def _messages_to_contents(self, messages: list[Message]) -> tuple[list[Message], str | None]:
-        """Extract system messages from the messages list.
+        """Extract system messages and convert tool messages to Anthropic format.
 
         Anthropic requires system to be passed separately, not in messages array.
+        Tool-call and tool-result messages are converted into the content-block
+        format that the Anthropic API expects.
         """
-        filtered = []
+        filtered: list[dict[str, Any]] = []
         system_text = None
+        pending_tool_results: list[dict[str, Any]] = []
+
         for msg in messages:
-            if msg["role"] == "system":
+            role = msg["role"]
+            if role == "system":
                 system_text = msg["content"]
-            else:
-                filtered.append(msg)
+                continue
+
+            # Assistant message with tool_calls → assistant with tool_use content blocks
+            if role == "assistant" and msg.get("tool_calls"):
+                # Flush pending tool results first
+                if pending_tool_results:
+                    filtered.append({"role": "user", "content": pending_tool_results})
+                    pending_tool_results = []
+                content_blocks: list[dict[str, Any]] = []
+                if msg.get("content"):
+                    content_blocks.append({"type": "text", "text": msg["content"]})
+                for tc in msg["tool_calls"]:
+                    name, args, call_id = self._parse_tool_call(tc)
+                    content_blocks.append({
+                        "type": "tool_use",
+                        "id": call_id or f"call_{name}",
+                        "name": name,
+                        "input": args,
+                    })
+                filtered.append({"role": "assistant", "content": content_blocks})
+                continue
+
+            # Tool result → collect into a single user message with tool_result blocks
+            if role == "tool":
+                pending_tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": msg.get("tool_call_id", ""),
+                    "content": msg.get("content", ""),
+                })
+                continue
+
+            # Flush pending tool results before any other message
+            if pending_tool_results:
+                filtered.append({"role": "user", "content": pending_tool_results})
+                pending_tool_results = []
+
+            filtered.append(msg)
+
+        if pending_tool_results:
+            filtered.append({"role": "user", "content": pending_tool_results})
+
         return filtered, system_text
 
     def _add_system_message(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
@@ -910,9 +1215,74 @@ class Anthropic(Llm):
         client_callable = self._get_cached_client(response_model, model=model, **model_kwargs)
         return partial(client_callable.func, *client_callable.args, timeout=self.timeout, **client_callable.keywords)
 
+    @classmethod
+    def _extract_tool_calls(cls, response: Any) -> list[Any]:
+        """Extract tool calls from an Anthropic Message response.
+
+        Normalises ToolUseBlocks into OpenAI-style dicts so the base-class
+        pipeline works unchanged.
+        """
+        if hasattr(response, "content") and not isinstance(response.content, str):
+            calls = []
+            for block in response.content:
+                if getattr(block, "type", None) == "tool_use":
+                    calls.append({
+                        "id": block.id,
+                        "function": {
+                            "name": block.name,
+                            "arguments": json.dumps(block.input),
+                        },
+                    })
+            if calls:
+                return calls
+        return []
+
+    @classmethod
+    def _extract_stream_tool_calls(cls, chunk: Any) -> list[dict[str, Any]]:
+        """Extract tool calls from Anthropic streaming events."""
+        # content_block_start with a tool_use block
+        if hasattr(chunk, "content_block"):
+            block = chunk.content_block
+            if getattr(block, "type", None) == "tool_use":
+                return [{
+                    "index": getattr(chunk, "index", 0),
+                    "id": block.id,
+                    "function": {
+                        "name": block.name,
+                        "arguments": "",
+                    },
+                }]
+        # content_block_delta with partial JSON for tool input
+        if hasattr(chunk, "delta"):
+            partial = getattr(chunk.delta, "partial_json", None)
+            if partial is not None:
+                return [{
+                    "index": getattr(chunk, "index", 0),
+                    "function": {
+                        "arguments": partial,
+                    },
+                }]
+        return []
+
     async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
         """Override to handle Anthropic-specific message format."""
         log_debug(f"Input messages: \033[95m{len(messages)} messages\033[0m including system")
+
+        # Convert OpenAI-format tool specs to Anthropic format
+        tool_specs = kwargs.pop("tools", None)
+        if tool_specs:
+            anthropic_tools = []
+            for spec in tool_specs:
+                if isinstance(spec, dict) and spec.get("type") == "function":
+                    func = spec["function"]
+                    anthropic_tools.append({
+                        "name": func["name"],
+                        "description": func.get("description", ""),
+                        "input_schema": func.get("parameters", {}),
+                    })
+                else:
+                    anthropic_tools.append(spec)
+            kwargs["tools"] = anthropic_tools
 
         # Extract system from messages
         filtered_messages, extracted_system = self._messages_to_contents(messages)
@@ -1241,7 +1611,37 @@ class Google(Llm):
             if role == "system":
                 system_instruction = content
                 continue
-            elif role != "user":
+
+            # Assistant message containing tool calls → model with function_call parts
+            if role == "assistant" and message.get("tool_calls"):
+                parts = []
+                for tc in message["tool_calls"]:
+                    name, args, _ = cls._parse_tool_call(tc)
+                    part: dict[str, Any] = {"function_call": {"name": name, "args": args}}
+                    # Preserve thought_signature required by Gemini 3 models
+                    sig = tc.get("thought_signature") if isinstance(tc, dict) else None
+                    if sig is not None:
+                        part["thought_signature"] = sig
+                    parts.append(part)
+                contents.append({"role": "model", "parts": parts})
+                continue
+
+            # Tool result message → user with function_response part
+            if role == "tool":
+                name = message.get("name", "")
+                try:
+                    response_payload = json.loads(content) if isinstance(content, str) else content
+                except (json.JSONDecodeError, TypeError):
+                    response_payload = {"result": content}
+                if not isinstance(response_payload, dict):
+                    response_payload = {"result": response_payload}
+                contents.append({
+                    "role": "user",
+                    "parts": [{"function_response": {"name": name, "response": response_payload}}],
+                })
+                continue
+
+            if role != "user":
                 role = "model"
 
             if isinstance(content, Image):
@@ -1275,6 +1675,89 @@ class Google(Llm):
         else:
             return partial(self._base_client.aio.models.generate_content, model=model)
 
+    @classmethod
+    def _extract_tool_calls(cls, response: Any) -> list[Any]:
+        """Extract tool calls from a Google GenAI response.
+
+        Normalises them into OpenAI-style dicts so the base-class
+        ``_parse_tool_call``, ``_tool_calls_message``, and
+        ``_run_tool_calls`` work without further overrides.
+
+        The ``thought_signature`` returned by Gemini 3 models is preserved
+        so it can be sent back in the follow-up request (required by the API).
+        """
+        if hasattr(response, "candidates") and response.candidates:
+            candidate = response.candidates[0]
+            if hasattr(candidate, "content") and candidate.content:
+                parts = candidate.content.parts or []
+                calls = []
+                for i, part in enumerate(parts):
+                    fc = getattr(part, "function_call", None)
+                    if fc is not None:
+                        args = dict(fc.args) if fc.args else {}
+                        call: dict[str, Any] = {
+                            "id": f"call_{fc.name}_{i}",
+                            "function": {
+                                "name": fc.name,
+                                "arguments": json.dumps(args),
+                            },
+                        }
+                        # Gemini 3 requires thought_signature to be echoed back
+                        sig = getattr(part, "thought_signature", None)
+                        if sig is not None:
+                            call["thought_signature"] = sig
+                        calls.append(call)
+                if calls:
+                    return calls
+        return []
+
+    @classmethod
+    def _extract_stream_tool_calls(cls, chunk: Any) -> list[dict[str, Any]]:
+        """Extract tool calls from a Google GenAI streaming chunk."""
+        # Google streaming chunks share the same response shape
+        return cls._extract_tool_calls(chunk)
+
+    @classmethod
+    def _translate_tool_specs(cls, tool_specs: list) -> Any:
+        # Convert OpenAI-format tool specs to Google function declarations
+        if not tool_specs:
+            return
+
+        from google.genai.types import FunctionDeclaration, Tool
+        declarations = []
+        for spec in tool_specs:
+            if not isinstance(spec, dict) or spec.get("type") != "function":
+                continue
+            func = spec["function"]
+            parameters = dict(func.get("parameters", {}))
+            # Remove keys that are not valid in Google's schema
+            parameters.pop("title", None)
+            declarations.append(FunctionDeclaration(
+                name=func["name"],
+                description=func.get("description", ""),
+                parameters=parameters,
+            ))
+        return Tool(function_declarations=declarations) if declarations else None
+
+    @classmethod
+    def _get_delta(cls, chunk: Any) -> str:
+        """Extract delta content from streaming response, skipping function_call parts."""
+        if hasattr(chunk, "candidates") and chunk.candidates:
+            candidate = chunk.candidates[0]
+            if hasattr(candidate, "content") and candidate.content:
+                parts = candidate.content.parts or []
+                texts = []
+                for p in parts:
+                    if getattr(p, "function_call", None) is not None:
+                        continue
+                    text = getattr(p, "text", None)
+                    if text:
+                        texts.append(text)
+                return "".join(texts)
+        if hasattr(chunk, "text"):
+            return chunk.text or ""
+        return ""
+
     async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
         """Override to handle Gemini-specific message format conversion."""
         try:
@@ -1291,6 +1774,7 @@ class Google(Llm):
         http_options = HttpOptions(timeout=self.timeout * 1000)  # timeout is in milliseconds
         thinking_config = ThinkingConfig(thinking_budget=0, include_thoughts=False)
 
+        tools = self._translate_tool_specs(kwargs.pop("tools", []))
         client = await self.get_client(model_spec, **kwargs)
         contents, system_instruction = self._messages_to_contents(messages)
         config = GenerateContentConfig(
@@ -1298,6 +1782,7 @@ class Google(Llm):
             temperature=self.temperature,
             thinking_config=thinking_config,
             system_instruction=system_instruction,
+            tools=tools,
         )
 
         if response_model:

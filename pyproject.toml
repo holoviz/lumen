@@ -76,6 +76,7 @@ ai-litellm = ['litellm']
 ai-ollama = ['ollama']
 chromadb = ['chromadb']
 bigquery = ['google-cloud-bigquery', 'sqlalchemy-bigquery']
+mcp = ['fastmcp']
 
 [project.scripts]
 lumen-spec = "lumen.command:main"
