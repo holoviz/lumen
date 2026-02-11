@@ -377,6 +377,8 @@ class Llm(param.Parameterized):
         """Extract content from a non-streaming response. Override for non-OpenAI APIs."""
         if hasattr(response, "choices"):
             return response.choices[0].message.content
+        elif isinstance(response, (BaseModel, str)):
+            return response
         return str(response)
 
     def _combine_tools(
@@ -1318,7 +1320,7 @@ class Anthropic(Llm):
     def _get_content(cls, response: Any) -> Any:
         """Extract text content from an Anthropic Message response."""
         content = getattr(response, "content", None)
-        if isinstance(content, str):
+        if isinstance(content, (str, BaseModel)):
             return content
         if isinstance(content, list):
             texts: list[str] = []
@@ -1608,6 +1610,8 @@ class Google(Llm):
             if hasattr(candidate, 'content') and candidate.content:
                 if hasattr(candidate.content, 'parts') and candidate.content.parts:
                     return candidate.content.parts[0].text or ""
+        elif isinstance(response, (str, BaseModel)):
+            return response
         return str(response)
 
     @classmethod
