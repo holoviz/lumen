@@ -326,11 +326,10 @@ class VectorStore(LLMUser):
         if not all_texts:
             return []
 
-        embeddings = np.array(
-            await self.embeddings.embed(text_and_metadata_list), dtype=np.float32
-        )
+        embeddings = await self.embeddings.embed(text_and_metadata_list)
+        embeddings_array = np.array(embeddings, dtype=np.float32)
 
-        return await self._add_items(all_texts, all_metadata, embeddings, force_ids)
+        return await self._add_items(all_texts, all_metadata, embeddings_array, force_ids)
 
     @abstractmethod
     async def _add_items(
@@ -1657,6 +1656,14 @@ class ChromaDBVectorStore(VectorStore):
         vector_store.upsert([{'text': 'Hello!', 'metadata': {'source': 'greeting'}}])
     """
 
+    embeddings = param.ClassSelector(
+        class_=Embeddings,
+        default=None,
+        allow_None=True,
+        doc="Embeddings object for text processing.",
+    )
+
+
     uri = param.String(
         default=None,
         allow_None=True,
@@ -1690,9 +1697,6 @@ class ChromaDBVectorStore(VectorStore):
             self._current_id = max(int(id_) for id_ in result["ids"])
         else:
             self._current_id = 0
-
-        if self.embeddings is None:
-            self.embeddings = NumpyEmbeddings()
 
     def _get_next_id(self) -> int:
         """Generate the next available ID.
@@ -1784,11 +1788,47 @@ class ChromaDBVectorStore(VectorStore):
             return conditions[0]
         return {"$and": conditions}
 
+    async def add(
+        self,
+        items: list[dict],
+        force_ids: list[int] | None = None,
+        situate: bool | None = None,
+    ) -> list[int]:
+        """
+        Add items to the vector store.
+
+        Parameters
+        ----------
+        items: list[dict]
+            List of dictionaries containing 'text' and optional 'metadata'.
+        force_ids: list[int] = None
+            Optional list of IDs to use instead of generating new ones.
+        situate: bool | None
+            Whether to insert a `llm_context` key in the metadata containing
+            contextual about the chunks. If None, uses the class default.
+
+        Returns
+        -------
+        List of assigned IDs for the added items.
+        """
+        all_texts, all_metadata, text_and_metadata_list = await self._prepare_items_for_embedding(items, situate)
+
+        if not all_texts:
+            return []
+
+        if self.embeddings is None:
+            embeddings_array = None
+        else:
+            embeddings = await self.embeddings.embed(text_and_metadata_list)
+            embeddings_array = np.array(embeddings, dtype=np.float32)
+
+        return await self._add_items(all_texts, all_metadata, embeddings_array, force_ids)
+
     async def _add_items(
         self,
         texts: list[str],
         metadata: list[dict],
-        embeddings: np.ndarray,
+        embeddings: np.ndarray | None,
         force_ids: list[int] | None = None,
     ) -> list[int]:
         """
@@ -1829,7 +1869,7 @@ class ChromaDBVectorStore(VectorStore):
 
         self._collection.add(
             ids=str_ids,
-            embeddings=embeddings.tolist(),
+            embeddings=None if embeddings is None else embeddings.tolist(),
             documents=texts,
             metadatas=chroma_metadatas,
         )
@@ -1865,18 +1905,20 @@ class ChromaDBVectorStore(VectorStore):
         if count == 0:
             return []
 
-        query_embedding = (await self.embeddings.embed([text]))[0]
-
         where = self._build_where_clause(filters) if filters else None
 
         # ChromaDB errors if n_results > number of items in the index
         n_results = min(top_k, count)
 
         kwargs: dict[str, t.Any] = {
-            "query_embeddings": [query_embedding],
             "n_results": n_results,
             "include": ["documents", "metadatas", "distances"],
         }
+        if self.embeddings is None:
+            kwargs["query_texts"] = [text]
+        else:
+            kwargs["query_embeddings"] = (await self.embeddings.embed([text]))[0]
+
         if where is not None:
             kwargs["where"] = where
 
