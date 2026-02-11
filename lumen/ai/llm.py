@@ -646,7 +646,7 @@ class Llm(param.Parameterized):
 
         if ((response_model and not self._supports_model_stream) or
             not self._supports_stream):
-            yield await self.invoke(
+            output = await self.invoke(
                 messages,
                 system=system,
                 response_model=response_model,
@@ -654,6 +654,7 @@ class Llm(param.Parameterized):
                 tools=tool_specs,
                 **kwargs,
             )
+            yield self._get_content(output)
             return
 
         string = ""
@@ -1312,6 +1313,31 @@ class Anthropic(Llm):
             log_debug(f"Response model: \033[93m{response_model.__name__!r}\033[0m")
         log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
         return result
+
+    @classmethod
+    def _get_content(cls, response: Any) -> Any:
+        """Extract text content from an Anthropic Message response."""
+        content = getattr(response, "content", None)
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            texts: list[str] = []
+            for block in content:
+                # SDK block objects (e.g. TextBlock)
+                block_type = getattr(block, "type", None)
+                if block_type == "text":
+                    text = getattr(block, "text", None)
+                    if text:
+                        texts.append(text)
+                    continue
+                # Dict blocks (defensive for mocked/test payloads)
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text = block.get("text")
+                    if text:
+                        texts.append(text)
+            if texts:
+                return "".join(texts)
+        return response
 
     @classmethod
     def _get_delta(cls, chunk: Any) -> str:
