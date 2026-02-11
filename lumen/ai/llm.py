@@ -377,6 +377,8 @@ class Llm(param.Parameterized):
         """Extract content from a non-streaming response. Override for non-OpenAI APIs."""
         if hasattr(response, "choices"):
             return response.choices[0].message.content
+        elif isinstance(response, (BaseModel, str)):
+            return response
         return str(response)
 
     def _combine_tools(
@@ -646,7 +648,7 @@ class Llm(param.Parameterized):
 
         if ((response_model and not self._supports_model_stream) or
             not self._supports_stream):
-            yield await self.invoke(
+            output = await self.invoke(
                 messages,
                 system=system,
                 response_model=response_model,
@@ -654,6 +656,7 @@ class Llm(param.Parameterized):
                 tools=tool_specs,
                 **kwargs,
             )
+            yield self._get_content(output)
             return
 
         string = ""
@@ -1314,6 +1317,31 @@ class Anthropic(Llm):
         return result
 
     @classmethod
+    def _get_content(cls, response: Any) -> Any:
+        """Extract text content from an Anthropic Message response."""
+        content = getattr(response, "content", None)
+        if isinstance(content, (str, BaseModel)):
+            return content
+        if isinstance(content, list):
+            texts: list[str] = []
+            for block in content:
+                # SDK block objects (e.g. TextBlock)
+                block_type = getattr(block, "type", None)
+                if block_type == "text":
+                    text = getattr(block, "text", None)
+                    if text:
+                        texts.append(text)
+                    continue
+                # Dict blocks (defensive for mocked/test payloads)
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text = block.get("text")
+                    if text:
+                        texts.append(text)
+            if texts:
+                return "".join(texts)
+        return response
+
+    @classmethod
     def _get_delta(cls, chunk: Any) -> str:
         if hasattr(chunk, 'delta') and hasattr(chunk.delta, "text"):
             return chunk.delta.text
@@ -1582,6 +1610,8 @@ class Google(Llm):
             if hasattr(candidate, 'content') and candidate.content:
                 if hasattr(candidate.content, 'parts') and candidate.content.parts:
                     return candidate.content.parts[0].text or ""
+        elif isinstance(response, (str, BaseModel)):
+            return response
         return str(response)
 
     @classmethod
