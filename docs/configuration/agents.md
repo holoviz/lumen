@@ -14,6 +14,7 @@ Most users never customize agents. The eight default agents handle typical data 
 - [Add custom agents](#add-a-custom-agent) - Extend Lumen with new capabilities  
 - [Remove agents](#use-specific-agents-only) - Use only some agents
 - [Configure agent models](#use-different-models-per-agent) - Control which LLM each agent uses
+- [Customize agent instructions](#customizing-agent-instructions) - Override agent prompts and behavior
 
 ## Default agents
 
@@ -121,6 +122,64 @@ ui.servable()
 Agent class names are converted to model keys automatically (e.g., `SQLAgent` → `"sql"`, `VegaLiteAgent` → `"vega_lite"`, `DeckGLAgent` → `"deck_gl"`).
 
 See [LLM Providers](llm_providers.md) for complete details.
+
+## Customizing agent instructions
+
+You can customize the instructions or system prompts for any agent using `template_overrides`. This is useful for injecting domain knowledge or changing the agent's behavior for specific tasks.
+
+### Overriding instructions via subclassing
+
+The most common way to customize an agent's instructions is to subclass it and provide a `template_overrides` dictionary:
+
+``` py title="Customized SQL Agent"
+from lumen.ai import ExplorerUI
+from lumen.ai.agents.sql import SQLAgent
+
+INSTRUCTION_OVERRIDE = """
+{{ super() }}
+
+When querying the database, always prioritize the `current_year` filter 
+unless the user specifically asks for historical data.
+"""
+
+class UXSQLAgent(SQLAgent):
+
+    template_overrides = {
+        "main": {"instructions": INSTRUCTION_OVERRIDE}
+    }
+
+ui = ExplorerUI(agents=[UXSQLAgent()])
+ui.servable()
+```
+
+### Global and class-level overrides
+
+You can also apply overrides globally to all agents or to specific agent classes directly. This is useful for adding context that applies across the entire application without needing to subclass.
+
+``` py title="Global and class-level overrides"
+import lumen.ai as lmai
+
+# Add context to ALL agents (planning phase)
+lmai.actor.Actor.template_overrides = {
+    "main": {
+        "global": "{{ super() }}\nThis application focuses on weather data analysis."
+    }
+}
+
+# Add context to ChatAgent specifically
+lmai.agents.ChatAgent.template_overrides = {
+    "main": {
+        "instructions": "{{ super() }}\nYou are a professional meteorologist."
+    }
+}
+```
+
+**Key concepts:**
+
+*   **`{{ super() }}`**: Always include this Jinja2 tag to preserve the default instructions or context.
+*   **`main`**: The primary prompt group for the agent.
+*   **`instructions`**: The system instructions specifically for that agent.
+*   **`global`**: Shared context injected into the system prompt for all agents.
 
 ## Creating custom agents
 
