@@ -94,7 +94,7 @@ class BaseViewAgent(BaseLumenAgent):
             context,
             table=pipeline.table,
             doc=doc,
-            schema=schema,
+            model_kwargs=dict(schema=schema),
             **errors_context,
         )
 

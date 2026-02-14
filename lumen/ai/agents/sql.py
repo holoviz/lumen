@@ -519,7 +519,7 @@ class SQLAgent(BaseLumenAgent):
         if len(all_tables) <= 3:
             return all_tables
 
-        selection = self._stream_prompt("select_tables", messages, context, available_tables=all_tables)
+        selection = self._stream_prompt("select_tables", messages, context, model_kwargs=dict(available_tables=all_tables))
         selected = selection.tables if selection else metaset.get_top_tables(n=3)
         step.stream(f"Selected: {selected}")
         return selected
@@ -572,6 +572,7 @@ class SQLAgent(BaseLumenAgent):
                 "main",
                 messages,
                 context,
+                model_kwargs=dict(sources=list(sources)),
                 dialect=dialect,
                 step_number=1,
                 is_final_step=True,
@@ -581,7 +582,6 @@ class SQLAgent(BaseLumenAgent):
                 sql_plan_context=None,
                 errors=errors,
                 discovery_context=discovery_context,
-                sources=list(sources)
             )
 
             if not output:
@@ -639,9 +639,9 @@ class SQLAgent(BaseLumenAgent):
             "select_discoveries",
             messages,
             context,
+            model_kwargs=dict(sources=list(sources)),
             model_index=0,
             error_context=error_context,
-            sources=list(sources)
         )
         return selection
 
@@ -668,10 +668,10 @@ class SQLAgent(BaseLumenAgent):
             "check_sufficiency",
             messages,
             context,
+            model_kwargs=dict(sources=sources_list),
             model_index=1,
             error_context=error_context,
             discovery_results=discovery_results,
-            sources=sources_list,
         )
         return sufficiency
 

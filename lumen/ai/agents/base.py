@@ -84,9 +84,9 @@ class Agent(Viewer, ToolUser, ContextProvider):
     def __panel__(self):
         return self.interface
 
-    async def _stream(self, messages: list[Message], context: TContext) -> Any:
+    async def _stream(self, messages: list[Message], context: TContext, **kwargs) -> Any:
         message = None
-        output = self._stream_prompt("main", messages, context, field="output")
+        output = self._stream_prompt("main", messages, context, field="output", **kwargs)
         try:
             async for output_chunk in output:
                 if self.interface is None:

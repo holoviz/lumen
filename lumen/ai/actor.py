@@ -177,7 +177,8 @@ class LLMUser(param.Parameterized):
         response_model: type[BaseModel] | None = None,
         model_spec: str | None = None,
         model_index: int | None = None,
-        **kwargs
+        model_kwargs: dict | None = None,
+        **prompt_kwargs
     ) -> Any:
         """
         Render a prompt and invoke the LLM.
@@ -203,10 +204,10 @@ class LLMUser(param.Parameterized):
         -------
         The structured response from the LLM
         """
-        system = await self._render_prompt(prompt_name, messages, context, **kwargs)
+        system = await self._render_prompt(prompt_name, messages, context, **prompt_kwargs)
         if response_model is None:
             try:
-                response_model = self._get_model(prompt_name, **kwargs)
+                response_model = self._get_model(prompt_name, **model_kwargs)
             except (KeyError, AttributeError):
                 pass
 

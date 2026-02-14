@@ -174,7 +174,7 @@ class VectorLookupTool(Tool):
                 "refine_query",
                 messages,
                 context,
-                item_type_name=self._item_type_name,
+                model_kwargs=dict(item_type_name=self._item_type_name),
                 results=results,
                 results_description=results_description,
                 original_query=original_query,

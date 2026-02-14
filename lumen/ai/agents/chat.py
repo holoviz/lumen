@@ -56,5 +56,4 @@ class ChatAgent(Agent):
         if len(context.get("data", [])) == 0 and context.get("sql"):
             context["sql"] = f"{context['sql']}\n-- No data was returned from the query."
 
-        system_prompt = await self._render_prompt("main", messages, context, **prompt_context)
-        return [await self._stream(messages, system_prompt)], {}
+        return [await self._stream(messages, context, **prompt_context)], {}
