@@ -209,7 +209,7 @@ class LLMUser(param.Parameterized):
         system = await self._render_prompt(prompt_name, messages, context, **prompt_kwargs)
         if response_model is None:
             try:
-                response_model = self._get_model(prompt_name, **model_kwargs)
+                response_model = self._get_model(prompt_name, **(model_kwargs or {}))
             except (KeyError, AttributeError):
                 pass
 
@@ -276,7 +276,7 @@ class LLMUser(param.Parameterized):
         # Determine the response model
         if response_model is None:
             try:
-                response_model = self._get_model(prompt_name, **model_kwargs)
+                response_model = self._get_model(prompt_name, **(model_kwargs or {}))
             except (KeyError, AttributeError):
                 pass
 
