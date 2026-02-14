@@ -34,8 +34,9 @@ from ..sources import Source
 from ..sources.duckdb import DuckDBSource
 from ..util import log
 from .agents import (
-    AnalysisAgent, BaseCodeAgent, ChatAgent, DocumentListAgent, SQLAgent,
-    TableListAgent, ValidationAgent, VegaLiteAgent,
+    AnalysisAgent, BaseCodeAgent, ChatAgent, DocumentListAgent,
+    DocumentSummarizerAgent, SQLAgent, TableListAgent, ValidationAgent,
+    VegaLiteAgent,
 )
 from .config import (
     DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROVIDED_SOURCE_NAME,
@@ -398,7 +399,8 @@ class UI(Viewer):
     )
 
     default_agents = param.List(default=[
-        TableListAgent, ChatAgent, DocumentListAgent, SQLAgent, VegaLiteAgent, ValidationAgent, DeckGLAgent
+        TableListAgent, ChatAgent, DocumentListAgent, DocumentSummarizerAgent,
+        SQLAgent, VegaLiteAgent, ValidationAgent, DeckGLAgent
     ], doc="""List of default agents which will always be added.""")
 
     demo_inputs = param.List(default=DEMO_MESSAGES, doc="""
@@ -822,8 +824,15 @@ class UI(Viewer):
                 state.add_periodic_callback(partial(on_submit, wait=True), period=100, count=1)
                 return
 
+            # On retry after upload completes, restore the pending query
+            if wait and self._pending_query and not user_prompt:
+                user_prompt = self._pending_query
+
             if not user_prompt and not uploaded:
                 return
+
+            # Clear pending query now that it's been captured
+            self._pending_query = None
 
             # Auto-process uploaded files without confirmation dialog
             if uploaded:
@@ -836,7 +845,7 @@ class UI(Viewer):
                 })
 
                 # Process the files
-                with self._upload_controls._layout.param.update(loading=True):
+                with self._chat_input.param.update(loading=True), self._upload_controls._layout.param.update(loading=True):
                     n_tables, n_docs, n_metadata = self._upload_controls._process_files()
 
                     # Clear uploads after processing
@@ -1166,6 +1175,7 @@ class UI(Viewer):
         # Use document_vector_store if available, otherwise fall back to main vector_store
         doc_store = self.document_vector_store or self._coordinator.vector_store
         self._source_catalog = SourceCatalog(context=self.context, vector_store=doc_store)
+        self.context["source_catalog"] = self._source_catalog
 
         # Watch for visibility changes and schedule async handler
         def _schedule_visibility_change(event):
@@ -2099,9 +2109,16 @@ class ExplorerUI(UI):
         else:
             parent.conversation = self._snapshot_messages(new=True)
         conversation = [msg for msg in self.interface.objects if plan.is_followup or msg not in parent.conversation]
+        has_data = any("pipeline" in step.actor.output_schema.__required_keys__ for step in plan)
+        if has_data:
+            initialized = False
+            items = [("Data Source", Markdown("Waiting on data...", margin=(5, 20)))]
+        else:
+            initialized = True
+            items = []
 
         tabs = Tabs(
-            ("Data Source", Markdown("Waiting on data...", margin=(5, 20))),
+            *items,
             dynamic=True,
             sizing_mode="stretch_both",
             loading=plan.param.running
@@ -2110,6 +2127,7 @@ class ExplorerUI(UI):
         exploration = Exploration(
             context=plan.param.out_context,
             conversation=conversation,
+            initialized=initialized,
             parent=parent if plan.is_followup else self._home,
             plan=plan,
             title=plan.title,
@@ -2216,6 +2234,12 @@ class ExplorerUI(UI):
 
         task = next(task for task in exploration.plan if view in task.views)
         controls = view.render_controls(task, self.interface)
+        editor = view.editor
+        if editor is None:
+            view = Column(controls, view)
+            controls.append(self._render_pop_out(exploration, view, title))
+            return (title, view)
+
         vsplit = VSplit(
             Column(view.editor, width_policy="max", scroll="y-auto"),
             view,
@@ -2315,7 +2339,10 @@ class ExplorerUI(UI):
         parent = prev["view"]
 
         # Check if we are adding to existing exploration or creating a new one
-        new_exploration = any("pipeline" in step.actor.output_schema.__required_keys__ for step in plan)
+        new_exploration = any(
+            {"pipeline", "view"} & set(step.actor.output_schema.__required_keys__)
+            for step in plan
+        )
 
         partial_plan = None
         if rerun:

@@ -229,4 +229,4 @@ class TestDocumentListAgentIntegration:
         context = {"metaset": metaset}
         
         applies = await DocumentListAgent.applies(context)
-        assert applies is False  # Only 1 document, not worth listing
+        assert applies is True

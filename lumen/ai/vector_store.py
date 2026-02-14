@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import importlib
 import io
 import json
@@ -325,11 +326,10 @@ class VectorStore(LLMUser):
         if not all_texts:
             return []
 
-        embeddings = np.array(
-            await self.embeddings.embed(text_and_metadata_list), dtype=np.float32
-        )
+        embeddings = await self.embeddings.embed(text_and_metadata_list)
+        embeddings_array = np.array(embeddings, dtype=np.float32)
 
-        return await self._add_items(all_texts, all_metadata, embeddings, force_ids)
+        return await self._add_items(all_texts, all_metadata, embeddings_array, force_ids)
 
     @abstractmethod
     async def _add_items(
@@ -1626,3 +1626,527 @@ class DuckDBVectorStore(VectorStore):
         if self.connection:
             self.connection.close()
             self.connection = None
+
+
+class ChromaDBVectorStore(VectorStore):
+    """
+    Vector store implementation using ChromaDB for persistent or in-memory storage.
+
+    Requires the ``chromadb`` package (``pip install chromadb``).
+
+    :Example:
+
+    .. code-block:: python
+
+        from lumen.ai.vector_store import ChromaDBVectorStore
+
+        vector_store = ChromaDBVectorStore()
+        vector_store.add_file('https://lumen.holoviz.org')
+        vector_store.query('LLM', threshold=0.1)
+
+    Use persistent storage:
+
+    .. code-block:: python
+
+        from lumen.ai.vector_store import ChromaDBVectorStore
+
+        vector_store = ChromaDBVectorStore(uri='/path/to/chromadb')
+        vector_store.upsert([{'text': 'Hello!', 'metadata': {'source': 'greeting'}}])
+        # Won't add duplicate if content is similar and metadata matches
+        vector_store.upsert([{'text': 'Hello!', 'metadata': {'source': 'greeting'}}])
+    """
+
+    embeddings = param.ClassSelector(
+        class_=Embeddings,
+        default=None,
+        allow_None=True,
+        doc="Embeddings object for text processing.",
+    )
+
+
+    uri = param.String(
+        default=None,
+        allow_None=True,
+        doc="""
+        Path to ChromaDB persistent storage directory.
+        If None, uses ephemeral in-memory storage.""",
+    )
+
+    collection_name = param.String(
+        default="documents",
+        doc="Name of the ChromaDB collection.",
+    )
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        import chromadb
+
+        if self.uri is None:
+            self._client = chromadb.Client()
+        else:
+            self._client = chromadb.PersistentClient(path=self.uri)
+
+        self._collection = self._client.get_or_create_collection(
+            name=self.collection_name,
+            metadata={"hnsw:space": "cosine"},
+        )
+
+        # Recover current ID counter from existing data
+        if self._collection.count() > 0:
+            result = self._collection.get(include=[])
+            self._current_id = max(int(id_) for id_ in result["ids"])
+        else:
+            self._current_id = 0
+
+    def _get_next_id(self) -> int:
+        """Generate the next available ID.
+
+        Returns
+        -------
+        The next unique integer ID.
+        """
+        self._current_id += 1
+        return self._current_id
+
+    @staticmethod
+    def _text_hash(text: str) -> str:
+        """Compute a deterministic hash for text content.
+
+        Parameters
+        ----------
+        text : str
+            The text to hash.
+
+        Returns
+        -------
+        Hex digest of the MD5 hash.
+        """
+        return hashlib.md5(text.encode("utf-8")).hexdigest()
+
+    def _prepare_metadata_for_chroma(self, metadata: dict, text: str) -> dict:
+        """Convert metadata to ChromaDB-compatible format.
+
+        ChromaDB metadata values must be str, int, float, or bool.
+        Complex types (None, list, dict) are excluded from direct metadata
+        storage but preserved via a JSON-serialized ``_metadata_json`` field.
+        A ``_text_hash`` field is also stored for efficient upsert lookups.
+
+        Parameters
+        ----------
+        metadata : dict
+            Original metadata dictionary.
+        text : str
+            The text content (used to compute hash).
+
+        Returns
+        -------
+        ChromaDB-compatible metadata dictionary.
+        """
+        chroma_meta = {
+            "_metadata_json": json.dumps(metadata),
+            "_text_hash": self._text_hash(text),
+        }
+        for key, value in metadata.items():
+            if isinstance(value, (str, int, float, bool)):
+                chroma_meta[key] = value
+        return chroma_meta
+
+    @staticmethod
+    def _restore_metadata(chroma_metadata: dict | None) -> dict:
+        """Restore original metadata from ChromaDB format.
+
+        Parameters
+        ----------
+        chroma_metadata : dict | None
+            Metadata dictionary from ChromaDB.
+
+        Returns
+        -------
+        Original metadata dictionary.
+        """
+        if chroma_metadata and "_metadata_json" in chroma_metadata:
+            return json.loads(chroma_metadata["_metadata_json"])
+        return {}
+
+    @staticmethod
+    def _build_where_clause(filters: dict) -> dict | None:
+        """Build a ChromaDB where clause from a filters dictionary.
+
+        Parameters
+        ----------
+        filters : dict
+            Dictionary of metadata key-value pairs to filter by.
+
+        Returns
+        -------
+        ChromaDB-compatible where clause, or None if filters is empty.
+        """
+        if not filters:
+            return None
+        conditions = [{key: {"$eq": value}} for key, value in filters.items()]
+        if len(conditions) == 1:
+            return conditions[0]
+        return {"$and": conditions}
+
+    async def add(
+        self,
+        items: list[dict],
+        force_ids: list[int] | None = None,
+        situate: bool | None = None,
+    ) -> list[int]:
+        """
+        Add items to the vector store.
+
+        Parameters
+        ----------
+        items: list[dict]
+            List of dictionaries containing 'text' and optional 'metadata'.
+        force_ids: list[int] = None
+            Optional list of IDs to use instead of generating new ones.
+        situate: bool | None
+            Whether to insert a `llm_context` key in the metadata containing
+            contextual about the chunks. If None, uses the class default.
+
+        Returns
+        -------
+        List of assigned IDs for the added items.
+        """
+        all_texts, all_metadata, text_and_metadata_list = await self._prepare_items_for_embedding(items, situate)
+
+        if not all_texts:
+            return []
+
+        if self.embeddings is None:
+            embeddings_array = None
+        else:
+            embeddings = await self.embeddings.embed(text_and_metadata_list)
+            embeddings_array = np.array(embeddings, dtype=np.float32)
+
+        return await self._add_items(all_texts, all_metadata, embeddings_array, force_ids)
+
+    async def _add_items(
+        self,
+        texts: list[str],
+        metadata: list[dict],
+        embeddings: np.ndarray | None,
+        force_ids: list[int] | None = None,
+    ) -> list[int]:
+        """
+        Internal method to add items to the vector store.
+
+        Parameters
+        ----------
+        texts : list[str]
+            List of text chunks.
+        metadata : list[dict]
+            List of metadata dictionaries for each chunk.
+        embeddings : np.ndarray
+            Matrix of embedding vectors.
+        force_ids : list[int] | None
+            Optional list of IDs to use instead of generating new ones.
+
+        Returns
+        -------
+        List of assigned IDs for the added items.
+        """
+        if force_ids is not None:
+            if len(force_ids) != len(texts):
+                raise ValueError(
+                    f"force_ids length ({len(force_ids)}) must match number of chunks ({len(texts)})"
+                )
+            new_ids = force_ids
+            self._current_id = (
+                max(self._current_id, *force_ids) if force_ids else self._current_id
+            )
+        else:
+            new_ids = [self._get_next_id() for _ in texts]
+
+        str_ids = [str(id_) for id_ in new_ids]
+        chroma_metadatas = [
+            self._prepare_metadata_for_chroma(m, t)
+            for m, t in zip(metadata, texts, strict=False)
+        ]
+
+        self._collection.add(
+            ids=str_ids,
+            embeddings=None if embeddings is None else embeddings.tolist(),
+            documents=texts,
+            metadatas=chroma_metadatas,
+        )
+
+        return new_ids
+
+    async def query(
+        self,
+        text: str,
+        top_k: int = 5,
+        filters: dict | None = None,
+        threshold: float = -1.0,
+    ) -> list[dict]:
+        """
+        Query the vector store for similar items.
+
+        Parameters
+        ----------
+        text : str
+            The query text.
+        top_k : int
+            Number of top results to return.
+        filters : dict | None
+            Optional metadata filters.
+        threshold : float
+            Minimum similarity score required for a result to be included.
+
+        Returns
+        -------
+        List of results with 'id', 'text', 'metadata', and 'similarity' score.
+        """
+        count = self._collection.count()
+        if count == 0:
+            return []
+
+        where = self._build_where_clause(filters) if filters else None
+
+        # ChromaDB errors if n_results > number of items in the index
+        n_results = min(top_k, count)
+
+        kwargs: dict[str, t.Any] = {
+            "n_results": n_results,
+            "include": ["documents", "metadatas", "distances"],
+        }
+        if self.embeddings is None:
+            kwargs["query_texts"] = [text]
+        else:
+            kwargs["query_embeddings"] = (await self.embeddings.embed([text]))[0]
+
+        if where is not None:
+            kwargs["where"] = where
+
+        try:
+            results = self._collection.query(**kwargs)
+        except Exception as e:
+            log_debug(f"Error during ChromaDB query: {e}")
+            return []
+
+        output = []
+        if results["ids"] and results["ids"][0]:
+            for i in range(len(results["ids"][0])):
+                # ChromaDB cosine distance = 1 - cosine_similarity
+                distance = results["distances"][0][i]
+                similarity = 1.0 - distance
+                if similarity < threshold:
+                    continue
+                output.append(
+                    {
+                        "id": int(results["ids"][0][i]),
+                        "text": results["documents"][0][i],
+                        "metadata": self._restore_metadata(results["metadatas"][0][i]),
+                        "similarity": float(similarity),
+                    }
+                )
+        return output
+
+    def filter_by(
+        self, filters: dict, limit: int | None = None, offset: int = 0
+    ) -> list[dict]:
+        """
+        Filter items by metadata without using embeddings similarity.
+
+        Parameters
+        ----------
+        filters : dict[str, str]
+            Dictionary of metadata key-value pairs to filter by.
+        limit : int | None
+            Maximum number of results to return. If None, returns all matches.
+        offset : int
+            Number of results to skip (for pagination).
+
+        Returns
+        -------
+        List of results with 'id', 'text', and 'metadata'.
+        """
+        if self._collection.count() == 0:
+            return []
+
+        kwargs: dict[str, t.Any] = {"include": ["documents", "metadatas"]}
+
+        where = self._build_where_clause(filters)
+        if where is not None:
+            kwargs["where"] = where
+
+        if limit is not None:
+            kwargs["limit"] = limit
+        if offset:
+            kwargs["offset"] = offset
+
+        result = self._collection.get(**kwargs)
+
+        return [
+            {
+                "id": int(result["ids"][i]),
+                "text": result["documents"][i],
+                "metadata": self._restore_metadata(result["metadatas"][i]),
+            }
+            for i in range(len(result["ids"]))
+        ]
+
+    def delete(self, ids: list[int]) -> None:
+        """
+        Delete items from the vector store by their IDs.
+
+        Parameters
+        ----------
+        ids : list[int]
+            List of IDs to delete.
+        """
+        if not ids or self._collection.count() == 0:
+            return
+        str_ids = [str(id_) for id_ in ids]
+        self._collection.delete(ids=str_ids)
+
+    async def upsert(self, items: list[dict], situate: bool | None = None) -> list[int]:
+        """
+        Add items to the vector store if similar items don't exist,
+        update them if they do.
+
+        Parameters
+        ----------
+        items : list[dict]
+            List of dictionaries containing 'text' and optional 'metadata'.
+        situate : bool | None
+            Whether to insert a `llm_context` key in the metadata containing
+            contextual about the chunks. If None, uses the class default.
+
+        Returns
+        -------
+        List of assigned IDs for the added or updated items.
+        """
+        if not items:
+            return []
+
+        if self._collection.count() == 0:
+            return await self.add(items, situate=situate)
+
+        assigned_ids = []
+        items_to_add = []
+
+        for item in items:
+            text = item["text"]
+            metadata = item.get("metadata", {}) or {}
+
+            # Look up exact text match via hash
+            text_hash = self._text_hash(text)
+            match_ids: list[int] = []
+            match_metadatas: list[dict] = []
+
+            try:
+                result = self._collection.get(
+                    where={"_text_hash": {"$eq": text_hash}},
+                    include=["documents", "metadatas"],
+                )
+                # Verify exact text match (guard against hash collisions)
+                for i, doc in enumerate(result["documents"]):
+                    if doc == text:
+                        match_ids.append(int(result["ids"][i]))
+                        match_metadatas.append(
+                            self._restore_metadata(result["metadatas"][i])
+                        )
+            except Exception:
+                pass
+
+            # If no exact match, check for chunked text match
+            if not match_ids:
+                chunks = self._chunk_text(
+                    text, self.chunk_size, self.chunk_func, **self.chunk_func_kwargs
+                )
+                for chunk in chunks:
+                    chunk_hash = self._text_hash(chunk)
+                    try:
+                        chunk_result = self._collection.get(
+                            where={"_text_hash": {"$eq": chunk_hash}},
+                            include=["documents", "metadatas"],
+                        )
+                        for j, doc in enumerate(chunk_result["documents"]):
+                            if doc == chunk:
+                                match_ids.append(int(chunk_result["ids"][j]))
+                                match_metadatas.append(
+                                    self._restore_metadata(chunk_result["metadatas"][j])
+                                )
+                    except Exception:
+                        pass
+
+            if match_ids:
+                # Check metadata compatibility for all matching chunks
+                all_chunks_match = True
+                matched_ids = []
+                needs_update = False
+
+                for idx_in_match, existing_meta in enumerate(match_metadatas):
+                    item_id = match_ids[idx_in_match]
+
+                    # Check for metadata value conflicts
+                    has_value_conflict = False
+                    common_keys = set(metadata.keys()) & set(existing_meta.keys())
+                    for key in common_keys:
+                        if metadata[key] != existing_meta[key]:
+                            has_value_conflict = True
+                            break
+
+                    if has_value_conflict:
+                        all_chunks_match = False
+                        break
+
+                    # Check if metadata needs updating
+                    if set(metadata.keys()) != set(existing_meta.keys()):
+                        needs_update = True
+
+                    matched_ids.append(item_id)
+
+                if all_chunks_match and matched_ids:
+                    if needs_update:
+                        # Delete existing chunks and re-add with new metadata
+                        self.delete(matched_ids)
+                        new_ids = await self.add(
+                            [{"text": text, "metadata": metadata}],
+                            situate=situate,
+                        )
+                        assigned_ids.extend(new_ids)
+                    else:
+                        # All chunks have exact metadata match — reuse existing IDs
+                        assigned_ids.extend(matched_ids)
+                    continue
+
+            # No match or metadata conflicts — add as new item
+            items_to_add.append(item)
+
+        if items_to_add:
+            new_ids = await self.add(items_to_add, situate=situate)
+            assigned_ids.extend(new_ids)
+        else:
+            log_debug("All items already exist in the vector store.")
+
+        return assigned_ids
+
+    def clear(self) -> None:
+        """
+        Clear all items from the vector store.
+
+        Deletes and recreates the underlying ChromaDB collection.
+        """
+        self._client.delete_collection(self.collection_name)
+        self._collection = self._client.get_or_create_collection(
+            name=self.collection_name,
+            metadata={"hnsw:space": "cosine"},
+        )
+        self._current_id = 0
+
+    def __len__(self) -> int:
+        return self._collection.count()
+
+    def close(self) -> None:
+        """Close the vector store.
+
+        For persistent ChromaDB, the client handles cleanup automatically.
+        """
+        self._client = None
+        self._collection = None

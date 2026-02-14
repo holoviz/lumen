@@ -74,7 +74,9 @@ ai-llama = ['lumen[ai-local]', 'llama-cpp-python >=0.3.15']
 ai-google = ['google-genai>=1.56.0', 'jsonref']
 ai-litellm = ['litellm']
 ai-ollama = ['ollama']
+chromadb = ['chromadb']
 bigquery = ['google-cloud-bigquery', 'sqlalchemy-bigquery']
+mcp = ['fastmcp']
 
 [project.scripts]
 lumen-spec = "lumen.command:main"

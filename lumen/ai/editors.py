@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import pathlib
 import re
 import traceback
 
@@ -15,15 +16,17 @@ import requests
 from jsonschema import Draft7Validator, ValidationError
 from panel.config import config
 from panel.io import cache
-from panel.layout import Row
-from panel.pane import DeckGL, panel as as_panel
+from panel.layout import Column, Row
+from panel.pane import (
+    PDF, DeckGL, Markdown, panel as as_panel,
+)
 from panel.param import ParamMethod
 from panel.viewable import Viewable, Viewer
 from panel.widgets import CodeEditor
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
-    Alert, Button, Checkbox, CircularProgress, Column, FileDownload, FlexBox,
-    MenuButton,
+    Alert, Button, Checkbox, CircularProgress, FileDownload, FlexBox,
+    FloatInput, MenuButton, Tabs,
 )
 
 from ..base import Component
@@ -637,3 +640,90 @@ class SQLEditor(LumenEditor):
 
     def __str__(self):
         return f"{self.__class__.__name__}:\n```sql\n{self.spec}\n```"
+
+
+class DocumentEditor(LumenEditor):
+    """
+    Displays relevant documents in tabs with type-aware rendering.
+    """
+
+    documents = param.List(default=[], doc="""
+        A list of document dictionaries with at least a `filename` key.
+        Optional keys include `content`, `raw_bytes`, and `similarity`.""")
+
+    min_similarity = param.Magnitude(default=0.3, doc="Minimum similarity threshold")
+
+    query = param.String(default="", doc="""
+        The user query these documents are relevant to.""")
+
+    title = param.String(default="Relevant documents", doc="""
+        The editor title shown above document tabs.""")
+
+    _max_preview_height = None
+
+    def __init__(self, **params):
+        if "documents" in params and "component" not in params:
+            params["component"] = self._render_component(
+                params["documents"],
+            )
+        super().__init__(**params)
+
+    def _render_editor(self):
+        return None
+
+    def render_controls(self, task, interface):
+        controls = super().render_controls(task, interface)
+        controls.append(FloatInput.from_param(self.param.min_similarity))
+        return controls
+
+    def _render_document(self, doc: dict[str, Any]):
+        filename = doc.get("filename", "Unknown document")
+        extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        raw_bytes = doc.get("raw_bytes")
+        content = doc.get("content", "") or "*No preview available for this document.*"
+
+        # Render PDFs natively when bytes are available for a high-fidelity preview.
+        if extension == "pdf":
+            if raw_bytes:
+                pdf_data = raw_bytes
+            elif pathlib.Path(filename).is_file():
+                pdf_data = filename
+            return PDF(
+                pdf_data,
+                height=self._max_preview_height,
+                sizing_mode="stretch_both",
+            )
+
+        return Column(
+            Markdown(content, sizing_mode="stretch_width"),
+            max_height=self._max_preview_height,
+            scroll="y-auto",
+            sizing_mode="stretch_both",
+        )
+
+    @param.depends("min_similarity", watch=True)
+    def _update_documents(self):
+        self.component = self._render_component()
+
+    def _render_component(
+        self,
+        documents: list[dict[str, Any]] | None = None
+    ) -> Panel:
+        documents = [
+            doc for doc in (documents or self.documents)
+            if doc.get("similarity", 0) > self.min_similarity
+        ]
+        if not documents:
+            return Panel(
+                object=Markdown("*No relevant documents found.*")
+            )
+
+        tabs = []
+        for doc in documents:
+            filename = doc.get("filename", "Unknown document")
+            tabs.append((filename, self._render_document(doc)))
+
+        return Panel(object=Tabs(*tabs, dynamic=True, sizing_mode="stretch_both"))
+
+    async def render_context(self):
+        return {"view": self._spec_dict}

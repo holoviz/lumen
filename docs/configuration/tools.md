@@ -391,6 +391,148 @@ def validate_and_process_user_data(data: dict):
             return f"Error: {e}"
     ```
 
+## MCP tools
+
+[MCP (Model Context Protocol)](https://modelcontextprotocol.io/) lets you connect to external tool servers. `MCPTool` wraps an MCP server tool and makes it available inside Lumen, working just like a `FunctionTool`.
+
+### Connect to an MCP server
+
+Use `MCPTool.from_server` to discover all tools on a server and create one `MCPTool` per tool:
+
+``` py title="Discover tools from an MCP server"
+import asyncio
+import lumen.ai as lmai
+from lumen.ai.tools import MCPTool
+
+tools = asyncio.run(MCPTool.from_server("https://my-mcp-server.example.com/mcp"))
+
+ui = lmai.ExplorerUI(
+    data='penguins.csv',
+    tools=tools
+)
+ui.servable()
+```
+
+You can also connect to a local Python MCP server:
+
+``` py title="Local MCP server"
+tools = asyncio.run(MCPTool.from_server("my_mcp_server.py"))
+```
+
+Or pass a `fastmcp.FastMCP` instance directly (useful for testing):
+
+``` py title="In-process MCP server"
+from fastmcp import FastMCP
+
+mcp = FastMCP("Demo")
+
+@mcp.tool()
+def add(a: int, b: int) -> int:
+    """Add two numbers."""
+    return a + b
+
+tools = asyncio.run(MCPTool.from_server(mcp))
+```
+
+### Create a single MCPTool manually
+
+If you already know the tool name and schema, you can create an `MCPTool` directly:
+
+``` py title="Manual MCPTool"
+from lumen.ai.tools import MCPTool
+
+tool = MCPTool(
+    server="https://my-mcp-server.example.com/mcp",
+    tool_name="add",
+    schema={
+        "type": "object",
+        "properties": {
+            "a": {"type": "integer", "description": "First number"},
+            "b": {"type": "integer", "description": "Second number"},
+        },
+        "required": ["a", "b"],
+    },
+    description="Add two numbers",
+)
+```
+
+## Two ways to use tools
+
+Lumen supports tools in two distinct modes. Understanding the difference is important for choosing the right approach.
+
+### Coordinator tools
+
+Tools passed to `ExplorerUI(tools=...)` are **coordinator tools**. The coordinator (planner) decides when to invoke them as part of a multi-step plan. These tools participate in the full agent orchestration:
+
+- The coordinator sees each tool's `purpose`, `requires`, and `provides`
+- It selects tools based on what the user asked and what context is available
+- Tool results flow into working memory and can be used by subsequent steps
+
+``` py title="Coordinator tools"
+import lumen.ai as lmai
+from lumen.ai.tools import MCPTool
+
+tools = asyncio.run(MCPTool.from_server(mcp_server))
+
+ui = lmai.ExplorerUI(
+    data='penguins.csv',
+    tools=tools  # (1)!
+)
+```
+
+1. The coordinator orchestrates these tools alongside built-in agents
+
+This is the right choice when tools need to interoperate with Lumen's data pipeline, agents, and context system.
+
+### LLM tools (native tool calling)
+
+Tools passed to `Llm(tools=...)` are **LLM tools**. They are sent as tool definitions directly to the LLM provider's API (OpenAI, Anthropic, Google, etc.) and the model decides when to call them using its built-in tool-calling capability:
+
+- The LLM sees the tool schema and decides whether to call it
+- The LLM fills in the arguments from the conversation context
+- Results are returned to the LLM as follow-up messages
+- This bypasses the coordinator and agent system entirely
+
+``` py title="LLM tools"
+import asyncio
+import lumen.ai as lmai
+from lumen.ai.tools import MCPTool
+
+tools = asyncio.run(MCPTool.from_server(mcp_server))
+
+llm = lmai.llm.Google(
+    tools=tools  # (1)!
+)
+
+ui = lmai.ExplorerUI(
+    data='penguins.csv',
+    llm=llm
+)
+```
+
+1. The LLM itself decides when to call these tools during any conversation turn
+
+LLM tools are also combined with any tools passed per-call:
+
+``` py title="Per-call tools combined with instance tools"
+# Instance tools are always available
+llm = lmai.llm.OpenAI(tools=[always_available_tool])
+
+# Per-call tools are added on top for this specific call
+result = await llm.invoke(messages, tools=[extra_tool])
+```
+
+Both `FunctionTool` and `MCPTool` instances work in either mode.
+
+### Choosing between coordinator and LLM tools
+
+| Coordinator tools (`ExplorerUI(tools=...)`) | LLM tools (`Llm(tools=...)`) |
+|---------------------------------------------|------------------------------|
+| Orchestrated by the planner as part of a multi-step plan | Called directly by the LLM during a single turn |
+| Can read from and write to Lumen's working memory (`requires`/`provides`) | Operate independently of Lumen's context system |
+| Best for tools that integrate with data pipelines | Best for self-contained tools (APIs, calculations) |
+| Planner decides when the tool is relevant | LLM decides when to call based on conversation |
+
 ## When to use tools vs agents
 
 | Use tools when | Use agents when |
@@ -466,3 +608,5 @@ def my_tool(data):
 - [Vector Stores](vector_stores.md) - Configure document search and table discovery tools
 - [Embeddings](embeddings.md) - Configure semantic search for tools
 - [Agents](agents.md) - When to use agents instead of tools
+- [MCP specification](https://modelcontextprotocol.io/) - The Model Context Protocol standard
+- [fastmcp](https://gofastmcp.com/) - Python library for building and connecting to MCP servers
