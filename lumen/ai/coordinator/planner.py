@@ -331,6 +331,7 @@ class Planner(Coordinator):
                 messages,
                 context,
                 model_spec=model_spec,
+                model_kwargs=dict(agents=agents, tools=tools),
                 agents=agents,
                 tools=tools,
                 unmet_dependencies=unmet_dependencies,
