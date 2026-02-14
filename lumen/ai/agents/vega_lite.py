@@ -350,25 +350,15 @@ class VegaLiteAgent(BaseCodeAgent):
         with self._add_step(title=step_desc, steps_layout=self._steps_layout) as step:
             if not isinstance(vega_spec, str):
                 vega_spec = dump_yaml(vega_spec, default_flow_style=False)
-            system_prompt = await self._render_prompt(
+            invoke_messages = self._prepare_vision_messages(messages, out, "Current chart to polish:")
+            result = await self._invoke_prompt(
                 prompt_name,
-                messages,
+                invoke_messages,
                 context,
                 vega_spec=vega_spec,
                 doc=doc,
                 table=context["pipeline"].table,
             )
-
-            invoke_messages = self._prepare_vision_messages(messages, out, "Current chart to polish:")
-
-            model_spec = self.prompts.get(prompt_name, {}).get("llm_spec", self.llm_spec_key)
-            result = await self.llm.invoke(
-                messages=invoke_messages,
-                system=system_prompt,
-                response_model=VegaLiteSpecUpdate,
-                model_spec=model_spec,
-            )
-
             step.stream(f"Reasoning: {result.chain_of_thought}")
             step.stream(f"Update:\n```yaml\n{result.yaml_update}\n```", replace=False)
             update_dict = load_yaml(result.yaml_update)
@@ -469,7 +459,7 @@ class VegaLiteAgent(BaseCodeAgent):
         """Generate VegaLite spec via YAML (declarative mode)."""
         errors_context = self._build_errors_context(pipeline, context, errors)
         with self._add_step(title="Creating basic plot structure", steps_layout=self._steps_layout) as step:
-            system_prompt = await self._render_prompt(
+            response = self._stream_prompt(
                 "main",
                 messages,
                 context,
@@ -478,14 +468,6 @@ class VegaLiteAgent(BaseCodeAgent):
                 doc_examples=doc_examples,
                 **errors_context,
             )
-            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
-            response = self.llm.stream(
-                messages,
-                system=system_prompt,
-                model_spec=model_spec,
-                response_model=VegaLiteSpec,
-            )
-
             async for output in response:
                 step.stream(output.chain_of_thought, replace=True)
 
@@ -507,7 +489,7 @@ class VegaLiteAgent(BaseCodeAgent):
         errors_context = self._build_errors_context(pipeline, context, errors)
 
         with self._add_step(title="Generating Altair code", steps_layout=self._steps_layout) as step:
-            system_prompt = await self._render_prompt(
+            response = self._stream_prompt(
                 "main_altair",
                 messages,
                 context,
@@ -516,15 +498,6 @@ class VegaLiteAgent(BaseCodeAgent):
                 doc_examples=doc_examples,
                 **errors_context,
             )
-
-            model_spec = self.prompts["main_altair"].get("llm_spec", self.llm_spec_key)
-            response = self.llm.stream(
-                messages,
-                system=system_prompt,
-                model_spec=model_spec,
-                response_model=AltairSpec,
-            )
-
             async for output in response:
                 step.stream(output.chain_of_thought, replace=True)
 
@@ -769,19 +742,11 @@ class VegaLiteAgent(BaseCodeAgent):
         messages = self._prepare_vision_messages(messages, view, f"Revise this chart: {instruction!r}")
 
         vega_spec = dump_yaml(spec["spec"], default_flow_style=False)
-        system_prompt = await self._render_prompt(
+        result = await self._invoke_prompt(
             "annotate_plot",
             messages,
             context,
             vega_spec=vega_spec,
-        )
-
-        model_spec = self.prompts.get("annotate_plot", {}).get("llm_spec", self.llm_spec_key)
-        result = await self.llm.invoke(
-            messages=messages,
-            system=system_prompt,
-            response_model=VegaLiteSpecUpdate,
-            model_spec=model_spec,
         )
         update_dict = load_yaml(result.yaml_update)
 

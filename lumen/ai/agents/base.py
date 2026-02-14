@@ -84,10 +84,9 @@ class Agent(Viewer, ToolUser, ContextProvider):
     def __panel__(self):
         return self.interface
 
-    async def _stream(self, messages: list[Message], system_prompt: str) -> Any:
+    async def _stream(self, messages: list[Message], context: TContext) -> Any:
         message = None
-        model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
-        output = self.llm.stream(messages, system=system_prompt, model_spec=model_spec, field="output")
+        output = self._stream_prompt("main", messages, context, field="output")
         try:
             async for output_chunk in output:
                 if self.interface is None:
@@ -139,5 +138,4 @@ class Agent(Viewer, ToolUser, ContextProvider):
             If the Agent response is part of a longer query this describes
             the step currently being processed.
         """
-        system_prompt = await self._render_prompt("main", messages, context)
-        return [await self._stream(messages, system_prompt)], context
+        return [await self._stream(messages, context)], context

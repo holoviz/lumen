@@ -176,6 +176,7 @@ class LLMUser(param.Parameterized):
         context: TContext,
         response_model: type[BaseModel] | None = None,
         model_spec: str | None = None,
+        model_index: int | None = None,
         **kwargs
     ) -> Any:
         """
@@ -193,6 +194,8 @@ class LLMUser(param.Parameterized):
             Pydantic model to structure the response
         model_spec : str, optional
             Specification for which LLM to use
+        model_index : int, optional
+            The index of the model to subset if the model spec returns a list of models
         **kwargs : dict
             Additional context variables for the prompt template
 
@@ -212,6 +215,9 @@ class LLMUser(param.Parameterized):
                 model_spec = self._lookup_prompt_key(prompt_name, "llm_spec")
             except KeyError:
                 model_spec = self.llm_spec_key
+
+        if model_index is not None:
+            model_spec = model_spec[model_index]
 
         result = await self.llm.invoke(
             messages=messages,

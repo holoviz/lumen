@@ -45,22 +45,16 @@ class BaseLumenAgent(Agent):
             raise ValueError("Must provide previous spec to revise.")
         lines = spec.splitlines()
         numbered_text = "\n".join(f"{i:2d}: {line}" for i, line in enumerate(lines, 1))
-        system = await self._render_prompt(
+        result = await self._invoke_prompt(
             "revise_output",
             messages,
             context,
+            model_spec="edit",
             numbered_text=numbered_text,
             language=language,
             feedback=instruction,
             errors=errors,
             **kwargs
-        )
-        retry_model = self._lookup_prompt_key("revise_output", "response_model")
-        result = await self.llm.invoke(
-            messages,
-            system=system,
-            response_model=retry_model,
-            model_spec="edit"
         )
         new_spec_raw = apply_changes(lines, result.edits)
         spec = load_yaml(new_spec_raw)

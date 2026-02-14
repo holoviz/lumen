@@ -170,25 +170,16 @@ class VectorLookupTool(Tool):
         messages = [{"role": "user", "content": original_query}]
 
         try:
-            refined_query_model = self._get_model("refine_query", item_type_name=self._item_type_name)
-            system_prompt = await self._render_prompt(
+            output = await self._invoke_prompt(
                 "refine_query",
                 messages,
                 context,
+                item_type_name=self._item_type_name,
                 results=results,
                 results_description=results_description,
                 original_query=original_query,
                 item_type=self._item_type_name
             )
-
-            model_spec = self.prompts["refine_query"].get("llm_spec", self.llm_spec_key)
-            output = await self.llm.invoke(
-                messages=messages,
-                system=system_prompt,
-                model_spec=model_spec,
-                response_model=refined_query_model
-            )
-
             return output.refined_search_query
         except Exception as e:
             with self._add_step(title="Query refinement error") as step:

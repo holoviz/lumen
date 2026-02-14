@@ -325,10 +325,12 @@ class Planner(Coordinator):
             # the unmet dependencies
             agent_candidates = [agent for agent in agents if not unmet_dependencies or set(agent.output_schema.__annotations__) & unmet_dependencies]
             tool_candidates = [tool for tool in tools if not unmet_dependencies or set(tool.output_schema.__annotations__) & unmet_dependencies]
-            system = await self._render_prompt(
+            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
+            async for reasoning in self._stream_prompt(
                 "main",
                 messages,
                 context,
+                model_spec=model_spec,
                 agents=agents,
                 tools=tools,
                 unmet_dependencies=unmet_dependencies,
@@ -336,15 +338,6 @@ class Planner(Coordinator):
                 previous_actors=previous_actors,
                 previous_plans=previous_plans,
                 is_follow_up=is_follow_up,
-            )
-            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
-
-            async for reasoning in self.llm.stream(
-                messages=messages,
-                system=system,
-                model_spec=model_spec,
-                response_model=Reasoning,
-                max_retries=3,
             ):
                 if reasoning.chain_of_thought:  # do not replace with empty string
                     context["reasoning"] = reasoning.chain_of_thought

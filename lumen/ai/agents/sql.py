@@ -519,23 +519,7 @@ class SQLAgent(BaseLumenAgent):
         if len(all_tables) <= 3:
             return all_tables
 
-        # Otherwise, ask LLM to select relevant tables
-        system_prompt = await self._render_prompt(
-            "select_tables",
-            messages,
-            context,
-        )
-
-        model_spec = self.prompts["select_tables"].get("llm_spec", self.llm_spec_key)
-        selection_model = self._get_model("select_tables", available_tables=all_tables)
-
-        selection = await self.llm.invoke(
-            messages,
-            system=system_prompt,
-            model_spec=model_spec,
-            response_model=selection_model,
-        )
-
+        selection = self._stream_prompt("select_tables", messages, context, available_tables=all_tables)
         selected = selection.tables if selection else metaset.get_top_tables(n=3)
         step.stream(f"Selected: {selected}")
         return selected
@@ -583,7 +567,8 @@ class SQLAgent(BaseLumenAgent):
             # Generate SQL using common prompt pattern
             dialects = set(src.dialect for src in sources.values())
             dialect = "duckdb" if len(dialects) > 1 else next(iter(dialects))
-            system_prompt = await self._render_prompt(
+
+            output = await self._invoke_prompt(
                 "main",
                 messages,
                 context,
@@ -596,17 +581,7 @@ class SQLAgent(BaseLumenAgent):
                 sql_plan_context=None,
                 errors=errors,
                 discovery_context=discovery_context,
-            )
-
-            # Generate SQL
-            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
-            sql_response_model = self._get_model("main", sources=list(sources))
-
-            output = await self.llm.invoke(
-                messages,
-                system=system_prompt,
-                model_spec=model_spec,
-                response_model=sql_response_model,
+                sources=list(sources)
             )
 
             if not output:
@@ -660,21 +635,13 @@ class SQLAgent(BaseLumenAgent):
         error_context: str,
     ) -> BaseModel:
         """Let LLM choose which discoveries to run based on error and available tables."""
-        system_prompt = await self._render_prompt(
+        selection = await self._invoke_prompt(
             "select_discoveries",
             messages,
             context,
+            model_index=0,
             error_context=error_context,
-        )
-
-        discovery_models = self._get_model("select_discoveries", sources=list(sources))
-        discovery_model = discovery_models[0]
-        model_spec = self.prompts["select_discoveries"].get("llm_spec", self.llm_spec_key)
-        selection = await self.llm.invoke(
-            messages,
-            system=system_prompt,
-            model_spec=model_spec,
-            response_model=discovery_model
+            sources=list(sources)
         )
         return selection
 
@@ -686,14 +653,6 @@ class SQLAgent(BaseLumenAgent):
         discovery_results: list[tuple[str, str]],
     ) -> BaseModel:
         """Check if discovery results are sufficient to fix the error."""
-        system_prompt = await self._render_prompt(
-            "check_sufficiency",
-            messages,
-            context,
-            error_context=error_context,
-            discovery_results=discovery_results,
-        )
-
         # Get sources from context for the discovery models
         metaset = context["metaset"]
         selected_slugs = list(metaset.catalog)
@@ -705,15 +664,14 @@ class SQLAgent(BaseLumenAgent):
             for table_slug in selected_slugs
         ]
 
-        discovery_models = self._get_model("check_sufficiency", sources=sources_list)
-        sufficiency_model = discovery_models[1]
-
-        model_spec = self.prompts["check_sufficiency"].get("llm_spec", self.llm_spec_key)
-        sufficiency = await self.llm.invoke(
+        sufficiency = await self._invoke_prompt(
+            "check_sufficiency",
             messages,
-            system=system_prompt,
-            model_spec=model_spec,
-            response_model=sufficiency_model,
+            context,
+            model_index=1,
+            error_context=error_context,
+            discovery_results=discovery_results,
+            sources=sources_list,
         )
         return sufficiency
 

@@ -93,23 +93,12 @@ class AnalysisAgent(BaseLumenAgent):
 
         if len(analyses) > 1:
             with self._add_step(title="Choosing the most relevant analysis...", steps_layout=self._steps_layout) as step:
-                analysis_model = self._get_model("main", analyses=list(analyses))
-                system_prompt = await self._render_prompt(
+                analysis_name = await self.invoke_prompt(
                     "main",
                     messages,
-                    analyses=analyses,
+                    analyses=list(analyses),
                     context=context,
                     data=context.get("data"),
-                )
-                model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
-                analysis_name = (
-                    await self.llm.invoke(
-                        messages,
-                        system=system_prompt,
-                        model_spec=model_spec,
-                        response_model=analysis_model,
-                        allow_partial=False,
-                    )
                 ).analysis
                 step.stream(f"Selected {analysis_name}")
                 step.success_title = f"Selected {analysis_name}"
