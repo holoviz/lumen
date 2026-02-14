@@ -88,21 +88,14 @@ class BaseViewAgent(BaseLumenAgent):
     ) -> dict[str, Any]:
         errors_context = self._build_errors_context(pipeline, context, errors)
         doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
-        system = await self._render_prompt(
+        response = await self._stream_prompt(
             "main",
             messages,
             context,
             table=pipeline.table,
             doc=doc,
+            model_kwargs=dict(schema=schema),
             **errors_context,
-        )
-
-        model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
-        response = self.llm.stream(
-            messages,
-            system=system,
-            model_spec=model_spec,
-            response_model=self._get_model("main", schema=schema),
         )
 
         e = None
