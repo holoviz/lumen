@@ -35,14 +35,17 @@ class RawStep(BaseModel):
     instruction: str = Field(
         description="""
         Concise instruction capturing user intent at the right altitude.
+        Reflect exactly what the user asked for, nothing more and nothing less,
+        i.e. if details/numbers are provided by the user, include them;
+        if not, do not randomly add arbitrary numbers or details.
 
         - ❌ Too low: implementation details (SQL syntax, chart specs)
         - ❌ Too high: vague ("handle this", "process data")
-        - ❌ Leaking: mentioning downstream purpose ("for plotting", "for the chart", "for analysis")
+        - ❌ No leaking: mentioning downstream purpose ("for plotting", "for the chart")
         - ✅ Just right: what THIS actor should do, nothing about why
         """,
         examples=[
-            "Query top 5 countries by sales",
+            "Query top 5 countries by sales # only if user requested the top 5, otherwise just query all countries",
             "Get wind, temperature, dewpoint, and precipitation data for Seattle on Jan 1, 2020",
             "Plot a line chart of sales over time.",
         ],

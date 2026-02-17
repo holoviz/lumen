@@ -221,8 +221,7 @@ class SQLQuery(BaseModel):
 
     query: str = Field(description="""
         One, correct, valid SQL query that answers the user's question;
-        should only be one query and do NOT add extraneous comments; no multiple semicolons.
-        No limits unless explicitly requested.""")
+        should only be one query and do NOT add extraneous comments; no multiple semicolons.""")
 
     table_slug: str = Field(
         description="""
