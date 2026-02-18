@@ -217,6 +217,7 @@ class Task(Viewer):
         """
         context = dict(self.context or {}, **(context or {}))
         self.param.update(status="running", running=True)
+        await asyncio.sleep(0.1)  # Allow _running watcher to insert progress bar before execution starts
         try:
             if not self._prepared:
                 await self.prepare(context)
@@ -333,6 +334,7 @@ class TaskGroup(Task):
     ) -> tuple[list[Any], TContext]:
         if task.status == "success":
             return task.views, task.out_context
+        await asyncio.sleep(0.01)
         messages = self._render_message_history(context)
         subcontext = self._get_context(i, context, task)
         task_history = messages + task.history
@@ -477,7 +479,7 @@ class TaskGroup(Task):
                 Divider(sizing_mode="stretch_width", margin=(10, 0)),
                 Accordion(
                     *self._render_tasks(), margin=(10, 0, 10, 0), title_variant="h4",
-                    sizing_mode="stretch_width"
+                    toggle=True, disable_gutters=True, sizing_mode="stretch_width"
                 ),
               ) if self._tasks else ()
             )
@@ -763,8 +765,23 @@ class Section(TaskGroup):
         await asyncio.sleep(0.05)
         if not self.running:
             return
-        loader = Progress(variant='indeterminate', sizing_mode='stretch_width', margin=0)
+        # Start with indeterminate, switch to determinate after first task
+        loader = Progress(
+            variant='indeterminate',
+            sizing_mode='stretch_width',
+            margin=(0, 0, 10, 0)
+        )
         self._view.insert(0, loader)
+
+        # Switch to determinate mode once first task completes
+        while self._current == 0 and self.running:
+            await asyncio.sleep(0.05)
+
+        if self.running and self._current > 0:
+            loader.variant = 'determinate'
+            progress_value = self.param._current.rx.pipe(lambda x: (x / len(self) * 100) if len(self) > 0 else 0)
+            loader.value = progress_value
+
         while self.running:
             await asyncio.sleep(0.05)
         self._view.remove(loader)
@@ -800,7 +817,9 @@ class Report(TaskGroup):
             self.param.title, variant="h1", margin=(0, 0, 0, 10)
         )
         self._view = Accordion(
-            sizing_mode="stretch_width", min_height=0, margin=(0, 5, 5, 5),
+            sizing_mode="stretch_width", min_height=0, margin=(0, 5, 15, 5),
+            toggle=True, disable_gutters=True,
+            height_policy='fit',
             sx={
                 "& .MuiAccordionDetails-root": {
                     "p": "0 calc(2 * var(--mui-spacing)) 1em !important",
@@ -879,6 +898,7 @@ class Report(TaskGroup):
             self._dialog,
             margin=(0, 0, 0, 5),
             sizing_mode="stretch_both",
+            height_policy='fit',
         )
         self._update_run_state()
         self._update_icon_visibility()
@@ -949,7 +969,7 @@ class Report(TaskGroup):
         if has_outputs:
             self._view.active = list(range(len(objects)))
         else:
-            self._view.active = [0] if objects else []
+            self._view.active = list(range(len(objects))) if objects else []
 
     async def _run_task(self, i: int, task: Section, context: TContext, **kwargs):
         self._view.active = self._view.active + [i]
@@ -960,12 +980,13 @@ class Report(TaskGroup):
         return Container(
             self._switcher,
             self._container,
+            align="center",
             sizing_mode="stretch_both",
-            height_policy="max",
             stylesheets=[":host > div { overflow-y: auto; }"],
-            min_height=600,
             sx={
                 "minWidth": "320px",
+                "width": "100%",
+                "height": "auto",
                 ".mui-light &": { "background-color": "var(--mui-palette-grey-100)"},
                 ".mui-dark &": { "background-color": "var(--mui-palette-grey-900)"}
             }
