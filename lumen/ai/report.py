@@ -479,7 +479,7 @@ class TaskGroup(Task):
                 Divider(sizing_mode="stretch_width", margin=(10, 0)),
                 Accordion(
                     *self._render_tasks(), margin=(10, 0, 10, 0), title_variant="h4",
-                    toggle=True, disable_gutters=True, sizing_mode="stretch_width"
+                    toggle=True, sizing_mode="stretch_width"
                 ),
               ) if self._tasks else ()
             )
@@ -817,9 +817,7 @@ class Report(TaskGroup):
             self.param.title, variant="h1", margin=(0, 0, 0, 10)
         )
         self._view = Accordion(
-            sizing_mode="stretch_width", min_height=0, margin=(0, 5, 15, 5),
-            toggle=True, disable_gutters=True,
-            height_policy='fit',
+            sizing_mode="stretch_width", min_height=0, margin=(0, 5, 15, 5), toggle=True,
             sx={
                 "& .MuiAccordionDetails-root": {
                     "p": "0 calc(2 * var(--mui-spacing)) 1em !important",
