@@ -23,8 +23,9 @@ from panel.pane import Markdown
 from panel.viewable import Viewable, Viewer
 from panel_material_ui import (
     Accordion, BreakpointSwitcher, Button, Card, ChatFeed, ChatMessage,
-    Container, Dialog, Divider, FileDownload, IconButton, Progress, Select,
-    SpeedDial, TextAreaInput, TextInput, Typography,
+    Container, Dialog, Divider, FileDownload, IconButton, MultiChoice,
+    Progress, Select, SpeedDial, TextAreaInput, TextInput, ToggleIcon,
+    Typography,
 )
 
 from ..views.base import Panel, View
@@ -222,6 +223,8 @@ class Task(Viewer):
             if not self._prepared:
                 await self.prepare(context)
             views, out_context = await self._execute(context, **kwargs)
+        except asyncio.CancelledError:
+            raise
         except Exception:
             self.status = "error"
             raise
@@ -399,12 +402,18 @@ class TaskGroup(Task):
 
         views = list(self._header)
         self.status = "running"
+        selector = getattr(self, '_export_selector', None)
+        included_titles = selector.value if selector is not None else None
         for i, task in enumerate(self):
+            if included_titles is not None and task.title not in included_titles:
+                continue
             new = []
             try:
                 new, new_context = await self._run_task(i, task, context, **kwargs)
             except MissingContextError:
                 # Re-raise MissingContextError to allow retry logic at Plan level
+                raise
+            except asyncio.CancelledError:
                 raise
             except Exception as e:
                 tb.print_exception(e)
@@ -612,8 +621,14 @@ class TaskGroup(Task):
             raise RuntimeError(
                 "Report has not been executed, run report before exporting to_notebook."
             )
+        selector = getattr(self, '_export_selector', None)
+        included_titles = selector.value if selector is not None else None
+        included_views = list(self._header)
+        for task in self:
+            if included_titles is None or task.title in included_titles:
+                included_views += task.views
         cells, extensions = [], ['tabulator']
-        for out in self.views:
+        for out in included_views:
             ext = None
             if isinstance(out, Typography):
                 level = int(out.variant[1:]) if out.variant and out.variant.startswith('h') else 0
@@ -718,6 +733,13 @@ class Section(TaskGroup):
             "", variant="body2", margin=(10, 10),
             sx={"color": "text.secondary"}
         )
+        self._export_selector = MultiChoice(
+            name="Include in process & export",
+            options=[],
+            value=[],
+            sizing_mode="stretch_width",
+        )
+        self._export_selector.param.watch(self._sync_placeholder_to_selector, 'value')
         self._view = Column(sizing_mode='stretch_width', styles={'min-height': 'unset'}, height_policy='fit')
         self._container = Column(
             Row(
@@ -725,6 +747,7 @@ class Section(TaskGroup):
                 styles={'position': 'absolute', 'top': '-57.5px', 'right': '20px'}
             ),
             self._dialog,
+            self._export_selector,
             self._view,
             sizing_mode='stretch_width',
             styles={'min-height': 'unset'},
@@ -741,14 +764,29 @@ class Section(TaskGroup):
             return
         has_outputs = self.status != "idle" or bool(self.views)
         if not has_outputs:
-            n = len(self._tasks)
-            task_word = "task" if n == 1 else "tasks"
-            self._placeholder.object = f"{n} {task_word} ready"
+            n_total = len(self._tasks)
+            n_selected = len(self._export_selector.value)
+            task_word = "task" if n_total == 1 else "tasks"
+            if n_selected < n_total:
+                self._placeholder.object = f"{n_selected} selected / {n_total} {task_word} ready"
+            else:
+                self._placeholder.object = f"{n_total} {task_word} ready"
             self._placeholder.visible = True
         else:
             self._placeholder.visible = False
 
+    def _sync_placeholder_to_selector(self, event=None):
+        self._update_placeholder()
+
     def _populate_view(self):
+        titles = [task.title for task in self._tasks]
+        prev_value = self._export_selector.value
+        self._export_selector.options = titles
+        # Preserve existing selections; only default to all-selected on first populate
+        if prev_value:
+            self._export_selector.value = [t for t in prev_value if t in titles]
+        else:
+            self._export_selector.value = titles
         self._view[:] = self._header + [self._placeholder] + list(self._tasks)
 
     async def _run_task(self, i: int, task: Task | Actor, context: TContext | None, **kwargs) -> list[Any]:
@@ -825,10 +863,14 @@ class Report(TaskGroup):
                 }
             }
         )
-        self._run = IconButton(
-            icon="play_arrow", on_click=self._execute_event, margin=0, size="large",
-            description="Execute Report", loading=self.param.running,
+        self._abort = False
+        self._execute_task = None
+        self._run = ToggleIcon(
+            icon="play_circle_filled", active_icon="stop",
+            value=False, margin=0, size="large",
+            description="Execute / Stop Report",
         )
+        self._run.param.watch(self._on_run_toggle, 'value')
         self._clear = IconButton(
             icon="clear", on_click=lambda _: self.reset(), margin=0, size="large",
             description="Clear outputs", visible=False
@@ -904,7 +946,8 @@ class Report(TaskGroup):
     async def _trigger_event(self, item: dict):
         icon = item["icon"]
         if icon == "play_arrow":
-            await self._execute_event()
+            self._run.value = not self._run.value
+            # watcher handles execution
         elif icon == "clear":
             self.reset()
         elif icon == "get_app":
@@ -921,14 +964,14 @@ class Report(TaskGroup):
         # Play button is always enabled - users can re-run after changing settings
         pass
 
-    @param.depends('status', 'views', watch=True)
+    @param.depends('status', 'views', 'running', watch=True)
     def _update_icon_visibility(self):
         """Show/hide icons based on whether report has outputs."""
         has_outputs = self.status in ("success", "error") or bool(self.views)
-        self._clear.visible = has_outputs
-        self._collapse.visible = has_outputs
-        self._export.visible = has_outputs
-        self._settings.visible = has_outputs
+        self._clear.visible = has_outputs and not self.running
+        self._collapse.visible = has_outputs and not self.running
+        self._export.visible = has_outputs and not self.running
+        self._settings.visible = has_outputs and not self.running
         # Only animate play button when no outputs
         if has_outputs:
             self._run.sx = {}
@@ -941,9 +984,26 @@ class Report(TaskGroup):
                 },
             }
 
+    def _on_run_toggle(self, event):
+        if event.new:
+            pn.state.execute(self._execute_event)
+        # User clicked stop — cancel the running task
+        elif self._execute_task and not self._execute_task.done():
+            self._execute_task.cancel()
+
     async def _execute_event(self, event=None):
-        await asyncio.sleep(0.01)  # yield the event loop to allow button loading state to update
-        await self.execute()
+        self._execute_task = asyncio.current_task()
+        try:
+            await asyncio.sleep(0.01)
+            await self.execute()
+        except asyncio.CancelledError:
+            self.running = False
+            for section in self:
+                if section.running:
+                    section.running = False
+        finally:
+            self._run.value = False
+            self._execute_task = None
 
     async def _notebook_export(self):
         if len(self) and self.status != "success":
