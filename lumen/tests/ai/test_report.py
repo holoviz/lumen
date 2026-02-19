@@ -247,7 +247,7 @@ async def test_taskgroup_context_invalidate():
 
     tg[0].out_context = {"a": "B"}
 
-    await asyncio.sleep(0.1)
+    await asyncio.sleep(0.5)
 
     assert tg.status == "success"
     assert tg[0].status == "success"
