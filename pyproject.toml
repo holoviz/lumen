@@ -184,3 +184,9 @@ multi_line_output = 5
 combine_as_imports = true
 lines_between_types = 1
 include_trailing_comma = true
+
+[tool.pyright]
+include = ["lumen/ai"]
+exclude = ["**/__pycache__"]
+reportMissingImports = false
+reportMissingTypeStubs = false
