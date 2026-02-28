@@ -1,0 +1,10 @@
+{
+  "include": [
+    "lumen/ai"
+  ],
+  "exclude": [
+    "**/__pycache__"
+  ],
+  "reportMissingImports": false,
+  "reportMissingTypeStubs": false
+}
