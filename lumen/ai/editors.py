@@ -608,7 +608,21 @@ class SQLEditor(LumenEditor):
         return GraphicWalker(
             self.component.param.data,
             kernel_computation=True,
-            tab='data',
+            hide_profiling=True,
+            tab='vis',
+            config={
+                "i18nLang": "en-US",
+                "i18nResources": {
+                    "en-US": {
+                        "App": {
+                            "segments": {
+                                "data": "Data View",
+                                "vis": "Visualization",
+                            }
+                        }
+                    }
+                },
+            },
             sizing_mode='stretch_both'
         )
 
