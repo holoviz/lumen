@@ -16,6 +16,8 @@ class UploadControls(BaseSourceControls):
     load_mode = "manual"  # File selection triggers, not a button
 
     label = '<span class="material-icons" style="vertical-align: middle;">upload</span> Upload Data'
+    add_button_label = "Upload file(s)"
+    add_button_icon = "upload_file"
 
     def _render_layout(self):
         """Build upload-specific layout with FileDropper."""
@@ -48,7 +50,13 @@ class UploadControls(BaseSourceControls):
 
     def _on_file_upload(self, event):
         """Handle file upload from FileDropper."""
-        self._generate_file_cards(self._file_input.value or {})
+        files = event.new if event is not None and event.new is not None else (self._file_input.value or {})
+        self._generate_file_cards(files)
+        if files:
+            self._message_placeholder.param.update(
+                object="Files selected. Click 'Upload file(s)' to add them as data sources.",
+                visible=True,
+            )
 
     @param.depends("add", watch=True)
     def _on_add(self):

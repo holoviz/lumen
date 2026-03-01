@@ -1,6 +1,7 @@
 import asyncio
 import io
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -276,3 +277,20 @@ class TestUploadControlsUnsupportedFiles:
         assert upload_controls._error_placeholder.visible is True
         assert "script.py" in upload_controls._error_placeholder.object
         assert "unsupported format" in upload_controls._error_placeholder.object
+
+
+class TestUploadControlsUX:
+    """Tests for upload affordance and guidance text."""
+
+    def test_upload_button_label_is_explicit(self, upload_controls):
+        """Upload controls should use explicit upload action text."""
+        assert upload_controls._add_button.name == "Upload file(s)"
+
+    def test_file_selection_shows_upload_guidance(self, upload_controls):
+        """Selecting files should tell users how to complete upload."""
+        upload_controls._on_file_upload(
+            SimpleNamespace(new={"sample.csv": b"a,b\n1,2"})
+        )
+
+        assert upload_controls._message_placeholder.visible is True
+        assert "Upload file(s)" in upload_controls._message_placeholder.object
