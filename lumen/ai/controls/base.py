@@ -766,6 +766,7 @@ class BaseSourceControls(Viewer):
         self._upload_cards.clear()
         self._file_cards.clear()
         self._add_button.visible = False
+        self._upload_cards.visible = False
 
     def __panel__(self):
         return self._layout

@@ -1,6 +1,7 @@
 import asyncio
 import io
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -276,3 +277,30 @@ class TestUploadControlsUnsupportedFiles:
         assert upload_controls._error_placeholder.visible is True
         assert "script.py" in upload_controls._error_placeholder.object
         assert "unsupported format" in upload_controls._error_placeholder.object
+
+
+class TestUploadControlsSelectionUX:
+    """Tests for staged file selection UX in UploadControls."""
+
+    def test_file_selection_shows_guidance_message(self, upload_controls):
+        upload_controls._on_file_upload(
+            SimpleNamespace(new={"a.csv": b"x,y\n1,2\n", "b.csv": b"x,y\n3,4\n"})
+        )
+        assert upload_controls._message_placeholder.visible is True
+        assert "2 file(s) selected" in upload_controls._message_placeholder.object
+        assert "Clear selected" in upload_controls._message_placeholder.object
+
+    def test_clear_selection_resets_staged_files(self, upload_controls):
+        upload_controls._on_file_upload(
+            SimpleNamespace(new={"a.csv": b"x,y\n1,2\n"})
+        )
+        assert len(upload_controls._file_cards) == 1
+        assert upload_controls._upload_cards.visible is True
+
+        upload_controls._on_clear_selection(None)
+
+        assert len(upload_controls._file_cards) == 0
+        assert upload_controls._upload_cards.visible is False
+        assert upload_controls._file_input.value == {}
+        assert upload_controls._message_placeholder.visible is True
+        assert upload_controls._message_placeholder.object == "Selection cleared."
