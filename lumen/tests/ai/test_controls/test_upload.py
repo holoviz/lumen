@@ -276,3 +276,26 @@ class TestUploadControlsUnsupportedFiles:
         assert upload_controls._error_placeholder.visible is True
         assert "script.py" in upload_controls._error_placeholder.object
         assert "unsupported format" in upload_controls._error_placeholder.object
+
+
+@pytest.mark.asyncio
+class TestUploadControlsSourceDeduplication:
+    """Tests for source de-duplication when uploading multiple files."""
+
+    async def test_multiple_data_files_add_single_source_reference(self, upload_controls):
+        files = {
+            "a.csv": b"x,y\n1,2\n",
+            "b.csv": b"x,y\n3,4\n",
+        }
+        upload_controls._generate_file_cards(files)
+
+        n_tables, n_docs, n_metadata = upload_controls._process_files()
+
+        assert n_tables == 2
+        assert n_docs == 0
+        assert n_metadata == 0
+
+        sources = upload_controls.outputs["sources"]
+        assert len(sources) == 1
+        assert upload_controls.outputs["source"] is sources[0]
+        assert set(sources[0].get_tables()) == {"a", "b"}
