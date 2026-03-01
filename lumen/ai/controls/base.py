@@ -315,6 +315,12 @@ class BaseSourceControls(Viewer):
     load_button_icon = param.String(default="download", doc="""
         Material icon name for the load button.""")
 
+    add_button_label = param.String(default="Confirm file(s)", doc="""
+        Text label for the add/upload confirmation button.""")
+
+    add_button_icon = param.String(default="add", doc="""
+        Material icon name for the add/upload confirmation button.""")
+
     source_name_prefix = param.String(default="UploadedSource", doc="""
         Prefix for auto-generated source names.""")
 
@@ -347,8 +353,8 @@ class BaseSourceControls(Viewer):
         files_to_process = self._upload_cards.param["objects"].rx.len() > 0
         self._add_button = Button.from_param(
             self.param.add,
-            name="Confirm file(s)",
-            icon="add",
+            name=self.param.add_button_label,
+            icon=self.param.add_button_icon,
             visible=files_to_process,
             description="",
             align="center",

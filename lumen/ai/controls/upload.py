@@ -13,6 +13,8 @@ class UploadControls(BaseSourceControls):
     Controls for uploading files from the local filesystem.
     """
 
+    add_button_icon = "upload_file"
+    add_button_label = "Upload file(s)"
     load_mode = "manual"  # File selection triggers, not a button
 
     label = '<span class="material-icons" style="vertical-align: middle;">upload</span> Upload Data'
@@ -57,13 +59,12 @@ class UploadControls(BaseSourceControls):
 
     def _on_file_upload(self, event):
         """Handle file upload from FileDropper."""
-        files = event.new if event is not None else self._file_input.value
-        files = files or {}
+        files = event.new if event is not None and event.new is not None else (self._file_input.value or {})
         self._generate_file_cards(files)
         if files:
             self._message_placeholder.param.update(
-                object=f"{len(files)} file(s) selected. Click 'Confirm file(s)' to process or 'Clear selected' to reset.",
-                visible=True
+                object="Files selected. Click 'Upload file(s)' to add them as data sources.",
+                visible=True,
             )
 
     def _on_clear_selection(self, event):
@@ -72,7 +73,7 @@ class UploadControls(BaseSourceControls):
         self._file_input.value = {}
         self._message_placeholder.param.update(
             object="Selection cleared.",
-            visible=True
+            visible=True,
         )
 
     @param.depends("add", watch=True)

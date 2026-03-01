@@ -279,7 +279,6 @@ class TestUploadControlsUnsupportedFiles:
         assert "script.py" in upload_controls._error_placeholder.object
         assert "unsupported format" in upload_controls._error_placeholder.object
 
-
 class TestUploadControlsSourceDeduplication:
     """Tests for source de-duplication when uploading multiple files."""
 
@@ -299,8 +298,6 @@ class TestUploadControlsSourceDeduplication:
         assert len(upload_controls.outputs["sources"]) == 1
         assert upload_controls.outputs["source"] is upload_controls.outputs["sources"][0]
         assert set(upload_controls.outputs["sources"][0].get_tables()) == {"a", "b"}
-
-
 class TestUploadControlsSelectionUX:
     """Tests for staged file selection UX in UploadControls."""
 
@@ -309,8 +306,7 @@ class TestUploadControlsSelectionUX:
             SimpleNamespace(new={"a.csv": b"x,y\n1,2\n", "b.csv": b"x,y\n3,4\n"})
         )
         assert upload_controls._message_placeholder.visible is True
-        assert "2 file(s) selected" in upload_controls._message_placeholder.object
-        assert "Clear selected" in upload_controls._message_placeholder.object
+        assert "Upload file(s)" in upload_controls._message_placeholder.object
 
     def test_clear_selection_resets_staged_files(self, upload_controls):
         upload_controls._on_file_upload(
@@ -358,3 +354,11 @@ class TestUploadControlsOutputContract:
         assert len(upload_controls.outputs["sources"]) == 1
         assert upload_controls.outputs["source"] is upload_controls.outputs["sources"][0]
         assert upload_controls.outputs["table"] == "my_table"
+
+
+class TestUploadControlsUX:
+    """Tests for upload affordance and guidance text."""
+
+    def test_upload_button_label_is_explicit(self, upload_controls):
+        """Upload controls should use explicit upload action text."""
+        assert upload_controls._add_button.name == "Upload file(s)"
