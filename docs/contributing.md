@@ -123,6 +123,13 @@ pixi run -e docs docs-build
 - Ensure all tests pass
 - Aim for >80% coverage
 
+### AI source controls contract
+When contributing to `lumen.ai.controls` source loaders, keep these output invariants true:
+
+- `outputs["sources"]` must not contain duplicate source objects
+- `outputs["source"]` must always reference an item present in `outputs["sources"]`
+- `outputs["table"]` should reflect the most recently active table when applicable
+
 ### Documentation
 - Update docs for new features
 - Add docstrings

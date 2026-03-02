@@ -6,7 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
-from lumen.ai.controls import UploadedFileRow
+from lumen.ai.controls import SourceResult, UploadedFileRow
+from lumen.sources.duckdb import DuckDBSource
 
 
 @pytest.mark.asyncio
@@ -304,3 +305,35 @@ class TestUploadControlsSelectionUX:
         assert upload_controls._file_input.value == {}
         assert upload_controls._message_placeholder.visible is True
         assert upload_controls._message_placeholder.object == "Selection cleared."
+
+
+class TestUploadControlsOutputContract:
+    """Regression tests for source output invariants."""
+
+    def test_multi_table_upload_deduplicates_outputs_sources(self, upload_controls):
+        upload_controls._generate_file_cards(
+            {
+                "first.csv": b"a,b\n1,2\n",
+                "second.csv": b"a,b\n3,4\n",
+            }
+        )
+
+        n_tables, n_docs, n_metadata = upload_controls._process_files()
+
+        assert n_tables == 2
+        assert n_docs == 0
+        assert n_metadata == 0
+        assert "sources" in upload_controls.outputs
+        assert len(upload_controls.outputs["sources"]) == 1
+        assert upload_controls.outputs["source"] in upload_controls.outputs["sources"]
+
+    def test_handle_success_deduplicates_duplicate_source_entries(self, upload_controls):
+        source = DuckDBSource(uri=":memory:", ephemeral=True, name="dedup_test", tables={})
+        result = SourceResult(sources=[source, source], table="my_table")
+
+        upload_controls._handle_success(result)
+
+        assert "sources" in upload_controls.outputs
+        assert len(upload_controls.outputs["sources"]) == 1
+        assert upload_controls.outputs["source"] is upload_controls.outputs["sources"][0]
+        assert upload_controls.outputs["table"] == "my_table"
