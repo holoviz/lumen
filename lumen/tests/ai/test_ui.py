@@ -15,7 +15,6 @@ except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
 from panel.layout import Column, Row
-from panel.pane import Markdown
 from panel.tests.util import async_wait_until
 from panel.util import edit_readonly
 from panel_material_ui import Container
@@ -34,17 +33,6 @@ from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
 from lumen.sources.sqlalchemy import SQLAlchemySource
-
-
-@pytest.fixture(autouse=True)
-def mock_sql_editor_explorer(monkeypatch):
-    """
-    Avoid constructing the real GraphicWalker widget in UI tests.
-
-    The third-party widget can leave event-loop resources behind in headless
-    test runs, which surfaces as PytestUnraisableExceptionWarning.
-    """
-    monkeypatch.setattr(SQLEditor, "render_explorer", lambda self: Markdown("Data Source"))
 
 
 @pytest.fixture

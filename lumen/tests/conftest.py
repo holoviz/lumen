@@ -181,8 +181,26 @@ def penguins_file(tmp_path):
 
 @pytest.fixture
 def asyncio_loop():
+    """
+    Provide an isolated asyncio loop and ensure it is always closed.
+
+    The previous implementation created two loops but only closed one,
+    which can leak event loops across tests and trigger ResourceWarnings.
+    """
+    try:
+        previous_loop = asyncio.get_event_loop()
+    except RuntimeError:
+        previous_loop = None
+
     loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(asyncio.new_event_loop())
-    yield
-    loop.stop()
-    loop.close()
+    asyncio.set_event_loop(loop)
+    try:
+        yield loop
+    finally:
+        if not loop.is_closed():
+            loop.stop()
+            loop.close()
+        if previous_loop is None or previous_loop.is_closed():
+            asyncio.set_event_loop(None)
+        else:
+            asyncio.set_event_loop(previous_loop)
