@@ -1,4 +1,5 @@
 import asyncio
+import gc
 import os
 import tempfile
 
@@ -114,6 +115,31 @@ def clear_state():
     state._pipeline.clear()
     state._variables.clear()
     state._variable = None
+
+@pytest.fixture(autouse=True)
+def cleanup_stray_event_loops(monkeypatch):
+    """
+    Track event loops created during a test and ensure they are closed.
+
+    Some async integrations create extra loops via ``asyncio.new_event_loop``
+    and do not reliably close them, which then surfaces as
+    ``PytestUnraisableExceptionWarning`` in following tests.
+    """
+    created_loops = []
+    original_new_event_loop = asyncio.new_event_loop
+
+    def _tracked_new_event_loop():
+        loop = original_new_event_loop()
+        created_loops.append(loop)
+        return loop
+
+    monkeypatch.setattr(asyncio, "new_event_loop", _tracked_new_event_loop)
+    yield
+    gc.collect()
+    for loop in created_loops:
+        if loop.is_closed() or loop.is_running():
+            continue
+        loop.close()
 
 @pytest.fixture
 def document():
