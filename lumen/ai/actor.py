@@ -176,7 +176,9 @@ class LLMUser(param.Parameterized):
         context: TContext,
         response_model: type[BaseModel] | None = None,
         model_spec: str | None = None,
-        **kwargs
+        model_index: int | None = None,
+        model_kwargs: dict | None = None,
+        **prompt_kwargs
     ) -> Any:
         """
         Render a prompt and invoke the LLM.
@@ -193,6 +195,10 @@ class LLMUser(param.Parameterized):
             Pydantic model to structure the response
         model_spec : str, optional
             Specification for which LLM to use
+        model_kwargs : dict, optional
+            Additional context variables for determining the model_spec or response_model
+        model_index : int, optional
+            The index of the model to subset if the model spec returns a list of models
         **kwargs : dict
             Additional context variables for the prompt template
 
@@ -200,10 +206,10 @@ class LLMUser(param.Parameterized):
         -------
         The structured response from the LLM
         """
-        system = await self._render_prompt(prompt_name, messages, context, **kwargs)
+        system = await self._render_prompt(prompt_name, messages, context, **prompt_kwargs)
         if response_model is None:
             try:
-                response_model = self._get_model(prompt_name, **kwargs)
+                response_model = self._get_model(prompt_name, **(model_kwargs or {}))
             except (KeyError, AttributeError):
                 pass
 
@@ -212,6 +218,9 @@ class LLMUser(param.Parameterized):
                 model_spec = self._lookup_prompt_key(prompt_name, "llm_spec")
             except KeyError:
                 model_spec = self.llm_spec_key
+
+        if model_index is not None:
+            model_spec = model_spec[model_index]
 
         result = await self.llm.invoke(
             messages=messages,
@@ -228,6 +237,8 @@ class LLMUser(param.Parameterized):
         context: TContext,
         response_model: type[BaseModel] | None = None,
         model_spec: str | None = None,
+        model_kwargs: dict | None = None,
+        model_index: int | None = None,
         field: str | None = None,
         **kwargs
     ):
@@ -246,6 +257,10 @@ class LLMUser(param.Parameterized):
             Pydantic model to structure the response
         model_spec : str, optional
             Specification for which LLM to use
+        model_kwargs : dict, optional
+            Additional context variables for determining the model_spec or response_model
+        model_index : int, optional
+            The index of the model to subset if the model spec returns a list of models
         field : str, optional
             Specific field to extract from the response model
         **kwargs : dict
@@ -261,7 +276,7 @@ class LLMUser(param.Parameterized):
         # Determine the response model
         if response_model is None:
             try:
-                response_model = self._get_model(prompt_name, **kwargs)
+                response_model = self._get_model(prompt_name, **(model_kwargs or {}))
             except (KeyError, AttributeError):
                 pass
 
@@ -271,6 +286,9 @@ class LLMUser(param.Parameterized):
                 model_spec = self._lookup_prompt_key(prompt_name, "llm_spec")
             except KeyError:
                 model_spec = self.llm_spec_key
+
+        if model_index is not None:
+            model_spec = model_spec[model_index]
 
         # Stream from the LLM
         async for chunk in self.llm.stream(
