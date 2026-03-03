@@ -3,7 +3,7 @@ from __future__ import annotations
 import param
 
 from panel.widgets import FileDropper
-from panel_material_ui import Column as MuiColumn
+from panel_material_ui import Button, Column as MuiColumn, Row
 
 from .base import BaseSourceControls
 
@@ -34,11 +34,20 @@ class UploadControls(BaseSourceControls):
 
         self._file_input = FileDropper(**file_dropper_params)
         self._file_input.param.watch(self._on_file_upload, "value")
+        self._clear_button = Button(
+            name="Clear selected",
+            icon="delete",
+            on_click=self._on_clear_selection,
+            visible=self._upload_cards.param.visible,
+            height=42,
+            sizing_mode="stretch_width",
+            description="",
+        )
 
         return MuiColumn(
             self._file_input,
             self._upload_cards,
-            self._add_button,
+            Row(self._add_button, self._clear_button),
             self._error_placeholder,
             self._message_placeholder,
             self.progress.bar,
@@ -48,7 +57,23 @@ class UploadControls(BaseSourceControls):
 
     def _on_file_upload(self, event):
         """Handle file upload from FileDropper."""
-        self._generate_file_cards(self._file_input.value or {})
+        files = event.new if event is not None else self._file_input.value
+        files = files or {}
+        self._generate_file_cards(files)
+        if files:
+            self._message_placeholder.param.update(
+                object=f"{len(files)} file(s) selected. Click 'Confirm file(s)' to process or 'Clear selected' to reset.",
+                visible=True
+            )
+
+    def _on_clear_selection(self, event):
+        """Clear staged files before processing."""
+        self._clear_uploads()
+        self._file_input.value = {}
+        self._message_placeholder.param.update(
+            object="Selection cleared.",
+            visible=True
+        )
 
     @param.depends("add", watch=True)
     def _on_add(self):
