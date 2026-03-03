@@ -31,6 +31,8 @@ Common use cases include:
 | `UploadControls` | Uploading local files (CSV, Excel, etc.) |
 | `DownloadControls` | Fetching data from URLs |
 
+`UploadControls` stages selected files before processing. After selecting files, click `Confirm file(s)` to process them, or `Clear selected` to reset the staged selection.
+
 ### Creating custom controls
 
 Custom controls inherit from `BaseSourceControls` and override two hooks:
