@@ -7,6 +7,7 @@ We welcome contributions from the community! Here's how to help.
 ## Ways to Contribute
 
 ### 🐛 Report Bugs
+
 Found an issue? [Open a GitHub issue](https://github.com/holoviz/lumen/issues):
 
 - Be specific about what failed
@@ -15,6 +16,7 @@ Found an issue? [Open a GitHub issue](https://github.com/holoviz/lumen/issues):
 - Your environment (OS, Python version, etc.)
 
 ### 📚 Improve Documentation
+
 Help others learn Lumen:
 
 - Fix typos and clarify language
@@ -23,6 +25,7 @@ Help others learn Lumen:
 - Submit new tutorials
 
 ### ✨ Suggest Features
+
 Have an idea? [Open a GitHub issue](https://github.com/holoviz/lumen/issues):
 
 - Explain the use case
@@ -30,12 +33,14 @@ Have an idea? [Open a GitHub issue](https://github.com/holoviz/lumen/issues):
 - Vote on existing feature requests
 
 ### 🔧 Contribute Code
+
 - Bug fixes welcome
 - New features via discussion first
 - Performance improvements
 - Tests and test improvements
 
 ### 💬 Help in Community
+
 - Answer questions on [Discourse](https://discourse.holoviz.org/c/lumen/14)
 - Share examples and projects
 - Participate in discussions
@@ -45,15 +50,18 @@ Have an idea? [Open a GitHub issue](https://github.com/holoviz/lumen/issues):
 ## Getting Started with Code
 
 ### 1. Fork & Clone
+
 ```bash
 # Visit and fork the repo on GitHub
-[https://github.com/holoviz/lumen](https://github.com/holoviz/lumen)
+# https://github.com/holoviz/lumen
+
 # Then clone your fork
 git clone https://github.com/YOUR_USERNAME/lumen.git
 cd lumen
 ```
 
 ### 2. Create Environment
+
 ```bash
 # Using pixi (recommended)
 pixi install
@@ -72,6 +80,7 @@ Lumen uses [pixi](https://pixi.sh) for development. Key environments:
 - `lint`: Code linting with pre-commit
 
 ### 3. Make Your Changes
+
 ```bash
 # Create a branch
 git checkout -b fix/issue-name
@@ -82,18 +91,21 @@ git commit -m "Fix: clear description of change"
 ```
 
 ### 4. Run Tests
+
 ```bash
 # Run test suite with pixi
 pixi run -e test-312 test-unit
 ```
 
 ### 5. Lint Your Code
+
 ```bash
 # Run linting
 pixi run -e lint lint
 ```
 
 ### 6. Build & Preview Docs
+
 ```bash
 # Serve docs locally with live reload
 pixi run -e docs docs-serve
@@ -114,11 +126,13 @@ pixi run -e docs docs-build
 ## Contribution Guidelines
 
 ### Code Style
+
 - Follow [PEP 8](https://pep8.org/)
 - Use type hints where possible
 - Add docstrings to functions/classes
 
 ### Testing
+
 - Add tests for new features
 - Ensure all tests pass
 - Aim for >80% coverage
@@ -131,11 +145,13 @@ When contributing to `lumen.ai.controls` source loaders, keep these output invar
 - `outputs["table"]` should reflect the most recently active table when applicable
 
 ### Documentation
+
 - Update docs for new features
 - Add docstrings
 - Include examples
 
 ### Commit Messages
+
 - Clear, descriptive messages
 - Reference issues: "Fixes #123"
 - Use present tense: "Add feature" not "Added feature"
