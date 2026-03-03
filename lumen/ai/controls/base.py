@@ -431,8 +431,7 @@ class BaseSourceControls(Viewer):
             return
 
         for source in result.sources:
-            self.outputs["source"] = source
-            self._append_source(source)
+            self._register_source_output(source)
 
         if result.table:
             self.outputs["table"] = result.table
@@ -450,8 +449,11 @@ class BaseSourceControls(Viewer):
         target.object = message
         target.visible = True
 
-    def _append_source(self, source):
-        """Append source while avoiding duplicate object references."""
+    def _register_source_output(self, source: DuckDBSource):
+        """
+        Record the active source while keeping ``outputs["sources"]`` deduplicated.
+        """
+        self.outputs["source"] = source
         sources = self.outputs.setdefault("sources", [])
         if not any(existing is source for existing in sources):
             sources.append(source)
@@ -564,8 +566,7 @@ class BaseSourceControls(Viewer):
         else:
             df_rel.to_view(table)
         duckdb_source.tables[table] = sql_expr
-        self.outputs["source"] = duckdb_source
-        self._append_source(duckdb_source)
+        self._register_source_output(duckdb_source)
         self.outputs["table"] = table
         self.param.trigger('outputs')
         self._last_table = table
@@ -737,11 +738,7 @@ class BaseSourceControls(Viewer):
                 )
                 if source is not None:
                     n_tables += len(source.get_tables())
-                    self.outputs["source"] = source
-                    if "sources" not in self.outputs:
-                        self.outputs["sources"] = [source]
-                    else:
-                        self.outputs["sources"].append(source)
+                    self._register_source_output(source)
                     self.param.trigger("outputs")
             elif card.extension.endswith(TABLE_EXTENSIONS):
                 if source is None:
@@ -767,6 +764,7 @@ class BaseSourceControls(Viewer):
         self._upload_cards.clear()
         self._file_cards.clear()
         self._add_button.visible = False
+        self._upload_cards.visible = False
 
     def __panel__(self):
         return self._layout

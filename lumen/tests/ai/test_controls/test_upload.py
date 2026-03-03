@@ -1,11 +1,13 @@
 import asyncio
 import io
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
-from lumen.ai.controls import UploadedFileRow
+from lumen.ai.controls import SourceResult, UploadedFileRow
+from lumen.sources.duckdb import DuckDBSource
 
 
 @pytest.mark.asyncio
@@ -278,11 +280,10 @@ class TestUploadControlsUnsupportedFiles:
         assert "unsupported format" in upload_controls._error_placeholder.object
 
 
-@pytest.mark.asyncio
 class TestUploadControlsSourceDeduplication:
     """Tests for source de-duplication when uploading multiple files."""
 
-    async def test_multiple_data_files_add_single_source_reference(self, upload_controls):
+    def test_multiple_data_files_add_single_source_reference(self, upload_controls):
         files = {
             "a.csv": b"x,y\n1,2\n",
             "b.csv": b"x,y\n3,4\n",
@@ -294,8 +295,66 @@ class TestUploadControlsSourceDeduplication:
         assert n_tables == 2
         assert n_docs == 0
         assert n_metadata == 0
+        assert "sources" in upload_controls.outputs
+        assert len(upload_controls.outputs["sources"]) == 1
+        assert upload_controls.outputs["source"] is upload_controls.outputs["sources"][0]
+        assert set(upload_controls.outputs["sources"][0].get_tables()) == {"a", "b"}
 
-        sources = upload_controls.outputs["sources"]
-        assert len(sources) == 1
-        assert upload_controls.outputs["source"] is sources[0]
-        assert set(sources[0].get_tables()) == {"a", "b"}
+
+class TestUploadControlsSelectionUX:
+    """Tests for staged file selection UX in UploadControls."""
+
+    def test_file_selection_shows_guidance_message(self, upload_controls):
+        upload_controls._on_file_upload(
+            SimpleNamespace(new={"a.csv": b"x,y\n1,2\n", "b.csv": b"x,y\n3,4\n"})
+        )
+        assert upload_controls._message_placeholder.visible is True
+        assert "2 file(s) selected" in upload_controls._message_placeholder.object
+        assert "Clear selected" in upload_controls._message_placeholder.object
+
+    def test_clear_selection_resets_staged_files(self, upload_controls):
+        upload_controls._on_file_upload(
+            SimpleNamespace(new={"a.csv": b"x,y\n1,2\n"})
+        )
+        assert len(upload_controls._file_cards) == 1
+        assert upload_controls._upload_cards.visible is True
+
+        upload_controls._on_clear_selection(None)
+
+        assert len(upload_controls._file_cards) == 0
+        assert upload_controls._upload_cards.visible is False
+        assert upload_controls._file_input.value == {}
+        assert upload_controls._message_placeholder.visible is True
+        assert upload_controls._message_placeholder.object == "Selection cleared."
+
+
+class TestUploadControlsOutputContract:
+    """Regression tests for source output invariants."""
+
+    def test_multi_table_upload_deduplicates_outputs_sources(self, upload_controls):
+        upload_controls._generate_file_cards(
+            {
+                "first.csv": b"a,b\n1,2\n",
+                "second.csv": b"a,b\n3,4\n",
+            }
+        )
+
+        n_tables, n_docs, n_metadata = upload_controls._process_files()
+
+        assert n_tables == 2
+        assert n_docs == 0
+        assert n_metadata == 0
+        assert "sources" in upload_controls.outputs
+        assert len(upload_controls.outputs["sources"]) == 1
+        assert upload_controls.outputs["source"] in upload_controls.outputs["sources"]
+
+    def test_handle_success_deduplicates_duplicate_source_entries(self, upload_controls):
+        source = DuckDBSource(uri=":memory:", ephemeral=True, name="dedup_test", tables={})
+        result = SourceResult(sources=[source, source], table="my_table")
+
+        upload_controls._handle_success(result)
+
+        assert "sources" in upload_controls.outputs
+        assert len(upload_controls.outputs["sources"]) == 1
+        assert upload_controls.outputs["source"] is upload_controls.outputs["sources"][0]
+        assert upload_controls.outputs["table"] == "my_table"

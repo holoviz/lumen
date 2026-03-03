@@ -95,15 +95,7 @@ class ValidationAgent(Agent):
                 f"{step[0].__class__.__name__}: {step.instruction}" for step in context["plan"]
             ]
 
-        system_prompt = await self._render_prompt("main", messages, context, executed_steps=executed_steps)
-        model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
-
-        result = await self.llm.invoke(
-            messages=messages,
-            system=system_prompt,
-            model_spec=model_spec,
-            response_model=QueryCompletionValidation,
-        )
+        result = await self._invoke_prompt("main", messages, context, executed_steps=executed_steps)
         response_parts = []
         if result.correct:
             return [result], {"validation_result": result}

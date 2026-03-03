@@ -129,20 +129,12 @@ class DbtslAgent(BaseLumenAgent, DbtslMixin):
         """
         Create a valid dbt Semantic Layer query based on user messages.
         """
-        system_prompt = await self._render_prompt(
-            "main",
-            messages,
-            errors=errors,
-        )
-
         out_context = {}
         with self._add_step(title=title or "dbt Semantic Layer query", steps_layout=self._steps_layout) as step:
-            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
-            response = self.llm.stream(
+            response = self._stream_prompt(
+                "main",
                 messages,
-                system=system_prompt,
-                model_spec=model_spec,
-                response_model=DbtslQueryParams,
+                errors=errors,
             )
 
             query_params = None
