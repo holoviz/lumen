@@ -713,6 +713,32 @@ def clean_sql(sql_expr: str, dialect: str | None = None, prettify: bool = False)
     return clean_sql
 
 
+def repair_common_sql_clause_order(sql_expr: str) -> str:
+    """
+    Repair a common LLM SQL error where ``WHERE`` is emitted before ``FROM``.
+
+    Only rewrites the specific malformed shape:
+    ``SELECT <projection> WHERE <predicate> FROM <relation...>``.
+    """
+    match = re.match(
+        r"^\s*SELECT\s+(?P<select>.*?)\s+WHERE\s+(?P<where>.*?)\s+FROM\s+(?P<from>.+?)\s*$",
+        sql_expr,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return sql_expr
+
+    select_clause = match.group("select").strip()
+    where_clause = match.group("where").strip()
+    from_clause = match.group("from").strip()
+
+    # Avoid rewriting if nested SELECT tokens make the query ambiguous.
+    if re.search(r"\bSELECT\b", select_clause, flags=re.IGNORECASE):
+        return sql_expr
+
+    return f"SELECT {select_clause} FROM {from_clause} WHERE {where_clause}"
+
+
 def report_error(exc: Exception, step: ChatStep, language: str = "python", context: str = "", status: str = "failed"):
     error_msg = str(exc)
     stream_details(f'\n\n```{language}\n{error_msg}\n```\n', step, title="Error")

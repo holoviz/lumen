@@ -101,6 +101,32 @@ async def test_sql_agent(llm, duckdb_source, test_messages):
     )
     assert set(out_context) == {"data", "pipeline", "sql", "table", "source"}
 
+
+async def test_sql_agent_repairs_where_before_from(llm, duckdb_source, test_messages):
+    agent = SQLAgent(llm=llm)
+
+    context = {
+        "source": duckdb_source,
+        "sources": [duckdb_source],
+        "metaset": await get_metaset([duckdb_source], ["test_sql"]),
+    }
+    SQLQueryWithTables = make_sql_model([(duckdb_source.name, "test_sql")])
+    llm.set_responses([
+        SQLQueryWithTables(
+            query='SELECT * WHERE "A" > 0 FROM test_sql',
+            table_slug="test_sql_filtered",
+            tables=["test_sql"],
+        ),
+    ])
+
+    out, out_context = await agent.respond(test_messages, context)
+
+    assert len(out) == 1
+    assert isinstance(out[0], SQLEditor)
+    assert "FROM test_sql" in out[0].spec
+    assert out[0].spec.index("FROM test_sql") < out[0].spec.index("WHERE")
+    assert set(out_context) == {"data", "pipeline", "sql", "table", "source"}
+
 async def test_vegalite_agent(llm, duckdb_source, test_messages):
     """Test VegaLiteAgent instantiation and respond"""
 
