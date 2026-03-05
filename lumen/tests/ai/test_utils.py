@@ -299,6 +299,16 @@ def test_repair_common_sql_clause_order():
     assert repaired == 'SELECT * FROM penguins WHERE "sex" = \'male\''
 
 
+def test_repair_common_sql_clause_order_no_match_returns_original():
+    valid_sql = 'SELECT * FROM penguins WHERE "sex" = \'male\''
+    assert repair_common_sql_clause_order(valid_sql) == valid_sql
+
+
+def test_repair_common_sql_clause_order_nested_select_returns_original():
+    ambiguous = 'SELECT (SELECT 1) AS x WHERE x = 1 FROM t'
+    assert repair_common_sql_clause_order(ambiguous) == ambiguous
+
+
 def test_report_error():
     step = ChatStep()
     report_error(Exception("Test error"), step)

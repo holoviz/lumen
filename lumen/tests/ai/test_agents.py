@@ -15,6 +15,8 @@ except ModuleNotFoundError:
 
 from panel.pane import Markdown
 
+import lumen.ai.agents.sql as sql_agent_module
+
 from lumen.ai.agents import (
     AnalysisAgent, ChatAgent, SQLAgent, VegaLiteAgent,
 )
@@ -126,6 +128,76 @@ async def test_sql_agent_repairs_where_before_from(llm, duckdb_source, test_mess
     assert "FROM test_sql" in out[0].spec
     assert out[0].spec.index("FROM test_sql") < out[0].spec.index("WHERE")
     assert set(out_context) == {"data", "pipeline", "sql", "table", "source"}
+
+
+async def test_validate_sql_logs_cleaning_failure_and_continues(monkeypatch, llm):
+    agent = SQLAgent(llm=llm)
+
+    class DummySource:
+        dialect = "duckdb"
+
+        def execute(self, _sql):
+            return None
+
+    class DummyStep:
+        def __init__(self):
+            self.messages = []
+
+        def stream(self, message):
+            self.messages.append(message)
+
+    def always_fail_clean_sql(*_args, **_kwargs):
+        raise ValueError("bad formatting")
+
+    monkeypatch.setattr(sql_agent_module, "clean_sql", always_fail_clean_sql)
+    step = DummyStep()
+
+    result = await agent._validate_sql(
+        context={},
+        sql_query="SELECT 1",
+        expr_slug="expr",
+        source=DummySource(),
+        messages=[],
+        step=step,
+        max_retries=1,
+    )
+
+    assert result == "SELECT 1"
+    assert any("SQL cleaning failed" in message for message in step.messages)
+
+
+async def test_validate_sql_raises_after_final_attempt_without_repair(monkeypatch, llm):
+    agent = SQLAgent(llm=llm)
+
+    class DummySource:
+        dialect = "duckdb"
+
+        def execute(self, _sql):
+            raise RuntimeError("invalid sql")
+
+    class DummyStep:
+        def __init__(self):
+            self.messages = []
+
+        def stream(self, message):
+            self.messages.append(message)
+
+    monkeypatch.setattr(sql_agent_module, "clean_sql", lambda sql, *_args, **_kwargs: sql)
+    monkeypatch.setattr(sql_agent_module, "repair_common_sql_clause_order", lambda sql: sql)
+    step = DummyStep()
+
+    with pytest.raises(RuntimeError, match="invalid sql"):
+        await agent._validate_sql(
+            context={},
+            sql_query="SELECT * FROM missing",
+            expr_slug="expr",
+            source=DummySource(),
+            messages=[],
+            step=step,
+            max_retries=1,
+        )
+
+    assert any("failed after 1 attempts" in message for message in step.messages)
 
 async def test_vegalite_agent(llm, duckdb_source, test_messages):
     """Test VegaLiteAgent instantiation and respond"""
