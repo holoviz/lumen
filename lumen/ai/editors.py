@@ -79,8 +79,8 @@ class LumenEditor(Viewer):
         self._spec_dict = spec_dict
         super().__init__(**params)
         self.editor = self._render_editor()
-        self.view = ParamMethod(self.render, inplace=True, sizing_mode='stretch_width')
         self._last_output = {}
+        self.view = ParamMethod(self.render, inplace=True, sizing_mode='stretch_width')
 
     def _render_editor(self):
         self._editor = CodeEditor(
