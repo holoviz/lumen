@@ -49,6 +49,9 @@ def test_sql_editor_explorer_defaults(monkeypatch):
         def to_spec(self, context=None):
             return {"type": "dummy"}
 
+        def __panel__(self):
+            return "dummy-panel"
+
     editor = editors_module.SQLEditor(component=DummyComponent())
     monkeypatch.setattr(editors_module, "GraphicWalker", fake_graphic_walker)
 
