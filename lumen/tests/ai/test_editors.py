@@ -1,5 +1,7 @@
 """Tests for lumen.ai.editors module."""
 
+from types import SimpleNamespace
+
 import param
 
 import lumen.ai.editors as editors_module
@@ -52,10 +54,10 @@ def test_sql_editor_explorer_defaults(monkeypatch):
         def __panel__(self):
             return "dummy-panel"
 
-    editor = editors_module.SQLEditor(component=DummyComponent())
+    editor = SimpleNamespace(component=DummyComponent())
     monkeypatch.setattr(editors_module, "GraphicWalker", fake_graphic_walker)
 
-    result = editor.render_explorer()
+    result = editors_module.SQLEditor.render_explorer(editor)
 
     assert result == "walker"
     assert calls["data"] is editor.component.param.data
