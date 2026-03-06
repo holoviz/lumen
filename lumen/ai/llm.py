@@ -499,6 +499,7 @@ class Llm(param.Parameterized):
             entry = accum[index]
             tool_calls.append({
                 "id": entry.get("id"),
+                "type": "function",
                 "function": {
                     "name": entry.get("name"),
                     "arguments": entry.get("arguments", ""),
@@ -507,13 +508,48 @@ class Llm(param.Parameterized):
         return tool_calls
 
     @classmethod
+    def _normalize_tool_call_for_message(cls, call: Any) -> dict[str, Any]:
+        if isinstance(call, dict):
+            call_dict = dict(call)
+            function = call_dict.get("function")
+            if function is None:
+                function = {
+                    "name": call_dict.get("name"),
+                    "arguments": call_dict.get("arguments", ""),
+                }
+            elif not isinstance(function, dict):
+                function = {
+                    "name": getattr(function, "name", None),
+                    "arguments": getattr(function, "arguments", ""),
+                }
+            else:
+                function = dict(function)
+            call_dict["function"] = function
+            call_dict["type"] = call_dict.get("type") or "function"
+            return call_dict
+
+        function = getattr(call, "function", None)
+        return {
+            "id": getattr(call, "id", None),
+            "type": getattr(call, "type", None) or "function",
+            "function": {
+                "name": getattr(function, "name", None) if function else getattr(call, "name", None),
+                "arguments": (
+                    getattr(function, "arguments", "")
+                    if function
+                    else getattr(call, "arguments", "")
+                ),
+            },
+        }
+
+    @classmethod
     def _tool_calls_message(cls, tool_calls: list[dict[str, Any]]) -> Message:
         return {
             "role": "assistant",
             "content": "",
             "name": None,
             "tool_call_id": None,
-            "tool_calls": tool_calls,
+            "tool_calls": [cls._normalize_tool_call_for_message(call) for call in tool_calls],
         }
 
     @classmethod
