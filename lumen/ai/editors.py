@@ -79,8 +79,8 @@ class LumenEditor(Viewer):
         self._spec_dict = spec_dict
         super().__init__(**params)
         self.editor = self._render_editor()
-        self.view = ParamMethod(self.render, inplace=True, sizing_mode='stretch_width')
         self._last_output = {}
+        self.view = ParamMethod(self.render, inplace=True, sizing_mode='stretch_width')
 
     def _render_editor(self):
         self._editor = CodeEditor(
@@ -608,7 +608,21 @@ class SQLEditor(LumenEditor):
         return GraphicWalker(
             self.component.param.data,
             kernel_computation=True,
-            tab='data',
+            hide_profiling=True,
+            tab='vis',
+            config={
+                "i18nLang": "en-US",
+                "i18nResources": {
+                    "en-US": {
+                        "App": {
+                            "segments": {
+                                "data": "Data View",
+                                "vis": "Visualization",
+                            }
+                        }
+                    }
+                },
+            },
             sizing_mode='stretch_both'
         )
 

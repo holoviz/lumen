@@ -1,4 +1,5 @@
 import asyncio
+import gc
 import os
 import tempfile
 
@@ -115,6 +116,31 @@ def clear_state():
     state._variables.clear()
     state._variable = None
 
+@pytest.fixture(autouse=True)
+def cleanup_stray_event_loops(monkeypatch):
+    """
+    Track event loops created during a test and ensure they are closed.
+
+    Some async integrations create extra loops via ``asyncio.new_event_loop``
+    and do not reliably close them, which then surfaces as
+    ``PytestUnraisableExceptionWarning`` in following tests.
+    """
+    created_loops = []
+    original_new_event_loop = asyncio.new_event_loop
+
+    def _tracked_new_event_loop():
+        loop = original_new_event_loop()
+        created_loops.append(loop)
+        return loop
+
+    monkeypatch.setattr(asyncio, "new_event_loop", _tracked_new_event_loop)
+    yield
+    gc.collect()
+    for loop in created_loops:
+        if loop.is_closed() or loop.is_running():
+            continue
+        loop.close()
+
 @pytest.fixture
 def document():
     doc = Document()
@@ -181,8 +207,26 @@ def penguins_file(tmp_path):
 
 @pytest.fixture
 def asyncio_loop():
+    """
+    Provide an isolated asyncio loop and ensure it is always closed.
+
+    The previous implementation created two loops but only closed one,
+    which can leak event loops across tests and trigger ResourceWarnings.
+    """
+    try:
+        previous_loop = asyncio.get_event_loop()
+    except RuntimeError:
+        previous_loop = None
+
     loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(asyncio.new_event_loop())
-    yield
-    loop.stop()
-    loop.close()
+    asyncio.set_event_loop(loop)
+    try:
+        yield loop
+    finally:
+        if not loop.is_closed():
+            loop.stop()
+            loop.close()
+        if previous_loop is None or previous_loop.is_closed():
+            asyncio.set_event_loop(None)
+        else:
+            asyncio.set_event_loop(previous_loop)

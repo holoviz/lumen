@@ -1,5 +1,13 @@
 """Tests for lumen.ai.editors module."""
+
+from types import SimpleNamespace
+
+import param
+
+import lumen.ai.editors as editors_module
+
 from lumen.ai.editors import LumenEditor
+from lumen.base import Component
 
 
 def test_class_name_to_filename():
@@ -22,3 +30,40 @@ def test_class_name_with_numbers():
         pass
     
     assert Editor2D._class_name_to_download_filename("png") == "editor2_d.png"
+
+
+def test_sql_editor_explorer_defaults(monkeypatch):
+    """SQLEditor should default Graphic Walker to the visualization tab."""
+    calls = {}
+
+    def fake_graphic_walker(data, **kwargs):
+        calls["data"] = data
+        calls["kwargs"] = kwargs
+        return "walker"
+
+    class DummyComponent(Component):
+        data = param.Parameter(default="table_data")
+
+        @classmethod
+        def from_spec(cls, spec):
+            return cls()
+
+        def to_spec(self, context=None):
+            return {"type": "dummy"}
+
+        def __panel__(self):
+            return "dummy-panel"
+
+    editor = SimpleNamespace(component=DummyComponent())
+    monkeypatch.setattr(editors_module, "GraphicWalker", fake_graphic_walker)
+
+    result = editors_module.SQLEditor.render_explorer(editor)
+
+    assert result == "walker"
+    assert calls["data"] is editor.component.param.data
+    assert calls["kwargs"]["tab"] == "vis"
+    assert calls["kwargs"]["hide_profiling"] is True
+    assert calls["kwargs"]["config"]["i18nResources"]["en-US"]["App"]["segments"] == {
+        "data": "Data View",
+        "vis": "Visualization",
+    }
