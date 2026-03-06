@@ -16,6 +16,8 @@ class UploadControls(BaseSourceControls):
     load_mode = "manual"  # File selection triggers, not a button
 
     label = '<span class="material-icons" style="vertical-align: middle;">upload</span> Upload Data'
+    add_button_label = "Upload file(s)"
+    add_button_icon = "upload_file"
 
     def _render_layout(self):
         """Build upload-specific layout with FileDropper."""
@@ -62,7 +64,7 @@ class UploadControls(BaseSourceControls):
         self._generate_file_cards(files)
         if files:
             self._message_placeholder.param.update(
-                object=f"{len(files)} file(s) selected. Click 'Confirm file(s)' to process or 'Clear selected' to reset.",
+                object=f"{len(files)} file(s) selected. Click 'Upload file(s)' to process or 'Clear selected' to reset.",
                 visible=True
             )
 

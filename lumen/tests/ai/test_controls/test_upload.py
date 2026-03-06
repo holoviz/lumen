@@ -280,8 +280,12 @@ class TestUploadControlsUnsupportedFiles:
         assert "unsupported format" in upload_controls._error_placeholder.object
 
 
-class TestUploadControlsSelectionUX:
-    """Tests for staged file selection UX in UploadControls."""
+class TestUploadControlsUX:
+    """Tests for upload affordance and guidance text."""
+
+    def test_upload_button_label_is_explicit(self, upload_controls):
+        """Upload controls should use explicit upload action text."""
+        assert upload_controls._add_button.name == "Upload file(s)"
 
     def test_file_selection_shows_guidance_message(self, upload_controls):
         upload_controls._on_file_upload(
@@ -289,6 +293,7 @@ class TestUploadControlsSelectionUX:
         )
         assert upload_controls._message_placeholder.visible is True
         assert "2 file(s) selected" in upload_controls._message_placeholder.object
+        assert "Upload file(s)" in upload_controls._message_placeholder.object
         assert "Clear selected" in upload_controls._message_placeholder.object
 
     def test_clear_selection_resets_staged_files(self, upload_controls):
