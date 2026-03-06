@@ -43,4 +43,4 @@ Once installed you will be able to start a Lumen Explorer server by running (rep
 
     lumen-ai serve data.csv
 
-Check out the [docs](https://lumen.holoviz.org/lumen_ai/getting_started/using_lumen_ai.html) for more details!
+Check out the [docs](https://lumen.holoviz.org/getting_started/using_lumen_ai/) for more details!

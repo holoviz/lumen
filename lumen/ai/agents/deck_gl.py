@@ -154,7 +154,7 @@ class DeckGLAgent(BaseCodeAgent):
         errors_context = self._build_errors_context(pipeline, context, errors)
 
         with self._add_step(title="Generating DeckGL specification", steps_layout=self._steps_layout) as step:
-            system_prompt = await self._render_prompt(
+            response = self._stream_prompt(
                 "main",
                 messages,
                 context,
@@ -162,15 +162,6 @@ class DeckGLAgent(BaseCodeAgent):
                 doc=doc,
                 **errors_context,
             )
-
-            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
-            response = self.llm.stream(
-                messages,
-                system=system_prompt,
-                model_spec=model_spec,
-                response_model=DeckGLSpec,
-            )
-
             async for output in response:
                 step.stream(output.chain_of_thought, replace=True)
 
@@ -193,21 +184,13 @@ class DeckGLAgent(BaseCodeAgent):
         errors_context = self._build_errors_context(pipeline, context, errors)
 
         with self._add_step(title="Generating PyDeck code", steps_layout=self._steps_layout) as step:
-            system_prompt = await self._render_prompt(
+            response = self._stream_prompt(
                 "main_pydeck",
                 messages,
                 context,
                 table=pipeline.table,
                 doc=doc,
                 **errors_context,
-            )
-
-            model_spec = self.prompts["main_pydeck"].get("llm_spec", self.llm_spec_key)
-            response = self.llm.stream(
-                messages,
-                system=system_prompt,
-                model_spec=model_spec,
-                response_model=PyDeckSpec,
             )
 
             async for output in response:
