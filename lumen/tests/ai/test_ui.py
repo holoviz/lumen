@@ -825,6 +825,8 @@ class TestResolveData:
 
     def test_resolve_data_remote_http_url(self):
         """Test resolving a remote HTTP URL (enables httpfs)."""
+        if sys.platform == 'win32':
+            pytest.skip("httpfs extension has file locking issues on Windows CI")
         result = UI._resolve_data('http://example.com/data.csv')
         assert len(result) == 1
         source = result[0]
@@ -835,6 +837,8 @@ class TestResolveData:
 
     def test_resolve_data_remote_https_url(self):
         """Test resolving a remote HTTPS URL (enables httpfs)."""
+        if sys.platform == 'win32':
+            pytest.skip("httpfs extension has file locking issues on Windows CI")
         result = UI._resolve_data('https://example.com/data.parquet')
         assert len(result) == 1
         source = result[0]

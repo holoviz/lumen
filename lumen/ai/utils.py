@@ -34,6 +34,7 @@ from jinja2.visitor import NodeVisitor
 from jsonschema import ValidationError
 from markupsafe import escape
 from panel_material_ui import Details
+from sqlglot.tokens import Tokenizer, TokenType
 
 from ..pipeline import Pipeline
 from ..transforms import SQLRemoveSourceSeparator
@@ -711,6 +712,58 @@ def clean_sql(sql_expr: str, dialect: str | None = None, prettify: bool = False)
             pretty=True
         )[0]
     return clean_sql
+
+
+def repair_common_sql_clause_order(sql_expr: str, dialect: str | None = None) -> str:
+    """
+    Repair a common LLM SQL error where ``WHERE`` is emitted before ``FROM``.
+
+    Only rewrites the specific malformed shape:
+    ``SELECT <projection> WHERE <predicate> FROM <relation...>``.
+    """
+    tokens = Tokenizer().tokenize(sql_expr)
+    if not tokens or tokens[0].token_type is not TokenType.SELECT:
+        return sql_expr
+
+    depth = 0
+    nested_select_before_where = False
+    where_token = None
+    from_token = None
+
+    for token in tokens[1:]:
+        if token.token_type is TokenType.L_PAREN:
+            depth += 1
+            continue
+        if token.token_type is TokenType.R_PAREN:
+            depth = max(depth - 1, 0)
+            continue
+
+        if depth > 0 and token.token_type is TokenType.SELECT and where_token is None:
+            nested_select_before_where = True
+            continue
+
+        if depth == 0 and token.token_type is TokenType.WHERE and where_token is None:
+            where_token = token
+            continue
+
+        if depth == 0 and token.token_type is TokenType.FROM:
+            from_token = token
+            break
+
+    if nested_select_before_where or where_token is None or from_token is None or where_token.start > from_token.start:
+        return sql_expr
+
+    select_clause = sql_expr[tokens[0].end + 1:where_token.start].strip()
+    where_clause = sql_expr[where_token.end + 1:from_token.start].strip()
+    from_clause = sql_expr[from_token.end + 1:].strip()
+    repaired_sql = f"SELECT {select_clause} FROM {from_clause} WHERE {where_clause}"
+
+    try:
+        sqlglot.parse_one(repaired_sql, read=dialect)
+    except sqlglot.errors.ParseError:
+        return sql_expr
+
+    return repaired_sql
 
 
 def report_error(exc: Exception, step: ChatStep, language: str = "python", context: str = "", status: str = "failed"):

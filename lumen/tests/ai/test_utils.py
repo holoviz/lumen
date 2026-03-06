@@ -20,7 +20,8 @@ from lumen.ai.config import PROMPTS_DIR
 from lumen.ai.models import DeleteLine, InsertLine, ReplaceLine
 from lumen.ai.utils import (
     UNRECOVERABLE_ERRORS, apply_changes, clean_sql, describe_data, get_schema,
-    parse_huggingface_url, render_template, report_error, retry_llm_output,
+    parse_huggingface_url, render_template, repair_common_sql_clause_order,
+    report_error, retry_llm_output,
 )
 
 
@@ -290,6 +291,28 @@ def test_clean_sql_strips_whitespace_and_semicolons():
     sql_expr = "SELECT * FROM table;    "
     cleaned_sql = clean_sql(sql_expr)
     assert cleaned_sql == "SELECT * FROM table"
+
+
+def test_repair_common_sql_clause_order():
+    malformed = 'SELECT * WHERE "sex" = \'male\' FROM penguins'
+    repaired = repair_common_sql_clause_order(malformed)
+    assert repaired == 'SELECT * FROM penguins WHERE "sex" = \'male\''
+
+
+def test_repair_common_sql_clause_order_no_match_returns_original():
+    valid_sql = 'SELECT * FROM penguins WHERE "sex" = \'male\''
+    assert repair_common_sql_clause_order(valid_sql) == valid_sql
+
+
+def test_repair_common_sql_clause_order_nested_select_returns_original():
+    ambiguous = 'SELECT (SELECT 1) AS x WHERE x = 1 FROM t'
+    assert repair_common_sql_clause_order(ambiguous) == ambiguous
+
+
+def test_repair_common_sql_clause_order_where_subquery_repairs_top_level_only():
+    malformed = "SELECT * WHERE id IN (SELECT id FROM t2) FROM t1"
+    repaired = repair_common_sql_clause_order(malformed)
+    assert repaired == "SELECT * FROM t1 WHERE id IN (SELECT id FROM t2)"
 
 
 def test_report_error():

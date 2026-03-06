@@ -25,7 +25,7 @@ from ..models import EscapeBaseModel, RetrySpec
 from ..schemas import Metaset
 from ..utils import (
     clean_sql, describe_data, get_data, get_pipeline, parse_table_slug,
-    retry_llm_output, stream_details,
+    repair_common_sql_clause_order, retry_llm_output, stream_details,
 )
 from .base_lumen import BaseLumenAgent
 
@@ -397,26 +397,29 @@ class SQLAgent(BaseLumenAgent):
         discovery_context: str | None = None,
     ) -> str:
         """Validate and potentially fix SQL query."""
-        # Clean SQL
         try:
             sql_query = clean_sql(sql_query, source.dialect, prettify=True)
         except Exception as e:
-            step.stream(f"\n\n❌ SQL cleaning failed: {e}")
+            step.stream(f"\n\nSQL cleaning failed: {e}")
 
-        # Validate with retries
         for i in range(max_retries):
             try:
                 step.stream(f"\n\n`{expr_slug}`\n```sql\n{sql_query}\n```")
                 source.execute(sql_query)
-                step.stream("\n\n✅ SQL validation successful")
+                step.stream("\n\nSQL validation successful")
                 return sql_query
             except Exception as e:
+                repaired_sql = repair_common_sql_clause_order(sql_query, source.dialect)
+                if repaired_sql != sql_query:
+                    step.stream("\n\nReordered malformed SQL clauses (moved WHERE after FROM) and retrying.")
+                    sql_query = clean_sql(repaired_sql, source.dialect, prettify=True)
+                    continue
+
                 if i == max_retries - 1:
-                    step.stream(f"\n\n❌ SQL validation failed after {max_retries} attempts: {e}")
+                    step.stream(f"\n\nSQL validation failed after {max_retries} attempts: {e}")
                     raise e
 
-                # Retry with LLM fix
-                step.stream(f"\n\n⚠️ SQL validation failed (attempt {i+1}/{max_retries}): {e}")
+                step.stream(f"\n\nSQL validation failed (attempt {i+1}/{max_retries}): {e}")
                 feedback = f"{type(e).__name__}: {e!s}"
                 if "KeyError" in feedback:
                     feedback += " The data does not exist; select from available data sources."
