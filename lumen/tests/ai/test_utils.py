@@ -309,6 +309,12 @@ def test_repair_common_sql_clause_order_nested_select_returns_original():
     assert repair_common_sql_clause_order(ambiguous) == ambiguous
 
 
+def test_repair_common_sql_clause_order_where_subquery_repairs_top_level_only():
+    malformed = "SELECT * WHERE id IN (SELECT id FROM t2) FROM t1"
+    repaired = repair_common_sql_clause_order(malformed)
+    assert repaired == "SELECT * FROM t1 WHERE id IN (SELECT id FROM t2)"
+
+
 def test_report_error():
     step = ChatStep()
     report_error(Exception("Test error"), step)

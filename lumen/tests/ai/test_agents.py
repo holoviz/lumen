@@ -183,7 +183,7 @@ async def test_validate_sql_raises_after_final_attempt_without_repair(monkeypatc
             self.messages.append(message)
 
     monkeypatch.setattr(sql_agent_module, "clean_sql", lambda sql, *_args, **_kwargs: sql)
-    monkeypatch.setattr(sql_agent_module, "repair_common_sql_clause_order", lambda sql: sql)
+    monkeypatch.setattr(sql_agent_module, "repair_common_sql_clause_order", lambda sql, *_args, **_kwargs: sql)
     step = DummyStep()
 
     with pytest.raises(RuntimeError, match="invalid sql"):
@@ -226,7 +226,7 @@ async def test_validate_sql_retries_with_revise_after_non_final_failure(monkeypa
         return "SELECT 1"
 
     monkeypatch.setattr(sql_agent_module, "clean_sql", lambda sql, *_args, **_kwargs: sql)
-    monkeypatch.setattr(sql_agent_module, "repair_common_sql_clause_order", lambda sql: sql)
+    monkeypatch.setattr(sql_agent_module, "repair_common_sql_clause_order", lambda sql, *_args, **_kwargs: sql)
     monkeypatch.setattr(agent, "revise", fake_revise)
     source = DummySource()
     step = DummyStep()

@@ -409,7 +409,7 @@ class SQLAgent(BaseLumenAgent):
                 step.stream("\n\nSQL validation successful")
                 return sql_query
             except Exception as e:
-                repaired_sql = repair_common_sql_clause_order(sql_query)
+                repaired_sql = repair_common_sql_clause_order(sql_query, source.dialect)
                 if repaired_sql != sql_query:
                     step.stream("\n\nReordered malformed SQL clauses (moved WHERE after FROM) and retrying.")
                     sql_query = clean_sql(repaired_sql, source.dialect, prettify=True)
