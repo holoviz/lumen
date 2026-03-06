@@ -280,6 +280,27 @@ class TestUploadControlsUnsupportedFiles:
         assert "unsupported format" in upload_controls._error_placeholder.object
 
 
+class TestUploadControlsSourceDeduplication:
+    """Tests for source de-duplication when uploading multiple files."""
+
+    def test_multiple_data_files_add_single_source_reference(self, upload_controls):
+        files = {
+            "a.csv": b"x,y\n1,2\n",
+            "b.csv": b"x,y\n3,4\n",
+        }
+        upload_controls._generate_file_cards(files)
+
+        n_tables, n_docs, n_metadata = upload_controls._process_files()
+
+        assert n_tables == 2
+        assert n_docs == 0
+        assert n_metadata == 0
+        assert "sources" in upload_controls.outputs
+        assert len(upload_controls.outputs["sources"]) == 1
+        assert upload_controls.outputs["source"] is upload_controls.outputs["sources"][0]
+        assert set(upload_controls.outputs["sources"][0].get_tables()) == {"a", "b"}
+
+
 class TestUploadControlsSelectionUX:
     """Tests for staged file selection UX in UploadControls."""
 
