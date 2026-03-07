@@ -84,7 +84,7 @@ def cached(method, locks=None):
             main_lock = threading.RLock()
             locks[self] = {'main': main_lock}
         with main_lock:
-            if table in locks:
+            if table in locks[self]:
                 lock = locks[self][table]
             else:
                 locks[self][table] = lock = threading.RLock()
