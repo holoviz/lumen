@@ -190,6 +190,46 @@ def test_extension_of_comlicated_url(source):
     assert source._named_files["test"][1] is None
 
 
+def test_cached_reuses_per_table_lock(source):
+    """Test that the cached decorator reuses the same per-table lock.
+
+    Regression test: the per-table lock lookup in cached() previously
+    checked `if table in locks` (the WeakKeyDictionary keyed by Source
+    instances) instead of `if table in locks[self]` (the per-source dict).
+    Since a string key can never exist in a WeakKeyDictionary, this caused
+    a new RLock to be created on every call, defeating per-table locking.
+    """
+    import threading
+    import weakref
+
+    from lumen.sources.base import cached
+
+    locks = weakref.WeakKeyDictionary()
+
+    def mock_get(self, table, **query):
+        return pd.DataFrame({'A': [1]})
+
+    wrapped = cached(mock_get, locks=locks)
+
+    # First call — creates the per-source dict and per-table lock
+    source.clear_cache()
+    wrapped(source, 'test')
+
+    assert source in locks
+    assert 'test' in locks[source]
+    lock_first = locks[source]['test']
+    assert 'RLock' in type(lock_first).__name__
+
+    # Second call — should reuse the same lock, not create a new one
+    source.clear_cache()
+    wrapped(source, 'test')
+
+    lock_second = locks[source]['test']
+    assert lock_first is lock_second, (
+        "Per-table lock was not reused; a new lock was created on each call"
+    )
+
+
 # Async tests for base source methods
 @pytest.mark.asyncio
 async def test_source_get_async_default_implementation(source):
