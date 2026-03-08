@@ -98,6 +98,7 @@ class OpenAIEmbeddings(Embeddings, OpenAIMixin):
         self.client = self._instantiate_client(async_client=True)
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
+        # Normalize: replace newlines with spaces and strip whitespace
         texts = [text.replace("\n", " ").strip() for text in texts]
         response = await self.client.embeddings.create(input=texts, model=self.model)
         return [r.embedding for r in response.data]
@@ -123,7 +124,8 @@ class AzureOpenAIEmbeddings(Embeddings, AzureOpenAIMixin):
         self.client = self._instantiate_client(async_client=True)
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
-        texts = [text.replace("\n", " ") for text in texts]
+        # Same normalization as OpenAIEmbeddings.embed()
+        texts = [text.replace("\n", " ").strip() for text in texts]
         response = await self.client.embeddings.create(input=texts, model=self.model)
         return [r.embedding for r in response.data]
 
