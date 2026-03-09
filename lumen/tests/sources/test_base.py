@@ -1,6 +1,8 @@
 import asyncio
 import datetime as dt
 import os
+import threading
+import weakref
 
 from pathlib import Path
 
@@ -9,7 +11,7 @@ import pytest
 
 from hvplot.tests.util import makeMixedDataFrame
 
-from lumen.sources.base import Source
+from lumen.sources.base import Source, cached
 from lumen.state import state
 from lumen.transforms.sql import SQLLimit
 
@@ -199,11 +201,6 @@ def test_cached_reuses_per_table_lock(source):
     Since a string key can never exist in a WeakKeyDictionary, this caused
     a new RLock to be created on every call, defeating per-table locking.
     """
-    import threading
-    import weakref
-
-    from lumen.sources.base import cached
-
     locks = weakref.WeakKeyDictionary()
 
     def mock_get(self, table, **query):
@@ -218,7 +215,7 @@ def test_cached_reuses_per_table_lock(source):
     assert source in locks
     assert 'test' in locks[source]
     lock_first = locks[source]['test']
-    assert 'RLock' in type(lock_first).__name__
+    assert isinstance(lock_first, type(threading.RLock()))
 
     # Second call — should reuse the same lock, not create a new one
     source.clear_cache()
