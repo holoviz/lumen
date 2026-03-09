@@ -80,7 +80,25 @@ class NumpyEmbeddings(Embeddings):
         return embeddings
 
 
-class OpenAIEmbeddings(Embeddings, OpenAIMixin):
+class BaseOpenAIEmbeddings(Embeddings):
+    """
+    BaseOpenAIEmbeddings provides the shared embed() implementation for
+    OpenAI-compatible embedding providers.
+
+    Subclasses must set a default ``model`` param and call
+    ``self._instantiate_client(async_client=True)`` in their ``__init__``
+    to populate ``self.client``.
+    """
+
+    model = param.String(doc="The embedding model to use.")
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        texts = [text.replace("\n", " ").strip() for text in texts]
+        response = await self.client.embeddings.create(input=texts, model=self.model)
+        return [r.embedding for r in response.data]
+
+
+class OpenAIEmbeddings(BaseOpenAIEmbeddings, OpenAIMixin):
     """
     OpenAIEmbeddings is an embeddings class that uses the OpenAI API to generate embeddings.
 
@@ -97,18 +115,12 @@ class OpenAIEmbeddings(Embeddings, OpenAIMixin):
         super().__init__(**params)
         self.client = self._instantiate_client(async_client=True)
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        # Normalize: replace newlines with spaces and strip whitespace
-        texts = [text.replace("\n", " ").strip() for text in texts]
-        response = await self.client.embeddings.create(input=texts, model=self.model)
-        return [r.embedding for r in response.data]
 
-
-class AzureOpenAIEmbeddings(Embeddings, AzureOpenAIMixin):
+class AzureOpenAIEmbeddings(BaseOpenAIEmbeddings, AzureOpenAIMixin):
     """
     AzureOpenAIEmbeddings is an embeddings class that uses the Azure OpenAI API to generate embeddings.
-    Inherits from AzureOpenAIMixin which extends OpenAIMixin, so it has access to all OpenAI functionality
-    plus Azure-specific configuration.
+    Inherits from AzureOpenAIMixin which extends OpenAIMixin, so it has access to all OpenAI
+    functionality plus Azure-specific configuration.
 
     :Example:
     >>> embeddings = AzureOpenAIEmbeddings()
@@ -116,17 +128,12 @@ class AzureOpenAIEmbeddings(Embeddings, AzureOpenAIMixin):
     """
 
     model = param.String(
-        default="text-embedding-3-large", doc="The OpenAI model to use."
+        default="text-embedding-3-large", doc="The Azure OpenAI model to use."
     )
 
     def __init__(self, **params):
         super().__init__(**params)
         self.client = self._instantiate_client(async_client=True)
-
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        texts = [text.replace("\n", " ").strip() for text in texts] # Same normalization as OpenAIEmbeddings.embed()
-        response = await self.client.embeddings.create(input=texts, model=self.model)
-        return [r.embedding for r in response.data]
 
 
 class HuggingFaceEmbeddings(Embeddings):
