@@ -27,7 +27,7 @@ class NullStep:
         self.status = None
 
     def stream(self, text, **kwargs):
-        log_debug(f"[{text}")
+        log_debug(f"[NullStep] {text}")
 
 
 class LLMUser(param.Parameterized):
