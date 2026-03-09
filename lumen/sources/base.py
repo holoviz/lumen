@@ -422,7 +422,7 @@ class Source(MultiTypeComponent):
             )
 
     def _set_schema_cache(self, schema):
-        if not self.cache_metadata:
+        if not self.cache_schema:
             return
         self._schema_cache = schema
         if not self.cache_dir:
