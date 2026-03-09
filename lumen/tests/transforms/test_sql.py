@@ -2,9 +2,13 @@ import datetime as dt
 
 from textwrap import dedent
 
+import pandas as pd
 import pytest
 import sqlglot
 
+import lumen as lm
+
+from lumen.sources.duckdb import DuckDBSource
 from lumen.transforms.sql import (
     SQLColumns, SQLCount, SQLDistinct, SQLFilter, SQLFormat, SQLGroupBy,
     SQLLimit, SQLMinMax, SQLOverride, SQLPreFilter, SQLRemoveSourceSeparator,
@@ -1102,3 +1106,33 @@ class TestSQLFilterBase:
         csv_matches = result.count('csv')
         assert parquet_matches == 1, f"Expected 1 'parquet', found {parquet_matches}"
         assert csv_matches == 1, f"Expected 1 'csv', found {csv_matches}"
+
+
+def test_sql_filter_empty_list_conditions():
+    """
+    SQLFilter._build_filter_conditions called or_() unconditionally on range_filters,
+    which crashes with a ValueError from sqlglot when the list is empty (e.g. a
+    multi-select widget with all options deselected). An empty list should produce
+    no filter condition, leaving data unfiltered.
+    """
+    df = pd.DataFrame({
+        "region":   ["North", "South", "North", "East", "South", "East"],
+        "product":  ["A", "B", "A", "C", "C", "B"],
+        "revenue":  [120, 85, 200, 150, 95, 175],
+        "quantity": [10, 7, 18, 12, 9, 14],
+    })
+    source = DuckDBSource.from_df({"sales": df})
+    pipeline = lm.Pipeline.from_spec({
+        "source": source,
+        "table":  "sales",
+        "filters": [
+            {"type": "widget", "field": "revenue"},
+            {"type": "widget", "field": "product"},
+        ],
+    })
+
+    product_filter = next(f for f in pipeline.filters if f.field == "product")
+    product_filter.value = []
+
+    result = pipeline.data
+    assert len(result) == len(df)
