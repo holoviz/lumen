@@ -1620,7 +1620,7 @@ class DerivedSource(Source):
         if self.tables:
             transforms = self.tables[table].get('transforms', []) + self.transforms
         else:
-            transforms = self.transforms
+            transforms = list(self.transforms)
         transforms.append(FilterTransform(conditions=list(query.items())))
         for transform in transforms:
             df = transform.apply(df)

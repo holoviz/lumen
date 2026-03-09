@@ -119,3 +119,18 @@ def test_derived_clear_cache(original, mirror_mode_spec):
     assert cache_key in derived._cache
     derived.clear_cache()
     assert len(derived._cache) == 0
+
+
+def test_derived_mirror_get_does_not_mutate_transforms(original, mirror_mode_spec):
+    """Regression test: DerivedSource.get() in mirror mode mutated self.transforms."""
+    derived = Source.from_spec(mirror_mode_spec)
+    n_transforms = len(derived.transforms)
+
+    derived.clear_cache()
+    derived.get('test')
+    derived.clear_cache()
+    derived.get('test')
+
+    assert len(derived.transforms) == n_transforms, (
+        "DerivedSource.get() should not permanently append to self.transforms"
+    )
