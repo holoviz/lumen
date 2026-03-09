@@ -331,3 +331,29 @@ async def test_base_sql_source_get_async():
     result_async_filtered = await mock_source.get_async('test_table', category='A')
     # The base implementation should build and execute a filtered query
     assert len(result_async_filtered) <= len(expected)  # Should be filtered
+
+
+def test_set_schema_cache_respects_cache_schema_flag(make_filesource):
+    """Test that _set_schema_cache checks cache_schema, not cache_metadata.
+
+    Regression test: _set_schema_cache previously checked self.cache_metadata
+    instead of self.cache_schema, so setting cache_schema=False had no effect
+    and setting cache_schema=True with cache_metadata=False would skip caching.
+    """
+    root = os.path.dirname(__file__)
+
+    schema = {'test': {'A': {'type': 'integer'}}}
+
+    # cache_schema=False should NOT cache schema
+    src = make_filesource(root, cache_schema=False, cache_metadata=True)
+    src._set_schema_cache(schema)
+    assert src._schema_cache == {}, (
+        "_set_schema_cache should not cache when cache_schema=False"
+    )
+
+    # cache_schema=True should cache schema
+    src2 = make_filesource(root, cache_schema=True, cache_metadata=False)
+    src2._set_schema_cache(schema)
+    assert src2._schema_cache == schema, (
+        "_set_schema_cache should cache when cache_schema=True"
+    )
