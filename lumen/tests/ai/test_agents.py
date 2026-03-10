@@ -274,4 +274,3 @@ class TestTemplateOverrides:
         messages = [{"role": "user", "content": "test"}]
         prompt = await agent._render_prompt("main", messages, {})
         assert "Footer appended." in prompt
-
