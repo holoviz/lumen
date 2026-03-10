@@ -289,6 +289,68 @@ async def test_taskgroup_invalidate():
     assert isinstance(outs[0], Markdown)
     assert outs[0].object == "B"
 
+
+async def test_section_incremental_execution():
+    order = []
+    a = A(order=order, title="Action A")
+    b = B(order=order, title="Action B")
+    section = Section(a, b, title="Section 1")
+    report = Report(section, title="Selector Report")
+
+    # Initial run with both A and B
+    await report.execute()
+    assert order == ["A", "B"]
+    assert a.status == "success"
+    assert b.status == "success"
+    assert len(a.views) == 2  # Title + Markdown
+    assert len(b.views) == 2
+
+    # Deselect B and run again
+    section._export_selector.value = ["Action A"]
+    await report.execute()
+    assert order == ["A", "B"]  # A is cached, B is skipped (and reset)
+    assert b.status == "idle"
+    assert len(b.views) == 0
+    assert len(section._view) == 2 # Placeholder + Action A (Action B is filtered out)
+
+    # Select B again and run again
+    section._export_selector.value = ["Action A", "Action B"]
+    await report.execute()
+    assert order == ["A", "B", "B"] # A is cached, B is re-run
+    assert b.status == "success"
+    assert len(b.views) == 2
+
+
+async def test_section_reset_filters():
+    section = Section(A(title="Action A"), B(title="Action B"), title="Section 1")
+    report = Report(section, title="Selector Report")
+
+    section._export_selector.value = ["Action A"]
+    assert section._export_selector.value == ["Action A"]
+
+    report.reset_filters()
+    assert section._export_selector.value == ["Action A", "Action B"]
+
+
+async def test_section_selector_filters_ui():
+    a = A(title="Action A")
+    b = B(title="Action B")
+    section = Section(a, b, title="Section 1")
+
+    # Initial state: both selected and rendered.
+    assert section._export_selector.value == ["Action A", "Action B"]
+    assert len(section._view) == 3
+
+    # Remove B from selector
+    section._export_selector.value = ["Action A"]
+    assert section._export_selector.value == ["Action A"]
+    assert len(section._view) == 2
+
+    # Add B back
+    section._export_selector.value = ["Action A", "Action B"]
+    assert section._export_selector.value == ["Action A", "Action B"]
+    assert len(section._view) == 3
+
 async def test_taskgroup_invalidate_partial():
 
     class BInputs(ContextModel):
@@ -395,6 +457,100 @@ async def test_export_selector_filters_play_execution():
     assert section.views[2].object == "B done"
 
 
+async def test_sync_context_skipped_while_root_running():
+    """_sync_context must not trigger re-execution while the root Report is running.
+
+    Regression test: deferred async param-watcher callbacks for out_context
+    could fire after a Section finished but while the Report was still running,
+    causing spurious invalidation cascades and duplicate task execution.
+    """
+    order = []
+
+    section = Section(
+        ASchema(title="Action A"),
+        BSchema(title="Action B"),
+        title="Section 1",
+    )
+    report = Report(section, title="Test Report")
+
+    await report.execute()
+
+    assert section[0].out_context == {"a": "A"}
+    assert section[1].out_context == {"b": "AA"}
+
+    # Simulate a deferred _sync_context callback arriving while the root
+    # is running.  Before the fix, this would trigger invalidation and
+    # re-execution.
+    report.running = True
+    try:
+        section[0].out_context = {"a": "CHANGED"}
+        await asyncio.sleep(0.3)
+
+        # B should NOT have been invalidated or re-run because the root
+        # was running — the _sync_context callback should have bailed out.
+        assert section[1].out_context == {"b": "AA"}
+        assert section[1].status == "success"
+    finally:
+        report.running = False
+
+
+async def test_selector_subset_no_reexecution_loop():
+    """Deselecting a task and running should not cause tasks to execute more than once.
+
+    Regression test: when a task was deselected via _export_selector, the
+    reset of excluded tasks would trigger _sync_context callbacks that
+    re-ran the entire report in an infinite loop.
+    """
+    order = []
+
+    section = Section(
+        A(order=order, title="Action A"),
+        B(order=order, title="Action B"),
+        title="Section 1",
+    )
+    section_2 = Section(
+        A(order=order, title="Action C"),
+        title="Section 2",
+    )
+    report = Report(section, section_2, title="Test Report")
+
+    # Deselect Action B
+    section._export_selector.value = ["Action A"]
+
+    await report.execute()
+
+    # Allow any deferred callbacks to settle
+    await asyncio.sleep(0.5)
+
+    # Each selected action should have run exactly once
+    assert order.count("A") == 2  # Action A in Section 1 + Action C (class A) in Section 2
+    assert order.count("B") == 0  # Action B was deselected
+
+
+async def test_populate_view_no_selector_retrigger():
+    """Section._populate_view should not re-trigger _sync_placeholder_to_selector
+    when the selector value hasn't changed."""
+    section = Section(
+        A(title="Action A"),
+        B(title="Action B"),
+        title="Section 1",
+    )
+
+    sync_calls = []
+    original = section._sync_placeholder_to_selector
+
+    def tracking_sync(*args, **kwargs):
+        sync_calls.append(1)
+        return original(*args, **kwargs)
+
+    section._sync_placeholder_to_selector = tracking_sync
+
+    # Calling _populate_view when value hasn't changed should NOT trigger the watcher
+    sync_calls.clear()
+    section._populate_view()
+    assert len(sync_calls) == 0
+
+
 async def test_export_selector_filters_notebook_export():
     order = []
 
@@ -423,23 +579,3 @@ async def test_export_selector_filters_notebook_export():
         "### Action A",
         "A done",
     ]
-
-
-async def test_replay_runs_newly_selected_tasks_after_filter_change():
-    order = []
-
-    section = Section(
-        A(order=order, title="Action A"),
-        B(order=order, title="Action B"),
-        title="Section 1",
-    )
-    report = Report(section, title="Selector Report")
-
-    section._export_selector.value = ["Action A"]
-    await report.execute()
-    assert order == ["A"]
-
-    section._export_selector.value = ["Action A", "Action B"]
-    await report.execute()
-
-    assert order == ["A", "B"]

@@ -137,7 +137,7 @@ class Task(Viewer):
         return nullcontext(self._null_step) if self.interface is None else self.interface.add_step(title=title, **kwargs)
 
     def _populate_view(self):
-        self._view[:] = self._header
+        self._view[:] = self._header + self.views
 
     def _render_controls(self):
         return [
@@ -232,6 +232,8 @@ class Task(Viewer):
             if self.status != "error":
                 self.status = "success"
             self.running = False
+
+        self.views = views
         self.out_context = out_context
         return views, out_context
 
@@ -240,9 +242,13 @@ class Task(Viewer):
 
     def reset(self):
         """Resets the view, removing generated outputs."""
+        self._prepared = False
         self.status = "idle"
         self._view[:] = []
-        self.out_context.clear()
+        self.views = []
+        self.out_context = {}
+        if self._header:
+             self._header = []
 
 
 class TaskGroup(Task):
@@ -285,10 +291,9 @@ class TaskGroup(Task):
         self._populate_view()
 
     def _init_views(self):
-        views = self.param._header.rx()
+        self.views = self.param._header.rx()
         for task in self:
-            views += task.param.views.rx()
-        self.views = views
+            self.views += task.param.views.rx()
 
     async def _sync_context(self, event: param.parameterized.Event):
         task = event.obj
@@ -301,12 +306,20 @@ class TaskGroup(Task):
         if index > self._current or self.running:
             # No need to invalidate if the task hasn't been executed
             return
-        changed = {k for k, v in event.new.items() if k in event.old and not is_equal(event.old.get(k), v)}
+        # Walk up to the root of the task tree and check if it is
+        # currently executing.  The root's ``running`` flag stays True
+        # for the entire duration of an execution run, unlike the local
+        # flag which may have already been reset by the time a deferred
+        # async param-watcher callback is dispatched by the event loop.
+        root = self
+        while root.parent is not None:
+            root = root.parent
+        if root.running:
+            return
+        changed = {k for k, v in event.new.items() if not is_equal(event.old.get(k), v)}
+
         if changed:
             self.invalidate(changed, start=index)
-            root = self
-            while root.parent is not None:
-                root = root.parent
             if not (root is self and index >= len(self)):
                 await root.execute()
 
@@ -330,12 +343,12 @@ class TaskGroup(Task):
         return f"{self.__class__.__name__}({', '.join(params)}{''.join(tasks)})"
 
     def _populate_view(self):
-        self._view[:] = self._header + self._tasks
+        self._view[:] = self._header + list(self._tasks)
 
     async def _run_task(
         self, i: int, task: Self | Actor, context: TContext, **kwargs
     ) -> tuple[list[Any], TContext]:
-        if task.status == "success":
+        if task.status == "success" and task.views:
             return task.views, task.out_context
         await asyncio.sleep(0.01)
         messages = self._render_message_history(context)
@@ -406,7 +419,15 @@ class TaskGroup(Task):
         included_titles = selector.value if selector is not None else None
         for i, task in enumerate(self):
             if included_titles is not None and task.title not in included_titles:
+                task.reset()
                 continue
+
+            if task.status == 'success':
+                views += task.views
+                context = merge_contexts(LWW, [context, task.out_context])
+                self._current = i + 1
+                continue
+
             new = []
             try:
                 new, new_context = await self._run_task(i, task, context, **kwargs)
@@ -570,6 +591,12 @@ class TaskGroup(Task):
         if invalidated:
             self.status = "idle"
             self._current = max(min(invalidated), 0)
+            # Keep parent views in sync with child invalidation state since
+            # execute() assigns a concrete list to self.views.
+            views = list(self._header)
+            for task in self:
+                views += task.views
+            self.views = views
         return [self[i] for i in invalidated], keys
 
     def merge(self, other: TaskGroup):
@@ -604,7 +631,11 @@ class TaskGroup(Task):
         """
         Resets the view, removing generated outputs.
         """
+        self._prepared = False
         self.status = "idle"
+        self._view[:] = []
+        self.views = []
+        self.out_context = {}
         self._current = start
         with hold():
             self._header = []
@@ -613,6 +644,14 @@ class TaskGroup(Task):
                 if isinstance(task, Task):
                     task.reset()
             self._populate_view()
+
+    def reset_filters(self):
+        """
+        Resets the filters for the task group and its subtasks.
+        """
+        for task in self:
+            if isinstance(task, TaskGroup):
+                task.reset_filters()
 
     def to_notebook(self):
         """
@@ -758,6 +797,7 @@ class Section(TaskGroup):
         self._selector_initialized = False
         self._export_selector.param.watch(self._sync_placeholder_to_selector, 'value')
         self._view = Column(sizing_mode='stretch_width', styles={'min-height': 'unset'}, height_policy='fit')
+        self._populate_view()
         self._container = Column(
             Row(
                 self._settings,
@@ -773,6 +813,13 @@ class Section(TaskGroup):
 
     def _open_settings(self, event):
         self._dialog.open = True
+
+    def _clear_progress_loaders(self):
+        # Progress widgets are transient execution indicators and should never
+        # remain in the section body once execution has finished.
+        for view in list(self._view):
+            if isinstance(view, Progress):
+                self._view.remove(view)
 
     @param.depends('status', '_tasks', 'views', watch=True)
     def _update_placeholder(self):
@@ -793,24 +840,46 @@ class Section(TaskGroup):
             self._placeholder.visible = False
 
     def _sync_placeholder_to_selector(self, event=None):
+        # Changing selector membership invalidates section-level cached outputs.
+        self.status = "idle"
+        self._current = 0
         self._update_placeholder()
+        self._populate_view()
+
+    def reset_filters(self):
+        """
+        Resets the filters for the section.
+        """
+        self._export_selector.value = self._export_selector.options
+        super().reset_filters()
 
     def _populate_view(self):
         titles = [task.title for task in self._tasks]
-        prev_value = self._export_selector.value
         prev_options = self._export_selector.options
         self._export_selector.options = titles
         if not self._selector_initialized:
             # First populate: select all tasks by default
-            self._export_selector.value = titles
+            new_value = titles
             self._selector_initialized = True
         else:
             # Keep existing selections that are still valid, and auto-select any
             # newly added tasks (titles not previously in options)
-            kept = [t for t in prev_value if t in titles]
+            kept = [t for t in self._export_selector.value if t in titles]
             new_titles = [t for t in titles if t not in prev_options]
-            self._export_selector.value = kept + [t for t in new_titles if t not in kept]
-        self._view[:] = self._header + [self._placeholder] + list(self._tasks)
+            new_value = kept + [t for t in new_titles if t not in kept]
+
+        # Guard against re-triggering the _sync_placeholder_to_selector
+        # watcher when the computed value hasn't actually changed.
+        if self._export_selector.value != new_value:
+            self._export_selector.value = new_value
+
+        selected = self._export_selector.value
+        tasks = [task for task in self._tasks if task.title in selected]
+        # Note: self._header is intentionally excluded from the view here
+        # because the parent Report's Accordion already renders the section
+        # title as a panel header.  _header is still kept for notebook export
+        # via _collect_included_views.
+        self._view[:] = [self._placeholder] + tasks
 
     async def _run_task(self, i: int, task: Task | Actor, context: TContext | None, **kwargs) -> list[Any]:
         if context is not None:
@@ -821,11 +890,18 @@ class Section(TaskGroup):
             context['reasoning'] = f"{self.title}\n\n{instructions}"
         return await super()._run_task(i, task, context, **kwargs)
 
+    async def _execute(self, context: TContext, **kwargs):
+        try:
+            return await super()._execute(context, **kwargs)
+        finally:
+            self._clear_progress_loaders()
+
     @param.depends('running', watch=True)
     async def _running(self):
         await asyncio.sleep(0.05)
         if not self.running:
             return
+        self._clear_progress_loaders()
         # Start with indeterminate, switch to determinate after first task
         loader = Progress(
             variant='indeterminate',
@@ -845,7 +921,8 @@ class Section(TaskGroup):
 
         while self.running:
             await asyncio.sleep(0.05)
-        self._view.remove(loader)
+        if loader in self._view:
+            self._view.remove(loader)
 
 
 class Report(TaskGroup):
@@ -898,6 +975,10 @@ class Report(TaskGroup):
             icon="clear", on_click=lambda _: self.reset(), margin=0, size="large",
             description="Clear outputs", visible=False
         )
+        self._filter_reset = IconButton(
+            icon="restart_alt", on_click=lambda _: self.reset_filters(), margin=0, size="large",
+            description="Reset filters", visible=True
+        )
         self._collapse = IconButton(
             styles={"margin-left": "auto"}, on_click=self._expand_all, icon="unfold_less",
             size="large", color="default", margin=(0, 0, 10, 0),
@@ -924,6 +1005,7 @@ class Report(TaskGroup):
             self._header_title,
             self._run,
             self._clear,
+            self._filter_reset,
             self._collapse,
             self._export,
             self._settings,
@@ -934,6 +1016,7 @@ class Report(TaskGroup):
             items=[
                 {"label": "Execute Report", "icon": "play_arrow"},
                 {"label": "Clear Report", "icon": "clear"},
+                {"label": "Reset filters", "icon": "restart_alt"},
                 {"label": "Export Report to Notebook", "icon": "get_app"},
                 {"label": "Configure Report", "icon": "settings"}
             ],
@@ -973,6 +1056,8 @@ class Report(TaskGroup):
             # watcher handles execution
         elif icon == "clear":
             self.reset()
+        elif icon == "restart_alt":
+            self.reset_filters()
         elif icon == "get_app":
             self._trigger_download()
         elif icon == "settings":
