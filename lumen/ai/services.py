@@ -257,10 +257,6 @@ class AnthropicMixin(APIKeyServiceMixin):
     between LLM implementations and embedding classes.
     """
 
-    api_key = param.String(default=None, doc="""
-        The Anthropic API key. If not provided, falls back to the
-        ANTHROPIC_API_KEY environment variable.""")
-
     api_key_env_var: str = PROVIDER_ENV_VARS['anthropic']
 
     def _instantiate_client(self, async_client=True, **extra_kwargs):
@@ -274,10 +270,6 @@ class GenAIMixin(APIKeyServiceMixin):
     Mixin class for Google GenAI functionality that can be shared
     between LLM implementations and embedding classes.
     """
-
-    api_key = param.String(default=None, doc="""
-        The Google API key. If not provided, falls back to the
-        GEMINI_API_KEY environment variable.""")
 
     api_key_env_var: str = PROVIDER_ENV_VARS['google']
 
@@ -293,10 +285,6 @@ class MistralAIMixin(APIKeyServiceMixin):
     between LLM implementations and embedding classes.
     """
 
-    api_key = param.String(default=None, doc="""
-        The Mistral AI API key. If not provided, falls back to the
-        MISTRAL_API_KEY environment variable.""")
-
     api_key_env_var: str = PROVIDER_ENV_VARS['mistral']
 
     def _instantiate_client(self, **extra_kwargs):
@@ -310,10 +298,6 @@ class AzureMistralAIMixin(MistralAIMixin):
     Mixin class for Azure Mistral AI functionality that extends MistralAIMixin
     with Azure-specific configuration.
     """
-
-    api_key = param.String(default=None, doc="""
-        The Azure API key. If not provided, falls back to the
-        AZUREAI_ENDPOINT_KEY environment variable.""")
 
     api_key_env_var: str = PROVIDER_ENV_VARS['azure-mistral']
 
@@ -339,10 +323,6 @@ class OpenAIMixin(APIKeyServiceMixin):
     Mixin class for OpenAI functionality that can be shared
     between LLM implementations and embedding classes.
     """
-
-    api_key = param.String(default=None, doc="""
-        The API key. If not provided, falls back to the
-        OPENAI_API_KEY environment variable.""")
 
     api_key_env_var: str = PROVIDER_ENV_VARS['openai']
 
@@ -381,10 +361,6 @@ class AzureOpenAIMixin(OpenAIMixin):
 
     api_version = param.String(default="2024-10-21", doc="""
         The Azure AI Studio API version.""")
-
-    api_key = param.String(default=None, doc="""
-        The Azure API key. If not provided, falls back to the
-        AZUREAI_ENDPOINT_KEY environment variable.""")
 
     api_key_env_var: str = PROVIDER_ENV_VARS['azure-openai']
 
