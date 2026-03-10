@@ -122,6 +122,99 @@ For installation and API key setup instructions, see the [Installation guide](..
 
 ## Advanced configuration
 
+### API keys
+
+Each provider has three ways to supply an API key, resolved in this order:
+
+1. **`api_key` param** — pass it directly at instantiation
+2. **`api_key_env_var`** — a class variable naming the environment variable to read from; defaults to the value from `PROVIDER_ENV_VARS` for that provider
+3. **`PROVIDER_ENV_VARS`** — the module-level dict that is the source of truth for env var names; changing it updates both `api_key_env_var` defaults and `get_available_llm()` auto-detection
+
+``` py title="Pass api_key directly (highest priority)"
+llm = lmai.llm.OpenAI(api_key="sk-...")
+```
+
+``` py title="Set via environment variable (default behaviour)"
+import os
+os.environ["OPENAI_API_KEY"] = "sk-..."
+llm = lmai.llm.OpenAI()  # api_key is auto-populated from OPENAI_API_KEY
+```
+
+If your key is stored under a different environment variable name, there are
+three ways to override it:
+
+``` py title="1. Override on the class"
+lmai.llm.OpenAI.api_key_env_var = "MY_OPENAI_KEY"
+llm = lmai.llm.OpenAI()  # now reads from MY_OPENAI_KEY
+```
+
+``` py title="2. Override on a subclass"
+class MyOpenAI(lmai.llm.OpenAI):
+    api_key_env_var = "MY_OPENAI_KEY"
+
+llm = MyOpenAI(model_kwargs={"default": {"model": "gpt-4.1-mini"}})
+```
+
+``` py title="3. Override the module-level PROVIDER_ENV_VARS dict"
+import lumen.ai.llm as llm_module
+
+llm_module.PROVIDER_ENV_VARS["openai"] = "MY_OPENAI_KEY"
+```
+
+Option 3 also affects `get_available_llm()`, which uses `PROVIDER_ENV_VARS` to
+auto-detect which provider to use at startup.
+
+!!! note
+    `api_key_env_var` is a plain class variable, not a param. It must be set at
+    the **class** level — changing it on an instance has no effect, because
+    `models()` is a classmethod and resolves it from the class.
+
+The default values for each provider are:
+
+| Provider | Default `api_key_env_var` |
+|----------|---------------------------|
+| `OpenAI` | `OPENAI_API_KEY` |
+| `Anthropic` | `ANTHROPIC_API_KEY` |
+| `Google` | `GEMINI_API_KEY` |
+| `MistralAI` | `MISTRAL_API_KEY` |
+| `AzureOpenAI` / `AzureMistralAI` | `AZUREAI_ENDPOINT_KEY` |
+| `Bedrock` / `AnthropicBedrock` | `AWS_ACCESS_KEY_ID` |
+| `AICatalyst` | `AI_CATALYST_API_KEY` |
+| `Ollama`, `LlamaCpp`, `AINavigator` | *(none required)* |
+
+### Checking available models
+
+`models()` is a classmethod you can call directly to inspect what models are
+available from a provider without instantiating the LLM:
+
+``` py title="Check available models"
+print(lmai.llm.OpenAI.models())
+# {'gpt-4.1-mini', 'gpt-4.1', 'gpt-4.1-nano', ...}
+
+print(lmai.llm.Anthropic.models())
+# {'claude-haiku-4-5', 'claude-sonnet-4-5', 'claude-opus-4-5', ...}
+```
+
+Providers that don't support listing models (e.g. `AzureOpenAI`, `LiteLLM`) return
+an empty set.
+
+If you implement a custom provider subclass, override `models()` to support it:
+
+``` py title="Custom provider with models()"
+class MyProvider(lmai.llm.Llm):
+    api_key_env_var = "MY_PROVIDER_API_KEY"
+
+    @classmethod
+    def models(cls) -> set[str]:
+        import requests
+        api_key = os.environ.get(cls.api_key_env_var)
+        if not api_key:
+            return set()
+        resp = requests.get("https://my-provider.com/models",
+                            headers={"Authorization": f"Bearer {api_key}"})
+        return {m["id"] for m in resp.json()["data"]}
+```
+
 ### Custom endpoints
 
 Override default API endpoints:
