@@ -403,7 +403,7 @@ class TaskGroup(Task):
         views = list(self._header)
         self.status = "running"
         selector = getattr(self, '_export_selector', None)
-        included_titles = selector.value if selector is not None else None
+        included_titles = selector.value if (selector is not None and selector.value) else None
         for i, task in enumerate(self):
             if included_titles is not None and task.title not in included_titles:
                 continue
