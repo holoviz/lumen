@@ -84,20 +84,23 @@ PROVIDER_ENV_VARS = {
 
 def get_available_llm() -> type[Llm] | None:
     """
-    Detect and return an available LLM provider by checking each provider's
-    is_online() classmethod.
+    Detect and instantiate an available LLM provider by checking environment variables
+    and attempting to instantiate each provider in order.
 
     Returns
     -------
     type[Llm] | None
         The LLM class if successful, or None if no provider is available.
     """
-    for class_name in LLM_PROVIDERS.values():
+    for provider, class_name in LLM_PROVIDERS.items():
+        env_var = PROVIDER_ENV_VARS.get(provider)
+        if env_var and not os.environ.get(env_var):
+            continue
+
         try:
             provider_cls = globals()[class_name]
-            if provider_cls.is_online():
-                return provider_cls
-        except (KeyError, ImportError):
+            return provider_cls
+        except KeyError:
             continue
     return None
 
