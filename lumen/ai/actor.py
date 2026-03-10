@@ -27,7 +27,7 @@ class NullStep:
         self.status = None
 
     def stream(self, text, **kwargs):
-        log_debug(f"[{text}")
+        log_debug(f"[NullStep] {text}")
 
 
 class LLMUser(param.Parameterized):
@@ -50,10 +50,42 @@ class LLMUser(param.Parameterized):
         The layout progress updates will be streamed to.""")
 
     template_overrides = param.Dict(default={}, doc="""
-        Overrides the template's blocks (instructions, context, tools, examples).
-        Is a nested dictionary with the prompt name (e.g. main) as the key
-        and the block names as the inner keys with the new content as the
-        values.""")
+        Overrides specific blocks inside a prompt template without replacing
+        the entire template. Useful for injecting domain knowledge, adding
+        rules, or changing agent behaviour for specific tasks.
+
+        Structure: ``{prompt_name: {block_name: new_content}}``.
+
+        - **prompt_name**: The prompt to override, e.g. ``"main"``.
+        - **block_name**: The Jinja2 block inside that template to replace.
+          Common blocks (defined in ``Actor/main.jinja2``):
+          ``global``, ``datetime``, ``instructions``, ``examples``,
+          ``tools``, ``context``, ``errors``, ``footer``.
+        - **new_content**: The replacement string. Use ``{{ super() }}`` to
+          keep the original block content and append after it.
+
+        Can be set at the class level (subclassing) or on an instance.
+
+        **Example — subclassing**::
+
+            INSTRUCTION_OVERRIDE = \"\"\"
+            {{ super() }}
+
+            <appended prompt>
+            \"\"\"
+
+            class UXSQLAgent(SQLAgent):
+                template_overrides = {
+                    "main": {"instructions": INSTRUCTION_OVERRIDE}
+                }
+
+        **Example — instance level**::
+
+            agent = SQLAgent(template_overrides={
+                "main": {"instructions": "{{ super() }}\\nBe concise."}
+            })
+        """)
+
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -176,7 +208,9 @@ class LLMUser(param.Parameterized):
         context: TContext,
         response_model: type[BaseModel] | None = None,
         model_spec: str | None = None,
-        **kwargs
+        model_index: int | None = None,
+        model_kwargs: dict | None = None,
+        **prompt_kwargs
     ) -> Any:
         """
         Render a prompt and invoke the LLM.
@@ -193,6 +227,10 @@ class LLMUser(param.Parameterized):
             Pydantic model to structure the response
         model_spec : str, optional
             Specification for which LLM to use
+        model_kwargs : dict, optional
+            Additional context variables for determining the model_spec or response_model
+        model_index : int, optional
+            The index of the model to subset if the model spec returns a list of models
         **kwargs : dict
             Additional context variables for the prompt template
 
@@ -200,10 +238,10 @@ class LLMUser(param.Parameterized):
         -------
         The structured response from the LLM
         """
-        system = await self._render_prompt(prompt_name, messages, context, **kwargs)
+        system = await self._render_prompt(prompt_name, messages, context, **prompt_kwargs)
         if response_model is None:
             try:
-                response_model = self._get_model(prompt_name, **kwargs)
+                response_model = self._get_model(prompt_name, **(model_kwargs or {}))
             except (KeyError, AttributeError):
                 pass
 
@@ -212,6 +250,9 @@ class LLMUser(param.Parameterized):
                 model_spec = self._lookup_prompt_key(prompt_name, "llm_spec")
             except KeyError:
                 model_spec = self.llm_spec_key
+
+        if model_index is not None:
+            model_spec = model_spec[model_index]
 
         result = await self.llm.invoke(
             messages=messages,
@@ -228,6 +269,8 @@ class LLMUser(param.Parameterized):
         context: TContext,
         response_model: type[BaseModel] | None = None,
         model_spec: str | None = None,
+        model_kwargs: dict | None = None,
+        model_index: int | None = None,
         field: str | None = None,
         **kwargs
     ):
@@ -246,6 +289,10 @@ class LLMUser(param.Parameterized):
             Pydantic model to structure the response
         model_spec : str, optional
             Specification for which LLM to use
+        model_kwargs : dict, optional
+            Additional context variables for determining the model_spec or response_model
+        model_index : int, optional
+            The index of the model to subset if the model spec returns a list of models
         field : str, optional
             Specific field to extract from the response model
         **kwargs : dict
@@ -261,7 +308,7 @@ class LLMUser(param.Parameterized):
         # Determine the response model
         if response_model is None:
             try:
-                response_model = self._get_model(prompt_name, **kwargs)
+                response_model = self._get_model(prompt_name, **(model_kwargs or {}))
             except (KeyError, AttributeError):
                 pass
 
@@ -271,6 +318,9 @@ class LLMUser(param.Parameterized):
                 model_spec = self._lookup_prompt_key(prompt_name, "llm_spec")
             except KeyError:
                 model_spec = self.llm_spec_key
+
+        if model_index is not None:
+            model_spec = model_spec[model_index]
 
         # Stream from the LLM
         async for chunk in self.llm.stream(

@@ -5,7 +5,7 @@ import pandas as pd
 import param  # type: ignore
 
 from lumen.transforms.base import (
-    Count, DropNA, Eval, Sum, Transform,
+    Count, DropNA, Eval, Sum, Transform, project_lnglat,
 )
 
 
@@ -80,3 +80,10 @@ def test_dropna_transform(mixed_df):
     assert len(DropNA.apply_to(mixed_df, how='all')) == 5
     assert len(DropNA.apply_to(mixed_df, axis=1).columns) == 3
     assert len(DropNA.apply_to(mixed_df, axis=1, how='all').columns) == 4
+
+
+def test_project_lnglat_default_params():
+    """Regression test: latitude default was 'longitude' (copy-paste bug)."""
+    transform = project_lnglat()
+    assert transform.longitude == 'longitude'
+    assert transform.latitude == 'latitude'

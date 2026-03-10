@@ -21,8 +21,9 @@ from lumen.filters.base import ConstantFilter
 from lumen.pipeline import Pipeline
 from lumen.sources.intake_sql import IntakeSQLSource
 from lumen.state import state
-from lumen.transforms.base import Columns
+from lumen.transforms.base import Columns, Transform
 from lumen.transforms.sql import SQLColumns, SQLGroupBy
+from lumen.validation import ValidationError
 
 sql_available = pytest.mark.skipif(intake_sql is None or duckdb is None, reason="intake-sql is not installed")
 
@@ -357,3 +358,36 @@ def test_pipeline_with_sql_transform_nested_widget_vars(mixed_df_object_type):
     sel.value = 'B'
     df = mixed_df_object_type[['C', 'B']]
     assert_df_equal(pipeline.data, df)
+
+
+def test_pipeline_from_spec_unresolved_pipeline_error():
+    """Regression test: ValidationError must interpolate the pipeline name."""
+    spec = {
+        'pipeline': 'nonexistent_pipeline',
+    }
+    with pytest.raises(ValidationError, match='nonexistent_pipeline'):
+        Pipeline.from_spec(spec)
+
+
+def test_pipeline_update_data_resets_loading_on_error(make_filesource):
+    """Regression test: loading flag must reset even when _compute_data raises."""
+    root = pathlib.Path(__file__).parent / 'sources'
+    source = make_filesource(str(root))
+
+    class FailTransform(Transform):
+        transform_type = 'fail'
+        def apply(self, table):
+            raise RuntimeError("deliberate failure")
+
+    pipeline = Pipeline(source=source, table='test', transforms=[FailTransform()])
+
+    # Force an update — _compute_data will raise due to FailTransform.
+    # @catch_and_notify may or may not re-raise depending on whether
+    # panel notifications are enabled, so we don't assert on the exception.
+    try:
+        pipeline._update_data(force=True)
+    except RuntimeError:
+        pass
+
+    # The loading flag must be False so future updates aren't blocked
+    assert not pipeline._update_widget.loading

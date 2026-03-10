@@ -35,14 +35,17 @@ class RawStep(BaseModel):
     instruction: str = Field(
         description="""
         Concise instruction capturing user intent at the right altitude.
+        Reflect exactly what the user asked for, nothing more and nothing less,
+        i.e. if details/numbers are provided by the user, include them;
+        if not, do not randomly add arbitrary numbers or details.
 
         - ❌ Too low: implementation details (SQL syntax, chart specs)
         - ❌ Too high: vague ("handle this", "process data")
-        - ❌ Leaking: mentioning downstream purpose ("for plotting", "for the chart", "for analysis")
+        - ❌ No leaking: mentioning downstream purpose ("for plotting", "for the chart")
         - ✅ Just right: what THIS actor should do, nothing about why
         """,
         examples=[
-            "Query top 5 countries by sales",
+            "Query top 5 countries by sales # only if user requested the top 5, otherwise just query all countries",
             "Get wind, temperature, dewpoint, and precipitation data for Seattle on Jan 1, 2020",
             "Plot a line chart of sales over time.",
         ],
@@ -325,10 +328,13 @@ class Planner(Coordinator):
             # the unmet dependencies
             agent_candidates = [agent for agent in agents if not unmet_dependencies or set(agent.output_schema.__annotations__) & unmet_dependencies]
             tool_candidates = [tool for tool in tools if not unmet_dependencies or set(tool.output_schema.__annotations__) & unmet_dependencies]
-            system = await self._render_prompt(
+            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
+            async for reasoning in self._stream_prompt(
                 "main",
                 messages,
                 context,
+                model_spec=model_spec,
+                response_model=Reasoning,
                 agents=agents,
                 tools=tools,
                 unmet_dependencies=unmet_dependencies,
@@ -336,15 +342,6 @@ class Planner(Coordinator):
                 previous_actors=previous_actors,
                 previous_plans=previous_plans,
                 is_follow_up=is_follow_up,
-            )
-            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
-
-            async for reasoning in self.llm.stream(
-                messages=messages,
-                system=system,
-                model_spec=model_spec,
-                response_model=Reasoning,
-                max_retries=3,
             ):
                 if reasoning.chain_of_thought:  # do not replace with empty string
                     context["reasoning"] = reasoning.chain_of_thought
