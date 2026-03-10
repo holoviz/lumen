@@ -8,12 +8,16 @@ import sqlglot
 
 import lumen as lm
 
-from lumen.sources.duckdb import DuckDBSource
 from lumen.transforms.sql import (
     SQLColumns, SQLCount, SQLDistinct, SQLFilter, SQLFormat, SQLGroupBy,
     SQLLimit, SQLMinMax, SQLOverride, SQLPreFilter, SQLRemoveSourceSeparator,
     SQLSample, SQLSelectFrom, SQLTransform,
 )
+
+try:
+    from lumen.sources.duckdb import DuckDBSource
+except ImportError:
+    DuckDBSource = None
 
 
 def test_dialect_alias_postgresql():
@@ -1115,6 +1119,9 @@ def test_sql_filter_empty_list_conditions():
     multi-select widget with all options deselected). An empty list should produce
     no filter condition, leaving data unfiltered.
     """
+    if DuckDBSource is None:
+        pytest.skip("DuckDBSource not available, skipping test")
+
     df = pd.DataFrame({
         "region":   ["North", "South", "North", "East", "South", "East"],
         "product":  ["A", "B", "A", "C", "C", "B"],
