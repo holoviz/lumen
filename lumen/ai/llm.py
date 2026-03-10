@@ -158,24 +158,6 @@ class Llm(param.Parameterized):
     __abstract = True
 
     @classmethod
-    def is_online(cls) -> bool:
-        """
-        Check if this LLM provider's service is online and reachable.
-
-        By default, checks if the required environment variable (from PROVIDER_ENV_VARS)
-        is set. Subclasses may override for additional checks (e.g., server connectivity).
-
-        Returns
-        -------
-        bool
-            True if the provider's service is online, False otherwise.
-        """
-        env_var = PROVIDER_ENV_VARS.get(cls.__name__)
-        if env_var:
-            return bool(os.environ.get(env_var))
-        return True  # Providers without env var requirements are available by default
-
-    @classmethod
     def models(cls) -> set[str]:
         """
         Return the set of available model identifiers from this provider.
@@ -646,33 +628,16 @@ class Llm(param.Parameterized):
         return results
 
     async def initialize(self, log_level: str):
-        # Check if service is online first
-        if not self.is_online():
+        try:
             self._ready = False
-            raise ConnectionError(
-                f"{self.__class__.__name__} service is not reachable. "
-                "Please check your API key or service configuration."
+            await self.invoke(
+                messages=[{'role': 'user', 'content': 'Ready? "Y" or "N"'}],
+                model_spec="ui",
             )
-
-        # Then check if all configured models are available
-        available = self.models()
-        if available:  # Only check if provider returns model list
-            configured = {
-                kwargs.get("model")
-                for kwargs in self.model_kwargs.values()
-                if isinstance(kwargs, dict) and kwargs.get("model")
-            }
-            unavailable = configured - available
-
-            if unavailable:
-                self._ready = False
-                models_str = ", ".join(repr(m) for m in unavailable)
-                raise ValueError(
-                    f"The following models are not available for {self.__class__.__name__}: {models_str}. "
-                    "Please check your model configuration or ensure the models are installed/accessible."
-                )
-
-        self._ready = True
+            self._ready = True
+        except Exception as e:
+            self._ready = False
+            raise e
 
     async def stream(
         self,
@@ -2099,35 +2064,6 @@ class Ollama(OpenAI):
             return {m.get("name", "") for m in available_models}
         except Exception:
             return set()
-
-    async def initialize(self, log_level: str):
-        """Initialize the Ollama LLM, checking server connectivity and model availability."""
-        # First check if server is running
-        if not self.is_online(endpoint=self.endpoint):
-            self._ready = False
-            raise ConnectionError(
-                f"Ollama server is not running at {self.endpoint}. "
-                "Please start Ollama with 'ollama serve' or check your endpoint configuration."
-            )
-
-        # Then check if all configured models are available
-        available = self.models(endpoint=self.endpoint)
-        configured = {
-            kwargs.get("model")
-            for kwargs in self.model_kwargs.values()
-            if isinstance(kwargs, dict) and kwargs.get("model")
-        }
-        unavailable = configured - available
-
-        if unavailable:
-            self._ready = False
-            models_str = ", ".join(repr(m) for m in unavailable)
-            raise ValueError(
-                f"The following models are not available in Ollama: {models_str}. "
-                "Please pull them with 'ollama pull <model>' or check your model configuration."
-            )
-
-        self._ready = True
 
 
 class MessageModel(BaseModel):
