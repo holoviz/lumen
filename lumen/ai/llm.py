@@ -56,7 +56,7 @@ LLM_PROVIDERS = {
     'openai': 'OpenAI',
     'google': 'Google',
     'anthropic': 'Anthropic',
-    'anthropic_bedrock': 'AnthropicBedrock',
+    'anthropic-bedrock': 'AnthropicBedrock',
     'bedrock': 'Bedrock',
     'mistral': 'MistralAI',
     'azure-openai': 'AzureOpenAI',
@@ -71,15 +71,15 @@ LLM_PROVIDERS = {
 # Environment variable mapping for providers that require API keys
 # Providers not in this list (like ollama, llama-cpp) don't require env vars
 PROVIDER_ENV_VARS = {
-    'OpenAI': 'OPENAI_API_KEY',
-    'Anthropic': 'ANTHROPIC_API_KEY',
-    'Bedrock': 'AWS_ACCESS_KEY_ID',
-    'AnthropicBedrock': 'AWS_ACCESS_KEY_ID',
-    'MistralAI': 'MISTRAL_API_KEY',
-    'AzureMistralAI': 'AZUREAI_ENDPOINT_KEY',
-    'AzureOpenAI': 'AZUREAI_ENDPOINT_KEY',
-    'Google': 'GEMINI_API_KEY',
-    "AICatalyst": "AI_CATALYST_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "bedrock": "AWS_ACCESS_KEY_ID",  # AWS credentials
+    "anthropic-bedrock": "AWS_ACCESS_KEY_ID",  # AWS credentials
+    "mistral": "MISTRAL_API_KEY",
+    "azure-mistral": "AZUREAI_ENDPOINT_KEY",
+    "azure-openai": "AZUREAI_ENDPOINT_KEY",
+    "google": "GEMINI_API_KEY",
+    "ai-catalyst": "AI_CATALYST_API_KEY",
 }
 
 def get_available_llm() -> type[Llm] | None:
