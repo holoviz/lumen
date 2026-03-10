@@ -26,7 +26,8 @@ from pydantic import BaseModel
 
 from .interceptor import Interceptor
 from .services import (
-    AzureOpenAIMixin, BedrockMixin, LlamaCppMixin, OpenAIMixin,
+    PROVIDER_ENV_VARS, AzureOpenAIMixin, BedrockMixin, LlamaCppMixin,
+    OpenAIMixin,
 )
 from .utils import format_exception, log_debug, truncate_string
 
@@ -68,19 +69,6 @@ LLM_PROVIDERS = {
     'litellm': 'LiteLLM',
 }
 
-# Environment variable mapping for providers that require API keys
-# Providers not in this list (like ollama, llama-cpp) don't require env vars
-PROVIDER_ENV_VARS = {
-    "openai": "OPENAI_API_KEY",
-    "anthropic": "ANTHROPIC_API_KEY",
-    "bedrock": "AWS_ACCESS_KEY_ID",  # AWS credentials
-    "anthropic-bedrock": "AWS_ACCESS_KEY_ID",  # AWS credentials
-    "mistral": "MISTRAL_API_KEY",
-    "azure-mistral": "AZUREAI_ENDPOINT_KEY",
-    "azure-openai": "AZUREAI_ENDPOINT_KEY",
-    "google": "GEMINI_API_KEY",
-    "ai-catalyst": "AI_CATALYST_API_KEY",
-}
 
 def get_available_llm() -> type[Llm] | None:
     """
@@ -146,6 +134,8 @@ class Llm(param.Parameterized):
     _ready = param.Boolean(default=False, doc="""
         Whether the LLM has been initialized and is ready to use.""")
 
+    api_key_env_var: str | None = None
+
     # Whether the LLM supports logging to logfire
     _supports_logfire = False
 
@@ -179,6 +169,8 @@ class Llm(param.Parameterized):
         if "mode" in params:
             if isinstance(params["mode"], str):
                 params["mode"] = Mode[params["mode"].upper()]
+        if "api_key" not in params and self.api_key_env_var and hasattr(self, 'api_key'):
+            params["api_key"] = os.environ.get(self.api_key_env_var)
         super().__init__(**params)
         # Instance-level client caches
         self._base_client = None
@@ -935,17 +927,14 @@ class OpenAI(Llm, OpenAIMixin):
     timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
         The timeout in seconds for OpenAI API calls.""")
 
-    _supports_logfire = True
+    api_key_env_var: str = PROVIDER_ENV_VARS['openai']
 
-    @classmethod
-    def is_online(cls) -> bool:
-        """Check if OpenAI API is reachable."""
-        return bool(cls.models())
+    _supports_logfire = True
 
     @classmethod
     def models(cls) -> set[str]:
         """Return the set of available model identifiers from OpenAI."""
-        api_key = os.environ.get("OPENAI_API_KEY")
+        api_key = os.environ.get(cls.api_key_env_var)
         if not api_key:
             return set()
         try:
@@ -1051,7 +1040,9 @@ class MistralAI(Llm):
     A LLM implementation that calls Mistral AI.
     """
 
-    api_key = param.String(default=os.getenv("MISTRAL_API_KEY"), doc="The Mistral AI API key.")
+    api_key = param.String(default=None, doc="""
+        The Mistral AI API key. If not provided, falls back to the environment
+        variable named by `api_key_env_var` (default: MISTRAL_API_KEY).""")
 
     display_name = param.String(default="Mistral AI", constant=True, doc="Display name for UI")
 
@@ -1079,20 +1070,17 @@ class MistralAI(Llm):
     timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
         The timeout in seconds for Mistral AI API calls.""")
 
+    api_key_env_var: str = PROVIDER_ENV_VARS['mistral']
+
     _supports_model_stream = False  # instructor doesn't work with Mistral's streaming
     _instructor_wrapper = "mistral"
-
-    @classmethod
-    def is_online(cls) -> bool:
-        """Check if Mistral API is reachable."""
-        return bool(cls.models())
 
     @classmethod
     def models(cls) -> set[str]:
         """Return the set of available model identifiers from Mistral."""
         from mistralai import Mistral
 
-        api_key = os.environ.get("MISTRAL_API_KEY")
+        api_key = os.environ.get(cls.api_key_env_var)
         if not api_key:
             return set()
         try:
@@ -1175,7 +1163,9 @@ class Anthropic(Llm):
     A LLM implementation that calls Anthropic models such as Claude.
     """
 
-    api_key = param.String(default=os.getenv("ANTHROPIC_API_KEY"), doc="The Anthropic API key.")
+    api_key = param.String(default=None, doc="""
+        The Anthropic API key. If not provided, falls back to the environment
+        variable named by `api_key_env_var` (default: ANTHROPIC_API_KEY).""")
 
     display_name = param.String(default="Anthropic", constant=True, doc="Display name for UI")
 
@@ -1197,21 +1187,18 @@ class Anthropic(Llm):
     timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
         The timeout in seconds for Anthropic API calls.""")
 
+    api_key_env_var: str = PROVIDER_ENV_VARS['anthropic']
+
     _supports_logfire = True
     _supports_model_stream = True
     _instructor_wrapper = "anthropic"
-
-    @classmethod
-    def is_online(cls) -> bool:
-        """Check if Anthropic API is reachable."""
-        return bool(cls.models())
 
     @classmethod
     def models(cls) -> set[str]:
         """Return the set of available model identifiers from Anthropic."""
         from anthropic import Anthropic as AnthropicClient
 
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        api_key = os.environ.get(cls.api_key_env_var)
         if not api_key:
             return set()
         try:
@@ -1654,7 +1641,9 @@ class Google(Llm):
     A LLM implementation that calls Google's Gemini models.
     """
 
-    api_key = param.String(default=os.getenv("GEMINI_API_KEY"), doc="The Google API key.")
+    api_key = param.String(default=None, doc="""
+        The Google API key. If not provided, falls back to the environment
+        variable named by `api_key_env_var` (default: GEMINI_API_KEY).""")
 
     display_name = param.String(default="Google AI", constant=True, doc="Display name for UI")
 
@@ -1681,21 +1670,18 @@ class Google(Llm):
     timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
         The timeout in seconds for Google AI API calls.""")
 
+    api_key_env_var: str = PROVIDER_ENV_VARS['google']
+
     _supports_logfire = True
     _supports_model_stream = True
     _instructor_wrapper = "genai"
-
-    @classmethod
-    def is_online(cls) -> bool:
-        """Check if Google AI API is reachable."""
-        return bool(cls.models())
 
     @classmethod
     def models(cls) -> set[str]:
         """Return the set of available model identifiers from Google AI."""
         from google import genai
 
-        api_key = os.environ.get("GEMINI_API_KEY")
+        api_key = os.environ.get(cls.api_key_env_var)
         if not api_key:
             return set()
         try:
@@ -1980,18 +1966,6 @@ class AINavigator(OpenAI):
 
     select_models = param.List(default=["server-model"], constant=True, doc="Available models for selection dropdowns")
 
-    @classmethod
-    def is_online(cls, endpoint: str | None = None) -> bool:
-        """Check if the AI Navigator server is running and accessible."""
-        if endpoint is None:
-            endpoint = cls.param["endpoint"].default
-        try:
-            client = OpenAIClient(base_url=endpoint, api_key="navigator", timeout=5)
-            client.models.list()
-            return True
-        except Exception:
-            return False
-
 
 class AICatalyst(OpenAI):
     """
@@ -2040,18 +2014,6 @@ class Ollama(OpenAI):
     ], constant=True, doc="Available models for selection dropdowns")
 
     temperature = param.Number(default=0.25, bounds=(0, None), constant=True)
-
-    @classmethod
-    def is_online(cls, endpoint: str | None = None) -> bool:
-        """Check if the Ollama server is running and accessible."""
-        if endpoint is None:
-            endpoint = cls.param["endpoint"].default
-        base_url = endpoint.rstrip('/').removesuffix('/v1')
-        try:
-            response = requests.get(base_url, timeout=5)
-            return response.status_code == 200
-        except Exception:
-            return False
 
     @classmethod
     def models(cls, endpoint: str | None = None) -> set[str]:

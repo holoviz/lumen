@@ -5,6 +5,20 @@ from abc import abstractmethod
 import openai
 import param
 
+# Environment variable mapping for providers that require API keys.
+# Providers not in this list (like ollama, llama-cpp) don't require env vars.
+PROVIDER_ENV_VARS = {
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "bedrock": "AWS_ACCESS_KEY_ID",
+    "anthropic-bedrock": "AWS_ACCESS_KEY_ID",
+    "mistral": "MISTRAL_API_KEY",
+    "azure-mistral": "AZUREAI_ENDPOINT_KEY",
+    "azure-openai": "AZUREAI_ENDPOINT_KEY",
+    "google": "GEMINI_API_KEY",
+    "ai-catalyst": "AI_CATALYST_API_KEY",
+}
+
 
 class ServiceMixin(param.Parameterized):
     """
@@ -218,7 +232,8 @@ class OpenAIMixin(ServiceMixin):
     """
 
     api_key = param.String(default=None, doc="""
-        The OpenAI API key. If not provided, will use OPENAI_API_KEY env var.""")
+        The API key. If not provided, will fall back to the environment variable
+        named by `api_key_env_var` (e.g. OPENAI_API_KEY).""")
 
     endpoint = param.String(default=None, doc="""
         The OpenAI API endpoint. If not provided, uses default OpenAI endpoint.""")
@@ -232,8 +247,9 @@ class OpenAIMixin(ServiceMixin):
         """
         kwargs = {}
 
-        if self.api_key:
-            kwargs["api_key"] = self.api_key
+        api_key = self.api_key or (os.environ.get(self.api_key_env_var) if self.api_key_env_var else None)
+        if api_key:
+            kwargs["api_key"] = api_key
         if self.endpoint:
             kwargs["base_url"] = self.endpoint
         if self.organization:
@@ -266,8 +282,9 @@ class AzureOpenAIMixin(OpenAIMixin):
         The Azure AI Studio API version.""")
 
     # Override defaults to use Azure environment variables
-    api_key = param.String(default=os.getenv("AZUREAI_ENDPOINT_KEY"), doc="""
-        The Azure API key.""")
+    api_key = param.String(default=os.getenv(PROVIDER_ENV_VARS["azure-openai"]), doc="""
+        The Azure API key. If not provided, falls back to the AZUREAI_ENDPOINT_KEY
+        environment variable (set via `api_key_env_var` on the LLM class).""")
 
     endpoint = param.String(default=os.getenv('AZUREAI_ENDPOINT_URL'), doc="""
         The Azure AI Studio endpoint.""")
@@ -317,8 +334,9 @@ class BedrockMixin(param.Parameterized):
     )
 
     api_key = param.String(
-        default=os.getenv("AWS_SECRET_ACCESS_KEY"),
-        doc="AWS secret access key. If not provided, boto3 will use default credentials (including SSO)."
+        default=os.getenv("AWS_SECRET_ACCESS_KEY"),  # NOTE: secret key, not the access key ID in PROVIDER_ENV_VARS
+        doc="AWS secret access key. If not provided, falls back to AWS_SECRET_ACCESS_KEY "
+            "or boto3 default credentials (including SSO)."
     )
 
     aws_session_token = param.String(
