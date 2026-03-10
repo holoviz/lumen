@@ -931,15 +931,8 @@ class OpenAI(Llm, OpenAIMixin):
     @classmethod
     def models(cls) -> set[str]:
         """Return the set of available model identifiers from OpenAI."""
-        api_key = os.environ.get(cls.api_key_env_var)
-        if not api_key:
-            return set()
-        try:
-            client = OpenAIClient(api_key=api_key, timeout=5)
-            response = client.models.list()
-            return {m.id for m in response.data}
-        except Exception:
-            return set()
+        client = OpenAIClient(api_key=os.environ.get(cls.api_key_env_var), timeout=5)
+        return {m.id for m in client.models.list().data}
 
     @property
     def _client_kwargs(self):
@@ -1064,16 +1057,7 @@ class MistralAI(Llm, MistralMixin):
     def models(cls) -> set[str]:
         """Return the set of available model identifiers from Mistral."""
         from mistralai import Mistral
-
-        api_key = os.environ.get(cls.api_key_env_var)
-        if not api_key:
-            return set()
-        try:
-            client = Mistral(api_key=api_key)
-            response = client.models.list()
-            return {m.id for m in response.data}
-        except Exception:
-            return set()
+        return {m.id for m in Mistral(api_key=os.environ.get(cls.api_key_env_var)).models.list().data}
 
     @property
     def _client_kwargs(self):
@@ -1164,17 +1148,9 @@ class Anthropic(Llm, AnthropicMixin):
     def models(cls) -> set[str]:
         """Return the set of available model identifiers from Anthropic."""
         from anthropic import Anthropic as AnthropicClient
-
-        api_key = os.environ.get(cls.api_key_env_var)
-        if not api_key:
-            return set()
-        try:
-            client = AnthropicClient(api_key=api_key, timeout=5)
-            response = client.models.list()
-            # also handle model aliases (claude-sonnet-4-5-20250929) -> (claude-sonnet-4-5)
-            return {m.id for m in response.data} | {m.id.rsplit("-", maxsplit=1)[0] for m in response.data}
-        except Exception:
-            return set()
+        response = AnthropicClient(api_key=os.environ.get(cls.api_key_env_var), timeout=5).models.list()
+        # also handle model aliases (claude-sonnet-4-5-20250929) -> (claude-sonnet-4-5)
+        return {m.id for m in response.data} | {m.id.rsplit("-", maxsplit=1)[0] for m in response.data}
 
     @property
     def _client_kwargs(self):
@@ -1634,22 +1610,12 @@ class Google(Llm, GenAIMixin):
     def models(cls) -> set[str]:
         """Return the set of available model identifiers from Google AI."""
         from google import genai
-
-        api_key = os.environ.get(cls.api_key_env_var)
-        if not api_key:
-            return set()
-        try:
-            client = genai.Client(api_key=api_key)
-            response = client.models.list()
-            # Include both full names (models/gemini-...) and short names
-            available = set()
-            for m in response:
-                available.add(m.name)
-                if m.name.startswith("models/"):
-                    available.add(m.name[7:])  # Strip "models/" prefix
-            return available
-        except Exception:
-            return set()
+        available = set()
+        for m in genai.Client(api_key=os.environ.get(cls.api_key_env_var)).models.list():
+            available.add(m.name)
+            if m.name.startswith("models/"):
+                available.add(m.name[7:])  # Strip "models/" prefix
+        return available
 
     @property
     def _client_kwargs(self):
