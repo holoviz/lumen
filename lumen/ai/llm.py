@@ -278,11 +278,41 @@ class Llm(param.Parameterized):
                 contains_image = True
 
             elif isinstance(content, list):
+                new_content = []
                 for item in content:
                     if isinstance(item, (Image, pn.pane.image.ImageBase)):
-                        messages[i]["content"] = self._serialize_image_pane(item)
+                        new_content.append(self._serialize_image_pane(item))
                         contains_image = True
+                    else:
+                        new_content.append(item)
+                messages[i]["content"] = new_content
         return messages, contains_image
+
+    @staticmethod
+    def _strip_images(messages: list[Message]) -> list[Message]:
+        """
+        Remove image content from messages, keeping only text.
+
+        Used as a fallback when a provider does not support multimodal
+        content (e.g. non-vision models or providers that require
+        ``content`` to be a plain string).
+        """
+        stripped = []
+        for msg in messages:
+            content = msg.get("content")
+            if isinstance(content, Image):
+                stripped.append({**msg, "content": "(image omitted)"})
+            elif isinstance(content, list):
+                text_parts = [
+                    item for item in content if isinstance(item, str)
+                ]
+                stripped.append({
+                    **msg,
+                    "content": "\n".join(text_parts) if text_parts else "(image omitted)",
+                })
+            else:
+                stripped.append(msg)
+        return stripped
 
     @classmethod
     def warmup(cls, model_kwargs: dict | None):
@@ -783,7 +813,18 @@ class Llm(param.Parameterized):
             previous_role = role
 
         client = await self.get_client(model_spec, **kwargs)
-        result = await client(messages=messages, **kwargs)
+        try:
+            result = await client(messages=messages, **kwargs)
+        except Exception as e:
+            if "content must be a string" in str(e):
+                log_debug(
+                    "Provider rejected multimodal content; "
+                    "stripping images and retrying."
+                )
+                messages = self._strip_images(messages)
+                result = await client(messages=messages, **kwargs)
+            else:
+                raise
         if response_model := kwargs.get("response_model"):
             log_debug(f"Response model: \033[93m{response_model.__name__!r}\033[0m")
         log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
