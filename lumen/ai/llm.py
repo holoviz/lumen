@@ -143,8 +143,6 @@ class Llm(param.Parameterized):
     _ready = param.Boolean(default=False, doc="""
         Whether the LLM has been initialized and is ready to use.""")
 
-    api_key_env_var: str | None = None
-
     # Whether the LLM supports logging to logfire
     _supports_logfire = False
 
@@ -178,8 +176,6 @@ class Llm(param.Parameterized):
         if "mode" in params:
             if isinstance(params["mode"], str):
                 params["mode"] = Mode[params["mode"].upper()]
-        if "api_key" not in params and getattr(self, 'api_key_env_var', None) and hasattr(self, 'api_key'):
-            params["api_key"] = os.environ.get(self.api_key_env_var)
         super().__init__(**params)
         # Instance-level client caches
         self._base_client = None
@@ -228,11 +224,7 @@ class Llm(param.Parameterized):
         return {}
 
     def _create_base_client(self, **kwargs) -> Any:
-        """Create the underlying SDK client (e.g., AsyncOpenAI, AsyncAnthropic).
-        Default implementation delegates to _instantiate_client() if provided by a mixin.
-        Override for providers with custom construction or post-init steps (e.g. logfire)."""
-        if hasattr(self, '_instantiate_client'):
-            return self._instantiate_client(**kwargs)
+        """Create the underlying SDK client (e.g., AsyncOpenAI, AsyncAnthropic)."""
         raise NotImplementedError(f"{self.__class__.__name__} must implement _create_base_client()")
 
     def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
@@ -864,6 +856,9 @@ class LlamaCpp(Llm, LlamaCppMixin):
     def _client_kwargs(self) -> dict[str, Any]:
         return {"temperature": self.temperature}
 
+    def _create_base_client(self, **kwargs) -> Any:
+        return self._instantiate_client(**kwargs)
+
     def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
         raw_client = base_client.create_chat_completion_openai_v1
         return patch(create=raw_client, mode=mode)
@@ -930,8 +925,6 @@ class OpenAI(Llm, OpenAIMixin):
     ], constant=True, doc="""Warning: Reasoning models (gpt-5, o4-mini) are much slower and not suitable for dialog interfaces.""")
 
     temperature = param.Number(default=0.25, bounds=(0, None), constant=True)
-
-    api_key_env_var: str = PROVIDER_ENV_VARS['openai']
 
     _supports_logfire = True
 
@@ -1016,6 +1009,9 @@ class AzureOpenAI(Llm, AzureOpenAIMixin):
         instance_kwargs = self._instantiate_client_kwargs()
         return {**instance_kwargs, **model_kwargs}
 
+    def _create_base_client(self, **kwargs) -> Any:
+        return self._instantiate_client(async_client=True, **kwargs)
+
     def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
         if self.interceptor:
             self.interceptor.patch_client(base_client, mode="store_inputs")
@@ -1083,6 +1079,9 @@ class MistralAI(Llm, MistralMixin):
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
+    def _create_base_client(self, **kwargs) -> Any:
+        return self._instantiate_client(**kwargs)
+
     def _get_completion_method(self, stream: bool = False) -> Callable:
         return self._base_client.chat.stream_async if stream else self._base_client.chat.complete_async
 
@@ -1130,6 +1129,9 @@ class AzureMistralAI(MistralAI, AzureMistralMixin):
         "mistral-large",
         "mistral-small"
     ], constant=True, doc="Available models for selection dropdowns")
+
+    def _create_base_client(self, **kwargs) -> Any:
+        return self._instantiate_client(**kwargs)
 
 
 class Anthropic(Llm, AnthropicMixin):

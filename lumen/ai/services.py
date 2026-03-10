@@ -20,7 +20,6 @@ PROVIDER_ENV_VARS = {
 }
 
 
-
 class ServiceMixin(param.Parameterized):
     """
     Base mixin class that defines the standard interface for service providers.
@@ -356,6 +355,8 @@ class OpenAIMixin(ServiceMixin):
         The API key. If not provided, will fall back to the environment variable
         named by `api_key_env_var` (e.g. OPENAI_API_KEY).""")
 
+    api_key_env_var: str = PROVIDER_ENV_VARS['openai']
+
     endpoint = param.String(default=None, doc="""
         The OpenAI API endpoint. If not provided, uses default OpenAI endpoint.""")
 
@@ -368,7 +369,7 @@ class OpenAIMixin(ServiceMixin):
         """
         kwargs = {}
 
-        api_key = self.api_key or (os.environ.get(self.api_key_env_var) if hasattr(self, 'api_key_env_var') and self.api_key_env_var else None)
+        api_key = self.api_key or os.environ.get(self.api_key_env_var)
         if api_key:
             kwargs["api_key"] = api_key
         if self.endpoint:
