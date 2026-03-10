@@ -5,9 +5,11 @@ import os
 import pytest
 
 try:
-	from lumen.ai.llm import (
-	    Anthropic, AzureOpenAI, Google, MistralAI, OpenAI,
-	)
+    import lumen.ai.llm as lmai
+
+    from lumen.ai.llm import (
+        Anthropic, AzureOpenAI, Google, MistralAI, OpenAI,
+    )
 except ModuleNotFoundError:
 	pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
@@ -67,12 +69,11 @@ def test_api_key_none_when_env_var_unset(monkeypatch):
 
 def test_api_key_from_modified_provider_env_vars(monkeypatch):
     """Modifying PROVIDER_ENV_VARS and api_key_env_var is reflected at instantiation."""
-    import lumen.ai.llm as llm_module
-    monkeypatch.setitem(llm_module.PROVIDER_ENV_VARS, "openai", "MY_PATCHED_KEY")
+    monkeypatch.setitem(lmai.llm.PROVIDER_ENV_VARS, "openai", "MY_PATCHED_KEY")
     monkeypatch.setenv("MY_PATCHED_KEY", "patched-key-value")
     original = OpenAI.api_key_env_var
     try:
-        OpenAI.api_key_env_var = llm_module.PROVIDER_ENV_VARS["openai"]
+        OpenAI.api_key_env_var = lmai.llm.PROVIDER_ENV_VARS["openai"]
         llm = OpenAI(model_kwargs={"default": {"model": "gpt-4.1-mini"}})
         assert llm.api_key == "patched-key-value"
     finally:
@@ -81,29 +82,26 @@ def test_api_key_from_modified_provider_env_vars(monkeypatch):
 
 def test_get_available_llm_returns_none_when_no_env_vars_set(monkeypatch):
     """get_available_llm returns None when no provider env vars are set."""
-    import lumen.ai.llm as llm_module
-    for env_var in llm_module.PROVIDER_ENV_VARS.values():
+    for env_var in lmai.llm.PROVIDER_ENV_VARS.values():
         monkeypatch.delenv(env_var, raising=False)
-    assert llm_module.get_available_llm() is None
+    assert lmai.llm.get_available_llm() is None
 
 
 def test_get_available_llm_returns_correct_provider(monkeypatch):
     """get_available_llm returns the provider whose env var is set."""
-    import lumen.ai.llm as llm_module
-    for env_var in llm_module.PROVIDER_ENV_VARS.values():
+    for env_var in lmai.llm.PROVIDER_ENV_VARS.values():
         monkeypatch.delenv(env_var, raising=False)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-    assert llm_module.get_available_llm() is Anthropic
+    assert lmai.llm.get_available_llm() is Anthropic
 
 
 def test_get_available_llm_respects_modified_provider_env_vars(monkeypatch):
     """get_available_llm picks up a modified PROVIDER_ENV_VARS entry."""
-    import lumen.ai.llm as llm_module
-    for env_var in list(llm_module.PROVIDER_ENV_VARS.values()):
+    for env_var in list(lmai.llm.PROVIDER_ENV_VARS.values()):
         monkeypatch.delenv(env_var, raising=False)
-    monkeypatch.setitem(llm_module.PROVIDER_ENV_VARS, "openai", "MY_CUSTOM_OPENAI_KEY")
+    monkeypatch.setitem(lmai.llm.PROVIDER_ENV_VARS, "openai", "MY_CUSTOM_OPENAI_KEY")
     monkeypatch.setenv("MY_CUSTOM_OPENAI_KEY", "custom-value")
-    assert llm_module.get_available_llm() is OpenAI
+    assert lmai.llm.get_available_llm() is OpenAI
 
 
 async def test_azure_open_ai_get_model_kwargs():
