@@ -20,6 +20,7 @@ PROVIDER_ENV_VARS = {
 }
 
 
+
 class ServiceMixin(param.Parameterized):
     """
     Base mixin class that defines the standard interface for service providers.
@@ -225,6 +226,126 @@ class LlamaCppMixin(ServiceMixin):
                 hf_hub_download(repo_id, filename)
 
 
+class AnthropicMixin(ServiceMixin):
+    """
+    Mixin class for Anthropic functionality that can be shared
+    between LLM implementations and embedding classes.
+    """
+
+    api_key = param.String(default=None, doc="""
+        The Anthropic API key. If not provided, falls back to the environment
+        variable named by `api_key_env_var` (default: ANTHROPIC_API_KEY).""")
+
+    api_key_env_var: str = PROVIDER_ENV_VARS['anthropic']
+
+    def _instantiate_client_kwargs(self, **extra_kwargs) -> dict:
+        """
+        Get the keyword arguments for initializing an Anthropic client.
+        """
+        kwargs = {}
+        api_key = self.api_key or os.environ.get(self.api_key_env_var)
+        if api_key:
+            kwargs["api_key"] = api_key
+        kwargs.update(extra_kwargs)
+        return kwargs
+
+    def _instantiate_client(self, async_client=True, **extra_kwargs):
+        """
+        Create and return an Anthropic client instance.
+        """
+        from anthropic import Anthropic, AsyncAnthropic
+        kwargs = self._instantiate_client_kwargs(**extra_kwargs)
+        return AsyncAnthropic(**kwargs) if async_client else Anthropic(**kwargs)
+
+
+class GenAIMixin(ServiceMixin):
+    """
+    Mixin class for Google GenAI functionality that can be shared
+    between LLM implementations and embedding classes.
+    """
+
+    api_key = param.String(default=None, doc="""
+        The Google API key. If not provided, falls back to the environment
+        variable named by `api_key_env_var` (default: GEMINI_API_KEY).""")
+
+    api_key_env_var: str = PROVIDER_ENV_VARS['google']
+
+    def _instantiate_client_kwargs(self, **extra_kwargs) -> dict:
+        """
+        Get the keyword arguments for initializing a Google GenAI client.
+        """
+        kwargs = {}
+        api_key = self.api_key or os.environ.get(self.api_key_env_var)
+        if api_key:
+            kwargs["api_key"] = api_key
+        kwargs.update(extra_kwargs)
+        return kwargs
+
+    def _instantiate_client(self, **extra_kwargs):
+        """
+        Create and return a Google GenAI client instance.
+        """
+        from google import genai
+        kwargs = self._instantiate_client_kwargs(**extra_kwargs)
+        return genai.Client(**kwargs)
+
+
+class MistralMixin(ServiceMixin):
+    """
+    Mixin class for Mistral AI functionality that can be shared
+    between LLM implementations and embedding classes.
+    """
+
+    api_key = param.String(default=None, doc="""
+        The Mistral AI API key. If not provided, falls back to the environment
+        variable named by `api_key_env_var` (default: MISTRAL_API_KEY).""")
+
+    api_key_env_var: str = PROVIDER_ENV_VARS['mistral']
+
+    def _instantiate_client_kwargs(self, **extra_kwargs) -> dict:
+        """
+        Get the keyword arguments for initializing a Mistral client.
+        """
+        kwargs = {}
+        api_key = self.api_key or os.environ.get(self.api_key_env_var)
+        if api_key:
+            kwargs["api_key"] = api_key
+        kwargs.update(extra_kwargs)
+        return kwargs
+
+    def _instantiate_client(self, async_client=False, **extra_kwargs):
+        """
+        Create and return a Mistral client instance.
+        """
+        from mistralai import Mistral
+        kwargs = self._instantiate_client_kwargs(**extra_kwargs)
+        return Mistral(**kwargs)
+
+
+class AzureMistralMixin(MistralMixin):
+    """
+    Mixin class for Azure Mistral AI functionality that extends MistralMixin
+    with Azure-specific configuration.
+    """
+
+    api_key = param.String(default=os.getenv(PROVIDER_ENV_VARS["azure-mistral"]), doc="""
+        The Azure API key. If not provided, falls back to the AZUREAI_ENDPOINT_KEY
+        environment variable.""")
+
+    api_key_env_var: str = PROVIDER_ENV_VARS['azure-mistral']
+
+    endpoint = param.String(default=os.getenv('AZUREAI_ENDPOINT_URL'), doc="""
+        The Azure Mistral endpoint URL.""")
+
+    def _instantiate_client(self, **extra_kwargs):
+        """
+        Create and return an Azure Mistral client instance.
+        """
+        from mistralai_azure import MistralAzure
+        kwargs = self._instantiate_client_kwargs(**extra_kwargs)
+        return MistralAzure(azure_endpoint=self.endpoint, **kwargs)
+
+
 class OpenAIMixin(ServiceMixin):
     """
     Mixin class for OpenAI functionality that can be shared
@@ -247,7 +368,7 @@ class OpenAIMixin(ServiceMixin):
         """
         kwargs = {}
 
-        api_key = self.api_key or (os.environ.get(self.api_key_env_var) if self.api_key_env_var else None)
+        api_key = self.api_key or (os.environ.get(self.api_key_env_var) if hasattr(self, 'api_key_env_var') and self.api_key_env_var else None)
         if api_key:
             kwargs["api_key"] = api_key
         if self.endpoint:
