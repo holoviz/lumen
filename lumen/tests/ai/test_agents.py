@@ -227,6 +227,51 @@ class TestDocumentListAgentIntegration:
             docs=[DocumentChunk(filename="readme.md", text="chunk", similarity=0.9)]
         )
         context = {"metaset": metaset}
-        
+
         applies = await DocumentListAgent.applies(context)
         assert applies is True
+
+
+@pytest.mark.asyncio
+class TestTemplateOverrides:
+    """Tests for template_overrides on Agent classes."""
+
+    async def test_subclass_override(self, llm):
+        """Subclass with class-level template_overrides injects extra instructions."""
+
+        class CustomAgent(ChatAgent):
+            template_overrides = {
+                "main": {"instructions": "{{ super() }}\nCustom subclass rule."}
+            }
+
+        agent = CustomAgent(llm=llm)
+        messages = [{"role": "user", "content": "test"}]
+        prompt = await agent._render_prompt("main", messages, {})
+        assert "Custom subclass rule." in prompt
+
+
+    async def test_instance_override(self, llm):
+        """Instance-level template_overrides injects extra instructions."""
+        agent = ChatAgent(
+            llm=llm,
+            template_overrides={
+                "main": {"instructions": "Instance override rule."}
+            }
+        )
+        messages = [{"role": "user", "content": "test"}]
+        prompt = await agent._render_prompt("main", messages, {})
+        assert "Instance override rule." in prompt
+
+    async def test_super_preserves_parent_content(self, llm):
+        """{{ super() }} keeps the parent block content when present."""
+
+        class ExtendedChatAgent(ChatAgent):
+            template_overrides = {
+                "main": {"footer": "{{ super() }}\nFooter appended."}
+            }
+
+        agent = ExtendedChatAgent(llm=llm)
+        messages = [{"role": "user", "content": "test"}]
+        prompt = await agent._render_prompt("main", messages, {})
+        assert "Footer appended." in prompt
+

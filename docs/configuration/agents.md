@@ -129,16 +129,16 @@ You can customize the instructions or system prompts for any agent using `templa
 
 ### Overriding instructions via subclassing
 
-The most common way to customize an agent's instructions is to subclass it and provide a `template_overrides` dictionary:
+The cleanest way to ship a reusable customized agent is to subclass it and declare `template_overrides` as a **class attribute**:
 
-``` py title="Customized SQL Agent"
+``` py title="Subclass with template_overrides"
 from lumen.ai import ExplorerUI
 from lumen.ai.agents.sql import SQLAgent
 
 INSTRUCTION_OVERRIDE = """
 {{ super() }}
 
-When querying the database, always prioritize the `current_year` filter 
+When querying the database, always prioritize the `current_year` filter
 unless the user specifically asks for historical data.
 """
 
@@ -149,6 +149,24 @@ class UXSQLAgent(SQLAgent):
     }
 
 ui = ExplorerUI(agents=[UXSQLAgent()])
+ui.servable()
+```
+
+`{{ super() }}` keeps the original instructions and appends yours after. Remove it to **replace** the instructions entirely.
+
+### Overriding instructions on an instance
+
+For one-off customization without subclassing, pass `template_overrides` directly to the constructor:
+
+``` py title="Instance-level override"
+import lumen.ai as lmai
+
+agent = lmai.agents.SQLAgent(
+    template_overrides={
+        "main": {"instructions": "{{ super() }}\nAlways use explicit JOIN syntax."}
+    }
+)
+ui = lmai.ExplorerUI(data='penguins.csv', agents=[agent])
 ui.servable()
 ```
 
@@ -180,6 +198,7 @@ lmai.agents.ChatAgent.template_overrides = {
 *   **`main`**: The primary prompt group for the agent.
 *   **`instructions`**: The system instructions specifically for that agent.
 *   **`global`**: Shared context injected into the system prompt for all agents.
+
 
 ## Creating custom agents
 
