@@ -369,3 +369,77 @@ async def test_report_to_notebook():
 
     assert cell3['cell_type'] == 'markdown'
     assert cell3['source'] == ["**Hello**"]
+
+
+async def test_export_selector_filters_play_execution():
+    order = []
+
+    section = Section(
+        A(order=order, title="Action A"),
+        B(order=order, title="Action B"),
+        title="Section 1",
+    )
+    report = Report(section, title="Selector Report")
+
+    section._export_selector.value = ["Action B"]
+
+    await report.execute()
+
+    assert order == ["B"]
+    assert len(section.views) == 3
+    assert isinstance(section.views[0], Typography)
+    assert section.views[0].object == "## Section 1"
+    assert isinstance(section.views[1], Typography)
+    assert section.views[1].object == "### Action B"
+    assert isinstance(section.views[2], Markdown)
+    assert section.views[2].object == "B done"
+
+
+async def test_export_selector_filters_notebook_export():
+    order = []
+
+    section = Section(
+        A(order=order, title="Action A"),
+        B(order=order, title="Action B"),
+        title="Section 1",
+    )
+    report = Report(section, title="Selector Report")
+
+    await report.execute()
+    assert order == ["A", "B"]
+
+    section._export_selector.value = ["Action A"]
+
+    nb_string = report.to_notebook()
+    nb = json.loads(nb_string)
+
+    markdown_cells = [
+        "".join(cell["source"]) for cell in nb["cells"] if cell["cell_type"] == "markdown"
+    ]
+
+    assert markdown_cells == [
+        "# Selector Report",
+        "## Section 1",
+        "### Action A",
+        "A done",
+    ]
+
+
+async def test_replay_runs_newly_selected_tasks_after_filter_change():
+    order = []
+
+    section = Section(
+        A(order=order, title="Action A"),
+        B(order=order, title="Action B"),
+        title="Section 1",
+    )
+    report = Report(section, title="Selector Report")
+
+    section._export_selector.value = ["Action A"]
+    await report.execute()
+    assert order == ["A"]
+
+    section._export_selector.value = ["Action A", "Action B"]
+    await report.execute()
+
+    assert order == ["A", "B"]

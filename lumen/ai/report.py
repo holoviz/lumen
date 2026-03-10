@@ -403,7 +403,7 @@ class TaskGroup(Task):
         views = list(self._header)
         self.status = "running"
         selector = getattr(self, '_export_selector', None)
-        included_titles = selector.value if (selector is not None and selector.value) else None
+        included_titles = selector.value if selector is not None else None
         for i, task in enumerate(self):
             if included_titles is not None and task.title not in included_titles:
                 continue
@@ -592,6 +592,7 @@ class TaskGroup(Task):
         self._view[:] = list(self._view) + list(other._view)
         self.history += [h for h in other.history if h not in self.history]
         self._init_views()
+        self._populate_view()
         return self
 
     async def prepare(self, context: TContext):
@@ -621,12 +622,7 @@ class TaskGroup(Task):
             raise RuntimeError(
                 "Report has not been executed, run report before exporting to_notebook."
             )
-        selector = getattr(self, '_export_selector', None)
-        included_titles = selector.value if selector is not None else None
-        included_views = list(self._header)
-        for task in self:
-            if included_titles is None or task.title in included_titles:
-                included_views += task.views
+        included_views = self._collect_included_views()
         cells, extensions = [], ['tabulator']
         for out in included_views:
             ext = None
@@ -638,13 +634,33 @@ class TaskGroup(Task):
                 cell = make_md_cell(out.object)
             elif isinstance(out, LumenEditor):
                 cell, ext = format_output(out)
+            elif isinstance(out, View):
+                cell, ext = format_output(out)
             elif isinstance(out, Viewable):
                 cell, ext = format_output(Panel(object=out))
+            else:
+                continue
             cells.append(cell)
             if ext and ext not in extensions:
                 extensions.append(ext)
         cells = make_preamble("", extensions=extensions) + cells
         return write_notebook(cells)
+
+    def _collect_included_views(self) -> list[Any]:
+        selector = getattr(self, '_export_selector', None)
+        included_titles = selector.value if selector is not None else None
+        included_views = list(self._header)
+        for task in self:
+            if included_titles is not None and task.title not in included_titles:
+                continue
+            if isinstance(task, TaskGroup):
+                included_views += task._collect_included_views()
+            else:
+                # Skip the task's own _header items (title Typography nodes) since
+                # they duplicate headings already emitted from self._header above
+                task_header_set = set(id(v) for v in task._header)
+                included_views += [v for v in task.views if id(v) not in task_header_set]
+        return included_views
 
     def validate(
         self,
@@ -739,6 +755,7 @@ class Section(TaskGroup):
             value=[],
             sizing_mode="stretch_width",
         )
+        self._selector_initialized = False
         self._export_selector.param.watch(self._sync_placeholder_to_selector, 'value')
         self._view = Column(sizing_mode='stretch_width', styles={'min-height': 'unset'}, height_policy='fit')
         self._container = Column(
@@ -781,12 +798,18 @@ class Section(TaskGroup):
     def _populate_view(self):
         titles = [task.title for task in self._tasks]
         prev_value = self._export_selector.value
+        prev_options = self._export_selector.options
         self._export_selector.options = titles
-        # Preserve existing selections; only default to all-selected on first populate
-        if prev_value:
-            self._export_selector.value = [t for t in prev_value if t in titles]
-        else:
+        if not self._selector_initialized:
+            # First populate: select all tasks by default
             self._export_selector.value = titles
+            self._selector_initialized = True
+        else:
+            # Keep existing selections that are still valid, and auto-select any
+            # newly added tasks (titles not previously in options)
+            kept = [t for t in prev_value if t in titles]
+            new_titles = [t for t in titles if t not in prev_options]
+            self._export_selector.value = kept + [t for t in new_titles if t not in kept]
         self._view[:] = self._header + [self._placeholder] + list(self._tasks)
 
     async def _run_task(self, i: int, task: Task | Actor, context: TContext | None, **kwargs) -> list[Any]:
