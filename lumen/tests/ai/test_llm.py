@@ -5,7 +5,7 @@ import os
 import pytest
 
 try:
-    import lumen.ai.llm as lmai
+    import lumen.ai as lmai
 
     from lumen.ai.llm import (
         Anthropic, AzureOpenAI, Google, MistralAI, OpenAI,
