@@ -2271,7 +2271,6 @@ class ExplorerUI(UI):
 
     def _add_views(self, exploration: Exploration, event: param.parameterized.Event | None = None, items: list | None = None):
         tabs = exploration.view[0]
-        content = []
         new_items = items if event is None else event.new
         for view in new_items:
             if not isinstance(view, LumenEditor) or (event and view in event.old):
@@ -2280,9 +2279,11 @@ class ExplorerUI(UI):
                 tabs[0] = ("Data Source", view.render_explorer())
                 exploration.initialized = True
             title, vsplit = self._render_view(exploration, view)
-            content.append((title, vsplit))
-
-        tabs.extend(content)
+            if title in tabs._names:
+                tab_idx = tabs._names.index(title)
+                tabs[tab_idx] = (title, vsplit)
+            else:
+                tabs.append((title, vsplit))
         tabs.active = max(tabs.active, len(tabs)-1)
         if self._split.collapsed:
             self._split.param.update(
@@ -2332,9 +2333,21 @@ class ExplorerUI(UI):
         if replan:
             tabs[:] = [("Data Source", Markdown("Waiting on data...", margin=(5, 20)))]
             tabs.active = 0
-        elif len(tabs) > 1 and isinstance(tabs[-1], Markdown):
-            tabs.pop(-1)
-            tabs.active = len(tabs)-1
+        elif len(tabs) > 1:
+            while len(tabs) > 1:
+                last_idx = len(tabs) - 1
+                last_name = tabs._names[last_idx] if hasattr(tabs, "_names") else None
+                last_tab = tabs[last_idx]
+                is_error_markdown = (
+                    isinstance(last_tab, Markdown)
+                    and isinstance(last_tab.object, str)
+                    and last_tab.object.startswith("❌ **Unable to complete your request**")
+                )
+                if last_name != "Error" and not is_error_markdown:
+                    break
+                tabs.pop(last_idx)
+            if len(tabs):
+                tabs.active = len(tabs) - 1
 
     async def _execute_plan(self, plan: Plan, rerun: bool = False, replan: bool = False):
         prev = self._explorations.value
