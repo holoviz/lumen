@@ -225,97 +225,86 @@ class LlamaCppMixin(ServiceMixin):
                 hf_hub_download(repo_id, filename)
 
 
-class AnthropicMixin(ServiceMixin):
+class APIKeyServiceMixin(ServiceMixin):
+    """
+    Mixin for service providers that authenticate with a single API key.
+    Handles env var resolution at instantiation time rather than class definition time.
+    Subclasses set `api_key_env_var` and implement `_instantiate_client`.
+    """
+
+    api_key = param.String(default=None, doc="""
+        The API key. If not provided, falls back to the environment variable
+        named by `api_key_env_var`.""")
+
+    api_key_env_var: str = ""
+
+    def __init__(self, **params):
+        if "api_key" not in params:
+            params["api_key"] = os.environ.get(self.api_key_env_var)
+        super().__init__(**params)
+
+    @classmethod
+    def _resolve_api_key(cls) -> str | None:
+        """Resolve the API key from the environment variable."""
+        return os.environ.get(cls.api_key_env_var)
+
+    def _instantiate_client_kwargs(self, **extra_kwargs) -> dict:
+        kwargs = {}
+        if self.api_key:
+            kwargs["api_key"] = self.api_key
+        kwargs.update(extra_kwargs)
+        return kwargs
+
+
+class AnthropicMixin(APIKeyServiceMixin):
     """
     Mixin class for Anthropic functionality that can be shared
     between LLM implementations and embedding classes.
     """
 
     api_key = param.String(default=None, doc="""
-        The Anthropic API key. If not provided, falls back to the environment
-        variable named by `api_key_env_var` (default: ANTHROPIC_API_KEY).""")
+        The Anthropic API key. If not provided, falls back to the
+        ANTHROPIC_API_KEY environment variable.""")
 
     api_key_env_var: str = PROVIDER_ENV_VARS['anthropic']
 
-    def _instantiate_client_kwargs(self, **extra_kwargs) -> dict:
-        """
-        Get the keyword arguments for initializing an Anthropic client.
-        """
-        kwargs = {}
-        api_key = self.api_key or os.environ.get(self.api_key_env_var)
-        if api_key:
-            kwargs["api_key"] = api_key
-        kwargs.update(extra_kwargs)
-        return kwargs
-
     def _instantiate_client(self, async_client=True, **extra_kwargs):
-        """
-        Create and return an Anthropic client instance.
-        """
         from anthropic import Anthropic, AsyncAnthropic
         kwargs = self._instantiate_client_kwargs(**extra_kwargs)
         return AsyncAnthropic(**kwargs) if async_client else Anthropic(**kwargs)
 
 
-class GenAIMixin(ServiceMixin):
+class GenAIMixin(APIKeyServiceMixin):
     """
     Mixin class for Google GenAI functionality that can be shared
     between LLM implementations and embedding classes.
     """
 
     api_key = param.String(default=None, doc="""
-        The Google API key. If not provided, falls back to the environment
-        variable named by `api_key_env_var` (default: GEMINI_API_KEY).""")
+        The Google API key. If not provided, falls back to the
+        GEMINI_API_KEY environment variable.""")
 
     api_key_env_var: str = PROVIDER_ENV_VARS['google']
 
-    def _instantiate_client_kwargs(self, **extra_kwargs) -> dict:
-        """
-        Get the keyword arguments for initializing a Google GenAI client.
-        """
-        kwargs = {}
-        api_key = self.api_key or os.environ.get(self.api_key_env_var)
-        if api_key:
-            kwargs["api_key"] = api_key
-        kwargs.update(extra_kwargs)
-        return kwargs
-
     def _instantiate_client(self, **extra_kwargs):
-        """
-        Create and return a Google GenAI client instance.
-        """
         from google import genai
         kwargs = self._instantiate_client_kwargs(**extra_kwargs)
         return genai.Client(**kwargs)
 
 
-class MistralMixin(ServiceMixin):
+class MistralMixin(APIKeyServiceMixin):
     """
     Mixin class for Mistral AI functionality that can be shared
     between LLM implementations and embedding classes.
     """
 
     api_key = param.String(default=None, doc="""
-        The Mistral AI API key. If not provided, falls back to the environment
-        variable named by `api_key_env_var` (default: MISTRAL_API_KEY).""")
+        The Mistral AI API key. If not provided, falls back to the
+        MISTRAL_API_KEY environment variable.""")
 
     api_key_env_var: str = PROVIDER_ENV_VARS['mistral']
 
-    def _instantiate_client_kwargs(self, **extra_kwargs) -> dict:
-        """
-        Get the keyword arguments for initializing a Mistral client.
-        """
-        kwargs = {}
-        api_key = self.api_key or os.environ.get(self.api_key_env_var)
-        if api_key:
-            kwargs["api_key"] = api_key
-        kwargs.update(extra_kwargs)
-        return kwargs
-
-    def _instantiate_client(self, async_client=False, **extra_kwargs):
-        """
-        Create and return a Mistral client instance.
-        """
+    def _instantiate_client(self, **extra_kwargs):
         from mistralai import Mistral
         kwargs = self._instantiate_client_kwargs(**extra_kwargs)
         return Mistral(**kwargs)
@@ -327,14 +316,19 @@ class AzureMistralMixin(MistralMixin):
     with Azure-specific configuration.
     """
 
-    api_key = param.String(default=os.getenv(PROVIDER_ENV_VARS["azure-mistral"]), doc="""
-        The Azure API key. If not provided, falls back to the AZUREAI_ENDPOINT_KEY
-        environment variable.""")
+    api_key = param.String(default=None, doc="""
+        The Azure API key. If not provided, falls back to the
+        AZUREAI_ENDPOINT_KEY environment variable.""")
 
     api_key_env_var: str = PROVIDER_ENV_VARS['azure-mistral']
 
-    endpoint = param.String(default=os.getenv('AZUREAI_ENDPOINT_URL'), doc="""
+    endpoint = param.String(default=None, doc="""
         The Azure Mistral endpoint URL.""")
+
+    def __init__(self, **params):
+        if "endpoint" not in params:
+            params["endpoint"] = os.environ.get("AZUREAI_ENDPOINT_URL")
+        super().__init__(**params)
 
     def _instantiate_client(self, **extra_kwargs):
         """
@@ -345,15 +339,15 @@ class AzureMistralMixin(MistralMixin):
         return MistralAzure(azure_endpoint=self.endpoint, **kwargs)
 
 
-class OpenAIMixin(ServiceMixin):
+class OpenAIMixin(APIKeyServiceMixin):
     """
     Mixin class for OpenAI functionality that can be shared
     between LLM implementations and embedding classes.
     """
 
     api_key = param.String(default=None, doc="""
-        The API key. If not provided, will fall back to the environment variable
-        named by `api_key_env_var` (e.g. OPENAI_API_KEY).""")
+        The API key. If not provided, falls back to the
+        OPENAI_API_KEY environment variable.""")
 
     api_key_env_var: str = PROVIDER_ENV_VARS['openai']
 
@@ -364,22 +358,12 @@ class OpenAIMixin(ServiceMixin):
         The OpenAI organization to charge.""")
 
     def _instantiate_client_kwargs(self, **extra_kwargs) -> dict:
-        """
-        Get the keyword arguments for initializing an OpenAI client.
-        """
-        kwargs = {}
-
-        api_key = self.api_key or os.environ.get(self.api_key_env_var)
-        if api_key:
-            kwargs["api_key"] = api_key
+        kwargs = super()._instantiate_client_kwargs()
         if self.endpoint:
             kwargs["base_url"] = self.endpoint
         if self.organization:
             kwargs["organization"] = self.organization
-
-        # Allow extra kwargs to override defaults
         kwargs.update(extra_kwargs)
-
         return kwargs
 
     def _instantiate_client(self, async_client=True, **extra_kwargs):
@@ -403,33 +387,28 @@ class AzureOpenAIMixin(OpenAIMixin):
     api_version = param.String(default="2024-10-21", doc="""
         The Azure AI Studio API version.""")
 
-    # Override defaults to use Azure environment variables
-    api_key = param.String(default=os.getenv(PROVIDER_ENV_VARS["azure-openai"]), doc="""
-        The Azure API key. If not provided, falls back to the AZUREAI_ENDPOINT_KEY
-        environment variable (set via `api_key_env_var` on the LLM class).""")
+    api_key = param.String(default=None, doc="""
+        The Azure API key. If not provided, falls back to the
+        AZUREAI_ENDPOINT_KEY environment variable.""")
 
-    endpoint = param.String(default=os.getenv('AZUREAI_ENDPOINT_URL'), doc="""
+    api_key_env_var: str = PROVIDER_ENV_VARS['azure-openai']
+
+    endpoint = param.String(default=None, doc="""
         The Azure AI Studio endpoint.""")
 
-    def _instantiate_client_kwargs(self, **extra_kwargs) -> dict:
-        """
-        Get the keyword arguments for initializing an Azure OpenAI client.
-        Builds on top of the base OpenAI client kwargs.
-        """
-        # Start with base OpenAI kwargs
-        kwargs = super()._instantiate_client_kwargs()
+    def __init__(self, **params):
+        if "endpoint" not in params:
+            params["endpoint"] = os.environ.get("AZUREAI_ENDPOINT_URL")
+        super().__init__(**params)
 
-        # Add Azure-specific parameters
+    def _instantiate_client_kwargs(self, **extra_kwargs) -> dict:
+        kwargs = super()._instantiate_client_kwargs()
         if self.api_version:
             kwargs["api_version"] = self.api_version
         if self.endpoint:
-            # Azure uses 'azure_endpoint' instead of 'base_url'
-            kwargs.pop("base_url", None)  # Remove base_url if it exists
+            kwargs.pop("base_url", None)
             kwargs["azure_endpoint"] = self.endpoint
-
-        # Allow extra kwargs to override defaults
         kwargs.update(extra_kwargs)
-
         return kwargs
 
     def _instantiate_client(self, async_client=True, **extra_kwargs):
@@ -450,26 +429,25 @@ class BedrockMixin(param.Parameterized):
     between LLM implementations and embedding classes.
     """
 
-    aws_access_key_id = param.String(
-        default=os.getenv("AWS_ACCESS_KEY_ID"),
-        doc="AWS access key ID. If not provided, boto3 will use default credentials (including SSO)."
-    )
+    aws_access_key_id = param.String(default=None,
+        doc="AWS access key ID. If not provided, boto3 will use default credentials (including SSO).")
 
-    api_key = param.String(
-        default=os.getenv("AWS_SECRET_ACCESS_KEY"),  # NOTE: secret key, not the access key ID in PROVIDER_ENV_VARS
+    api_key = param.String(default=None,
         doc="AWS secret access key. If not provided, falls back to AWS_SECRET_ACCESS_KEY "
-            "or boto3 default credentials (including SSO)."
-    )
+            "or boto3 default credentials (including SSO).")
 
-    aws_session_token = param.String(
-        default=os.getenv("AWS_SESSION_TOKEN"),
-        doc="AWS session token for temporary credentials (optional)."
-    )
+    aws_session_token = param.String(default=None,
+        doc="AWS session token for temporary credentials (optional).")
 
     region_name = param.String(default="us-east-1", doc="The AWS region name for Bedrock API calls.")
 
     def __init__(self, **params):
-        params["api_key"] = params.pop("aws_secret_access_key", params.get("api_key"))
-        if not params["api_key"]:
-            del params["api_key"]
+        if "aws_secret_access_key" in params:
+            params["api_key"] = params.pop("aws_secret_access_key")
+        if "api_key" not in params:
+            params["api_key"] = os.environ.get("AWS_SECRET_ACCESS_KEY")
+        if "aws_access_key_id" not in params:
+            params["aws_access_key_id"] = os.environ.get("AWS_ACCESS_KEY_ID")
+        if "aws_session_token" not in params:
+            params["aws_session_token"] = os.environ.get("AWS_SESSION_TOKEN")
         super().__init__(**params)

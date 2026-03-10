@@ -931,7 +931,7 @@ class OpenAI(Llm, OpenAIMixin):
     @classmethod
     def models(cls) -> set[str]:
         """Return the set of available model identifiers from OpenAI."""
-        client = OpenAIClient(api_key=os.environ.get(cls.api_key_env_var), timeout=5)
+        client = OpenAIClient(api_key=cls._resolve_api_key(), timeout=5)
         return {m.id for m in client.models.list().data}
 
     @property
@@ -1057,7 +1057,7 @@ class MistralAI(Llm, MistralMixin):
     def models(cls) -> set[str]:
         """Return the set of available model identifiers from Mistral."""
         from mistralai import Mistral
-        return {m.id for m in Mistral(api_key=os.environ.get(cls.api_key_env_var)).models.list().data}
+        return {m.id for m in Mistral(api_key=cls._resolve_api_key()).models.list().data}
 
     @property
     def _client_kwargs(self):
@@ -1148,7 +1148,7 @@ class Anthropic(Llm, AnthropicMixin):
     def models(cls) -> set[str]:
         """Return the set of available model identifiers from Anthropic."""
         from anthropic import Anthropic as AnthropicClient
-        response = AnthropicClient(api_key=os.environ.get(cls.api_key_env_var), timeout=5).models.list()
+        response = AnthropicClient(api_key=cls._resolve_api_key(), timeout=5).models.list()
         # also handle model aliases (claude-sonnet-4-5-20250929) -> (claude-sonnet-4-5)
         return {m.id for m in response.data} | {m.id.rsplit("-", maxsplit=1)[0] for m in response.data}
 
@@ -1611,7 +1611,7 @@ class Google(Llm, GenAIMixin):
         """Return the set of available model identifiers from Google AI."""
         from google import genai
         available = set()
-        for m in genai.Client(api_key=os.environ.get(cls.api_key_env_var)).models.list():
+        for m in genai.Client(api_key=cls._resolve_api_key()).models.list():
             available.add(m.name)
             if m.name.startswith("models/"):
                 available.add(m.name[7:])  # Strip "models/" prefix
@@ -1891,13 +1891,19 @@ class AICatalyst(OpenAI):
     A LLM implementation that calls the [Anaconda AI Catalyst](https://www.anaconda.com/platform/ai-catalyst) API.
     """
 
-    api_key = param.String(default=os.getenv("AI_CATALYST_API_KEY"), doc="The AI Catalyst API key.")
+    api_key = param.String(default=None, doc="The AI Catalyst API key.")
 
     display_name = param.String(default="AI Catalyst", constant=True)
 
-    endpoint = param.String(
-        default=os.getenv("AI_CATALYST_BASE_URL"), doc="""
+    endpoint = param.String(default=None, doc="""
             The API endpoint; should include the full address, including the port.""")
+
+    def __init__(self, **params):
+        if "api_key" not in params:
+            params["api_key"] = os.environ.get("AI_CATALYST_API_KEY")
+        if "endpoint" not in params:
+            params["endpoint"] = os.environ.get("AI_CATALYST_BASE_URL")
+        super().__init__(**params)
 
     mode = param.Selector(default=Mode.JSON_SCHEMA)
 
