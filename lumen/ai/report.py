@@ -399,6 +399,14 @@ class TaskGroup(Task):
         else:
             raise TypeError("Abstract Task does not implement _get_context.")
 
+    def _included_tasks(self) -> set[str] | None:
+        """Return the set of task titles to include, or None to include all.
+
+        Subclasses can override this to filter which tasks are executed
+        and exported.
+        """
+        return None
+
     async def _execute(self, context: TContext, **kwargs):
         """
         Executes the tasks.
@@ -415,8 +423,7 @@ class TaskGroup(Task):
 
         views = list(self._header)
         self.status = "running"
-        selector = getattr(self, '_export_selector', None)
-        included_titles = selector.value if selector is not None else None
+        included_titles = self._included_tasks()
         for i, task in enumerate(self):
             if included_titles is not None and task.title not in included_titles:
                 task.reset()
@@ -686,8 +693,7 @@ class TaskGroup(Task):
         return write_notebook(cells)
 
     def _collect_included_views(self) -> list[Any]:
-        selector = getattr(self, '_export_selector', None)
-        included_titles = selector.value if selector is not None else None
+        included_titles = self._included_tasks()
         included_views = list(self._header)
         for task in self:
             if included_titles is not None and task.title not in included_titles:
@@ -838,6 +844,12 @@ class Section(TaskGroup):
             self._placeholder.visible = True
         else:
             self._placeholder.visible = False
+
+    def _included_tasks(self) -> set[str] | None:
+        selected = self._export_selector.value
+        if len(selected) == len(self._tasks):
+            return None
+        return set(selected)
 
     def _sync_placeholder_to_selector(self, event=None):
         # Changing selector membership invalidates section-level cached outputs.
