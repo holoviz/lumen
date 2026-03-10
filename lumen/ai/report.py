@@ -1340,10 +1340,9 @@ class ActorTask(ExecutableTask):
         self._view.extend(rendered)
 
     async def _execute(self, context: TContext, **kwargs) -> tuple[list[Any], TContext]:
-        views = []
+        outputs = []
         if self.title and not self._header:
             title = Typography(f"{'#'*self.level} {self.title}", margin=(10, 10, 0, 10))
-            views.append(title)
             self.views = self._header = [title]
 
         messages = self._render_message_history(context)
@@ -1371,7 +1370,7 @@ class ActorTask(ExecutableTask):
         if unprovided:
             raise RuntimeError(f"{self.actor.__class__.__name__} failed to provide declared context: {', '.join(unprovided)}.")
         contexts = [self.context, out_context] if self.context else [out_context]
-        return outputs, merge_contexts(LWW, contexts)
+        return self.views, merge_contexts(LWW, contexts)
 
     def _actor_prompt(self, actor: Actor):
         prompt = Select(
