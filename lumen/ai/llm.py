@@ -157,8 +157,7 @@ class Llm(param.Parameterized):
 
     __abstract = True
 
-    @classmethod
-    def models(cls) -> set[str]:
+    def models(self) -> set[str]:
         """
         Return the set of available model identifiers from this provider.
 
@@ -928,10 +927,9 @@ class OpenAI(Llm, OpenAIMixin):
 
     _supports_logfire = True
 
-    @classmethod
-    def models(cls) -> set[str]:
+    def models(self) -> set[str]:
         """Return the set of available model identifiers from OpenAI."""
-        client = OpenAIClient(api_key=cls._resolve_api_key(), timeout=5)
+        client = OpenAIClient(api_key=self.api_key, timeout=5)
         return {m.id for m in client.models.list().data}
 
     @property
@@ -1053,11 +1051,10 @@ class MistralAI(Llm, MistralAIMixin):
     _supports_model_stream = False  # instructor doesn't work with Mistral's streaming
     _instructor_wrapper = "mistral"
 
-    @classmethod
-    def models(cls) -> set[str]:
+    def models(self) -> set[str]:
         """Return the set of available model identifiers from Mistral."""
         from mistralai import Mistral
-        return {m.id for m in Mistral(api_key=cls._resolve_api_key()).models.list().data}
+        return {m.id for m in Mistral(api_key=self.api_key).models.list().data}
 
     @property
     def _client_kwargs(self):
@@ -1144,11 +1141,10 @@ class Anthropic(Llm, AnthropicMixin):
     _supports_model_stream = True
     _instructor_wrapper = "anthropic"
 
-    @classmethod
-    def models(cls) -> set[str]:
+    def models(self) -> set[str]:
         """Return the set of available model identifiers from Anthropic."""
         from anthropic import Anthropic as AnthropicClient
-        response = AnthropicClient(api_key=cls._resolve_api_key(), timeout=5).models.list()
+        response = AnthropicClient(api_key=self.api_key, timeout=5).models.list()
         # also handle model aliases (claude-sonnet-4-5-20250929) -> (claude-sonnet-4-5)
         return {m.id for m in response.data} | {m.id.rsplit("-", maxsplit=1)[0] for m in response.data}
 
@@ -1606,12 +1602,11 @@ class Google(Llm, GenAIMixin):
     _supports_model_stream = True
     _instructor_wrapper = "genai"
 
-    @classmethod
-    def models(cls) -> set[str]:
+    def models(self) -> set[str]:
         """Return the set of available model identifiers from Google AI."""
         from google import genai
         available = set()
-        for m in genai.Client(api_key=cls._resolve_api_key()).models.list():
+        for m in genai.Client(api_key=self.api_key).models.list():
             available.add(m.name)
             if m.name.startswith("models/"):
                 available.add(m.name[7:])  # Strip "models/" prefix
@@ -1943,20 +1938,13 @@ class Ollama(OpenAI):
 
     temperature = param.Number(default=0.25, bounds=(0, None), constant=True)
 
-    @classmethod
-    def models(cls, endpoint: str | None = None) -> set[str]:
+    def models(self, endpoint: str | None = None) -> set[str]:
         """Return the set of available model identifiers from Ollama."""
-        if endpoint is None:
-            endpoint = cls.param["endpoint"].default
-        base_url = endpoint.rstrip('/').removesuffix('/v1')
-        try:
-            tags_response = requests.get(f"{base_url}/api/tags", timeout=5)
-            if tags_response.status_code != 200:
-                return set()
-            available_models = tags_response.json().get("models", [])
-            return {m.get("name", "") for m in available_models}
-        except Exception:
+        base_url = (endpoint or self.endpoint).rstrip('/').removesuffix('/v1')
+        tags_response = requests.get(f"{base_url}/api/tags", timeout=5)
+        if tags_response.status_code != 200:
             return set()
+        return {m.get("name", "") for m in tags_response.json().get("models", [])}
 
 
 class MessageModel(BaseModel):

@@ -243,11 +243,6 @@ class APIKeyServiceMixin(ServiceMixin):
             params["api_key"] = os.environ.get(self.api_key_env_var)
         super().__init__(**params)
 
-    @classmethod
-    def _resolve_api_key(cls) -> str | None:
-        """Resolve the API key from the environment variable."""
-        return os.environ.get(cls.api_key_env_var)
-
     def _instantiate_client_kwargs(self, **extra_kwargs) -> dict:
         kwargs = {}
         if self.api_key:
