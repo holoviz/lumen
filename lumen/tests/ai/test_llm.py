@@ -80,11 +80,13 @@ def test_api_key_from_modified_provider_env_vars(monkeypatch):
         OpenAI.api_key_env_var = original
 
 
-def test_get_available_llm_returns_none_when_no_env_vars_set(monkeypatch):
-    """get_available_llm returns None when no provider env vars are set."""
+def test_get_available_llm_returns_local_provider_when_no_env_vars_set(monkeypatch):
+    """get_available_llm returns a local provider when no cloud API keys are set."""
     for env_var in lmai.llm.PROVIDER_ENV_VARS.values():
         monkeypatch.delenv(env_var, raising=False)
-    assert lmai.llm.get_available_llm() is None
+    # Local providers (no env var required) should still be returned
+    result = lmai.llm.get_available_llm()
+    assert result is not None
 
 
 def test_get_available_llm_returns_correct_provider(monkeypatch):
