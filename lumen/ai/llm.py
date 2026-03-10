@@ -25,8 +25,8 @@ from pydantic import BaseModel
 
 from .interceptor import Interceptor
 from .services import (
-    PROVIDER_ENV_VARS, AnthropicMixin, AzureMistralMixin, AzureOpenAIMixin,
-    BedrockMixin, GenAIMixin, LlamaCppMixin, MistralMixin, OpenAIMixin,
+    PROVIDER_ENV_VARS, AnthropicMixin, AzureMistralAIMixin, AzureOpenAIMixin,
+    BedrockMixin, GenAIMixin, LlamaCppMixin, MistralAIMixin, OpenAIMixin,
 )
 from .utils import format_exception, log_debug, truncate_string
 
@@ -1022,7 +1022,7 @@ class AzureOpenAI(Llm, AzureOpenAIMixin):
         return partial(client_callable.func, *client_callable.args, timeout=self.timeout, **client_callable.keywords)
 
 
-class MistralAI(Llm, MistralMixin):
+class MistralAI(Llm, MistralAIMixin):
     """
     A LLM implementation that calls Mistral AI.
     """
@@ -1097,7 +1097,7 @@ class MistralAI(Llm, MistralMixin):
         return ""
 
 
-class AzureMistralAI(MistralAI, AzureMistralMixin):
+class AzureMistralAI(MistralAI, AzureMistralAIMixin):
     """
     A LLM implementation that calls Mistral AI models on Azure.
     """
@@ -1636,7 +1636,6 @@ class Google(Llm, GenAIMixin):
             return chunk.text or ""
         if hasattr(chunk, 'content') and chunk.content:
             return chunk.content
-        # Handle full response from generate_content (non-streaming fallback)
         if hasattr(chunk, 'candidates') and chunk.candidates:
             candidate = chunk.candidates[0]
             if hasattr(candidate, 'content') and candidate.content:
@@ -1873,9 +1872,13 @@ class AINavigator(OpenAI):
 
     display_name = param.String(default="AI Navigator", constant=True)
 
-    endpoint = param.String(
-        default=os.getenv("AINAVIGATOR_BASE_URL", "http://localhost:8080/v1"), doc="""
+    endpoint = param.String(default=None, doc="""
             The API endpoint; should include the full address, including the port.""")
+
+    def __init__(self, **params):
+        if "endpoint" not in params:
+            params["endpoint"] = os.environ.get("AINAVIGATOR_BASE_URL", "http://localhost:8080/v1")
+        super().__init__(**params)
 
     mode = param.Selector(default=Mode.JSON_SCHEMA)
 
@@ -1898,14 +1901,14 @@ class AICatalyst(OpenAI):
     endpoint = param.String(default=None, doc="""
             The API endpoint; should include the full address, including the port.""")
 
+    mode = param.Selector(default=Mode.JSON_SCHEMA)
+
     def __init__(self, **params):
         if "api_key" not in params:
             params["api_key"] = os.environ.get("AI_CATALYST_API_KEY")
         if "endpoint" not in params:
             params["endpoint"] = os.environ.get("AI_CATALYST_BASE_URL")
         super().__init__(**params)
-
-    mode = param.Selector(default=Mode.JSON_SCHEMA)
 
     model_kwargs = param.Dict(default={
         "default": {"model": "ai_catalyst"},

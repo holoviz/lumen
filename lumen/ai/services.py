@@ -292,7 +292,7 @@ class GenAIMixin(APIKeyServiceMixin):
         return genai.Client(**kwargs)
 
 
-class MistralMixin(APIKeyServiceMixin):
+class MistralAIMixin(APIKeyServiceMixin):
     """
     Mixin class for Mistral AI functionality that can be shared
     between LLM implementations and embedding classes.
@@ -310,9 +310,9 @@ class MistralMixin(APIKeyServiceMixin):
         return Mistral(**kwargs)
 
 
-class AzureMistralMixin(MistralMixin):
+class AzureMistralAIMixin(MistralAIMixin):
     """
-    Mixin class for Azure Mistral AI functionality that extends MistralMixin
+    Mixin class for Azure Mistral AI functionality that extends MistralAIMixin
     with Azure-specific configuration.
     """
 
