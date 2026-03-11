@@ -243,7 +243,7 @@ class Plan(Section):
             steps_title, todo_list = self.steps_layout.header
             todo_list.object = todos
             if self.status == "success":
-                steps_title.object = f"✅ Sucessfully completed {self.title!r}"
+                steps_title.object = f"✅ Successfully completed {self.title!r}"
             else:
                 steps_title.object = f"❌ Failed to execute {self.title!r}"
             self.steps_layout.collapsed = True
