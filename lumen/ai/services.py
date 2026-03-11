@@ -16,6 +16,7 @@ PROVIDER_ENV_VARS = {
     "azure-mistral": "AZUREAI_ENDPOINT_KEY",
     "azure-openai": "AZUREAI_ENDPOINT_KEY",
     "google": "GEMINI_API_KEY",
+    "groq": "GROQ_API_KEY",
     "ai-catalyst": "AI_CATALYST_API_KEY",
 }
 
