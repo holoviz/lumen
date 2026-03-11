@@ -1,5 +1,5 @@
 """
-XArraySQLSource — SQL-backed xarray source for Lumen.
+XArraySQLSource -- SQL-backed xarray source for Lumen.
 
 Uses xarray-sql (Apache DataFusion) to provide SQL query capabilities
 over N-dimensional xarray datasets. Each data variable in the dataset
@@ -16,6 +16,7 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import logging
 
 from pathlib import Path
@@ -61,6 +62,44 @@ def _detect_engine(path: str) -> str | None:
     return XARRAY_ENGINES.get(suffix)
 
 
+def _sql_literal(value: Any) -> str:
+    """
+    Format a Python value as a DataFusion-compatible SQL literal.
+
+    Handles numeric types, strings, datetimes (including pandas Timestamps
+    and numpy datetime64), booleans, and None/NaN.
+    """
+    if value is None:
+        return "NULL"
+    try:
+        if pd.isna(value):
+            return "NULL"
+    except (ValueError, TypeError):
+        pass
+    if isinstance(value, (bool, np.bool_)):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, (int, np.integer)):
+        return str(int(value))
+    if isinstance(value, (float, np.floating)):
+        return str(float(value))
+    if isinstance(value, np.datetime64):
+        return f"'{pd.Timestamp(value).isoformat()}'"
+    if isinstance(value, pd.Timestamp):
+        return f"'{value.isoformat()}'"
+    if isinstance(value, (dt.datetime, dt.date)):
+        return f"'{value.isoformat()}'"
+    if isinstance(value, str):
+        escaped = value.replace("'", "''")
+        return f"'{escaped}'"
+    return repr(value)
+
+
+def _quote_identifier(name: str) -> str:
+    """Quote a SQL column/table identifier with double quotes."""
+    escaped = name.replace('"', '""')
+    return f'"{escaped}"'
+
+
 class XArraySQLSource(BaseSQLSource):
     """
     SQL-queryable xarray data source for Lumen.
@@ -71,7 +110,7 @@ class XArraySQLSource(BaseSQLSource):
 
     To use this source, install the optional xarray dependencies::
 
-        pip install xarray xarray-sql netCDF4
+        pip install lumen[xarray]
 
     Parameters
     ----------
@@ -121,7 +160,8 @@ class XArraySQLSource(BaseSQLSource):
         None means all variables are exposed.""")
 
     tables = param.ClassSelector(class_=(list, dict), default=None, allow_None=True, doc="""
-        List or dict of tables. Populated automatically from dataset variables.""")
+        List or dict of tables. Populated automatically from dataset variables.
+        When a dict, maps logical table names to SQL expressions.""")
 
     _supports_sql: ClassVar[bool] = True
 
@@ -129,17 +169,16 @@ class XArraySQLSource(BaseSQLSource):
         if not XARRAY_AVAILABLE:
             raise ImportError(
                 "xarray and xarray-sql are required for XArraySQLSource. "
-                "Install them with: pip install xarray xarray-sql netCDF4"
+                "Install them with: pip install lumen[xarray]"
             )
         super().__init__(**params)
         self._dataset = _dataset
         self._ctx = _ctx
         self._registered_tables = set()
-        self._df_cache = {}
         if self._ctx is None:
             self._initialize()
         else:
-            # Context was shared — just populate registered tables
+            # Context was shared -- just populate registered tables
             if self._dataset is not None:
                 self._registered_tables = set(self._dataset.data_vars)
             if self.tables is None:
@@ -159,11 +198,8 @@ class XArraySQLSource(BaseSQLSource):
         # Create DataFusion context and register each variable as a table
         self._ctx = XarrayContext()
 
-        # xarray-sql requires chunks — resolve 'auto' and None to a dict
-        if isinstance(self.chunks, dict):
-            chunk_spec = self.chunks
-        else:
-            chunk_spec = dict(self._dataset.sizes)
+        # Resolve chunk specification for xarray-sql registration
+        chunk_spec = self._resolve_chunks(self._dataset, self.chunks)
 
         for var_name in self._dataset.data_vars:
             var_ds = self._dataset[[var_name]]
@@ -172,6 +208,22 @@ class XArraySQLSource(BaseSQLSource):
 
         if self.tables is None:
             self.tables = list(self._registered_tables)
+
+    @staticmethod
+    def _resolve_chunks(dataset, chunks):
+        """
+        Resolve chunk specification for DataFusion registration.
+
+        Returns a dict mapping dimension names to chunk sizes.
+        """
+        if isinstance(chunks, dict):
+            return chunks
+        # Prefer chunking already present on the dataset
+        ds_chunks = getattr(dataset, "chunks", None)
+        if ds_chunks:
+            return {dim: sizes[0] for dim, sizes in ds_chunks.items()}
+        # Fallback: use full dimension sizes (DataFusion needs a concrete spec)
+        return dict(dataset.sizes)
 
     @staticmethod
     def _load_dataset(dataset, uri, engine, chunks, open_kwargs, variables):
@@ -206,32 +258,55 @@ class XArraySQLSource(BaseSQLSource):
         return self._dataset
 
     def get_tables(self) -> list[str]:
-        """Return list of available table names (one per data variable)."""
-        return sorted(self._registered_tables)
+        """Return list of available table names, including derived tables."""
+        tables: set[str] = set(self._registered_tables)
+        if isinstance(self.tables, dict):
+            tables.update(self.tables.keys())
+        elif isinstance(self.tables, (list, tuple)):
+            tables.update(self.tables)
+        return sorted(tables)
 
     def normalize_table(self, table: str) -> str:
         """
         Normalize table names for fuzzy matching.
 
-        Strips quotes, lowercases, and matches against registered tables
+        Strips quotes, lowercases, and matches against known tables
         to handle minor variations from Lumen AI agents.
         """
         stripped = table.strip('"').strip("'").strip("`")
-        if stripped in self._registered_tables:
+        all_known = set(self._registered_tables)
+        if isinstance(self.tables, dict):
+            all_known.update(self.tables.keys())
+        elif isinstance(self.tables, (list, tuple)):
+            all_known.update(self.tables)
+        if stripped in all_known:
             return stripped
-        lower_map = {t.lower(): t for t in self._registered_tables}
+        lower_map = {t.lower(): t for t in all_known}
         if stripped.lower() in lower_map:
             return lower_map[stripped.lower()]
         return stripped
 
     def get_sql_expr(self, table: str | dict) -> str:
         """
-        Return a SQL SELECT expression for the given table.
+        Return a SQL expression for the given table.
+
+        When ``table`` is a dict, returns the first mapped SQL expression.
+        When ``self.tables`` is a dict, looks up the normalized table name
+        and returns the mapped SQL expression, raising KeyError on miss.
+        Otherwise returns ``SELECT * FROM <table>``.
         """
         if isinstance(table, dict):
-            table = next(iter(table.values()))
+            return next(iter(table.values()))
+
         if isinstance(self.tables, dict):
-            table = self.tables.get(table, table)
+            normalized = self.normalize_table(table)
+            if normalized in self.tables:
+                return self.tables[normalized]
+            raise KeyError(
+                f"Table {table!r} not found in tables mapping. "
+                f"Available: {list(self.tables.keys())}"
+            )
+
         table = self.normalize_table(table)
         return f"SELECT * FROM {table}"
 
@@ -245,6 +320,15 @@ class XArraySQLSource(BaseSQLSource):
         Overrides BaseSQLSource.get_schema to query DataFusion directly
         instead of going through sqlglot SQL transforms, since DataFusion
         has its own SQL dialect nuances.
+
+        Parameters
+        ----------
+        table : str or None
+            Table name, or None for all tables.
+        limit : int or None
+            Sample size for schema inference.
+        shuffle : bool
+            If True, sample randomly (ORDER BY RANDOM()) instead of LIMIT.
         """
         from ..util import get_dataframe_schema
 
@@ -253,16 +337,23 @@ class XArraySQLSource(BaseSQLSource):
         else:
             tables = [table]
 
+        sample_limit = limit or 1
         schemas = {}
         for entry in tables:
-            sample = self.execute(f"SELECT * FROM {entry} LIMIT 1")
+            sql_expr = self.get_sql_expr(entry)
+            if shuffle:
+                sample_sql = f"SELECT * FROM ({sql_expr}) ORDER BY RANDOM() LIMIT {sample_limit}"
+            else:
+                sample_sql = f"SELECT * FROM ({sql_expr}) LIMIT {sample_limit}"
+            sample = self.execute(sample_sql)
             schema = get_dataframe_schema(sample)["items"]["properties"]
 
-            count_df = self.execute(f"SELECT COUNT(*) as count FROM {entry}")
+            count_df = self.execute(f"SELECT COUNT(*) as count FROM ({sql_expr})")
             count = int(count_df["count"].iloc[0])
             schema["__len__"] = count
 
             if limit:
+                schemas[entry] = schema
                 continue
 
             enums, min_maxes = [], []
@@ -276,16 +367,17 @@ class XArraySQLSource(BaseSQLSource):
 
             for col in enums:
                 distinct = self.execute(
-                    f"SELECT DISTINCT {col} FROM {entry} ORDER BY {col}"
+                    f"SELECT DISTINCT {_quote_identifier(col)} FROM ({sql_expr}) ORDER BY {_quote_identifier(col)}"
                 )
                 schema[col]["enum"] = distinct[col].tolist()
 
             if min_maxes:
                 min_max_exprs = ", ".join(
-                    f"MIN({c}) as {c}_min, MAX({c}) as {c}_max"
+                    f"MIN({_quote_identifier(c)}) as {_quote_identifier(c + '_min')}, "
+                    f"MAX({_quote_identifier(c)}) as {_quote_identifier(c + '_max')}"
                     for c in min_maxes
                 )
-                mm = self.execute(f"SELECT {min_max_exprs} FROM {entry}")
+                mm = self.execute(f"SELECT {min_max_exprs} FROM ({sql_expr})")
                 for col in min_maxes:
                     kind = sample[col].dtype.kind
                     if kind in "iu":
@@ -319,30 +411,26 @@ class XArraySQLSource(BaseSQLSource):
             - sql_transforms: list of SQLTransform objects to apply
         """
         sql_transforms = query.pop("sql_transforms", [])
-        table = self.normalize_table(table)
-        sql = f"SELECT * FROM {table}"
+        sql = self.get_sql_expr(table)
 
         conditions = []
-        # NOTE: DataFusion does not support parameterized queries, so values
-        # are inlined. This is safe because DataFusion runs in-process (no
-        # network boundary) and query values come from Lumen's internal
-        # pipeline, not directly from untrusted user input.
         for col, val in query.items():
             if col.startswith("__"):
                 continue
+            qcol = _quote_identifier(col)
             if isinstance(val, list):
-                vals_str = ", ".join(repr(v) for v in val)
-                conditions.append(f"{col} IN ({vals_str})")
+                vals_str = ", ".join(_sql_literal(v) for v in val)
+                conditions.append(f"{qcol} IN ({vals_str})")
             elif isinstance(val, slice):
                 if val.start is not None:
-                    conditions.append(f"{col} >= {val.start!r}")
+                    conditions.append(f"{qcol} >= {_sql_literal(val.start)}")
                 if val.stop is not None:
-                    conditions.append(f"{col} <= {val.stop!r}")
+                    conditions.append(f"{qcol} <= {_sql_literal(val.stop)}")
             else:
-                conditions.append(f"{col} = {val!r}")
+                conditions.append(f"{qcol} = {_sql_literal(val)}")
 
         if conditions:
-            sql += " WHERE " + " AND ".join(conditions)
+            sql = f"SELECT * FROM ({sql}) WHERE " + " AND ".join(conditions)
 
         for transform in sql_transforms:
             try:
@@ -370,8 +458,9 @@ class XArraySQLSource(BaseSQLSource):
             SQL query string. Tables correspond to dataset variable names.
             DataFusion supports PostgreSQL-compatible SQL syntax.
         params : list | dict | None
-            Not natively supported by DataFusion — basic inlining is used
-            for API compatibility with BaseSQLSource.
+            Query parameters. Positional (list, replaces ``?``) or named
+            (dict, replaces ``:name``). Values are formatted as safe SQL
+            literals via ``_sql_literal()``.
 
         Returns
         -------
@@ -381,10 +470,10 @@ class XArraySQLSource(BaseSQLSource):
         if params:
             if isinstance(params, list):
                 for p in params:
-                    sql_query = sql_query.replace("?", repr(p), 1)
+                    sql_query = sql_query.replace("?", _sql_literal(p), 1)
             elif isinstance(params, dict):
                 for k, v in params.items():
-                    sql_query = sql_query.replace(f":{k}", repr(v))
+                    sql_query = sql_query.replace(f":{k}", _sql_literal(v))
 
         result = self._ctx.sql(sql_query)
         return result.to_pandas()
@@ -407,25 +496,11 @@ class XArraySQLSource(BaseSQLSource):
     async def get_async(self, table: str, **query) -> pd.DataFrame:
         """
         Return a table asynchronously; optionally filtered.
+
+        Delegates to the synchronous get() to ensure identical behavior
+        including sql_transforms application.
         """
-        sql = self.get_sql_expr(table)
-        conditions = []
-        for col, val in query.items():
-            if col.startswith("__") or col == "sql_transforms":
-                continue
-            if isinstance(val, list):
-                vals_str = ", ".join(repr(v) for v in val)
-                conditions.append(f"{col} IN ({vals_str})")
-            elif isinstance(val, slice):
-                if val.start is not None:
-                    conditions.append(f"{col} >= {val.start!r}")
-                if val.stop is not None:
-                    conditions.append(f"{col} <= {val.stop!r}")
-            else:
-                conditions.append(f"{col} = {val!r}")
-        if conditions:
-            sql += " WHERE " + " AND ".join(conditions)
-        return await self.execute_async(sql)
+        return await asyncio.to_thread(self.get, table, **query)
 
     def estimate_size(self, table: str | None = None) -> dict[str, Any]:
         """
@@ -437,10 +512,16 @@ class XArraySQLSource(BaseSQLSource):
         tables = [table] if table else self.get_tables()
         result = {}
         for tbl in tables:
-            count_df = self.execute(f"SELECT COUNT(*) as count FROM {tbl}")
+            sql_expr = self.get_sql_expr(tbl)
+            count_df = self.execute(f"SELECT COUNT(*) as count FROM ({sql_expr})")
             n_rows = int(count_df["count"].iloc[0])
-            var = self._dataset[tbl]
-            n_cols = len(var.dims) + 1
+            if tbl in self._dataset.data_vars:
+                var = self._dataset[tbl]
+                n_cols = len(var.dims) + 1
+            else:
+                # Derived table -- estimate from a sample row
+                sample = self.execute(f"SELECT * FROM ({sql_expr}) LIMIT 1")
+                n_cols = len(sample.columns)
             est_bytes = n_rows * n_cols * 8
             result[tbl] = {
                 "rows": n_rows,
@@ -462,7 +543,28 @@ class XArraySQLSource(BaseSQLSource):
 
         Shares the same underlying dataset and DataFusion context to avoid
         expensive re-registration of variables.
+
+        Parameters
+        ----------
+        tables : dict[str, str]
+            Mapping from logical table name to SQL expression.
+        params : dict[str, list | dict] or None
+            Optional mapping from table name to query parameters.
         """
+        # Merge with existing tables (upsert behavior matching DuckDBSource)
+        all_tables = {}
+        if isinstance(self.tables, dict):
+            all_tables.update(self.tables)
+        elif isinstance(self.tables, (list, tuple)):
+            for t in self.tables:
+                all_tables[t] = f"SELECT * FROM {t}"
+        all_tables.update(tables)
+
+        # Merge table_params
+        all_params = dict(self.table_params)
+        if params:
+            all_params.update(params)
+
         return XArraySQLSource(
             _dataset=self._dataset,
             _ctx=self._ctx,
@@ -471,7 +573,8 @@ class XArraySQLSource(BaseSQLSource):
             chunks=self.chunks,
             variables=self.variables,
             open_kwargs=self.open_kwargs,
-            tables=tables,
+            tables=all_tables,
+            table_params=all_params,
         )
 
     def _get_table_metadata(self, tables: list[str]) -> dict[str, Any]:
@@ -523,7 +626,7 @@ class XArraySQLSource(BaseSQLSource):
                 description += f" [{attrs['units']}]"
 
             metadata[table] = {
-                "description": f"{description} — dimensions: {dims_str}",
+                "description": f"{description} -- dimensions: {dims_str}",
                 "columns": columns,
                 "dimensions": list(var.dims),
                 "shape": list(var.shape),
@@ -569,18 +672,12 @@ class XArraySQLSource(BaseSQLSource):
 
         return info if table is None else info.get(table, {})
 
-    def clear_cache(self, *events):
-        """Clear cached data and schema."""
-        super().clear_cache(*events)
-        self._df_cache.clear()
-
     def close(self):
         """Clean up resources."""
         if self._dataset is not None:
             self._dataset.close()
         self._ctx = None
         self._registered_tables.clear()
-        self._df_cache.clear()
 
     def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
         """Serialize this source to a Lumen spec dict."""

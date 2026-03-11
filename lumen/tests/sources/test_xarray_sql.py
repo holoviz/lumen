@@ -1,5 +1,5 @@
 """
-Tests for XArraySQLSource — SQL-backed xarray source via DataFusion.
+Tests for XArraySQLSource -- SQL-backed xarray source via DataFusion.
 
 Tests cover:
 - Construction from dataset, file path, and Zarr store
@@ -14,18 +14,9 @@ Tests cover:
 import numpy as np
 import pandas as pd
 import pytest
-import xarray as xr
 
-try:
-    from xarray_sql import XarrayContext  # noqa: F401
-    XARRAY_SQL_AVAILABLE = True
-except ImportError:
-    XARRAY_SQL_AVAILABLE = False
-
-pytestmark = pytest.mark.skipif(
-    not XARRAY_SQL_AVAILABLE,
-    reason="xarray-sql not installed"
-)
+xr = pytest.importorskip("xarray")
+pytest.importorskip("xarray_sql")
 
 from lumen.sources.xarray_sql import XArraySQLSource
 
@@ -72,6 +63,7 @@ def synthetic_dataset():
 @pytest.fixture
 def nc_file(synthetic_dataset, tmp_path):
     """Write synthetic dataset to a temporary NetCDF file."""
+    pytest.importorskip("netCDF4")
     path = tmp_path / "test_data.nc"
     synthetic_dataset.to_netcdf(path)
     return str(path)
@@ -80,6 +72,7 @@ def nc_file(synthetic_dataset, tmp_path):
 @pytest.fixture
 def zarr_path(synthetic_dataset, tmp_path):
     """Write synthetic dataset to a temporary Zarr store."""
+    zarr = pytest.importorskip("zarr")  # noqa: F841
     import warnings
     path = tmp_path / "test_data.zarr"
     with warnings.catch_warnings():
@@ -237,6 +230,16 @@ class TestSchemaMetadata:
         schema = source.get_schema("temperature")
         assert "inclusiveMinimum" in schema.get("lat", {}) or "inclusiveMinimum" in schema.get("temperature", {})
 
+    def test_get_schema_with_limit(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        schema = source.get_schema("temperature", limit=5)
+        assert "__len__" in schema
+
+    def test_get_schema_with_shuffle(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        schema = source.get_schema("temperature", shuffle=True)
+        assert "temperature" in schema
+
     def test_get_metadata(self, synthetic_dataset):
         source = XArraySQLSource(_dataset=synthetic_dataset)
         meta = source.get_metadata("temperature")
@@ -297,6 +300,25 @@ class TestLumenIntegration:
         assert isinstance(expr, str)
         assert "temperature" in expr.lower()
 
+    def test_get_sql_expr_dict_tables(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        derived = {"avg_temp": "SELECT lat, AVG(temperature) FROM temperature GROUP BY lat"}
+        new_source = source.create_sql_expr_source(derived)
+        expr = new_source.get_sql_expr("avg_temp")
+        assert "AVG" in expr
+
+    def test_get_sql_expr_dict_input(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        expr = source.get_sql_expr({"alias": "SELECT 1"})
+        assert expr == "SELECT 1"
+
+    def test_get_sql_expr_missing_table_raises(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        derived = {"avg_temp": "SELECT 1"}
+        new_source = source.create_sql_expr_source(derived)
+        with pytest.raises(KeyError, match="not found"):
+            new_source.get_sql_expr("nonexistent")
+
     def test_get_skips_dunder_keys(self, synthetic_dataset):
         source = XArraySQLSource(_dataset=synthetic_dataset)
         df = source.get("temperature", __limit__=10)
@@ -312,6 +334,12 @@ class TestLumenIntegration:
         df = source.get("temperature", lat=slice(20.0, 40.0))
         assert all(df["lat"] >= 20.0)
         assert all(df["lat"] <= 40.0)
+
+    def test_get_with_timestamp_filter(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        ts = pd.Timestamp("2020-01-03")
+        df = source.get("temperature", time=ts)
+        assert len(df) > 0
 
 
 # ---- Normalize Table ----
@@ -335,6 +363,31 @@ class TestNormalizeTable:
     def test_unknown_returns_as_is(self, synthetic_dataset):
         source = XArraySQLSource(_dataset=synthetic_dataset)
         assert source.normalize_table("nonexistent") == "nonexistent"
+
+    def test_normalize_derived_table(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        derived = {"avg_temp": "SELECT 1"}
+        new_source = source.create_sql_expr_source(derived)
+        assert new_source.normalize_table("AVG_TEMP") == "avg_temp"
+
+
+# ---- get_tables ----
+
+class TestGetTables:
+
+    def test_includes_registered_tables(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        assert "temperature" in source.get_tables()
+        assert "pressure" in source.get_tables()
+
+    def test_includes_derived_tables(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        derived = {"avg_temp": "SELECT lat, AVG(temperature) FROM temperature GROUP BY lat"}
+        new_source = source.create_sql_expr_source(derived)
+        tables = new_source.get_tables()
+        assert "avg_temp" in tables
+        assert "temperature" in tables
+        assert "pressure" in tables
 
 
 # ---- Estimate Size ----
@@ -407,6 +460,23 @@ class TestResourceManagement:
         assert new_source._ctx is source._ctx  # shared context
         assert new_source._dataset is source._dataset
 
+    def test_create_sql_expr_source_with_params(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        new_tables = {"filtered": "SELECT * FROM temperature WHERE lat > :min_lat"}
+        params = {"filtered": {"min_lat": 30.0}}
+        new_source = source.create_sql_expr_source(new_tables, params=params)
+        assert new_source.table_params["filtered"] == {"min_lat": 30.0}
+
+    def test_create_sql_expr_source_merges_tables(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        derived = {"avg_temp": "SELECT lat, AVG(temperature) FROM temperature GROUP BY lat"}
+        new_source = source.create_sql_expr_source(derived)
+        tables = new_source.get_tables()
+        # Should contain both original registered tables and derived
+        assert "temperature" in tables
+        assert "pressure" in tables
+        assert "avg_temp" in tables
+
 
 # ---- Async ----
 
@@ -423,3 +493,79 @@ class TestAsync:
         source = XArraySQLSource(_dataset=synthetic_dataset)
         df = await source.get_async("temperature")
         assert len(df) > 0
+
+    @pytest.mark.asyncio
+    async def test_get_async_with_filter(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        df = await source.get_async("temperature", lat=30.0)
+        assert all(df["lat"] == 30.0)
+
+
+# ---- SQL Literal Formatting ----
+
+class TestSQLLiteral:
+
+    def test_timestamp_filter(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        ts = pd.Timestamp("2020-01-05")
+        df = source.get("temperature", time=ts)
+        assert len(df) == 20  # 5 lats * 4 lons for one time step
+        assert all(pd.to_datetime(df["time"]).dt.date == ts.date())
+
+    def test_string_filter_escaping(self):
+        """Verify _sql_literal properly escapes single quotes."""
+        from lumen.sources.xarray_sql import _sql_literal
+        assert _sql_literal("it's") == "'it''s'"
+
+    def test_none_literal(self):
+        from lumen.sources.xarray_sql import _sql_literal
+        assert _sql_literal(None) == "NULL"
+
+    def test_nan_literal(self):
+        from lumen.sources.xarray_sql import _sql_literal
+        assert _sql_literal(float("nan")) == "NULL"
+        assert _sql_literal(np.float64("nan")) == "NULL"
+        assert _sql_literal(np.float32("nan")) == "NULL"
+
+    def test_bool_literal(self):
+        from lumen.sources.xarray_sql import _sql_literal
+        assert _sql_literal(True) == "TRUE"
+        assert _sql_literal(False) == "FALSE"
+        assert _sql_literal(np.bool_(True)) == "TRUE"
+        assert _sql_literal(np.bool_(False)) == "FALSE"
+
+    def test_numpy_types(self):
+        from lumen.sources.xarray_sql import _sql_literal
+        assert _sql_literal(np.int64(42)) == "42"
+        assert _sql_literal(np.float64(3.14)) == "3.14"
+
+    def test_numpy_datetime64(self):
+        from lumen.sources.xarray_sql import _sql_literal
+        val = np.datetime64("2020-01-01")
+        result = _sql_literal(val)
+        assert "2020-01-01" in result
+        assert result.startswith("'") and result.endswith("'")
+
+    def test_pd_timestamp_literal(self):
+        from lumen.sources.xarray_sql import _sql_literal
+        val = pd.Timestamp("2020-06-15 12:30:00")
+        result = _sql_literal(val)
+        assert "2020-06-15" in result
+        assert result.startswith("'") and result.endswith("'")
+
+    def test_execute_with_positional_params(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        df = source.execute(
+            "SELECT * FROM temperature WHERE lat > ? AND lon < ?",
+            params=[30.0, 130.0],
+        )
+        assert all(df["lat"] > 30.0)
+        assert all(df["lon"] < 130.0)
+
+    def test_execute_with_named_params(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        df = source.execute(
+            "SELECT * FROM temperature WHERE lat = :target_lat",
+            params={"target_lat": 20.0},
+        )
+        assert all(df["lat"] == 20.0)
