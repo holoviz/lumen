@@ -694,7 +694,41 @@ class TestAnnotationControls:
         )
         assert md_text.startswith("```\n")
         assert md_text.endswith("\n```")
-            
+
+    @pytest.mark.asyncio
+    async def test_annotate_diff_markdown_uses_real_newlines(self):
+        """Test that diff markdown uses actual newlines after successful annotation."""
+        interface = MockInterface()
+        old_spec = "type: bar"
+        new_spec = "type: bar\nannotations:\n  - mark: peak"
+        view = MockView(spec=old_spec)
+        task = MockTask()
+
+        task.actor.annotate = AsyncMock(return_value=new_spec)
+        task.history = []
+        task.out_context = {}
+
+        controls = AnnotationControls(
+            interface=interface,
+            view=view,
+            task=task
+        )
+
+        with patch('lumen.ai.controls.revision.generate_diff', return_value="- type: bar\n+ type: bar\n+ annotations:\n+   - mark: peak"):
+            with patch('lumen.ai.controls.revision.load_yaml', return_value={}):
+                controls.instruction = "Highlight peak values"
+                await controls._annotate()
+
+        card = interface.messages[0]["content"]
+        md_object = card.objects[0]
+        md_text = md_object.object
+
+        assert "\\n" not in md_text, (
+            "Diff markdown contains literal backslash-n instead of real newlines"
+        )
+        assert md_text.startswith("```diff\n")
+        assert md_text.endswith("\n```")
+
     @pytest.mark.asyncio
     async def test_annotate_spec_application_failure(self):
         """Test _annotate handles spec application failures."""
