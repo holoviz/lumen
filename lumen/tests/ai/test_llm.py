@@ -126,7 +126,7 @@ async def test_azure_open_ai_get_model_kwargs():
 
     # Test other model inherits instance config
     expected_other = {
-        "model": "r_m", 
+        "model": "r_m",
         "azure_ad_token_provider": "r_aatp",
         "api_version": "av",
         "azure_endpoint": "ep",
@@ -136,24 +136,24 @@ async def test_azure_open_ai_get_model_kwargs():
 
 async def test_azure_open_ai_get_model_kwargs_individual_models():
     """Test model-specific config overrides instance defaults.
-    
+
     To support use case where models do not share api_version and endpoint.
     """
     model_kwargs = {
         "default": {
             "model": "d_m",
-            "azure_ad_token_provider": "d_aatp", 
+            "azure_ad_token_provider": "d_aatp",
             "api_version": "d_av",
             "azure_endpoint": "d_ep",
         },
         "other": {
             "model": "r_m",
             "azure_ad_token_provider": "r_aatp",
-            "api_version": "r_av", 
+            "api_version": "r_av",
             "azure_endpoint": "r_ep",
         },
     }
-    
+
     llm = AzureOpenAI(api_version="av", endpoint="ep", model_kwargs=model_kwargs)
 
     # Model-specific config should override instance defaults
