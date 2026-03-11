@@ -2325,6 +2325,9 @@ class ExplorerUI(UI):
 
     def _reset_error(self, plan: Plan, exploration: Exploration, replan: bool = False):
         plan.reset(plan._current)
+        exploration.conversation[-1].footer_objects = []
+        if not exploration.view:
+            return
         tabs = exploration.view[0]
         if replan:
             tabs[:] = [("Data Source", Markdown("Waiting on data...", margin=(5, 20)))]
@@ -2332,7 +2335,6 @@ class ExplorerUI(UI):
         elif len(tabs) > 1 and isinstance(tabs[-1], Markdown):
             tabs.pop(-1)
             tabs.active = len(tabs)-1
-        exploration.conversation[-1].footer_objects = []
 
     async def _execute_plan(self, plan: Plan, rerun: bool = False, replan: bool = False):
         prev = self._explorations.value
@@ -2418,7 +2420,8 @@ class ExplorerUI(UI):
         last_message = self.interface.objects[-1]
         footer_objects = last_message.footer_objects or []
         last_message.footer_objects = footer_objects + [rerun_button, replan_button]
-        exploration.parent.conversation = exploration.conversation
+        if exploration.parent:
+            exploration.parent.conversation = exploration.conversation
 
         error_type = plan.out_context.pop("__error_type__", Exception)
         error = plan.out_context.pop("__error__", "Unknown error")
@@ -2439,12 +2442,15 @@ class ExplorerUI(UI):
             response_model=ErrorDescription
         )
         explanation = f"❌ **Unable to complete your request**\n\n{response.explanation}"
-        tabs = exploration.view[0]
-        if exploration.initialized:
-            tabs.append(("Error", Markdown(explanation, margin=(5, 20))))
-            tabs.active = len(tabs)-1
+        if not exploration.view:
+            exploration.conversation[-1].stream(f"\n\n{explanation}")
         else:
-            tabs[0].object = explanation
+            tabs = exploration.view[0]
+            if exploration.initialized:
+                tabs.append(("Error", Markdown(explanation, margin=(5, 20))))
+                tabs.active = len(tabs)-1
+            else:
+                tabs[0].object = explanation
 
     @wrap_logfire(span_name="Chat Invoke")
     async def _chat_invoke(

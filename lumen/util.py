@@ -246,7 +246,7 @@ def merge_schemas(schema, old_schema):
         return dict(old_schema, enum=merged_enum)
     elif 'inclusiveMinimum' in schema and 'inclusiveMinimum' in old_schema:
         merged_min = min(schema['inclusiveMinimum'], old_schema['inclusiveMinimum'])
-        merged_max = min(schema['inclusiveMaximum'], old_schema['inclusiveMaximum'])
+        merged_max = max(schema['inclusiveMaximum'], old_schema['inclusiveMaximum'])
         return dict(old_schema, inclusiveMinimum=merged_min, inclusiveMaximum=merged_max)
 
 

@@ -319,21 +319,22 @@ class Pipeline(Viewer, Component):
             return
 
         self._update_widget.loading = True
+        try:
+            # Ensure all refs are up-to-date before we run the pipeline
+            for f in self.filters+self.transforms+self.sql_transforms:
+                f._sync_refs()
 
-        # Ensure all refs are up-to-date before we run the pipeline
-        for f in self.filters+self.transforms+self.sql_transforms:
-            f._sync_refs()
-
-        new_data = self._compute_data()
-        if pn_state._unblocked(pn_state.curdoc):
-            with unlocked():
+            new_data = self._compute_data()
+            if pn_state._unblocked(pn_state.curdoc):
+                with unlocked():
+                    self.data = new_data
+            else:
                 self.data = new_data
-        else:
-            self.data = new_data
-        if state.config and state.config.on_update:
-            pn.state.execute(partial(state.config.on_update, self))
-        self._stale = False
-        self._update_widget.loading = False
+            if state.config and state.config.on_update:
+                pn.state.execute(partial(state.config.on_update, self))
+            self._stale = False
+        finally:
+            self._update_widget.loading = False
 
     @classmethod
     def _validate_source(
@@ -449,7 +450,7 @@ class Pipeline(Viewer, Component):
             elif isinstance(pipeline, str) and pipeline in state.pipelines:
                 pipeline = state.pipelines[pipeline]
             else:
-                raise ValidationError('Pipeline {pipeline!r} could not be resolved.', spec)
+                raise ValidationError(f'Pipeline {pipeline!r} could not be resolved.', spec)
             params['pipeline'] = pipeline
             params['source'] = resolved_source = pipeline.source
             params['table'] = pipeline.table
