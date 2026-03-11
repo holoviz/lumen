@@ -29,7 +29,6 @@ pytestmark = pytest.mark.skipif(
 
 from lumen.sources.xarray_sql import XArraySQLSource
 
-
 # ---- Fixtures ----
 
 @pytest.fixture

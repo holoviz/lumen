@@ -25,12 +25,15 @@ import numpy as np
 import pandas as pd
 import param
 
-from .base import BaseSQLSource, Source, cached, cached_schema
+from .base import (
+    BaseSQLSource, cached, cached_schema,
+)
 
 logger = logging.getLogger(__name__)
 
 try:
     import xarray as xr
+
     from xarray_sql import XarrayContext
     XARRAY_AVAILABLE = True
 except ImportError:
@@ -228,7 +231,7 @@ class XArraySQLSource(BaseSQLSource):
         Return a SQL SELECT expression for the given table.
         """
         if isinstance(table, dict):
-            table = list(table.values())[0]
+            table = next(iter(table.values()))
         if isinstance(self.tables, dict):
             table = self.tables.get(table, table)
         table = self.normalize_table(table)
