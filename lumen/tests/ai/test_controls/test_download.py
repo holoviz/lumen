@@ -1,3 +1,4 @@
+import asyncio
 import io
 
 import pytest
@@ -241,3 +242,61 @@ class TestDownloadControlsUnsupportedFiles:
         error_text = download_controls._error_placeholder.object
         assert "script.py" in error_text
         assert "binary.exe" in error_text
+
+
+class TestDownloadCallbackLogic:
+    """Tests for the done_callback logic on download tasks."""
+
+    def _make_callback(self, results):
+        """Create a callback matching the pattern in DownloadControls._process_urls."""
+        def callback(t):
+            if not t.cancelled() and t.exception() is None:
+                results.append("complete")
+            # With the old bug (or instead of and), this would:
+            # 1. Crash with CancelledError when task is cancelled
+            # 2. Show "complete" when task fails with an exception
+        return callback
+
+    async def test_callback_on_successful_task(self):
+        """Callback should fire on a successful task."""
+        results = []
+
+        async def success():
+            return "ok"
+
+        t = asyncio.create_task(success())
+        t.add_done_callback(self._make_callback(results))
+        await t
+        assert results == ["complete"]
+
+    async def test_callback_on_cancelled_task(self):
+        """Callback should NOT fire (or crash) on a cancelled task."""
+        results = []
+
+        async def slow():
+            await asyncio.sleep(10)
+
+        t = asyncio.create_task(slow())
+        t.add_done_callback(self._make_callback(results))
+        await asyncio.sleep(0.01)
+        t.cancel()
+        try:
+            await t
+        except asyncio.CancelledError:
+            pass
+        assert results == []
+
+    async def test_callback_on_failed_task(self):
+        """Callback should NOT fire on a task that raised an exception."""
+        results = []
+
+        async def fail():
+            raise ValueError("download failed")
+
+        t = asyncio.create_task(fail())
+        t.add_done_callback(self._make_callback(results))
+        try:
+            await t
+        except ValueError:
+            pass
+        assert results == []

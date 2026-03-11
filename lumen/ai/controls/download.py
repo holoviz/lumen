@@ -285,7 +285,7 @@ class DownloadControls(BaseSourceControls):
             lambda t: self._message_placeholder.param.update(
                 object="Download complete." if not t.cancelled() else "Download cancelled.",
                 visible=True
-            ) if not t.cancelled() or t.exception() is None else None
+            ) if not t.cancelled() and t.exception() is None else None
         )
 
     async def _download_and_process_urls(self, urls):
