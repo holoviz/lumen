@@ -25,9 +25,7 @@ import numpy as np
 import pandas as pd
 import param
 
-from .base import (
-    BaseSQLSource, cached, cached_schema,
-)
+from .base import BaseSQLSource, cached, cached_schema
 
 logger = logging.getLogger(__name__)
 
