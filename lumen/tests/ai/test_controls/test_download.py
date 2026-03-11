@@ -244,59 +244,51 @@ class TestDownloadControlsUnsupportedFiles:
         assert "binary.exe" in error_text
 
 
-class TestDownloadCallbackLogic:
-    """Tests for the done_callback logic on download tasks."""
+class TestDownloadDoneCallback:
+    """Tests for DownloadControls._on_download_done callback behavior."""
 
-    def _make_callback(self, results):
-        """Create a callback matching the pattern in DownloadControls._process_urls."""
-        def callback(t):
-            if not t.cancelled() and t.exception() is None:
-                results.append("complete")
-            # With the old bug (or instead of and), this would:
-            # 1. Crash with CancelledError when task is cancelled
-            # 2. Show "complete" when task fails with an exception
-        return callback
+    @pytest.fixture
+    def _setup(self, download_controls):
+        """Run _on_download_done via add_done_callback on a real asyncio.Task."""
+        self.controls = download_controls
 
-    async def test_callback_on_successful_task(self):
-        """Callback should fire on a successful task."""
-        results = []
-
+    async def test_successful_task_shows_complete(self, _setup):
+        """On success, message should show 'Download complete.'"""
         async def success():
             return "ok"
 
-        t = asyncio.create_task(success())
-        t.add_done_callback(self._make_callback(results))
-        await t
-        assert results == ["complete"]
+        task = asyncio.create_task(success())
+        task.add_done_callback(self.controls._on_download_done)
+        await task
 
-    async def test_callback_on_cancelled_task(self):
-        """Callback should NOT fire (or crash) on a cancelled task."""
-        results = []
+        assert self.controls._message_placeholder.object == "Download complete."
+        assert self.controls._message_placeholder.visible is True
 
+    async def test_cancelled_task_shows_cancelled(self, _setup):
+        """On cancellation, message should show 'Download cancelled.' without crashing."""
         async def slow():
             await asyncio.sleep(10)
 
-        t = asyncio.create_task(slow())
-        t.add_done_callback(self._make_callback(results))
+        task = asyncio.create_task(slow())
+        task.add_done_callback(self.controls._on_download_done)
         await asyncio.sleep(0.01)
-        t.cancel()
-        try:
-            await t
-        except asyncio.CancelledError:
-            pass
-        assert results == []
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
-    async def test_callback_on_failed_task(self):
-        """Callback should NOT fire on a task that raised an exception."""
-        results = []
+        assert self.controls._message_placeholder.object == "Download cancelled."
+        assert self.controls._message_placeholder.visible is True
+
+    async def test_failed_task_does_not_show_complete(self, _setup):
+        """On exception, message should NOT be updated to 'Download complete.'"""
+        initial_message = self.controls._message_placeholder.object
 
         async def fail():
-            raise ValueError("download failed")
+            raise ValueError("network error")
 
-        t = asyncio.create_task(fail())
-        t.add_done_callback(self._make_callback(results))
-        try:
-            await t
-        except ValueError:
-            pass
-        assert results == []
+        task = asyncio.create_task(fail())
+        task.add_done_callback(self.controls._on_download_done)
+        with pytest.raises(ValueError):
+            await task
+
+        assert self.controls._message_placeholder.object == initial_message

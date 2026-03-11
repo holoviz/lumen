@@ -81,6 +81,21 @@ class DownloadControls(BaseSourceControls):
         # Clear the active task so Cancel button hides
         self._active_download_task = None
 
+    def _on_download_done(self, task):
+        """Handle download task completion, cancellation, or failure."""
+        if task.cancelled():
+            self._message_placeholder.param.update(
+                object="Download cancelled.",
+                visible=True
+            )
+        elif task.exception() is not None:
+            return
+        else:
+            self._message_placeholder.param.update(
+                object="Download complete.",
+                visible=True
+            )
+
     def _is_valid_url(self, url):
         """Basic URL validation"""
         try:
@@ -281,12 +296,7 @@ class DownloadControls(BaseSourceControls):
             self._active_download_task.cancel()
 
         self._active_download_task = asyncio.create_task(self._download_and_process_urls(valid_urls))
-        self._active_download_task.add_done_callback(
-            lambda t: self._message_placeholder.param.update(
-                object="Download complete." if not t.cancelled() else "Download cancelled.",
-                visible=True
-            ) if not t.cancelled() and t.exception() is None else None
-        )
+        self._active_download_task.add_done_callback(self._on_download_done)
 
     async def _download_and_process_urls(self, urls):
         """Download URLs and generate file cards for processing"""
