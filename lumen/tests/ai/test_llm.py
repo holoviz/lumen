@@ -17,7 +17,6 @@ except ModuleNotFoundError:
 
 from instructor.processing.multimodal import Image
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
