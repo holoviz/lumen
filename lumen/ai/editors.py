@@ -600,23 +600,11 @@ class SQLEditor(LumenEditor):
         data = self.component.data
         if fmt == 'sql':
             return StringIO(self.spec)
-        elif fmt == 'csv':
+        elif fmt in ('csv', 'xlsx'):
             sio = StringIO()
-            data.to_csv(sio, index=False)
+            data.to_csv(sio)
             sio.seek(0)
             return sio
-        elif fmt == 'xlsx':
-            try:
-                import openpyxl  # noqa: F401
-            except ImportError:
-                raise ImportError(
-                    "Excel export requires openpyxl. "
-                    "Install it with: pip install openpyxl"
-                )
-            bio = BytesIO()
-            data.to_excel(bio, index=False)
-            bio.seek(0)
-            return bio
         elif fmt == 'json':
             sio = StringIO()
             data.to_json(sio, orient='records', indent=2)
