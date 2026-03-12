@@ -543,3 +543,33 @@ def test_round_trip_with_default_values():
     # Verify param behavior is preserved
     with pytest.raises(ValueError):
         round_trip_settings.max_connections = 5  # Below minimum
+
+
+def test_param_range_conversion():
+    """
+    Test that param.Range parameters are correctly converted to Pydantic fields.
+
+    Regression test for https://github.com/holoviz/lumen/issues/1730
+    """
+
+    class PlotConfig(param.Parameterized):
+        xlim = param.Range(default=None, doc="X-axis limits")
+        ylim = param.Range(default=(0.0, 10.0), doc="Y-axis limits")
+
+    created_models = param_to_pydantic(PlotConfig)
+    PydanticPlotConfig = created_models["PlotConfig"]
+
+    # Check schema has correct types
+    schema = PydanticPlotConfig.model_json_schema()
+    assert "xlim" in schema["properties"]
+    assert "ylim" in schema["properties"]
+
+    # Test with default values
+    instance = PydanticPlotConfig()
+    assert instance.xlim is None
+    assert instance.ylim == (0.0, 10.0)
+
+    # Test with custom values
+    instance = PydanticPlotConfig(xlim=(1.0, 5.0), ylim=(-1.0, 1.0))
+    assert instance.xlim == (1.0, 5.0)
+    assert instance.ylim == (-1.0, 1.0)

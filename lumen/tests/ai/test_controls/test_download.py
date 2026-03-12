@@ -1,3 +1,4 @@
+import asyncio
 import io
 
 import pytest
@@ -241,3 +242,79 @@ class TestDownloadControlsUnsupportedFiles:
         error_text = download_controls._error_placeholder.object
         assert "script.py" in error_text
         assert "binary.exe" in error_text
+
+
+class TestDownloadDoneCallback:
+    """Tests for DownloadControls._on_download_done callback behavior."""
+
+    @pytest.fixture
+    def _setup(self, download_controls):
+        """Set up controls with an active download task reference."""
+        self.controls = download_controls
+
+    async def test_successful_task_preserves_coroutine_message(self, _setup):
+        """On success, _on_download_done should NOT overwrite the message.
+
+        The coroutine (_download_and_process_urls) sets a more informative
+        message with a call-to-action; the callback must not clobber it.
+        """
+        self.controls._message_placeholder.object = "Successfully downloaded 1 file(s). Click 'Confirm file(s)' to process."
+
+        async def success():
+            return "ok"
+
+        task = asyncio.create_task(success())
+        self.controls._active_download_task = task
+        task.add_done_callback(self.controls._on_download_done)
+        await task
+
+        assert self.controls._message_placeholder.object == "Successfully downloaded 1 file(s). Click 'Confirm file(s)' to process."
+        assert self.controls._active_download_task is None
+
+    async def test_cancelled_task_shows_cancelled(self, _setup):
+        """On cancellation, message should show 'Download cancelled.' without crashing."""
+        async def slow():
+            await asyncio.sleep(10)
+
+        task = asyncio.create_task(slow())
+        self.controls._active_download_task = task
+        task.add_done_callback(self.controls._on_download_done)
+        await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert self.controls._message_placeholder.object == "Download cancelled."
+        assert self.controls._message_placeholder.visible is True
+        assert self.controls._active_download_task is None
+
+    async def test_failed_task_shows_error(self, _setup):
+        """On exception, message should show the error, not 'Download complete.'"""
+        async def fail():
+            raise ValueError("network error")
+
+        task = asyncio.create_task(fail())
+        self.controls._active_download_task = task
+        task.add_done_callback(self.controls._on_download_done)
+        with pytest.raises(ValueError):
+            await task
+
+        assert "network error" in self.controls._message_placeholder.object
+        assert self.controls._active_download_task is None
+
+    async def test_stale_task_is_ignored(self, _setup):
+        """A done callback from a stale (replaced) task should be a no-op."""
+        self.controls._message_placeholder.object = "Preparing..."
+
+        async def success():
+            return "ok"
+
+        old_task = asyncio.create_task(success())
+        old_task.add_done_callback(self.controls._on_download_done)
+        # Simulate a new download replacing the old one
+        self.controls._active_download_task = asyncio.create_task(success())
+        await old_task
+
+        # Stale callback should not touch anything
+        assert self.controls._message_placeholder.object == "Preparing..."
+        assert self.controls._active_download_task is not None
