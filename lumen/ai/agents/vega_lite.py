@@ -300,6 +300,8 @@ class VegaLiteAgent(BaseCodeAgent):
         self, messages: list[Message], out: LumenEditor | None, content: str
     ) -> list[Message]:
         """Add plot image to messages for LLM vision analysis."""
+        if not self.llm._supports_vision:
+            return messages
         if out is None or not isinstance(out, VegaLiteEditor):
             return messages
 
