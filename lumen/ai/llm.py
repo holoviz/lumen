@@ -5,7 +5,6 @@ import base64
 import json
 import os
 
-from abc import abstractmethod
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
@@ -16,15 +15,18 @@ from typing import (
 import instructor
 import panel as pn
 import param
+import requests
 
 from instructor import Mode, patch
 from instructor.dsl.partial import Partial
 from instructor.processing.multimodal import Image
+from openai import OpenAI as OpenAIClient
 from pydantic import BaseModel
 
 from .interceptor import Interceptor
 from .services import (
-    AzureOpenAIMixin, BedrockMixin, LlamaCppMixin, OpenAIMixin,
+    PROVIDER_ENV_VARS, AnthropicMixin, AzureMistralAIMixin, AzureOpenAIMixin,
+    BedrockMixin, GenAIMixin, LlamaCppMixin, MistralAIMixin, OpenAIMixin,
 )
 from .utils import format_exception, log_debug, truncate_string
 
@@ -54,7 +56,7 @@ LLM_PROVIDERS = {
     'openai': 'OpenAI',
     'google': 'Google',
     'anthropic': 'Anthropic',
-    'anthropic_bedrock': 'AnthropicBedrock',
+    'anthropic-bedrock': 'AnthropicBedrock',
     'bedrock': 'Bedrock',
     'mistral': 'MistralAI',
     'azure-openai': 'AzureOpenAI',
@@ -64,20 +66,6 @@ LLM_PROVIDERS = {
     'ollama': 'Ollama',
     'llama-cpp': 'LlamaCpp',
     'litellm': 'LiteLLM',
-}
-
-# Environment variable mapping for providers that require API keys
-# Providers not in this list (like ollama, llama-cpp) may work without env vars
-PROVIDER_ENV_VARS = {
-    "openai": "OPENAI_API_KEY",
-    "anthropic": "ANTHROPIC_API_KEY",
-    "bedrock": "AWS_ACCESS_KEY_ID",  # AWS credentials
-    "anthropic_bedrock": "AWS_ACCESS_KEY_ID",  # AWS credentials
-    "mistral": "MISTRAL_API_KEY",
-    "azure-mistral": "AZUREAI_ENDPOINT_KEY",
-    "azure-openai": "AZUREAI_ENDPOINT_KEY",
-    "google": "GEMINI_API_KEY",
-    "ai-catalyst": "AI_CATALYST_API_KEY",
 }
 
 
@@ -142,6 +130,16 @@ class Llm(param.Parameterized):
         Suppresses streaming responses if enabled since
         logfire does not track token usage on stream.""")
 
+    display_name = param.String(default="", constant=True, doc="Display name for UI")
+
+    select_models = param.List(default=[], constant=True, doc="Available models for selection dropdowns")
+
+    temperature = param.Number(default=0.7, bounds=(0, None), constant=True, doc="""
+        The temperature to use for sampling.""")
+
+    timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
+        The timeout in seconds for API calls.""")
+
     _ready = param.Boolean(default=False, doc="""
         Whether the LLM has been initialized and is ready to use.""")
 
@@ -158,6 +156,20 @@ class Llm(param.Parameterized):
     _instructor_wrapper: str = "openai"
 
     __abstract = True
+
+    def models(self) -> set[str]:
+        """
+        Return the set of available model identifiers from this provider.
+
+        By default returns an empty set. Subclasses should override to
+        query their provider's API for available models.
+
+        Returns
+        -------
+        set[str]
+            Set of available model identifiers.
+        """
+        return set()
 
     def __init__(self, **params):
         if "mode" in params:
@@ -210,7 +222,6 @@ class Llm(param.Parameterized):
     def _client_kwargs(self) -> dict[str, Any]:
         return {}
 
-    @abstractmethod
     def _create_base_client(self, **kwargs) -> Any:
         """Create the underlying SDK client (e.g., AsyncOpenAI, AsyncAnthropic)."""
         raise NotImplementedError(f"{self.__class__.__name__} must implement _create_base_client()")
@@ -499,6 +510,7 @@ class Llm(param.Parameterized):
             entry = accum[index]
             tool_calls.append({
                 "id": entry.get("id"),
+                "type": "function",
                 "function": {
                     "name": entry.get("name"),
                     "arguments": entry.get("arguments", ""),
@@ -507,13 +519,48 @@ class Llm(param.Parameterized):
         return tool_calls
 
     @classmethod
+    def _normalize_tool_call_for_message(cls, call: Any) -> dict[str, Any]:
+        if isinstance(call, dict):
+            call_dict = dict(call)
+            function = call_dict.get("function")
+            if function is None:
+                function = {
+                    "name": call_dict.get("name"),
+                    "arguments": call_dict.get("arguments", ""),
+                }
+            elif not isinstance(function, dict):
+                function = {
+                    "name": getattr(function, "name", None),
+                    "arguments": getattr(function, "arguments", ""),
+                }
+            else:
+                function = dict(function)
+            call_dict["function"] = function
+            call_dict["type"] = call_dict.get("type") or "function"
+            return call_dict
+
+        function = getattr(call, "function", None)
+        return {
+            "id": getattr(call, "id", None),
+            "type": getattr(call, "type", None) or "function",
+            "function": {
+                "name": getattr(function, "name", None) if function else getattr(call, "name", None),
+                "arguments": (
+                    getattr(function, "arguments", "")
+                    if function
+                    else getattr(call, "arguments", "")
+                ),
+            },
+        }
+
+    @classmethod
     def _tool_calls_message(cls, tool_calls: list[dict[str, Any]]) -> Message:
         return {
             "role": "assistant",
             "content": "",
             "name": None,
             "tool_call_id": None,
-            "tool_calls": tool_calls,
+            "tool_calls": [cls._normalize_tool_call_for_message(call) for call in tool_calls],
         }
 
     @classmethod
@@ -761,7 +808,7 @@ class LlamaCpp(Llm, LlamaCppMixin):
 
     chat_format = param.String(constant=True)
 
-    display_name = param.String(default="Llama.cpp", constant=True, doc="Display name for UI")
+    display_name = param.String(default="Llama.cpp", constant=True)
 
     mode = param.Selector(default=Mode.JSON_SCHEMA, objects=BASE_MODES)
 
@@ -779,7 +826,7 @@ class LlamaCpp(Llm, LlamaCppMixin):
         "unsloth/Qwen2.5-Coder-32B-Instruct-GGUF",
         "meta-llama/Llama-3.3-70B-Instruct-GGUF",
         "nvidia/Nemotron-3-Nano-30B-GGUF"
-    ], constant=True, doc="Available models for selection dropdowns")
+    ], constant=True)
 
     temperature = param.Number(default=0.4, bounds=(0, None), constant=True)
 
@@ -809,8 +856,7 @@ class LlamaCpp(Llm, LlamaCppMixin):
         return {"temperature": self.temperature}
 
     def _create_base_client(self, **kwargs) -> Any:
-        from llama_cpp import Llama as LlamaCppModel
-        return LlamaCppModel(**kwargs)
+        return self._instantiate_client(**kwargs)
 
     def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
         raw_client = base_client.create_chat_completion_openai_v1
@@ -859,7 +905,7 @@ class OpenAI(Llm, OpenAIMixin):
     An LLM implementation using the OpenAI cloud.
     """
 
-    display_name = param.String(default="OpenAI", constant=True, doc="Display name for UI")
+    display_name = param.String(default="OpenAI", constant=True)
 
     mode = param.Selector(default=Mode.TOOLS)
 
@@ -875,15 +921,16 @@ class OpenAI(Llm, OpenAIMixin):
         "gpt-4.1",
         "gpt-4.1-mini",
         "gpt-4.1-nano"
-    ], constant=True, doc="""Available models for selection dropdowns.
-        Warning: Reasoning models (gpt-5, o4-mini) are much slower and not suitable for dialog interfaces.""")
+    ], constant=True, doc="""Warning: Reasoning models (gpt-5, o4-mini) are much slower and not suitable for dialog interfaces.""")
 
     temperature = param.Number(default=0.25, bounds=(0, None), constant=True)
 
-    timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
-        The timeout in seconds for OpenAI API calls.""")
-
     _supports_logfire = True
+
+    def models(self) -> set[str]:
+        """Return the set of available model identifiers from OpenAI."""
+        client = OpenAIClient(api_key=self.api_key, timeout=5)
+        return {m.id for m in client.models.list().data}
 
     @property
     def _client_kwargs(self):
@@ -926,7 +973,7 @@ class AzureOpenAI(Llm, AzureOpenAIMixin):
     plus Azure-specific configuration.
     """
 
-    display_name = param.String(default="Azure OpenAI", constant=True, doc="Display name for UI")
+    display_name = param.String(default="Azure OpenAI", constant=True)
 
     mode = param.Selector(default=Mode.TOOLS)
 
@@ -940,12 +987,9 @@ class AzureOpenAI(Llm, AzureOpenAIMixin):
         "gpt-4-turbo",
         "gpt-4o",
         "gpt-4o-mini"
-    ], constant=True, doc="Available models for selection dropdowns")
+    ], constant=True)
 
     temperature = param.Number(default=1, bounds=(0, None), constant=True)
-
-    timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
-        The timeout in seconds for Azure OpenAI API calls.""")
 
     @property
     def _client_kwargs(self):
@@ -976,14 +1020,12 @@ class AzureOpenAI(Llm, AzureOpenAIMixin):
         return partial(client_callable.func, *client_callable.args, timeout=self.timeout, **client_callable.keywords)
 
 
-class MistralAI(Llm):
+class MistralAI(Llm, MistralAIMixin):
     """
     A LLM implementation that calls Mistral AI.
     """
 
-    api_key = param.String(default=os.getenv("MISTRAL_API_KEY"), doc="The Mistral AI API key.")
-
-    display_name = param.String(default="Mistral AI", constant=True, doc="Display name for UI")
+    display_name = param.String(default="Mistral AI", constant=True)
 
     mode = param.Selector(default=Mode.MISTRAL_TOOLS, objects=[Mode.JSON_SCHEMA, Mode.MISTRAL_TOOLS])
 
@@ -1002,23 +1044,24 @@ class MistralAI(Llm):
         "ministral-8b-latest",
         "ministral-3b-latest",
         "devstral-small-latest"
-    ], constant=True, doc="Available models for selection dropdowns")
+    ], constant=True)
 
     temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
 
-    timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
-        The timeout in seconds for Mistral AI API calls.""")
-
     _supports_model_stream = False  # instructor doesn't work with Mistral's streaming
     _instructor_wrapper = "mistral"
+
+    def models(self) -> set[str]:
+        """Return the set of available model identifiers from Mistral."""
+        from mistralai import Mistral
+        return {m.id for m in Mistral(api_key=self.api_key).models.list().data}
 
     @property
     def _client_kwargs(self):
         return {"temperature": self.temperature}
 
     def _create_base_client(self, **kwargs) -> Any:
-        from mistralai import Mistral
-        return Mistral(api_key=self.api_key, **kwargs)
+        return self._instantiate_client(**kwargs)
 
     def _get_completion_method(self, stream: bool = False) -> Callable:
         return self._base_client.chat.stream_async if stream else self._base_client.chat.complete_async
@@ -1051,16 +1094,12 @@ class MistralAI(Llm):
         return ""
 
 
-class AzureMistralAI(MistralAI):
+class AzureMistralAI(MistralAI, AzureMistralAIMixin):
     """
     A LLM implementation that calls Mistral AI models on Azure.
     """
 
-    api_key = param.String(default=os.getenv("AZUREAI_ENDPOINT_KEY"), doc="The Azure API key")
-
-    display_name = param.String(default="Azure Mistral AI", constant=True, doc="Display name for UI")
-
-    endpoint = param.String(default=os.getenv('AZUREAI_ENDPOINT_URL'), doc="The Azure API endpoint to invoke.")
+    display_name = param.String(default="Azure Mistral AI", constant=True)
 
     model_kwargs = param.Dict(default={
         "default": {"model": "azureai"},
@@ -1072,22 +1111,16 @@ class AzureMistralAI(MistralAI):
         "mistral-small"
     ], constant=True, doc="Available models for selection dropdowns")
 
-    timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
-        The timeout in seconds for Mistral AI API calls.""")
-
     def _create_base_client(self, **kwargs) -> Any:
-        from mistralai_azure import MistralAzure
-        return MistralAzure(api_key=self.api_key, azure_endpoint=self.endpoint, **kwargs)
+        return self._instantiate_client(**kwargs)
 
 
-class Anthropic(Llm):
+class Anthropic(Llm, AnthropicMixin):
     """
     A LLM implementation that calls Anthropic models such as Claude.
     """
 
-    api_key = param.String(default=os.getenv("ANTHROPIC_API_KEY"), doc="The Anthropic API key.")
-
-    display_name = param.String(default="Anthropic", constant=True, doc="Display name for UI")
+    display_name = param.String(default="Anthropic", constant=True)
 
     mode = param.Selector(default=Mode.ANTHROPIC_TOOLS, objects=[Mode.ANTHROPIC_JSON, Mode.ANTHROPIC_TOOLS])
 
@@ -1100,24 +1133,27 @@ class Anthropic(Llm):
         "claude-sonnet-4-5",
         "claude-haiku-4-5",
         "claude-opus-4-5"
-    ], constant=True, doc="Available models for selection dropdowns")
+    ], constant=True)
 
     temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
-
-    timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
-        The timeout in seconds for Anthropic API calls.""")
 
     _supports_logfire = True
     _supports_model_stream = True
     _instructor_wrapper = "anthropic"
+
+    def models(self) -> set[str]:
+        """Return the set of available model identifiers from Anthropic."""
+        from anthropic import Anthropic as AnthropicClient
+        response = AnthropicClient(api_key=self.api_key, timeout=5).models.list()
+        # also handle model aliases (claude-sonnet-4-5-20250929) -> (claude-sonnet-4-5)
+        return {m.id for m in response.data} | {m.id.rsplit("-", maxsplit=1)[0] for m in response.data}
 
     @property
     def _client_kwargs(self):
         return {"temperature": self.temperature, "max_tokens": 1024}
 
     def _create_base_client(self, **kwargs) -> Any:
-        from anthropic import AsyncAnthropic
-        client = AsyncAnthropic(api_key=self.api_key, **kwargs)
+        client = self._instantiate_client(**kwargs)
         if self.logfire_tags:
             self._logfire.instrument_anthropic(client)
         return client
@@ -1350,7 +1386,7 @@ class Anthropic(Llm):
 
 class AnthropicBedrock(BedrockMixin, Anthropic):  # Keep it before Anthropic so API key is correct
 
-    display_name = param.String(default="Anthropic on AWS Bedrock", constant=True, doc="Display name for UI")
+    display_name = param.String(default="Anthropic on AWS Bedrock", constant=True)
 
     model_kwargs = param.Dict(default={
         "default": {"model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"},
@@ -1379,7 +1415,7 @@ class Bedrock(Llm, BedrockMixin):
     and AWS SSO.
     """
 
-    display_name = param.String(default="AWS Bedrock", constant=True, doc="Display name for UI")
+    display_name = param.String(default="AWS Bedrock", constant=True)
 
     mode = param.Selector(default=Mode.BEDROCK_TOOLS, objects=[Mode.BEDROCK_JSON, Mode.BEDROCK_TOOLS])
 
@@ -1405,9 +1441,6 @@ class Bedrock(Llm, BedrockMixin):
     ], constant=True, doc="Available Claude models on Bedrock")
 
     temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
-
-    timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
-        The timeout in seconds for Bedrock API calls.""")
 
     _instructor_wrapper = "bedrock"
     _supports_stream = True
@@ -1538,14 +1571,12 @@ class Bedrock(Llm, BedrockMixin):
         return partial(self._bedrock_invoke, model=model)
 
 
-class Google(Llm):
+class Google(Llm, GenAIMixin):
     """
     A LLM implementation that calls Google's Gemini models.
     """
 
-    api_key = param.String(default=os.getenv("GEMINI_API_KEY"), doc="The Google API key.")
-
-    display_name = param.String(default="Google AI", constant=True, doc="Display name for UI")
+    display_name = param.String(default="Google AI", constant=True)
 
     mode = param.Selector(default=Mode.GENAI_TOOLS, objects=[Mode.GENAI_TOOLS, Mode.GENAI_STRUCTURED_OUTPUTS])
 
@@ -1563,26 +1594,32 @@ class Google(Llm):
         "gemini-2.0-flash-lite",
         "gemini-1.5-flash",
         "gemini-1.5-pro"
-    ], constant=True, doc="Available models for selection dropdowns")
+    ], constant=True)
 
     temperature = param.Number(default=1, bounds=(0, 1), constant=True)
-
-    timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
-        The timeout in seconds for Google AI API calls.""")
 
     _supports_logfire = True
     _supports_model_stream = True
     _instructor_wrapper = "genai"
+
+    def models(self) -> set[str]:
+        """Return the set of available model identifiers from Google AI."""
+        from google import genai
+        available = set()
+        for m in genai.Client(api_key=self.api_key).models.list():
+            available.add(m.name)
+            if m.name.startswith("models/"):
+                available.add(m.name[7:])  # Strip "models/" prefix
+        return available
 
     @property
     def _client_kwargs(self):
         return {}
 
     def _create_base_client(self, **kwargs) -> Any:
-        from google import genai
         if self.logfire_tags:
             self._logfire.instrument_google_genai()
-        return genai.Client(api_key=self.api_key)
+        return self._instantiate_client()
 
     def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
         return instructor.from_genai(base_client, mode=mode, use_async=True)
@@ -1594,7 +1631,6 @@ class Google(Llm):
             return chunk.text or ""
         if hasattr(chunk, 'content') and chunk.content:
             return chunk.content
-        # Handle full response from generate_content (non-streaming fallback)
         if hasattr(chunk, 'candidates') and chunk.candidates:
             candidate = chunk.candidates[0]
             if hasattr(candidate, 'content') and candidate.content:
@@ -1829,11 +1865,15 @@ class AINavigator(OpenAI):
     A LLM implementation that calls the [Anaconda AI Navigator](https://www.anaconda.com/products/ai-navigator) API.
     """
 
-    display_name = param.String(default="AI Navigator", constant=True, doc="Display name for UI")
+    display_name = param.String(default="AI Navigator", constant=True)
 
-    endpoint = param.String(
-        default=os.getenv("AINAVIGATOR_BASE_URL", "http://localhost:8080/v1"), doc="""
+    endpoint = param.String(default=None, doc="""
             The API endpoint; should include the full address, including the port.""")
+
+    def __init__(self, **params):
+        if "endpoint" not in params:
+            params["endpoint"] = os.environ.get("AINAVIGATOR_BASE_URL", "http://localhost:8080/v1")
+        super().__init__(**params)
 
     mode = param.Selector(default=Mode.JSON_SCHEMA)
 
@@ -1849,15 +1889,21 @@ class AICatalyst(OpenAI):
     A LLM implementation that calls the [Anaconda AI Catalyst](https://www.anaconda.com/platform/ai-catalyst) API.
     """
 
-    api_key = param.String(default=os.getenv("AI_CATALYST_API_KEY"), doc="The AI Catalyst API key.")
+    api_key = param.String(default=None, doc="The AI Catalyst API key.")
 
-    display_name = param.String(default="AI Catalyst", constant=True, doc="Display name for UI")
+    display_name = param.String(default="AI Catalyst", constant=True)
 
-    endpoint = param.String(
-        default=os.getenv("AI_CATALYST_BASE_URL"), doc="""
+    endpoint = param.String(default=None, doc="""
             The API endpoint; should include the full address, including the port.""")
 
     mode = param.Selector(default=Mode.JSON_SCHEMA)
+
+    def __init__(self, **params):
+        if "api_key" not in params:
+            params["api_key"] = os.environ.get("AI_CATALYST_API_KEY")
+        if "endpoint" not in params:
+            params["endpoint"] = os.environ.get("AI_CATALYST_BASE_URL")
+        super().__init__(**params)
 
     model_kwargs = param.Dict(default={
         "default": {"model": "ai_catalyst"},
@@ -1873,7 +1919,7 @@ class Ollama(OpenAI):
 
     api_key = param.String(default="ollama", doc="The Ollama API key; required but unused.")
 
-    display_name = param.String(default="Ollama", constant=True, doc="Display name for UI")
+    display_name = param.String(default="Ollama", constant=True)
 
     endpoint = param.String(default="http://localhost:11434/v1", doc="The Ollama API endpoint.")
 
@@ -1888,9 +1934,17 @@ class Ollama(OpenAI):
         "qwen3-coder:32b",
         "nemotron-3-nano:30b",
         "mistral-small3.2:24b",
-    ], constant=True, doc="Available models for selection dropdowns")
+    ], constant=True)
 
     temperature = param.Number(default=0.25, bounds=(0, None), constant=True)
+
+    def models(self, endpoint: str | None = None) -> set[str]:
+        """Return the set of available model identifiers from Ollama."""
+        base_url = (endpoint or self.endpoint).rstrip('/').removesuffix('/v1')
+        tags_response = requests.get(f"{base_url}/api/tags", timeout=5)
+        if tags_response.status_code != 200:
+            return set()
+        return {m.get("name", "") for m in tags_response.json().get("models", [])}
 
 
 class MessageModel(BaseModel):
@@ -1916,7 +1970,7 @@ class Response(BaseModel):
 class WebLLM(Llm):
     """WebLLM implementation using panel_web_llm. Uses patch(create=...) like LlamaCpp."""
 
-    display_name = param.String(default="WebLLM", constant=True, doc="Display name for UI")
+    display_name = param.String(default="WebLLM", constant=True)
 
     mode = param.Parameter(default=Mode.JSON_SCHEMA)
 
@@ -1926,7 +1980,7 @@ class WebLLM(Llm):
         "Llama-3.2-3B-Instruct-q4f16_1-MLC",
         "Phi-3.5-mini-instruct-q4f16_1-MLC",
         "Qwen2.5-7B-Instruct-q4f16_1-MLC"
-    ], constant=True, doc="Available models for selection dropdowns")
+    ], constant=True)
 
     temperature = param.Number(default=0.4, bounds=(0, None))
 
@@ -2015,7 +2069,7 @@ class LiteLLM(Llm):
     Hugging Face, Azure, Vertex AI, and more.
     """
 
-    display_name = param.String(default="LiteLLM", constant=True, doc="Display name for UI")
+    display_name = param.String(default="LiteLLM", constant=True)
 
     enable_caching = param.Boolean(default=False, doc="""
         Enable LiteLLM's built-in caching for repeated queries.""")
@@ -2059,12 +2113,9 @@ class LiteLLM(Llm):
         "mistral/mistral-medium-latest",
         "mistral/mistral-small-latest",
         "mistral/codestral-latest"
-    ], constant=True, doc="Available models for selection dropdowns")
+    ], constant=True)
 
     temperature = param.Number(default=0.7, bounds=(0, 2), constant=True)
-
-    timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
-        The timeout in seconds for LiteLLM API calls.""")
 
     _supports_logfire = True
     _supports_stream = True

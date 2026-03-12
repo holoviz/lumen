@@ -919,7 +919,7 @@ class project_lnglat(Transform):
     """
 
     longitude = param.String(default='longitude', doc="Longitude column")
-    latitude = param.String(default='longitude', doc="Latitude column")
+    latitude = param.String(default='latitude', doc="Latitude column")
 
     transform_type: ClassVar[str] = 'project_lnglat'
 

@@ -118,11 +118,11 @@ class RetryControls(RevisionControls):
                     self.instruction, messages, self.task.out_context, self.view
                 )
         except Exception as e:
-            self._report_status(f"```\\n{e}\\n```", title="❌ Failed to generate revisions")
+            self._report_status(f"```\n{e}\n```", title="❌ Failed to generate revisions")
             raise
 
         diff = generate_diff(old_spec, new_spec, filename=self.view.language or "spec")
-        diff_md = f'```diff\\n{diff}\\n```'
+        diff_md = f'```diff\n{diff}\n```'
         try:
             self.view.spec = new_spec
         except Exception:
@@ -156,11 +156,11 @@ class AnnotationControls(RevisionControls):
                     self.instruction, list(self.task.history), self.task.out_context, {"spec": load_yaml(self.view.spec)}
                 )
         except Exception as e:
-            self._report_status(f"```\\n{e}\\n```", title="❌ Failed to generate annotations")
+            self._report_status(f"```\n{e}\n```", title="❌ Failed to generate annotations")
             raise
 
         diff = generate_diff(old_spec, new_spec, filename=self.view.language or "spec")
-        diff_md = f'```diff\\n{diff}\\n```'
+        diff_md = f'```diff\n{diff}\n```'
         try:
             self.view.spec = new_spec
         except Exception:

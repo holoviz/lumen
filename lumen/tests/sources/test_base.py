@@ -1,6 +1,8 @@
 import asyncio
 import datetime as dt
 import os
+import threading
+import weakref
 
 from pathlib import Path
 
@@ -9,7 +11,7 @@ import pytest
 
 from hvplot.tests.util import makeMixedDataFrame
 
-from lumen.sources.base import Source
+from lumen.sources.base import Source, cached
 from lumen.state import state
 from lumen.transforms.sql import SQLLimit
 
@@ -190,6 +192,41 @@ def test_extension_of_comlicated_url(source):
     assert source._named_files["test"][1] is None
 
 
+def test_cached_reuses_per_table_lock(source):
+    """Test that the cached decorator reuses the same per-table lock.
+
+    Regression test: the per-table lock lookup in cached() previously
+    checked `if table in locks` (the WeakKeyDictionary keyed by Source
+    instances) instead of `if table in locks[self]` (the per-source dict).
+    Since a string key can never exist in a WeakKeyDictionary, this caused
+    a new RLock to be created on every call, defeating per-table locking.
+    """
+    locks = weakref.WeakKeyDictionary()
+
+    def mock_get(self, table, **query):
+        return pd.DataFrame({'A': [1]})
+
+    wrapped = cached(mock_get, locks=locks)
+
+    # First call — creates the per-source dict and per-table lock
+    source.clear_cache()
+    wrapped(source, 'test')
+
+    assert source in locks
+    assert 'test' in locks[source]
+    lock_first = locks[source]['test']
+    assert isinstance(lock_first, type(threading.RLock()))
+
+    # Second call — should reuse the same lock, not create a new one
+    source.clear_cache()
+    wrapped(source, 'test')
+
+    lock_second = locks[source]['test']
+    assert lock_first is lock_second, (
+        "Per-table lock was not reused; a new lock was created on each call"
+    )
+
+
 # Async tests for base source methods
 @pytest.mark.asyncio
 async def test_source_get_async_default_implementation(source):
@@ -331,3 +368,29 @@ async def test_base_sql_source_get_async():
     result_async_filtered = await mock_source.get_async('test_table', category='A')
     # The base implementation should build and execute a filtered query
     assert len(result_async_filtered) <= len(expected)  # Should be filtered
+
+
+def test_set_schema_cache_respects_cache_schema_flag(make_filesource):
+    """Test that _set_schema_cache checks cache_schema, not cache_metadata.
+
+    Regression test: _set_schema_cache previously checked self.cache_metadata
+    instead of self.cache_schema, so setting cache_schema=False had no effect
+    and setting cache_schema=True with cache_metadata=False would skip caching.
+    """
+    root = os.path.dirname(__file__)
+
+    schema = {'test': {'A': {'type': 'integer'}}}
+
+    # cache_schema=False should NOT cache schema
+    src = make_filesource(root, cache_schema=False, cache_metadata=True)
+    src._set_schema_cache(schema)
+    assert src._schema_cache == {}, (
+        "_set_schema_cache should not cache when cache_schema=False"
+    )
+
+    # cache_schema=True should cache schema
+    src2 = make_filesource(root, cache_schema=True, cache_metadata=False)
+    src2._set_schema_cache(schema)
+    assert src2._schema_cache == schema, (
+        "_set_schema_cache should cache when cache_schema=True"
+    )

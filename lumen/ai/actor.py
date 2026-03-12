@@ -27,7 +27,7 @@ class NullStep:
         self.status = None
 
     def stream(self, text, **kwargs):
-        log_debug(f"[{text}")
+        log_debug(f"[NullStep] {text}")
 
 
 class LLMUser(param.Parameterized):
@@ -50,10 +50,42 @@ class LLMUser(param.Parameterized):
         The layout progress updates will be streamed to.""")
 
     template_overrides = param.Dict(default={}, doc="""
-        Overrides the template's blocks (instructions, context, tools, examples).
-        Is a nested dictionary with the prompt name (e.g. main) as the key
-        and the block names as the inner keys with the new content as the
-        values.""")
+        Overrides specific blocks inside a prompt template without replacing
+        the entire template. Useful for injecting domain knowledge, adding
+        rules, or changing agent behaviour for specific tasks.
+
+        Structure: ``{prompt_name: {block_name: new_content}}``.
+
+        - **prompt_name**: The prompt to override, e.g. ``"main"``.
+        - **block_name**: The Jinja2 block inside that template to replace.
+          Common blocks (defined in ``Actor/main.jinja2``):
+          ``global``, ``datetime``, ``instructions``, ``examples``,
+          ``tools``, ``context``, ``errors``, ``footer``.
+        - **new_content**: The replacement string. Use ``{{ super() }}`` to
+          keep the original block content and append after it.
+
+        Can be set at the class level (subclassing) or on an instance.
+
+        **Example — subclassing**::
+
+            INSTRUCTION_OVERRIDE = \"\"\"
+            {{ super() }}
+
+            <appended prompt>
+            \"\"\"
+
+            class UXSQLAgent(SQLAgent):
+                template_overrides = {
+                    "main": {"instructions": INSTRUCTION_OVERRIDE}
+                }
+
+        **Example — instance level**::
+
+            agent = SQLAgent(template_overrides={
+                "main": {"instructions": "{{ super() }}\\nBe concise."}
+            })
+        """)
+
 
     def __init__(self, **params):
         super().__init__(**params)
