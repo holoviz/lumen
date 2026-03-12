@@ -592,17 +592,41 @@ class SQLEditor(LumenEditor):
 
     language = "sql"
 
-    export_formats = ("sql", "csv", "xlsx")
+    export_formats = ("sql", "csv", "xlsx", "json", "markdown")
     _label = "Table"
 
-    def export(self, fmt: str) -> str | bytes:
+    def export(self, fmt: str) -> StringIO | BytesIO:
         super().export(fmt)
+        data = self.component.data
         if fmt == 'sql':
             return StringIO(self.spec)
-        sio = StringIO()
-        self.component.data.to_csv(sio)
-        sio.seek(0)
-        return sio
+        elif fmt == 'csv':
+            sio = StringIO()
+            data.to_csv(sio, index=False)
+            sio.seek(0)
+            return sio
+        elif fmt == 'xlsx':
+            try:
+                import openpyxl  # noqa: F401
+            except ImportError:
+                raise ImportError(
+                    "Excel export requires openpyxl. "
+                    "Install it with: pip install openpyxl"
+                )
+            bio = BytesIO()
+            data.to_excel(bio, index=False)
+            bio.seek(0)
+            return bio
+        elif fmt == 'json':
+            sio = StringIO()
+            data.to_json(sio, orient='records', indent=2)
+            sio.seek(0)
+            return sio
+        elif fmt == 'markdown':
+            sio = StringIO()
+            sio.write(data.to_markdown(index=False))
+            sio.seek(0)
+            return sio
 
     def render_explorer(self):
         return GraphicWalker(

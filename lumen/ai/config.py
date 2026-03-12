@@ -21,29 +21,31 @@ ChatMessage.default_avatars.update({
 })
 
 FORMAT_ICONS = {
-    "csv":   "table_chart",
-    "html":  "html",
-    "jpeg":  "photo_camera_back",
-    "json":  "data_object",
-    "pdf":   "picture_as_pdf",
-    "png":   "image",
-    "sql":   "code",
-    "svg":   "polyline",
-    "xlsx":  "grid_on",
-    "yaml":  "segment",
+    "csv":      "table_chart",
+    "html":     "html",
+    "jpeg":     "photo_camera_back",
+    "json":     "data_object",
+    "markdown": "format_list_bulleted",
+    "pdf":      "picture_as_pdf",
+    "png":      "image",
+    "sql":      "code",
+    "svg":      "polyline",
+    "xlsx":     "grid_on",
+    "yaml":     "segment",
 }
 
 FORMAT_LABELS = {
-    "csv": "CSV",
-    "html": "HTML",
-    "jpeg": "JPEG",
-    "json": "JSON",
-    "pdf": "PDF",
-    "png": "PNG",
-    "sql": "SQL",
-    "svg": "SVG",
-    "xlsx": "Excel",
-    "yaml": "YAML",
+    "csv":      "CSV",
+    "html":     "HTML",
+    "jpeg":     "JPEG",
+    "json":     "JSON",
+    "markdown": "Markdown",
+    "pdf":      "PDF",
+    "png":      "PNG",
+    "sql":      "SQL",
+    "svg":      "SVG",
+    "xlsx":     "Excel",
+    "yaml":     "YAML",
 }
 
 class UserCancelledError(Exception):
