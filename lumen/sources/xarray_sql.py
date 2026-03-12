@@ -8,8 +8,6 @@ is exposed as a separate SQL table with coordinate columns.
 
 from __future__ import annotations
 
-import logging
-
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -17,9 +15,8 @@ import numpy as np
 import pandas as pd
 import param
 
-from .base import BaseSQLSource, cached, cached_schema
-
-logger = logging.getLogger(__name__)
+from ..transforms.sql import SQLFilter
+from .base import BaseSQLSource, cached
 
 try:
     import xarray as xr
@@ -43,8 +40,6 @@ XARRAY_ENGINES = {
     ".grb": "cfgrib",
     ".grb2": "cfgrib",
 }
-
-XARRAY_EXTENSIONS = tuple(XARRAY_ENGINES.keys())
 
 
 def _detect_engine(path: str) -> str | None:
@@ -200,85 +195,10 @@ class XArraySQLSource(BaseSQLSource):
         """Access the underlying xarray Dataset."""
         return self._dataset
 
-    # DataFusion does not support TABLESAMPLE, so we override get_schema
-    # to always use SQLLimit instead of SQLSample when shuffle=True.
-    @cached_schema
-    def get_schema(
-        self, table: str | None = None, limit: int | None = None, shuffle: bool = False
-    ) -> dict[str, dict[str, Any]] | dict[str, Any]:
-        # DataFusion doesn't support TABLESAMPLE, so force shuffle=False
-        # to use SQLLimit instead of SQLSample in the parent logic.
-        # We inline the parent's logic here with that one change.
-        from ..transforms.sql import (
-            SQLCount, SQLDistinct, SQLLimit, SQLMinMax,
-        )
-        from ..util import get_dataframe_schema
-
-        if table is None:
-            tables = self.get_tables()
-        else:
-            tables = [table]
-
-        sql_transforms = [SQLLimit(limit=limit or 1, read=self.dialect)]
-        schemas = {}
-        for entry in tables:
-            if not self.load_schema:
-                schemas[entry] = {}
-                continue
-            sql_expr = self.get_sql_expr(entry)
-            data_sql_expr = sql_expr
-            for sql_transform in sql_transforms:
-                data_sql_expr = sql_transform.apply(data_sql_expr)
-            data = self.execute(data_sql_expr, self.table_params.get(entry, []))
-            schemas[entry] = schema = get_dataframe_schema(data)['items']['properties']
-
-            count_expr = SQLCount(read=self.dialect).apply(sql_expr)
-            count_expr = ' '.join(count_expr.splitlines())
-            count_data = self.execute(count_expr, self.table_params.get(entry, []))
-            count_col = 'count' if 'count' in count_data else 'COUNT'
-            count = int(count_data[count_col].iloc[0])
-            if limit:
-                schema['__len__'] = count
-                continue
-
-            enums, min_maxes = [], []
-            for name, col_schema in schema.items():
-                if 'enum' in col_schema:
-                    enums.append(name)
-                elif 'inclusiveMinimum' in col_schema:
-                    min_maxes.append(name)
-            for col in enums:
-                distinct_expr = SQLDistinct(columns=[col], read=self.dialect).apply(sql_expr)
-                distinct_expr = ' '.join(distinct_expr.splitlines())
-                distinct = self.execute(distinct_expr, self.table_params.get(entry, []))
-                schema[col]['enum'] = distinct[col].tolist()
-
-            schema['__len__'] = count
-            if not min_maxes:
-                continue
-
-            minmax_expr = SQLMinMax(columns=min_maxes, read=self.dialect).apply(sql_expr)
-            minmax_expr = ' '.join(minmax_expr.splitlines())
-            minmax_data = self.execute(minmax_expr, self.table_params.get(entry, []))
-            for col in min_maxes:
-                kind = data[col].dtype.kind
-                if kind in 'iu':
-                    cast = int
-                elif kind == 'f':
-                    cast = float
-                elif kind == 'M':
-                    cast = str
-                else:
-                    cast = lambda v: v
-
-                min_col = f'{col}_min' if f'{col}_min' in minmax_data else f'{col}_MIN'
-                min_data = minmax_data[min_col].iloc[0]
-                max_col = f'{col}_max' if f'{col}_max' in minmax_data else f'{col}_MAX'
-                max_data = minmax_data[max_col].iloc[0]
-                schema[col]['inclusiveMinimum'] = min_data if pd.isna(min_data) else cast(min_data)
-                schema[col]['inclusiveMaximum'] = max_data if pd.isna(max_data) else cast(max_data)
-
-        return schemas if table is None else schemas[table]
+    def get_schema(self, table=None, limit=None, shuffle=False):
+        # DataFusion doesn't support TABLESAMPLE; force shuffle=False
+        # so the parent uses SQLLimit instead of SQLSample.
+        return super().get_schema(table, limit, shuffle=False)
 
     # ---- BaseSQLSource required overrides ----
 
@@ -301,22 +221,8 @@ class XArraySQLSource(BaseSQLSource):
             return lower_map[stripped.lower()]
         return stripped
 
-    def execute(
-        self,
-        sql_query: str,
-        params: list | dict | None = None,
-        *args,
-        **kwargs,
-    ) -> pd.DataFrame:
+    def execute(self, sql_query, params=None, *args, **kwargs):
         """Execute a SQL query against the DataFusion context."""
-        if params:
-            if isinstance(params, list):
-                for p in params:
-                    sql_query = sql_query.replace("?", repr(p), 1)
-            elif isinstance(params, dict):
-                for k, v in params.items():
-                    sql_query = sql_query.replace(f":{k}", repr(v))
-
         result = self._ctx.sql(sql_query)
         return result.to_pandas()
 
@@ -325,22 +231,15 @@ class XArraySQLSource(BaseSQLSource):
         query.pop('__dask', None)
         sql_expr = self.get_sql_expr(table)
         sql_transforms = query.pop('sql_transforms', [])
-
-        # Normalize conditions: skip dunder keys, convert slices to tuples
-        conditions = []
-        for col, val in query.items():
-            if col.startswith("__"):
-                continue
-            if isinstance(val, slice):
-                val = (val.start, val.stop)
-            conditions.append((col, val))
-
-        from ..transforms.sql import SQLFilter
+        conditions = [
+            (col, (val.start, val.stop) if isinstance(val, slice) else val)
+            for col, val in query.items()
+            if not col.startswith("__")
+        ]
         sql_transforms = [SQLFilter(conditions=conditions, read=self.dialect)] + sql_transforms
         for st in sql_transforms:
             sql_expr = st.apply(sql_expr)
-
-        return self.execute(sql_expr, self.table_params.get(table, []))
+        return self.execute(sql_expr)
 
     def create_sql_expr_source(
         self,
