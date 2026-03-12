@@ -600,21 +600,15 @@ class SQLEditor(LumenEditor):
         data = self.component.data
         if fmt == 'sql':
             return StringIO(self.spec)
-        elif fmt in ('csv', 'xlsx'):
-            sio = StringIO()
+        sio = StringIO()
+        if fmt in ('csv', 'xlsx'):
             data.to_csv(sio)
-            sio.seek(0)
-            return sio
         elif fmt == 'json':
-            sio = StringIO()
             data.to_json(sio, orient='records', indent=2)
-            sio.seek(0)
-            return sio
         elif fmt == 'markdown':
-            sio = StringIO()
             sio.write(data.to_markdown(index=False))
-            sio.seek(0)
-            return sio
+        sio.seek(0)
+        return sio
 
     def render_explorer(self):
         return GraphicWalker(
