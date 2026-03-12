@@ -9,7 +9,7 @@ try:
     import lumen.ai as lmai
 
     from lumen.ai.llm import (
-        Anthropic, AzureOpenAI, Google, Message, MistralAI, OpenAI,
+        Anthropic, AzureOpenAI, Google, Groq, Message, MistralAI, OpenAI,
     )
 
 except ModuleNotFoundError:
@@ -180,6 +180,36 @@ async def test_azure_open_ai_get_model_kwargs_individual_models():
     assert llm._get_model_kwargs("other") == model_kwargs["other"]
 
 
+def test_groq_registered_in_llm_providers():
+    """Test that the Groq provider is registered in LLM_PROVIDERS."""
+    assert "groq" in lmai.llm.LLM_PROVIDERS
+    assert lmai.llm.LLM_PROVIDERS["groq"] == "Groq"
+
+
+def test_groq_registered_in_provider_env_vars():
+    """Test that the Groq provider env var is registered."""
+    assert "groq" in lmai.llm.PROVIDER_ENV_VARS
+    assert lmai.llm.PROVIDER_ENV_VARS["groq"] == "GROQ_API_KEY"
+
+
+def test_groq_api_key_env_var():
+    """Test that Groq has the correct api_key_env_var."""
+    assert Groq.api_key_env_var == "GROQ_API_KEY"
+
+
+def test_groq_defaults():
+    """Test that Groq has the correct default endpoint and model."""
+    groq = Groq(api_key="test-key")
+    assert groq.endpoint == "https://api.groq.com/openai/v1"
+    assert groq.model_kwargs["default"]["model"] == "llama-3.3-70b-versatile"
+
+
+def test_get_available_llm_selects_groq(monkeypatch):
+    """Test that get_available_llm() selects Groq when only GROQ_API_KEY is set."""
+    for env_var in lmai.llm.PROVIDER_ENV_VARS.values():
+        monkeypatch.delenv(env_var, raising=False)
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    assert lmai.llm.get_available_llm() is Groq
 # ---------------------------------------------------------------------------
 # _check_for_image tests
 # ---------------------------------------------------------------------------

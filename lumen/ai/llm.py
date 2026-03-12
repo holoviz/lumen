@@ -61,6 +61,7 @@ LLM_PROVIDERS = {
     'mistral': 'MistralAI',
     'azure-openai': 'AzureOpenAI',
     'azure-mistral': 'AzureMistralAI',
+    'groq': 'Groq',
     "ai-navigator": "AINavigator",
     "ai-catalyst": "AICatalyst",
     'ollama': 'Ollama',
@@ -1952,6 +1953,44 @@ class Ollama(OpenAI):
         if tags_response.status_code != 200:
             return set()
         return {m.get("name", "") for m in tags_response.json().get("models", [])}
+
+
+class Groq(OpenAI):
+    """
+    An LLM implementation using the Groq cloud API.
+
+    Groq provides an OpenAI-compatible endpoint, so this is a thin
+    subclass of :class:`OpenAI` with Groq-specific defaults.
+
+    Set the ``GROQ_API_KEY`` environment variable or pass ``api_key``
+    directly.  The provider is auto-detected when ``GROQ_API_KEY`` is
+    present, or can be selected explicitly with ``--provider groq``.
+    """
+
+    api_key_env_var: str = PROVIDER_ENV_VARS['groq']
+
+    display_name = param.String(
+        default="Groq", constant=True, doc="Display name for UI"
+    )
+
+    endpoint = param.String(
+        default="https://api.groq.com/openai/v1",
+        doc="The Groq API endpoint.",
+    )
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "llama-3.3-70b-versatile"},
+    })
+
+    select_models = param.List(default=[
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant",
+        "llama-4-scout-17b-16e-instruct",
+        "meta-llama/llama-4-maverick-17b-128e-instruct",
+        "gemma2-9b-it",
+        "mistral-saba-24b",
+        "qwen-qwq-32b",
+    ], constant=True, doc="Available Groq models for selection dropdowns.")
 
 
 class MessageModel(BaseModel):
