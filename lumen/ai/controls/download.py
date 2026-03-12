@@ -284,7 +284,7 @@ class DownloadControls(BaseSourceControls):
 
     def _handle_urls(self, event):
         """Handle URL input and trigger downloads"""
-        url_text = self._url_input.value
+        url_text = self._url_input.value_input or self._url_input.value
         if not url_text:
             return
 
