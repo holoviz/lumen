@@ -592,15 +592,21 @@ class SQLEditor(LumenEditor):
 
     language = "sql"
 
-    export_formats = ("sql", "csv", "xlsx")
+    export_formats = ("sql", "csv", "xlsx", "json", "markdown")
     _label = "Table"
 
-    def export(self, fmt: str) -> str | bytes:
+    def export(self, fmt: str) -> StringIO | BytesIO:
         super().export(fmt)
+        data = self.component.data
         if fmt == 'sql':
             return StringIO(self.spec)
         sio = StringIO()
-        self.component.data.to_csv(sio)
+        if fmt in ('csv', 'xlsx'):
+            data.to_csv(sio)
+        elif fmt == 'json':
+            data.to_json(sio, orient='records', indent=2)
+        elif fmt == 'markdown':
+            sio.write(data.to_markdown(index=False))
         sio.seek(0)
         return sio
 

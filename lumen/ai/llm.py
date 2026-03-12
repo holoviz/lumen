@@ -153,6 +153,9 @@ class Llm(param.Parameterized):
     # Whether the LLM supports streaming of Pydantic model output
     _supports_model_stream = True
 
+    # Whether the LLM supports vision (multimodal image content)
+    _supports_vision = True
+
     # Used for `instructor.from_*` wrapping; subclasses may override
     _instructor_wrapper: str = "openai"
 
@@ -290,10 +293,14 @@ class Llm(param.Parameterized):
                 contains_image = True
 
             elif isinstance(content, list):
+                new_content = []
                 for item in content:
                     if isinstance(item, (Image, pn.pane.image.ImageBase)):
-                        messages[i]["content"] = self._serialize_image_pane(item)
+                        new_content.append(self._serialize_image_pane(item))
                         contains_image = True
+                    else:
+                        new_content.append(item)
+                messages[i]["content"] = new_content
         return messages, contains_image
 
     @classmethod
