@@ -307,11 +307,6 @@ class TestLumenIntegration:
         expr = new_source.get_sql_expr("avg_temp")
         assert "AVG" in expr
 
-    def test_get_sql_expr_dict_input(self, synthetic_dataset):
-        source = XArraySQLSource(_dataset=synthetic_dataset)
-        expr = source.get_sql_expr({"alias": "SELECT 1"})
-        assert expr == "SELECT 1"
-
     def test_get_sql_expr_missing_table_raises(self, synthetic_dataset):
         source = XArraySQLSource(_dataset=synthetic_dataset)
         derived = {"avg_temp": "SELECT 1"}
@@ -390,24 +385,6 @@ class TestGetTables:
         assert "pressure" in tables
 
 
-# ---- Estimate Size ----
-
-class TestEstimateSize:
-
-    def test_single_table(self, synthetic_dataset):
-        source = XArraySQLSource(_dataset=synthetic_dataset)
-        info = source.estimate_size("temperature")
-        assert info["rows"] == 200  # 10 * 5 * 4
-        assert info["estimated_mb"] >= 0
-        assert info["exceeds_warning"] is False
-
-    def test_all_tables(self, synthetic_dataset):
-        source = XArraySQLSource(_dataset=synthetic_dataset)
-        info = source.estimate_size()
-        assert "temperature" in info
-        assert "pressure" in info
-
-
 # ---- Serialization ----
 
 class TestSerialization:
@@ -472,7 +449,6 @@ class TestResourceManagement:
         derived = {"avg_temp": "SELECT lat, AVG(temperature) FROM temperature GROUP BY lat"}
         new_source = source.create_sql_expr_source(derived)
         tables = new_source.get_tables()
-        # Should contain both original registered tables and derived
         assert "temperature" in tables
         assert "pressure" in tables
         assert "avg_temp" in tables
@@ -493,79 +469,3 @@ class TestAsync:
         source = XArraySQLSource(_dataset=synthetic_dataset)
         df = await source.get_async("temperature")
         assert len(df) > 0
-
-    @pytest.mark.asyncio
-    async def test_get_async_with_filter(self, synthetic_dataset):
-        source = XArraySQLSource(_dataset=synthetic_dataset)
-        df = await source.get_async("temperature", lat=30.0)
-        assert all(df["lat"] == 30.0)
-
-
-# ---- SQL Literal Formatting ----
-
-class TestSQLLiteral:
-
-    def test_timestamp_filter(self, synthetic_dataset):
-        source = XArraySQLSource(_dataset=synthetic_dataset)
-        ts = pd.Timestamp("2020-01-05")
-        df = source.get("temperature", time=ts)
-        assert len(df) == 20  # 5 lats * 4 lons for one time step
-        assert all(pd.to_datetime(df["time"]).dt.date == ts.date())
-
-    def test_string_filter_escaping(self):
-        """Verify _sql_literal properly escapes single quotes."""
-        from lumen.sources.xarray_sql import _sql_literal
-        assert _sql_literal("it's") == "'it''s'"
-
-    def test_none_literal(self):
-        from lumen.sources.xarray_sql import _sql_literal
-        assert _sql_literal(None) == "NULL"
-
-    def test_nan_literal(self):
-        from lumen.sources.xarray_sql import _sql_literal
-        assert _sql_literal(float("nan")) == "NULL"
-        assert _sql_literal(np.float64("nan")) == "NULL"
-        assert _sql_literal(np.float32("nan")) == "NULL"
-
-    def test_bool_literal(self):
-        from lumen.sources.xarray_sql import _sql_literal
-        assert _sql_literal(True) == "TRUE"
-        assert _sql_literal(False) == "FALSE"
-        assert _sql_literal(np.bool_(True)) == "TRUE"
-        assert _sql_literal(np.bool_(False)) == "FALSE"
-
-    def test_numpy_types(self):
-        from lumen.sources.xarray_sql import _sql_literal
-        assert _sql_literal(np.int64(42)) == "42"
-        assert _sql_literal(np.float64(3.14)) == "3.14"
-
-    def test_numpy_datetime64(self):
-        from lumen.sources.xarray_sql import _sql_literal
-        val = np.datetime64("2020-01-01")
-        result = _sql_literal(val)
-        assert "2020-01-01" in result
-        assert result.startswith("'") and result.endswith("'")
-
-    def test_pd_timestamp_literal(self):
-        from lumen.sources.xarray_sql import _sql_literal
-        val = pd.Timestamp("2020-06-15 12:30:00")
-        result = _sql_literal(val)
-        assert "2020-06-15" in result
-        assert result.startswith("'") and result.endswith("'")
-
-    def test_execute_with_positional_params(self, synthetic_dataset):
-        source = XArraySQLSource(_dataset=synthetic_dataset)
-        df = source.execute(
-            "SELECT * FROM temperature WHERE lat > ? AND lon < ?",
-            params=[30.0, 130.0],
-        )
-        assert all(df["lat"] > 30.0)
-        assert all(df["lon"] < 130.0)
-
-    def test_execute_with_named_params(self, synthetic_dataset):
-        source = XArraySQLSource(_dataset=synthetic_dataset)
-        df = source.execute(
-            "SELECT * FROM temperature WHERE lat = :target_lat",
-            params={"target_lat": 20.0},
-        )
-        assert all(df["lat"] == 20.0)

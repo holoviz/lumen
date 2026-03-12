@@ -4,19 +4,10 @@ XArraySQLSource -- SQL-backed xarray source for Lumen.
 Uses xarray-sql (Apache DataFusion) to provide SQL query capabilities
 over N-dimensional xarray datasets. Each data variable in the dataset
 is exposed as a separate SQL table with coordinate columns.
-
-Architecture:
-    NetCDF/Zarr file
-        -> xarray.open_dataset() (lazy, dask-chunked)
-        -> xarray-sql: XarrayContext registers dataset in DataFusion
-        -> XArraySQLSource.execute() runs SQL via DataFusion
-        -> Lumen Pipeline / AI agents consume DataFrames
 """
 
 from __future__ import annotations
 
-import asyncio
-import datetime as dt
 import logging
 
 from pathlib import Path
@@ -62,44 +53,6 @@ def _detect_engine(path: str) -> str | None:
     return XARRAY_ENGINES.get(suffix)
 
 
-def _sql_literal(value: Any) -> str:
-    """
-    Format a Python value as a DataFusion-compatible SQL literal.
-
-    Handles numeric types, strings, datetimes (including pandas Timestamps
-    and numpy datetime64), booleans, and None/NaN.
-    """
-    if value is None:
-        return "NULL"
-    try:
-        if pd.isna(value):
-            return "NULL"
-    except (ValueError, TypeError):
-        pass
-    if isinstance(value, (bool, np.bool_)):
-        return "TRUE" if value else "FALSE"
-    if isinstance(value, (int, np.integer)):
-        return str(int(value))
-    if isinstance(value, (float, np.floating)):
-        return str(float(value))
-    if isinstance(value, np.datetime64):
-        return f"'{pd.Timestamp(value).isoformat()}'"
-    if isinstance(value, pd.Timestamp):
-        return f"'{value.isoformat()}'"
-    if isinstance(value, (dt.datetime, dt.date)):
-        return f"'{value.isoformat()}'"
-    if isinstance(value, str):
-        escaped = value.replace("'", "''")
-        return f"'{escaped}'"
-    return repr(value)
-
-
-def _quote_identifier(name: str) -> str:
-    """Quote a SQL column/table identifier with double quotes."""
-    escaped = name.replace('"', '""')
-    return f'"{escaped}"'
-
-
 class XArraySQLSource(BaseSQLSource):
     """
     SQL-queryable xarray data source for Lumen.
@@ -137,7 +90,6 @@ class XArraySQLSource(BaseSQLSource):
 
     source_type: ClassVar[str | None] = "xarray"
 
-    # DataFusion is PostgreSQL-compatible for sqlglot dialect translation
     dialect = "postgres"
 
     uri = param.String(default=None, allow_None=True, doc="""
@@ -163,7 +115,8 @@ class XArraySQLSource(BaseSQLSource):
         List or dict of tables. Populated automatically from dataset variables.
         When a dict, maps logical table names to SQL expressions.""")
 
-    _supports_sql: ClassVar[bool] = True
+    sql_expr = param.String(default='SELECT * FROM {table}', doc="""
+        The SQL expression template for table queries.""")
 
     def __init__(self, _dataset=None, _ctx=None, **params):
         if not XARRAY_AVAILABLE:
@@ -178,7 +131,6 @@ class XArraySQLSource(BaseSQLSource):
         if self._ctx is None:
             self._initialize()
         else:
-            # Context was shared -- just populate registered tables
             if self._dataset is not None:
                 self._registered_tables = set(self._dataset.data_vars)
             if self.tables is None:
@@ -195,10 +147,7 @@ class XArraySQLSource(BaseSQLSource):
             variables=self.variables,
         )
 
-        # Create DataFusion context and register each variable as a table
         self._ctx = XarrayContext()
-
-        # Resolve chunk specification for xarray-sql registration
         chunk_spec = self._resolve_chunks(self._dataset, self.chunks)
 
         for var_name in self._dataset.data_vars:
@@ -211,18 +160,12 @@ class XArraySQLSource(BaseSQLSource):
 
     @staticmethod
     def _resolve_chunks(dataset, chunks):
-        """
-        Resolve chunk specification for DataFusion registration.
-
-        Returns a dict mapping dimension names to chunk sizes.
-        """
+        """Resolve chunk specification for DataFusion registration."""
         if isinstance(chunks, dict):
             return chunks
-        # Prefer chunking already present on the dataset
         ds_chunks = getattr(dataset, "chunks", None)
         if ds_chunks:
             return {dim: sizes[0] for dim, sizes in ds_chunks.items()}
-        # Fallback: use full dimension sizes (DataFusion needs a concrete spec)
         return dict(dataset.sizes)
 
     @staticmethod
@@ -257,22 +200,94 @@ class XArraySQLSource(BaseSQLSource):
         """Access the underlying xarray Dataset."""
         return self._dataset
 
+    # DataFusion does not support TABLESAMPLE, so we override get_schema
+    # to always use SQLLimit instead of SQLSample when shuffle=True.
+    @cached_schema
+    def get_schema(
+        self, table: str | None = None, limit: int | None = None, shuffle: bool = False
+    ) -> dict[str, dict[str, Any]] | dict[str, Any]:
+        # DataFusion doesn't support TABLESAMPLE, so force shuffle=False
+        # to use SQLLimit instead of SQLSample in the parent logic.
+        # We inline the parent's logic here with that one change.
+        from ..transforms.sql import (
+            SQLCount, SQLDistinct, SQLLimit, SQLMinMax,
+        )
+        from ..util import get_dataframe_schema
+
+        if table is None:
+            tables = self.get_tables()
+        else:
+            tables = [table]
+
+        sql_transforms = [SQLLimit(limit=limit or 1, read=self.dialect)]
+        schemas = {}
+        for entry in tables:
+            if not self.load_schema:
+                schemas[entry] = {}
+                continue
+            sql_expr = self.get_sql_expr(entry)
+            data_sql_expr = sql_expr
+            for sql_transform in sql_transforms:
+                data_sql_expr = sql_transform.apply(data_sql_expr)
+            data = self.execute(data_sql_expr, self.table_params.get(entry, []))
+            schemas[entry] = schema = get_dataframe_schema(data)['items']['properties']
+
+            count_expr = SQLCount(read=self.dialect).apply(sql_expr)
+            count_expr = ' '.join(count_expr.splitlines())
+            count_data = self.execute(count_expr, self.table_params.get(entry, []))
+            count_col = 'count' if 'count' in count_data else 'COUNT'
+            count = int(count_data[count_col].iloc[0])
+            if limit:
+                schema['__len__'] = count
+                continue
+
+            enums, min_maxes = [], []
+            for name, col_schema in schema.items():
+                if 'enum' in col_schema:
+                    enums.append(name)
+                elif 'inclusiveMinimum' in col_schema:
+                    min_maxes.append(name)
+            for col in enums:
+                distinct_expr = SQLDistinct(columns=[col], read=self.dialect).apply(sql_expr)
+                distinct_expr = ' '.join(distinct_expr.splitlines())
+                distinct = self.execute(distinct_expr, self.table_params.get(entry, []))
+                schema[col]['enum'] = distinct[col].tolist()
+
+            schema['__len__'] = count
+            if not min_maxes:
+                continue
+
+            minmax_expr = SQLMinMax(columns=min_maxes, read=self.dialect).apply(sql_expr)
+            minmax_expr = ' '.join(minmax_expr.splitlines())
+            minmax_data = self.execute(minmax_expr, self.table_params.get(entry, []))
+            for col in min_maxes:
+                kind = data[col].dtype.kind
+                if kind in 'iu':
+                    cast = int
+                elif kind == 'f':
+                    cast = float
+                elif kind == 'M':
+                    cast = str
+                else:
+                    cast = lambda v: v
+
+                min_col = f'{col}_min' if f'{col}_min' in minmax_data else f'{col}_MIN'
+                min_data = minmax_data[min_col].iloc[0]
+                max_col = f'{col}_max' if f'{col}_max' in minmax_data else f'{col}_MAX'
+                max_data = minmax_data[max_col].iloc[0]
+                schema[col]['inclusiveMinimum'] = min_data if pd.isna(min_data) else cast(min_data)
+                schema[col]['inclusiveMaximum'] = max_data if pd.isna(max_data) else cast(max_data)
+
+        return schemas if table is None else schemas[table]
+
+    # ---- BaseSQLSource required overrides ----
+
     def get_tables(self) -> list[str]:
-        """Return list of available table names, including derived tables."""
-        tables: set[str] = set(self._registered_tables)
-        if isinstance(self.tables, dict):
-            tables.update(self.tables.keys())
-        elif isinstance(self.tables, (list, tuple)):
-            tables.update(self.tables)
-        return sorted(tables)
+        if isinstance(self.tables, (dict, list)):
+            return sorted(self.tables)
+        return sorted(self._registered_tables)
 
     def normalize_table(self, table: str) -> str:
-        """
-        Normalize table names for fuzzy matching.
-
-        Strips quotes, lowercases, and matches against known tables
-        to handle minor variations from Lumen AI agents.
-        """
         stripped = table.strip('"').strip("'").strip("`")
         all_known = set(self._registered_tables)
         if isinstance(self.tables, dict):
@@ -286,162 +301,6 @@ class XArraySQLSource(BaseSQLSource):
             return lower_map[stripped.lower()]
         return stripped
 
-    def get_sql_expr(self, table: str | dict) -> str:
-        """
-        Return a SQL expression for the given table.
-
-        When ``table`` is a dict, returns the first mapped SQL expression.
-        When ``self.tables`` is a dict, looks up the normalized table name
-        and returns the mapped SQL expression, raising KeyError on miss.
-        Otherwise returns ``SELECT * FROM <table>``.
-        """
-        if isinstance(table, dict):
-            return next(iter(table.values()))
-
-        if isinstance(self.tables, dict):
-            normalized = self.normalize_table(table)
-            if normalized in self.tables:
-                return self.tables[normalized]
-            raise KeyError(
-                f"Table {table!r} not found in tables mapping. "
-                f"Available: {list(self.tables.keys())}"
-            )
-
-        table = self.normalize_table(table)
-        return f"SELECT * FROM {table}"
-
-    @cached_schema
-    def get_schema(
-        self, table: str | None = None, limit: int | None = None, shuffle: bool = False
-    ) -> dict[str, dict[str, Any]] | dict[str, Any]:
-        """
-        Return JSON schema for the given table(s).
-
-        Overrides BaseSQLSource.get_schema to query DataFusion directly
-        instead of going through sqlglot SQL transforms, since DataFusion
-        has its own SQL dialect nuances.
-
-        Parameters
-        ----------
-        table : str or None
-            Table name, or None for all tables.
-        limit : int or None
-            Sample size for schema inference.
-        shuffle : bool
-            If True, sample randomly (ORDER BY RANDOM()) instead of LIMIT.
-        """
-        from ..util import get_dataframe_schema
-
-        if table is None:
-            tables = self.get_tables()
-        else:
-            tables = [table]
-
-        sample_limit = limit or 1
-        schemas = {}
-        for entry in tables:
-            sql_expr = self.get_sql_expr(entry)
-            if shuffle:
-                sample_sql = f"SELECT * FROM ({sql_expr}) ORDER BY RANDOM() LIMIT {sample_limit}"
-            else:
-                sample_sql = f"SELECT * FROM ({sql_expr}) LIMIT {sample_limit}"
-            sample = self.execute(sample_sql)
-            schema = get_dataframe_schema(sample)["items"]["properties"]
-
-            count_df = self.execute(f"SELECT COUNT(*) as count FROM ({sql_expr})")
-            count = int(count_df["count"].iloc[0])
-            schema["__len__"] = count
-
-            if limit:
-                schemas[entry] = schema
-                continue
-
-            enums, min_maxes = [], []
-            for name, col_schema in schema.items():
-                if name == "__len__":
-                    continue
-                if "enum" in col_schema:
-                    enums.append(name)
-                elif "inclusiveMinimum" in col_schema:
-                    min_maxes.append(name)
-
-            for col in enums:
-                distinct = self.execute(
-                    f"SELECT DISTINCT {_quote_identifier(col)} FROM ({sql_expr}) ORDER BY {_quote_identifier(col)}"
-                )
-                schema[col]["enum"] = distinct[col].tolist()
-
-            if min_maxes:
-                min_max_exprs = ", ".join(
-                    f"MIN({_quote_identifier(c)}) as {_quote_identifier(c + '_min')}, "
-                    f"MAX({_quote_identifier(c)}) as {_quote_identifier(c + '_max')}"
-                    for c in min_maxes
-                )
-                mm = self.execute(f"SELECT {min_max_exprs} FROM ({sql_expr})")
-                for col in min_maxes:
-                    kind = sample[col].dtype.kind
-                    if kind in "iu":
-                        cast = int
-                    elif kind == "f":
-                        cast = float
-                    elif kind == "M":
-                        cast = str
-                    else:
-                        cast = lambda v: v
-                    min_val = mm[f"{col}_min"].iloc[0]
-                    max_val = mm[f"{col}_max"].iloc[0]
-                    schema[col]["inclusiveMinimum"] = min_val if pd.isna(min_val) else cast(min_val)
-                    schema[col]["inclusiveMaximum"] = max_val if pd.isna(max_val) else cast(max_val)
-
-            schemas[entry] = schema
-
-        return schemas if table is None else schemas[table]
-
-    @cached
-    def get(self, table: str, **query) -> pd.DataFrame:
-        """
-        Return a table as a DataFrame, optionally filtered by query params.
-
-        Parameters
-        ----------
-        table : str
-            Name of the table (data variable).
-        query : dict
-            Column-value pairs for filtering. Special keys:
-            - sql_transforms: list of SQLTransform objects to apply
-        """
-        sql_transforms = query.pop("sql_transforms", [])
-        sql = self.get_sql_expr(table)
-
-        conditions = []
-        for col, val in query.items():
-            if col.startswith("__"):
-                continue
-            qcol = _quote_identifier(col)
-            if isinstance(val, list):
-                vals_str = ", ".join(_sql_literal(v) for v in val)
-                conditions.append(f"{qcol} IN ({vals_str})")
-            elif isinstance(val, slice):
-                if val.start is not None:
-                    conditions.append(f"{qcol} >= {_sql_literal(val.start)}")
-                if val.stop is not None:
-                    conditions.append(f"{qcol} <= {_sql_literal(val.stop)}")
-            else:
-                conditions.append(f"{qcol} = {_sql_literal(val)}")
-
-        if conditions:
-            sql = f"SELECT * FROM ({sql}) WHERE " + " AND ".join(conditions)
-
-        for transform in sql_transforms:
-            try:
-                sql = transform.apply(sql)
-            except Exception:
-                logger.warning(
-                    "SQL transform %s failed, skipping", type(transform).__name__
-                )
-
-        return self.execute(sql)
-
     def execute(
         self,
         sql_query: str,
@@ -449,88 +308,39 @@ class XArraySQLSource(BaseSQLSource):
         *args,
         **kwargs,
     ) -> pd.DataFrame:
-        """
-        Execute a SQL query against the registered xarray data via DataFusion.
-
-        Parameters
-        ----------
-        sql_query : str
-            SQL query string. Tables correspond to dataset variable names.
-            DataFusion supports PostgreSQL-compatible SQL syntax.
-        params : list | dict | None
-            Query parameters. Positional (list, replaces ``?``) or named
-            (dict, replaces ``:name``). Values are formatted as safe SQL
-            literals via ``_sql_literal()``.
-
-        Returns
-        -------
-        pd.DataFrame
-            Query results as a pandas DataFrame.
-        """
+        """Execute a SQL query against the DataFusion context."""
         if params:
             if isinstance(params, list):
                 for p in params:
-                    sql_query = sql_query.replace("?", _sql_literal(p), 1)
+                    sql_query = sql_query.replace("?", repr(p), 1)
             elif isinstance(params, dict):
                 for k, v in params.items():
-                    sql_query = sql_query.replace(f":{k}", _sql_literal(v))
+                    sql_query = sql_query.replace(f":{k}", repr(v))
 
         result = self._ctx.sql(sql_query)
         return result.to_pandas()
 
-    async def execute_async(
-        self,
-        sql_query: str,
-        params: list | dict | None = None,
-        *args,
-        **kwargs,
-    ) -> pd.DataFrame:
-        """
-        Execute a SQL query asynchronously.
+    @cached
+    def get(self, table, **query):
+        query.pop('__dask', None)
+        sql_expr = self.get_sql_expr(table)
+        sql_transforms = query.pop('sql_transforms', [])
 
-        Runs the synchronous execute() in a thread pool to avoid
-        blocking the event loop. Used by Lumen AI agents.
-        """
-        return await asyncio.to_thread(self.execute, sql_query, params, *args, **kwargs)
+        # Normalize conditions: skip dunder keys, convert slices to tuples
+        conditions = []
+        for col, val in query.items():
+            if col.startswith("__"):
+                continue
+            if isinstance(val, slice):
+                val = (val.start, val.stop)
+            conditions.append((col, val))
 
-    async def get_async(self, table: str, **query) -> pd.DataFrame:
-        """
-        Return a table asynchronously; optionally filtered.
+        from ..transforms.sql import SQLFilter
+        sql_transforms = [SQLFilter(conditions=conditions, read=self.dialect)] + sql_transforms
+        for st in sql_transforms:
+            sql_expr = st.apply(sql_expr)
 
-        Delegates to the synchronous get() to ensure identical behavior
-        including sql_transforms application.
-        """
-        return await asyncio.to_thread(self.get, table, **query)
-
-    def estimate_size(self, table: str | None = None) -> dict[str, Any]:
-        """
-        Estimate the memory size of a table for large dataset safety.
-
-        Returns a dict with row count, estimated bytes, and whether
-        it exceeds a safety threshold.
-        """
-        tables = [table] if table else self.get_tables()
-        result = {}
-        for tbl in tables:
-            sql_expr = self.get_sql_expr(tbl)
-            count_df = self.execute(f"SELECT COUNT(*) as count FROM ({sql_expr})")
-            n_rows = int(count_df["count"].iloc[0])
-            if tbl in self._dataset.data_vars:
-                var = self._dataset[tbl]
-                n_cols = len(var.dims) + 1
-            else:
-                # Derived table -- estimate from a sample row
-                sample = self.execute(f"SELECT * FROM ({sql_expr}) LIMIT 1")
-                n_cols = len(sample.columns)
-            est_bytes = n_rows * n_cols * 8
-            result[tbl] = {
-                "rows": n_rows,
-                "columns": n_cols,
-                "estimated_bytes": est_bytes,
-                "estimated_mb": round(est_bytes / 1024**2, 1),
-                "exceeds_warning": n_rows > 10_000_000,
-            }
-        return result if table is None else result[tbl]
+        return self.execute(sql_expr, self.table_params.get(table, []))
 
     def create_sql_expr_source(
         self,
@@ -538,29 +348,15 @@ class XArraySQLSource(BaseSQLSource):
         params: dict[str, list | dict] | None = None,
         **kwargs,
     ):
-        """
-        Create a new XArraySQLSource with custom SQL expressions as tables.
-
-        Shares the same underlying dataset and DataFusion context to avoid
-        expensive re-registration of variables.
-
-        Parameters
-        ----------
-        tables : dict[str, str]
-            Mapping from logical table name to SQL expression.
-        params : dict[str, list | dict] or None
-            Optional mapping from table name to query parameters.
-        """
-        # Merge with existing tables (upsert behavior matching DuckDBSource)
+        """Create a new XArraySQLSource sharing the same DataFusion context."""
         all_tables = {}
         if isinstance(self.tables, dict):
             all_tables.update(self.tables)
         elif isinstance(self.tables, (list, tuple)):
             for t in self.tables:
-                all_tables[t] = f"SELECT * FROM {t}"
+                all_tables[t] = self.sql_expr.format(table=t)
         all_tables.update(tables)
 
-        # Merge table_params
         all_params = dict(self.table_params)
         if params:
             all_params.update(params)
@@ -577,13 +373,10 @@ class XArraySQLSource(BaseSQLSource):
             table_params=all_params,
         )
 
-    def _get_table_metadata(self, tables: list[str]) -> dict[str, Any]:
-        """
-        Build rich metadata for each table from xarray attributes.
+    # ---- XArray-specific methods ----
 
-        Extracts coordinate ranges, units, long_name, dimensions, and
-        dataset-level attributes.
-        """
+    def _get_table_metadata(self, tables: list[str]) -> dict[str, Any]:
+        """Build rich metadata from xarray attributes."""
         ds = self._dataset
         metadata = {}
 
@@ -636,12 +429,7 @@ class XArraySQLSource(BaseSQLSource):
         return metadata
 
     def get_dimension_info(self, table: str | None = None) -> dict[str, Any]:
-        """
-        Return detailed dimension information for UI controls and AI context.
-
-        Provides coordinate values, ranges, and types that the AI agent
-        or UI needs to construct meaningful queries.
-        """
+        """Return dimension information for UI controls and AI context."""
         ds = self._dataset
         tables = [table] if table else list(ds.data_vars)
         info = {}
@@ -678,28 +466,6 @@ class XArraySQLSource(BaseSQLSource):
             self._dataset.close()
         self._ctx = None
         self._registered_tables.clear()
-
-    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Serialize this source to a Lumen spec dict."""
-        spec = {"type": self.source_type}
-        if self.uri:
-            spec["uri"] = str(self.uri)
-        if self.engine:
-            spec["engine"] = self.engine
-        if self.chunks:
-            spec["chunks"] = self.chunks
-        if self.variables:
-            spec["variables"] = self.variables
-        if self.open_kwargs:
-            spec["open_kwargs"] = self.open_kwargs
-        return spec
-
-    @classmethod
-    def from_spec(cls, spec: dict[str, Any], **kwargs):
-        """Create an XArraySQLSource from a Lumen spec dict."""
-        params = {k: v for k, v in spec.items() if k != "type"}
-        params.update(kwargs)
-        return cls(**params)
 
     def __repr__(self):
         tables = self.get_tables()
