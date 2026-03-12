@@ -741,7 +741,7 @@ class VegaLiteAgent(BaseCodeAgent):
         str
             Updated specification with annotations
         """
-        messages = self._prepare_vision_messages(messages, view, f"Revise this chart: {instruction!r}")
+        messages = self._prepare_vision_messages(messages, view, f"Annotate this chart: {instruction!r}")
 
         vega_spec = dump_yaml(spec["spec"], default_flow_style=False)
         result = await self._invoke_prompt(
@@ -749,6 +749,7 @@ class VegaLiteAgent(BaseCodeAgent):
             messages,
             context,
             vega_spec=vega_spec,
+            instruction=instruction,
         )
         update_dict = load_yaml(result.yaml_update)
 
