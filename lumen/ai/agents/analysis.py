@@ -1,7 +1,9 @@
 import asyncio
 
 from collections.abc import Callable
-from typing import Annotated, Any, Literal, NotRequired
+from typing import (
+    Annotated, Any, Literal, NotRequired,
+)
 
 import param
 
