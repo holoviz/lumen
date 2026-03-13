@@ -42,14 +42,30 @@ Steps: {% for step in executed_steps %}{{ step }}{% if not loop.last %}, {% endi
 {% endif %}
 Current context contains the following keys: {{ ", ".join(memory) }}
 
-{% if memory.get('sql') %}
+{% if memory.get('sqls') %}
+All SQL queries executed:
+{% for s in memory['sqls'] %}- `{{ s }}`
+{% endfor %}
+{%- elif memory.get('sql') %}
 SQL: `{{ memory['sql'] }}`
 {%- endif -%}
-{%- if memory.get('data') is not none %}
+{%- if memory.get('datasets') is not none and memory.get('datasets') %}
+Data Overviews ({{ memory['datasets'] | length }} datasets):
+{% for d in memory['datasets'] %}--- Dataset {{ loop.index }} ---
+{{ d }}
+{% endfor %}
+{%- elif memory.get('data') is not none %}
 Data Overview:
 {{ memory["data"] }}
 {%- endif -%}
-{% if memory.get('view') %}
+{% if memory.get('views') %}
+All Generated Views ({{ memory['views'] | length }}):
+{% for v in memory['views'] %}--- View {{ loop.index }} ---
+```yaml
+{{ v | json_to_yaml }}
+```
+{% endfor %}
+{%- elif memory.get('view') %}
 Generated View:
 ```yaml
 {{ memory["view"] | json_to_yaml }}

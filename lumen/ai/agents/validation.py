@@ -1,4 +1,4 @@
-from typing import Any, NotRequired
+from typing import Annotated, Any, NotRequired
 
 import param
 
@@ -36,6 +36,12 @@ class ValidationInputs(ContextModel):
     sql: NotRequired[str]
 
     view: NotRequired[Any]
+
+    sqls: NotRequired[Annotated[list[str], ("accumulate", "sql")]]
+
+    datasets: NotRequired[Annotated[list[Any], ("accumulate", "data")]]
+
+    views: NotRequired[Annotated[list[Any], ("accumulate", "view")]]
 
 
 class ValidationOutputs(ContextModel):

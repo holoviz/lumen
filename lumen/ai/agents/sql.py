@@ -315,6 +315,12 @@ class SQLEditors(ContextModel):
 
     pipeline: Pipeline
 
+    pipelines: NotRequired[Annotated[list[Pipeline], ("accumulate", "pipeline")]]
+
+    datasets: NotRequired[Annotated[list[Any], ("accumulate", "data")]]
+
+    tables: NotRequired[Annotated[list[str], ("accumulate", "table")]]
+
 
 class SQLAgent(BaseLumenAgent):
 

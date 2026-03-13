@@ -209,6 +209,7 @@ class Plan(Section):
             task.reset()
             if idx < failed_index:
                 out, out_context = await self._run_task(idx, task, context)
+                outputs += out
                 continue
 
             # For the provider task, mutate the user message to include feedback
@@ -230,6 +231,7 @@ class Plan(Section):
                 subcontext = self._get_context(idx, context, task)
                 with task.param.update(interface=self.interface, steps_layout=self.steps_layout, history=retry_history, **kwargs):
                     out, out_context = await task.execute(subcontext, **kwargs)
+                outputs += out
                 retry_step.success_title = f"✅ {task.title} successfully completed on retry"
         return outputs, out_context
 
