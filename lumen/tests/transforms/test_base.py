@@ -5,7 +5,7 @@ import pandas as pd
 import param  # type: ignore
 
 from lumen.transforms.base import (
-    Count, DropNA, Eval, Sum, Transform, project_lnglat,
+    Count, DropNA, Eval, FillNA, Sum, Transform, project_lnglat,
 )
 
 
@@ -80,6 +80,25 @@ def test_dropna_transform(mixed_df):
     assert len(DropNA.apply_to(mixed_df, how='all')) == 5
     assert len(DropNA.apply_to(mixed_df, axis=1).columns) == 3
     assert len(DropNA.apply_to(mixed_df, axis=1, how='all').columns) == 4
+
+
+def test_fillna_transform_value(mixed_df):
+    mixed_df.loc[1, 'A'] = float('NaN')
+    result = FillNA.apply_to(mixed_df, value=0)
+    assert result.loc[1, 'A'] == 0
+    assert not result['A'].isna().any()
+
+
+def test_fillna_transform_ffill(mixed_df):
+    mixed_df.loc[1, 'A'] = float('NaN')
+    result = FillNA.apply_to(mixed_df, method='ffill')
+    assert result.loc[1, 'A'] == mixed_df.loc[0, 'A']
+
+
+def test_fillna_transform_bfill(mixed_df):
+    mixed_df.loc[1, 'A'] = float('NaN')
+    result = FillNA.apply_to(mixed_df, method='bfill')
+    assert result.loc[1, 'A'] == mixed_df.loc[2, 'A']
 
 
 def test_project_lnglat_default_params():

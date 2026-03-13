@@ -884,6 +884,45 @@ class DropNA(Transform):
         return table.dropna(**kwargs)
 
 
+class FillNA(Transform):
+    """
+    `FillNA` fills missing values.
+
+    `df.fillna(value=<value>)` or `df.ffill()` / `df.bfill()`
+    """
+
+    value = param.Parameter(default=None, doc="""
+        Value to use to fill holes (e.g. 0). Can also be a dict/Series
+        for per-column fill values. Cannot be used together with method.""")
+
+    method = param.Selector(default=None, objects=[None, 'bfill', 'ffill'], doc="""
+        Method to use for filling holes.
+        ffill: propagate last valid observation forward.
+        bfill: use next valid observation to fill gap.""")
+
+    limit = param.Integer(default=None, doc="""
+        Maximum number of consecutive NaN values to forward/backward fill.
+        Only used when method is specified.""")
+
+    axis = param.ClassSelector(default=None, class_=(int, str), doc="""
+        Axis along which to fill missing values.
+        0 or 'index', 1 or 'columns'.""")
+
+    transform_type: ClassVar[str] = 'fillna'
+
+    def apply(self, table: DataFrame) -> DataFrame:
+        if self.method == 'ffill':
+            return table.ffill(limit=self.limit, axis=self.axis)
+        elif self.method == 'bfill':
+            return table.bfill(limit=self.limit, axis=self.axis)
+        kwargs = {}
+        if self.value is not None:
+            kwargs['value'] = self.value
+        if self.axis is not None:
+            kwargs['axis'] = self.axis
+        return table.fillna(**kwargs)
+
+
 class Corr(Transform):
     """
     ``Corr`` computes pairwise correlation of columns, excluding NA/null values.
