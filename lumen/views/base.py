@@ -1163,11 +1163,24 @@ class Table(View):
     _panel_type = pn.widgets.tables.Tabulator
 
     def get_panel(self):
-        return self._panel_type(**self._normalize_params(self._get_params()))
+        params = self._normalize_params(self._get_params())
+        config = {'columnDefaults': {'maxInitialWidth': 300}}
+        if 'configuration' in self.kwargs:
+            config.update(self.kwargs['configuration'])
+        params['configuration'] = config
+        return self._panel_type(**params)
 
     def _get_params(self):
-        return dict(value=self.get_data(), disabled=True, page_size=self.page_size,
-                    **self.kwargs)
+        kwargs = {k: v for k, v in self.kwargs.items() if k != 'configuration'}
+        params = dict(
+            value=self.get_data(),
+            disabled=True,
+            page_size=self.page_size,
+            sizing_mode='stretch_width',
+            layout='fit_data_stretch',
+        )
+        params.update(kwargs)
+        return params
 
 
 class DownloadView(View):
