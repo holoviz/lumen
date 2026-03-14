@@ -8,11 +8,11 @@ is exposed as a separate SQL table with coordinate columns.
 
 from __future__ import annotations
 
+import math
+
 from pathlib import Path
 from typing import Any, ClassVar
 
-import numpy as np
-import pandas as pd
 import param
 
 from ..transforms.sql import SQLFilter
@@ -208,6 +208,9 @@ class XArraySQLSource(BaseSQLSource):
         return sorted(self._registered_tables)
 
     def normalize_table(self, table: str) -> str:
+        # Case-insensitive matching and quote stripping for AI-generated queries.
+        # Not using normalize_table_name() since that normalizes filenames, not
+        # xarray variable names which are already valid Python identifiers.
         stripped = table.strip('"').strip("'").strip("`")
         all_known = set(self._registered_tables)
         if isinstance(self.tables, dict):
@@ -272,92 +275,38 @@ class XArraySQLSource(BaseSQLSource):
             table_params=all_params,
         )
 
-    # ---- XArray-specific methods ----
-
     def _get_table_metadata(self, tables: list[str]) -> dict[str, Any]:
-        """Build rich metadata from xarray attributes."""
+        """Build metadata from xarray attributes for AI table discovery."""
         ds = self._dataset
         metadata = {}
-
         for table in tables:
             if table not in ds.data_vars:
                 continue
-
             var = ds[table]
             attrs = dict(var.attrs)
-            columns = {}
 
-            for coord_name in var.dims:
-                coord = ds.coords[coord_name]
-                coord_attrs = dict(coord.attrs)
-                col_meta = {
-                    "data_type": str(coord.dtype),
-                    "is_coordinate": True,
-                    "is_dimension": True,
-                }
-                if "units" in coord_attrs:
-                    col_meta["units"] = coord_attrs["units"]
-                if "long_name" in coord_attrs:
-                    col_meta["description"] = coord_attrs["long_name"]
-                if coord.dtype.kind in "fiuM":
-                    col_meta["min"] = str(coord.values.min())
-                    col_meta["max"] = str(coord.values.max())
-                    col_meta["size"] = int(coord.size)
-                columns[coord_name] = col_meta
-
-            col_meta = {"data_type": str(var.dtype), "is_coordinate": False}
-            if "units" in attrs:
-                col_meta["units"] = attrs["units"]
-            if "long_name" in attrs:
-                col_meta["description"] = attrs["long_name"]
-            columns[table] = col_meta
-
-            dims_str = " x ".join(f"{d}({ds.sizes[d]})" for d in var.dims)
             description = attrs.get("long_name", table)
             if "units" in attrs:
                 description += f" [{attrs['units']}]"
 
-            metadata[table] = {
-                "description": f"{description} -- dimensions: {dims_str}",
-                "columns": columns,
-                "dimensions": list(var.dims),
-                "shape": list(var.shape),
-                "dataset_attrs": dict(ds.attrs),
+            columns = {}
+            for coord_name in var.dims:
+                coord_attrs = dict(ds.coords[coord_name].attrs)
+                columns[coord_name] = {
+                    "data_type": str(ds.coords[coord_name].dtype),
+                    "description": coord_attrs.get("long_name", ""),
+                }
+            columns[table] = {
+                "data_type": str(var.dtype),
+                "description": attrs.get("long_name", ""),
             }
 
+            metadata[table] = {
+                "description": description,
+                "columns": columns,
+                "rows": math.prod(var.shape),
+            }
         return metadata
-
-    def get_dimension_info(self, table: str | None = None) -> dict[str, Any]:
-        """Return dimension information for UI controls and AI context."""
-        ds = self._dataset
-        tables = [table] if table else list(ds.data_vars)
-        info = {}
-
-        for tbl in tables:
-            if tbl not in ds.data_vars:
-                continue
-            var = ds[tbl]
-            dim_info = {}
-            for dim in var.dims:
-                coord = ds.coords[dim]
-                vals = coord.values
-                d = {"size": int(coord.size), "dtype": str(coord.dtype)}
-                if coord.dtype.kind == "M":
-                    d["min"] = str(pd.Timestamp(vals.min()))
-                    d["max"] = str(pd.Timestamp(vals.max()))
-                    d["type"] = "datetime"
-                elif coord.dtype.kind in "fiu":
-                    d["min"] = float(vals.min())
-                    d["max"] = float(vals.max())
-                    d["step"] = float(np.diff(vals[:2])[0]) if len(vals) > 1 else None
-                    d["type"] = "numeric"
-                else:
-                    d["values"] = vals.tolist()
-                    d["type"] = "categorical"
-                dim_info[dim] = d
-            info[tbl] = dim_info
-
-        return info if table is None else info.get(table, {})
 
     def close(self):
         """Clean up resources."""
@@ -365,11 +314,3 @@ class XArraySQLSource(BaseSQLSource):
             self._dataset.close()
         self._ctx = None
         self._registered_tables.clear()
-
-    def __repr__(self):
-        tables = self.get_tables()
-        dims = dict(self._dataset.sizes) if self._dataset else {}
-        return (
-            f"XArraySQLSource(uri={self.uri!r}, tables={tables}, "
-            f"dims={dims}, dialect='{self.dialect}')"
-        )

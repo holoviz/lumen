@@ -11,6 +11,8 @@ Tests cover:
 - Edge cases and error handling
 """
 
+import warnings
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -33,9 +35,9 @@ def synthetic_dataset():
     lats = np.array([10.0, 20.0, 30.0, 40.0, 50.0])
     lons = np.array([100.0, 110.0, 120.0, 130.0])
 
-    np.random.seed(42)
-    temp = np.random.uniform(250, 310, (10, 5, 4))
-    pressure = np.random.uniform(950, 1050, (10, 5, 4))
+    rng = np.random.default_rng(42)
+    temp = rng.uniform(250, 310, (10, 5, 4))
+    pressure = rng.uniform(950, 1050, (10, 5, 4))
 
     return xr.Dataset(
         {
@@ -73,7 +75,6 @@ def nc_file(synthetic_dataset, tmp_path):
 def zarr_path(synthetic_dataset, tmp_path):
     """Write synthetic dataset to a temporary Zarr store."""
     zarr = pytest.importorskip("zarr")  # noqa: F841
-    import warnings
     path = tmp_path / "test_data.zarr"
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -113,11 +114,6 @@ class TestConstruction:
     def test_no_uri_no_dataset_raises(self):
         with pytest.raises(ValueError, match="Either 'uri' or '_dataset'"):
             XArraySQLSource()
-
-    def test_repr(self, synthetic_dataset):
-        source = XArraySQLSource(_dataset=synthetic_dataset)
-        r = repr(source)
-        assert "XArraySQLSource" in r
 
     def test_dialect_is_postgres(self, synthetic_dataset):
         source = XArraySQLSource(_dataset=synthetic_dataset)
@@ -245,37 +241,22 @@ class TestSchemaMetadata:
         meta = source.get_metadata("temperature")
         assert "description" in meta
         assert "columns" in meta
-        assert "dimensions" in meta
+        assert "rows" in meta
+        assert meta["rows"] == 10 * 5 * 4  # time * lat * lon
 
-    def test_metadata_has_units(self, synthetic_dataset):
+    def test_metadata_has_descriptions(self, synthetic_dataset):
         source = XArraySQLSource(_dataset=synthetic_dataset)
         meta = source.get_metadata("temperature")
+        assert "Air Temperature" in meta["description"]
         cols = meta["columns"]
-        assert cols["temperature"].get("units") == "K"
-        assert cols["lat"].get("units") == "degrees_north"
+        assert cols["temperature"]["description"] == "Air Temperature"
+        assert cols["lat"]["data_type"] == "float64"
 
     def test_metadata_all_tables(self, synthetic_dataset):
         source = XArraySQLSource(_dataset=synthetic_dataset)
         meta = source.get_metadata()
         assert "temperature" in meta
         assert "pressure" in meta
-
-    def test_dimension_info(self, synthetic_dataset):
-        source = XArraySQLSource(_dataset=synthetic_dataset)
-        info = source.get_dimension_info("temperature")
-        assert "time" in info
-        assert "lat" in info
-        assert "lon" in info
-        assert info["time"]["type"] == "datetime"
-        assert info["lat"]["type"] == "numeric"
-        assert info["lat"]["min"] == 10.0
-        assert info["lat"]["max"] == 50.0
-
-    def test_dimension_info_all_tables(self, synthetic_dataset):
-        source = XArraySQLSource(_dataset=synthetic_dataset)
-        info = source.get_dimension_info()
-        assert "temperature" in info
-        assert "pressure" in info
 
 
 # ---- Lumen Integration (get, get_sql_expr) ----
