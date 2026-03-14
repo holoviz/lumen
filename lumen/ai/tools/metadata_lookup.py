@@ -127,6 +127,16 @@ class MetadataLookup(VectorLookupTool):
         super().__init__(**params)
         self._raw_metadata = {}
         self._semaphore = asyncio.Semaphore(self.max_concurrent)
+        self._ready_event = asyncio.Event()
+        self._ready_event.set()  # Initially ready (no pending sync)
+        self.param.watch(self._sync_ready_event, "_ready")
+
+    def _sync_ready_event(self, event):
+        """Keep _ready_event in sync with _ready param automatically."""
+        if event.new is False:
+            self._ready_event.clear()
+        else:
+            self._ready_event.set()
 
     async def sync(self, context: TContext):
         """
@@ -241,19 +251,21 @@ class MetadataLookup(VectorLookupTool):
 
         async with self._progress_lock:
             if vector_store_id not in self._sources_in_progress:
-                self._sources_in_progress[vector_store_id] = set()
+                self._sources_in_progress[vector_store_id] = {}
 
         log_debug(f"[MetadataLookup] Starting _update_vector_store for {len(sources)} sources")
 
         for source in sources:
             async with self._progress_lock:
-                # Skip this source if it's already being processed for this vector store
-                if source.name in self._sources_in_progress[vector_store_id]:
-                    log_debug(f"[MetadataLookup] Skipping source {source.name} - already in progress")
+                # Skip this source if already processed with the same (or more) tables
+                current_table_count = len(source.get_tables())
+                known_count = self._sources_in_progress[vector_store_id].get(source.name, 0)
+                if known_count >= current_table_count:
+                    log_debug(f"[MetadataLookup] Skipping source {source.name} - already processed {known_count} tables")
                     continue
 
-                # Mark this source as in progress for this vector store
-                self._sources_in_progress[vector_store_id].add(source.name)
+                # Mark this source as in progress with current table count
+                self._sources_in_progress[vector_store_id][source.name] = current_table_count
                 processed_sources.append(source.name)
                 log_debug(f"[MetadataLookup] Processing source {source.name}")
 
@@ -294,7 +306,7 @@ class MetadataLookup(VectorLookupTool):
                     log_debug(f"[MetadataLookup] Cleaning up sources: {processed_sources}")
                     for source_name in processed_sources:
                         if vector_store_id in self._sources_in_progress:
-                            self._sources_in_progress[vector_store_id].discard(source_name)
+                            self._sources_in_progress[vector_store_id].pop(source_name, None)
                             log_debug(f"[MetadataLookup] Removed {source_name} from in-progress")
 
                     # Remove the vector_store_id entry if empty
@@ -540,6 +552,11 @@ class MetadataLookup(VectorLookupTool):
         """
         Fetches tables based on the user query and returns formatted context.
         """
+        # Wait for vector store to finish processing new sources
+        try:
+            await asyncio.wait_for(self._ready_event.wait(), timeout=30)
+        except TimeoutError:
+            log_debug("[MetadataLookup] Timeout waiting for vector store sync")
         # Run the process to build schema objects
         out_model = await self._gather_info(messages, context)
         return [self._format_context(out_model)], out_model
