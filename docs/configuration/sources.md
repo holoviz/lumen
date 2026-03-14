@@ -29,6 +29,7 @@ ui.servable()
 |--------|---------|
 | Files | CSV, Parquet, JSON (local or URL) |
 | DuckDB | Local SQL queries on files |
+| xarray | N-dimensional scientific data (NetCDF, Zarr, HDF5) |
 | Snowflake | Cloud data warehouse |
 | BigQuery | Google's data warehouse |
 | PostgreSQL | PostgreSQL via SQLAlchemy |
@@ -172,6 +173,45 @@ source = DuckDBSource(
 ```
 
 1. Required for HTTP/S3 access
+
+### xarray for scientific data
+
+Query N-dimensional scientific datasets (NetCDF, Zarr, HDF5) with SQL via Apache DataFusion:
+
+``` bash title="Install dependencies"
+pip install lumen[xarray]
+```
+
+``` py title="Query a NetCDF file"
+from lumen.sources.xarray_sql import XArraySQLSource
+import lumen.ai as lmai
+
+source = XArraySQLSource(uri='air_temperature.nc')
+
+ui = lmai.ExplorerUI(data=source)
+ui.servable()
+```
+
+Each data variable in the dataset becomes a separate SQL table with coordinate columns:
+
+``` py title="Direct SQL queries"
+source = XArraySQLSource(uri='air_temperature.nc')
+source.get_tables()  # ['air']
+
+df = source.execute(
+    "SELECT lat, lon, AVG(air) as avg_temp "
+    "FROM air GROUP BY lat, lon"
+)
+```
+
+**Select specific variables:**
+
+``` py hl_lines="3"
+source = XArraySQLSource(
+    uri='climate_data.nc',
+    variables=['temperature', 'pressure']
+)
+```
 
 ### Multiple sources
 
