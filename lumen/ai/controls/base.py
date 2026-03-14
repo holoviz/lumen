@@ -742,8 +742,17 @@ class BaseSourceControls(Viewer):
                     self.param.trigger("outputs")
             elif card.extension.endswith(TABLE_EXTENSIONS):
                 if source is None:
-                    source_id = f"{self.source_name_prefix}{self._count:06d}"
-                    source = DuckDBSource(uri=":memory:", ephemeral=True, name=source_id, tables={})
+                    # Reuse existing ephemeral DuckDB source to keep all
+                    # uploaded tables in one connection across chat uploads.
+                    existing_sources = self.outputs.get("sources", [])
+                    for existing in existing_sources:
+                        if isinstance(existing, DuckDBSource) and existing.ephemeral:
+                            source = existing
+                            break
+                    if source is None:
+                        source_id = f"{self.source_name_prefix}{self._count:06d}"
+                        source = DuckDBSource(uri=":memory:", ephemeral=True, name=source_id, tables={})
+                        self._count += 1
                 table_name = card.alias
                 filename = f"{card.filename}.{card.extension}"
                 if table_name not in source.metadata:
