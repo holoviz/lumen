@@ -1,9 +1,7 @@
 import asyncio
 
 from collections.abc import Callable
-from typing import (
-    Annotated, Any, Literal, NotRequired,
-)
+from typing import Any, Literal, NotRequired
 
 import param
 
@@ -35,10 +33,6 @@ class AnalysisInputs(ContextModel):
     data: NotRequired[Any]
 
     pipeline: Pipeline
-
-    pipelines: NotRequired[Annotated[list[Pipeline], ("accumulate", "pipeline")]]
-
-    datasets: NotRequired[Annotated[list[Any], ("accumulate", "data")]]
 
 
 class AnalysisOutputs(ContextModel):

@@ -396,11 +396,7 @@ class Planner(Coordinator):
 
             if len(consecutive_steps) > 1:
                 # Join the consecutive steps into one
-                additional = ". ".join(step.instruction for step in consecutive_steps[1:])
-                if current_step.actor == "SQLAgent":
-                    combined_instruction = f"{current_step.instruction} Combine the following into a single query using JOIN or UNION: {additional}"
-                else:
-                    combined_instruction = f"{current_step.instruction} Additionally: {additional}"
+                combined_instruction = f"{current_step.instruction} Additionally: " + ". ".join(step.instruction for step in consecutive_steps[1:])
                 combined_title = f"{current_step.title} (combined {len(consecutive_steps)} steps)"
 
                 # Create a new step with combined instruction

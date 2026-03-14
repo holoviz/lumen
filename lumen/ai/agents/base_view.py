@@ -1,6 +1,6 @@
 import traceback
 
-from typing import Annotated, Any, NotRequired
+from typing import Any, NotRequired
 
 import param
 
@@ -21,10 +21,6 @@ class ViewInputs(ContextModel):
     data: Any
 
     pipeline: Pipeline
-
-    pipelines: NotRequired[Annotated[list[Pipeline], ("accumulate", "pipeline")]]
-
-    datasets: NotRequired[Annotated[list[Any], ("accumulate", "data")]]
 
     metaset: NotRequired[Metaset]
 
