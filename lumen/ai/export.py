@@ -76,24 +76,29 @@ def serialize_avatar(avatar: str | BytesIO, size: int = 45) -> str:
 def format_markdown(md: Markdown):
     return [nbformat.v4.new_markdown_cell(source=md.object)]
 
-def format_output(output: LumenEditor):
+def format_output(output: LumenEditor | View | Pipeline):
     ext = None
     code = []
+    # Accept either a LumenEditor wrapper or a raw View/Pipeline
+    if isinstance(output, LumenEditor):
+        component = output.component
+    else:
+        component = output
     with config.param.update(serializer='csv'):
         # replace |2- |3- |4-... etc with | for a cleaner look
-        spec = re.sub(r'(\|[-\d]*)', '|', yaml.dump(output.component.to_spec(), sort_keys=False))
+        spec = re.sub(r'(\|[-\d]*)', '|', yaml.dump(component.to_spec(), sort_keys=False))
     read_code = [
         f'yaml_spec = """\n{spec}"""',
         'spec = yaml.safe_load(yaml_spec)',
     ]
-    if isinstance(output.component, Pipeline):
+    if isinstance(component, Pipeline):
         code.extend([
             *read_code,
             'pipeline = lm.Pipeline.from_spec(spec)',
             'pipeline'
         ])
-    elif isinstance(output.component, View):
-        ext = output.component._extension
+    elif isinstance(component, View):
+        ext = component._extension
         code.extend([
             *read_code,
             'view = lm.View.from_spec(spec)',
