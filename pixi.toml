@@ -70,10 +70,12 @@ sqlalchemy = "*"
 
 [feature.xarray.dependencies]
 xarray = "*"
-xarray-sql = "*"
 netcdf4 = "*"
 h5netcdf = "*"
 zarr = "*"
+
+[feature.xarray.pypi-dependencies]
+xarray-sql = "*"
 
 # =============================================
 # =================== TESTS ===================
