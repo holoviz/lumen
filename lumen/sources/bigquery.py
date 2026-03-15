@@ -12,6 +12,7 @@ import param
 
 try:
     import google.auth
+
     from google.auth.credentials import Credentials
     from google.auth.exceptions import DefaultCredentialsError
     from google.cloud import bigquery, exceptions
