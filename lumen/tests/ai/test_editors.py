@@ -1,10 +1,12 @@
 """Tests for lumen.ai.editors module."""
 import json
+
 from io import BytesIO
 
 import pandas as pd
 import param
 import pytest
+
 from PIL import Image
 
 import lumen.ai.editors as editors_module
