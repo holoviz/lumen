@@ -9,7 +9,11 @@ import pandas as pd
 import param  # type: ignore
 import requests
 
-from ae5_tools.api import AEAdminSession, AEUserSession  # type: ignore
+try:
+    from ae5_tools.api import AEAdminSession, AEUserSession  # type: ignore
+except ImportError:
+    AEAdminSession = None
+    AEUserSession = None
 from panel import state
 
 from ..util import get_dataframe_schema
@@ -86,6 +90,11 @@ class AE5Source(Source):
     }
 
     def __init__(self, **params):
+        if AEAdminSession is None:
+            raise ImportError(
+                "AE5Source requires the 'ae5-tools' package. "
+                "Install it with: pip install lumen[ae5]"
+            )
         super().__init__(**params)
         self._session = AEUserSession(
             self.hostname, self.username, self.password, persist=False,

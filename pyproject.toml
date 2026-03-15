@@ -75,6 +75,8 @@ ai-litellm = ['litellm']
 ai-ollama = ['ollama']
 chromadb = ['chromadb']
 bigquery = ['google-cloud-bigquery', 'sqlalchemy-bigquery']
+snowflake = ['snowflake-connector-python', 'cryptography']
+ae5 = ['ae5-tools']
 mcp = ['fastmcp']
 
 [project.scripts]

@@ -11,13 +11,19 @@ from typing import Any
 
 import pandas as pd
 import param
-import snowflake.connector
 
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives.serialization import (
-    Encoding, NoEncryption, PrivateFormat, load_pem_private_key,
-)
-from snowflake.connector.constants import QueryStatus
+try:
+    import snowflake.connector
+    from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives.serialization import (
+        Encoding, NoEncryption, PrivateFormat, load_pem_private_key,
+    )
+    from snowflake.connector.constants import QueryStatus
+except ImportError:
+    snowflake = None
+    default_backend = None
+    Encoding = NoEncryption = PrivateFormat = load_pem_private_key = None
+    QueryStatus = None
 
 from ..transforms.sql import SQLFilter
 from .base import BaseSQLSource, cached, cached_schema
@@ -104,6 +110,11 @@ class SnowflakeSource(BaseSQLSource):
     dialect = 'snowflake'
 
     def __init__(self, **params):
+        if snowflake is None:
+            raise ImportError(
+                "SnowflakeSource requires the 'snowflake-connector-python' package. "
+                "Install it with: pip install lumen[snowflake]"
+            )
         conn = params.pop('conn', None)
         super().__init__(**params)
         conn_kwargs = self.conn_kwargs.copy()
