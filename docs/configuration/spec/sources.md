@@ -26,8 +26,56 @@ sources:
 | `intake` | Intake catalog entries | Data catalogs |
 | `rest` | REST API endpoints | API data |
 | `live` | Live website status checks | Website monitoring |
+| `xarray` | NetCDF and Zarr datasets | Labeled n-dimensional scientific data |
 
 This guide focuses on `file` sources (most common). See Lumen's source reference for other types.
+
+## Xarray sources
+
+`xarray` sources expose each `Dataset.data_var` as a logical table. Queries filter
+coordinates with xarray selection semantics, and results are flattened to pandas
+DataFrames so they can flow through normal Lumen pipelines and views.
+
+### Basic xarray spec
+
+```yaml
+sources:
+  forecast:
+    type: xarray
+    uri: ./air_temperature.nc
+    filterable_coords: [time, lat, lon]
+    max_rows: 5000
+
+pipelines:
+  air:
+    source: forecast
+    table: air
+    filters:
+      - type: widget
+        field: time
+      - type: widget
+        field: lat
+```
+
+Use `uri` for NetCDF or Zarr-backed datasets, or construct `XarraySource(dataset=...)`
+directly in Python when you already have an in-memory `xarray.Dataset`.
+
+### Key parameters
+
+- `uri`: Local path, `file://` URI, or remote URI to an xarray-readable dataset
+- `dataset_format`: `auto`, `netcdf`, or `zarr`; set explicitly for suffixless stores
+- `load_kwargs`: Passed through to `xr.open_dataset()` or `xr.open_zarr()`
+- `filterable_coords`: Restricts which 1D coordinates appear in schema and queries
+- `max_rows`: Rejects oversized flattened results before DataFrame materialization
+
+### Current behavior
+
+- Each data variable becomes its own table
+- Only 1D coordinates are queryable
+- `get_schema()` includes `__len__` and supports sampled schemas via `limit` and `shuffle`
+- Zarr stores can be selected explicitly with `dataset_format: zarr` or inferred from local store markers
+
+See [examples/xarray_air_temperature.yaml](../../../examples/xarray_air_temperature.yaml) for a minimal review-friendly spec.
 
 ## File sources
 

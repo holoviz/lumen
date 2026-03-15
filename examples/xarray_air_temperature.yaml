@@ -1,0 +1,29 @@
+config:
+  title: Xarray Air Temperature
+  reloadable: false
+
+sources:
+  air_temperature:
+    type: xarray
+    uri: ./air_temperature.nc
+    filterable_coords: [time, lat, lon]
+    max_rows: 5000
+
+pipelines:
+  air_temperature:
+    source: air_temperature
+    table: air
+    filters:
+      - type: widget
+        field: time
+      - type: widget
+        field: lat
+
+layouts:
+  - title: Air Temperature
+    pipeline: air_temperature
+    views:
+      - type: table
+        page_size: 20
+        sizing_mode: stretch_width
+    sizing_mode: stretch_width

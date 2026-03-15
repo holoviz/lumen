@@ -62,6 +62,7 @@ HoloViz = "https://holoviz.org/"
 
 [project.optional-dependencies]
 tests = ['pytest', 'pytest-rerunfailures', 'pytest-asyncio']
+xarray = ['xarray']
 sql = ['sqlalchemy']
 ai-local = ['huggingface_hub', 'hf_xet']
 ai-openai = ['openai']
