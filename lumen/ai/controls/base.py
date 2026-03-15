@@ -591,7 +591,7 @@ class BaseSourceControls(Viewer):
             if len(data) == 0:
                 raise ValueError("JSON array is empty")
             if all(isinstance(item, dict) for item in data):
-                return pd.DataFrame(data)
+                return pd.json_normalize(data)
             else:
                 return pd.DataFrame({"value": data})
         elif isinstance(data, dict):
@@ -599,7 +599,7 @@ class BaseSourceControls(Viewer):
             for key in data_keys:
                 if key in data and isinstance(data[key], list):
                     if len(data[key]) > 0 and all(isinstance(item, dict) for item in data[key]):
-                        return pd.DataFrame(data[key])
+                        return pd.json_normalize(data[key])
             if all(isinstance(v, list) for v in data.values()):
                 lengths = [len(v) for v in data.values()]
                 if len(set(lengths)) == 1:
