@@ -37,6 +37,7 @@ ui.servable()
 | Oracle | Oracle via SQLAlchemy |
 | MSSQL | Microsoft SQL Server via SQLAlchemy |
 | Intake | Data catalogs |
+| Xarray | NetCDF and Zarr scientific datasets |
 
 ## Database connections
 
@@ -172,6 +173,28 @@ source = DuckDBSource(
 ```
 
 1. Required for HTTP/S3 access
+
+### Xarray datasets
+
+Use `XarraySource` when your data already lives in NetCDF or Zarr and you want
+to preserve coordinate-aware filtering before flattening to a DataFrame.
+
+``` py title="Xarray NetCDF source"
+from lumen.sources.xarray import XarraySource
+import lumen.ai as lmai
+
+source = XarraySource(
+    uri="air_temperature.nc",
+    filterable_coords=["time", "lat", "lon"],
+    max_rows=5000,
+)
+
+ui = lmai.ExplorerUI(data=source)
+ui.servable()
+```
+
+Set `dataset_format="zarr"` for suffixless stores, or leave the default `auto`
+format detection for normal NetCDF and local Zarr directories.
 
 ### Multiple sources
 
