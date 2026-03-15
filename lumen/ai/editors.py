@@ -285,7 +285,9 @@ class LumenEditor(Viewer):
 
 class VegaLiteEditor(LumenEditor):
 
-    export_formats = ("yaml", "png", "jpeg", "pdf", "svg", "html")
+    export_formats = ("yaml", "png", "jpeg", "pdf", "svg", "html", "webp", "tiff", "eps")
+
+    _PILLOW_FORMATS = ("webp", "tiff", "eps")
 
     _controls = [RetryControls, AnnotationControls, CopyControls]
     _label = "Plot"
@@ -294,20 +296,28 @@ class VegaLiteEditor(LumenEditor):
         ret = super().export(fmt)
         if ret is not None:
             return ret
-        kwargs = {"scale": 2} if fmt in ("png", "jpeg", "pdf") else {}
-        # Replace 'container' with actual dimensions for image and HTML exports
-        if fmt in ("png", "jpeg", "pdf", "svg", "html"):
-            spec = load_yaml(self.spec)
-            # Replace 'container' with actual pixel values or use defaults
-            if spec.get("width") == "container" or "width" not in spec:
-                spec["width"] = 800
-            if spec.get("height") == "container" or "height" not in spec:
-                spec["height"] = 400
-            # Temporarily update spec for export
-            with self.param.update(spec=dump_yaml(spec)):
-                out = self.component.get_panel().export(fmt, **kwargs)
-            return BytesIO(out) if isinstance(out, bytes) else StringIO(out)
-        out = self.component.get_panel().export(fmt, **kwargs)
+
+        render_fmt = "png" if fmt in self._PILLOW_FORMATS else fmt
+        kwargs = {"scale": 2} if render_fmt in ("png", "jpeg", "pdf") else {}
+
+        spec = load_yaml(self.spec)
+        if spec.get("width") == "container" or "width" not in spec:
+            spec["width"] = 800
+        if spec.get("height") == "container" or "height" not in spec:
+            spec["height"] = 400
+        with self.param.update(spec=dump_yaml(spec)):
+            out = self.component.get_panel().export(render_fmt, **kwargs)
+
+        if fmt in self._PILLOW_FORMATS:
+            from PIL import Image
+            img = Image.open(BytesIO(out))
+            if fmt == "eps":
+                img = img.convert("RGB")
+            buf = BytesIO()
+            img.save(buf, format=fmt.upper())
+            buf.seek(0)
+            return buf
+
         return BytesIO(out) if isinstance(out, bytes) else StringIO(out)
 
     @cache

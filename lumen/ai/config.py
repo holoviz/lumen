@@ -22,6 +22,7 @@ ChatMessage.default_avatars.update({
 
 FORMAT_ICONS = {
     "csv":      "table_chart",
+    "eps":      "brush",
     "html":     "html",
     "jpeg":     "photo_camera_back",
     "json":     "data_object",
@@ -30,12 +31,15 @@ FORMAT_ICONS = {
     "png":      "image",
     "sql":      "code",
     "svg":      "polyline",
+    "tiff":     "photo_library",
+    "webp":     "filter",
     "xlsx":     "grid_on",
     "yaml":     "segment",
 }
 
 FORMAT_LABELS = {
     "csv":      "CSV",
+    "eps":      "EPS",
     "html":     "HTML",
     "jpeg":     "JPEG",
     "json":     "JSON",
@@ -44,6 +48,8 @@ FORMAT_LABELS = {
     "png":      "PNG",
     "sql":      "SQL",
     "svg":      "SVG",
+    "tiff":     "TIFF",
+    "webp":     "WebP",
     "xlsx":     "Excel",
     "yaml":     "YAML",
 }
