@@ -107,6 +107,8 @@ class XarraySource(Source):
         assert self.uri is not None
         if self._is_remote_uri(self.uri):
             return self.uri
+        if self._is_windows_path(self.uri):
+            return self.uri
         path = self._uri_to_path(self.uri)
         if not path.is_absolute():
             path = self.root / path
