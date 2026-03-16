@@ -294,8 +294,12 @@ class TestPrepareVisionMessages:
 
     @pytest.fixture
     def agent(self, llm):
+        import warnings
         agent = VegaLiteAgent.__new__(VegaLiteAgent)
-        agent.llm = llm
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            warnings.simplefilter("ignore", PendingDeprecationWarning)
+            agent.llm = llm
         return agent
 
     def test_no_vision_no_fallback(self, agent):
