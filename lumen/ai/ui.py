@@ -56,7 +56,7 @@ from .llm_dialog import LLMConfigDialog
 from .logs import ChatLogs
 from .models import ErrorDescription
 from .report import ActorTask, Report, Section
-from .utils import log_debug, sanitize_llm_output, sanitize_user_input, wrap_logfire
+from .utils import log_debug, sanitize_user_input, wrap_logfire
 from .vector_store import VectorStore
 
 DataT = str | Path | Source | Pipeline
