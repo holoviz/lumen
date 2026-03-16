@@ -43,8 +43,6 @@ Point: `type, color, size, filled, shape`
 {% endblock %}
 
 {% block context %}
-User's annotation request: {{ instruction }}
-
 Build off the following Vega-Lite yaml:
 ```yaml
 {{ vega_spec | safe }}

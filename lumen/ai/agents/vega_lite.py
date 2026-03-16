@@ -297,17 +297,24 @@ class VegaLiteAgent(BaseCodeAgent):
             return None
 
     def _prepare_vision_messages(
-        self, messages: list[Message], out: LumenEditor | None, content: str
+        self, messages: list[Message], out: LumenEditor | None, content: str,
+        text_fallback: bool = False
     ) -> list[Message]:
-        """Add plot image to messages for LLM vision analysis."""
+        """Add plot image to messages for LLM vision analysis.
+
+        When *text_fallback* is True the content string is always
+        appended as a plain-text user message if vision is unavailable
+        or image export fails, so the instruction is never lost.
+        """
+        fallback = messages + [{"role": "user", "content": content}] if text_fallback else messages
         if not self.llm._supports_vision:
-            return messages
+            return fallback
         if out is None or not isinstance(out, VegaLiteEditor):
-            return messages
+            return fallback
 
         image_bytes = self._export_plot_image(out)
         if image_bytes is None:
-            return messages
+            return fallback
 
         base64_str = base64.b64encode(image_bytes).decode('utf-8')
         plot_image = Image.from_raw_base64(base64_str)
@@ -741,7 +748,7 @@ class VegaLiteAgent(BaseCodeAgent):
         str
             Updated specification with annotations
         """
-        messages = self._prepare_vision_messages(messages, view, f"Annotate this chart: {instruction!r}")
+        messages = self._prepare_vision_messages(messages, view, f"Annotate this chart: {instruction!r}", text_fallback=True)
 
         vega_spec = dump_yaml(spec["spec"], default_flow_style=False)
         result = await self._invoke_prompt(
@@ -749,7 +756,6 @@ class VegaLiteAgent(BaseCodeAgent):
             messages,
             context,
             vega_spec=vega_spec,
-            instruction=instruction,
         )
         update_dict = load_yaml(result.yaml_update)
 
