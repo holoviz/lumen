@@ -11,8 +11,10 @@ try:
     from sqlalchemy import create_engine, inspect, text
     from sqlalchemy.engine.url import URL, make_url
 except ImportError:
-    create_engine = inspect = text = None
-    URL = make_url = None
+    raise ImportError(
+        "SQLAlchemySource requires the 'sqlalchemy' package. "
+        "Install it with: pip install lumen[sql]"
+    )
 
 from ..transforms.base import Filter
 from ..transforms.sql import SQLFilter
@@ -97,11 +99,6 @@ class SQLAlchemySource(BaseSQLSource):
     }
 
     def __init__(self, **params):
-        if create_engine is None:
-            raise ImportError(
-                "SQLAlchemySource requires the 'sqlalchemy' package. "
-                "Install it with: pip install lumen[sql]"
-            )
         engine = params.pop('engine', None)
         super().__init__(**params)
 

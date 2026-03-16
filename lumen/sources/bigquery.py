@@ -17,15 +17,13 @@ try:
     from google.auth.exceptions import DefaultCredentialsError
     from google.cloud import bigquery, exceptions
     from google.cloud.bigquery.client import Client
-    from tqdm import tqdm
 except ImportError:
-    google = None
-    Credentials = None
-    DefaultCredentialsError = None
-    bigquery = None
-    exceptions = None
-    Client = None
-    tqdm = None
+    raise ImportError(
+        "BigQuerySource requires the 'google-cloud-bigquery' package. "
+        "Install it with: pip install lumen[bigquery]"
+    )
+
+from tqdm import tqdm
 
 from ..transforms.sql import SQLFilter, SQLMinMax
 from .base import BaseSQLSource, cached, cached_schema
@@ -62,11 +60,6 @@ class BigQuerySource(BaseSQLSource):
     }
 
     def __init__(self, **params) -> None:
-        if bigquery is None:
-            raise ImportError(
-                "BigQuerySource requires the 'google-cloud-bigquery' package. "
-                "Install it with: pip install lumen[bigquery]"
-            )
         self._metadata__client: Client | None = None
         self._sql__client: Client | None = None
         self._credentials: Credentials | None = None
