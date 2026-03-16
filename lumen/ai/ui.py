@@ -823,6 +823,36 @@ class UI(Viewer):
                 for message in instance.objects[message_index:]:
                     self._logs.update_status(message_id=id(message), removed=True)
 
+            # If on a non-Home exploration, remove it so re-send creates
+            # a fresh exploration instead of a duplicate tab
+            current_item = self._exploration
+            current_exploration = current_item['view']
+            if current_exploration.plan is not None:
+                with hold():
+                    for child in current_item.get('items', []):
+                        if child['view'].plan is not None:
+                            child['view'].plan.cleanup()
+                        child['view'].context.clear()
+                    current_exploration.plan.cleanup()
+                    current_exploration.context.clear()
+                    if current_item in self._explorations.items:
+                        self._explorations.items = [
+                            it for it in self._explorations.items
+                            if it is not current_item
+                        ]
+                    else:
+                        parent = current_item["parent"]
+                        self._explorations.update_item(
+                            parent,
+                            items=[
+                                it for it in parent["items"]
+                                if it is not current_item
+                            ],
+                        )
+                    home_item = self._explorations.items[0]
+                    self._explorations.value = self._exploration = home_item
+                    self._last_synced = self._home
+
             # Truncate conversation and re-send edited content as a new message
             with instance.param.update(disabled=True, loading=True), hold():
                 instance.objects = instance.objects[:message_index]

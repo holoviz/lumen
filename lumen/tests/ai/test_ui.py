@@ -1216,3 +1216,176 @@ async def test_edit_callback_is_set_on_interface(explorer_ui):
     ui = explorer_ui
     assert ui.interface.edit_callback is not None
     assert asyncio.iscoroutinefunction(ui.interface.edit_callback)
+
+
+# --- Tests for on_edit exploration lifecycle ---
+
+async def _create_successful_exploration(ui):
+    """Helper: execute a plan with SQLAgent + ChatAgent to create an exploration."""
+    test_source = ui.context["source"]
+    SQLQueryWithTables = make_sql_model([(test_source.name, "test_table")])
+    ui.llm.set_responses([
+        SQLQueryWithTables(
+            query="SELECT SUM(value) as value_sum FROM test_table",
+            table_slug="test_sql_agg",
+            tables=["test_table"]
+        ),
+        "Summary of results"
+    ])
+    sql_agent = SQLAgent(llm=ui.llm)
+    chat_agent = ChatAgent(llm=ui.llm)
+    plan = Plan(
+        ActorTask(sql_agent),
+        ActorTask(chat_agent),
+        history=[{"content": "Sum value column", "role": "user"}],
+        title="Sum of value",
+        context=ui.context
+    )
+    await ui._execute_plan(plan)
+
+
+async def test_edit_on_exploration_removes_old_and_switches_to_home(explorer_ui):
+    """Editing on a non-Home exploration should remove it and switch to Home
+    so re-send creates a fresh exploration instead of a duplicate."""
+    ui = explorer_ui
+    await _create_successful_exploration(ui)
+
+    # Verify exploration was created
+    assert len(ui._explorations.items) == 2
+    old_exploration = ui._exploration['view']
+    assert old_exploration.plan is not None
+    old_context = old_exploration.context
+
+    # Replace callback with noop to isolate the cleanup logic
+    async def noop_callback(contents, user, instance):
+        return
+
+    ui.interface.callback = noop_callback
+
+    # Edit a message
+    await ui.interface.edit_callback("Edited query", 0, ui.interface)
+
+    # Old exploration should be removed, back on Home
+    assert len(ui._explorations.items) == 1
+    assert ui._explorations.value['view'] is ui._home
+    assert ui._exploration['view'] is ui._home
+    assert ui._last_synced is ui._home
+
+    # Old exploration context should be cleared
+    assert len(old_context) == 0
+
+
+async def test_edit_on_home_preserves_behavior(explorer_ui):
+    """Editing on Home (no exploration) should just truncate and resend,
+    without any exploration manipulation."""
+    ui = explorer_ui
+
+    # We're on Home — no exploration created
+    assert len(ui._explorations.items) == 1
+    assert ui._exploration['view'] is ui._home
+
+    ui.interface.send("Question", user="User", respond=False)
+    ui.interface.send("Answer", user="Assistant", respond=False)
+
+    async def noop_callback(contents, user, instance):
+        return
+
+    ui.interface.callback = noop_callback
+
+    await ui.interface.edit_callback("Edited question", 0, ui.interface)
+
+    # Still on Home, no explorations added or removed
+    assert len(ui._explorations.items) == 1
+    assert ui._exploration['view'] is ui._home
+    assert len(ui.interface.objects) == 1
+    assert ui.interface.objects[0].object == "Edited question"
+
+
+async def test_edit_on_exploration_does_not_duplicate_tabs(explorer_ui):
+    """After editing on an exploration, the old exploration should be removed
+    so re-send cannot create a duplicate alongside it."""
+    ui = explorer_ui
+    await _create_successful_exploration(ui)
+
+    assert len(ui._explorations.items) == 2
+    old_exploration = ui._exploration['view']
+    old_plan = old_exploration.plan
+
+    # Replace callback with noop to isolate cleanup behavior
+    async def noop_callback(contents, user, instance):
+        return
+
+    ui.interface.callback = noop_callback
+
+    # Trigger edit - removes old exploration, re-sends through noop
+    await ui.interface.edit_callback("Show me the average", 0, ui.interface)
+
+    # Old exploration must be gone - at most Home + possibly new (never 3)
+    assert len(ui._explorations.items) <= 2
+
+    # Old exploration must not appear anywhere in the tree
+    for item in ui._explorations.items:
+        assert item['view'] is not old_exploration
+        for child in item.get('items', []):
+            assert child['view'] is not old_exploration
+
+    # Old plan was cleaned up (watchers unwatched)
+    assert old_plan._current == 0  # reset by cleanup()
+
+
+async def test_edit_on_parent_exploration_removes_children(explorer_ui):
+    """Editing on a parent exploration should also remove its child
+    (followup) explorations and clean up their plans."""
+    ui = explorer_ui
+    await _create_successful_exploration(ui)
+
+    assert len(ui._explorations.items) == 2
+    parent_item = ui._explorations.items[1]
+    parent_exploration = parent_item['view']
+
+    # Create a child (followup) exploration under the parent
+    test_source = ui.context["source"]
+    SQLQueryWithTables = make_sql_model([(test_source.name, "test_table")])
+    ui.llm.set_responses([
+        SQLQueryWithTables(
+            query="SELECT * FROM test_table LIMIT 5",
+            table_slug="test_limit",
+            tables=["test_table"]
+        )
+    ])
+    sql_agent = SQLAgent(llm=ui.llm)
+    child_plan = Plan(
+        ActorTask(sql_agent),
+        history=[{"content": "Show first 5 rows", "role": "user"}],
+        title="First 5 rows",
+        context=parent_exploration.context,
+        is_followup=True
+    )
+    await ui._add_exploration(child_plan, parent_exploration)
+    await asyncio.sleep(0.1)
+
+    # Re-fetch parent_item after _add_exploration may have updated it
+    parent_item = ui._explorations.items[1]
+
+    # Verify child was created under parent
+    assert len(parent_item.get('items', [])) == 1
+    child_item = parent_item['items'][0]
+    child_context = child_item['view'].context
+
+    # Switch back to parent for the edit
+    ui._explorations.value = ui._exploration = parent_item
+
+    async def noop_callback(contents, user, instance):
+        return
+
+    ui.interface.callback = noop_callback
+
+    # Edit on the parent - should remove parent AND child
+    await ui.interface.edit_callback("Edited query", 0, ui.interface)
+
+    # Back to Home, parent removed (child goes with it)
+    assert len(ui._explorations.items) == 1
+    assert ui._exploration['view'] is ui._home
+
+    # Child context should be cleared
+    assert len(child_context) == 0
