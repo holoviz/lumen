@@ -1,4 +1,5 @@
 import io
+
 from typing import get_args
 
 import pandas as pd
