@@ -11,11 +11,11 @@ import requests
 
 try:
     from ae5_tools.api import AEAdminSession, AEUserSession  # type: ignore
-except ImportError:
+except ImportError as e:
     raise ImportError(
         "AE5Source requires the 'ae5-tools' package. "
         "Install it with: pip install lumen[ae5]"
-    ) from None
+    ) from e
 
 from panel import state
 

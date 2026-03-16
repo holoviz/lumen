@@ -17,11 +17,11 @@ try:
     from google.auth.exceptions import DefaultCredentialsError
     from google.cloud import bigquery, exceptions
     from google.cloud.bigquery.client import Client
-except ImportError:
+except ImportError as e:
     raise ImportError(
         "BigQuerySource requires the 'google-cloud-bigquery' package. "
         "Install it with: pip install lumen[bigquery]"
-    ) from None
+    ) from e
 
 from tqdm import tqdm
 

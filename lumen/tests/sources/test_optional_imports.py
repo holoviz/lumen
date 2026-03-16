@@ -47,8 +47,8 @@ def test_import_guard_uses_try_except(module_path, class_name, guard_package, pi
     """Each module should have a try/except guard around the optional import."""
     module_file = module_path.replace(".", "/") + ".py"
     source_text = Path(module_file).read_text()
-    assert "except ImportError:" in source_text, (
-        f"{module_path} should have 'except ImportError:' guard"
+    assert "except ImportError" in source_text, (
+        f"{module_path} should have 'except ImportError' guard"
     )
     assert "raise ImportError(" in source_text, (
         f"{module_path} should re-raise ImportError with a helpful message"

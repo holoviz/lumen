@@ -10,11 +10,11 @@ import param
 try:
     from sqlalchemy import create_engine, inspect, text
     from sqlalchemy.engine.url import URL, make_url
-except ImportError:
+except ImportError as e:
     raise ImportError(
         "SQLAlchemySource requires the 'sqlalchemy' package. "
         "Install it with: pip install lumen[sql]"
-    ) from None
+    ) from e
 
 from ..transforms.base import Filter
 from ..transforms.sql import SQLFilter
