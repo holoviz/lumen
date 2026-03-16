@@ -1,3 +1,4 @@
+import io
 from typing import get_args
 
 import pandas as pd
@@ -13,6 +14,7 @@ from panel_material_ui import Card, ChatMessage, Typography
 
 from lumen.ai.agents import ChatAgent, SQLAgent
 from lumen.ai.agents.sql import make_sql_model
+from lumen.ai.controls.base import BaseSourceControls, UploadedFileRow
 from lumen.ai.coordinator import Coordinator, Plan, Planner
 from lumen.ai.coordinator.planner import Reasoning, make_plan_model
 from lumen.ai.editors import SQLEditor
@@ -21,6 +23,7 @@ from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
 from lumen.ai.tools import FunctionTool, define_tool
 from lumen.config import SOURCE_TABLE_SEPARATOR
+from lumen.sources.duckdb import DuckDBSource
 
 
 async def test_planner_instantiate():
@@ -288,8 +291,6 @@ async def test_reuse_ephemeral_source_across_uploads():
     When an ephemeral DuckDBSource already exists in outputs,
     subsequent uploads should reuse it instead of creating a new one.
     """
-    from lumen.ai.controls.base import BaseSourceControls
-    from lumen.sources.duckdb import DuckDBSource
 
     controls = BaseSourceControls()
 
@@ -314,7 +315,6 @@ async def test_metadata_lookup_reprocesses_source_with_new_tables():
     increases (new tables uploaded to the same source).
     """
     from lumen.ai.tools.metadata_lookup import MetadataLookup
-    from lumen.sources.duckdb import DuckDBSource
 
     source = DuckDBSource(tables={
         'table_a': "SELECT 1 AS id, 'X' AS category",
@@ -345,7 +345,6 @@ async def test_metadata_lookup_skips_unchanged_source():
     stays the same.
     """
     from lumen.ai.tools.metadata_lookup import MetadataLookup
-    from lumen.sources.duckdb import DuckDBSource
 
     source = DuckDBSource(tables={
         'my_table': "SELECT 1 AS x",
@@ -378,10 +377,6 @@ async def test_process_files_reuses_ephemeral_source():
     Calling _process_files() twice (simulating two separate chat uploads)
     should reuse the same DuckDBSource so all tables share one connection.
     """
-    import io
-
-    from lumen.ai.controls.base import BaseSourceControls, UploadedFileRow
-    from lumen.sources.duckdb import DuckDBSource
 
     controls = BaseSourceControls()
 
@@ -429,9 +424,6 @@ async def test_process_files_creates_new_source_when_none_exists():
     First call to _process_files() should create a new DuckDBSource
     and increment _count.
     """
-    import io
-
-    from lumen.ai.controls.base import BaseSourceControls, UploadedFileRow
 
     controls = BaseSourceControls()
     assert controls._count == 0
@@ -528,9 +520,6 @@ async def test_process_files_partial_failure():
     If one file fails during _process_files() (unsupported format),
     other valid files should still be processed successfully.
     """
-    import io
-
-    from lumen.ai.controls.base import BaseSourceControls, UploadedFileRow
 
     controls = BaseSourceControls()
 
@@ -555,10 +544,6 @@ async def test_process_files_concurrent_uploads_same_source():
     Multiple sequential _process_files() calls should all write to
     the same DuckDBSource without conflicts.
     """
-    import io
-
-    from lumen.ai.controls.base import BaseSourceControls, UploadedFileRow
-    from lumen.sources.duckdb import DuckDBSource
 
     controls = BaseSourceControls()
 
@@ -585,9 +570,6 @@ async def test_process_files_duplicate_table_name():
     Uploading a file with the same table name twice should overwrite
     the table data, not error out.
     """
-    import io
-
-    from lumen.ai.controls.base import BaseSourceControls, UploadedFileRow
 
     controls = BaseSourceControls()
 
