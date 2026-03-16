@@ -14,8 +14,8 @@ from ...state import state
 from ..actor import ContextProvider
 from ..context import TContext
 from ..llm import Llm, Message
-from ..utils import sanitize_llm_output
 from ..tools import ToolUser
+from ..utils import sanitize_llm_output
 
 
 class Agent(Viewer, ToolUser, ContextProvider):
