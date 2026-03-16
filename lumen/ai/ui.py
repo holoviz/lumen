@@ -56,7 +56,7 @@ from .llm_dialog import LLMConfigDialog
 from .logs import ChatLogs
 from .models import ErrorDescription
 from .report import ActorTask, Report, Section
-from .utils import log_debug, wrap_logfire
+from .utils import log_debug, sanitize_llm_output, sanitize_user_input, wrap_logfire
 from .vector_store import VectorStore
 
 DataT = str | Path | Source | Pipeline
@@ -875,7 +875,7 @@ class UI(Viewer):
 
             with self.interface.param.update(disabled=True, loading=True), hold():
                 self._update_main_view()
-                self.interface.send(user_prompt, respond=bool(user_prompt))
+                self.interface.send(sanitize_user_input(user_prompt), respond=bool(user_prompt))
                 with edit_readonly(self._chat_input):
                     self._chat_input.value_input = ""
 
@@ -976,7 +976,8 @@ class UI(Viewer):
         ) if new_sources else None
 
         self._update_main_view()
-        msg = Column(user_prompt, source_view) if source_view else user_prompt
+        sanitized_prompt = sanitize_user_input(user_prompt)
+        msg = Column(sanitized_prompt, source_view) if source_view else sanitized_prompt
         self.interface.send(msg, respond=True)
 
     def _on_sources_dialog_close(self, event):
@@ -1972,7 +1973,7 @@ class ExplorerUI(UI):
 
         table = self._explorer.table_slug.split(SOURCE_TABLE_SEPARATOR)[0]
         self._update_main_view()
-        self.interface.send(f"Explore the `{table}` table", respond=False)
+        self.interface.send(f"Explore the `{sanitize_user_input(table)}` table", respond=False)
 
         # Flush UI
         await asyncio.sleep(0.01)

@@ -9,6 +9,7 @@ from panel_material_ui import Tabs
 
 from ..context import TContext
 from ..llm import Message
+from ..utils import sanitize_user_input
 from .base import Agent
 
 
@@ -43,7 +44,7 @@ class BaseListAgent(Agent):
             raise ValueError("Subclass must define _message_format")
 
         message = self._message_format.format(item=repr(item))
-        interface.send(message)
+        interface.send(sanitize_user_input(message))
 
     def _create_row_content(self, context: TContext, source_name: str):
         """Create row content function that displays more info collapsed under each row."""

@@ -1057,3 +1057,240 @@ class TestResolveData:
         assert pipeline.name in duckdb_source.mirrors
         # Table key is sanitized
         assert 'data_csv' in duckdb_source.tables
+
+
+class TestSanitizeUserInput:
+    """Tests for XSS prevention in user input sanitization."""
+
+    def setup_method(self):
+        from lumen.ai.utils import sanitize_user_input
+        self.sanitize = sanitize_user_input
+
+    # --- XSS vector tests ---
+
+    def test_script_tag_escaped(self):
+        result = self.sanitize("<script>alert('XSS')</script>")
+        assert "&lt;script&gt;" in result
+        assert "<script>" not in result
+
+    def test_img_onerror_escaped(self):
+        result = self.sanitize('<img src=x onerror="alert(1)">')
+        assert "<img" not in result
+        assert "&lt;img" in result
+
+    def test_svg_onload_escaped(self):
+        result = self.sanitize("<svg/onload=alert(1)>")
+        assert "<svg" not in result
+        assert "&lt;svg" in result
+
+    def test_iframe_escaped(self):
+        result = self.sanitize('<iframe src="http://evil.com"></iframe>')
+        assert "<iframe" not in result
+        assert "&lt;iframe" in result
+
+    def test_body_onload_escaped(self):
+        result = self.sanitize("<body onload=alert(1)>")
+        assert "<body" not in result
+
+    def test_nested_tags_escaped(self):
+        result = self.sanitize("<<script>>alert('XSS')<</script>>")
+        assert "<script>" not in result
+
+    # --- Markdown preservation tests ---
+
+    def test_markdown_bold_preserved(self):
+        assert self.sanitize("**bold text**") == "**bold text**"
+
+    def test_markdown_italic_preserved(self):
+        assert self.sanitize("*italic*") == "*italic*"
+
+    def test_markdown_code_preserved(self):
+        assert self.sanitize("`code`") == "`code`"
+
+    def test_markdown_heading_preserved(self):
+        assert self.sanitize("# Heading") == "# Heading"
+
+    def test_markdown_list_preserved(self):
+        assert self.sanitize("- list item") == "- list item"
+
+    # --- Normal text tests ---
+
+    def test_normal_text_unchanged(self):
+        text = "Show me average body mass by species"
+        assert self.sanitize(text) == text
+
+    def test_quotes_preserved(self):
+        result = self.sanitize("it's a \"test\"")
+        assert "it's" in result
+        assert '"test"' in result
+
+    # --- Edge cases ---
+
+    def test_empty_string(self):
+        assert self.sanitize("") == ""
+
+    def test_non_string_int_passthrough(self):
+        assert self.sanitize(42) == 42
+
+    def test_non_string_none_passthrough(self):
+        assert self.sanitize(None) is None
+
+    def test_ampersand_escaped(self):
+        assert self.sanitize("A & B") == "A &amp; B"
+
+    def test_no_double_encoding(self):
+        # Pre-escaped input should encode the &
+        result = self.sanitize("&lt;script&gt;")
+        assert result == "&amp;lt;script&amp;gt;"
+
+    # --- Mixed content tests ---
+
+    def test_mixed_markdown_and_xss(self):
+        result = self.sanitize("**bold** and <script>evil</script>")
+        assert "**bold**" in result
+        assert "<script>" not in result
+        assert "&lt;script&gt;" in result
+
+    def test_sql_query_text_preserved(self):
+        text = "SELECT * FROM penguins WHERE species = 'Gentoo'"
+        assert self.sanitize(text) == text
+
+    # --- Dangerous URL protocol tests ---
+
+    def test_javascript_url_in_markdown_link(self):
+        result = self.sanitize("[click me](javascript:alert(1))")
+        assert "javascript:" not in result
+        assert "about:invalid" in result
+
+    def test_javascript_url_case_insensitive(self):
+        result = self.sanitize("[click](JaVaScRiPt:alert(1))")
+        assert "javascript:" not in result.lower()
+        assert "about:invalid" in result
+
+    def test_data_url_in_markdown_link(self):
+        result = self.sanitize("[img](data:text/html,<script>alert(1)</script>)")
+        assert "data:" not in result.lower() or "about:invalid" in result
+
+    def test_vbscript_url_in_markdown_link(self):
+        result = self.sanitize("[run](vbscript:MsgBox('XSS'))")
+        assert "vbscript:" not in result.lower()
+        assert "about:invalid" in result
+
+    def test_javascript_url_with_spaces(self):
+        result = self.sanitize("[click]( javascript : alert(1))")
+        assert "javascript" not in result.lower() or "about:invalid" in result
+
+    def test_normal_url_preserved(self):
+        text = "[Google](https://google.com)"
+        assert self.sanitize(text) == text
+
+    def test_mailto_url_preserved(self):
+        text = "[email](mailto:user@example.com)"
+        assert self.sanitize(text) == text
+
+
+class TestSanitizeLlmOutput:
+    """Tests for XSS prevention in LLM output sanitization."""
+
+    def setup_method(self):
+        from lumen.ai.utils import sanitize_llm_output
+        self.sanitize = sanitize_llm_output
+
+    # --- Script tag removal ---
+
+    def test_script_tag_removed(self):
+        result = self.sanitize("<script>alert('XSS')</script>")
+        assert "<script>" not in result
+        assert "alert" not in result
+
+    def test_script_tag_with_attributes_removed(self):
+        result = self.sanitize('<script type="text/javascript">alert(1)</script>')
+        assert "<script" not in result
+        assert "alert" not in result
+
+    def test_script_tag_multiline_removed(self):
+        result = self.sanitize("<script>\nalert('XSS')\n</script>")
+        assert "<script>" not in result
+
+    def test_orphan_script_tags_removed(self):
+        result = self.sanitize("text <script> more text </script> end")
+        assert "<script>" not in result
+        assert "</script>" not in result
+
+    # --- Event handler removal ---
+
+    def test_img_onerror_stripped(self):
+        result = self.sanitize('<img src="x" onerror="alert(1)">')
+        assert "onerror" not in result
+        assert "<img" in result  # tag preserved, handler removed
+
+    def test_svg_onload_stripped(self):
+        result = self.sanitize('<svg onload="alert(1)">')
+        assert "onload" not in result
+
+    def test_body_onmouseover_stripped(self):
+        result = self.sanitize('<div onmouseover="alert(1)">hover</div>')
+        assert "onmouseover" not in result
+        assert "<div" in result  # tag preserved
+
+    def test_event_handler_single_quotes(self):
+        result = self.sanitize("<img src=x onerror='alert(1)'>")
+        assert "onerror" not in result
+
+    def test_event_handler_no_quotes(self):
+        result = self.sanitize("<img src=x onerror=alert(1)>")
+        assert "onerror" not in result
+
+    # --- Dangerous URL protocols ---
+
+    def test_javascript_href_neutralized(self):
+        result = self.sanitize('<a href="javascript:alert(1)">click</a>')
+        assert "javascript:" not in result
+        assert "about:invalid" in result
+
+    def test_data_src_neutralized(self):
+        result = self.sanitize('<img src="data:text/html,<script>alert(1)</script>">')
+        assert "data:text/html" not in result
+
+    def test_javascript_markdown_link_neutralized(self):
+        result = self.sanitize("[click](javascript:alert(1))")
+        assert "javascript:" not in result
+        assert "about:invalid" in result
+
+    # --- Safe content preservation ---
+
+    def test_markdown_bold_preserved(self):
+        assert "**bold**" in self.sanitize("**bold** text")
+
+    def test_safe_html_preserved(self):
+        result = self.sanitize("<b>bold</b> and <i>italic</i>")
+        assert "<b>bold</b>" in result
+        assert "<i>italic</i>" in result
+
+    def test_table_html_preserved(self):
+        html = "<table><tr><td>data</td></tr></table>"
+        assert self.sanitize(html) == html
+
+    def test_code_block_preserved(self):
+        text = "```python\nprint('hello')\n```"
+        assert self.sanitize(text) == text
+
+    def test_normal_text_unchanged(self):
+        text = "The average body mass is 4200g for Gentoo penguins."
+        assert self.sanitize(text) == text
+
+    # --- Edge cases ---
+
+    def test_empty_string(self):
+        assert self.sanitize("") == ""
+
+    def test_non_string_passthrough(self):
+        assert self.sanitize(42) == 42
+        assert self.sanitize(None) is None
+
+    def test_mixed_safe_and_dangerous(self):
+        result = self.sanitize('<b>bold</b><script>alert(1)</script><i>italic</i>')
+        assert "<b>bold</b>" in result
+        assert "<i>italic</i>" in result
+        assert "<script>" not in result
+        assert "alert" not in result

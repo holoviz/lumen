@@ -9,6 +9,7 @@ from ..config import PROMPTS_DIR
 from ..context import ContextModel, TContext
 from ..llm import Message
 from ..models import BaseModel
+from ..utils import sanitize_llm_output
 from .base import Agent
 
 
@@ -87,7 +88,7 @@ class ValidationAgent(Agent):
                 user_messages = [msg for msg in reversed(messages) if msg.get("role") == "user"]
                 original_query = user_messages[0].get("content", "").split("-- For context...")[0]
             suggestions_list = '\n- '.join(result.suggestions)
-            interface.send(f"Follow these suggestions to fulfill the original intent {original_query}\n\n{suggestions_list}")
+            interface.send(sanitize_llm_output(f"Follow these suggestions to fulfill the original intent {original_query}\n\n{suggestions_list}"))
 
         executed_steps = None
         if "plan" in context:
@@ -110,6 +111,6 @@ class ValidationAgent(Agent):
 
         button = Button(name="Rerun", on_click=on_click)
         footer_objects = [button]
-        formatted_response = "\n\n".join(response_parts)
+        formatted_response = sanitize_llm_output("\n\n".join(response_parts))
         interface.stream(formatted_response, user=self.user, max_width=self._max_width, footer_objects=footer_objects)
         return [result], {"validation_result": result}

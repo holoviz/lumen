@@ -9,7 +9,7 @@ from panel_material_ui import (
 )
 
 from ...config import load_yaml
-from ..utils import generate_diff
+from ..utils import generate_diff, sanitize_llm_output
 
 
 class RevisionControls(Viewer):
@@ -76,7 +76,7 @@ class RevisionControls(Viewer):
         if not out:
             return
         md = Markdown(
-            out,
+            sanitize_llm_output(out),
             margin=0,
             styles={"padding-inline": "0", "margin-left": "0", "padding": "0"},
             stylesheets=[".codehilite { margin-top: 0; margin-bottom: 0; display: inline-block; } .codehilite pre { margin-top: -1.5em; }"],

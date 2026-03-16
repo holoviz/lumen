@@ -13,6 +13,7 @@ from ...dashboard import Config
 from ...state import state
 from ..actor import ContextProvider
 from ..context import TContext
+from ..utils import sanitize_llm_output
 from ..llm import Llm, Message
 from ..tools import ToolUser
 
@@ -89,13 +90,14 @@ class Agent(Viewer, ToolUser, ContextProvider):
         output = self._stream_prompt("main", messages, context, field="output", **kwargs)
         try:
             async for output_chunk in output:
+                sanitized_chunk = sanitize_llm_output(output_chunk)
                 if self.interface is None:
                     if message is None:
-                        message = ChatMessage(output_chunk, user=self.user)
+                        message = ChatMessage(sanitized_chunk, user=self.user)
                     else:
-                        message.object = output_chunk
+                        message.object = sanitized_chunk
                 else:
-                    message = self.interface.stream(output_chunk, replace=True, message=message, user=self.user, max_width=self._max_width)
+                    message = self.interface.stream(sanitized_chunk, replace=True, message=message, user=self.user, max_width=self._max_width)
         except Exception as e:
             traceback.print_exc()
             raise e

@@ -1171,3 +1171,84 @@ def sanitize_column_names(df: pd.DataFrame) -> pd.DataFrame:
         for col in df.columns
     ]
     return df
+
+
+def sanitize_user_input(text):
+    """
+    Sanitize user input to prevent XSS when rendered as markdown/HTML.
+
+    Escapes HTML angle brackets to prevent script injection while
+    preserving markdown formatting (bold, italic, code, headings, etc.)
+    since markdown syntax uses non-HTML characters. Also neutralizes
+    dangerous URL protocols (javascript:, data:, vbscript:) that could
+    execute code via markdown link syntax.
+
+    Parameters
+    ----------
+    text : str
+        The user input text to sanitize
+
+    Returns
+    -------
+    str
+        The sanitized text with HTML tags and dangerous URLs neutralized
+    """
+    if not isinstance(text, str):
+        return text
+    # Escape HTML entities to prevent tag injection
+    text = text.replace("&", "&amp;")
+    text = text.replace("<", "&lt;")
+    text = text.replace(">", "&gt;")
+    # Neutralize dangerous URL protocols in markdown links
+    # e.g. [click me](javascript:alert(1)) → [click me](about:invalid)
+    text = re.sub(
+        r'\]\(\s*(javascript|data|vbscript)\s*:',
+        '](about:invalid',
+        text,
+        flags=re.IGNORECASE,
+    )
+    return text
+
+
+def sanitize_llm_output(text):
+    """
+    Sanitize LLM output to prevent XSS from prompt injection attacks.
+
+    Unlike sanitize_user_input() which escapes all HTML, this function
+    selectively removes dangerous HTML elements while preserving safe
+    markdown/HTML that the LLM legitimately produces (tables, formatting).
+
+    Strips: <script> tags, event handler attributes (on*=...), and
+    dangerous URL protocols (javascript:, data:, vbscript:).
+
+    Parameters
+    ----------
+    text : str
+        The LLM output text to sanitize
+
+    Returns
+    -------
+    str
+        The sanitized text with dangerous HTML elements removed
+    """
+    if not isinstance(text, str):
+        return text
+    # Remove <script>...</script> tags and their content
+    text = re.sub(r'<script\b[^>]*>.*?</script>', '', text, flags=re.IGNORECASE | re.DOTALL)
+    # Remove standalone <script> open/close tags (incomplete pairs)
+    text = re.sub(r'</?script\b[^>]*>', '', text, flags=re.IGNORECASE)
+    # Remove event handler attributes from HTML tags (onerror, onload, onclick, etc.)
+    text = re.sub(r'\s+on\w+\s*=\s*"[^"]*"', '', text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+on\w+\s*=\s*'[^']*'", '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\s+on\w+\s*=\s*[^\s>]+', '', text, flags=re.IGNORECASE)
+    # Neutralize dangerous URL protocols in href/src attributes
+    text = re.sub(r'(href|src)\s*=\s*"?\s*(javascript|data|vbscript)\s*:',
+                  r'\1="about:invalid', text, flags=re.IGNORECASE)
+    # Neutralize dangerous URL protocols in markdown links
+    text = re.sub(
+        r'\]\(\s*(javascript|data|vbscript)\s*:',
+        '](about:invalid',
+        text,
+        flags=re.IGNORECASE,
+    )
+    return text
