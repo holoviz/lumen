@@ -807,6 +807,28 @@ class UI(Viewer):
         def on_clear(instance, _):
             pass
 
+        async def on_edit(contents, message_index, instance):
+            # Don't allow editing while assistant is responding
+            if not self._idle.is_set():
+                if state.notifications:
+                    state.notifications.info(
+                        "Cannot edit while a response is being generated. "
+                        "Please wait for the current response to complete.",
+                        duration=3000,
+                    )
+                return
+
+            # Mark all messages from edited index onward as removed in logs
+            if self._logs:
+                for message in instance.objects[message_index:]:
+                    self._logs.update_status(message_id=id(message), removed=True)
+
+            # Truncate conversation and re-send edited content as a new message
+            with instance.param.update(disabled=True, loading=True), hold():
+                instance.objects = instance.objects[:message_index]
+                self._update_main_view()
+                instance.send(contents, respond=True)
+
         # Track pending query when files are being uploaded
         self._pending_query = None
         self._pending_sources_snapshot = None  # Also indicates dialog was opened from chat
@@ -886,6 +908,7 @@ class UI(Viewer):
             interface = ChatInterface(
                 callback=self._chat_invoke,
                 callback_exception="raise",
+                edit_callback=on_edit,
                 load_buffer=5,
                 on_submit=on_submit,
                 show_button_tooltips=True,
@@ -895,6 +918,7 @@ class UI(Viewer):
         else:
             interface = self.interface
             interface.callback = self._chat_invoke
+            interface.edit_callback = on_edit
             interface.on_submit = on_submit
         interface.button_properties = {
             "undo": {"callback": on_undo},

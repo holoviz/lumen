@@ -1057,3 +1057,162 @@ class TestResolveData:
         assert pipeline.name in duckdb_source.mirrors
         # Table key is sanitized
         assert 'data_csv' in duckdb_source.tables
+
+
+# --- Tests for on_edit callback ---
+
+async def test_edit_message_truncates_and_resends(explorer_ui):
+    """Test that editing a message removes it and all subsequent messages,
+    then re-sends the edited content."""
+    ui = explorer_ui
+
+    # Populate interface with some messages
+    ui.interface.send("Original question", user="User", respond=False)
+    ui.interface.send("Here is the answer", user="Assistant", respond=False)
+    ui.interface.send("Follow-up question", user="User", respond=False)
+    ui.interface.send("Follow-up answer", user="Assistant", respond=False)
+    assert len(ui.interface.objects) == 4
+
+    # Replace callback with a no-op to prevent actual LLM calls
+    async def noop_callback(contents, user, instance):
+        return
+
+    ui.interface.callback = noop_callback
+
+    # Trigger the edit callback on the first message (index 0)
+    await ui.interface.edit_callback("Edited question", 0, ui.interface)
+
+    # All 4 original messages should be removed, replaced by the edited one
+    assert len(ui.interface.objects) == 1
+    assert ui.interface.objects[0].object == "Edited question"
+
+
+async def test_edit_last_message_resends(explorer_ui):
+    """Test editing the last (most recent) user message."""
+    ui = explorer_ui
+
+    ui.interface.send("Only question", user="User", respond=False)
+    assert len(ui.interface.objects) == 1
+
+    async def noop_callback(contents, user, instance):
+        return
+
+    ui.interface.callback = noop_callback
+
+    await ui.interface.edit_callback("Better question", 0, ui.interface)
+
+    assert len(ui.interface.objects) == 1
+    assert ui.interface.objects[0].object == "Better question"
+
+
+async def test_edit_middle_message_removes_subsequent(explorer_ui):
+    """Test editing a middle message removes only messages after it."""
+    ui = explorer_ui
+
+    ui.interface.send("First question", user="User", respond=False)
+    ui.interface.send("First answer", user="Assistant", respond=False)
+    ui.interface.send("Second question", user="User", respond=False)
+    ui.interface.send("Second answer", user="Assistant", respond=False)
+    assert len(ui.interface.objects) == 4
+
+    async def noop_callback(contents, user, instance):
+        return
+
+    ui.interface.callback = noop_callback
+
+    # Edit the third message (index 2) — should keep messages 0,1 and remove 2,3
+    await ui.interface.edit_callback("Revised second question", 2, ui.interface)
+
+    assert len(ui.interface.objects) == 3
+    assert ui.interface.objects[0].object == "First question"
+    assert ui.interface.objects[1].object == "First answer"
+    assert ui.interface.objects[2].object == "Revised second question"
+
+
+async def test_edit_blocked_while_busy(explorer_ui):
+    """Test that editing is blocked when the assistant is responding."""
+    ui = explorer_ui
+
+    ui.interface.send("A question", user="User", respond=False)
+    ui.interface.send("An answer", user="Assistant", respond=False)
+    assert len(ui.interface.objects) == 2
+
+    async def noop_callback(contents, user, instance):
+        return
+
+    ui.interface.callback = noop_callback
+
+    # Simulate busy state
+    ui._idle.clear()
+
+    await ui.interface.edit_callback("Edited while busy", 0, ui.interface)
+
+    # Nothing should have changed — edit was blocked
+    assert len(ui.interface.objects) == 2
+    assert ui.interface.objects[0].object == "A question"
+    assert ui.interface.objects[1].object == "An answer"
+
+    # Restore idle state
+    ui._idle.set()
+
+
+async def test_edit_updates_logs(explorer_ui, tmp_path):
+    """Test that editing marks removed messages in the logs."""
+    ui = explorer_ui
+
+    # Set up a mock for _logs
+    from unittest.mock import MagicMock
+    mock_logs = MagicMock()
+    ui._logs = mock_logs
+
+    ui.interface.send("Question", user="User", respond=False)
+    ui.interface.send("Answer", user="Assistant", respond=False)
+
+    msg0_id = id(ui.interface.objects[0])
+    msg1_id = id(ui.interface.objects[1])
+
+    async def noop_callback(contents, user, instance):
+        return
+
+    ui.interface.callback = noop_callback
+
+    await ui.interface.edit_callback("New question", 0, ui.interface)
+
+    # Both original messages should be marked as removed
+    removed_ids = {
+        call.kwargs.get('message_id') or call.args[0]
+        for call in mock_logs.update_status.call_args_list
+    }
+    assert msg0_id in removed_ids
+    assert msg1_id in removed_ids
+
+    # All calls should have removed=True
+    for call in mock_logs.update_status.call_args_list:
+        assert call.kwargs.get('removed') is True
+
+
+async def test_edit_works_without_logs(explorer_ui):
+    """Test that editing works when logging is disabled (_logs is None)."""
+    ui = explorer_ui
+    ui._logs = None
+
+    ui.interface.send("Question", user="User", respond=False)
+    ui.interface.send("Answer", user="Assistant", respond=False)
+
+    async def noop_callback(contents, user, instance):
+        return
+
+    ui.interface.callback = noop_callback
+
+    # Should not raise even though _logs is None
+    await ui.interface.edit_callback("Edited question", 0, ui.interface)
+
+    assert len(ui.interface.objects) == 1
+    assert ui.interface.objects[0].object == "Edited question"
+
+
+async def test_edit_callback_is_set_on_interface(explorer_ui):
+    """Test that edit_callback is properly wired to the ChatInterface."""
+    ui = explorer_ui
+    assert ui.interface.edit_callback is not None
+    assert asyncio.iscoroutinefunction(ui.interface.edit_callback)
