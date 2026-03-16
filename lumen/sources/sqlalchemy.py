@@ -14,7 +14,7 @@ except ImportError:
     raise ImportError(
         "SQLAlchemySource requires the 'sqlalchemy' package. "
         "Install it with: pip install lumen[sql]"
-    )
+    ) from None
 
 from ..transforms.base import Filter
 from ..transforms.sql import SQLFilter

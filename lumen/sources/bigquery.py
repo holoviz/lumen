@@ -21,7 +21,7 @@ except ImportError:
     raise ImportError(
         "BigQuerySource requires the 'google-cloud-bigquery' package. "
         "Install it with: pip install lumen[bigquery]"
-    )
+    ) from None
 
 from tqdm import tqdm
 

@@ -24,7 +24,7 @@ except ImportError:
     raise ImportError(
         "SnowflakeSource requires the 'snowflake-connector-python' package. "
         "Install it with: pip install lumen[snowflake]"
-    )
+    ) from None
 
 from ..transforms.sql import SQLFilter
 from .base import BaseSQLSource, cached, cached_schema

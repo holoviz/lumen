@@ -15,7 +15,7 @@ except ImportError:
     raise ImportError(
         "AE5Source requires the 'ae5-tools' package. "
         "Install it with: pip install lumen[ae5]"
-    )
+    ) from None
 
 from panel import state
 
