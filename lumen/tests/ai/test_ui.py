@@ -1389,3 +1389,92 @@ async def test_edit_on_parent_exploration_removes_children(explorer_ui):
 
     # Child context should be cleared
     assert len(child_context) == 0
+
+
+async def test_edit_on_second_exploration_preserves_first(explorer_ui):
+    """When two consecutive explorations exist and the user edits on the
+    second one, only the second exploration (sql_2 + spec_2) should be
+    removed. The first exploration (sql_1 + spec_1) must remain intact."""
+    ui = explorer_ui
+    test_source = ui.context["source"]
+    SQLQueryWithTables = make_sql_model([(test_source.name, "test_table")])
+
+    # --- Create exploration 1 (sql_1 + spec_1) ---
+    ui.llm.set_responses([
+        SQLQueryWithTables(
+            query="SELECT category, SUM(value) as total FROM test_table GROUP BY category",
+            table_slug="test_cat_agg",
+            tables=["test_table"]
+        ),
+        "Revenue by category summary"
+    ])
+    sql_agent_1 = SQLAgent(llm=ui.llm)
+    chat_agent_1 = ChatAgent(llm=ui.llm)
+    plan_1 = Plan(
+        ActorTask(sql_agent_1),
+        ActorTask(chat_agent_1),
+        history=[{"content": "Show revenue by category", "role": "user"}],
+        title="Revenue by Category",
+        context=ui.context
+    )
+    await ui._execute_plan(plan_1)
+
+    assert len(ui._explorations.items) == 2
+    exploration_1_item = ui._explorations.items[1]
+    exploration_1 = exploration_1_item['view']
+    exploration_1_context = dict(exploration_1.context)  # snapshot
+
+    # Switch back to Home to create a second exploration
+    home_item = ui._explorations.items[0]
+    ui._explorations.value = ui._exploration = home_item
+    ui._last_synced = ui._home
+
+    # --- Create exploration 2 (sql_2 + spec_2) ---
+    ui.llm.set_responses([
+        SQLQueryWithTables(
+            query="SELECT id, value FROM test_table ORDER BY value DESC",
+            table_slug="test_top_values",
+            tables=["test_table"]
+        ),
+        "Top values summary"
+    ])
+    sql_agent_2 = SQLAgent(llm=ui.llm)
+    chat_agent_2 = ChatAgent(llm=ui.llm)
+    plan_2 = Plan(
+        ActorTask(sql_agent_2),
+        ActorTask(chat_agent_2),
+        history=[{"content": "Show top values", "role": "user"}],
+        title="Top Values",
+        context=ui.context
+    )
+    await ui._execute_plan(plan_2)
+
+    assert len(ui._explorations.items) == 3  # Home + exp1 + exp2
+    exploration_2_item = ui._explorations.items[2]
+    exploration_2 = exploration_2_item['view']
+    exploration_2_context = exploration_2.context
+
+    # Navigate to exploration 2
+    ui._explorations.value = ui._exploration = exploration_2_item
+
+    # Replace callback with noop to isolate cleanup behavior
+    async def noop_callback(contents, user, instance):
+        return
+
+    ui.interface.callback = noop_callback
+
+    # --- Edit on exploration 2 ---
+    await ui.interface.edit_callback("Edited query", 0, ui.interface)
+
+    # Exploration 2 should be removed
+    assert len(ui._explorations.items) == 2  # Home + exp1 only
+    assert ui._exploration['view'] is ui._home
+
+    # Exploration 2 context should be cleared
+    assert len(exploration_2_context) == 0
+
+    # Exploration 1 must still exist and be untouched
+    assert ui._explorations.items[1] is exploration_1_item
+    assert exploration_1_item['view'] is exploration_1
+    assert exploration_1.plan is not None
+    assert len(exploration_1.context) > 0  # sql_1 context preserved
