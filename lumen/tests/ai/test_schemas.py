@@ -485,3 +485,126 @@ class TestResolveTableSlug:
     def test_returns_none_for_none_input(self):
         ms = _metaset([_entry(f"Src{SEP}tbl")])
         assert ms._resolve_table_slug(None) is None
+
+
+# ---------------------------------------------------------------
+# Realistic rendered output
+# ---------------------------------------------------------------
+
+class TestRealisticOutput:
+    """Verify rendered YAML against a realistic multi-column derived table."""
+
+    @pytest.fixture
+    def oni_metaset(self):
+        raw_slug = f"Src{SEP}data_oni_csv"
+        derived_slug = f"Src{SEP}aggregated_metrics_by_season"
+        raw = _entry(
+            raw_slug,
+            columns=[
+                _col("season"), _col("year"), _col("sst_c"),
+                _col("anom_c"), _col("cumulative"), _col("ntotal"), _col("oni"),
+            ],
+        )
+        derived = _entry(
+            derived_slug,
+            derived_from=[raw_slug],
+            created_order=1,
+            columns=[
+                _col("season"), _col("count_records"), _col("avg_sst_c"),
+                _col("avg_anom_c"), _col("sum_cumulative"), _col("sum_ntotal"),
+            ],
+        )
+        schemas = {
+            raw_slug: {
+                "season": {"type": "str", "enum": ["AMJ", "OND", "ASO", "SON", "DJF", "NDJ", "FMA", "JFM", "..."]},
+                "year": {"min": 1950, "max": 2024},
+                "sst_c": {"min": 24.6, "max": 29.2},
+                "anom_c": {"min": -1.6, "max": 2.6},
+                "cumulative": {"min": 1, "max": 41},
+                "ntotal": {"min": 2, "max": 50},
+                "oni": {"type": "str", "enum": ["neutral", "el_nino", "la_nina"]},
+                "__len__": 900,
+            },
+            derived_slug: {
+                "season": {"type": "str", "enum": ["AMJ", "OND", "ASO", "SON", "DJF", "NDJ", "FMA", "JFM", "..."]},
+                "count_records": {"min": 74, "max": 75},
+                "avg_sst_c": {"min": 26.5, "max": 27.6},
+                "avg_anom_c": {"type": "num", "min": "-9.5e-03", "max": 0},
+                "sum_cumulative": {"min": 530, "max": 704},
+                "sum_ntotal": {"min": 1061, "max": 1161},
+                "__len__": 7,
+            },
+        }
+        return _metaset([raw, derived], schemas=schemas)
+
+    def test_compact_context_derived_table_structure(self, oni_metaset):
+        output = oni_metaset.compact_context()
+        parsed = yaml.safe_load(output)
+        derived = parsed["aggregated_metrics_by_season"]
+
+        assert derived["derived_from"] == ["data_oni_csv"]
+        assert derived["step"] == 1
+        assert derived["latest"] is True
+        assert "season" in derived["columns"]
+        assert "avg_sst_c" in derived["columns"]
+        assert "count_records" in derived["columns"]
+
+    def test_compact_context_original_table_has_no_lineage(self, oni_metaset):
+        output = oni_metaset.compact_context()
+        parsed = yaml.safe_load(output)
+        raw = parsed["data_oni_csv"]
+
+        assert "derived_from" not in raw
+        assert "step" not in raw
+        assert "latest" not in raw
+        assert "season" in raw["columns"]
+        assert "year" in raw["columns"]
+
+    def test_compact_context_column_schemas_present(self, oni_metaset):
+        output = oni_metaset.compact_context()
+        parsed = yaml.safe_load(output)
+        derived_cols = parsed["aggregated_metrics_by_season"]["columns"]
+
+        # Numeric range columns should have min/max
+        assert derived_cols["avg_sst_c"]["min"] == 26.5
+        assert derived_cols["avg_sst_c"]["max"] == 27.6
+        assert derived_cols["count_records"]["min"] == 74
+        assert derived_cols["count_records"]["max"] == 75
+
+        # Enum column should have enum list
+        assert "enum" in derived_cols["season"]
+
+    def test_table_list_with_lineage_shows_derivation(self, oni_metaset):
+        output = oni_metaset.table_list(include_lineage=True)
+        parsed = yaml.safe_load(output)
+
+        assert "aggregated_metrics_by_season" in parsed
+        assert parsed["aggregated_metrics_by_season"]["derived_from"] == ["data_oni_csv"]
+        assert parsed["aggregated_metrics_by_season"]["latest"] is True
+
+        # Original table should have no lineage keys
+        raw_data = parsed.get("data_oni_csv", {})
+        assert "derived_from" not in raw_data
+
+    def test_table_list_without_lineage_is_clean(self, oni_metaset):
+        output = oni_metaset.table_list(include_lineage=False)
+        assert "derived_from" not in output
+        assert "step" not in output
+        assert "latest" not in output
+
+    def test_others_available_with_derived_hint(self, oni_metaset):
+        oni_metaset.schema_tables = [f"Src{SEP}data_oni_csv"]
+        output = oni_metaset.table_list(include_lineage=True, n_others=10)
+        assert "(from data_oni_csv)" in output
+        assert "\u2605" in output  # star on the derived table
+
+    def test_full_context_includes_all_details(self, oni_metaset):
+        output = oni_metaset.full_context()
+        parsed = yaml.safe_load(output)
+
+        # Both tables present with columns and lineage
+        assert "data_oni_csv" in parsed
+        assert "aggregated_metrics_by_season" in parsed
+        assert "columns" in parsed["data_oni_csv"]
+        assert "columns" in parsed["aggregated_metrics_by_season"]
+        assert parsed["aggregated_metrics_by_season"]["derived_from"] == ["data_oni_csv"]
