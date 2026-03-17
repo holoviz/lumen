@@ -81,6 +81,14 @@ Conditions:
 {% if agent.not_with %}
 Should never be used together with: `{{ agent.not_with | join('`, `') }}`{%- endif %}
 {% endfor %}
+
+## LLM Tools Specs
+
+The LLM can also directly invoke tools. This can aid it in getting additional context, so if such a tool is referenced do not duplicate its functionality simply call the agent you think can make use of the context.
+{% for tool in llm_tools %}
+- {{ tool }}
+{% endfor %}
+
 ## Current Data Context
 
 {%- if memory.get('metaset') %}
