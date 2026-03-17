@@ -127,6 +127,7 @@ class MetadataLookup(VectorLookupTool):
         super().__init__(**params)
         self._raw_metadata = {}
         self._semaphore = asyncio.Semaphore(self.max_concurrent)
+        self._initialized = False
         self._ready_event = asyncio.Event()
         self._ready_event.set()  # Initially ready (no pending sync)
         self.param.watch(self._sync_ready_event, "_ready")
@@ -212,7 +213,12 @@ class MetadataLookup(VectorLookupTool):
                 column = Column(name=col_name, description=col_desc, metadata=col_info.copy() if isinstance(col_info, dict) else {})
                 columns.append(column)
 
-        vector_metadata = {"source": source.name, "table_name": table_name, "type": self._item_type_name}
+        vector_metadata = {
+            "source": source.name,
+            "table_name": table_name,
+            "type": self._item_type_name,
+            "provenance_chain": self._get_provenance_chain(context),
+        }
         # the following is for the embeddings/vector store use only (i.e. filter from 1000s of tables)
         enriched_text = f"Table: {table_name}"
         if description := vector_info.pop("description", ""):
@@ -242,9 +248,11 @@ class MetadataLookup(VectorLookupTool):
         elif sources is None or len(sources) == 0:
             return
         self._ready = False
-        await asyncio.sleep(0.5)  # allow main thread time to load UI first
+        if not self._initialized:
+            await asyncio.sleep(0.5)
         tasks = []
         processed_sources = []
+        provenance_chain = tuple(self._get_provenance_chain(context))
 
         # Use class variable to track which sources are currently being processed
         vector_store_id = id(self.vector_store)
@@ -259,14 +267,17 @@ class MetadataLookup(VectorLookupTool):
             async with self._progress_lock:
                 # Skip this source if already processed with the same (or more) tables
                 current_table_count = len(source.get_tables())
-                known_count = self._sources_in_progress[vector_store_id].get(source.name, 0)
+                source_key = (source.name, provenance_chain)
+                known_count = self._sources_in_progress[vector_store_id].get(source_key, 0)
                 if known_count >= current_table_count:
-                    log_debug(f"[MetadataLookup] Skipping source {source.name} - already processed {known_count} tables")
+                    log_debug(
+                        f"[MetadataLookup] Skipping source {source.name} for provenance {provenance_chain} - already processed {known_count} tables"
+                    )
                     continue
 
                 # Mark this source as in progress with current table count
-                self._sources_in_progress[vector_store_id][source.name] = current_table_count
-                processed_sources.append(source.name)
+                self._sources_in_progress[vector_store_id][source_key] = current_table_count
+                processed_sources.append(source_key)
                 log_debug(f"[MetadataLookup] Processing source {source.name}")
 
             if self.include_metadata and self._raw_metadata.get(source.name) is None:
@@ -293,9 +304,13 @@ class MetadataLookup(VectorLookupTool):
             ready_task = asyncio.create_task(self._mark_ready_when_done(tasks, vector_store_id, processed_sources))
             ready_task.add_done_callback(self._handle_ready_task_done)
         else:
-            self._ready = True
+            self._ready = self._initialized = True
             # No tasks to wait for, so clean up immediately
             self._cleanup_sources_in_progress(vector_store_id, processed_sources)
+
+    def _handle_ready_task_done(self, task):
+        super()._handle_ready_task_done(task)
+        self._initialized = True
 
     def _cleanup_sources_in_progress(self, vector_store_id, processed_sources):
         """Clean up the sources_in_progress tracking after tasks are completed."""
@@ -304,10 +319,10 @@ class MetadataLookup(VectorLookupTool):
             async with self._progress_lock:
                 try:
                     log_debug(f"[MetadataLookup] Cleaning up sources: {processed_sources}")
-                    for source_name in processed_sources:
+                    for source_key in processed_sources:
                         if vector_store_id in self._sources_in_progress:
-                            self._sources_in_progress[vector_store_id].pop(source_name, None)
-                            log_debug(f"[MetadataLookup] Removed {source_name} from in-progress")
+                            self._sources_in_progress[vector_store_id].pop(source_key, None)
+                            log_debug(f"[MetadataLookup] Removed {source_key} from in-progress")
 
                     # Remove the vector_store_id entry if empty
                     if vector_store_id in self._sources_in_progress and not self._sources_in_progress[vector_store_id]:
@@ -457,6 +472,10 @@ class MetadataLookup(VectorLookupTool):
     async def _gather_info(self, messages: list[dict[str, str]], context: TContext) -> MetadataLookupOutputs:
         """Gather relevant information about the tables based on the user query."""
         query = messages[-1]["content"]
+        query_filters = {
+            "type": self._item_type_name,
+            "provenance_chain": self._get_provenance_chain(context),
+        }
 
         # Count total number of tables available across all sources
         total_tables = 0
@@ -466,12 +485,9 @@ class MetadataLookup(VectorLookupTool):
         # Skip query refinement if there are fewer than 5 tables
         if total_tables < 5:
             # Perform search without refinement
-            filters = {}
-            if self._item_type_name and "type" not in filters:
-                filters["type"] = self._item_type_name
-            results = await self.vector_store.query(query, top_k=self.n, filters=filters)
+            results = await self.vector_store.query(query, top_k=self.n, filters=query_filters)
         else:
-            results = await self._perform_search_with_refinement(query, context)
+            results = await self._perform_search_with_refinement(query, context, filters=query_filters)
 
         any_matches = any(result["similarity"] >= self.min_similarity for result in results)
         same_table = len([result["metadata"]["table_name"] for result in results])
@@ -560,3 +576,9 @@ class MetadataLookup(VectorLookupTool):
         # Run the process to build schema objects
         out_model = await self._gather_info(messages, context)
         return [self._format_context(out_model)], out_model
+
+    def _get_provenance_chain(self, context: TContext) -> list[str]:
+        chain = context.get("provenance_chain")
+        if not isinstance(chain, list) or not chain:
+            return ["global"]
+        return [str(v) for v in chain]

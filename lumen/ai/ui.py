@@ -631,6 +631,7 @@ class UI(Viewer):
         data: DataT | list[DataT] | dict[DataT] | None
             The data to resolve.
         """
+        self.context["provenance_chain"] = ["global"]
         self.context["sources"] = sources = self._resolve_data(data)
         if sources:
             self.context["source"] = sources[-1]
@@ -2116,6 +2117,12 @@ class ExplorerUI(UI):
     async def _add_exploration(self, plan: Plan, parent: Exploration) -> Exploration:
         is_home = parent is self._home
         parent_item = self._exploration
+        parent_chain = list(parent.context.get("provenance_chain", ["global"])) if parent.context else ["global"]
+        exploration_id = f"exploration_{id(plan)}"
+        provenance_chain = [*parent_chain, exploration_id]
+        # Ensure this plan executes in the new exploration scope without mutating parent context.
+        plan.context = {**(plan.context or {}), "provenance_chain": provenance_chain}
+        plan.out_context = {**(plan.out_context or {}), "provenance_chain": provenance_chain}
         if is_home:
             parent.conversation = []
         else:

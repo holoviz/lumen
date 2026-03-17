@@ -468,6 +468,43 @@ async def test_exploration_parent_relationship(explorer_ui):
     assert exploration.parent.title == 'Home'
 
 
+async def test_exploration_sets_provenance_chain(explorer_ui):
+    explorer_ui._explorer.param.update(table_slug="test_table")
+    await explorer_ui._add_exploration_from_explorer()
+    await async_wait_until(lambda: len(explorer_ui._explorations.items) > 1)
+    exploration = explorer_ui._explorations.items[1]['view']
+    provenance_chain = exploration.context.get("provenance_chain")
+    assert isinstance(provenance_chain, list)
+    assert provenance_chain[0] == "global"
+    assert len(provenance_chain) == 2
+
+
+async def test_followup_exploration_extends_provenance_chain(explorer_ui):
+    explorer_ui._explorer.param.update(table_slug="test_table")
+    await explorer_ui._add_exploration_from_explorer()
+    await async_wait_until(lambda: len(explorer_ui._explorations.items) > 1)
+    parent_item = explorer_ui._explorations.items[1]
+    parent_exploration = parent_item['view']
+    parent_chain = list(parent_exploration.context["provenance_chain"])
+
+    sql_agent = SQLAgent(llm=explorer_ui.llm)
+    child_plan = Plan(
+        ActorTask(sql_agent),
+        history=[{"content": "Show first 5 rows", "role": "user"}],
+        title="First 5 rows",
+        context=parent_exploration.context,
+        is_followup=True
+    )
+
+    await explorer_ui._add_exploration(child_plan, parent_exploration)
+    child_item = explorer_ui._explorations.items[1]['items'][0]
+    child_exploration = child_item['view']
+    child_chain = child_exploration.context["provenance_chain"]
+
+    assert child_chain[:len(parent_chain)] == parent_chain
+    assert len(child_chain) == len(parent_chain) + 1
+
+
 async def test_chat_upload_flow_processes_files_directly(explorer_ui, monkeypatch):
     """Test that file uploads via chat are processed directly without opening a dialog."""
     ui = explorer_ui
