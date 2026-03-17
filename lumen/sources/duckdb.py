@@ -91,7 +91,13 @@ class DuckDBSource(BaseSQLSource):
             self._connection = duckdb.connect(self.uri, read_only=self.read_only)
             for init in self.initializers:
                 with self._connection.cursor() as cursor:
-                    cursor.execute(init)
+                    try:
+                        cursor.execute(init)
+                    except duckdb.IOException as e:
+                        if "delete file" in str(e) and "duckdb_extension" in str(e):
+                            pass
+                        else:
+                            raise
 
         # Process tables to handle automatic file detection
         self._file_based_tables = {}

@@ -775,6 +775,38 @@ class TestAnnotationControls:
                 assert "Failed to apply annotations" in card.title
                 
     @pytest.mark.asyncio
+    async def test_annotate_passes_view_to_actor(self):
+        """Test _annotate passes view to actor.annotate for vision analysis.
+
+        Without passing view, the LLM may receive no user messages
+        (only a system prompt), causing providers like Google Gemini
+        to reject the request.
+        """
+        interface = MockInterface()
+        view = MockView(spec="type: bar")
+        task = MockTask()
+
+        task.actor.annotate = AsyncMock(return_value="annotated spec")
+        task.history = []
+        task.out_context = {}
+
+        controls = AnnotationControls(
+            interface=interface,
+            view=view,
+            task=task
+        )
+
+        with patch('lumen.ai.controls.revision.load_yaml', return_value={"type": "bar"}):
+            with patch('lumen.ai.controls.revision.generate_diff', return_value=""):
+                controls.instruction = "Highlight peaks"
+                await controls._annotate()
+
+                # Verify view was passed as the 5th argument
+                call_args = task.actor.annotate.call_args[0]
+                assert len(call_args) == 5
+                assert call_args[4] is view
+
+    @pytest.mark.asyncio
     async def test_annotate_uses_load_yaml(self):
         """Test _annotate properly loads and passes spec to annotate method."""
         interface = MockInterface()

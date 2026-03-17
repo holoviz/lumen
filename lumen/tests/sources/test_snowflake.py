@@ -4,6 +4,8 @@ import pandas as pd
 import pytest
 
 try:
+    import snowflake.connector  # noqa: F401
+
     from lumen.sources.snowflake import SnowflakeSource
     pytestmark = pytest.mark.xdist_group("snowflake")
 except ImportError:

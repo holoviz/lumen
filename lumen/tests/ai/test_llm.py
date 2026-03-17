@@ -3,11 +3,14 @@
 import base64
 import os
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 try:
     import lumen.ai as lmai
 
+    from lumen.ai.agents.vega_lite import VegaLiteAgent
     from lumen.ai.llm import (
         Anthropic, AzureOpenAI, Google, Groq, Message, MistralAI, OpenAI,
     )
@@ -280,3 +283,71 @@ class TestCheckForImage:
         assert content[0] == "Compare:"
         assert isinstance(content[1], Image)
         assert isinstance(content[2], Image)
+
+
+# ---------------------------------------------------------------------------
+# _prepare_vision_messages tests
+# ---------------------------------------------------------------------------
+
+class TestPrepareVisionMessages:
+    """Tests for VegaLiteAgent._prepare_vision_messages fallback behavior."""
+
+    @pytest.fixture
+    def agent(self, llm):
+        import warnings
+        agent = VegaLiteAgent.__new__(VegaLiteAgent)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            warnings.simplefilter("ignore", PendingDeprecationWarning)
+            agent.llm = llm
+        return agent
+
+    def test_no_vision_with_fallback(self, agent):
+        """With text_fallback, appends text-only message when vision unsupported."""
+        agent.llm._supports_vision = False
+        msgs = [{"role": "user", "content": "hello"}]
+        result = agent._prepare_vision_messages(msgs, None, "Annotate this")
+        assert len(result) == 2
+        assert result[1] == {"role": "user", "content": "Annotate this"}
+
+    def test_no_editor_with_fallback(self, agent):
+        """With text_fallback, appends text-only message when editor is None."""
+        agent.llm._supports_vision = True
+        msgs = [{"role": "user", "content": "hello"}]
+        result = agent._prepare_vision_messages(msgs, None, "Annotate this")
+        assert len(result) == 2
+        assert result[1] == {"role": "user", "content": "Annotate this"}
+
+    def test_image_export_fails_with_fallback(self, agent):
+        """With text_fallback, appends text-only message when image export fails."""
+        agent.llm._supports_vision = True
+        mock_editor = MagicMock()
+        mock_editor.__class__ = type("VegaLiteEditor", (), {})
+        msgs = [{"role": "user", "content": "hello"}]
+        with patch.object(agent, '_export_plot_image', return_value=None):
+            with patch('lumen.ai.agents.vega_lite.VegaLiteEditor', mock_editor.__class__):
+                result = agent._prepare_vision_messages(msgs, mock_editor, "Annotate this")
+        assert len(result) == 2
+        assert result[1] == {"role": "user", "content": "Annotate this"}
+
+    def test_vision_success_returns_image_message(self, agent):
+        """When vision succeeds, appends message with [content, Image]."""
+        agent.llm._supports_vision = True
+        mock_editor = MagicMock()
+        mock_editor.__class__ = type("VegaLiteEditor", (), {})
+        fake_png = (
+            b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01'
+            b'\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00'
+            b'\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00'
+            b'\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82'
+        )
+        msgs = [{"role": "user", "content": "hello"}]
+        with patch.object(agent, '_export_plot_image', return_value=fake_png):
+            with patch('lumen.ai.agents.vega_lite.VegaLiteEditor', mock_editor.__class__):
+                result = agent._prepare_vision_messages(msgs, mock_editor, "Annotate this")
+        assert len(result) == 2
+        content = result[1]["content"]
+        assert isinstance(content, list)
+        assert len(content) == 2
+        assert content[0] == "Annotate this"
+        assert isinstance(content[1], Image)

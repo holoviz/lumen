@@ -9,7 +9,14 @@ import pandas as pd
 import param  # type: ignore
 import requests
 
-from ae5_tools.api import AEAdminSession, AEUserSession  # type: ignore
+try:
+    from ae5_tools.api import AEAdminSession, AEUserSession  # type: ignore
+except ImportError as e:
+    raise ImportError(
+        "AE5Source requires the 'ae5-tools' package. "
+        "Install it with: pip install lumen[ae5]"
+    ) from e
+
 from panel import state
 
 from ..util import get_dataframe_schema

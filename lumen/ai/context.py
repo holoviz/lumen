@@ -49,6 +49,10 @@ def _parse_accumulate_meta(annotation: Any) -> AccumulateSpec | None:
     The accumulate specification, or None if the field is not an Annotated field.
 
   """
+  # Unwrap NotRequired/Required before checking for Annotated
+  origin = get_origin(annotation)
+  if origin in (_NOTREQ_ORIGIN, _REQ_ORIGIN):
+      annotation = get_args(annotation)[0]
   if get_origin(annotation) is not Annotated:
       return None
   base, *meta = get_args(annotation)

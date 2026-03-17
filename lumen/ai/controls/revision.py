@@ -153,7 +153,7 @@ class AnnotationControls(RevisionControls):
         try:
             with self.task.actor.param.update(interface=self.interface), self.view.editor.param.update(loading=True):
                 new_spec = await self.task.actor.annotate(
-                    self.instruction, list(self.task.history), self.task.out_context, {"spec": load_yaml(self.view.spec)}
+                    self.instruction, list(self.task.history), self.task.out_context, {"spec": load_yaml(self.view.spec)}, self.view
                 )
         except Exception as e:
             self._report_status(f"```\n{e}\n```", title="❌ Failed to generate annotations")

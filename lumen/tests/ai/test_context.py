@@ -60,6 +60,25 @@ def test_parse_accumulate_meta_tuple_form():
     assert spec.from_key == "source"
     assert spec.func is list
 
+def test_parse_accumulate_meta_notrequired_wrapped():
+    """NotRequired[Annotated[...]] should still be parsed as accumulation."""
+    ann = NotRequired[Annotated[list[Source], ("accumulate", "source")]]
+    spec = _parse_accumulate_meta(ann)
+    assert isinstance(spec, AccumulateSpec)
+    assert spec.from_key == "source"
+    assert spec.func is list
+
+def test_merge_contexts_notrequired_annotated_accumulates():
+    """Accumulation should work when the field is NotRequired[Annotated[...]]."""
+    class Inputs(ContextModel):
+        source: Source
+        sources: NotRequired[Annotated[list[Source], ("accumulate", "source")]]
+    c1 = {"source": {"id": "s1", "title": "S1"}}
+    c2 = {"source": {"id": "s2", "title": "S2"}}
+    merged = merge_contexts(Inputs, [c1, c2])
+    assert "sources" in merged
+    assert len(merged["sources"]) == 2
+
 def test_dedupe_value_and_callable():
     assert _dedupe([1, 2, 2, 3], "value") == [1, 2, 3]
     items = [{"id": 1}, {"id": 2}, {"id": 1}]

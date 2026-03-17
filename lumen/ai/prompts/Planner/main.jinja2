@@ -81,6 +81,25 @@ Conditions:
 {% if agent.not_with %}
 Should never be used together with: `{{ agent.not_with | join('`, `') }}`{%- endif %}
 {% endfor %}
+
+{%- if llm_tools %}
+## LLM Tools
+
+The LLM is capable of invoking tools directly.
+
+If a required capability is covered by one of these tools:
+- Do NOT attempt to replicate the tool’s functionality in the plan
+- Do NOT construct or infer the tool’s output yourself
+- Instead, delegate to an agent that can leverage the tool, or allow the LLM to call the tool directly
+
+The planner’s role is to coordinate agents, not to replace tool usage.
+
+Available tools:
+{% for tool in llm_tools %}
+- {{ tool }}
+{% endfor %}
+{% endif -%}
+
 ## Current Data Context
 
 {%- if memory.get('metaset') %}
