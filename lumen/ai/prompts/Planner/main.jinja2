@@ -137,6 +137,11 @@ The previously used visualization type was `{{ view_type }}`, please consider us
 👉 Existing metadata found: Evaluate if current data is sufficient before requesting more
 {%- endif %}
 
+{%- if 'prev_plan' in memory and (is_follow_up or 'data' not in memory) %}
+The previous plan that was executed:
+{{ memory['prev_plan'].render_task_history()[-1] }}
+{% endif %}
+
 {# Break the terrible loop of it not planning properly #}
 {% if previous_plans and not (previous_plans | length) % 2 == 0 and unmet_dependencies %}
 # ❌ Previous Planning Failure

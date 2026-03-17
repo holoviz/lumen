@@ -581,6 +581,8 @@ class TaskGroup(Task):
             other.parent = self
             self._tasks.append(task)
         self._view[:] = list(self._view) + list(other._view)
+        self.context = merge_contexts(LWW, [self.context, other.context])
+        self.out_context = merge_contexts(LWW, [self.context, self.out_context])
         self.history += [h for h in other.history if h not in self.history]
         self._init_views()
         return self

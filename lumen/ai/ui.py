@@ -2360,10 +2360,11 @@ class ExplorerUI(UI):
         parent = prev["view"]
 
         # Check if we are adding to existing exploration or creating a new one
+        is_home = self._exploration['view'] is self._home
         new_exploration = (any(
             {"pipeline", "view"} & set(step.actor.output_schema.__required_keys__)
             for step in plan
-        ) and "pipeline" in parent.context) or self._exploration['view'] is self._home
+        ) and "pipeline" in parent.context) or is_home
 
         partial_plan = None
         if rerun:
@@ -2480,6 +2481,10 @@ class ExplorerUI(UI):
         self._update_main_view()
         with self._busy():
             exploration = self._exploration['view']
-            plan = await self._coordinator.respond(messages, exploration.context)
+            is_home = self._exploration['view'] is self._home
+            context = dict(exploration.context)
+            if not is_home:
+                context['prev_plan'] = exploration.plan
+            plan = await self._coordinator.respond(messages, context)
             if plan is not None:
                 await self._execute_plan(plan)
