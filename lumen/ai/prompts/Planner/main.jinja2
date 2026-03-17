@@ -136,7 +136,7 @@ The previously used visualization type was `{{ view_type }}`, please consider us
 {%- if follow_up_type == 'direct' %}
 👉 **Direct follow-up**: The data in memory is sufficient. Do NOT run a new SQL query — use existing data directly (e.g., for visualization or reordering).
 {%- elif follow_up_type == 'derived' %}
-👉 **Derived follow-up**: Query the derived table (marked ★) with a simple filter instead of recomputing from raw sources.
+👉 **Derived follow-up**: Query the derived table instead of recomputing from raw sources.
 {%- elif 'metaset' in memory %}
 👉 Existing metadata found: Evaluate if current data is sufficient before requesting more.
 {%- endif %}
