@@ -1409,8 +1409,9 @@ class DuckDBVectorStore(VectorStore):
 
         if filters:
             for key, value in filters.items():
-                base_query += f" AND json_extract_string(metadata, '$.{key}') = ?"
-                params.append(str(value))
+                if isinstance(value, (str, int, float, bool)):
+                    base_query += f" AND json_extract_string(metadata, '$.{key}') = ?"
+                    params.append(str(value))
 
         base_query += """
             ORDER BY similarity DESC;
