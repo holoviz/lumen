@@ -728,6 +728,10 @@ class UI(Viewer):
         """Get the currently active exploration."""
         return self._explorations.value['view']
 
+    def _exploration_has_outputs(self, exploration: Exploration) -> bool:
+        """Whether an exploration should be shown in split view."""
+        return exploration is not self._home
+
     @hold()
     def _update_main_view(self, force_report_mode: bool | None = None):
         """
@@ -775,9 +779,12 @@ class UI(Viewer):
                 else:
                     main_content = self._splash
                 self._output[1:] = []
-            else:
+            elif self._exploration_has_outputs(exploration):
                 main_content = self._split
                 self._output[1:] = [exploration]
+            else:
+                main_content = self.interface
+                self._output[1:] = []
             self._current_mode = "Exploration"
             self._navigation_caption.object = EXPLORATION_CAPTION
 
@@ -1707,6 +1714,21 @@ class ExplorerUI(UI):
         self._navigation.visible = active
         self._sidebar_menu.update_item(self._sidebar_menu.items[6], active=active, icon="layers" if active else "layers_outlined")
 
+    def _exploration_has_outputs(self, exploration: Exploration) -> bool:
+        """
+        Override base behavior: keep chat-only view until an exploration has
+        rendered output tabs (not just a placeholder).
+        """
+        if exploration is self._home or not exploration.view:
+            return False
+        tabs = exploration.view[0]
+        if len(tabs) == 0:
+            return False
+        if len(tabs) == 1 and not exploration.initialized:
+            # Placeholder-only state ("Waiting on data...")
+            return False
+        return True
+
     @param.depends("_exploration", watch=True)
     def _update_home(self):
         if not hasattr(self, '_page'):
@@ -2303,6 +2325,8 @@ class ExplorerUI(UI):
 
         tabs.extend(content)
         tabs.active = max(tabs.active, len(tabs)-1)
+        if self._exploration['view'] is exploration:
+            self._update_main_view()
         if self._split.collapsed:
             self._split.param.update(
                 sizes=self._split.expanded_sizes,
@@ -2341,6 +2365,12 @@ class ExplorerUI(UI):
             content.insert((idx or 0)+1, (title, vsplit))
         tabs[:] = content
         tabs.active = max(len(tabs)-1, 0)
+        if self._exploration['view'] is exploration:
+            self._update_main_view()
+        if self._split.collapsed:
+            self._split.param.update(
+                sizes=self._split.expanded_sizes,
+            )
 
     def _reset_error(self, plan: Plan, exploration: Exploration, replan: bool = False):
         plan.reset(plan._current)

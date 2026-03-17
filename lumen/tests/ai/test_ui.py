@@ -574,6 +574,24 @@ async def test_exploration_launch_transitions_to_split(explorer_ui):
     assert explorer_ui._splash not in explorer_ui._main
 
 
+async def test_new_exploration_without_outputs_keeps_chat_view(explorer_ui):
+    """A new exploration without outputs should not expand the split output pane."""
+    explorer_ui.llm.set_responses(["No output yet"])
+    chat_agent = ChatAgent(llm=explorer_ui.llm)
+    plan = Plan(
+        ActorTask(chat_agent),
+        history=[{"content": "Just answer in chat", "role": "user"}],
+        title="Chat only",
+        context=explorer_ui.context
+    )
+
+    await explorer_ui._execute_plan(plan)
+
+    assert len(explorer_ui._explorations.items) > 1
+    assert explorer_ui._main[1] is explorer_ui.interface
+    assert explorer_ui._split not in explorer_ui._main
+
+
 async def test_exploration_with_pipeline_data_shows_split(explorer_ui):
     """Test 2b: When plan produces data, should show split view with navigation."""
     # Create an exploration with pipeline data
