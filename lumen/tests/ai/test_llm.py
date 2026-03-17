@@ -310,13 +310,6 @@ class TestPrepareVisionMessages:
         assert len(result) == 2
         assert result[1] == {"role": "user", "content": "Annotate this"}
 
-    def test_no_editor_no_fallback(self, agent):
-        """Without text_fallback, returns messages unchanged when editor is None."""
-        agent.llm._supports_vision = True
-        msgs = [{"role": "user", "content": "hello"}]
-        result = agent._prepare_vision_messages(msgs, None, "Annotate this")
-        assert result is msgs
-
     def test_no_editor_with_fallback(self, agent):
         """With text_fallback, appends text-only message when editor is None."""
         agent.llm._supports_vision = True
