@@ -22,7 +22,7 @@ from ..utils import (
     stream_details,
 )
 from .base_lumen import BaseLumenAgent
-from .sql import SQLEditors
+from .sql import SQLOutputs
 
 
 class DbtslQueryParams(BaseModel):
@@ -69,7 +69,7 @@ class DbtslQueryParams(BaseModel):
     )
 
 
-class DbtslOutputs(SQLEditors):
+class DbtslOutputs(SQLOutputs):
 
     dbtsl_metaset: DbtslMetaset
 

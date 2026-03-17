@@ -17,6 +17,22 @@ from ..utils import log_debug
 from .vector_lookup import VectorLookupTool, make_refined_query_model
 
 
+def _table_name(slug: str) -> str:
+    """Extract the table name from a possibly source-qualified slug."""
+    if SOURCE_TABLE_SEPARATOR in slug:
+        return slug.split(SOURCE_TABLE_SEPARATOR, 1)[1]
+    return slug
+
+
+def _find_slug_by_table_name(table_name: str, candidates: dict | list) -> str | None:
+    """Find a slug in *candidates* whose table-name suffix matches *table_name*."""
+    keys = candidates if isinstance(candidates, (list, set, frozenset)) else candidates.keys()
+    return next(
+        (k for k in keys if _table_name(k) == table_name),
+        None,
+    )
+
+
 class MetadataLookupInputs(ContextModel):
     sources: Annotated[list[Source], ("accumulate", "source")]
 
@@ -557,6 +573,27 @@ class MetadataLookup(VectorLookupTool):
                     column_schema = Column(name=col_name, description=col_desc, metadata=col_info.copy() if isinstance(col_info, dict) else {})
                     columns.append(column_schema)
 
+            # Apply lineage metadata if this table was derived by SQLAgent.
+            # The lineage dict may be keyed under a different source name
+            # (e.g. the original source vs the materialized source), so
+            # we fall back to matching by table-name suffix.
+            all_lineage = context.get("derived_table_lineage", {})
+            lineage = all_lineage.get(table_slug, {})
+            if not lineage:
+                lkey = _find_slug_by_table_name(_table_name(table_slug), all_lineage)
+                if lkey is not None:
+                    lineage = all_lineage[lkey]
+
+            # Remap derived_from slugs to match the current catalog keys
+            # (source names may differ after materialization).
+            remapped_derived_from = []
+            for parent_slug in lineage.get("derived_from", []):
+                if parent_slug not in catalog:
+                    parent_slug = _find_slug_by_table_name(
+                        _table_name(parent_slug), catalog
+                    ) or parent_slug
+                remapped_derived_from.append(parent_slug)
+
             catalog_entry = TableCatalogEntry(
                 table_slug=table_slug,
                 similarity=similarity_score,
@@ -565,6 +602,8 @@ class MetadataLookup(VectorLookupTool):
                 description=table_description,
                 sql_expr=sql,
                 metadata=context["tables_metadata"].get(table_slug, {}).copy(),
+                derived_from=remapped_derived_from,
+                created_order=lineage.get("created_order", 0),
             )
             catalog[table_slug] = catalog_entry
 
