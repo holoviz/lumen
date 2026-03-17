@@ -1305,12 +1305,13 @@ class UI(Viewer):
             self._current_help_text = HELP_GETTING_STARTED
 
     @param.depends('context', on_init=True, watch=True)
-    async def _sync_sources(self, event=None):
-        context = event.new if event else self.context
+    async def _sync_sources(self, event=None, global_context=None):
+        global_context = self.context if global_context is None else global_context
+        context = event.new if event else global_context
         if 'sources' in context:
-            old_sources = self.context.get("sources", [self.context["source"]] if "source" in self.context else [])
+            old_sources = global_context.get("sources", [global_context["source"]] if "source" in global_context else [])
             new_sources = [src for src in context["sources"] if src not in old_sources]
-            self.context["sources"] = old_sources + new_sources
+            global_context["sources"] = old_sources + new_sources
 
             # Compute table slugs for old, new, and all sources
             old_slugs = set()
@@ -1321,7 +1322,7 @@ class UI(Viewer):
                     old_slugs.add(table_slug)
 
             all_slugs = set()
-            for source in self.context["sources"]:
+            for source in global_context["sources"]:
                 tables = source.get_tables()
                 for table in tables:
                     table_slug = f'{source.name}{SOURCE_TABLE_SEPARATOR}{table}'
@@ -1330,34 +1331,39 @@ class UI(Viewer):
             new_slugs = all_slugs - old_slugs
 
             # Update visible_slugs: preserve old table visibility, auto-check new tables
-            current_visible = self.context.get("visible_slugs")
+            current_visible = global_context.get("visible_slugs")
             if current_visible is not None:  # Check for None, not truthiness (empty set is valid!)
-                self.context["visible_slugs"] = current_visible.intersection(old_slugs) | new_slugs
-            else:
-                self.context["visible_slugs"] = all_slugs
+                global_context["visible_slugs"] = current_visible.intersection(old_slugs) | new_slugs
+            elif all_slugs:
+                global_context["visible_slugs"] = all_slugs
 
         if "source" in context:
             source = context["source"]
-            if "source" in self.context:
-                old_source = self.context["source"]
-                if "sources" not in self.context:
-                    self.context["sources"] = [old_source]
-                elif old_source not in self.context["sources"]:
-                    self.context["sources"].append(old_source)
-            elif "sources" not in self.context:
-                self.context["sources"] = []
-            if source not in self.context["sources"]:
-                self.context["sources"].append(source)
-            self.context["source"] = source
+            if "source" in global_context:
+                old_source = global_context["source"]
+                if "sources" not in global_context:
+                    global_context["sources"] = [old_source]
+                elif old_source not in global_context["sources"]:
+                    global_context["sources"].append(old_source)
+            elif "sources" not in global_context:
+                global_context["sources"] = []
+            if source not in global_context["sources"]:
+                global_context["sources"].append(source)
+            global_context["source"] = source
         if "table" in context:
-            self.context["table"] = context["table"]
+            global_context["table"] = context["table"]
 
         # Guard against early calls during init when components don't exist yet
         if hasattr(self, '_explorer'):
             await self._explorer.sync()
         # Only sync coordinator if we have sources and coordinator exists
-        if hasattr(self, '_coordinator') and self.context.get("sources"):
-            await self._coordinator.sync(self.context)
+        if hasattr(self, '_coordinator') and global_context.get("sources"):
+            await self._coordinator.sync(global_context)
+
+        # Only update source catalog and input tabs for truly global sources
+        if global_context is not self.context:
+            return
+
         if hasattr(self, '_source_catalog'):
             self._source_catalog.sync(self.context)
 
@@ -2327,7 +2333,7 @@ class ExplorerUI(UI):
             title, vsplit = self._render_view(exploration, view)
             content.insert((idx or 0)+1, (title, vsplit))
         tabs[:] = content
-        tabs.active = len(tabs)-1
+        tabs.active = max(len(tabs)-1, 0)
 
     def _reset_error(self, plan: Plan, exploration: Exploration, replan: bool = False):
         plan.reset(plan._current)
@@ -2347,10 +2353,10 @@ class ExplorerUI(UI):
         parent = prev["view"]
 
         # Check if we are adding to existing exploration or creating a new one
-        new_exploration = any(
+        new_exploration = (any(
             {"pipeline", "view"} & set(step.actor.output_schema.__required_keys__)
             for step in plan
-        )
+        ) and "pipeline" in parent.context) or self._exploration['view'] is self._home
 
         partial_plan = None
         if rerun:
@@ -2405,15 +2411,8 @@ class ExplorerUI(UI):
         self, plan: Plan, exploration: Exploration, prev: dict, is_new: bool = False, partial_plan: Plan | None = None
     ):
         self._exploration['view'].conversation = self.interface.objects
-        sync_context = {
-            key: plan.out_context[key]
-            for key in ("sources", "source", "table")
-            if key in plan.out_context and
-            any(key in t.output_schema.__required_keys__ for t in plan if isinstance(t, ActorTask))
-        }
-        if sync_context:
-            await self._sync_sources(SimpleNamespace(new=sync_context))
         if "__error__" not in plan.out_context and plan.status != "error":
+            await self._sync_sources(SimpleNamespace(new=plan.out_context), global_context=plan.out_context)
             if "pipeline" in plan.out_context:
                 await self._add_analysis_suggestions(plan)
 
