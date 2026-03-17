@@ -17,7 +17,9 @@ from typing_extensions import NotRequired
 
 from lumen.ai.agents.base import Agent
 from lumen.ai.context import ContextModel, TContext
+from lumen.ai.editors import SQLEditor
 from lumen.ai.llm import Message
+from lumen.pipeline import Pipeline
 from lumen.sources.base import Source
 from lumen.sources.duckdb import DuckDBSource
 
@@ -52,7 +54,6 @@ class MassiveDataSourceAgent(Agent):
     conditions = param.List(default=[
         "Use when the user asks for stock, equities, ticker, OHLCV, or market price data.",
         "Do not use for fetching news or anything other than OHLCV data."
-        "This agent only fetches the data, always use with an SQLAgent to load the data."
     ])
 
     purpose = param.String(default="""
@@ -257,15 +258,14 @@ class MassiveDataSourceAgent(Agent):
 
         duck_name = f"massive_{'_'.join(llm_args.tickers).lower()}_duckdb"
         source = DuckDBSource.from_df({"prices": prices}, name=duck_name)
+        pipeline = Pipeline(source=source, table="prices")
+        editor = SQLEditor(component=pipeline, spec="SELECT * FROM prices")
 
         existing_sources = list(context.get("sources", []))
         filtered = [existing for existing in existing_sources if getattr(existing, "name", None) != duck_name]
         updated_sources = [*filtered, source]
 
-        text = (
-            f"Fetched Massive data for {', '.join(llm_args.tickers)} "
-            f"({llm_args.start_date} to {llm_args.end_date}, "
-            f"{llm_args.multiplier} {llm_args.timespan} bars) and loaded it into "
-            f"DuckDB source `{duck_name}` as table `prices`."
-        )
-        return [text], {"source": source, "sources": updated_sources, "table": "prices"}
+        context = await editor.render_context()
+        context["source"] = source
+        context["sources"] = updated_sources
+        return [editor], context
