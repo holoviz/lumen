@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from functools import partial
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import param
@@ -1336,13 +1337,18 @@ class UI(Viewer):
                 self.context["visible_slugs"] = all_slugs
 
         if "source" in context:
+            source = context["source"]
             if "source" in self.context:
                 old_source = self.context["source"]
                 if "sources" not in self.context:
                     self.context["sources"] = [old_source]
                 elif old_source not in self.context["sources"]:
                     self.context["sources"].append(old_source)
-            self.context["source"] = context["source"]
+            elif "sources" not in self.context:
+                self.context["sources"] = []
+            if source not in self.context["sources"]:
+                self.context["sources"].append(source)
+            self.context["source"] = source
         if "table" in context:
             self.context["table"] = context["table"]
 
@@ -2399,6 +2405,14 @@ class ExplorerUI(UI):
         self, plan: Plan, exploration: Exploration, prev: dict, is_new: bool = False, partial_plan: Plan | None = None
     ):
         self._exploration['view'].conversation = self.interface.objects
+        sync_context = {
+            key: plan.out_context[key]
+            for key in ("sources", "source", "table")
+            if key in plan.out_context and
+            any(key in t.output_schema.__required_keys__ for t in plan if isinstance(t, ActorTask))
+        }
+        if sync_context:
+            await self._sync_sources(SimpleNamespace(new=sync_context))
         if "__error__" not in plan.out_context and plan.status != "error":
             if "pipeline" in plan.out_context:
                 await self._add_analysis_suggestions(plan)

@@ -4,6 +4,7 @@ import sys
 import tempfile
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import duckdb
@@ -151,6 +152,34 @@ async def test_exploration_ui_error(explorer_ui_with_error):
     # Check Interface contents
     assert len(ui.interface) == 2
     assert len(ui.interface[1].footer_objects) == 2 # Rerun buttons
+
+async def test_sync_sources_keeps_source_and_sources_in_sync(explorer_ui):
+    ui = explorer_ui
+    previous_sources = list(ui.context["sources"])
+    new_source = DuckDBSource(uri=":memory:", tables={"new_table": "SELECT 1 as id"})
+
+    await ui._sync_sources(SimpleNamespace(new={"source": new_source}))
+
+    assert ui.context["source"] is new_source
+    assert new_source in ui.context["sources"]
+    for source in previous_sources:
+        assert source in ui.context["sources"]
+
+async def test_postprocess_exploration_syncs_source_into_global_context(explorer_ui):
+    ui = explorer_ui
+    previous_sources = list(ui.context["sources"])
+    new_source = DuckDBSource(uri=":memory:", tables={"fresh_table": "SELECT 1 as id"})
+
+    plan = Plan(title="sync source", out_context={"source": new_source}, status="success")
+    exploration = ui._explorations.value["view"]
+    prev = ui._explorations.value
+
+    await ui._postprocess_exploration(plan, exploration, prev, is_new=False)
+
+    assert ui.context["source"] is new_source
+    assert new_source in ui.context["sources"]
+    for source in previous_sources:
+        assert source in ui.context["sources"]
 
 async def test_exploration_ui_error_rerun(explorer_ui_with_error):
     ui = explorer_ui_with_error
