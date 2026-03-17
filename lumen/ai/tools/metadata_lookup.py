@@ -118,6 +118,8 @@ class MetadataLookup(VectorLookupTool):
 
     # Class variable to track which sources are currently being processed
     _sources_in_progress = {}
+    _sources_processed = {}
+    _source_provenance = {}
     _progress_lock = asyncio.Lock()  # Lock for thread-safe access
 
     input_schema = MetadataLookupInputs
@@ -184,7 +186,13 @@ class MetadataLookup(VectorLookupTool):
             formatted_results.append(description)
         return "\n".join(formatted_results)
 
-    async def _enrich_metadata(self, source, table_name: str, context: TContext):
+    async def _enrich_metadata(
+        self,
+        source,
+        table_name: str,
+        context: TContext,
+        provenance_chain: list[str] | None = None,
+    ):
         """Fetch metadata for a table and return enriched entry for batch processing."""
         async with self._semaphore:
             source_metadata = self._raw_metadata[source.name]
@@ -217,7 +225,7 @@ class MetadataLookup(VectorLookupTool):
             "source": source.name,
             "table_name": table_name,
             "type": self._item_type_name,
-            "provenance_chain": self._get_provenance_chain(context),
+            "provenance_chain": provenance_chain or self._get_provenance_chain(context),
         }
         # the following is for the embeddings/vector store use only (i.e. filter from 1000s of tables)
         enriched_text = f"Table: {table_name}"
@@ -259,24 +267,35 @@ class MetadataLookup(VectorLookupTool):
 
         async with self._progress_lock:
             if vector_store_id not in self._sources_in_progress:
-                self._sources_in_progress[vector_store_id] = {}
+                self._sources_in_progress[vector_store_id] = set()
+            if vector_store_id not in self._sources_processed:
+                self._sources_processed[vector_store_id] = {}
+            if vector_store_id not in self._source_provenance:
+                self._source_provenance[vector_store_id] = {}
 
         log_debug(f"[MetadataLookup] Starting _update_vector_store for {len(sources)} sources")
 
         for source in sources:
             async with self._progress_lock:
+                source_provenance = self._source_provenance[vector_store_id].setdefault(
+                    source.name, provenance_chain
+                )
                 # Skip this source if already processed with the same (or more) tables
                 current_table_count = len(source.get_tables())
-                source_key = (source.name, provenance_chain)
-                known_count = self._sources_in_progress[vector_store_id].get(source_key, 0)
+                source_key = source.name
+                known_count = self._sources_processed[vector_store_id].get(source_key, 0)
+                if source_key in self._sources_in_progress[vector_store_id]:
+                    log_debug(f"[MetadataLookup] Skipping source {source.name} - already in progress")
+                    continue
                 if known_count >= current_table_count:
                     log_debug(
-                        f"[MetadataLookup] Skipping source {source.name} for provenance {provenance_chain} - already processed {known_count} tables"
+                        f"[MetadataLookup] Skipping source {source.name} at provenance {source_provenance} - already processed {known_count} tables"
                     )
                     continue
 
                 # Mark this source as in progress with current table count
-                self._sources_in_progress[vector_store_id][source_key] = current_table_count
+                self._sources_in_progress[vector_store_id].add(source_key)
+                self._sources_processed[vector_store_id][source_key] = current_table_count
                 processed_sources.append(source_key)
                 log_debug(f"[MetadataLookup] Processing source {source.name}")
 
@@ -292,11 +311,23 @@ class MetadataLookup(VectorLookupTool):
 
             if self.include_metadata:
                 for table in tables:
-                    task = asyncio.create_task(self._enrich_metadata(source, table, context))
+                    task = asyncio.create_task(
+                        self._enrich_metadata(
+                            source, table, context, provenance_chain=list(source_provenance)
+                        )
+                    )
                     tasks.append(task)
             else:
                 await self.vector_store.upsert(
-                    [{"text": table_name, "metadata": {"source": source.name, "table_name": table_name, "type": "table"}} for table_name in tables]
+                    [{
+                        "text": table_name,
+                        "metadata": {
+                            "source": source.name,
+                            "table_name": table_name,
+                            "type": "table",
+                            "provenance_chain": list(source_provenance),
+                        },
+                    } for table_name in tables]
                 )
 
         if tasks:
@@ -321,18 +352,15 @@ class MetadataLookup(VectorLookupTool):
                     log_debug(f"[MetadataLookup] Cleaning up sources: {processed_sources}")
                     for source_key in processed_sources:
                         if vector_store_id in self._sources_in_progress:
-                            self._sources_in_progress[vector_store_id].pop(source_key, None)
+                            self._sources_in_progress[vector_store_id].discard(source_key)
                             log_debug(f"[MetadataLookup] Removed {source_key} from in-progress")
 
-                    # Remove the vector_store_id entry if empty
-                    if vector_store_id in self._sources_in_progress and not self._sources_in_progress[vector_store_id]:
-                        del self._sources_in_progress[vector_store_id]
-                        log_debug(f"[MetadataLookup] Removed empty vector_store_id {vector_store_id}")
                 except Exception as e:
                     log_debug(f"[MetadataLookup] Error cleaning up sources_in_progress: {e!s}")
                     # Force cleanup on error
                     if vector_store_id in self._sources_in_progress:
-                        self._sources_in_progress[vector_store_id].clear()
+                        for source_key in processed_sources:
+                            self._sources_in_progress[vector_store_id].discard(source_key)
 
         # Schedule the async cleanup and store the task reference
         # This prevents the task from being garbage collected
@@ -496,6 +524,7 @@ class MetadataLookup(VectorLookupTool):
         for result in results:
             source_name = result["metadata"]["source"]
             table_name = result["metadata"]["table_name"]
+            provenance = result["metadata"].get("provenance_chain", ["global"])
             source_obj = None
             sql = None
             for source in context.get("sources", []):
@@ -507,7 +536,10 @@ class MetadataLookup(VectorLookupTool):
             similarity_score = result["similarity"]
             # Filter by visible_slugs if specified
             visible_slugs = context.get("visible_slugs")
-            if visible_slugs is not None and table_slug not in visible_slugs:
+
+            # For dynamically created sources we don't check visible_slugs since those
+            # only apply to global sources
+            if visible_slugs is not None and table_slug not in visible_slugs and len(provenance) == 1:
                 continue
 
             if any_matches and result["similarity"] < self.min_similarity and not same_table:

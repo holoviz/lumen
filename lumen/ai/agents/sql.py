@@ -655,9 +655,6 @@ class SQLAgent(BaseLumenAgent):
         # Get sources from context for the discovery models
         metaset = context["metaset"]
         selected_slugs = list(metaset.catalog)
-        visible_slugs = context.get('visible_slugs', [])
-        if visible_slugs:
-            selected_slugs = [slug for slug in selected_slugs if slug in visible_slugs]
         sources_list = [
             tuple(table_slug.split(SOURCE_TABLE_SEPARATOR))
             for table_slug in selected_slugs
@@ -832,13 +829,6 @@ class SQLAgent(BaseLumenAgent):
         sources = context["sources"]
         metaset = context["metaset"]
         selected_slugs = list(metaset.catalog)
-        visible_slugs = context.get('visible_slugs', [])
-        if selected_slugs and visible_slugs:
-            # hide de-selected slugs
-            selected_slugs = [slug for slug in selected_slugs if slug in visible_slugs]
-        elif not selected_slugs and visible_slugs:
-            # if no closest matches, use visible slugs
-            selected_slugs = list(visible_slugs)
 
         # Select relevant tables if there are many
         if len(selected_slugs) > 3:

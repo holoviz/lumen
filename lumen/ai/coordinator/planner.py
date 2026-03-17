@@ -264,14 +264,7 @@ class Planner(Coordinator):
         tools: dict[str, Tool],
     ) -> tuple[dict[str, Agent], dict[str, Tool], dict[str, Any]]:
         is_follow_up = await self._check_follow_up_question(messages, context)
-        if not is_follow_up:
-            await self._execute_planner_tools(messages, context)
-        else:
-            log_debug("\033[92mDetected follow-up question, using existing context\033[0m")
-            with self._add_step(title="Using existing data context...", user="Assistant", steps_layout=self.steps_layout) as step:
-                step.stream("Detected that this is a follow-up question related to the previous dataset.")
-                step.stream("\n\nUsing the existing data in memory to answer without re-executing data retrieval.")
-                step.success_title = "Using existing data for follow-up question"
+        await self._execute_planner_tools(messages, context)
         agents, tools, pre_plan_output = await super()._pre_plan(messages, context, agents, tools)
         pre_plan_output["is_follow_up"] = is_follow_up
         return agents, tools, pre_plan_output
