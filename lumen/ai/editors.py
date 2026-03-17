@@ -28,6 +28,7 @@ from panel_material_ui import (
     Alert, Button, Checkbox, CircularProgress, FileDownload, FlexBox,
     FloatInput, MenuButton, Tabs,
 )
+from PIL import Image
 
 from ..base import Component
 from ..config import dump_yaml, load_yaml
@@ -285,7 +286,9 @@ class LumenEditor(Viewer):
 
 class VegaLiteEditor(LumenEditor):
 
-    export_formats = ("yaml", "png", "jpeg", "pdf", "svg", "html")
+    export_formats = ("yaml", "png", "jpeg", "pdf", "svg", "html", "webp", "tiff", "eps")
+
+    _pillow_formats = ("webp", "tiff", "eps")
 
     _controls = [RetryControls, AnnotationControls, CopyControls]
     _label = "Plot"
@@ -294,20 +297,28 @@ class VegaLiteEditor(LumenEditor):
         ret = super().export(fmt)
         if ret is not None:
             return ret
-        kwargs = {"scale": 2} if fmt in ("png", "jpeg", "pdf") else {}
-        # Replace 'container' with actual dimensions for image and HTML exports
-        if fmt in ("png", "jpeg", "pdf", "svg", "html"):
-            spec = load_yaml(self.spec)
-            # Replace 'container' with actual pixel values or use defaults
-            if spec.get("width") == "container" or "width" not in spec:
-                spec["width"] = 800
-            if spec.get("height") == "container" or "height" not in spec:
-                spec["height"] = 400
-            # Temporarily update spec for export
-            with self.param.update(spec=dump_yaml(spec)):
-                out = self.component.get_panel().export(fmt, **kwargs)
-            return BytesIO(out) if isinstance(out, bytes) else StringIO(out)
-        out = self.component.get_panel().export(fmt, **kwargs)
+
+        # vl-convert doesn't support webp/tiff/eps; render as png first, then convert with Pillow
+        render_fmt = "png" if fmt in self._pillow_formats else fmt
+        kwargs = {"scale": 2} if render_fmt in ("png", "jpeg", "pdf") else {}
+
+        spec = load_yaml(self.spec)
+        if spec.get("width") == "container" or "width" not in spec:
+            spec["width"] = 800
+        if spec.get("height") == "container" or "height" not in spec:
+            spec["height"] = 400
+        with self.param.update(spec=dump_yaml(spec)):
+            out = self.component.get_panel().export(render_fmt, **kwargs)
+
+        if fmt in self._pillow_formats:
+            img = Image.open(BytesIO(out))
+            if fmt == "eps":
+                img = img.convert("RGB")
+            buf = BytesIO()
+            img.save(buf, format=fmt.upper())
+            buf.seek(0)
+            return buf
+
         return BytesIO(out) if isinstance(out, bytes) else StringIO(out)
 
     @cache
@@ -592,15 +603,21 @@ class SQLEditor(LumenEditor):
 
     language = "sql"
 
-    export_formats = ("sql", "csv", "xlsx")
+    export_formats = ("sql", "csv", "xlsx", "json", "markdown")
     _label = "Table"
 
-    def export(self, fmt: str) -> str | bytes:
+    def export(self, fmt: str) -> StringIO | BytesIO:
         super().export(fmt)
+        data = self.component.data
         if fmt == 'sql':
             return StringIO(self.spec)
         sio = StringIO()
-        self.component.data.to_csv(sio)
+        if fmt in ('csv', 'xlsx'):
+            data.to_csv(sio)
+        elif fmt == 'json':
+            data.to_json(sio, orient='records', indent=2)
+        elif fmt == 'markdown':
+            sio.write(data.to_markdown(index=False))
         sio.seek(0)
         return sio
 

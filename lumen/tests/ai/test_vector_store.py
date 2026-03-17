@@ -81,6 +81,28 @@ class VectorStoreTestKit:
         assert filtered_offset[0]["text"] == "A second receipt with different details"
 
     @pytest.mark.asyncio
+    async def test_filter_by_list_matches_any_scalar_value(self, empty_store):
+        await empty_store.add([
+            {"text": "alpha doc", "metadata": {"scope": "alpha"}},
+            {"text": "beta doc", "metadata": {"scope": "beta"}},
+            {"text": "gamma doc", "metadata": {"scope": "gamma"}},
+        ])
+        filtered = empty_store.filter_by({"scope": ["alpha", "gamma"]})
+        scopes = {doc["metadata"]["scope"] for doc in filtered}
+        assert scopes == {"alpha", "gamma"}
+
+    @pytest.mark.asyncio
+    async def test_filter_by_list_requires_all_values_for_list_metadata(self, empty_store):
+        await empty_store.add([
+            {"text": "doc one", "metadata": {"provenance_chain": ["global", "a", "b"]}},
+            {"text": "doc two", "metadata": {"provenance_chain": ["global", "a"]}},
+            {"text": "doc three", "metadata": {"provenance_chain": ["global", "b"]}},
+        ])
+        filtered = empty_store.filter_by({"provenance_chain": ["global", "a"]})
+        assert len(filtered) == 2
+        assert {doc["text"] for doc in filtered} == {"doc one", "doc two"}
+
+    @pytest.mark.asyncio
     async def test_query_with_filter_title_org_chart(self, store_with_three_docs):
         query_text = "CEO reports to?"
         results = await store_with_three_docs.query(query_text)
@@ -92,6 +114,20 @@ class VectorStoreTestKit:
         assert len(results) == 1
         assert results[0]["metadata"]["title"] == "org_chart"
         assert "CEO" in results[0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_query_with_list_filter(self, empty_store):
+        await empty_store.add([
+            {"text": "global only", "metadata": {"provenance_chain": ["global"]}},
+            {"text": "global and alpha", "metadata": {"provenance_chain": ["global", "alpha"]}},
+            {"text": "global alpha beta", "metadata": {"provenance_chain": ["global", "alpha", "beta"]}},
+        ])
+        results = await empty_store.query(
+            "alpha",
+            top_k=10,
+            filters={"provenance_chain": ["global", "alpha"]},
+        )
+        assert {result["text"] for result in results} == {"global and alpha", "global alpha beta"}
 
     @pytest.mark.asyncio
     async def test_query_1_threshold(self, store_with_three_docs):

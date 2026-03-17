@@ -10,7 +10,7 @@ from lumen.sources.base import FileSource
 from lumen.state import state
 from lumen.variables.base import Variables
 from lumen.views.base import (
-    Panel, VegaLiteView, View, hvOverlayView, hvPlotView,
+    Panel, Table, VegaLiteView, View, hvOverlayView, hvPlotView,
 )
 
 
@@ -220,6 +220,29 @@ def test_hvplot_view_to_spec(set_root):
         'y': 'B',
         'alpha': 0.3
     }
+
+def test_table_layout_defaults(set_root):
+    set_root(str(Path(__file__).parent.parent))
+    source = FileSource(tables={'test': 'sources/test.csv'})
+    view = View.from_spec({'type': 'table', 'table': 'test'}, source, [])
+    panel = view.get_panel()
+    assert panel.sizing_mode == 'stretch_width'
+    assert panel.layout == 'fit_data_stretch'
+    assert panel._configuration.get('columnDefaults', {}).get('maxInitialWidth') == 300
+
+
+def test_table_user_configuration_merges(set_root):
+    set_root(str(Path(__file__).parent.parent))
+    source = FileSource(tables={'test': 'sources/test.csv'})
+    table = Table(
+        pipeline=Pipeline(source=source, table='test'),
+        configuration={'columnDefaults': {'maxInitialWidth': 500, 'headerSort': False}},
+    )
+    panel = table.get_panel()
+    config = panel._configuration
+    assert config['columnDefaults']['maxInitialWidth'] == 500
+    assert config['columnDefaults']['headerSort'] is False
+
 
 @pytest.mark.parametrize("view_type", ("table", "hvplot"))
 def test_view_title(set_root, view_type):

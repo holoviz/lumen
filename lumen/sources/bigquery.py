@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import datetime
 import json
@@ -5,14 +7,22 @@ import threading
 
 from typing import Any
 
-import google.auth
 import pandas as pd
 import param
 
-from google.auth.credentials import Credentials
-from google.auth.exceptions import DefaultCredentialsError
-from google.cloud import bigquery, exceptions
-from google.cloud.bigquery.client import Client
+try:
+    import google.auth
+
+    from google.auth.credentials import Credentials
+    from google.auth.exceptions import DefaultCredentialsError
+    from google.cloud import bigquery, exceptions
+    from google.cloud.bigquery.client import Client
+except ImportError as e:
+    raise ImportError(
+        "BigQuerySource requires the 'google-cloud-bigquery' package. "
+        "Install it with: pip install lumen[bigquery]"
+    ) from e
+
 from tqdm import tqdm
 
 from ..transforms.sql import SQLFilter, SQLMinMax

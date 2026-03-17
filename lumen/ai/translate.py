@@ -32,6 +32,7 @@ PARAM_TYPE_MAPPING: dict[param.Parameter, type] = {
     param.Event: bool,
     param.Tuple: tuple,
     param.NumericTuple: tuple,
+    param.Range: tuple[float, float],
     param.Date: DATE_TYPE,
     param.DateRange: tuple[DATE_TYPE],
     param.CalendarDate: DATE_TYPE,

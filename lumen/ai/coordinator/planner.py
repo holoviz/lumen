@@ -264,14 +264,7 @@ class Planner(Coordinator):
         tools: dict[str, Tool],
     ) -> tuple[dict[str, Agent], dict[str, Tool], dict[str, Any]]:
         is_follow_up = await self._check_follow_up_question(messages, context)
-        if not is_follow_up:
-            await self._execute_planner_tools(messages, context)
-        else:
-            log_debug("\033[92mDetected follow-up question, using existing context\033[0m")
-            with self._add_step(title="Using existing data context...", user="Assistant", steps_layout=self.steps_layout) as step:
-                step.stream("Detected that this is a follow-up question related to the previous dataset.")
-                step.stream("\n\nUsing the existing data in memory to answer without re-executing data retrieval.")
-                step.success_title = "Using existing data for follow-up question"
+        await self._execute_planner_tools(messages, context)
         agents, tools, pre_plan_output = await super()._pre_plan(messages, context, agents, tools)
         pre_plan_output["is_follow_up"] = is_follow_up
         return agents, tools, pre_plan_output
@@ -328,8 +321,9 @@ class Planner(Coordinator):
             # the unmet dependencies
             agent_candidates = [agent for agent in agents if not unmet_dependencies or set(agent.output_schema.__annotations__) & unmet_dependencies]
             tool_candidates = [tool for tool in tools if not unmet_dependencies or set(tool.output_schema.__annotations__) & unmet_dependencies]
+            llm_tools, _, _ = self.llm._normalize_tools(self.llm.tools)
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
-            async for reasoning in self._stream_prompt(
+            system = await self._render_prompt(
                 "main",
                 messages,
                 context,
@@ -342,6 +336,14 @@ class Planner(Coordinator):
                 previous_actors=previous_actors,
                 previous_plans=previous_plans,
                 is_follow_up=is_follow_up,
+                llm_tools=llm_tools
+            )
+            async for reasoning in self.llm.stream(
+                messages=messages,
+                system=system,
+                model_spec=model_spec,
+                response_model=Reasoning,
+                max_retries=3,
             ):
                 if reasoning.chain_of_thought:  # do not replace with empty string
                     context["reasoning"] = reasoning.chain_of_thought

@@ -11,13 +11,27 @@ from typing import Any
 
 import pandas as pd
 import param
-import snowflake.connector
 
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives.serialization import (
-    Encoding, NoEncryption, PrivateFormat, load_pem_private_key,
-)
-from snowflake.connector.constants import QueryStatus
+try:
+    import snowflake.connector
+
+    from snowflake.connector.constants import QueryStatus
+except ImportError as e:
+    raise ImportError(
+        "SnowflakeSource requires the 'snowflake-connector-python' package. "
+        "Install it with: pip install lumen[snowflake]"
+    ) from e
+
+try:
+    from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives.serialization import (
+        Encoding, NoEncryption, PrivateFormat, load_pem_private_key,
+    )
+except ImportError as e:
+    raise ImportError(
+        "SnowflakeSource requires the 'cryptography' package. "
+        "Install it with: pip install cryptography"
+    ) from e
 
 from ..transforms.sql import SQLFilter
 from .base import BaseSQLSource, cached, cached_schema

@@ -383,28 +383,99 @@ class TestRetryControls:
         interface = MockInterface()
         view = MockView(spec="original")
         task = MockTask()
-        
+
         # Mock revise to raise exception
         task.actor.revise = AsyncMock(side_effect=Exception("LLM Error"))
         task.history = []
         task.out_context = {}
-        
+
         controls = RetryControls(
             interface=interface,
             view=view,
             task=task
         )
-        
+
         # Trigger revision and expect exception
         controls.instruction = "Fix this"
         with pytest.raises(Exception, match="LLM Error"):
             await controls._revise()
-            
+
         # Verify error was reported (check that a Card was created with correct title)
         assert len(interface.messages) == 1
         card = interface.messages[0]["content"]
         assert hasattr(card, 'title')
         assert "Failed to generate revisions" in card.title
+
+    @pytest.mark.asyncio
+    async def test_revise_error_markdown_uses_real_newlines(self):
+        """Test that error markdown uses actual newlines, not literal backslash-n.
+
+        Regression test: f-strings previously used escaped newlines (\\\\n)
+        which rendered as literal \\n text in the chat instead of proper
+        markdown code blocks.
+        """
+        interface = MockInterface()
+        view = MockView(spec="original")
+        task = MockTask()
+
+        task.actor.revise = AsyncMock(side_effect=Exception("Some error"))
+        task.history = []
+        task.out_context = {}
+
+        controls = RetryControls(
+            interface=interface,
+            view=view,
+            task=task
+        )
+
+        controls.instruction = "Fix this"
+        with pytest.raises(Exception):
+            await controls._revise()
+
+        # The Card wraps a Markdown object; extract its content
+        card = interface.messages[0]["content"]
+        md_object = card.objects[0]
+        md_text = md_object.object
+
+        # Must contain real newlines for proper markdown code block rendering
+        assert "\\n" not in md_text, (
+            "Error markdown contains literal backslash-n instead of real newlines"
+        )
+        assert md_text.startswith("```\n")
+        assert md_text.endswith("\n```")
+
+    @pytest.mark.asyncio
+    async def test_revise_diff_markdown_uses_real_newlines(self):
+        """Test that diff markdown uses actual newlines after successful revision."""
+        interface = MockInterface()
+        old_spec = "type: bar"
+        new_spec = "type: line"
+        view = MockView(spec=old_spec)
+        task = MockTask()
+
+        task.actor.revise = AsyncMock(return_value=new_spec)
+        task.history = []
+        task.out_context = {}
+
+        controls = RetryControls(
+            interface=interface,
+            view=view,
+            task=task
+        )
+
+        with patch('lumen.ai.controls.revision.generate_diff', return_value="- type: bar\n+ type: line"):
+            controls.instruction = "Change to line chart"
+            await controls._revise()
+
+        card = interface.messages[0]["content"]
+        md_object = card.objects[0]
+        md_text = md_object.object
+
+        assert "\\n" not in md_text, (
+            "Diff markdown contains literal backslash-n instead of real newlines"
+        )
+        assert md_text.startswith("```diff\n")
+        assert md_text.endswith("\n```")
         
     @pytest.mark.asyncio
     async def test_revise_spec_application_failure(self):
@@ -565,30 +636,99 @@ class TestAnnotationControls:
         interface = MockInterface()
         view = MockView(spec="original")
         task = MockTask()
-        
+
         # Mock annotate to raise exception
         task.actor.annotate = AsyncMock(side_effect=Exception("Annotation failed"))
         task.history = []
         task.out_context = {}
-        
+
         controls = AnnotationControls(
             interface=interface,
             view=view,
             task=task
         )
-        
+
         with patch('lumen.ai.controls.revision.load_yaml', return_value={}):
             controls.instruction = "Add labels"
-            
+
             with pytest.raises(Exception, match="Annotation failed"):
                 await controls._annotate()
-                
+
             # Verify error was reported with correct title
             assert len(interface.messages) == 1
             card = interface.messages[0]["content"]
             assert hasattr(card, 'title')
             assert "Failed to generate annotations" in card.title
-            
+
+    @pytest.mark.asyncio
+    async def test_annotate_error_markdown_uses_real_newlines(self):
+        """Test that annotation error markdown uses actual newlines.
+
+        Regression test: same escaped newline bug as in RetryControls.
+        """
+        interface = MockInterface()
+        view = MockView(spec="original")
+        task = MockTask()
+
+        task.actor.annotate = AsyncMock(side_effect=Exception("Annotation error"))
+        task.history = []
+        task.out_context = {}
+
+        controls = AnnotationControls(
+            interface=interface,
+            view=view,
+            task=task
+        )
+
+        with patch('lumen.ai.controls.revision.load_yaml', return_value={}):
+            controls.instruction = "Annotate peaks"
+            with pytest.raises(Exception):
+                await controls._annotate()
+
+        card = interface.messages[0]["content"]
+        md_object = card.objects[0]
+        md_text = md_object.object
+
+        assert "\\n" not in md_text, (
+            "Error markdown contains literal backslash-n instead of real newlines"
+        )
+        assert md_text.startswith("```\n")
+        assert md_text.endswith("\n```")
+
+    @pytest.mark.asyncio
+    async def test_annotate_diff_markdown_uses_real_newlines(self):
+        """Test that diff markdown uses actual newlines after successful annotation."""
+        interface = MockInterface()
+        old_spec = "type: bar"
+        new_spec = "type: bar\nannotations:\n  - mark: peak"
+        view = MockView(spec=old_spec)
+        task = MockTask()
+
+        task.actor.annotate = AsyncMock(return_value=new_spec)
+        task.history = []
+        task.out_context = {}
+
+        controls = AnnotationControls(
+            interface=interface,
+            view=view,
+            task=task
+        )
+
+        with patch('lumen.ai.controls.revision.generate_diff', return_value="- type: bar\n+ type: bar\n+ annotations:\n+   - mark: peak"):
+            with patch('lumen.ai.controls.revision.load_yaml', return_value={}):
+                controls.instruction = "Highlight peak values"
+                await controls._annotate()
+
+        card = interface.messages[0]["content"]
+        md_object = card.objects[0]
+        md_text = md_object.object
+
+        assert "\\n" not in md_text, (
+            "Diff markdown contains literal backslash-n instead of real newlines"
+        )
+        assert md_text.startswith("```diff\n")
+        assert md_text.endswith("\n```")
+
     @pytest.mark.asyncio
     async def test_annotate_spec_application_failure(self):
         """Test _annotate handles spec application failures."""
@@ -634,6 +774,38 @@ class TestAnnotationControls:
                 assert hasattr(card, 'title')
                 assert "Failed to apply annotations" in card.title
                 
+    @pytest.mark.asyncio
+    async def test_annotate_passes_view_to_actor(self):
+        """Test _annotate passes view to actor.annotate for vision analysis.
+
+        Without passing view, the LLM may receive no user messages
+        (only a system prompt), causing providers like Google Gemini
+        to reject the request.
+        """
+        interface = MockInterface()
+        view = MockView(spec="type: bar")
+        task = MockTask()
+
+        task.actor.annotate = AsyncMock(return_value="annotated spec")
+        task.history = []
+        task.out_context = {}
+
+        controls = AnnotationControls(
+            interface=interface,
+            view=view,
+            task=task
+        )
+
+        with patch('lumen.ai.controls.revision.load_yaml', return_value={"type": "bar"}):
+            with patch('lumen.ai.controls.revision.generate_diff', return_value=""):
+                controls.instruction = "Highlight peaks"
+                await controls._annotate()
+
+                # Verify view was passed as the 5th argument
+                call_args = task.actor.annotate.call_args[0]
+                assert len(call_args) == 5
+                assert call_args[4] is view
+
     @pytest.mark.asyncio
     async def test_annotate_uses_load_yaml(self):
         """Test _annotate properly loads and passes spec to annotate method."""

@@ -25,8 +25,6 @@ def make_md_cell(text: str):
 def make_preamble(preamble: str, extensions: list[str] | None = None, title: str | None = None):
     if extensions is None:
         extensions = []
-    if title:
-        header = make_md_cell(f'# {title}')
     if 'tabulator' not in extensions:
         extensions = ['tabulator'] + extensions
     exts = ', '.join([repr(ext) for ext in extensions])
@@ -41,9 +39,11 @@ def make_preamble(preamble: str, extensions: list[str] | None = None, title: str
         """
     )).strip()
     imports = nbformat.v4.new_code_cell(source=source)
-    return [header, imports] if title else [imports]
+    if title:
+        return [make_md_cell(f'# {title}'), imports]
+    return [imports]
 
-def serialize_avatar(avatar: str | BytesIO, size: int = 45) -> str:
+def serialize_avatar(avatar: str | bytes | BytesIO | ImageBase, size: int = 45) -> str:
     """
     Process different types of avatar inputs into HTML img tag or text span.
 
@@ -55,7 +55,7 @@ def serialize_avatar(avatar: str | BytesIO, size: int = 45) -> str:
         HTML string representing the avatar
     """
     if isinstance(avatar, ImageBase):
-        avatar = avatar.object
+        avatar = avatar.object # type: ignore
     if isinstance(avatar, BytesIO):
         avatar = avatar.getvalue()
 
@@ -76,6 +76,7 @@ def serialize_avatar(avatar: str | BytesIO, size: int = 45) -> str:
 def format_markdown(md: Markdown):
     return [nbformat.v4.new_markdown_cell(source=md.object)]
 
+<<<<<<< improve_report_ui
 def format_output(output: LumenEditor | View | Pipeline):
     ext = None
     code = []
@@ -84,6 +85,19 @@ def format_output(output: LumenEditor | View | Pipeline):
         component = output.component
     else:
         component = output
+=======
+def format_output(output: Any):
+    ext = None
+    code = []
+
+    if hasattr(output, 'component') and hasattr(output.component, 'to_spec'):
+        component = output.component
+    elif hasattr(output, 'to_spec'):
+        component = output
+    else:
+        return nbformat.v4.new_code_cell(source=f'# Cannot export output of type {type(output).__name__}'), None
+
+>>>>>>> main
     with config.param.update(serializer='csv'):
         # replace |2- |3- |4-... etc with | for a cleaner look
         spec = re.sub(r'(\|[-\d]*)', '|', yaml.dump(component.to_spec(), sort_keys=False))
@@ -98,7 +112,11 @@ def format_output(output: LumenEditor | View | Pipeline):
             'pipeline'
         ])
     elif isinstance(component, View):
+<<<<<<< improve_report_ui
         ext = component._extension
+=======
+        ext = getattr(component, '_extension', None)
+>>>>>>> main
         code.extend([
             *read_code,
             'view = lm.View.from_spec(spec)',
