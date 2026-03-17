@@ -99,7 +99,7 @@ async def test_sql_agent(llm, duckdb_source, test_messages):
         "  SUM(A) AS A_sum\n"
         "FROM test_sql"
     )
-    assert set(out_context) == {"data", "pipeline", "sql", "table", "source"}
+    assert set(out_context) == {"data", 'derived_table_lineage', "pipeline", "sql", "table", "source"}
 
 async def test_vegalite_agent(llm, duckdb_source, test_messages):
     """Test VegaLiteAgent instantiation and respond"""
