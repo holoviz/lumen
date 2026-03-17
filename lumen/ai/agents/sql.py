@@ -22,7 +22,7 @@ from ..context import ContextModel, TContext
 from ..editors import LumenEditor, SQLEditor
 from ..llm import Message
 from ..models import EscapeBaseModel, RetrySpec
-from ..schemas import Metaset
+from ..schemas import Metaset, get_metaset
 from ..utils import (
     clean_sql, describe_data, get_data, get_pipeline, parse_table_slug,
     retry_llm_output, stream_details,
@@ -837,14 +837,38 @@ class SQLAgent(BaseLumenAgent):
                 if selected_tables:
                     metaset.schema_tables = selected_tables
                     step.stream(f"\n\nWill load schemas for: {selected_tables}")
-        else:
-            # Use all tables if 3 or fewer
+        # Use all tables if 3 or fewer
+        elif metaset is not None:
             metaset.schema_tables = selected_slugs
 
         sources = {
             tuple(table_slug.split(SOURCE_TABLE_SEPARATOR)): parse_table_slug(table_slug, sources)[0]
             for table_slug in selected_slugs
         }
+        sources = {key: source for key, source in sources.items() if source is not None}
+        if not sources:
+            # If available sources changed but metaset is stale/missing, rebuild immediately
+            # so downstream SQL generation can proceed in the same plan execution.
+            fallback_slugs = []
+            for source in context["sources"]:
+                try:
+                    tables = source.get_tables()
+                except Exception:
+                    tables = []
+                fallback_slugs.extend(
+                    f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}"
+                    for table in tables
+                )
+
+            if fallback_slugs:
+                metaset = await get_metaset(context["sources"], fallback_slugs, prev=metaset)
+                context["metaset"] = metaset
+                selected_slugs = list(metaset.catalog)
+                sources = {
+                    tuple(table_slug.split(SOURCE_TABLE_SEPARATOR)): parse_table_slug(table_slug, context["sources"])[0]
+                    for table_slug in selected_slugs
+                }
+                sources = {key: source for key, source in sources.items() if source is not None}
         if not sources:
             raise ValueError("No valid SQL sources available for querying.")
         try:
