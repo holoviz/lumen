@@ -76,16 +76,6 @@ def serialize_avatar(avatar: str | bytes | BytesIO | ImageBase, size: int = 45) 
 def format_markdown(md: Markdown):
     return [nbformat.v4.new_markdown_cell(source=md.object)]
 
-<<<<<<< improve_report_ui
-def format_output(output: LumenEditor | View | Pipeline):
-    ext = None
-    code = []
-    # Accept either a LumenEditor wrapper or a raw View/Pipeline
-    if isinstance(output, LumenEditor):
-        component = output.component
-    else:
-        component = output
-=======
 def format_output(output: Any):
     ext = None
     code = []
@@ -97,7 +87,6 @@ def format_output(output: Any):
     else:
         return nbformat.v4.new_code_cell(source=f'# Cannot export output of type {type(output).__name__}'), None
 
->>>>>>> main
     with config.param.update(serializer='csv'):
         # replace |2- |3- |4-... etc with | for a cleaner look
         spec = re.sub(r'(\|[-\d]*)', '|', yaml.dump(component.to_spec(), sort_keys=False))
@@ -112,11 +101,7 @@ def format_output(output: Any):
             'pipeline'
         ])
     elif isinstance(component, View):
-<<<<<<< improve_report_ui
-        ext = component._extension
-=======
         ext = getattr(component, '_extension', None)
->>>>>>> main
         code.extend([
             *read_code,
             'view = lm.View.from_spec(spec)',
