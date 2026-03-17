@@ -306,6 +306,12 @@ class BaseSourceControls(Viewer):
     _count = param.Integer(default=0, doc="Count of sources added")
 
     # UI customization
+    add_button_icon = param.String(default="add", doc="""
+        Material icon name for the add/upload confirmation button.""")
+
+    add_button_label = param.String(default="Confirm file(s)", doc="""
+        Text label for the add/upload confirmation button.""")
+
     label = param.String(default="", constant=True, doc="""
         HTML label shown in the sidebar for this control.""" )
 
@@ -314,12 +320,6 @@ class BaseSourceControls(Viewer):
 
     load_button_icon = param.String(default="download", doc="""
         Material icon name for the load button.""")
-
-    add_button_label = param.String(default="Confirm file(s)", doc="""
-        Text label for the add/upload confirmation button.""")
-
-    add_button_icon = param.String(default="add", doc="""
-        Material icon name for the add/upload confirmation button.""")
 
     source_name_prefix = param.String(default="UploadedSource", doc="""
         Prefix for auto-generated source names.""")

@@ -63,7 +63,7 @@ class UploadControls(BaseSourceControls):
         self._generate_file_cards(files)
         if files:
             self._message_placeholder.param.update(
-                object="Files selected. Click 'Upload file(s)' to add them as data sources.",
+                object=f"{len(files)} file(s) selected. Click 'Upload file(s)' to add them as data sources.",
                 visible=True,
             )
 

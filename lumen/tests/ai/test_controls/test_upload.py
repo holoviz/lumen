@@ -306,6 +306,7 @@ class TestUploadControlsSelectionUX:
             SimpleNamespace(new={"a.csv": b"x,y\n1,2\n", "b.csv": b"x,y\n3,4\n"})
         )
         assert upload_controls._message_placeholder.visible is True
+        assert "2 file(s) selected." in upload_controls._message_placeholder.object
         assert "Upload file(s)" in upload_controls._message_placeholder.object
 
     def test_clear_selection_resets_staged_files(self, upload_controls):
