@@ -13,24 +13,8 @@ from ..llm import Message
 from ..schemas import (
     Column, DocumentChunk, Metaset, TableCatalogEntry,
 )
-from ..utils import log_debug
+from ..utils import find_slug_by_table_name, log_debug, slug_to_table_name
 from .vector_lookup import VectorLookupTool, make_refined_query_model
-
-
-def _table_name(slug: str) -> str:
-    """Extract the table name from a possibly source-qualified slug."""
-    if SOURCE_TABLE_SEPARATOR in slug:
-        return slug.split(SOURCE_TABLE_SEPARATOR, 1)[1]
-    return slug
-
-
-def _find_slug_by_table_name(table_name: str, candidates: dict | list) -> str | None:
-    """Find a slug in *candidates* whose table-name suffix matches *table_name*."""
-    keys = candidates if isinstance(candidates, (list, set, frozenset)) else candidates.keys()
-    return next(
-        (k for k in keys if _table_name(k) == table_name),
-        None,
-    )
 
 
 class MetadataLookupInputs(ContextModel):
@@ -580,7 +564,7 @@ class MetadataLookup(VectorLookupTool):
             all_lineage = context.get("derived_table_lineage", {})
             lineage = all_lineage.get(table_slug, {})
             if not lineage:
-                lkey = _find_slug_by_table_name(_table_name(table_slug), all_lineage)
+                lkey = find_slug_by_table_name(slug_to_table_name(table_slug), all_lineage)
                 if lkey is not None:
                     lineage = all_lineage[lkey]
 
@@ -589,8 +573,8 @@ class MetadataLookup(VectorLookupTool):
             remapped_derived_from = []
             for parent_slug in lineage.get("derived_from", []):
                 if parent_slug not in catalog:
-                    parent_slug = _find_slug_by_table_name(
-                        _table_name(parent_slug), catalog
+                    parent_slug = find_slug_by_table_name(
+                        slug_to_table_name(parent_slug), catalog
                     ) or parent_slug
                 remapped_derived_from.append(parent_slug)
 

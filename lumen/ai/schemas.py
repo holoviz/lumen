@@ -8,7 +8,9 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from .config import SOURCE_TABLE_SEPARATOR
-from .utils import get_schema, log_debug, truncate_string
+from .utils import (
+    get_schema, log_debug, slug_to_table_name, truncate_string,
+)
 
 if TYPE_CHECKING:
     from ..sources import Source
@@ -166,8 +168,7 @@ class Metaset:
 
         if include_lineage and catalog_entry.derived_from:
             data['derived_from'] = [
-                p.split(SOURCE_TABLE_SEPARATOR, 1)[1] if SOURCE_TABLE_SEPARATOR in p else p
-                for p in catalog_entry.derived_from
+                slug_to_table_name(p) for p in catalog_entry.derived_from
             ]
             data['step'] = catalog_entry.created_order
             if catalog_entry.created_order == max_order:
@@ -245,7 +246,7 @@ class Metaset:
         """
         best: dict[str, tuple[int, str]] = {}  # table_name -> (created_order, slug)
         for slug, entry in self.catalog.items():
-            tname = slug.split(SOURCE_TABLE_SEPARATOR, 1)[-1]
+            tname = slug_to_table_name(slug)
             if tname not in best or entry.created_order > best[tname][0]:
                 best[tname] = (entry.created_order, slug)
         return [slug for _, slug in sorted(best.values(), reverse=True)]
@@ -329,8 +330,7 @@ class Metaset:
                     entry = self.catalog.get(slug)
                     if include_lineage and entry and entry.derived_from:
                         parents = ", ".join(
-                            p.split(SOURCE_TABLE_SEPARATOR, 1)[1] if SOURCE_TABLE_SEPARATOR in p else p
-                            for p in entry.derived_from
+                            slug_to_table_name(p) for p in entry.derived_from
                         )
                         marker = " ★" if entry.created_order == max_order else ""
                         result += f"- {display_slug} (from {parents}){marker}\n"
@@ -359,8 +359,7 @@ class Metaset:
         if table_name in self.catalog:
             return table_name
         return next(
-            (s for s in self.catalog
-             if s.endswith(f"{SOURCE_TABLE_SEPARATOR}{table_name}")),
+            (s for s in self.catalog if slug_to_table_name(s) == table_name),
             None,
         )
 
