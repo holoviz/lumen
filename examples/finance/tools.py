@@ -22,13 +22,14 @@ def _get_json(url: str, params: dict[str, Any]) -> dict[str, Any]:
     return response.json()
 
 
+
 @define_tool(
-    purpose="Fetch the most recent stock-related news headlines from Massive.",
+    purpose="Fetch the most recent stock-related news for a ChatAgent to summarize",
 )
 def fetch_stock_news(ticker: str, limit: int = 5) -> dict[str, Any]:
     """
     Fetch recent stock news for a ticker from Massive returning news as JSON.
-    Can provide context for the ChatAgent to summarize.
+    Provides context for the ChatAgent to summarize.
 
     Parameters
     ----------
