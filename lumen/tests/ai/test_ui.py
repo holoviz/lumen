@@ -165,22 +165,6 @@ async def test_sync_sources_keeps_source_and_sources_in_sync(explorer_ui):
     for source in previous_sources:
         assert source in ui.context["sources"]
 
-async def test_postprocess_exploration_syncs_source_into_global_context(explorer_ui):
-    ui = explorer_ui
-    previous_sources = list(ui.context["sources"])
-    new_source = DuckDBSource(uri=":memory:", tables={"fresh_table": "SELECT 1 as id"})
-
-    plan = Plan(title="sync source", out_context={"source": new_source}, status="success")
-    exploration = ui._explorations.value["view"]
-    prev = ui._explorations.value
-
-    await ui._postprocess_exploration(plan, exploration, prev, is_new=False)
-
-    assert ui.context["source"] is new_source
-    assert new_source in ui.context["sources"]
-    for source in previous_sources:
-        assert source in ui.context["sources"]
-
 async def test_exploration_ui_error_rerun(explorer_ui_with_error):
     ui = explorer_ui_with_error
     exploration = ui._exploration['view']

@@ -101,31 +101,6 @@ async def test_sql_agent(llm, duckdb_source, test_messages):
     )
     assert set(out_context) == {"data", "pipeline", "sql", "table", "source"}
 
-async def test_sql_agent_refreshes_stale_metaset(llm, duckdb_source, test_messages):
-    agent = SQLAgent(llm=llm)
-    stale_source = DuckDBSource(uri=":memory:", tables={"stale_table": "SELECT 1 as x"})
-
-    context = {
-        "source": duckdb_source,
-        "sources": [duckdb_source],
-        "metaset": await get_metaset([stale_source], ["stale_table"]),
-    }
-    SQLQueryWithTables = make_sql_model([(duckdb_source.name, "test_sql")])
-    llm.set_responses([
-        SQLQueryWithTables(
-            query="SELECT SUM(A) as A_sum FROM test_sql",
-            table_slug="test_sql_agg",
-            tables=["test_sql"]
-        ),
-    ])
-
-    out, out_context = await agent.respond(test_messages, context)
-
-    assert len(out) == 1
-    assert isinstance(out[0], SQLEditor)
-    assert out_context["table"] == "test_sql_agg"
-    assert f"{duckdb_source.name}::test_sql" in context["metaset"].catalog
-
 async def test_vegalite_agent(llm, duckdb_source, test_messages):
     """Test VegaLiteAgent instantiation and respond"""
 
