@@ -42,6 +42,8 @@ ui = lmai.ExplorerUI(
     agents=[MassiveDataSourceAgent],
     page_config={
         "theme_config": {
+            "favicon": "./logo.svg",
+            "logo": "./logo.svg",
             "palette": {
                 "primary": {
                     "main": "#000000",
@@ -59,7 +61,7 @@ ui = lmai.ExplorerUI(
         VolatilityRegimeAnalysis,
         PriceVolumeDistributionAnalysis,
     ],
-    title="AI Assistant",
+    title="Finance AI Assistant",
     suggestions=[
         ("dataset_selection", "Fetch AAPL, TSLA, and META data."),
         ("question_answer", "Summarize news about NVDA."),
