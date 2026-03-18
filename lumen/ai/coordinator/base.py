@@ -143,7 +143,7 @@ class Plan(Section):
 
             context_keys = ", ".join(f"`{k}`" for k in task_context)
             step.stream(f"Generated {len(outputs)} and provided {context_keys}.")
-            task_context = await self._validate_and_maybe_replan(i, task, context, task_context, outputs, history, step)
+            outputs, task_context = await self._validate_and_maybe_replan(i, task, context, task_context, outputs, history, step)
             step.success_title = f"Task {task.title!r} successfully completed"
             log_debug(f"\033[96mCompleted: {task.title}\033[0m", show_length=False)
         return outputs, task_context
@@ -212,7 +212,7 @@ class Plan(Section):
                 "title": done_task.title,
                 "instruction": done_task.instruction,
             }
-            for done_task in self._tasks[:i+1]
+            for done_task in self._tasks[:i]
             if isinstance(done_task, ActorTask)
         ]
         remaining_steps = [
@@ -221,7 +221,7 @@ class Plan(Section):
                 "title": pending_task.title,
                 "instruction": pending_task.instruction,
             }
-            for pending_task in self._tasks[i+1:]
+            for pending_task in self._tasks[i:]
             if isinstance(pending_task, ActorTask)
         ]
         return {
@@ -246,12 +246,9 @@ class Plan(Section):
         outputs: list[Any],
         history: list[Message],
         step: ChatStep,
-    ) -> TContext:
+    ) -> tuple[list[Any], TContext]:
         if not self._should_fast_validate(task):
-            return task_context
-        if i >= len(self._tasks) - 1:
-            # Nothing remains to replan after the current step.
-            return task_context
+            return outputs, task_context
 
         step_result = self._serialize_step_outputs(outputs)
         validation_context = merge_contexts(LWW, [
@@ -271,11 +268,11 @@ class Plan(Section):
         if reasoning:
             step.stream(f"\n\nFast validation: {reasoning}")
         if not getattr(validation, "yes", False):
-            return task_context
+            return outputs, task_context
 
         if self._partial_replans >= self.max_partial_replans:
             step.stream("\n\nFast validation requested replanning, but the maximum replan attempts was reached. Continuing current plan.")
-            return dict(task_context, replan_trigger_reason="max_partial_replans_reached")
+            return outputs, dict(task_context, replan_trigger_reason="max_partial_replans_reached")
 
         self._partial_replans += 1
         payload = self._build_partial_replan_payload(i, task, reasoning or "validator requested replanning", step_result)
@@ -288,12 +285,16 @@ class Plan(Section):
         )
         if new_plan is None:
             step.stream("\n\nFast validation requested replanning, but planner returned no replacement steps.")
-            return dict(task_context, replan_trigger_reason="partial_replan_failed")
+            return outputs, dict(task_context, replan_trigger_reason="partial_replan_failed")
 
         new_tasks = list(new_plan)
-        self._replace_remaining_tasks(i+1, new_tasks)
-        step.stream(f"\n\nFast validation triggered partial replanning and replaced {len(new_tasks)} remaining task(s).")
-        return dict(task_context, replan_trigger_reason="partial_replan_applied")
+        if not new_tasks:
+            step.stream("\n\nFast validation requested replanning, but no replacement steps were returned.")
+            return outputs, dict(task_context, replan_trigger_reason="partial_replan_empty")
+        self._replace_remaining_tasks(i, new_tasks)
+        step.stream(f"\n\nFast validation rolled back the current step and replaced {len(new_tasks)} task(s) from this point.")
+        rewritten_outputs, rewritten_context = await self._run_task(i, self._tasks[i], context)
+        return rewritten_outputs, dict(rewritten_context, replan_trigger_reason="partial_replan_applied")
 
     async def _handle_task_execution_error(self, e: Exception, task: Self | Actor, context: TContext, step: ChatStep, i: int) -> tuple[list[Any], TContext]:
         """

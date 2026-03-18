@@ -333,7 +333,7 @@ async def test_plan_fast_validation_triggers_partial_replan(llm):
     call = coordinator.partial_replan_calls[0]
     assert call.kwargs["partial_replan"] is True
     assert call.kwargs["partial_replan_payload"]["current_step_index"] == 0
-    assert call.kwargs["partial_replan_payload"]["remaining_steps"][0]["title"] == "Second"
+    assert call.kwargs["partial_replan_payload"]["remaining_steps"][0]["title"] == "First"
 
 
 async def test_plan_fast_validation_respects_replan_limit(llm):
