@@ -130,16 +130,7 @@ class MetadataLookup(VectorLookupTool):
         self._raw_metadata = {}
         self._semaphore = asyncio.Semaphore(self.max_concurrent)
         self._initialized = False
-        self._ready_event = asyncio.Event()
-        self._ready_event.set()  # Initially ready (no pending sync)
-        self.param.watch(self._sync_ready_event, "_ready")
-
-    def _sync_ready_event(self, event):
-        """Keep _ready_event in sync with _ready param automatically."""
-        if event.new is False:
-            self._ready_event.clear()
-        else:
-            self._ready_event.set()
+        self._pending_update_tasks = set()
 
     async def sync(self, context: TContext):
         """
@@ -153,7 +144,9 @@ class MetadataLookup(VectorLookupTool):
         if "tables_metadata" not in context:
             context["tables_metadata"] = {}
 
-        await self._update_vector_store(context)
+        update_task = asyncio.create_task(self._update_vector_store(context))
+        self._track_update_task(update_task)
+        await update_task
 
     def _format_results_for_refinement(self, results: list[dict[str, Any]], context: TContext) -> str:
         """
@@ -331,9 +324,7 @@ class MetadataLookup(VectorLookupTool):
                 )
 
         if tasks:
-            # Pass the processed_sources to _mark_ready_when_done so it can clean up after tasks complete
-            ready_task = asyncio.create_task(self._mark_ready_when_done(tasks, vector_store_id, processed_sources))
-            ready_task.add_done_callback(self._handle_ready_task_done)
+            await self._mark_ready_when_done(tasks, vector_store_id, processed_sources)
         else:
             self._ready = self._initialized = True
             # No tasks to wait for, so clean up immediately
@@ -342,6 +333,29 @@ class MetadataLookup(VectorLookupTool):
     def _handle_ready_task_done(self, task):
         super()._handle_ready_task_done(task)
         self._initialized = True
+
+    def _track_update_task(self, task: asyncio.Task):
+        """Track in-flight update tasks so respond can await them reliably."""
+        self._pending_update_tasks.add(task)
+
+        def _on_done(done_task: asyncio.Task):
+            self._pending_update_tasks.discard(done_task)
+            self._handle_ready_task_done(done_task)
+
+        task.add_done_callback(_on_done)
+
+    async def _wait_for_pending_updates(self, timeout: float = 30):
+        """Wait for update tasks started by prior sync calls."""
+        pending_tasks = [task for task in self._pending_update_tasks if not task.done()]
+        if not pending_tasks:
+            return
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*pending_tasks, return_exceptions=True),
+                timeout=timeout,
+            )
+        except TimeoutError:
+            log_debug(f"[MetadataLookup] Timeout waiting for {len(pending_tasks)} in-flight update task(s)")
 
     def _cleanup_sources_in_progress(self, vector_store_id, processed_sources):
         """Clean up the sources_in_progress tracking after tasks are completed."""
@@ -596,16 +610,16 @@ class MetadataLookup(VectorLookupTool):
         metaset = outputs.get("metaset")
         return str(metaset)
 
-    async def respond(self, messages: list[Message], context: TContext, **kwargs: dict[str, Any]) -> tuple[list[Any], MetadataLookupOutputs]:
+    async def respond(
+        self,
+        messages: list[Message],
+        context: TContext,
+        **kwargs: dict[str, Any],
+    ) -> tuple[list[Any], MetadataLookupOutputs]:
         """
         Fetches tables based on the user query and returns formatted context.
         """
-        # Wait for vector store to finish processing new sources
-        try:
-            await asyncio.wait_for(self._ready_event.wait(), timeout=30)
-        except TimeoutError:
-            log_debug("[MetadataLookup] Timeout waiting for vector store sync")
-        # Run the process to build schema objects
+        await self._wait_for_pending_updates(timeout=30)
         out_model = await self._gather_info(messages, context)
         return [self._format_context(out_model)], out_model
 
