@@ -1473,8 +1473,10 @@ async def test_edit_on_second_exploration_preserves_first(explorer_ui):
     # Exploration 2 context should be cleared
     assert len(exploration_2_context) == 0
 
-    # Exploration 1 must still exist and be untouched
+    # Exploration 1 must still exist with its sql and context intact
     assert ui._explorations.items[1] is exploration_1_item
     assert exploration_1_item['view'] is exploration_1
     assert exploration_1.plan is not None
-    assert len(exploration_1.context) > 0  # sql_1 context preserved
+    assert "pipeline" in exploration_1.context
+    assert "table" in exploration_1.context
+    assert "sql" in exploration_1.context
