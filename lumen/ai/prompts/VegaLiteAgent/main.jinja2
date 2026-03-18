@@ -55,6 +55,8 @@ Legends appear when you map data to `color`, `size`, or `shape` in encoding.
 
 **Selective emphasis**: Reduce opacity of secondary data (`opacity: 0.3`), keep primary prominent (`opacity: 1, strokeWidth: 2-3`)
 
+**Pie/donut charts**: Use `arc` mark with `theta` encoding and a color legend. Tooltips provide detail on hover. For donuts, add `innerRadius` to the arc mark.
+
 **Geographic maps**: Use `longitude`/`latitude` encodings (NOT `x`/`y`) with `projection: {type: mercator}` at top level. Base map added automatically.
 
 **Choropleth maps**: Join data to map boundaries - `lookup: <map_field>`, `from: {data: {...}, key: <your_field>, fields: [...]}` (key/fields inside from!)
@@ -201,6 +203,20 @@ layer:
       x: {field: category, type: nominal}
       y: {field: sales, type: quantitative}
       color: {field: category, type: nominal, legend: {title: "Category", orient: "right"}}
+```
+
+Pie/donut chart (ALWAYS use this pattern for pie charts):
+```yaml
+data:
+  name: <TABLE_NAME>
+layer:
+  - mark: {type: arc, outerRadius: 80}
+    encoding:
+      theta: {field: amount, type: quantitative, stack: true}
+      color: {field: category, type: nominal, legend: {title: "Category"}}
+      tooltip:
+        - {field: category, type: nominal, title: "Category"}
+        - {field: amount, type: quantitative, format: ",", title: "Amount"}
 ```
 
 Choropleth map:

@@ -274,3 +274,130 @@ class TestTemplateOverrides:
         messages = [{"role": "user", "content": "test"}]
         prompt = await agent._render_prompt("main", messages, {})
         assert "Footer appended." in prompt
+
+
+class TestFixArcLabels:
+    """Tests for VegaLiteAgent._fix_arc_labels post-processing."""
+
+    @pytest.fixture
+    def agent(self, llm):
+        return VegaLiteAgent(llm=llm, code_execution="disabled")
+
+    def _make_pie_spec(self, categories=None, outer_radius=None, with_text_layer=False):
+        """Helper to build a pie chart spec for testing."""
+        if categories is None:
+            categories = [
+                {"cat": "A", "val": 10},
+                {"cat": "B", "val": 20},
+                {"cat": "C", "val": 30},
+            ]
+        arc_mark = {"type": "arc"}
+        if outer_radius is not None:
+            arc_mark["outerRadius"] = outer_radius
+        layers = [
+            {
+                "mark": arc_mark,
+                "encoding": {
+                    "theta": {"field": "val", "type": "quantitative", "stack": True},
+                    "color": {"field": "cat", "type": "nominal"},
+                },
+            }
+        ]
+        if with_text_layer:
+            layers.append({
+                "mark": {"type": "text", "radiusOffset": 10},
+                "encoding": {
+                    "theta": {"field": "val", "type": "quantitative", "stack": True},
+                    "text": {"field": "cat", "type": "nominal"},
+                },
+            })
+        return {"data": {"values": categories}, "layer": layers}
+
+    def test_adds_text_layer_with_correct_radius(self, agent):
+        spec = self._make_pie_spec(outer_radius=80)
+        result = agent._fix_arc_labels(spec)
+        text_layers = [l for l in result["layer"] if agent._get_layer_mark_type(l) == "text"]
+        assert len(text_layers) == 1
+        assert text_layers[0]["mark"]["radius"] == 110  # 80 + 30
+
+    def test_replaces_existing_text_layer(self, agent):
+        spec = self._make_pie_spec(with_text_layer=True)
+        result = agent._fix_arc_labels(spec)
+        text_layers = [l for l in result["layer"] if agent._get_layer_mark_type(l) == "text"]
+        assert len(text_layers) == 1
+        # Should not have the old radiusOffset
+        assert "radiusOffset" not in text_layers[0]["mark"]
+
+    def test_preserves_non_arc_specs(self, agent):
+        bar_spec = {"layer": [{"mark": "bar", "encoding": {"x": {"field": "a"}}}]}
+        result = agent._fix_arc_labels(bar_spec)
+        assert result == bar_spec
+
+    def test_no_layers_returns_unchanged(self, agent):
+        spec = {"mark": "arc", "encoding": {"theta": {"field": "v"}}}
+        result = agent._fix_arc_labels(spec)
+        assert result is spec
+
+    def test_normalizes_string_arc_mark(self, agent):
+        spec = {
+            "data": {"values": [{"c": "X", "v": 1}]},
+            "layer": [
+                {
+                    "mark": "arc",
+                    "encoding": {
+                        "theta": {"field": "v", "type": "quantitative"},
+                        "color": {"field": "c", "type": "nominal"},
+                    },
+                }
+            ],
+        }
+        result = agent._fix_arc_labels(spec)
+        arc = [l for l in result["layer"] if agent._get_layer_mark_type(l) == "arc"][0]
+        assert isinstance(arc["mark"], dict)
+        assert arc["mark"]["outerRadius"] == 80
+
+    def test_skips_labels_for_many_categories(self, agent):
+        categories = [{"cat": chr(65 + i), "val": 10} for i in range(10)]
+        spec = self._make_pie_spec(categories=categories)
+        result = agent._fix_arc_labels(spec)
+        text_layers = [l for l in result["layer"] if agent._get_layer_mark_type(l) == "text"]
+        assert len(text_layers) == 0
+
+    def test_adds_labels_for_few_categories(self, agent):
+        categories = [{"cat": chr(65 + i), "val": 10} for i in range(5)]
+        spec = self._make_pie_spec(categories=categories)
+        result = agent._fix_arc_labels(spec)
+        text_layers = [l for l in result["layer"] if agent._get_layer_mark_type(l) == "text"]
+        assert len(text_layers) == 1
+
+    def test_adds_labels_when_data_is_named(self, agent):
+        """When data is referenced by name (not inline), labels are added."""
+        spec = {
+            "data": {"name": "my_table"},
+            "layer": [
+                {
+                    "mark": {"type": "arc", "outerRadius": 80},
+                    "encoding": {
+                        "theta": {"field": "val", "type": "quantitative"},
+                        "color": {"field": "cat", "type": "nominal"},
+                    },
+                }
+            ],
+        }
+        result = agent._fix_arc_labels(spec)
+        text_layers = [l for l in result["layer"] if agent._get_layer_mark_type(l) == "text"]
+        assert len(text_layers) == 1
+
+    def test_removes_legend_none(self, agent):
+        spec = self._make_pie_spec()
+        spec["layer"][0]["encoding"]["color"]["legend"] = None
+        result = agent._fix_arc_labels(spec)
+        arc = [l for l in result["layer"] if agent._get_layer_mark_type(l) == "arc"][0]
+        assert "legend" not in arc["encoding"]["color"]
+
+    def test_donut_preserves_inner_radius(self, agent):
+        spec = self._make_pie_spec(outer_radius=80)
+        spec["layer"][0]["mark"]["innerRadius"] = 40
+        result = agent._fix_arc_labels(spec)
+        arc = [l for l in result["layer"] if agent._get_layer_mark_type(l) == "arc"][0]
+        assert arc["mark"]["innerRadius"] == 40
