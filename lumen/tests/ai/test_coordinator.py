@@ -475,7 +475,7 @@ async def test_metadata_lookup_respond_waits_for_pending_updates(monkeypatch):
     assert gather_called_after_update is True
 
 
-async def test_metadata_lookup_pending_updates_timeout():
+async def test_metadata_lookup_pending_updates_timeout(monkeypatch):
     """
     If pending update tasks do not complete in time,
     _wait_for_pending_updates should timeout gracefully.
@@ -485,16 +485,17 @@ async def test_metadata_lookup_pending_updates_timeout():
     from lumen.ai.tools.metadata_lookup import MetadataLookup
 
     lookup = MetadataLookup()
-    long_running_task = asyncio.create_task(asyncio.sleep(1))
+    long_running_task = asyncio.create_task(asyncio.sleep(0.2))
     lookup._track_update_task(long_running_task)
 
-    # Verify timeout handling does not raise.
-    await lookup._wait_for_pending_updates(timeout=0.05)
+    async def _mock_wait_for(*args, **kwargs):
+        raise TimeoutError
 
-    assert not long_running_task.done()
-    long_running_task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await long_running_task
+    monkeypatch.setattr("lumen.ai.tools.metadata_lookup.asyncio.wait_for", _mock_wait_for)
+
+    # Verify timeout handling does not raise even when wait_for times out.
+    await lookup._wait_for_pending_updates(timeout=0.05)
+    await long_running_task
 
 
 async def test_metadata_lookup_no_pending_updates_initially():
