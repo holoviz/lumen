@@ -19,7 +19,7 @@ from ..context import (
     LWW, ContextError, TContext, merge_contexts,
 )
 from ..llm import Message
-from ..models import FollowUpClassification
+from ..models import FollowUpClassification, ThinkingYesNo
 from ..report import ActorTask
 from ..tools import MetadataLookup, Tool
 from ..utils import log_debug, wrap_logfire
