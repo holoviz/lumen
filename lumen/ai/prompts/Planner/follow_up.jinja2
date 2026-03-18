@@ -1,44 +1,54 @@
 {% extends 'Actor/main.jinja2' %}
 
 {%- block instructions %}
-You need to determine if the user's current query is a follow-up question related to the previous dataset in memory and whether the existing context is sufficient to answer it.
+## Instructions
 
-Examine:
-1. The current user query
-2. The currently selected columns in memory
+Classify the user's query as one of three follow-up types based on the data context below.
 
-Rules:
-- Answer YES if the current query is clearly a follow-up that can be answered using the data already in memory (metaset)
-- Answer NO if:
-  - The query appears to be about a different topic entirely
-  - The query requires different data or columns not present in the current memory
-  - The user is explicitly asking for new data or refreshed information
-  - The query contains explicit instructions to run a new search or query
-
-Ground your reasoning in specific elements of both the current query and previously selected columns.
+- **direct**: The data already in memory answers the question. No SQL needed (e.g. visualization change, reorder).
+- **derived**: A previously computed table (marked with `derived_from` or ★) can answer with a simple filter or subset. Prefer this over recomputing from raw sources.
+- **new**: Requires fresh computation from original sources, or is a different topic entirely.
 {%- endblock -%}
 
 {% block examples %}
-# Examples
+## Examples
 
-✅ YES:
-User query: "Can you create a time series?"
-Data in memory: Annual revenue data with time and dollars columns
--> YES (query is asking to visualize the existing time-based data already in memory)
-User query: "Show only the last 3 months"
-Data in memory: Data with time column extending to the last 3 months
--> YES (can be done with existing data)
+direct:
+User: "Show that as a bar chart"
+In-memory data: aggregated sales by region (region, total_sales)
+→ direct — visualization change only, data already in memory
 
-❌ NO:
-User query: "What's the total capacity?"
-Data in memory: Only revenue data
--> NO (explicitly asking for new/refreshed data)
-User query: "What's the total capacity?"
-Data in memory: Only revenue data
--> NO (explicitly asking for new/refreshed data)
+direct:
+User: "Sort by value descending"
+In-memory data: summary table with value column
+→ direct — reordering, no new query needed
+
+derived:
+User: "Filter to just categories A and B"
+In-memory data: summary_by_category with columns [category, count], many categories present
+Derived tables: summary_by_category (from raw_sales) ★
+→ derived — simple WHERE on the derived table
+
+derived:
+User: "Show only the top 5"
+In-memory data: ranked_results with 20 rows
+Derived tables: ranked_results (from scores) ★
+→ derived — simple LIMIT on the derived table
+
+new:
+User: "Now show me the monthly breakdown"
+In-memory data: annual_totals — no month column present, not in any derived table
+→ new — requires fresh aggregation from raw source
+
+new:
+User: "What's the average order value?"
+In-memory data: customer_signups — unrelated topic
+→ new — different metric entirely
 {% endblock %}
 
 {% block context -%}
+## Context
+
 {%- if 'sql' in memory %}
 🗃️ Current SQL:
 ```sql
@@ -47,8 +57,12 @@ Data in memory: Only revenue data
 {%- endif %}
 
 {%- if 'data' in memory %}
-📊 Data summary:
+📊 Most recent data in memory:
 {{ memory['data'] }}
 {%- endif %}
 
+{%- if memory.get('metaset') %}
+📋 All available tables:
+{{ memory['metaset'].table_list() }}
+{%- endif %}
 {%- endblock -%}

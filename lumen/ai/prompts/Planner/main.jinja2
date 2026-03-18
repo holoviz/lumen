@@ -19,7 +19,8 @@ Ground Rules:
 - Do not ignore the actor's exclusions and conditions
 - When keys are already present in memory, utilize them to construct your plan efficiently—avoid assigning an actor to produce memory keys that are already available
 - **Visualization continuity**: Prefer the previously used visualization agent if its conditions still apply to the current request
-- **Multi-metric queries**: When user asks for multiple metrics (e.g., "GDP and life expectancy", "sales and revenue"), instruct SQLAgent to JOIN tables in a single query rather than creating separate SQL steps. Example instruction: "Join GDP and life expectancy tables on country and year, selecting all metrics needed for visualization"
+- **Derived table preference**: When a derived table (marked with `derived_from` or ★) already contains the columns and data needed, query it directly rather than recomputing from the original source
+- **Multi-metric queries**: When user asks for multiple metrics (e.g., "GDP and life expectancy", "sales and revenue"), join tables in a single query rather than creating separate steps. Example instruction: "Join GDP and life expectancy tables on country and year, selecting all metrics needed for visualization"
 {%- if tools %}
 - Tools require actor interpretation - always follow-up tools with agents
 {%- endif %}
@@ -106,6 +107,7 @@ Available tools:
 {%- set table_list = memory['metaset'].table_list(n=3, n_others=17, show_source=True) %}
 Data sources:
 {{ table_list }}
+
 {%- endif %}
 
 {%- if 'table' in memory %}
@@ -131,13 +133,15 @@ The previously used visualization type was `{{ view_type }}`, please consider us
 {%- endif %}
 {%- endif -%}
 
-{%- if is_follow_up and 'metaset' in memory %}
-👉 Follow-up detected: Prioritize using existing data before retrieving new information
-{%- elif 'metaset' in memory and not is_follow_up %}
-👉 Existing metadata found: Evaluate if current data is sufficient before requesting more
+{%- if follow_up_type == 'direct' %}
+👉 **Direct follow-up**: The data in memory is sufficient. Do NOT run a new SQL query — use existing data directly (e.g., for visualization or reordering).
+{%- elif follow_up_type == 'derived' %}
+👉 **Derived follow-up**: Query the derived table instead of recomputing from raw sources.
+{%- elif 'metaset' in memory %}
+👉 Existing metadata found: Evaluate if current data is sufficient before requesting more.
 {%- endif %}
 
-{%- if 'prev_plan' in memory and (is_follow_up or 'data' not in memory) %}
+{%- if 'prev_plan' in memory and (follow_up_type in ('direct', 'derived') or 'data' not in memory) %}
 The previous plan that was executed:
 {{ memory['prev_plan'].render_task_history()[-1] }}
 {% endif %}

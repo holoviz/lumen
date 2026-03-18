@@ -571,6 +571,11 @@ class MetadataLookup(VectorLookupTool):
                     column_schema = Column(name=col_name, description=col_desc, metadata=col_info.copy() if isinstance(col_info, dict) else {})
                     columns.append(column_schema)
 
+            # Read lineage stored directly on the source by SQLAgent.
+            lineage = (source_obj.metadata or {}).get(table_name, {}) if source_obj else {}
+
+            remapped_derived_from = list(lineage.get("derived_from", []))
+
             catalog_entry = TableCatalogEntry(
                 table_slug=table_slug,
                 similarity=similarity_score,
@@ -579,6 +584,8 @@ class MetadataLookup(VectorLookupTool):
                 description=table_description,
                 sql_expr=sql,
                 metadata=context["tables_metadata"].get(table_slug, {}).copy(),
+                derived_from=remapped_derived_from,
+                created_order=lineage.get("created_order", 0),
             )
             catalog[table_slug] = catalog_entry
 

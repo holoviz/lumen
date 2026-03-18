@@ -225,9 +225,12 @@ class SQLQuery(BaseModel):
 
     table_slug: str = Field(
         description="""
-        Provide a unique, descriptive table slug for the SQL expression that clearly indicates the key transformations and source tables involved.
-        Include 1 or 2 elements of data lineage in the slug, such as the main transformation and original table names,
-        e.g. top_5_athletes_in_2020 or distinct_years_from_wx_table.
+        A short, unique, descriptive snake_case slug (3-5 words max) describing
+        WHAT the resulting data contains. Do NOT include the source table name
+        in the slug — provenance is tracked separately.
+        Follow the naming style of existing derived tables (shown in the data
+        summary with `derived_from`/`step` annotations).
+        Examples: avg_sst_by_season, top_5_athletes_2020, revenue_by_region.
         Ensure the slug does not duplicate any existing table names or slugs.
         """
     )
@@ -305,7 +308,7 @@ class SQLInputs(ContextModel):
     visible_slugs: NotRequired[set[str]]
 
 
-class SQLEditors(ContextModel):
+class SQLOutputs(ContextModel):
 
     data: Any
 
@@ -371,7 +374,7 @@ class SQLAgent(BaseLumenAgent):
     _editor_type = SQLEditor
 
     input_schema = SQLInputs
-    output_schema = SQLEditors
+    output_schema = SQLOutputs
 
     async def _gather_prompt_context(self, prompt_name: str, messages: list, context: TContext, **kwargs):
         """Pre-compute metaset context for template rendering."""
@@ -449,6 +452,20 @@ class SQLAgent(BaseLumenAgent):
         if should_materialize:
             context["source"] = sql_expr_source
 
+            if sql_expr_source.metadata is None:
+                sql_expr_source.metadata = {}
+            existing_entries = sum(
+                1 for v in sql_expr_source.metadata.values()
+                if isinstance(v, dict) and "derived_from" in v
+            )
+            sql_expr_source.metadata[expr_slug] = {
+                "derived_from": [
+                    f"{source.name}{SOURCE_TABLE_SEPARATOR}{t}" if SOURCE_TABLE_SEPARATOR not in t else t
+                    for t in tables
+                ],
+                "created_order": existing_entries + 1,
+            }
+
         # Create pipeline
         if is_final:
             sql_transforms = [SQLLimit(limit=1_000_000, write=source.dialect, pretty=True, identify=False)]
@@ -518,7 +535,7 @@ class SQLAgent(BaseLumenAgent):
         if len(all_tables) <= 3:
             return all_tables
 
-        selection = self._stream_prompt("select_tables", messages, context, model_kwargs=dict(available_tables=all_tables))
+        selection = await self._invoke_prompt("select_tables", messages, context, model_kwargs=dict(available_tables=all_tables))
         selected = selection.tables if selection else metaset.get_top_tables(n=3)
         step.stream(f"Selected: {selected}")
         return selected
@@ -824,13 +841,12 @@ class SQLAgent(BaseLumenAgent):
         messages: list[Message],
         context: TContext,
         step_title: str | None = None,
-    ) -> tuple[list[Any], SQLEditors]:
+    ) -> tuple[list[Any], SQLOutputs]:
         """Execute SQL generation with table selection, then one-shot attempt, then exploration if needed."""
         sources = context["sources"]
         metaset = context["metaset"]
         selected_slugs = list(metaset.catalog)
 
-        # Select relevant tables if there are many
         if len(selected_slugs) > 3:
             with self._add_step(title="Selecting relevant tables...", steps_layout=self._steps_layout) as step:
                 selected_tables = await self._select_tables(messages, context, step)
@@ -841,12 +857,21 @@ class SQLAgent(BaseLumenAgent):
             # Use all tables if 3 or fewer
             metaset.schema_tables = selected_slugs
 
-        sources = {
-            tuple(table_slug.split(SOURCE_TABLE_SEPARATOR)): parse_table_slug(table_slug, sources)[0]
-            for table_slug in selected_slugs
-        }
+        # Build source lookup, skipping slugs whose source no longer
+        # exists in the context (stale entries from prior materializations).
+        available_source_names = {s.name for s in sources}
+        sources = {}
+        for table_slug in selected_slugs:
+            source_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[0] if SOURCE_TABLE_SEPARATOR in table_slug else None
+            if source_name and source_name not in available_source_names:
+                continue
+            key = tuple(table_slug.split(SOURCE_TABLE_SEPARATOR))
+            src = parse_table_slug(table_slug, context["sources"])[0]
+            if src is not None:
+                sources[key] = src
         if not sources:
             raise ValueError("No valid SQL sources available for querying.")
+
         try:
             if not self.exploration_enabled:
                 # Try retry-wrapped one-shot approach
