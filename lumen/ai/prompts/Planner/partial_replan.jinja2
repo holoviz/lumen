@@ -1,0 +1,46 @@
+{% extends 'Planner/main.jinja2' %}
+
+{%- block instructions %}
+You are performing a **partial replan** during execution.
+
+Your output must be a replacement plan tail only.
+
+Rules:
+- Do not recreate or rewrite already completed steps.
+- Focus on correcting the current failing direction and the remaining work.
+- Keep the plan minimal and dependency-safe.
+- Explicitly address the validator feedback.
+- If remaining steps are still valid, keep them with minimal edits.
+- Only return steps that should run **after** the completed steps.
+- NEVER use the same actor consecutively.
+{%- endblock -%}
+
+{% block context %}
+{{ super() }}
+
+## Partial Replan Payload
+{% if partial_replan_payload %}
+Current step index: {{ partial_replan_payload.get("current_step_index") }}
+
+Current step:
+{{ partial_replan_payload.get("current_step") }}
+
+Validator feedback:
+{{ partial_replan_payload.get("validation_reason", "") }}
+
+Current step result:
+{{ partial_replan_payload.get("step_result", "") }}
+
+Completed steps (must remain unchanged):
+{% for step in partial_replan_payload.get("completed_steps", []) %}
+- {{ step }}
+{% endfor %}
+
+Remaining steps to replace:
+{% for step in partial_replan_payload.get("remaining_steps", []) %}
+- {{ step }}
+{% endfor %}
+{% else %}
+No partial replan payload was provided. Produce the smallest safe continuation plan.
+{% endif %}
+{% endblock %}
