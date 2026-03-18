@@ -36,7 +36,7 @@ Use cheap models for simple tasks, powerful models for complex tasks:
 import lumen.ai as lmai
 
 model_config = {
-    "default": {"model": "gpt-4.1-mini"},  # Cheap for most agents
+    "default": {"model": "gpt-5.4-mini"},  # Cheap for most agents
     "sql": {"model": "gpt-4.1"},           # Powerful for SQL
     "vega_lite": {"model": "gpt-4.1"},     # Powerful for charts
     "deck_gl": {"model": "gpt-4.1"},       # Powerful for 3D maps
@@ -61,7 +61,7 @@ model_config = {
         "temperature": 0.1,  # Deterministic SQL
     },
     "chat": {
-        "model": "gpt-4.1-mini",
+        "model": "gpt-5.4-mini",
         "temperature": 0.4,  # Natural conversation
     },
 }
@@ -77,11 +77,11 @@ For installation and API key setup instructions, see the [Installation guide](..
 
 | Provider | Default Model | Popular Models |
 |----------|---------------|----------------|
-| **OpenAI** | `gpt-4.1-mini` | `gpt-4.1`, `gpt-4-turbo`, `gpt-4` |
-| **Anthropic** | `claude-haiku-4-5` | `claude-sonnet-4-5`, `claude-opus-4-5` |
+| **OpenAI** | `gpt-5.4-mini` | `gpt-5.4`, `gpt-5.4-nano` |
+| **Anthropic** | `claude-haiku-4-5` | `claude-sonnet-4-6`, `claude-opus-4-5` |
 | **Google** | `gemini-3-flash-preview` | `gemini-3-pro-preview`, `gemini-2.5-flash`, `gemini-2.0-flash` |
 | **Mistral** | `mistral-small-latest` | `mistral-large-latest`, `ministral-8b-latest` |
-| **Azure OpenAI** | `gpt-4.1-mini` | `gpt-4.1`, `gpt-4-turbo`, `gpt-4` |
+| **Azure OpenAI** | `gpt-5.4-mini` | `gpt-5.4`, `gpt-5.4-nano` |
 | **Azure Mistral** | `azureai` | `mistral-large`, `mistral-small` |
 
 !!! warning "Reasoning Models Not Suitable for Dialog"
@@ -111,8 +111,8 @@ For installation and API key setup instructions, see the [Installation guide](..
 
 | Provider | Default Model | Description |
 |----------|---------------|-------------|
-| **AWS Bedrock** | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | Enterprise gateway providing access to models from Anthropic, Meta, Mistral, and more. |
-| **LiteLLM** | `gpt-4.1-mini` | Unified router to access 100+ models across all supported LLM providers. |
+| **AWS Bedrock** | `us.anthropic.claude-sonnet-4-6-20250929-v1:0` | Enterprise gateway providing access to models from Anthropic, Meta, Mistral, and more. |
+| **LiteLLM** | `gpt-5.4-mini` | Unified router to access 100+ models across all supported LLM providers. |
 | **AI Catalyst** | `ai_catalyst` | Enterprise model server; provides access to validated, governed open-source models. |
 
 **AWS Bedrock options:**
@@ -152,7 +152,7 @@ llm = lmai.llm.OpenAI()  # now reads from MY_OPENAI_KEY
 class MyOpenAI(lmai.llm.OpenAI):
     api_key_env_var = "MY_OPENAI_KEY"
 
-llm = MyOpenAI(model_kwargs={"default": {"model": "gpt-4.1-mini"}})
+llm = MyOpenAI(model_kwargs={"default": {"model": "gpt-5.4-mini"}})
 ```
 
 ``` py title="3. Override the module-level PROVIDER_ENV_VARS dict"
@@ -189,10 +189,10 @@ available from a provider without instantiating the LLM:
 
 ``` py title="Check available models"
 print(lmai.llm.OpenAI.models())
-# {'gpt-4.1-mini', 'gpt-4.1', 'gpt-4.1-nano', ...}
+# {'gpt-5.4-mini', 'gpt-4.1', 'gpt-4.1-nano', ...}
 
 print(lmai.llm.Anthropic.models())
-# {'claude-haiku-4-5', 'claude-sonnet-4-5', 'claude-opus-4-5', ...}
+# {'claude-haiku-4-5', 'claude-sonnet-4-6', 'claude-opus-4-5', ...}
 ```
 
 Providers that don't support listing models (e.g. `AzureOpenAI`, `LiteLLM`) return
@@ -257,10 +257,10 @@ Automatically retry with backup models if primary fails:
 ``` py title="Fallback configuration"
 llm = lmai.llm.LiteLLM(
     model_kwargs={
-        "default": {"model": "gpt-4.1-mini"}
+        "default": {"model": "gpt-5.4-mini"}
     },
     fallback_models=[
-        "gpt-4.1-mini",
+        "gpt-5.4-mini",
         "claude-haiku-4-5",
         "gemini/gemini-2.5-flash"
     ]
@@ -330,13 +330,13 @@ Additional model types:
 
 Different providers use different model string formats:
 
-- **OpenAI**: `"gpt-4.1"`, `"gpt-4.1-mini"`, `"gpt-4-turbo"`, `"gpt-4"`
-- **Anthropic**: `"claude-sonnet-4-5"`, `"claude-haiku-4-5"`, `"claude-opus-4-5"`
+- **OpenAI**: `"gpt-5.4"`, `"gpt-5.4-mini"`, `"gpt-5.4-nano"`, `"gpt-5.4"`
+- **Anthropic**: `"claude-sonnet-4-6"`, `"claude-haiku-4-5"`, `"claude-opus-4-5"`
 - **Google**: `"gemini-3-flash-preview"`, `"gemini-2.5-flash"`
 - **Mistral**: `"mistral-large-latest"`, `"mistral-small-latest"`
 - **Azure**: `"your-deployment-name"` (use your Azure deployment name)
-- **Bedrock**: `"us.anthropic.claude-sonnet-4-5-20250929-v1:0"`, `"meta.llama3-70b-instruct-v1:0"`
-- **LiteLLM**: `"gpt-4.1-mini"` (OpenAI), `"anthropic/claude-sonnet-4-5"` (Anthropic), `"gemini/gemini-2.5-flash"` (Google)
+- **Bedrock**: `"us.anthropic.claude-sonnet-4-6-20250929-v1:0"`, `"meta.llama3-70b-instruct-v1:0"`
+- **LiteLLM**: `"gpt-5.4-mini"` (OpenAI), `"anthropic/claude-sonnet-4-6"` (Anthropic), `"gemini/gemini-2.5-flash"` (Google)
 
 For LiteLLM, use the `provider/model` format for non-OpenAI models.
 
@@ -346,7 +346,7 @@ For LiteLLM, use the `provider/model` format for non-OpenAI models.
 
 **Wrong model used** - Model type names must be snake_case: `"sql"` not `"SQLAgent"`.
 
-**High costs** - Use `gpt-4.1-mini` or `claude-haiku-4-5` for `default`, reserve `gpt-4.1` or `claude-sonnet-4-5` for critical tasks (`sql`, `vega_lite`, `analyst`).
+**High costs** - Use `gpt-5.4-mini` or `claude-haiku-4-5` for `default`, reserve `gpt-5.4` or `claude-sonnet-4-6` for critical tasks (`sql`, `vega_lite`, `analyst`).
 
 **Slow responses** - Local models are slower than cloud APIs. Use cloud providers when speed matters.
 
@@ -356,14 +356,14 @@ For LiteLLM, use the `provider/model` format for non-OpenAI models.
 
 **Use efficient models elsewhere:**
 
-- `default` - Simple tasks work well with `gpt-4.1-mini` or `claude-haiku-4-5`
+- `default` - Simple tasks work well with `gpt-5.4-mini` or `claude-haiku-4-5`
 - `chat` - Conversation works with smaller models
 
 **Avoid reasoning models in dialog interfaces:**
 
 - Reasoning models (`o1`, `o1-mini`, `gemini-3.0-pro`) are **significantly slower**
 - They're designed for single, complex queries, not interactive chat
-- For Lumen's dialog interface, use standard models (`mistral-small-latest`, `gpt-4.1-mini`, `claude-sonnet-4-5`)
+- For Lumen's dialog interface, use standard models (`mistral-small-latest`, `gpt-5.4-mini`, `claude-sonnet-4-6`)
 - Reserve reasoning models for batch processing or one-off complex analyses
 
 **Set temperature by task:**
