@@ -13,7 +13,7 @@ from ..llm import Message
 from ..schemas import (
     Column, DocumentChunk, Metaset, TableCatalogEntry,
 )
-from ..utils import find_slug_by_table_name, log_debug, slug_to_table_name
+from ..utils import log_debug
 from .vector_lookup import VectorLookupTool, make_refined_query_model
 
 
@@ -571,26 +571,10 @@ class MetadataLookup(VectorLookupTool):
                     column_schema = Column(name=col_name, description=col_desc, metadata=col_info.copy() if isinstance(col_info, dict) else {})
                     columns.append(column_schema)
 
-            # Apply lineage metadata if this table was derived by SQLAgent.
-            # The lineage dict may be keyed under a different source name
-            # (e.g. the original source vs the materialized source), so
-            # we fall back to matching by table-name suffix.
-            all_lineage = context.get("derived_table_lineage", {})
-            lineage = all_lineage.get(table_slug, {})
-            if not lineage:
-                lkey = find_slug_by_table_name(slug_to_table_name(table_slug), all_lineage)
-                if lkey is not None:
-                    lineage = all_lineage[lkey]
+            # Read lineage stored directly on the source by SQLAgent.
+            lineage = (source_obj.metadata or {}).get(table_name, {}) if source_obj else {}
 
-            # Remap derived_from slugs to match the current catalog keys
-            # (source names may differ after materialization).
-            remapped_derived_from = []
-            for parent_slug in lineage.get("derived_from", []):
-                if parent_slug not in catalog:
-                    parent_slug = find_slug_by_table_name(
-                        slug_to_table_name(parent_slug), catalog
-                    ) or parent_slug
-                remapped_derived_from.append(parent_slug)
+            remapped_derived_from = list(lineage.get("derived_from", []))
 
             catalog_entry = TableCatalogEntry(
                 table_slug=table_slug,

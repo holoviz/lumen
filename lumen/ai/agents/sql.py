@@ -318,8 +318,6 @@ class SQLOutputs(ContextModel):
 
     pipeline: Pipeline
 
-    derived_table_lineage: NotRequired[dict]
-
 
 class SQLAgent(BaseLumenAgent):
 
@@ -454,17 +452,18 @@ class SQLAgent(BaseLumenAgent):
         if should_materialize:
             context["source"] = sql_expr_source
 
-            # Store lineage so MetadataLookup can tag the catalog entry
-            # on the next turn.  Key uses the *original* source name
-            # because that is what MetadataLookup will resolve to.
-            table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{expr_slug}"
-            lineage = context.setdefault("derived_table_lineage", {})
-            lineage[table_slug] = {
+            if sql_expr_source.metadata is None:
+                sql_expr_source.metadata = {}
+            existing_entries = sum(
+                1 for v in sql_expr_source.metadata.values()
+                if isinstance(v, dict) and "derived_from" in v
+            )
+            sql_expr_source.metadata[expr_slug] = {
                 "derived_from": [
                     f"{source.name}{SOURCE_TABLE_SEPARATOR}{t}" if SOURCE_TABLE_SEPARATOR not in t else t
                     for t in tables
                 ],
-                "created_order": len(lineage) + 1,
+                "created_order": existing_entries + 1,
             }
 
         # Create pipeline
@@ -901,6 +900,4 @@ class SQLAgent(BaseLumenAgent):
                 messages, context, sources, str(e), step_title
             )
         out_context = await out.render_context()
-        if "derived_table_lineage" in context:
-            out_context["derived_table_lineage"] = context["derived_table_lineage"]
         return [out], out_context
