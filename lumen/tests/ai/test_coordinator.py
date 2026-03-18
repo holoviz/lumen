@@ -423,6 +423,62 @@ async def test_planner_make_plan_uses_partial_replan_prompt(llm):
     assert captured["payload"] == payload
 
 
+async def test_plan_fast_validation_handles_expanded_replan(llm):
+    class DummyCoordinator(param.Parameterized):
+        validation_enabled = True
+        prompts = {"validate": {"template": None}}
+
+        def __init__(self):
+            self.partial_replan_calls = 0
+            self._validate_calls = 0
+
+        def _serialize(self, obj):
+            return str(obj)
+
+        async def _invoke_prompt(self, prompt, messages, context, **kwargs):
+            self._validate_calls += 1
+            # Trigger replanning only once on the second original task.
+            if self._validate_calls == 2:
+                return ThinkingYesNo(chain_of_thought="Second step is incorrect, replan from here.", yes=True)
+            return ThinkingYesNo(chain_of_thought="Continue.", yes=False)
+
+        async def respond(self, messages, context, **kwargs):
+            self.partial_replan_calls += 1
+            return Plan(
+                ActorTask(ChatAgent(llm=llm), title="Rewritten B1", instruction="Rewrite current step"),
+                ActorTask(ChatAgent(llm=llm), title="Added B2", instruction="New follow-up task"),
+                ActorTask(ChatAgent(llm=llm), title="Added B3", instruction="Another follow-up task"),
+                history=messages,
+                context=context,
+                coordinator=self,
+            )
+
+    llm.set_responses([
+        "output-a",     # original A
+        "output-b",     # original B (will be invalidated)
+        "output-b1",    # rewritten current step
+        "output-b2",    # extra task 1
+        "output-b3",    # extra task 2
+    ])
+    coordinator = DummyCoordinator()
+    plan = Plan(
+        ActorTask(ChatAgent(llm=llm), title="Original A", instruction="First"),
+        ActorTask(ChatAgent(llm=llm), title="Original B", instruction="Second"),
+        history=[{"role": "user", "content": "Do a multi-step task"}],
+        context={},
+        coordinator=coordinator,
+    )
+
+    await plan.execute()
+
+    assert plan.status == "success"
+    assert coordinator.partial_replan_calls == 1
+    titles = [task.title for task in plan]
+    assert titles == ["Original A", "Rewritten B1", "Added B2", "Added B3"]
+    assert all(task.status == "success" for task in plan)
+    assert plan._current == len(plan)
+
+
 # -------------------------------------------------------------------
 # Tests for chat file upload fix (reuse ephemeral source + MetadataLookup tracking)
 # -------------------------------------------------------------------
