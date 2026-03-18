@@ -112,11 +112,26 @@ class Planner(Coordinator):
         to making a plan.""",
     )
 
+    final_validation_enabled = param.Boolean(
+        default=False,
+        allow_refs=True,
+        doc="""
+        Whether to append a final ValidationAgent step after planning.""",
+    )
+
     prompts = param.Dict(
         default={
             "main": {
                 "template": PROMPTS_DIR / "Planner" / "main.jinja2",
                 "response_model": make_plan_model,
+            },
+            "partial_replan": {
+                "template": PROMPTS_DIR / "Planner" / "partial_replan.jinja2",
+                "response_model": make_plan_model,
+            },
+            "validate": {
+                "template": PROMPTS_DIR / "Planner" / "validate.jinja2",
+                "response_model": ThinkingYesNo,
             },
             "follow_up": {
                 "template": PROMPTS_DIR / "Planner" / "follow_up.jinja2",
@@ -298,6 +313,8 @@ class Planner(Coordinator):
         plan_model: type[RawPlan],
         step: ChatStep,
         is_follow_up: bool = False,
+        prompt_key: str = "main",
+        partial_replan_payload: dict[str, Any] | None = None,
     ) -> BaseModel:
         agents = list(agents.values())
         tools = list(tools.values())
@@ -322,9 +339,10 @@ class Planner(Coordinator):
             agent_candidates = [agent for agent in agents if not unmet_dependencies or set(agent.output_schema.__annotations__) & unmet_dependencies]
             tool_candidates = [tool for tool in tools if not unmet_dependencies or set(tool.output_schema.__annotations__) & unmet_dependencies]
             llm_tools, _, _ = self.llm._normalize_tools(self.llm.tools)
-            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
+            active_prompt_key = prompt_key if prompt_key in self.prompts else "main"
+            model_spec = self.prompts[active_prompt_key].get("llm_spec", self.llm_spec_key)
             system = await self._render_prompt(
-                "main",
+                active_prompt_key,
                 messages,
                 context,
                 model_spec=model_spec,
@@ -336,7 +354,8 @@ class Planner(Coordinator):
                 previous_actors=previous_actors,
                 previous_plans=previous_plans,
                 is_follow_up=is_follow_up,
-                llm_tools=llm_tools
+                llm_tools=llm_tools,
+                partial_replan_payload=partial_replan_payload or {},
             )
             async for reasoning in self.llm.stream(
                 messages=messages,
@@ -480,7 +499,12 @@ class Planner(Coordinator):
             )
             actors_in_graph.add(actor)
 
-        if "ValidationAgent" in agents and len(actors_in_graph) > 1 and self.validation_enabled:
+        if (
+            "ValidationAgent" in agents and
+            len(actors_in_graph) > 1 and
+            self.validation_enabled and
+            self.final_validation_enabled
+        ):
             validation_step = type(step)(
                 actor="ValidationAgent",
                 instruction="Validate whether the executed plan fully answered the user's original query.",
@@ -497,12 +521,20 @@ class Planner(Coordinator):
         return plan, actors
 
     async def _compute_plan(
-        self, messages: list[Message], context: TContext, agents: dict[str, Agent], tools: dict[str, Tool], pre_plan_output: dict[str, Any]
+        self,
+        messages: list[Message],
+        context: TContext,
+        agents: dict[str, Agent],
+        tools: dict[str, Tool],
+        pre_plan_output: dict[str, Any],
+        **kwargs: Any,
     ) -> Plan:
         tool_names = list(tools)
         agent_names = list(agents)
         plan_model = self._get_model("main", agents=agent_names, tools=tool_names)
         is_followup = pre_plan_output["is_follow_up"]
+        partial_replan = bool(kwargs.get("partial_replan", False))
+        partial_replan_payload = kwargs.get("partial_replan_payload", {})
 
         planned = False
         unmet_dependencies = set()
@@ -527,6 +559,8 @@ class Planner(Coordinator):
                         plan_model,
                         istep,
                         is_follow_up=is_followup,
+                        prompt_key="partial_replan" if partial_replan else "main",
+                        partial_replan_payload=partial_replan_payload,
                     )
                 except asyncio.CancelledError as e:
                     self._todos_title.object = istep.failed_title = "Planning was cancelled, please try again."

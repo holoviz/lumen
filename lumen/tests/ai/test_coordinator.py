@@ -1,8 +1,10 @@
 import io
 
+from types import SimpleNamespace
 from typing import get_args
 
 import pandas as pd
+import param
 import pytest
 
 try:
@@ -19,7 +21,7 @@ from lumen.ai.controls.base import BaseSourceControls, UploadedFileRow
 from lumen.ai.coordinator import Coordinator, Plan, Planner
 from lumen.ai.coordinator.planner import Reasoning, make_plan_model
 from lumen.ai.editors import SQLEditor
-from lumen.ai.models import ReplaceLine, RetrySpec
+from lumen.ai.models import ReplaceLine, RetrySpec, ThinkingYesNo
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
 from lumen.ai.tools import FunctionTool, define_tool
@@ -29,6 +31,15 @@ from lumen.sources.duckdb import DuckDBSource
 
 async def test_planner_instantiate():
     Planner()
+
+
+async def test_planner_preserves_prompt_defaults_on_init():
+    planner = Planner()
+    assert set(planner.prompts) >= {"main", "partial_replan", "validate", "follow_up"}
+    assert "template" in planner.prompts["main"]
+    assert "response_model" in planner.prompts["partial_replan"]
+    assert "response_model" in planner.prompts["validate"]
+    assert planner.prompts["main"]["tools"]
 
 
 def _add_one(value: int) -> int:
@@ -281,6 +292,135 @@ async def test_plan_revise(sql_plan):
     )
     await async_wait_until(lambda: len(sql_plan.views) == 4)
     assert sql_plan.views[3].object == "Result: 10.5"
+
+
+async def test_plan_fast_validation_triggers_partial_replan(llm):
+    class DummyCoordinator(param.Parameterized):
+        validation_enabled = True
+        prompts = {"validate": {"template": None}}
+
+        def __init__(self):
+            self.partial_replan_calls = []
+
+        def _serialize(self, obj):
+            return str(obj)
+
+        async def _invoke_prompt(self, prompt, messages, context, **kwargs):
+            assert prompt == "validate"
+            return ThinkingYesNo(chain_of_thought="Current direction is wrong.", yes=True)
+
+        async def respond(self, messages, context, **kwargs):
+            self.partial_replan_calls.append(SimpleNamespace(messages=messages, context=context, kwargs=kwargs))
+            replacement_task = ActorTask(ChatAgent(llm=llm), title="Replacement", instruction="Run replacement step")
+            return Plan(replacement_task, history=messages, context=context, coordinator=self)
+
+    llm.set_responses(["first output", "replacement output", "extra output", "extra output 2"])
+    coordinator = DummyCoordinator()
+    plan = Plan(
+        ActorTask(ChatAgent(llm=llm), title="First", instruction="Run first step"),
+        ActorTask(ChatAgent(llm=llm), title="Second", instruction="Run second step"),
+        history=[{"role": "user", "content": "Do two steps"}],
+        context={},
+        coordinator=coordinator,
+    )
+
+    await plan.execute()
+
+    assert plan.status == "success"
+    assert any(task.title == "Replacement" for task in plan)
+    assert all(task.title != "Second" for task in plan)
+    assert len(coordinator.partial_replan_calls) >= 1
+    call = coordinator.partial_replan_calls[0]
+    assert call.kwargs["partial_replan"] is True
+    assert call.kwargs["partial_replan_payload"]["current_step_index"] == 0
+    assert call.kwargs["partial_replan_payload"]["remaining_steps"][0]["title"] == "Second"
+
+
+async def test_plan_fast_validation_respects_replan_limit(llm):
+    class DummyCoordinator(param.Parameterized):
+        validation_enabled = True
+        prompts = {"validate": {"template": None}}
+
+        def __init__(self):
+            self.partial_replan_calls = 0
+
+        def _serialize(self, obj):
+            return str(obj)
+
+        async def _invoke_prompt(self, prompt, messages, context, **kwargs):
+            return ThinkingYesNo(chain_of_thought="Replan requested.", yes=True)
+
+        async def respond(self, messages, context, **kwargs):
+            self.partial_replan_calls += 1
+            replacement_task = ActorTask(ChatAgent(llm=llm), title="Replacement", instruction="Run replacement step")
+            return Plan(replacement_task, history=messages, context=context, coordinator=self)
+
+    llm.set_responses(["first output", "second output"])
+    coordinator = DummyCoordinator()
+    plan = Plan(
+        ActorTask(ChatAgent(llm=llm), title="First", instruction="Run first step"),
+        ActorTask(ChatAgent(llm=llm), title="Second", instruction="Run second step"),
+        history=[{"role": "user", "content": "Do two steps"}],
+        context={},
+        coordinator=coordinator,
+        max_partial_replans=0,
+    )
+
+    await plan.execute()
+
+    assert plan.status == "success"
+    rendered = [view.object for view in plan.views if isinstance(view, ChatMessage)]
+    assert "first output" in rendered
+    assert "second output" in rendered
+    assert coordinator.partial_replan_calls == 0
+
+
+async def test_planner_make_plan_uses_partial_replan_prompt(llm):
+    plan_model = make_plan_model(["ChatAgent"], [])
+    (StepModel,) = get_args(plan_model.__annotations__['steps'])
+    llm.set_responses([
+        Reasoning(chain_of_thought="Adjust only remaining steps."),
+        plan_model(title="Partial", steps=[
+            StepModel(actor="ChatAgent", instruction="Continue with corrected step", title="Corrected step")
+        ]),
+    ])
+
+    planner = Planner(llm=llm)
+    planner.prompts = {
+        **planner.prompts,
+        "partial_replan": {
+            "template": None,
+            "response_model": make_plan_model,
+        },
+    }
+    chat_agent = ChatAgent(llm=llm)
+    captured = {}
+
+    async def _capture_render(prompt_key, messages, context, **kwargs):
+        captured["prompt_key"] = prompt_key
+        captured["payload"] = kwargs.get("partial_replan_payload")
+        return "Render output"
+
+    planner._render_prompt = _capture_render
+    step = SimpleNamespace(stream=lambda *args, **kwargs: None)
+    payload = {"validation_reason": "Wrong table selected"}
+    raw_plan = await planner._make_plan(
+        messages=[{"role": "user", "content": "Fix the plan"}],
+        context={},
+        agents={"ChatAgent": chat_agent},
+        tools={},
+        unmet_dependencies=set(),
+        previous_actors=[],
+        previous_plans=[],
+        plan_model=plan_model,
+        step=step,
+        prompt_key="partial_replan",
+        partial_replan_payload=payload,
+    )
+
+    assert raw_plan.title == "Partial"
+    assert captured["prompt_key"] == "partial_replan"
+    assert captured["payload"] == payload
 
 
 # -------------------------------------------------------------------

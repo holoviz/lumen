@@ -79,7 +79,13 @@ class DependencyResolver(Coordinator):
         return await self._fill_model(messages, system, agent_model)
 
     async def _compute_plan(
-        self, messages: list[Message], context: TContext, agents: dict[str, Agent], tools: dict[str, Tool], pre_plan_output: dict[str, Any]
+        self,
+        messages: list[Message],
+        context: TContext,
+        agents: dict[str, Agent],
+        tools: dict[str, Tool],
+        pre_plan_output: dict[str, Any],
+        **kwargs: Any,
     ) -> Plan | None:
         if len(agents) == 1:
             agent = next(iter(agents.values()))
