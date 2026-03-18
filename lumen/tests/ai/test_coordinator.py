@@ -441,13 +441,13 @@ async def test_process_files_creates_new_source_when_none_exists():
 
 
 # -------------------------------------------------------------------
-# Readiness wait test (asyncio.Event based)
+# Readiness wait tests (pending task based)
 # -------------------------------------------------------------------
 
-async def test_metadata_lookup_respond_waits_for_ready_event():
+async def test_metadata_lookup_respond_waits_for_pending_updates(monkeypatch):
     """
-    respond() should wait for _ready_event before calling _gather_info.
-    If the event is not set within the timeout, it should proceed anyway.
+    respond() should wait for in-flight tracked update tasks
+    before calling _gather_info.
     """
     import asyncio
 
@@ -455,61 +455,57 @@ async def test_metadata_lookup_respond_waits_for_ready_event():
 
     lookup = MetadataLookup()
 
-    # Simulate an in-progress sync by clearing the event
-    lookup._ready_event.clear()
-    lookup._ready = False
+    update_completed = asyncio.Event()
+    gather_called_after_update = False
 
-    # Schedule the event to be set after 0.2s
-    async def _set_ready():
+    async def _slow_update():
         await asyncio.sleep(0.2)
-        lookup._ready = True
-        lookup._ready_event.set()
+        update_completed.set()
 
-    task = asyncio.create_task(_set_ready())
+    async def _mock_gather_info(messages, context):
+        nonlocal gather_called_after_update
+        gather_called_after_update = update_completed.is_set()
+        return {"metaset": None}
 
-    # respond() should wait for the event, not return immediately
-    # We can't call respond() directly without proper context, so
-    # test the wait mechanism directly
-    assert not lookup._ready_event.is_set()
-    await asyncio.wait_for(lookup._ready_event.wait(), timeout=5)
-    assert lookup._ready_event.is_set()
-    assert lookup._ready is True
-    await task
+    lookup._track_update_task(asyncio.create_task(_slow_update()))
+    monkeypatch.setattr(lookup, "_gather_info", _mock_gather_info)
+
+    await lookup.respond([{"role": "user", "content": "test"}], {})
+
+    assert gather_called_after_update is True
 
 
-async def test_metadata_lookup_ready_event_timeout():
+async def test_metadata_lookup_pending_updates_timeout(monkeypatch):
     """
-    If _ready_event is never set, the wait should timeout gracefully
-    without raising an exception.
+    If pending update tasks do not complete in time,
+    _wait_for_pending_updates should timeout gracefully.
     """
     import asyncio
 
     from lumen.ai.tools.metadata_lookup import MetadataLookup
 
     lookup = MetadataLookup()
-    lookup._ready_event.clear()
-    lookup._ready = False
+    long_running_task = asyncio.create_task(asyncio.sleep(0.2))
+    lookup._track_update_task(long_running_task)
 
-    # Verify timeout works without raising
-    timed_out = False
-    try:
-        await asyncio.wait_for(lookup._ready_event.wait(), timeout=0.2)
-    except TimeoutError:
-        timed_out = True
+    async def _mock_wait_for(*args, **kwargs):
+        raise TimeoutError
 
-    assert timed_out
-    assert not lookup._ready_event.is_set()
+    monkeypatch.setattr("lumen.ai.tools.metadata_lookup.asyncio.wait_for", _mock_wait_for)
+
+    # Verify timeout handling does not raise even when wait_for times out.
+    await lookup._wait_for_pending_updates(timeout=0.05)
+    await long_running_task
 
 
-async def test_metadata_lookup_ready_event_initially_set():
+async def test_metadata_lookup_no_pending_updates_initially():
     """
-    A freshly created MetadataLookup should have _ready_event set
-    so that respond() does not block when no sync has happened.
+    A freshly created MetadataLookup should have no pending update tasks.
     """
     from lumen.ai.tools.metadata_lookup import MetadataLookup
 
     lookup = MetadataLookup()
-    assert lookup._ready_event.is_set()
+    assert lookup._pending_update_tasks == set()
 
 
 # -------------------------------------------------------------------
