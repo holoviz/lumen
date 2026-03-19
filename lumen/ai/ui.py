@@ -821,12 +821,12 @@ class UI(Viewer):
                 for message in instance.objects[message_index:]:
                     self._logs.update_status(message_id=id(message), removed=True)
 
-            self._cleanup_exploration(self._exploration)
-
-            with instance.param.update(disabled=True, loading=True), hold():
-                instance.objects = instance.objects[:message_index]
-                self._update_main_view()
-                instance.send(contents, respond=True)
+            with hold():
+                self._cleanup_exploration(self._exploration)
+                with instance.param.update(disabled=True, loading=True):
+                    instance.objects = instance.objects[:message_index]
+                    self._update_main_view()
+                    instance.send(contents, respond=True)
 
         # Track pending query when files are being uploaded
         self._pending_query = None
@@ -2036,26 +2036,25 @@ class ExplorerUI(UI):
         exploration = item['view']
         if exploration.plan is None:
             return
-        with hold():
-            for child in item.get('items', []):
-                if child['view'].plan is not None:
-                    child['view'].plan.cleanup()
-                child['view'].context.clear()
-            exploration.plan.cleanup()
-            exploration.context.clear()
-            if item in self._explorations.items:
-                self._explorations.items = [
-                    it for it in self._explorations.items if it is not item
-                ]
-            else:
-                parent = item["parent"]
-                self._explorations.update_item(
-                    parent,
-                    items=[it for it in parent["items"] if it is not item],
-                )
-            home_item = self._explorations.items[0]
-            self._explorations.value = self._exploration = home_item
-            self._last_synced = self._home
+        for child in item.get('items', []):
+            if child['view'].plan is not None:
+                child['view'].plan.cleanup()
+            child['view'].context.clear()
+        exploration.plan.cleanup()
+        exploration.context.clear()
+        if item in self._explorations.items:
+            self._explorations.items = [
+                it for it in self._explorations.items if it is not item
+            ]
+        else:
+            parent = item["parent"]
+            self._explorations.update_item(
+                parent,
+                items=[it for it in parent["items"] if it is not item],
+            )
+        home_item = self._explorations.items[0]
+        self._explorations.value = self._exploration = home_item
+        self._last_synced = self._home
 
     async def _delete_exploration(self, item):
         await self._idle.wait()
