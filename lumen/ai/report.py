@@ -27,6 +27,7 @@ from panel_material_ui import (
     SpeedDial, TextAreaInput, TextInput, Typography,
 )
 
+from ..util import resolve_module_reference
 from ..views.base import Panel, View
 from .actor import (
     Actor, ContextProvider, NullStep, TContext,
@@ -46,6 +47,28 @@ from .tools import FunctionTool, Tool
 from .utils import (
     extract_block_source, get_block_names, wrap_logfire_on_method,
 )
+
+
+def _task_type_spec(obj: Any) -> str:
+    return f"{type(obj).__module__}.{type(obj).__name__}"
+
+
+def _task_type_from_spec(type_spec: str) -> type:
+    return resolve_module_reference(type_spec)
+
+
+def _ensure_jsonable(value: Any) -> Any:
+    """
+    Best-effort conversion of values to JSON-serializable structures.
+    Intended primarily for chat `history` payloads.
+    """
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(k): _ensure_jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_ensure_jsonable(v) for v in value]
+    return str(value)
 
 
 class Task(Viewer):
@@ -240,6 +263,74 @@ class Task(Viewer):
         self.status = "idle"
         self._view[:] = []
         self.out_context.clear()
+
+    def to_spec(
+        self,
+        *,
+        include_views: bool = False,
+        include_context: bool = False,
+        include_artifacts: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Serialize a Task to a declarative spec.
+
+        By default, this only captures the task definition (and `history`) and
+        excludes rendered `views`, execution state, and generated artifacts.
+        """
+        params: dict[str, Any] = {}
+        for k in ("title", "instruction", "history", "abort_on_error"):
+            if k in self.param:
+                v = getattr(self, k)
+                if k == "history":
+                    v = _ensure_jsonable(v)
+                params[k] = v
+
+        if include_context and "context" in self.param:
+            params["context"] = _ensure_jsonable(self.context)
+
+        if include_artifacts:
+            # Explicit opt-in only
+            params["status"] = self.status
+            params["out_context"] = _ensure_jsonable(self.out_context)
+
+        if include_views:
+            params["views"] = None
+
+        return {"type": _task_type_spec(self), "params": params}
+
+    @classmethod
+    def from_spec(
+        cls,
+        spec: dict[str, Any],
+        *,
+        actor_lookup: dict[str, Actor | Tool] | None = None,
+    ) -> Task:
+        """
+        Materialize a Task from a spec.
+
+        Parameters
+        ----------
+        actor_lookup:
+          Mapping used to resolve `ActorTask.actor` keys.
+        """
+        spec = dict(spec)
+        type_spec = spec.get("type")
+        params = dict(spec.get("params") or {})
+        tasks = spec.get("tasks")
+        if type_spec:
+            task_type = _task_type_from_spec(type_spec)
+        else:
+            task_type = cls
+
+        if tasks is not None:
+            # Delegate to TaskGroup-like materialization
+            if hasattr(task_type, "_tasks"):
+                return task_type.from_spec(spec, actor_lookup=actor_lookup)  # type: ignore[misc]
+
+        if hasattr(task_type, "from_spec") and task_type is not cls:
+            return task_type.from_spec(spec, actor_lookup=actor_lookup)  # type: ignore[misc]
+
+        return task_type(**params)  # type: ignore[call-arg]
 
 
 class TaskGroup(Task):
@@ -606,6 +697,50 @@ class TaskGroup(Task):
                     task.reset()
             self._populate_view()
 
+    def to_spec(
+        self,
+        *,
+        include_views: bool = False,
+        include_context: bool = False,
+        include_artifacts: bool = False,
+    ) -> dict[str, Any]:
+        spec = super().to_spec(
+            include_views=include_views,
+            include_context=include_context,
+            include_artifacts=include_artifacts,
+        )
+        spec["tasks"] = [
+            t.to_spec(
+                include_views=include_views,
+                include_context=include_context,
+                include_artifacts=include_artifacts,
+            )
+            for t in self._tasks
+        ]
+        return spec
+
+    @classmethod
+    def from_spec(
+        cls,
+        spec: dict[str, Any],
+        *,
+        actor_lookup: dict[str, Actor | Tool] | None = None,
+    ) -> TaskGroup:
+        spec = dict(spec)
+        type_spec = spec.get("type")
+        params = dict(spec.get("params") or {})
+        tasks_spec = list(spec.get("tasks") or [])
+
+        group_type = _task_type_from_spec(type_spec) if type_spec else cls
+        tasks: list[Task] = []
+        for ts in tasks_spec:
+            tasks.append(Task.from_spec(ts, actor_lookup=actor_lookup))
+
+        obj = group_type(*tasks, **params)  # type: ignore[call-arg]
+        for t in obj:
+            t.parent = obj
+        return obj
+
     def to_notebook(self):
         """
         Returns the notebook representation of the tasks.
@@ -813,6 +948,22 @@ class Report(TaskGroup):
         pn.state.execute(partial(self.prepare, self.context))
         if self.auto_execute:
             pn.state.execute(self.execute)
+
+    def to_spec(
+        self,
+        *,
+        include_views: bool = False,
+        include_context: bool = False,
+        include_artifacts: bool = False,
+    ) -> dict[str, Any]:
+        spec = super().to_spec(
+            include_views=include_views,
+            include_context=include_context,
+            include_artifacts=include_artifacts,
+        )
+        if self.auto_execute != self.param.auto_execute.default:
+            spec["params"]["auto_execute"] = self.auto_execute
+        return spec
 
     def _init_view(self):
         self._header_title = Typography(
@@ -1115,6 +1266,44 @@ class ActorTask(ExecutableTask):
         super().__init__(actor=actor, **params)
         if views and out_context:
             self._add_outputs(views, out_context)
+
+    def to_spec(
+        self,
+        *,
+        include_views: bool = False,
+        include_context: bool = False,
+        include_artifacts: bool = False,
+        actor_key: str | None = None,
+    ) -> dict[str, Any]:
+        spec = super().to_spec(
+            include_views=include_views,
+            include_context=include_context,
+            include_artifacts=include_artifacts,
+        )
+        # Store actor by lookup key; reconstruction requires an explicit mapping.
+        spec["params"]["actor"] = actor_key or getattr(self.actor, "name", type(self.actor).__name__)
+        return spec
+
+    @classmethod
+    def from_spec(
+        cls,
+        spec: dict[str, Any],
+        *,
+        actor_lookup: dict[str, Actor | Tool] | None = None,
+    ) -> ActorTask:
+        spec = dict(spec)
+        params = dict(spec.get("params") or {})
+        actor_key = params.pop("actor", None)
+        if actor_key is None:
+            raise ValueError("ActorTask spec did not declare required 'actor' key in params.")
+        if actor_lookup is None or actor_key not in actor_lookup:
+            known = [] if actor_lookup is None else sorted(actor_lookup)
+            raise ValueError(
+                f"ActorTask spec references unknown actor {actor_key!r}. "
+                f"Provide actor_lookup with this key. Known keys: {known!r}"
+            )
+        actor = actor_lookup[actor_key]
+        return cls(actor, **params)  # type: ignore[arg-type]
 
     @property
     def input_schema(self):

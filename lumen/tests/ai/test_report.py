@@ -16,7 +16,7 @@ from typing_extensions import NotRequired
 
 from lumen.ai.actor import ContextModel
 from lumen.ai.report import (
-    Action, Report, Section, TaskGroup, Typography,
+    Action, Actor, ActorTask, Report, Section, Task, TaskGroup, Typography,
 )
 
 
@@ -369,3 +369,54 @@ async def test_report_to_notebook():
 
     assert cell3['cell_type'] == 'markdown'
     assert cell3['source'] == ["**Hello**"]
+
+
+def test_taskgroup_spec_roundtrip_preserves_structure():
+    tg = TaskGroup(A(title="A1"), B(title="B1"), title="Seq", instruction="Do it")
+    tg.history = [{"role": "user", "content": "hi"}]
+    spec = tg.to_spec()
+
+    assert "tasks" in spec
+    assert "views" not in spec.get("params", {})
+    assert "out_context" not in spec.get("params", {})
+
+    new = Task.from_spec(spec)
+    assert isinstance(new, TaskGroup)
+    assert new.title == "Seq"
+    assert new.instruction == "Do it"
+    assert new.history == [{"role": "user", "content": "hi"}]
+    assert len(new) == 2
+    assert type(new[0]) is A
+    assert type(new[1]) is B
+
+
+def test_report_spec_roundtrip_preserves_sections_and_title():
+    report = Report(Section(HelloAction(title="Hello"), title="S1"), title="MyReport")
+    report.history = [{"role": "user", "content": "build report"}]
+    spec = report.to_spec()
+
+    new = Task.from_spec(spec)
+    assert isinstance(new, Report)
+    assert new.title == "MyReport"
+    assert new.history == [{"role": "user", "content": "build report"}]
+    assert len(new) == 1
+    assert isinstance(new[0], Section)
+    assert new[0].title == "S1"
+
+
+def test_actortask_spec_roundtrip_uses_actor_lookup():
+    class DummyActor(Actor):
+        async def respond(self, messages, context, **kwargs):
+            return [], {}
+
+    actor = DummyActor(name="dummy_actor")
+    task = ActorTask(actor, title="T1", instruction="Run")
+    task.history = [{"role": "user", "content": "do"}]
+
+    spec = task.to_spec()
+    new = Task.from_spec(spec, actor_lookup={"dummy_actor": actor})
+    assert isinstance(new, ActorTask)
+    assert new.actor is actor
+    assert new.title == "T1"
+    assert new.instruction == "Run"
+    assert new.history == [{"role": "user", "content": "do"}]
