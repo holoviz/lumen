@@ -344,6 +344,8 @@ class VegaLiteEditor(LumenEditor):
             vlc.vegalite_to_vega(spec)
         except ValueError as e:
             msg = str(e)
+            if '\n    at Nc.' in msg:
+                msg = msg[:msg.index('\n    at Nc.')]
             raise RuntimeError(msg) from e
         return super().validate_spec(spec)
 
