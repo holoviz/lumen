@@ -8,8 +8,6 @@ is exposed as a separate SQL table with coordinate columns.
 
 from __future__ import annotations
 
-import math
-
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -158,7 +156,8 @@ class XArraySQLSource(BaseSQLSource):
         """Resolve chunk specification for DataFusion registration."""
         if isinstance(chunks, dict):
             return chunks
-        ds_chunks = getattr(dataset, "chunks", None)
+        # dataset.chunks returns Frozen({}) for non-dask datasets (falsy)
+        ds_chunks = dataset.chunks
         if ds_chunks:
             return {dim: sizes[0] for dim, sizes in ds_chunks.items()}
         return dict(dataset.sizes)
@@ -196,8 +195,11 @@ class XArraySQLSource(BaseSQLSource):
         return self._dataset
 
     def get_schema(self, table=None, limit=None, shuffle=False):
-        # DataFusion doesn't support TABLESAMPLE; force shuffle=False
-        # so the parent uses SQLLimit instead of SQLSample.
+        # The AI layer (lumen/ai/utils.py) calls get_schema(shuffle=True),
+        # which triggers SQLSample to emit TABLESAMPLE via our postgres
+        # dialect. DataFusion supports neither TABLESAMPLE nor ORDER BY
+        # RAND() (the generic fallback). Forcing shuffle=False makes the
+        # parent use SQLLimit instead.
         return super().get_schema(table, limit, shuffle=False)
 
     # ---- BaseSQLSource required overrides ----
@@ -208,21 +210,23 @@ class XArraySQLSource(BaseSQLSource):
         return sorted(self._registered_tables)
 
     def normalize_table(self, table: str) -> str:
-        # Case-insensitive matching and quote stripping for AI-generated queries.
-        # Not using normalize_table_name() since that normalizes filenames, not
-        # xarray variable names which are already valid Python identifiers.
+        # 1. Strip quotes AI models sometimes add: "air" -> air
         stripped = table.strip('"').strip("'").strip("`")
-        all_known = set(self._registered_tables)
+
+        # 2. Build set of all known table names
+        known = set(self._registered_tables)
         if isinstance(self.tables, dict):
-            all_known.update(self.tables.keys())
+            known.update(self.tables.keys())
         elif isinstance(self.tables, (list, tuple)):
-            all_known.update(self.tables)
-        if stripped in all_known:
+            known.update(self.tables)
+
+        # 3. Exact match
+        if stripped in known:
             return stripped
-        lower_map = {t.lower(): t for t in all_known}
-        if stripped.lower() in lower_map:
-            return lower_map[stripped.lower()]
-        return stripped
+
+        # 4. Case-insensitive fallback: AIR -> air
+        lower_map = {t.lower(): t for t in known}
+        return lower_map.get(stripped.lower(), stripped)
 
     def execute(self, sql_query, params=None, *args, **kwargs):
         """Execute a SQL query against the DataFusion context."""
@@ -237,7 +241,7 @@ class XArraySQLSource(BaseSQLSource):
         conditions = [
             (col, (val.start, val.stop) if isinstance(val, slice) else val)
             for col, val in query.items()
-            if not col.startswith("__")
+            if not col.startswith("__")  # skip internal keys like __limit__
         ]
         sql_transforms = [SQLFilter(conditions=conditions, read=self.dialect)] + sql_transforms
         for st in sql_transforms:
@@ -290,21 +294,38 @@ class XArraySQLSource(BaseSQLSource):
                 description += f" [{attrs['units']}]"
 
             columns = {}
-            for coord_name in var.dims:
-                coord_attrs = dict(ds.coords[coord_name].attrs)
-                columns[coord_name] = {
-                    "data_type": str(ds.coords[coord_name].dtype),
-                    "description": coord_attrs.get("long_name", ""),
-                }
+            for dim in var.dims:
+                if dim in ds.coords:
+                    coord_attrs = dict(ds.coords[dim].attrs)
+                    columns[dim] = {
+                        "data_type": str(ds.coords[dim].dtype),
+                        "description": coord_attrs.get("long_name", ""),
+                    }
+                else:
+                    columns[dim] = {
+                        "data_type": "int64",
+                        "description": f"index along {dim} dimension",
+                    }
             columns[table] = {
                 "data_type": str(var.dtype),
                 "description": attrs.get("long_name", ""),
             }
 
+            aux_coords = [c for c in var.coords if c not in var.dims and c != table]
+            if aux_coords:
+                aux_labels = []
+                for ac in aux_coords:
+                    label = ac
+                    ac_long = ds.coords[ac].attrs.get("long_name")
+                    if ac_long:
+                        label += f" [{ac_long}]"
+                    aux_labels.append(label)
+                description += f" (auxiliary coords: {', '.join(aux_labels)})"
+
             metadata[table] = {
                 "description": description,
                 "columns": columns,
-                "rows": math.prod(var.shape),
+                "rows": var.size,
             }
         return metadata
 

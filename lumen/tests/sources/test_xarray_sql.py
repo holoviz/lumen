@@ -12,6 +12,7 @@ Tests cover:
 """
 
 import warnings
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -20,7 +21,7 @@ import pytest
 xr = pytest.importorskip("xarray")
 pytest.importorskip("xarray_sql")
 
-from lumen.sources.xarray_sql import XArraySQLSource
+from lumen.sources.xarray_sql import XArraySQLSource, _detect_engine
 
 # ---- Fixtures ----
 
@@ -126,6 +127,34 @@ class TestConstruction:
     def test_source_type(self, synthetic_dataset):
         source = XArraySQLSource(_dataset=synthetic_dataset)
         assert source.source_type == "xarray"
+
+    def test_engine_detection_all_formats(self):
+        assert _detect_engine("/data/file.nc") == "netcdf4"
+        assert _detect_engine("/data/file.nc4") == "netcdf4"
+        assert _detect_engine("/data/file.h5") == "h5netcdf"
+        assert _detect_engine("/data/file.hdf5") == "h5netcdf"
+        assert _detect_engine("/data/file.zarr") == "zarr"
+        assert _detect_engine("/data/file.grib") == "cfgrib"
+        assert _detect_engine("/data/file.grib2") == "cfgrib"
+        assert _detect_engine("/data/file.grb") == "cfgrib"
+        assert _detect_engine("/data/file.txt") is None
+
+    def test_from_grib(self):
+        """GRIB file I/O via cfgrib engine."""
+        pytest.importorskip("cfgrib")
+        grib_path = Path(xr.__file__).parent / "tests" / "data" / "example.grib"
+        if not grib_path.exists():
+            pytest.skip("xarray example.grib not found")
+        source = XArraySQLSource(uri=str(grib_path), engine="cfgrib")
+        tables = source.get_tables()
+        assert "z" in tables
+        assert "t" in tables
+
+        df = source.execute("SELECT * FROM z LIMIT 5")
+        assert len(df) == 5
+        assert "z" in df.columns
+        assert "latitude" in df.columns
+        assert "longitude" in df.columns
 
 
 # ---- SQL Execution ----
@@ -257,6 +286,48 @@ class TestSchemaMetadata:
         meta = source.get_metadata()
         assert "temperature" in meta
         assert "pressure" in meta
+
+    def test_metadata_2d_auxiliary_coords(self):
+        """Metadata correctly handles datasets with 2D auxiliary coordinates (RASM-like)."""
+        y = np.arange(5)
+        x = np.arange(4)
+        yy, xx = np.meshgrid(y, x, indexing="ij")
+        ds = xr.Dataset(
+            {"Tair": (["time", "y", "x"], np.random.randn(3, 5, 4).astype("float32"))},
+            coords={
+                "time": np.arange(3),
+                "y": y,
+                "x": x,
+                "xc": (["y", "x"], -120.0 + xx * 0.5),
+                "yc": (["y", "x"], 50.0 + yy * 0.5),
+            },
+        )
+        ds["Tair"].attrs = {"long_name": "Air Temperature", "units": "K"}
+        ds.coords["xc"].attrs = {"long_name": "longitude"}
+        ds.coords["yc"].attrs = {"long_name": "latitude"}
+        source = XArraySQLSource(_dataset=ds)
+
+        meta = source._get_table_metadata(["Tair"])
+        assert "Tair" in meta
+
+        # SQL columns = dims + data var (not 2D auxiliary coords)
+        assert set(meta["Tair"]["columns"]) == {"time", "y", "x", "Tair"}
+        assert "xc" not in meta["Tair"]["columns"]
+        assert "yc" not in meta["Tair"]["columns"]
+
+        # Auxiliary coords noted in description with long_name
+        desc = meta["Tair"]["description"]
+        assert "auxiliary coords" in desc
+        assert "xc [longitude]" in desc
+        assert "yc [latitude]" in desc
+
+        # Row count correct
+        assert meta["Tair"]["rows"] == 3 * 5 * 4
+
+        # SQL queries still work with dimension coords
+        df = source.execute("SELECT * FROM Tair LIMIT 5")
+        assert set(df.columns) == {"time", "y", "x", "Tair"}
+        assert len(df) == 5
 
 
 # ---- Lumen Integration (get, get_sql_expr) ----

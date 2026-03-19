@@ -73,6 +73,8 @@ xarray = "*"
 netcdf4 = "*"
 h5netcdf = "*"
 zarr = "*"
+cfgrib = "*"
+eccodes = "*"
 
 [feature.xarray.pypi-dependencies]
 xarray-sql = "*"
