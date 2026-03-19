@@ -7,8 +7,14 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd
 import param
 
-from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.engine.url import URL, make_url
+try:
+    from sqlalchemy import create_engine, inspect, text
+    from sqlalchemy.engine.url import URL, make_url
+except ImportError as e:
+    raise ImportError(
+        "SQLAlchemySource requires the 'sqlalchemy' package. "
+        "Install it with: pip install lumen[sql]"
+    ) from e
 
 from ..transforms.base import Filter
 from ..transforms.sql import SQLFilter

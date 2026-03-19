@@ -64,6 +64,21 @@ class ThinkingYesNo(BaseModel):
     yes: bool = Field(description="True if yes, otherwise False.")
 
 
+class FollowUpClassification(BaseModel):
+    """Classify how a follow-up question relates to existing data."""
+
+    chain_of_thought: str = Field(
+        description="In 1-2 sentences, explain which data source can answer this question and why.",
+        examples=[
+            "The user wants to filter the existing derived table avg_sst_by_season to two seasons — this table already has the season column with OND and MJJ values.",
+            "The user wants a bar chart of the data already in memory — no new query needed.",
+            "The user is asking about a completely different metric (temperature vs rainfall) — need a fresh query.",
+        ]
+    )
+
+    follow_up_type: Literal["direct", "derived", "new"]
+
+
 class InsertLine(BaseModel):
     op: Literal["insert"] = "insert"
     line_no: int = Field(ge=1, description=(

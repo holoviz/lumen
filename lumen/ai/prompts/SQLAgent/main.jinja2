@@ -38,7 +38,7 @@ Tables listed under "Others available" do NOT have their schemas loaded yet - if
 {%- block context -%}
 {%- if memory.get('metaset') %}
 ### Data summary
-{{ memory["metaset"].compact_context(n_others=17) }}
+{{ memory["metaset"].compact_context(n_others=17, include_lineage=True) }}
 {%- endif %}
 
 {%- if 'sql' in memory %}

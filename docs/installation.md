@@ -336,7 +336,7 @@ Use a unified interface to access multiple LLM providers and models.
 
     llm = lmai.llm.LiteLLM(
         model_kwargs={
-            "default": {"model": "gpt-4.1-mini"},                    # OpenAI
+            "default": {"model": "gpt-5.4-mini"},                    # OpenAI
             "edit": {"model": "anthropic/claude-sonnet-4-5"},        # Anthropic
             "sql": {"model": "gemini/gemini-2.5-flash"}             # Google
         }

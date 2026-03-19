@@ -19,7 +19,7 @@ from ..context import (
     LWW, ContextError, TContext, merge_contexts,
 )
 from ..llm import Message
-from ..models import ThinkingYesNo
+from ..models import FollowUpClassification
 from ..report import ActorTask
 from ..tools import MetadataLookup, Tool
 from ..utils import log_debug, wrap_logfire
@@ -120,7 +120,7 @@ class Planner(Coordinator):
             },
             "follow_up": {
                 "template": PROMPTS_DIR / "Planner" / "follow_up.jinja2",
-                "response_model": ThinkingYesNo,
+                "response_model": FollowUpClassification,
             },
         }
     )
@@ -194,20 +194,27 @@ class Planner(Coordinator):
                 await tool.sync(context)
                 synced_tools.add(id(tool))
 
-    async def _check_follow_up_question(self, messages: list[Message], context: TContext) -> bool:
-        """Check if the user's query is a follow-up question about the previous dataset."""
+    async def _check_follow_up_question(self, messages: list[Message], context: TContext) -> str:
+        """
+        Classify the user's query as a follow-up type.
+
+        Returns
+        -------
+        str
+            One of "direct", "derived", or "new".
+        """
         # Only check if data is in memory
         if "data" not in context:
-            return False
+            return "new"
 
-        # Use the follow_up prompt to check
+        # Use the follow_up prompt to classify
         result = await self._invoke_prompt("follow_up", messages, context)
 
-        is_follow_up = result.yes
-        if not is_follow_up:
+        follow_up_type = result.follow_up_type
+        if follow_up_type == "new":
             context.pop("pipeline", None)
 
-        return is_follow_up
+        return follow_up_type
 
     async def _execute_planner_tools(self, messages: list[Message], context: TContext):
         """Execute planner tools to gather context before planning."""
@@ -263,17 +270,10 @@ class Planner(Coordinator):
         agents: dict[str, Agent],
         tools: dict[str, Tool],
     ) -> tuple[dict[str, Agent], dict[str, Tool], dict[str, Any]]:
-        is_follow_up = await self._check_follow_up_question(messages, context)
-        if not is_follow_up:
-            await self._execute_planner_tools(messages, context)
-        else:
-            log_debug("\033[92mDetected follow-up question, using existing context\033[0m")
-            with self._add_step(title="Using existing data context...", user="Assistant", steps_layout=self.steps_layout) as step:
-                step.stream("Detected that this is a follow-up question related to the previous dataset.")
-                step.stream("\n\nUsing the existing data in memory to answer without re-executing data retrieval.")
-                step.success_title = "Using existing data for follow-up question"
+        follow_up_type = await self._check_follow_up_question(messages, context)
+        await self._execute_planner_tools(messages, context)
         agents, tools, pre_plan_output = await super()._pre_plan(messages, context, agents, tools)
-        pre_plan_output["is_follow_up"] = is_follow_up
+        pre_plan_output["follow_up_type"] = follow_up_type
         return agents, tools, pre_plan_output
 
     def _render_partial_todos(self, raw_plan: RawPlan | None) -> str:
@@ -292,7 +292,7 @@ class Planner(Coordinator):
 
         return "\n".join(todos_list)
 
-    @wrap_logfire(span_name="Make Plan", extract_args=["messages", "previous_plans", "is_follow_up"])
+    @wrap_logfire(span_name="Make Plan", extract_args=["messages", "previous_plans", "follow_up_type"])
     async def _make_plan(
         self,
         messages: list[Message],
@@ -304,7 +304,7 @@ class Planner(Coordinator):
         previous_plans: list[str],
         plan_model: type[RawPlan],
         step: ChatStep,
-        is_follow_up: bool = False,
+        follow_up_type: str = "new",
     ) -> BaseModel:
         agents = list(agents.values())
         tools = list(tools.values())
@@ -328,8 +328,9 @@ class Planner(Coordinator):
             # the unmet dependencies
             agent_candidates = [agent for agent in agents if not unmet_dependencies or set(agent.output_schema.__annotations__) & unmet_dependencies]
             tool_candidates = [tool for tool in tools if not unmet_dependencies or set(tool.output_schema.__annotations__) & unmet_dependencies]
+            llm_tools, _, _ = self.llm._normalize_tools(self.llm.tools)
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
-            async for reasoning in self._stream_prompt(
+            system = await self._render_prompt(
                 "main",
                 messages,
                 context,
@@ -341,7 +342,15 @@ class Planner(Coordinator):
                 candidates=agent_candidates + tool_candidates,
                 previous_actors=previous_actors,
                 previous_plans=previous_plans,
-                is_follow_up=is_follow_up,
+                follow_up_type=follow_up_type,
+                llm_tools=llm_tools
+            )
+            async for reasoning in self.llm.stream(
+                messages=messages,
+                system=system,
+                model_spec=model_spec,
+                response_model=Reasoning,
+                max_retries=3,
             ):
                 if reasoning.chain_of_thought:  # do not replace with empty string
                     context["reasoning"] = reasoning.chain_of_thought
@@ -500,7 +509,8 @@ class Planner(Coordinator):
         tool_names = list(tools)
         agent_names = list(agents)
         plan_model = self._get_model("main", agents=agent_names, tools=tool_names)
-        is_followup = pre_plan_output["is_follow_up"]
+        follow_up_type = pre_plan_output.get("follow_up_type", "new")
+        is_followup = follow_up_type in ("direct", "derived")
 
         planned = False
         unmet_dependencies = set()
@@ -524,7 +534,7 @@ class Planner(Coordinator):
                         previous_plans,
                         plan_model,
                         istep,
-                        is_follow_up=is_followup,
+                        follow_up_type=follow_up_type,
                     )
                 except asyncio.CancelledError as e:
                     self._todos_title.object = istep.failed_title = "Planning was cancelled, please try again."

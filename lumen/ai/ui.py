@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from functools import partial
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import param
@@ -630,6 +631,7 @@ class UI(Viewer):
         data: DataT | list[DataT] | dict[DataT] | None
             The data to resolve.
         """
+        self.context["provenance_chain"] = ["global"]
         self.context["sources"] = sources = self._resolve_data(data)
         if sources:
             self.context["source"] = sources[-1]
@@ -726,6 +728,10 @@ class UI(Viewer):
         """Get the currently active exploration."""
         return self._explorations.value['view']
 
+    def _exploration_has_outputs(self, exploration: Exploration) -> bool:
+        """Whether an exploration should be shown in split view."""
+        return exploration is not self._home
+
     @hold()
     def _update_main_view(self, force_report_mode: bool | None = None):
         """
@@ -773,9 +779,12 @@ class UI(Viewer):
                 else:
                     main_content = self._splash
                 self._output[1:] = []
-            else:
+            elif self._exploration_has_outputs(exploration):
                 main_content = self._split
                 self._output[1:] = [exploration]
+            else:
+                main_content = self.interface
+                self._output[1:] = []
             self._current_mode = "Exploration"
             self._navigation_caption.object = EXPLORATION_CAPTION
 
@@ -1304,12 +1313,13 @@ class UI(Viewer):
             self._current_help_text = HELP_GETTING_STARTED
 
     @param.depends('context', on_init=True, watch=True)
-    async def _sync_sources(self, event=None):
-        context = event.new if event else self.context
+    async def _sync_sources(self, event=None, global_context=None):
+        global_context = self.context if global_context is None else global_context
+        context = event.new if event else global_context
         if 'sources' in context:
-            old_sources = self.context.get("sources", [self.context["source"]] if "source" in self.context else [])
+            old_sources = global_context.get("sources", [global_context["source"]] if "source" in global_context else [])
             new_sources = [src for src in context["sources"] if src not in old_sources]
-            self.context["sources"] = old_sources + new_sources
+            global_context["sources"] = old_sources + new_sources
 
             # Compute table slugs for old, new, and all sources
             old_slugs = set()
@@ -1320,7 +1330,7 @@ class UI(Viewer):
                     old_slugs.add(table_slug)
 
             all_slugs = set()
-            for source in self.context["sources"]:
+            for source in global_context["sources"]:
                 tables = source.get_tables()
                 for table in tables:
                     table_slug = f'{source.name}{SOURCE_TABLE_SEPARATOR}{table}'
@@ -1329,29 +1339,39 @@ class UI(Viewer):
             new_slugs = all_slugs - old_slugs
 
             # Update visible_slugs: preserve old table visibility, auto-check new tables
-            current_visible = self.context.get("visible_slugs")
+            current_visible = global_context.get("visible_slugs")
             if current_visible is not None:  # Check for None, not truthiness (empty set is valid!)
-                self.context["visible_slugs"] = current_visible.intersection(old_slugs) | new_slugs
-            else:
-                self.context["visible_slugs"] = all_slugs
+                global_context["visible_slugs"] = current_visible.intersection(old_slugs) | new_slugs
+            elif all_slugs:
+                global_context["visible_slugs"] = all_slugs
 
         if "source" in context:
-            if "source" in self.context:
-                old_source = self.context["source"]
-                if "sources" not in self.context:
-                    self.context["sources"] = [old_source]
-                elif old_source not in self.context["sources"]:
-                    self.context["sources"].append(old_source)
-            self.context["source"] = context["source"]
+            source = context["source"]
+            if "source" in global_context:
+                old_source = global_context["source"]
+                if "sources" not in global_context:
+                    global_context["sources"] = [old_source]
+                elif old_source not in global_context["sources"]:
+                    global_context["sources"].append(old_source)
+            elif "sources" not in global_context:
+                global_context["sources"] = []
+            if source not in global_context["sources"]:
+                global_context["sources"].append(source)
+            global_context["source"] = source
         if "table" in context:
-            self.context["table"] = context["table"]
+            global_context["table"] = context["table"]
 
         # Guard against early calls during init when components don't exist yet
         if hasattr(self, '_explorer'):
             await self._explorer.sync()
         # Only sync coordinator if we have sources and coordinator exists
-        if hasattr(self, '_coordinator') and self.context.get("sources"):
-            await self._coordinator.sync(self.context)
+        if hasattr(self, '_coordinator') and global_context.get("sources"):
+            await self._coordinator.sync(global_context)
+
+        # Only update source catalog and input tabs for truly global sources
+        if global_context is not self.context:
+            return
+
         if hasattr(self, '_source_catalog'):
             self._source_catalog.sync(self.context)
 
@@ -1693,6 +1713,21 @@ class ExplorerUI(UI):
     def _toggle_navigation(self, active: bool):
         self._navigation.visible = active
         self._sidebar_menu.update_item(self._sidebar_menu.items[6], active=active, icon="layers" if active else "layers_outlined")
+
+    def _exploration_has_outputs(self, exploration: Exploration) -> bool:
+        """
+        Override base behavior: keep chat-only view until an exploration has
+        rendered output tabs (not just a placeholder).
+        """
+        if exploration is self._home or not exploration.view:
+            return False
+        tabs = exploration.view[0]
+        if len(tabs) == 0:
+            return False
+        if len(tabs) == 1 and not exploration.initialized:
+            # Placeholder-only state ("Waiting on data...")
+            return False
+        return True
 
     @param.depends("_exploration", watch=True)
     def _update_home(self):
@@ -2104,6 +2139,12 @@ class ExplorerUI(UI):
     async def _add_exploration(self, plan: Plan, parent: Exploration) -> Exploration:
         is_home = parent is self._home
         parent_item = self._exploration
+        parent_chain = list(parent.context.get("provenance_chain", ["global"])) if parent.context else ["global"]
+        exploration_id = f"exploration_{id(plan)}"
+        provenance_chain = [*parent_chain, exploration_id]
+        # Ensure this plan executes in the new exploration scope without mutating parent context.
+        plan.context = {**(plan.context or {}), "provenance_chain": provenance_chain}
+        plan.out_context = {**(plan.out_context or {}), "provenance_chain": provenance_chain}
         if is_home:
             parent.conversation = []
         else:
@@ -2284,6 +2325,8 @@ class ExplorerUI(UI):
 
         tabs.extend(content)
         tabs.active = max(tabs.active, len(tabs)-1)
+        if self._exploration['view'] is exploration:
+            self._update_main_view()
         if self._split.collapsed:
             self._split.param.update(
                 sizes=self._split.expanded_sizes,
@@ -2321,7 +2364,13 @@ class ExplorerUI(UI):
             title, vsplit = self._render_view(exploration, view)
             content.insert((idx or 0)+1, (title, vsplit))
         tabs[:] = content
-        tabs.active = len(tabs)-1
+        tabs.active = max(len(tabs)-1, 0)
+        if self._exploration['view'] is exploration:
+            self._update_main_view()
+        if self._split.collapsed:
+            self._split.param.update(
+                sizes=self._split.expanded_sizes,
+            )
 
     def _reset_error(self, plan: Plan, exploration: Exploration, replan: bool = False):
         plan.reset(plan._current)
@@ -2341,10 +2390,11 @@ class ExplorerUI(UI):
         parent = prev["view"]
 
         # Check if we are adding to existing exploration or creating a new one
-        new_exploration = any(
+        is_home = self._exploration['view'] is self._home
+        new_exploration = (any(
             {"pipeline", "view"} & set(step.actor.output_schema.__required_keys__)
             for step in plan
-        )
+        ) and "pipeline" in parent.context) or is_home
 
         partial_plan = None
         if rerun:
@@ -2400,6 +2450,7 @@ class ExplorerUI(UI):
     ):
         self._exploration['view'].conversation = self.interface.objects
         if "__error__" not in plan.out_context and plan.status != "error":
+            await self._sync_sources(SimpleNamespace(new=plan.out_context), global_context=plan.out_context)
             if "pipeline" in plan.out_context:
                 await self._add_analysis_suggestions(plan)
 
@@ -2460,6 +2511,10 @@ class ExplorerUI(UI):
         self._update_main_view()
         with self._busy():
             exploration = self._exploration['view']
-            plan = await self._coordinator.respond(messages, exploration.context)
+            is_home = self._exploration['view'] is self._home
+            context = dict(exploration.context)
+            if not is_home:
+                context['prev_plan'] = exploration.plan
+            plan = await self._coordinator.respond(messages, context)
             if plan is not None:
                 await self._execute_plan(plan)

@@ -28,6 +28,38 @@ from .models import YesNo
 from .utils import log_debug
 
 
+def _metadata_value_matches_filter(metadata_value: Any, filter_value: Any) -> bool:
+    """
+    Match a metadata value against a filter value.
+
+    Supports scalar-to-scalar equality plus list-aware semantics:
+    - scalar metadata vs list filter -> any match
+    - list metadata vs scalar filter -> containment
+    - list metadata vs list filter -> all filter values must be present
+    """
+    metadata_is_sequence = isinstance(metadata_value, (list, tuple, set))
+    filter_is_sequence = isinstance(filter_value, (list, tuple, set))
+
+    if metadata_is_sequence and filter_is_sequence:
+        metadata_values = set(metadata_value)
+        return all(v in metadata_values for v in filter_value)
+    if metadata_is_sequence:
+        return filter_value in metadata_value
+    if filter_is_sequence:
+        return metadata_value in filter_value
+    return metadata_value == filter_value
+
+
+def _metadata_matches_filters(metadata: dict[str, Any], filters: dict[str, Any] | None) -> bool:
+    """Check whether metadata matches all provided filters."""
+    if not filters:
+        return True
+    for key, value in filters.items():
+        if key not in metadata or not _metadata_value_matches_filter(metadata.get(key), value):
+            return False
+    return True
+
+
 class VectorStore(LLMUser):
     """Abstract base class for a vector store."""
 
@@ -817,7 +849,10 @@ class NumpyVectorStore(VectorStore):
         if filters and len(self.vectors) > 0:
             mask = np.ones(len(self.vectors), dtype=bool)
             for key, value in filters.items():
-                mask &= np.array([item.get(key) == value for item in self.metadata])
+                mask &= np.array([
+                    _metadata_value_matches_filter(item.get(key), value)
+                    for item in self.metadata
+                ])
             similarities = np.where(mask, similarities, -9999)
 
         results = []
@@ -863,7 +898,10 @@ class NumpyVectorStore(VectorStore):
 
         mask = np.ones(len(self.metadata), dtype=bool)
         for key, value in filters.items():
-            mask &= np.array([item.get(key) == value for item in self.metadata])
+            mask &= np.array([
+                _metadata_value_matches_filter(item.get(key), value)
+                for item in self.metadata
+            ])
 
         matching_indices = np.where(mask)[0]
 
@@ -1371,18 +1409,17 @@ class DuckDBVectorStore(VectorStore):
 
         if filters:
             for key, value in filters.items():
-                base_query += f" AND json_extract_string(metadata, '$.{key}') = ?"
-                params.append(str(value))
+                if isinstance(value, (str, int, float, bool)):
+                    base_query += f" AND json_extract_string(metadata, '$.{key}') = ?"
+                    params.append(str(value))
 
         base_query += """
-            ORDER BY similarity DESC
-            LIMIT ?;
+            ORDER BY similarity DESC;
         """
-        params.append(top_k)
 
         try:
             result = self.connection.execute(base_query, params).fetchall()
-            return [
+            results = [
                 {
                     "id": row[0],
                     "text": row[1],
@@ -1391,6 +1428,9 @@ class DuckDBVectorStore(VectorStore):
                 }
                 for row in result
             ]
+            if filters:
+                results = [r for r in results if _metadata_matches_filters(r["metadata"], filters)]
+            return results[:top_k]
         except duckdb.Error as e:
             log_debug(f"Error during query: {e}")
             return []
@@ -1423,30 +1463,24 @@ class DuckDBVectorStore(VectorStore):
         """
         params = []
 
-        for key, value in filters.items():
-            base_query += f" AND json_extract_string(metadata, '$.{key}') = ?"
-            params.append(str(value))
-
-        if offset:
-            base_query += " OFFSET ?"
-            params.append(offset)
-
-        if limit is not None:
-            base_query += " LIMIT ?"
-            params.append(limit)
-
         base_query += ";"
 
         result = self.connection.execute(base_query, params).fetchall()
 
-        return [
+        output = [
             {
                 "id": row[0],
                 "text": row[1],
                 "metadata": json.loads(row[2]),
             }
             for row in result
+            if _metadata_matches_filters(json.loads(row[2]), filters)
         ]
+        if offset:
+            output = output[offset:]
+        if limit is not None:
+            output = output[:limit]
+        return output
 
     def delete(self, ids: list[int]) -> None:
         """
@@ -1783,7 +1817,14 @@ class ChromaDBVectorStore(VectorStore):
         """
         if not filters:
             return None
-        conditions = [{key: {"$eq": value}} for key, value in filters.items()]
+        scalar_types = (str, int, float, bool)
+        conditions = [
+            {key: {"$eq": value}}
+            for key, value in filters.items()
+            if isinstance(value, scalar_types)
+        ]
+        if not conditions:
+            return None
         if len(conditions) == 1:
             return conditions[0]
         return {"$and": conditions}
@@ -1908,7 +1949,7 @@ class ChromaDBVectorStore(VectorStore):
         where = self._build_where_clause(filters) if filters else None
 
         # ChromaDB errors if n_results > number of items in the index
-        n_results = min(top_k, count)
+        n_results = count if filters else min(top_k, count)
 
         kwargs: dict[str, t.Any] = {
             "n_results": n_results,
@@ -1936,14 +1977,19 @@ class ChromaDBVectorStore(VectorStore):
                 similarity = 1.0 - distance
                 if similarity < threshold:
                     continue
+                metadata = self._restore_metadata(results["metadatas"][0][i])
+                if filters and not _metadata_matches_filters(metadata, filters):
+                    continue
                 output.append(
                     {
                         "id": int(results["ids"][0][i]),
                         "text": results["documents"][0][i],
-                        "metadata": self._restore_metadata(results["metadatas"][0][i]),
+                        "metadata": metadata,
                         "similarity": float(similarity),
                     }
                 )
+                if len(output) >= top_k:
+                    break
         return output
 
     def filter_by(
@@ -1981,14 +2027,20 @@ class ChromaDBVectorStore(VectorStore):
 
         result = self._collection.get(**kwargs)
 
-        return [
+        output = [
             {
                 "id": int(result["ids"][i]),
                 "text": result["documents"][i],
                 "metadata": self._restore_metadata(result["metadatas"][i]),
             }
             for i in range(len(result["ids"]))
+            if _metadata_matches_filters(self._restore_metadata(result["metadatas"][i]), filters)
         ]
+        if offset:
+            output = output[offset:]
+        if limit is not None:
+            output = output[:limit]
+        return output
 
     def delete(self, ids: list[int]) -> None:
         """

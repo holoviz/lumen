@@ -903,6 +903,20 @@ def load_json(json_spec: str) -> dict:
     return json.loads(json_spec.encode().decode('unicode_escape'))
 
 
+def slug_to_table_name(slug: str) -> str:
+    """Extract just the table name from a source-qualified slug."""
+    return slug.split(SOURCE_TABLE_SEPARATOR, 1)[-1]
+
+
+def find_slug_by_table_name(table_name: str, candidates: dict | list) -> str | None:
+    """Find a slug in *candidates* whose table-name suffix matches *table_name*."""
+    keys = candidates if isinstance(candidates, (list, set, frozenset)) else candidates.keys()
+    return next(
+        (k for k in keys if slug_to_table_name(k) == table_name),
+        None,
+    )
+
+
 def parse_table_slug(table: str, sources: list[Source], normalize: bool = True) -> tuple[Source | None, str]:
     if SOURCE_TABLE_SEPARATOR in table:
         a_source_name, a_table = table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)

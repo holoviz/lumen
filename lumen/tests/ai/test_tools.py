@@ -10,6 +10,7 @@ from panel.viewable import Viewable
 from lumen.ai.coordinator import Coordinator
 from lumen.ai.tools import FunctionTool, MetadataLookup, define_tool
 from lumen.ai.vector_store import NumpyVectorStore
+from lumen.sources.duckdb import DuckDBSource
 
 
 def add(a: int, b: int) -> int:
@@ -110,3 +111,22 @@ class TestVectorLookupToolUser:
 
         # Each tool should have its own vector store that was passed in
         assert id(table_tool.vector_store) == id(vs1)
+
+
+async def test_metadata_lookup_source_keeps_first_provenance():
+    source = DuckDBSource(uri=":memory:", tables={"test_table": "SELECT 1 as id"})
+    tool = MetadataLookup(vector_store=NumpyVectorStore())
+
+    context_global = {"sources": [source], "provenance_chain": ["global"], "tables_metadata": {}}
+    await tool.sync(context_global)
+
+    context_exploration = {
+        "sources": [source],
+        "provenance_chain": ["global", "exploration_1"],
+        "tables_metadata": {},
+    }
+    await tool.sync(context_exploration)
+
+    entries = tool.vector_store.filter_by({"source": source.name, "type": "tables"})
+    assert len(entries) == 1
+    assert entries[0]["metadata"]["provenance_chain"] == ["global"]

@@ -8,7 +8,9 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from .config import SOURCE_TABLE_SEPARATOR
-from .utils import get_schema, log_debug, truncate_string
+from .utils import (
+    get_schema, log_debug, slug_to_table_name, truncate_string,
+)
 
 if TYPE_CHECKING:
     from ..sources import Source
@@ -42,6 +44,8 @@ class TableCatalogEntry:
     description: str | None = None
     sql_expr: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    derived_from: list[str] = field(default_factory=list)  # parent table slugs; empty = original
+    created_order: int = 0  # session-scoped creation index; 0 = original, 1/2/3... = derived
 
 
 @dataclass
@@ -130,6 +134,8 @@ class Metaset:
         truncate: bool,
         include_sql: bool = True,
         include_metadata: bool = True,
+        include_lineage: bool = False,
+        max_order: int = 0,
     ) -> dict:
         data = {}
 
@@ -159,6 +165,14 @@ class Metaset:
             schema = self.schemas.get(table_slug)
             if schema and schema.get("__len__"):
                 data['n_rows'] = len(schema)
+
+        if include_lineage and catalog_entry.derived_from:
+            data['derived_from'] = [
+                slug_to_table_name(p) for p in catalog_entry.derived_from
+            ]
+            data['step'] = catalog_entry.created_order
+            if catalog_entry.created_order == max_order:
+                data['latest'] = True
 
         if include_columns:
             if catalog_entry.columns:
@@ -221,6 +235,22 @@ class Metaset:
 
         return columns_data
 
+    def _deduplicated_slugs(self) -> list[str]:
+        """
+        Return catalog slugs deduplicated by table name, keeping the
+        newest entry (highest ``created_order``) when the same table
+        appears under multiple source names after materialization.
+
+        Sorted by ``created_order`` descending so the most recent
+        derived tables appear first in prompts.
+        """
+        best: dict[str, tuple[int, str]] = {}  # table_name -> (created_order, slug)
+        for slug, entry in self.catalog.items():
+            tname = slug_to_table_name(slug)
+            if tname not in best or entry.created_order > best[tname][0]:
+                best[tname] = (entry.created_order, slug)
+        return [slug for _, slug in sorted(best.values(), reverse=True)]
+
     def _generate_context(
         self,
         include_columns: bool = False,
@@ -229,18 +259,23 @@ class Metaset:
         include_sql: bool = True,
         include_metadata: bool = True,
         include_docs: bool = True,
+        include_lineage: bool = False,
         n: int | None = None,
         offset: int = 0,
         show_source: bool | None = None,
         n_others: int = 0,
     ) -> str:
+        # Deduplicate catalog slugs — keep only the newest entry per
+        # table name so stale materialization generations don't appear.
+        active_slugs = set(self._deduplicated_slugs())
+
         # Determine which tables to show with full details
         if self.schema_tables is not None:
-            # Use explicitly set schema_tables
-            primary_slugs = [s for s in self.schema_tables if s in self.catalog]
+            # Use explicitly set schema_tables, filtered to active slugs
+            primary_slugs = [s for s in self.schema_tables if s in self.catalog and s in active_slugs]
         else:
-            # Fall back to top n by similarity
-            primary_slugs = self.get_top_tables(n, offset)
+            # Fall back to top n by similarity, filtered to active slugs
+            primary_slugs = [s for s in self.get_top_tables(n, offset) if s in active_slugs]
 
         # Check if all tables come from a single source
         unique_sources = set()
@@ -253,6 +288,9 @@ class Metaset:
         if show_source is None:
             show_source = not single_source
 
+        # Precompute max created_order for "latest" annotation
+        max_order = max((e.created_order for e in self.catalog.values()), default=0)
+
         # Build tables data for primary tables
         tables_data = {}
         for table_slug in primary_slugs:
@@ -263,13 +301,14 @@ class Metaset:
             if single_source and not show_source and SOURCE_TABLE_SEPARATOR in table_slug:
                 display_slug = table_slug.split(SOURCE_TABLE_SEPARATOR, 1)[1]
             tables_data[display_slug] = self._build_table_data(
-                table_slug, entry, include_columns, include_schema, truncate, include_sql, include_metadata
+                table_slug, entry, include_columns, include_schema, truncate,
+                include_sql, include_metadata, include_lineage, max_order
             )
 
         # Build result
         result = ""
         if tables_data:
-            if all(not data for data in tables_data.values()):
+            if not include_lineage and all(not data for data in tables_data.values()):
                 result = yaml.dump(list(tables_data.keys()), default_flow_style=False, allow_unicode=True)
             else:
                 result = yaml.dump(tables_data, default_flow_style=False, allow_unicode=True, sort_keys=False)
@@ -279,7 +318,7 @@ class Metaset:
             primary_set = set(primary_slugs)
             other_slugs = [
                 slug for slug in self.catalog.keys()
-                if slug not in primary_set
+                if slug not in primary_set and slug in active_slugs
             ][:n_others]
             if other_slugs:
                 result += "\n\nOthers available:\n"
@@ -287,7 +326,16 @@ class Metaset:
                     display_slug = slug
                     if single_source and not show_source and SOURCE_TABLE_SEPARATOR in slug:
                         display_slug = slug.split(SOURCE_TABLE_SEPARATOR, 1)[1]
-                    result += f"- {display_slug}\n"
+                    # Add a short lineage hint for derived tables
+                    entry = self.catalog.get(slug)
+                    if include_lineage and entry and entry.derived_from:
+                        parents = ", ".join(
+                            slug_to_table_name(p) for p in entry.derived_from
+                        )
+                        marker = " ★" if entry.created_order == max_order else ""
+                        result += f"- {display_slug} (from {parents}){marker}\n"
+                    else:
+                        result += f"- {display_slug}\n"
 
         # Add docs section
         if include_docs:
@@ -303,6 +351,17 @@ class Metaset:
                 result += "</documentation>"
 
         return result or "No data sources or documentation available."
+
+    def _resolve_table_slug(self, table_name: str | None) -> str | None:
+        """Resolve a bare table name to its full catalog slug."""
+        if not table_name:
+            return None
+        if table_name in self.catalog:
+            return table_name
+        return next(
+            (s for s in self.catalog if slug_to_table_name(s) == table_name),
+            None,
+        )
 
     def get_top_tables(self, n: int | None = None, offset: int = 0) -> list[str]:
         """Get top n table slugs sorted by similarity.
@@ -325,7 +384,7 @@ class Metaset:
             sorted_slugs = sorted_slugs[:n]
         return sorted_slugs
 
-    def table_list(self, n: int | None = None, offset: int = 0, show_source: bool | None = None, n_others: int = 0, include_metadata: bool = False, **override_kwargs) -> str:
+    def table_list(self, n: int | None = None, offset: int = 0, show_source: bool | None = None, n_others: int = 0, include_metadata: bool = False, include_lineage: bool = False, **override_kwargs) -> str:
         """Generate minimal table listing for planning - just table names and columns without schema details."""
         generate_kwargs = {
             "include_columns": False,
@@ -334,11 +393,12 @@ class Metaset:
             "include_sql": False,
             "include_metadata": include_metadata,
             "include_docs": True,
+            "include_lineage": include_lineage,
         }
         generate_kwargs.update(override_kwargs)
         return self._generate_context(**generate_kwargs, n=n, offset=offset, show_source=show_source, n_others=n_others)
 
-    def table_context(self, n: int | None = None, offset: int = 0, show_source: bool | None = None, n_others: int = 0, include_metadata: bool = True, **override_kwargs) -> str:
+    def table_context(self, n: int | None = None, offset: int = 0, show_source: bool | None = None, n_others: int = 0, include_metadata: bool = True, include_lineage: bool = True, **override_kwargs) -> str:
         generate_kwargs = {
             "include_columns": True,
             "include_schema": False,
@@ -346,11 +406,12 @@ class Metaset:
             "include_sql": False,
             "include_metadata": include_metadata,
             "include_docs": True,
+            "include_lineage": include_lineage,
         }
         generate_kwargs.update(override_kwargs)
         return self._generate_context(**generate_kwargs, n=n, offset=offset, show_source=show_source, n_others=n_others)
 
-    def full_context(self, n: int | None = None, offset: int = 0, show_source: bool | None = None, n_others: int = 0, include_metadata: bool = True, **override_kwargs) -> str:
+    def full_context(self, n: int | None = None, offset: int = 0, show_source: bool | None = None, n_others: int = 0, include_metadata: bool = True, include_lineage: bool = True, **override_kwargs) -> str:
         generate_kwargs = {
             "include_columns": True,
             "include_schema": True,
@@ -358,11 +419,12 @@ class Metaset:
             "include_sql": False,
             "include_metadata": include_metadata,
             "include_docs": True,
+            "include_lineage": include_lineage,
         }
         generate_kwargs.update(override_kwargs)
         return self._generate_context(**generate_kwargs, n=n, offset=offset, show_source=show_source, n_others=n_others)
 
-    def compact_context(self, n: int | None = None, offset: int = 0, show_source: bool | None = None, n_others: int = 0, include_metadata: bool = True, **override_kwargs) -> str:
+    def compact_context(self, n: int | None = None, offset: int = 0, show_source: bool | None = None, n_others: int = 0, include_metadata: bool = True, include_lineage: bool = True, **override_kwargs) -> str:
         generate_kwargs = {
             "include_columns": True,
             "include_schema": True,
@@ -370,6 +432,7 @@ class Metaset:
             "include_sql": False,
             "include_metadata": include_metadata,
             "include_docs": True,
+            "include_lineage": include_lineage,
         }
         generate_kwargs.update(override_kwargs)
         return self._generate_context(**generate_kwargs, n=n, offset=offset, show_source=show_source, n_others=n_others)

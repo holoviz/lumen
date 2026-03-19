@@ -4,6 +4,7 @@ import sys
 import tempfile
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import duckdb
@@ -151,6 +152,18 @@ async def test_exploration_ui_error(explorer_ui_with_error):
     # Check Interface contents
     assert len(ui.interface) == 2
     assert len(ui.interface[1].footer_objects) == 2 # Rerun buttons
+
+async def test_sync_sources_keeps_source_and_sources_in_sync(explorer_ui):
+    ui = explorer_ui
+    previous_sources = list(ui.context["sources"])
+    new_source = DuckDBSource(uri=":memory:", tables={"new_table": "SELECT 1 as id"})
+
+    await ui._sync_sources(SimpleNamespace(new={"source": new_source}))
+
+    assert ui.context["source"] is new_source
+    assert new_source in ui.context["sources"]
+    for source in previous_sources:
+        assert source in ui.context["sources"]
 
 async def test_exploration_ui_error_rerun(explorer_ui_with_error):
     ui = explorer_ui_with_error
@@ -439,6 +452,43 @@ async def test_exploration_parent_relationship(explorer_ui):
     assert exploration.parent.title == 'Home'
 
 
+async def test_exploration_sets_provenance_chain(explorer_ui):
+    explorer_ui._explorer.param.update(table_slug="test_table")
+    await explorer_ui._add_exploration_from_explorer()
+    await async_wait_until(lambda: len(explorer_ui._explorations.items) > 1)
+    exploration = explorer_ui._explorations.items[1]['view']
+    provenance_chain = exploration.context.get("provenance_chain")
+    assert isinstance(provenance_chain, list)
+    assert provenance_chain[0] == "global"
+    assert len(provenance_chain) == 2
+
+
+async def test_followup_exploration_extends_provenance_chain(explorer_ui):
+    explorer_ui._explorer.param.update(table_slug="test_table")
+    await explorer_ui._add_exploration_from_explorer()
+    await async_wait_until(lambda: len(explorer_ui._explorations.items) > 1)
+    parent_item = explorer_ui._explorations.items[1]
+    parent_exploration = parent_item['view']
+    parent_chain = list(parent_exploration.context["provenance_chain"])
+
+    sql_agent = SQLAgent(llm=explorer_ui.llm)
+    child_plan = Plan(
+        ActorTask(sql_agent),
+        history=[{"content": "Show first 5 rows", "role": "user"}],
+        title="First 5 rows",
+        context=parent_exploration.context,
+        is_followup=True
+    )
+
+    await explorer_ui._add_exploration(child_plan, parent_exploration)
+    child_item = explorer_ui._explorations.items[1]['items'][0]
+    child_exploration = child_item['view']
+    child_chain = child_exploration.context["provenance_chain"]
+
+    assert child_chain[:len(parent_chain)] == parent_chain
+    assert len(child_chain) == len(parent_chain) + 1
+
+
 async def test_chat_upload_flow_processes_files_directly(explorer_ui, monkeypatch):
     """Test that file uploads via chat are processed directly without opening a dialog."""
     ui = explorer_ui
@@ -522,6 +572,24 @@ async def test_exploration_launch_transitions_to_split(explorer_ui):
 
     # Should not be showing splash anymore
     assert explorer_ui._splash not in explorer_ui._main
+
+
+async def test_new_exploration_without_outputs_keeps_chat_view(explorer_ui):
+    """A new exploration without outputs should not expand the split output pane."""
+    explorer_ui.llm.set_responses(["No output yet"])
+    chat_agent = ChatAgent(llm=explorer_ui.llm)
+    plan = Plan(
+        ActorTask(chat_agent),
+        history=[{"content": "Just answer in chat", "role": "user"}],
+        title="Chat only",
+        context=explorer_ui.context
+    )
+
+    await explorer_ui._execute_plan(plan)
+
+    assert len(explorer_ui._explorations.items) > 1
+    assert explorer_ui._main[1] is explorer_ui.interface
+    assert explorer_ui._split not in explorer_ui._main
 
 
 async def test_exploration_with_pipeline_data_shows_split(explorer_ui):

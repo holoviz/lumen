@@ -591,7 +591,7 @@ class BaseSourceControls(Viewer):
             if len(data) == 0:
                 raise ValueError("JSON array is empty")
             if all(isinstance(item, dict) for item in data):
-                return pd.DataFrame(data)
+                return pd.json_normalize(data)
             else:
                 return pd.DataFrame({"value": data})
         elif isinstance(data, dict):
@@ -599,7 +599,7 @@ class BaseSourceControls(Viewer):
             for key in data_keys:
                 if key in data and isinstance(data[key], list):
                     if len(data[key]) > 0 and all(isinstance(item, dict) for item in data[key]):
-                        return pd.DataFrame(data[key])
+                        return pd.json_normalize(data[key])
             if all(isinstance(v, list) for v in data.values()):
                 lengths = [len(v) for v in data.values()]
                 if len(set(lengths)) == 1:
@@ -742,8 +742,17 @@ class BaseSourceControls(Viewer):
                     self.param.trigger("outputs")
             elif card.extension.endswith(TABLE_EXTENSIONS):
                 if source is None:
-                    source_id = f"{self.source_name_prefix}{self._count:06d}"
-                    source = DuckDBSource(uri=":memory:", ephemeral=True, name=source_id, tables={})
+                    # Reuse existing ephemeral DuckDB source to keep all
+                    # uploaded tables in one connection across chat uploads.
+                    existing_sources = self.outputs.get("sources", [])
+                    for existing in existing_sources:
+                        if isinstance(existing, DuckDBSource) and existing.ephemeral:
+                            source = existing
+                            break
+                    if source is None:
+                        source_id = f"{self.source_name_prefix}{self._count:06d}"
+                        source = DuckDBSource(uri=":memory:", ephemeral=True, name=source_id, tables={})
+                        self._count += 1
                 table_name = card.alias
                 filename = f"{card.filename}.{card.extension}"
                 if table_name not in source.metadata:
