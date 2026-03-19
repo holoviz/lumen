@@ -343,10 +343,7 @@ class VegaLiteEditor(LumenEditor):
             import vl_convert as vlc
             vlc.vegalite_to_vega(spec)
         except ValueError as e:
-            # Strip JavaScript stack trace noise from vl-convert errors
             msg = str(e)
-            if '\n    at ' in msg:
-                msg = msg[:msg.index('\n    at ')]
             raise RuntimeError(msg) from e
         return super().validate_spec(spec)
 
