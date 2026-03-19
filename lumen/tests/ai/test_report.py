@@ -409,12 +409,12 @@ def test_actortask_spec_roundtrip_uses_actor_lookup():
         async def respond(self, messages, context, **kwargs):
             return [], {}
 
-    actor = DummyActor(name="dummy_actor")
+    actor = DummyActor()
     task = ActorTask(actor, title="T1", instruction="Run")
     task.history = [{"role": "user", "content": "do"}]
 
     spec = task.to_spec()
-    new = Task.from_spec(spec, actor_lookup={"dummy_actor": actor})
+    new = Task.from_spec(spec, actor_lookup={"DummyActor": actor})
     assert isinstance(new, ActorTask)
     assert new.actor is actor
     assert new.title == "T1"
