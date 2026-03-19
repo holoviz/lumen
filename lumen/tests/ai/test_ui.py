@@ -1480,3 +1480,65 @@ async def test_edit_on_second_exploration_preserves_first(explorer_ui):
     assert "pipeline" in exploration_1.context
     assert "table" in exploration_1.context
     assert "sql" in exploration_1.context
+
+
+async def test_edit_on_child_exploration_switches_to_parent(explorer_ui):
+    """Editing on a nested (followup) exploration should remove only that
+    child and switch to the parent, not all the way back to Home."""
+    ui = explorer_ui
+    await _create_successful_exploration(ui)
+
+    assert len(ui._explorations.items) == 2
+    parent_item = ui._explorations.items[1]
+    parent_exploration = parent_item['view']
+
+    # Create a child (followup) exploration under the parent
+    test_source = ui.context["source"]
+    SQLQueryWithTables = make_sql_model([(test_source.name, "test_table")])
+    ui.llm.set_responses([
+        SQLQueryWithTables(
+            query="SELECT * FROM test_table LIMIT 5",
+            table_slug="test_limit",
+            tables=["test_table"]
+        )
+    ])
+    sql_agent = SQLAgent(llm=ui.llm)
+    child_plan = Plan(
+        ActorTask(sql_agent),
+        history=[{"content": "Show first 5 rows", "role": "user"}],
+        title="First 5 rows",
+        context=parent_exploration.context,
+        is_followup=True
+    )
+    await ui._add_exploration(child_plan, parent_exploration)
+    await asyncio.sleep(0.1)
+
+    # Re-fetch parent_item after _add_exploration may have updated it
+    parent_item = ui._explorations.items[1]
+
+    # Verify child was created and switch to it
+    assert len(parent_item.get('items', [])) == 1
+    child_item = parent_item['items'][0]
+    child_context = child_item['view'].context
+    ui._explorations.value = ui._exploration = child_item
+
+    async def noop_callback(contents, user, instance):
+        return
+
+    ui.interface.callback = noop_callback
+
+    # Edit on the child -- should remove child and switch to parent
+    await ui.interface.edit_callback("Edited followup", 0, ui.interface)
+
+    # Should be on parent, not Home
+    assert ui._exploration['view'] is parent_exploration
+    assert ui._exploration['view'] is not ui._home
+    assert ui._last_synced is parent_exploration
+
+    # Child should be removed from parent's items
+    assert len(ui._exploration.get('items', [])) == 0
+    assert len(child_context) == 0
+
+    # Parent and Home still intact
+    assert len(ui._explorations.items) == 2
+    assert parent_exploration.plan is not None

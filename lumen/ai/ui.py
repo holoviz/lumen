@@ -2032,7 +2032,8 @@ class ExplorerUI(UI):
         self._update_main_view(force_report_mode=active)
 
     def _cleanup_exploration(self, item):
-        """Clean up an exploration and its children, remove from tree, switch to Home."""
+        """Clean up an exploration and its children, remove from tree,
+        and switch to parent (or Home for top-level explorations)."""
         exploration = item['view']
         if exploration.plan is None:
             return
@@ -2043,18 +2044,22 @@ class ExplorerUI(UI):
         exploration.plan.cleanup()
         exploration.context.clear()
         if item in self._explorations.items:
+            # Top-level exploration: remove and switch to Home
             self._explorations.items = [
                 it for it in self._explorations.items if it is not item
             ]
+            home_item = self._explorations.items[0]
+            self._explorations.value = self._exploration = home_item
+            self._last_synced = self._home
         else:
+            # Nested (followup) exploration: remove and switch to parent
             parent = item["parent"]
             self._explorations.update_item(
                 parent,
                 items=[it for it in parent["items"] if it is not item],
             )
-        home_item = self._explorations.items[0]
-        self._explorations.value = self._exploration = home_item
-        self._last_synced = self._home
+            self._explorations.value = self._exploration = parent
+            self._last_synced = parent['view']
 
     async def _delete_exploration(self, item):
         await self._idle.wait()
