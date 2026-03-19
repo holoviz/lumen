@@ -13,6 +13,8 @@ Critical Requirements:
 - Preserve original formatting, indentation, and style
 - Ground your response in the specific dataset at hand; do not guess column names
 - Each edit must declare its op: "insert", "replace", or "delete"
+- All line_no values refer to the ORIGINAL numbering shown above — they do not shift as edits are applied
+- To insert a block of N lines before original line L, use N inserts all with line_no=L — they appear in order
 {% endblock %}
 
 {%- block context %}

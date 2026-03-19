@@ -82,19 +82,20 @@ class FollowUpClassification(BaseModel):
 class InsertLine(BaseModel):
     op: Literal["insert"] = "insert"
     line_no: int = Field(ge=1, description=(
-        "Insert BEFORE this 1-based line number. "
-        "Use line_no == len(lines) to append at the end."
+        "Insert new content BEFORE this original line number (1-based). "
+        "To append after the last line, use line_no = last_line + 1. "
+        "Multiple inserts at the same line_no appear in the order given."
     ))
     line: str = Field(min_length=1, description="Content for the new line (must be non-empty).")
 
 class ReplaceLine(BaseModel):
     op: Literal["replace"] = "replace"
-    line_no: int = Field(ge=1, description="The 1-based line number to replace.")
+    line_no: int = Field(ge=1, description="The original line number (1-based) to replace.")
     line: str = Field(description="The new content for the line (empty string is allowed).")
 
 class DeleteLine(BaseModel):
     op: Literal["delete"] = "delete"
-    line_no: int = Field(ge=1, description="The 1-based line number to delete.")
+    line_no: int = Field(ge=1, description="The original line number (1-based) to delete.")
 
 LineEdit = Annotated[
     InsertLine | ReplaceLine | DeleteLine,
