@@ -279,11 +279,20 @@ class Task(Viewer):
         """
         params: dict[str, Any] = {}
         for k in ("title", "instruction", "history", "abort_on_error"):
-            if k in self.param:
-                v = getattr(self, k)
-                if k == "history":
-                    v = _ensure_jsonable(v)
-                params[k] = v
+            v = getattr(self, k)
+            pobj = self.param[k]
+            try:
+                equal = is_equal(v, pobj.default)
+            except Exception:
+                try:
+                    equal = v == pobj.default
+                except Exception:
+                    equal = False
+            if equal:
+                continue
+            if k == "history":
+                v = _ensure_jsonable(v)
+            params[k] = v
 
         if include_context and "context" in self.param:
             params["context"] = _ensure_jsonable(self.context)
@@ -296,7 +305,7 @@ class Task(Viewer):
         if include_views:
             params["views"] = None
 
-        return {"type": _task_type_spec(self), "params": params}
+        return {"type": _task_type_spec(self), **params}
 
     @classmethod
     def from_spec(
@@ -304,6 +313,7 @@ class Task(Viewer):
         spec: dict[str, Any],
         *,
         actor_lookup: dict[str, Actor | Tool] | None = None,
+        **params
     ) -> Task:
         """
         Materialize a Task from a spec.
@@ -315,7 +325,6 @@ class Task(Viewer):
         """
         spec = dict(spec)
         type_spec = spec.get("type")
-        params = dict(spec.get("params") or {})
         tasks = spec.get("tasks")
         if type_spec:
             task_type = _task_type_from_spec(type_spec)
@@ -325,12 +334,17 @@ class Task(Viewer):
         if tasks is not None:
             # Delegate to TaskGroup-like materialization
             if hasattr(task_type, "_tasks"):
-                return task_type.from_spec(spec, actor_lookup=actor_lookup)  # type: ignore[misc]
+                return task_type.from_spec(spec, actor_lookup=actor_lookup, **params)  # type: ignore[misc]
 
         if hasattr(task_type, "from_spec") and task_type is not cls:
-            return task_type.from_spec(spec, actor_lookup=actor_lookup)  # type: ignore[misc]
+            return task_type.from_spec(spec, actor_lookup=actor_lookup, **params)  # type: ignore[misc]
 
-        return task_type(**params)  # type: ignore[call-arg]
+        base_params = {k: v for k, v in spec.items() if k not in ("type", "tasks", "params")}
+        if "params" in spec and isinstance(spec["params"], dict):
+            # Backward compatibility with nested param format.
+            base_params = dict(spec["params"], **base_params)
+        materialized_params = dict(base_params, **params)
+        return task_type(**materialized_params)  # type: ignore[call-arg]
 
 
 class TaskGroup(Task):
@@ -725,16 +739,21 @@ class TaskGroup(Task):
         spec: dict[str, Any],
         *,
         actor_lookup: dict[str, Actor | Tool] | None = None,
+        **params
     ) -> TaskGroup:
         spec = dict(spec)
         type_spec = spec.get("type")
-        params = dict(spec.get("params") or {})
+        base_params = {k: v for k, v in spec.items() if k not in ("type", "tasks", "params")}
+        if "params" in spec and isinstance(spec["params"], dict):
+            # Backward compatibility with nested param format.
+            base_params = dict(spec["params"], **base_params)
+        params = dict(base_params, **params)
         tasks_spec = list(spec.get("tasks") or [])
 
         group_type = _task_type_from_spec(type_spec) if type_spec else cls
         tasks: list[Task] = []
         for ts in tasks_spec:
-            tasks.append(Task.from_spec(ts, actor_lookup=actor_lookup))
+            tasks.append(Task.from_spec(ts, actor_lookup=actor_lookup, context=params.get("context", {})))
 
         obj = group_type(*tasks, **params)  # type: ignore[call-arg]
         for t in obj:
@@ -962,7 +981,7 @@ class Report(TaskGroup):
             include_artifacts=include_artifacts,
         )
         if self.auto_execute != self.param.auto_execute.default:
-            spec["params"]["auto_execute"] = self.auto_execute
+            spec["auto_execute"] = self.auto_execute
         return spec
 
     def _init_view(self):
@@ -1281,7 +1300,7 @@ class ActorTask(ExecutableTask):
             include_artifacts=include_artifacts,
         )
         # Store actor by lookup key; reconstruction requires an explicit mapping.
-        spec["params"]["actor"] = actor_key or getattr(self.actor, "name", type(self.actor).__name__)
+        spec["actor"] = actor_key or type(self.actor).__name__
         return spec
 
     @classmethod
@@ -1290,12 +1309,17 @@ class ActorTask(ExecutableTask):
         spec: dict[str, Any],
         *,
         actor_lookup: dict[str, Actor | Tool] | None = None,
+        **params
     ) -> ActorTask:
         spec = dict(spec)
-        params = dict(spec.get("params") or {})
+        base_params = {k: v for k, v in spec.items() if k not in ("type", "tasks", "params")}
+        if "params" in spec and isinstance(spec["params"], dict):
+            # Backward compatibility with nested param format.
+            base_params = dict(spec["params"], **base_params)
+        params = dict(base_params, **params)
         actor_key = params.pop("actor", None)
         if actor_key is None:
-            raise ValueError("ActorTask spec did not declare required 'actor' key in params.")
+            raise ValueError("ActorTask spec did not declare required 'actor' key.")
         if actor_lookup is None or actor_key not in actor_lookup:
             known = [] if actor_lookup is None else sorted(actor_lookup)
             raise ValueError(

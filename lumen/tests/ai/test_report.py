@@ -377,8 +377,8 @@ def test_taskgroup_spec_roundtrip_preserves_structure():
     spec = tg.to_spec()
 
     assert "tasks" in spec
-    assert "views" not in spec.get("params", {})
-    assert "out_context" not in spec.get("params", {})
+    assert "views" not in spec
+    assert "out_context" not in spec
 
     new = Task.from_spec(spec)
     assert isinstance(new, TaskGroup)
