@@ -53,8 +53,8 @@ def _task_type_spec(obj: Any) -> str:
     return f"{type(obj).__module__}.{type(obj).__name__}"
 
 
-def _task_type_from_spec(type_spec: str) -> type:
-    return resolve_module_reference(type_spec)
+def _task_type_from_spec(type_spec: str) -> type[Actor]:
+    return resolve_module_reference(type_spec, component_type=Task)
 
 
 def _ensure_jsonable(value: Any) -> Any:
