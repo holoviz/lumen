@@ -117,9 +117,15 @@ class TestConstruction:
         with pytest.raises(ValueError, match="Either 'uri' or '_dataset'"):
             XArraySQLSource()
 
-    def test_dialect_is_postgres(self, synthetic_dataset):
+    def test_dialect(self, synthetic_dataset):
         source = XArraySQLSource(_dataset=synthetic_dataset)
-        assert source.dialect == "postgres"
+        assert source.dialect == "any"
+
+    def test_from_dataset_classmethod(self, synthetic_dataset):
+        source = XArraySQLSource.from_dataset(synthetic_dataset)
+        assert source.get_tables() == ["pressure", "temperature"]
+        df = source.execute("SELECT * FROM temperature LIMIT 3")
+        assert len(df) == 3
 
     def test_supports_sql(self, synthetic_dataset):
         source = XArraySQLSource(_dataset=synthetic_dataset)

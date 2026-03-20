@@ -83,8 +83,6 @@ class XArraySQLSource(BaseSQLSource):
 
     source_type: ClassVar[str | None] = "xarray"
 
-    dialect = "postgres"
-
     uri = param.String(default=None, allow_None=True, doc="""
         Path or URL to the xarray-compatible data file.
         Supports NetCDF (.nc), Zarr (.zarr), HDF5 (.h5), GRIB (.grib).""")
@@ -156,10 +154,8 @@ class XArraySQLSource(BaseSQLSource):
         """Resolve chunk specification for DataFusion registration."""
         if isinstance(chunks, dict):
             return chunks
-        # dataset.chunks returns Frozen({}) for non-dask datasets (falsy)
-        ds_chunks = dataset.chunks
-        if ds_chunks:
-            return {dim: sizes[0] for dim, sizes in ds_chunks.items()}
+        if dataset.chunks:
+            return {dim: sizes[0] for dim, sizes in dataset.chunks.items()}
         return dict(dataset.sizes)
 
     @staticmethod
@@ -189,17 +185,34 @@ class XArraySQLSource(BaseSQLSource):
             ds = ds[variables]
         return ds
 
+    @classmethod
+    def from_dataset(cls, dataset, chunks='auto', **kwargs):
+        """
+        Creates an in-memory XArraySQLSource from an xarray Dataset.
+
+        Arguments
+        ---------
+        dataset: xr.Dataset
+            The xarray Dataset to query.
+        chunks: dict or str
+            Chunk specification for DataFusion registration.
+        kwargs: any
+            Additional keyword arguments for the source.
+
+        Returns
+        -------
+        source: XArraySQLSource
+        """
+        return cls(_dataset=dataset, chunks=chunks, **kwargs)
+
     @property
     def dataset(self):
         """Access the underlying xarray Dataset."""
         return self._dataset
 
     def get_schema(self, table=None, limit=None, shuffle=False):
-        # The AI layer (lumen/ai/utils.py) calls get_schema(shuffle=True),
-        # which triggers SQLSample to emit TABLESAMPLE via our postgres
-        # dialect. DataFusion supports neither TABLESAMPLE nor ORDER BY
-        # RAND() (the generic fallback). Forcing shuffle=False makes the
-        # parent use SQLLimit instead.
+        # DataFusion supports neither TABLESAMPLE nor ORDER BY RAND(),
+        # so force shuffle=False to make the parent use SQLLimit instead.
         return super().get_schema(table, limit, shuffle=False)
 
     # ---- BaseSQLSource required overrides ----
@@ -210,23 +223,17 @@ class XArraySQLSource(BaseSQLSource):
         return sorted(self._registered_tables)
 
     def normalize_table(self, table: str) -> str:
-        # 1. Strip quotes AI models sometimes add: "air" -> air
-        stripped = table.strip('"').strip("'").strip("`")
-
-        # 2. Build set of all known table names
+        table = table.strip('"').strip("'").strip("`")
         known = set(self._registered_tables)
         if isinstance(self.tables, dict):
             known.update(self.tables.keys())
-        elif isinstance(self.tables, (list, tuple)):
+        elif isinstance(self.tables, list):
             known.update(self.tables)
-
-        # 3. Exact match
-        if stripped in known:
-            return stripped
-
-        # 4. Case-insensitive fallback: AIR -> air
+        if table in known:
+            return table
+        # Case-insensitive fallback (DataFusion lowercases unquoted identifiers)
         lower_map = {t.lower(): t for t in known}
-        return lower_map.get(stripped.lower(), stripped)
+        return lower_map.get(table.lower(), table)
 
     def execute(self, sql_query, params=None, *args, **kwargs):
         """Execute a SQL query against the DataFusion context."""
@@ -241,7 +248,7 @@ class XArraySQLSource(BaseSQLSource):
         conditions = [
             (col, (val.start, val.stop) if isinstance(val, slice) else val)
             for col, val in query.items()
-            if not col.startswith("__")  # skip internal keys like __limit__
+            if not col.startswith("__")
         ]
         sql_transforms = [SQLFilter(conditions=conditions, read=self.dialect)] + sql_transforms
         for st in sql_transforms:
