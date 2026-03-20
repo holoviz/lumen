@@ -14,6 +14,7 @@ class UploadControls(BaseSourceControls):
     """
 
     add_button_icon = "upload_file"
+
     add_button_label = "Upload file(s)"
     load_mode = "manual"  # File selection triggers, not a button
 
