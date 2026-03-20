@@ -11,11 +11,8 @@ from io import BytesIO, StringIO
 from typing import TYPE_CHECKING, Any
 
 import param
-import requests
 
-from jsonschema import Draft7Validator, ValidationError
 from panel.config import config
-from panel.io import cache
 from panel.layout import Column, Row
 from panel.pane import (
     PDF, DeckGL, Markdown, panel as as_panel,
@@ -36,7 +33,7 @@ from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
 from ..views.base import Panel, Table, View
 from .analysis import Analysis
-from .config import FORMAT_ICONS, FORMAT_LABELS, VEGA_ZOOMABLE_MAP_ITEMS
+from .config import FORMAT_ICONS, FORMAT_LABELS
 from .controls import AnnotationControls, CopyControls, RetryControls
 from .utils import describe_data, get_data
 
@@ -321,91 +318,6 @@ class VegaLiteEditor(LumenEditor):
 
         return BytesIO(out) if isinstance(out, bytes) else StringIO(out)
 
-    @cache
-    @staticmethod
-    def _load_vega_lite_schema(schema_url: str | None = None):
-        return requests.get(schema_url, timeout=0.5).json()
-
-    @staticmethod
-    def _format_validation_error(error: ValidationError) -> str:
-        """Turn a (possibly nested) JSONSchema ValidationError into readable lines."""
-
-        # 1) Collect leaf errors (ignore parents that just aggregate alternatives)
-        GROUP_VALIDATORS = {"anyOf", "oneOf", "allOf", "not"}
-
-        def iter_leaves(err: ValidationError):
-            # If this error has nested contexts, descend; otherwise it's a leaf
-            if err.context:
-                for e in err.context:
-                    yield from iter_leaves(e)
-            else:
-                yield err
-
-        leaves = list(iter_leaves(error))
-        if not leaves:
-            # Fallback: no leaves; return the top-level message
-            return f"{error.json_path}: {error.message}"
-
-        # 2) Remove group-validator parents that slipped through (rare on leaves, but safe)
-        leaves = [e for e in leaves if (e.validator or "") not in GROUP_VALIDATORS]
-
-        # 3) If there are any non-root errors, drop root-level `$` to reduce noise
-        if any(e.json_path != "$" for e in leaves):
-            leaves = [e for e in leaves if e.json_path != "$"]
-
-        # 4) Per-path choose the "best" error by (priority, -depth) then stable order
-        # Lower priority number wins; deeper path wins for ties
-        PRIORITY = {
-            "required": 0,
-            "additionalProperties": 1,
-            "enum": 2,
-            "const": 2,
-            "type": 3,
-            "format": 4,
-            "pattern": 4,
-        }
-
-        def path_depth(p: str) -> int:
-            # Rough depth metric: count of separators
-            return p.count(".") + p.count("[") + p.count("]")
-
-        def priority(err: ValidationError) -> tuple[int, int]:
-            return (PRIORITY.get(err.validator or "", 5), -path_depth(err.json_path))
-
-        winners: dict[str, ValidationError] = {}
-        for e in leaves:
-            p = e.json_path
-            if p not in winners or priority(e) < priority(winners[p]):
-                winners[p] = e
-
-        # 5) Nicely format each error; include a compact instance snippet when useful
-        def fmt_value(val) -> str:
-            try:
-                s = json.dumps(val, ensure_ascii=False)
-            except Exception:
-                s = repr(val)
-            if len(s) > 80:
-                s = s[:77] + "..."
-            return s
-
-        lines = []
-        # Sort by path, then by priority within the same path for deterministic output
-        for p, e in sorted(winners.items(), key=lambda kv: (kv[0], priority(kv[1]))):
-            # Some messages are already very clear; optionally append value snippet
-            suffix = ""
-            # Show the instance if it's short and the message isn't already repeating it
-            try:
-                inst = e.instance
-                if inst is not None and e.validator != "required":
-                    snippet = fmt_value(inst)
-                    if snippet and snippet not in e.message:
-                        suffix = f" (value={snippet})"
-            except Exception:
-                pass
-            lines.append(f"{p}: {e.message}{suffix}")
-
-        return "\n".join(lines)
-
     @classmethod
     def _serialize_component(cls, component: Component, spec_dict: dict[str, Any] | None = None) -> tuple[str, dict[str, Any]]:
         component_spec = spec_dict or component.to_spec()
@@ -428,23 +340,13 @@ class VegaLiteEditor(LumenEditor):
         if "spec" in spec:
             spec = spec["spec"]
         try:
-            vega_lite_schema = cls._load_vega_lite_schema(
-                spec.get("$schema", "https://vega.github.io/schema/vega-lite/v5.json")
-            )
-        except Exception:
-            return super().validate_spec(spec)
-        vega_lite_validator = Draft7Validator(vega_lite_schema)
-        try:
-            # the zoomable params work, but aren't officially valid
-            # so we need to remove them for validation
-            # https://stackoverflow.com/a/78342773/9324652
-            spec_copy = deepcopy(spec)
-            for key in VEGA_ZOOMABLE_MAP_ITEMS.get("projection", {}):
-                spec_copy.get("projection", {}).pop(key, None)
-            spec_copy.pop("params", None)
-            vega_lite_validator.validate(spec_copy)
-        except ValidationError as e:
-            raise RuntimeError(cls._format_validation_error(e)) from e
+            import vl_convert as vlc
+            vlc.vegalite_to_vega(spec)
+        except ValueError as e:
+            msg = str(e)
+            if '\n    at Nc.' in msg:
+                msg = msg[:msg.index('\n    at Nc.')]
+            raise RuntimeError(msg) from e
         return super().validate_spec(spec)
 
     def __str__(self):
