@@ -213,6 +213,27 @@ source = XArraySQLSource(
 )
 ```
 
+**Scientific transforms** for post-processing xarray query results:
+
+| Transform | Type | Description |
+|-----------|------|-------------|
+| `TimeResample` | `time_resample` | Resample time series (daily to monthly, etc.) |
+| `RollingWindow` | `rolling_window` | Smoothing via rolling mean, sum, std |
+| `Anomaly` | `anomaly` | Deviation from climatological mean |
+| `SpatialBBox` | `spatial_bbox` | Filter to lat/lon bounding box |
+
+``` yaml title="Pipeline with transforms"
+transforms:
+  - type: spatial_bbox
+    lat_bounds: [30, 60]
+    lon_bounds: [-100, -80]
+  - type: time_resample
+    rule: ME
+    method: mean
+```
+
+These transforms work on any DataFrame with coordinate columns, not just xarray sources.
+
 ### Multiple sources
 
 ``` py title="Mix sources"
