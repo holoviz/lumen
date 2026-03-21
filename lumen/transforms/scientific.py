@@ -11,12 +11,11 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-import pandas as pd
 import param
 
-from ..transforms.base import Transform
-
 from pandas import DataFrame
+
+from ..transforms.base import Transform
 
 
 class TimeResample(Transform):

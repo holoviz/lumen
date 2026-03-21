@@ -6,12 +6,8 @@ import pytest
 
 from lumen.transforms.base import Transform
 from lumen.transforms.scientific import (
-    Anomaly,
-    RollingWindow,
-    SpatialBBox,
-    TimeResample,
+    Anomaly, RollingWindow, SpatialBBox, TimeResample,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -267,7 +263,9 @@ class TestChaining:
 class TestRegistration:
 
     def test_transform_types_registered(self):
-        from lumen.transforms import TimeResample, RollingWindow, Anomaly, SpatialBBox
+        from lumen.transforms import (
+            Anomaly, RollingWindow, SpatialBBox, TimeResample,
+        )
         assert TimeResample.transform_type == 'time_resample'
         assert RollingWindow.transform_type == 'rolling_window'
         assert Anomaly.transform_type == 'anomaly'
