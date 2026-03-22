@@ -1,7 +1,9 @@
 """Tests for explain controls."""
 import asyncio
 
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import (
+    AsyncMock, MagicMock, Mock, patch,
+)
 
 import pytest
 
@@ -10,7 +12,7 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
-from lumen.ai.controls.explain import ExplainControls, SPEC_TYPE_MAP
+from lumen.ai.controls.explain import SPEC_TYPE_MAP, ExplainControls
 
 
 class MockView:

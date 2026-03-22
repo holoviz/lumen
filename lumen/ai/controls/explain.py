@@ -6,7 +6,9 @@ import param
 
 from jinja2 import Environment, FileSystemLoader
 from panel.viewable import Viewer
-from panel_material_ui import Card, IconButton, Markdown, Row
+from panel_material_ui import (
+    Card, IconButton, Markdown, Row,
+)
 
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
