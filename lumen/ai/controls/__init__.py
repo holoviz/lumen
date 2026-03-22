@@ -4,6 +4,7 @@ from .base import (
 )
 from .catalog import SourceCatalog
 from .copy import CopyControls
+from .explain import ExplainControls
 from .download import DownloadControls
 from .explorer import TableExplorer
 from .revision import AnnotationControls, RetryControls, RevisionControls
@@ -16,6 +17,7 @@ __all__ = (
     "CopyControls",
     "DownloadConfig",
     "DownloadControls",
+    "ExplainControls",
     "RetryControls",
     "RevisionControls",
     "SourceCatalog",

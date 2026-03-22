@@ -34,7 +34,7 @@ from ..transforms.sql import SQLLimit
 from ..views.base import Panel, Table, View
 from .analysis import Analysis
 from .config import FORMAT_ICONS, FORMAT_LABELS
-from .controls import AnnotationControls, CopyControls, RetryControls
+from .controls import AnnotationControls, CopyControls, ExplainControls, RetryControls
 from .utils import describe_data, get_data
 
 if TYPE_CHECKING:
@@ -504,6 +504,8 @@ class AnalysisOutput(LumenEditor):
 class SQLEditor(LumenEditor):
 
     language = "sql"
+
+    _controls = [RetryControls, ExplainControls, CopyControls]
 
     export_formats = ("sql", "csv", "xlsx", "json", "markdown")
     _label = "Table"
