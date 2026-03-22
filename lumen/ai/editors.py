@@ -290,6 +290,152 @@ class VegaLiteEditor(LumenEditor):
     _controls = [RetryControls, AnnotationControls, CopyControls]
     _label = "Plot"
 
+    # Default export dimensions. These approximate a typical browser viewport
+    # and are used when the spec uses container sizing or the actual rendered
+    # dimensions cannot be determined from the live panel.
+    _export_width = param.Integer(default=1600, precedence=-1, doc="""
+        Minimum width for exported images. Ensures the export is wide
+        enough to show full chart content including legends.""")
+    _export_height = param.Integer(default=800, precedence=-1, doc="""
+        Minimum height for exported images. Ensures geographic maps
+        have enough vertical space to show the full projection.""")
+
+    def _get_current_bounds(self) -> dict | None:
+        """Extract current zoom/pan bounds from the live browser-rendered panel.
+
+        Returns a dict mapping field names to [min, max] intervals,
+        e.g. {'temperature': [10, 30], 'date': ['2024-01-01', '2024-06-01']},
+        or None if no zoom state is available.
+        """
+        panel = getattr(self.component, '_panel', None)
+        if panel is None or not hasattr(panel, 'selection') or panel.selection is None:
+            return None
+        bounds = {}
+        for param_name in panel.selection.param:
+            if param_name == 'name':
+                continue
+            value = getattr(panel.selection, param_name)
+            if isinstance(value, dict):
+                bounds.update(value)
+        return bounds if bounds else None
+
+    @staticmethod
+    def _set_selection_value(spec: dict, bounds: dict) -> bool:
+        """Set the value of an interval selection bound to scales.
+
+        This works for standard x/y charts (scatter, bar, line, etc.)
+        where an interval selection with bind="scales" enables zoom/pan.
+        Vega-Lite uses the selection value to initialize the scale domains
+        at render time, reproducing the user's zoomed view.
+
+        Note: Vega-Lite does not support bind="scales" with geographic
+        projections, so geographic maps are handled separately via
+        dimension preservation in export().
+
+        Returns True if a matching selection was found and updated.
+        """
+        if not bounds:
+            return False
+        params = spec.get('params', [])
+        if not isinstance(params, list):
+            return False
+        for i, p in enumerate(params):
+            if not isinstance(p, dict):
+                continue
+            select = p.get('select', {})
+            sel_type = select if isinstance(select, str) else select.get('type', '')
+            if sel_type == 'interval' and p.get('bind') == 'scales':
+                params = list(params)
+                params[i] = dict(p, value=dict(bounds))
+                spec['params'] = params
+                return True
+        return False
+
+    @staticmethod
+    def _inject_encoding_domains(spec: dict, bounds: dict) -> None:
+        """Fallback: inject scale.domain on matching encoding channels.
+
+        Modifies spec in place. Handles x, y, x2, y2 channels.
+        Does not handle longitude/latitude (they use projections, not scales).
+        """
+        def inject_encoding(enc: dict) -> dict:
+            enc = dict(enc)
+            for channel in ('x', 'y', 'x2', 'y2'):
+                if channel not in enc:
+                    continue
+                ch_spec = enc[channel]
+                field = ch_spec.get('field')
+                if field and field in bounds:
+                    ch_spec = dict(ch_spec)
+                    scale = dict(ch_spec.get('scale', {}))
+                    scale['domain'] = list(bounds[field])
+                    ch_spec['scale'] = scale
+                    enc[channel] = ch_spec
+            return enc
+
+        if 'encoding' in spec:
+            spec['encoding'] = inject_encoding(spec['encoding'])
+        if 'layer' in spec:
+            spec['layer'] = [
+                dict(layer, encoding=inject_encoding(layer['encoding']))
+                if 'encoding' in layer else layer
+                for layer in spec['layer']
+            ]
+
+    @staticmethod
+    def _apply_bounds_to_spec(spec: dict, bounds: dict) -> dict:
+        """Inject zoom/pan bounds into a Vega-Lite spec.
+
+        Uses two strategies for standard x/y charts:
+        1. Primary: Set the value of an interval selection with bind="scales".
+        2. Fallback: Inject scale.domain on encoding channels directly.
+
+        For geographic maps with projections, zoom/pan state is preserved
+        by matching the export dimensions to the live panel dimensions
+        (handled in export(), not here).
+
+        Parameters
+        ----------
+        spec : dict
+            The Vega-Lite specification.
+        bounds : dict
+            Field-name-to-[min, max] mapping from the live selection.
+
+        Returns
+        -------
+        dict
+            Modified spec with current view bounds applied.
+        """
+        spec = dict(spec)
+
+        # Strategy 1: Set selection parameter value (universal approach)
+        if VegaLiteEditor._set_selection_value(spec, bounds):
+            return spec
+
+        # Also check inside layers for selection params
+        if 'layer' in spec:
+            for i, layer in enumerate(spec['layer']):
+                if not isinstance(layer, dict):
+                    continue
+                layer = dict(layer)
+                if VegaLiteEditor._set_selection_value(layer, bounds):
+                    layers = list(spec['layer'])
+                    layers[i] = layer
+                    spec['layer'] = layers
+                    return spec
+
+        # Strategy 2: Fallback to scale.domain injection on encodings
+        VegaLiteEditor._inject_encoding_domains(spec, bounds)
+
+        # Recurse into concatenated specs
+        for key in ('hconcat', 'vconcat', 'concat'):
+            if key in spec:
+                spec[key] = [
+                    VegaLiteEditor._apply_bounds_to_spec(sub, bounds)
+                    for sub in spec[key]
+                ]
+        return spec
+
     def export(self, fmt: str) -> StringIO | BytesIO:
         ret = super().export(fmt)
         if ret is not None:
@@ -299,13 +445,45 @@ class VegaLiteEditor(LumenEditor):
         render_fmt = "png" if fmt in self._pillow_formats else fmt
         kwargs = {"scale": 2} if render_fmt in ("png", "jpeg", "pdf") else {}
 
+        # Capture zoom/pan bounds from live panel
+        # BEFORE param.update replaces the component
+        bounds = self._get_current_bounds()
+
         spec = load_yaml(self.spec)
-        if spec.get("width") == "container" or "width" not in spec:
-            spec["width"] = 800
-        if spec.get("height") == "container" or "height" not in spec:
-            spec["height"] = 400
+
+        # Resolve dimensions for export rendering.
+        # The browser renders charts stretched to fill the container
+        # (via sizing_mode='stretch_width'/'stretch_both'), so both width
+        # and height in the browser are typically larger than what the spec
+        # declares. Ensure export dimensions are at least _export_width and
+        # _export_height to approximate the browser viewport.
+        spec_width = spec.get("width")
+        spec_height = spec.get("height")
+        if isinstance(spec_width, (int, float)) and spec_width != "container":
+            spec["width"] = max(int(spec_width), self._export_width)
+        else:
+            spec["width"] = self._export_width
+        if isinstance(spec_height, (int, float)) and spec_height != "container":
+            spec["height"] = max(int(spec_height), self._export_height)
+        else:
+            spec["height"] = self._export_height
+
+        # Inject current view bounds so export reflects zoomed view
+        # (works for standard x/y charts with interval selections)
+        if bounds:
+            spec = self._apply_bounds_to_spec(spec, bounds)
+
+        export_width = spec["width"]
+        export_height = spec["height"]
         with self.param.update(spec=dump_yaml(spec)):
-            out = self.component.get_panel().export(render_fmt, **kwargs)
+            panel = self.component.get_panel()
+            # Set dimensions directly on the pane so Panel's Vega.export()
+            # uses them instead of its own defaults
+            if hasattr(panel, 'width'):
+                panel.width = export_width
+            if hasattr(panel, 'height'):
+                panel.height = export_height
+            out = panel.export(render_fmt, **kwargs)
 
         if fmt in self._pillow_formats:
             img = Image.open(BytesIO(out))
