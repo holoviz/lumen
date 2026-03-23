@@ -585,6 +585,19 @@ class SQLFilterBase(SQLTransform):
                     else:
                         # No None values
                         filters.append(column_expr.isin(*[SQLLiteral.string(str(v)) for v in val]))
+            elif isinstance(val, slice) and val.start is not None and val.stop is not None:
+                start, end = val.start, val.stop
+                if isinstance(start, dt.date) and not isinstance(start, dt.datetime):
+                    start_str = f"{start} 00:00:00"
+                else:
+                    start_str = str(start)
+
+                if isinstance(end, dt.date) and not isinstance(end, dt.datetime):
+                    end_str = f"{end} 23:59:59"
+                else:
+                    end_str = str(end)
+
+                filters.append(column_expr.between(SQLLiteral.string(start_str), SQLLiteral.string(end_str)))
             else:
                 self.param.warning(f"Condition {val!r} on {col!r} column not understood. Filter query will not be applied.")
                 continue

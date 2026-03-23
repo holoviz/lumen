@@ -1125,3 +1125,488 @@ class TestResolveData:
         assert pipeline.name in duckdb_source.mirrors
         # Table key is sanitized
         assert 'data_csv' in duckdb_source.tables
+
+
+# --- Tests for on_edit callback ---
+
+async def test_edit_message_truncates_and_resends(explorer_ui):
+    """Test that editing a message removes it and all subsequent messages,
+    then re-sends the edited content."""
+    ui = explorer_ui
+
+    # Populate interface with some messages
+    ui.interface.send("Original question", user="User", respond=False)
+    ui.interface.send("Here is the answer", user="Assistant", respond=False)
+    ui.interface.send("Follow-up question", user="User", respond=False)
+    ui.interface.send("Follow-up answer", user="Assistant", respond=False)
+    assert len(ui.interface.objects) == 4
+
+    # Replace callback with a no-op to prevent actual LLM calls
+    async def noop_callback(contents, user, instance):
+        return
+
+    ui.interface.callback = noop_callback
+
+    # Trigger the edit callback on the first message (index 0)
+    await ui.interface.edit_callback("Edited question", 0, ui.interface)
+
+    # All 4 original messages should be removed, replaced by the edited one
+    assert len(ui.interface.objects) == 1
+    assert ui.interface.objects[0].object == "Edited question"
+
+
+async def test_edit_last_message_resends(explorer_ui):
+    """Test editing the last (most recent) user message."""
+    ui = explorer_ui
+
+    ui.interface.send("Only question", user="User", respond=False)
+    assert len(ui.interface.objects) == 1
+
+    async def noop_callback(contents, user, instance):
+        return
+
+    ui.interface.callback = noop_callback
+
+    await ui.interface.edit_callback("Better question", 0, ui.interface)
+
+    assert len(ui.interface.objects) == 1
+    assert ui.interface.objects[0].object == "Better question"
+
+
+async def test_edit_middle_message_removes_subsequent(explorer_ui):
+    """Test editing a middle message removes only messages after it."""
+    ui = explorer_ui
+
+    ui.interface.send("First question", user="User", respond=False)
+    ui.interface.send("First answer", user="Assistant", respond=False)
+    ui.interface.send("Second question", user="User", respond=False)
+    ui.interface.send("Second answer", user="Assistant", respond=False)
+    assert len(ui.interface.objects) == 4
+
+    async def noop_callback(contents, user, instance):
+        return
+
+    ui.interface.callback = noop_callback
+
+    # Edit the third message (index 2) — should keep messages 0,1 and remove 2,3
+    await ui.interface.edit_callback("Revised second question", 2, ui.interface)
+
+    assert len(ui.interface.objects) == 3
+    assert ui.interface.objects[0].object == "First question"
+    assert ui.interface.objects[1].object == "First answer"
+    assert ui.interface.objects[2].object == "Revised second question"
+
+
+async def test_edit_blocked_while_busy(explorer_ui):
+    """Test that editing is blocked when the assistant is responding."""
+    ui = explorer_ui
+
+    ui.interface.send("A question", user="User", respond=False)
+    ui.interface.send("An answer", user="Assistant", respond=False)
+    assert len(ui.interface.objects) == 2
+
+    async def noop_callback(contents, user, instance):
+        return
+
+    ui.interface.callback = noop_callback
+
+    # Simulate busy state
+    ui._idle.clear()
+
+    await ui.interface.edit_callback("Edited while busy", 0, ui.interface)
+
+    # Nothing should have changed — edit was blocked
+    assert len(ui.interface.objects) == 2
+    assert ui.interface.objects[0].object == "A question"
+    assert ui.interface.objects[1].object == "An answer"
+
+    # Restore idle state
+    ui._idle.set()
+
+
+async def test_edit_updates_logs(explorer_ui, tmp_path):
+    """Test that editing marks removed messages in the logs."""
+    ui = explorer_ui
+
+    # Set up a mock for _logs
+    from unittest.mock import MagicMock
+    mock_logs = MagicMock()
+    ui._logs = mock_logs
+
+    ui.interface.send("Question", user="User", respond=False)
+    ui.interface.send("Answer", user="Assistant", respond=False)
+
+    msg0_id = id(ui.interface.objects[0])
+    msg1_id = id(ui.interface.objects[1])
+
+    async def noop_callback(contents, user, instance):
+        return
+
+    ui.interface.callback = noop_callback
+
+    await ui.interface.edit_callback("New question", 0, ui.interface)
+
+    # Both original messages should be marked as removed
+    removed_ids = {
+        call.kwargs.get('message_id') or call.args[0]
+        for call in mock_logs.update_status.call_args_list
+    }
+    assert msg0_id in removed_ids
+    assert msg1_id in removed_ids
+
+    # All calls should have removed=True
+    for call in mock_logs.update_status.call_args_list:
+        assert call.kwargs.get('removed') is True
+
+
+async def test_edit_works_without_logs(explorer_ui):
+    """Test that editing works when logging is disabled (_logs is None)."""
+    ui = explorer_ui
+    ui._logs = None
+
+    ui.interface.send("Question", user="User", respond=False)
+    ui.interface.send("Answer", user="Assistant", respond=False)
+
+    async def noop_callback(contents, user, instance):
+        return
+
+    ui.interface.callback = noop_callback
+
+    # Should not raise even though _logs is None
+    await ui.interface.edit_callback("Edited question", 0, ui.interface)
+
+    assert len(ui.interface.objects) == 1
+    assert ui.interface.objects[0].object == "Edited question"
+
+
+async def test_edit_callback_is_set_on_interface(explorer_ui):
+    """Test that edit_callback is properly wired to the ChatInterface."""
+    ui = explorer_ui
+    assert ui.interface.edit_callback is not None
+    assert asyncio.iscoroutinefunction(ui.interface.edit_callback)
+
+
+# --- Tests for on_edit exploration lifecycle ---
+
+async def _create_successful_exploration(ui):
+    """Helper: execute a plan with SQLAgent + ChatAgent to create an exploration."""
+    test_source = ui.context["source"]
+    SQLQueryWithTables = make_sql_model([(test_source.name, "test_table")])
+    ui.llm.set_responses([
+        SQLQueryWithTables(
+            query="SELECT SUM(value) as value_sum FROM test_table",
+            table_slug="test_sql_agg",
+            tables=["test_table"]
+        ),
+        "Summary of results"
+    ])
+    sql_agent = SQLAgent(llm=ui.llm)
+    chat_agent = ChatAgent(llm=ui.llm)
+    plan = Plan(
+        ActorTask(sql_agent),
+        ActorTask(chat_agent),
+        history=[{"content": "Sum value column", "role": "user"}],
+        title="Sum of value",
+        context=ui.context
+    )
+    await ui._execute_plan(plan)
+
+
+async def test_edit_on_exploration_removes_old_and_switches_to_home(explorer_ui):
+    """Editing on a non-Home exploration should remove it and switch to Home
+    so re-send creates a fresh exploration instead of a duplicate."""
+    ui = explorer_ui
+    await _create_successful_exploration(ui)
+
+    # Verify exploration was created
+    assert len(ui._explorations.items) == 2
+    old_exploration = ui._exploration['view']
+    assert old_exploration.plan is not None
+    old_context = old_exploration.context
+
+    # Replace callback with noop to isolate the cleanup logic
+    async def noop_callback(contents, user, instance):
+        return
+
+    ui.interface.callback = noop_callback
+
+    # Edit a message
+    await ui.interface.edit_callback("Edited query", 0, ui.interface)
+
+    # Old exploration should be removed, back on Home
+    assert len(ui._explorations.items) == 1
+    assert ui._explorations.value['view'] is ui._home
+    assert ui._exploration['view'] is ui._home
+    assert ui._last_synced is ui._home
+
+    # Old exploration context should be cleared
+    assert len(old_context) == 0
+
+
+async def test_edit_on_home_preserves_behavior(explorer_ui):
+    """Editing on Home (no exploration) should just truncate and resend,
+    without any exploration manipulation."""
+    ui = explorer_ui
+
+    # We're on Home — no exploration created
+    assert len(ui._explorations.items) == 1
+    assert ui._exploration['view'] is ui._home
+
+    ui.interface.send("Question", user="User", respond=False)
+    ui.interface.send("Answer", user="Assistant", respond=False)
+
+    async def noop_callback(contents, user, instance):
+        return
+
+    ui.interface.callback = noop_callback
+
+    await ui.interface.edit_callback("Edited question", 0, ui.interface)
+
+    # Still on Home, no explorations added or removed
+    assert len(ui._explorations.items) == 1
+    assert ui._exploration['view'] is ui._home
+    assert len(ui.interface.objects) == 1
+    assert ui.interface.objects[0].object == "Edited question"
+
+
+async def test_edit_on_exploration_does_not_duplicate_tabs(explorer_ui):
+    """After editing on an exploration, the old exploration should be removed
+    so re-send cannot create a duplicate alongside it."""
+    ui = explorer_ui
+    await _create_successful_exploration(ui)
+
+    assert len(ui._explorations.items) == 2
+    old_exploration = ui._exploration['view']
+    old_plan = old_exploration.plan
+
+    # Replace callback with noop to isolate cleanup behavior
+    async def noop_callback(contents, user, instance):
+        return
+
+    ui.interface.callback = noop_callback
+
+    # Trigger edit - removes old exploration, re-sends through noop
+    await ui.interface.edit_callback("Show me the average", 0, ui.interface)
+
+    # Old exploration must be gone - at most Home + possibly new (never 3)
+    assert len(ui._explorations.items) <= 2
+
+    # Old exploration must not appear anywhere in the tree
+    for item in ui._explorations.items:
+        assert item['view'] is not old_exploration
+        for child in item.get('items', []):
+            assert child['view'] is not old_exploration
+
+    # Old plan was cleaned up (watchers unwatched)
+    assert old_plan._current == 0  # reset by cleanup()
+
+
+async def test_edit_on_parent_exploration_removes_children(explorer_ui):
+    """Editing on a parent exploration should also remove its child
+    (followup) explorations and clean up their plans."""
+    ui = explorer_ui
+    await _create_successful_exploration(ui)
+
+    assert len(ui._explorations.items) == 2
+    parent_item = ui._explorations.items[1]
+    parent_exploration = parent_item['view']
+
+    # Create a child (followup) exploration under the parent
+    test_source = ui.context["source"]
+    SQLQueryWithTables = make_sql_model([(test_source.name, "test_table")])
+    ui.llm.set_responses([
+        SQLQueryWithTables(
+            query="SELECT * FROM test_table LIMIT 5",
+            table_slug="test_limit",
+            tables=["test_table"]
+        )
+    ])
+    sql_agent = SQLAgent(llm=ui.llm)
+    child_plan = Plan(
+        ActorTask(sql_agent),
+        history=[{"content": "Show first 5 rows", "role": "user"}],
+        title="First 5 rows",
+        context=parent_exploration.context,
+        is_followup=True
+    )
+    await ui._add_exploration(child_plan, parent_exploration)
+    await asyncio.sleep(0.1)
+
+    # Re-fetch parent_item after _add_exploration may have updated it
+    parent_item = ui._explorations.items[1]
+
+    # Verify child was created under parent
+    assert len(parent_item.get('items', [])) == 1
+    child_item = parent_item['items'][0]
+    child_context = child_item['view'].context
+
+    # Switch back to parent for the edit
+    ui._explorations.value = ui._exploration = parent_item
+
+    async def noop_callback(contents, user, instance):
+        return
+
+    ui.interface.callback = noop_callback
+
+    # Edit on the parent - should remove parent AND child
+    await ui.interface.edit_callback("Edited query", 0, ui.interface)
+
+    # Back to Home, parent removed (child goes with it)
+    assert len(ui._explorations.items) == 1
+    assert ui._exploration['view'] is ui._home
+
+    # Child context should be cleared
+    assert len(child_context) == 0
+
+
+async def test_edit_on_second_exploration_preserves_first(explorer_ui):
+    """When two consecutive explorations exist and the user edits on the
+    second one, only the second exploration (sql_2 + spec_2) should be
+    removed. The first exploration (sql_1 + spec_1) must remain intact."""
+    ui = explorer_ui
+    test_source = ui.context["source"]
+    SQLQueryWithTables = make_sql_model([(test_source.name, "test_table")])
+
+    # --- Create exploration 1 (sql_1 + spec_1) ---
+    ui.llm.set_responses([
+        SQLQueryWithTables(
+            query="SELECT category, SUM(value) as total FROM test_table GROUP BY category",
+            table_slug="test_cat_agg",
+            tables=["test_table"]
+        ),
+        "Revenue by category summary"
+    ])
+    sql_agent_1 = SQLAgent(llm=ui.llm)
+    chat_agent_1 = ChatAgent(llm=ui.llm)
+    plan_1 = Plan(
+        ActorTask(sql_agent_1),
+        ActorTask(chat_agent_1),
+        history=[{"content": "Show revenue by category", "role": "user"}],
+        title="Revenue by Category",
+        context=ui.context
+    )
+    await ui._execute_plan(plan_1)
+
+    assert len(ui._explorations.items) == 2
+    exploration_1_item = ui._explorations.items[1]
+    exploration_1 = exploration_1_item['view']
+    exploration_1_context = dict(exploration_1.context)  # snapshot
+
+    # Switch back to Home to create a second exploration
+    home_item = ui._explorations.items[0]
+    ui._explorations.value = ui._exploration = home_item
+    ui._last_synced = ui._home
+
+    # --- Create exploration 2 (sql_2 + spec_2) ---
+    ui.llm.set_responses([
+        SQLQueryWithTables(
+            query="SELECT id, value FROM test_table ORDER BY value DESC",
+            table_slug="test_top_values",
+            tables=["test_table"]
+        ),
+        "Top values summary"
+    ])
+    sql_agent_2 = SQLAgent(llm=ui.llm)
+    chat_agent_2 = ChatAgent(llm=ui.llm)
+    plan_2 = Plan(
+        ActorTask(sql_agent_2),
+        ActorTask(chat_agent_2),
+        history=[{"content": "Show top values", "role": "user"}],
+        title="Top Values",
+        context=ui.context
+    )
+    await ui._execute_plan(plan_2)
+
+    assert len(ui._explorations.items) == 3  # Home + exp1 + exp2
+    exploration_2_item = ui._explorations.items[2]
+    exploration_2 = exploration_2_item['view']
+    exploration_2_context = exploration_2.context
+
+    # Navigate to exploration 2
+    ui._explorations.value = ui._exploration = exploration_2_item
+
+    # Replace callback with noop to isolate cleanup behavior
+    async def noop_callback(contents, user, instance):
+        return
+
+    ui.interface.callback = noop_callback
+
+    # --- Edit on exploration 2 ---
+    await ui.interface.edit_callback("Edited query", 0, ui.interface)
+
+    # Exploration 2 should be removed
+    assert len(ui._explorations.items) == 2  # Home + exp1 only
+    assert ui._exploration['view'] is ui._home
+
+    # Exploration 2 context should be cleared
+    assert len(exploration_2_context) == 0
+
+    # Exploration 1 must still exist with its sql and context intact
+    assert ui._explorations.items[1] is exploration_1_item
+    assert exploration_1_item['view'] is exploration_1
+    assert exploration_1.plan is not None
+    assert "pipeline" in exploration_1.context
+    assert "table" in exploration_1.context
+    assert "sql" in exploration_1.context
+
+
+async def test_edit_on_child_exploration_switches_to_parent(explorer_ui):
+    """Editing on a nested (followup) exploration should remove only that
+    child and switch to the parent, not all the way back to Home."""
+    ui = explorer_ui
+    await _create_successful_exploration(ui)
+
+    assert len(ui._explorations.items) == 2
+    parent_item = ui._explorations.items[1]
+    parent_exploration = parent_item['view']
+
+    # Create a child (followup) exploration under the parent
+    test_source = ui.context["source"]
+    SQLQueryWithTables = make_sql_model([(test_source.name, "test_table")])
+    ui.llm.set_responses([
+        SQLQueryWithTables(
+            query="SELECT * FROM test_table LIMIT 5",
+            table_slug="test_limit",
+            tables=["test_table"]
+        )
+    ])
+    sql_agent = SQLAgent(llm=ui.llm)
+    child_plan = Plan(
+        ActorTask(sql_agent),
+        history=[{"content": "Show first 5 rows", "role": "user"}],
+        title="First 5 rows",
+        context=parent_exploration.context,
+        is_followup=True
+    )
+    await ui._add_exploration(child_plan, parent_exploration)
+    await asyncio.sleep(0.1)
+
+    # Re-fetch parent_item after _add_exploration may have updated it
+    parent_item = ui._explorations.items[1]
+
+    # Verify child was created and switch to it
+    assert len(parent_item.get('items', [])) == 1
+    child_item = parent_item['items'][0]
+    child_context = child_item['view'].context
+    ui._explorations.value = ui._exploration = child_item
+
+    async def noop_callback(contents, user, instance):
+        return
+
+    ui.interface.callback = noop_callback
+
+    # Edit on the child -- should remove child and switch to parent
+    await ui.interface.edit_callback("Edited followup", 0, ui.interface)
+
+    # Should be on parent, not Home
+    assert ui._exploration['view'] is parent_exploration
+    assert ui._exploration['view'] is not ui._home
+    assert ui._last_synced is parent_exploration
+
+    # Child should be removed from parent's items
+    assert len(ui._exploration.get('items', [])) == 0
+    assert len(child_context) == 0
+
+    # Parent and Home still intact
+    assert len(ui._explorations.items) == 2
+    assert parent_exploration.plan is not None

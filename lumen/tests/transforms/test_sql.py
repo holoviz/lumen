@@ -276,6 +276,32 @@ def test_sql_filter_datetime_range():
     assert result == expected
 
 
+def test_sql_filter_slice_numeric():
+    result = SQLFilter.apply_to(
+        "SELECT * FROM TABLE", conditions=[("A", slice(20.0, 40.0))]
+    )
+    expected = "SELECT * FROM (SELECT * FROM TABLE) WHERE A BETWEEN '20.0' AND '40.0'"
+    assert result == expected
+
+
+def test_sql_filter_slice_date():
+    result = SQLFilter.apply_to(
+        "SELECT * FROM TABLE",
+        conditions=[("A", slice(dt.date(2017, 2, 22), dt.date(2017, 4, 14)))],
+    )
+    expected = "SELECT * FROM (SELECT * FROM TABLE) WHERE A BETWEEN '2017-02-22 00:00:00' AND '2017-04-14 23:59:59'"
+    assert result == expected
+
+
+def test_sql_filter_slice_datetime():
+    result = SQLFilter.apply_to(
+        "SELECT * FROM TABLE",
+        conditions=[("A", slice(dt.datetime(2017, 2, 22), dt.datetime(2017, 4, 14)))],
+    )
+    expected = "SELECT * FROM (SELECT * FROM TABLE) WHERE A BETWEEN '2017-02-22 00:00:00' AND '2017-04-14 00:00:00'"
+    assert result == expected
+
+
 def test_sql_prefilter_basic():
     """Test basic prefiltering on a single table."""
     result = SQLPreFilter.apply_to(

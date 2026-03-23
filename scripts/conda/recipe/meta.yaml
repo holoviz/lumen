@@ -26,6 +26,7 @@ requirements:
     {% endfor %}
   run:
     - python {{ project['requires-python'] }}
+    - sqlglot
     {% for dep in project.get('dependencies', []) %}
     - {{ dep }}
     {% endfor %}

@@ -306,6 +306,12 @@ class BaseSourceControls(Viewer):
     _count = param.Integer(default=0, doc="Count of sources added")
 
     # UI customization
+    add_button_icon = param.String(default="add", doc="""
+        Material icon name for the add/upload confirmation button.""")
+
+    add_button_label = param.String(default="Confirm file(s)", doc="""
+        Text label for the add/upload confirmation button.""")
+
     label = param.String(default="", constant=True, doc="""
         HTML label shown in the sidebar for this control.""" )
 
@@ -347,8 +353,8 @@ class BaseSourceControls(Viewer):
         files_to_process = self._upload_cards.param["objects"].rx.len() > 0
         self._add_button = Button.from_param(
             self.param.add,
-            name="Confirm file(s)",
-            icon="add",
+            name=self.param.add_button_label,
+            icon=self.param.add_button_icon,
             visible=files_to_process,
             description="",
             align="center",

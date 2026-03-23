@@ -64,22 +64,38 @@ class ThinkingYesNo(BaseModel):
     yes: bool = Field(description="True if yes, otherwise False.")
 
 
+class FollowUpClassification(BaseModel):
+    """Classify how a follow-up question relates to existing data."""
+
+    chain_of_thought: str = Field(
+        description="In 1-2 sentences, explain which data source can answer this question and why.",
+        examples=[
+            "The user wants to filter the existing derived table avg_sst_by_season to two seasons — this table already has the season column with OND and MJJ values.",
+            "The user wants a bar chart of the data already in memory — no new query needed.",
+            "The user is asking about a completely different metric (temperature vs rainfall) — need a fresh query.",
+        ]
+    )
+
+    follow_up_type: Literal["direct", "derived", "new"]
+
+
 class InsertLine(BaseModel):
     op: Literal["insert"] = "insert"
     line_no: int = Field(ge=1, description=(
-        "Insert BEFORE this 1-based line number. "
-        "Use line_no == len(lines) to append at the end."
+        "Insert new content BEFORE this original line number (1-based). "
+        "To append after the last line, use line_no = last_line + 1. "
+        "Multiple inserts at the same line_no appear in the order given."
     ))
     line: str = Field(min_length=1, description="Content for the new line (must be non-empty).")
 
 class ReplaceLine(BaseModel):
     op: Literal["replace"] = "replace"
-    line_no: int = Field(ge=1, description="The 1-based line number to replace.")
+    line_no: int = Field(ge=1, description="The original line number (1-based) to replace.")
     line: str = Field(description="The new content for the line (empty string is allowed).")
 
 class DeleteLine(BaseModel):
     op: Literal["delete"] = "delete"
-    line_no: int = Field(ge=1, description="The 1-based line number to delete.")
+    line_no: int = Field(ge=1, description="The original line number (1-based) to delete.")
 
 LineEdit = Annotated[
     InsertLine | ReplaceLine | DeleteLine,

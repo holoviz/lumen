@@ -918,17 +918,17 @@ class OpenAI(Llm, OpenAIMixin):
     mode = param.Selector(default=Mode.TOOLS)
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "gpt-4.1-mini"},  # Use standard models, not reasoning models (gpt-5, o4-mini)
-        "ui": {"model": "gpt-4.1-nano"},
+        "default": {"model": "gpt-5.4-mini"},  # Use standard models, not reasoning models (gpt-5, o4-mini)
+        "ui": {"model": "gpt-5.4-nano"},
     })
 
     select_models = param.List(default=[
         "gpt-5.2",
         "gpt-5-mini",
         "gpt-5-nano",
-        "gpt-4.1",
-        "gpt-4.1-mini",
-        "gpt-4.1-nano"
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.4-nano"
     ], constant=True, doc="""Warning: Reasoning models (gpt-5, o4-mini) are much slower and not suitable for dialog interfaces.""")
 
     temperature = param.Number(default=0.25, bounds=(0, None), constant=True)
@@ -2131,12 +2131,12 @@ class LiteLLM(Llm):
     mode = param.Selector(default=Mode.TOOLS, objects=BASE_MODES)
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "gpt-4.1-mini"},
+        "default": {"model": "gpt-5.4-mini"},
         "edit": {"model": "anthropic/claude-sonnet-4-5"},
-        "sql": {"model": "gpt-4.1-mini"},
+        "sql": {"model": "gpt-5.4-mini"},
     }, doc="""
         Model configurations by type. LiteLLM supports model strings like:
-        - OpenAI: "gpt-4.1-mini", "gpt-4.1-nano", "gpt-5-mini"
+        - OpenAI: "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5-mini"
         - Anthropic: "anthropic/claude-sonnet-4-5", "anthropic/claude-haiku-4-5"
         - Google: "gemini/gemini-2.0-flash", "gemini/gemini-2.5-flash"
         - Mistral: "mistral/mistral-medium-latest", "mistral/mistral-small-latest"
@@ -2148,8 +2148,8 @@ class LiteLLM(Llm):
         Example: {"routing_strategy": "least-busy", "num_retries": 3}""")
 
     select_models = param.List(default=[
-        "gpt-4.1-mini",
-        "gpt-4.1-nano",
+        "gpt-5.4-mini",
+        "gpt-5.4-nano",
         "gpt-5-mini",
         "anthropic/claude-sonnet-4-5",
         "anthropic/claude-haiku-4-5",

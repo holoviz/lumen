@@ -19,9 +19,11 @@ except ModuleNotFoundError:
 from lumen.ai.config import PROMPTS_DIR
 from lumen.ai.models import DeleteLine, InsertLine, ReplaceLine
 from lumen.ai.utils import (
-    UNRECOVERABLE_ERRORS, apply_changes, clean_sql, describe_data, get_schema,
-    parse_huggingface_url, render_template, report_error, retry_llm_output,
+    UNRECOVERABLE_ERRORS, apply_changes, clean_sql, describe_data,
+    find_slug_by_table_name, get_schema, parse_huggingface_url,
+    render_template, report_error, retry_llm_output, slug_to_table_name,
 )
+from lumen.config import SOURCE_TABLE_SEPARATOR as SEP
 
 
 def test_render_template_with_valid_template():
@@ -418,3 +420,41 @@ def test_delete_line_no_out_of_range_raises():
         apply_changes(lines, [DeleteLine(line_no=3)])
     with pytest.raises(ValidationError):
         apply_changes(lines, [DeleteLine(line_no=0)])
+
+
+class TestSlugToTableName:
+
+    def test_source_qualified(self):
+        assert slug_to_table_name(f"DuckDB001{SEP}my_table") == "my_table"
+
+    def test_bare_name_unchanged(self):
+        assert slug_to_table_name("my_table") == "my_table"
+
+    def test_multiple_separators_splits_on_first(self):
+        slug = f"src{SEP}schema{SEP}table"
+        assert slug_to_table_name(slug) == f"schema{SEP}table"
+
+
+class TestFindSlugByTableName:
+
+    def test_finds_in_dict(self):
+        candidates = {
+            f"SrcA{SEP}t1": "a",
+            f"SrcA{SEP}t2": "b",
+        }
+        assert find_slug_by_table_name("t2", candidates) == f"SrcA{SEP}t2"
+
+    def test_finds_in_list(self):
+        candidates = [f"SrcA{SEP}t1", f"SrcB{SEP}t2"]
+        assert find_slug_by_table_name("t2", candidates) == f"SrcB{SEP}t2"
+
+    def test_returns_none_when_absent(self):
+        assert find_slug_by_table_name("missing", {f"S{SEP}x": 1}) is None
+
+    def test_returns_first_match(self):
+        candidates = {
+            f"SrcOld{SEP}tbl": 1,
+            f"SrcNew{SEP}tbl": 2,
+        }
+        result = find_slug_by_table_name("tbl", candidates)
+        assert result in (f"SrcOld{SEP}tbl", f"SrcNew{SEP}tbl")

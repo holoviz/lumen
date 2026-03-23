@@ -119,7 +119,6 @@ async def test_metadata_lookup_source_keeps_first_provenance():
 
     context_global = {"sources": [source], "provenance_chain": ["global"], "tables_metadata": {}}
     await tool.sync(context_global)
-    await tool._ready_event.wait()
 
     context_exploration = {
         "sources": [source],
@@ -127,7 +126,6 @@ async def test_metadata_lookup_source_keeps_first_provenance():
         "tables_metadata": {},
     }
     await tool.sync(context_exploration)
-    await tool._ready_event.wait()
 
     entries = tool.vector_store.filter_by({"source": source.name, "type": "tables"})
     assert len(entries) == 1

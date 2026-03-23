@@ -330,7 +330,7 @@ class SnowflakeSource(BaseSQLSource):
         query_id = self._cursor.sfqid
 
         while True:
-            status = self._cursor.get_query_status(query_id)
+            status = self._conn.get_query_status(query_id)
             if status in (QueryStatus.SUCCESS, QueryStatus.FAILED_WITH_ERROR, QueryStatus.ABORTED, QueryStatus.FAILED_WITH_INCIDENT):
                 break
             await asyncio.sleep(0.1)  # Check every 100ms

@@ -37,14 +37,14 @@ You can ask the AI to perform several steps in one message. This helps you build
 
 ## Choose your model
 
-The model Lumen AI uses affects both quality and cost. By default, Lumen uses OpenAI's `gpt-4.1-mini`, but you can choose any supported model from OpenAI, Anthropic, Google, Mistral, or local providers.
+The model Lumen AI uses affects both quality and cost. By default, Lumen uses OpenAI's `gpt-5.4-mini`, but you can choose any supported model from OpenAI, Anthropic, Google, Mistral, or local providers.
 
 **Configure from Settings:**
 - Click **Settings** (left sidebar) to select a different provider and model
 
 **For guidance on model selection:**
 - See [LLM Providers](../configuration/llm_providers.md) for detailed information on model choices, cost optimization, and task-specific recommendations
-- Use cheaper models like `gpt-4.1-mini` or `claude-haiku-4-5` for general tasks
+- Use cheaper models like `gpt-5.4-mini` or `claude-haiku-4-5` for general tasks
 - Reserve more powerful models like `gpt-4.1` or `claude-sonnet-4-5` for SQL generation and complex analysis
 
 ## Understand the AI's reasoning

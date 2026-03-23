@@ -816,6 +816,27 @@ class UI(Viewer):
         def on_clear(instance, _):
             pass
 
+        async def on_edit(contents, message_index, instance):
+            if not self._idle.is_set():
+                if state.notifications:
+                    state.notifications.info(
+                        "Cannot edit while a response is being generated. "
+                        "Please wait for the current response to complete.",
+                        duration=3000,
+                    )
+                return
+
+            if self._logs:
+                for message in instance.objects[message_index:]:
+                    self._logs.update_status(message_id=id(message), removed=True)
+
+            with hold():
+                self._cleanup_exploration(self._exploration)
+                with instance.param.update(disabled=True, loading=True):
+                    instance.objects = instance.objects[:message_index]
+                    self._update_main_view()
+                    instance.send(contents, respond=True)
+
         # Track pending query when files are being uploaded
         self._pending_query = None
         self._pending_sources_snapshot = None  # Also indicates dialog was opened from chat
@@ -895,6 +916,7 @@ class UI(Viewer):
             interface = ChatInterface(
                 callback=self._chat_invoke,
                 callback_exception="raise",
+                edit_callback=on_edit,
                 load_buffer=5,
                 on_submit=on_submit,
                 show_button_tooltips=True,
@@ -904,6 +926,7 @@ class UI(Viewer):
         else:
             interface = self.interface
             interface.callback = self._chat_invoke
+            interface.edit_callback = on_edit
             interface.on_submit = on_submit
         interface.button_properties = {
             "undo": {"callback": on_undo},
@@ -2042,6 +2065,36 @@ class ExplorerUI(UI):
     def _toggle_report_mode(self, active: bool):
         """Toggle between regular and report mode."""
         self._update_main_view(force_report_mode=active)
+
+    def _cleanup_exploration(self, item):
+        """Clean up an exploration and its children, remove from tree,
+        and switch to parent (or Home for top-level explorations)."""
+        exploration = item['view']
+        if exploration.plan is None:
+            return
+        for child in item.get('items', []):
+            if child['view'].plan is not None:
+                child['view'].plan.cleanup()
+            child['view'].context.clear()
+        exploration.plan.cleanup()
+        exploration.context.clear()
+        if item in self._explorations.items:
+            # Top-level exploration: remove and switch to Home
+            self._explorations.items = [
+                it for it in self._explorations.items if it is not item
+            ]
+            home_item = self._explorations.items[0]
+            self._explorations.value = self._exploration = home_item
+            self._last_synced = self._home
+        else:
+            # Nested (followup) exploration: remove and switch to parent
+            parent = item["parent"]
+            self._explorations.update_item(
+                parent,
+                items=[it for it in parent["items"] if it is not item],
+            )
+            self._explorations.value = self._exploration = parent
+            self._last_synced = parent['view']
 
     async def _delete_exploration(self, item):
         await self._idle.wait()

@@ -160,11 +160,10 @@ Below is a summary of the data returned by the query. This includes:
 ```
 {%- endif %}
 
-{%- if memory.get('metaset') -%}
+{%- if memory.get('metaset') and memory['metaset'].catalog | length > 1 -%}
 {%- set table_list = memory['metaset'].table_context(n=0, n_others=19) %}
 
 ## Available Data Sources
-These tables are available in the database for reference:
 {{ table_list }}
 {%- endif -%}
 
