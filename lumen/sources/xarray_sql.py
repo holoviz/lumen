@@ -29,9 +29,9 @@ XARRAY_ENGINES = {
     ".nc": "netcdf4",
     ".nc4": "netcdf4",
     ".netcdf": "netcdf4",
-    ".h5": "h5netcdf",
-    ".hdf5": "h5netcdf",
-    ".he5": "h5netcdf",
+    ".h5": "netcdf4",
+    ".hdf5": "netcdf4",
+    ".he5": "netcdf4",
     ".zarr": "zarr",
     ".grib": "cfgrib",
     ".grib2": "cfgrib",
@@ -89,7 +89,7 @@ class XArraySQLSource(BaseSQLSource):
 
     engine = param.String(default=None, allow_None=True, doc="""
         xarray backend engine. Auto-detected from file extension if None.
-        Options: netcdf4, h5netcdf, zarr, cfgrib.""")
+        Options: netcdf4, zarr, cfgrib, h5netcdf.""")
 
     chunks = param.Parameter(default="auto", doc="""
         Dask chunk specification for lazy loading.
@@ -286,6 +286,42 @@ class XArraySQLSource(BaseSQLSource):
             table_params=all_params,
         )
 
+    def _build_column_metadata(
+        self, var: Any, table: str,
+    ) -> dict[str, dict[str, str]]:
+        """Build per-column metadata for a single data variable."""
+        ds = self._dataset
+        columns = {}
+        for dim in var.dims:
+            if dim not in ds.coords:
+                columns[dim] = {
+                    "data_type": "int64",
+                    "description": f"index along {dim} dimension",
+                }
+                continue
+            coord_attrs = dict(ds.coords[dim].attrs)
+            columns[dim] = {
+                "data_type": str(ds.coords[dim].dtype),
+                "description": coord_attrs.get("long_name", ""),
+            }
+        columns[table] = {
+            "data_type": str(var.dtype),
+            "description": var.attrs.get("long_name", ""),
+        }
+        return columns
+
+    def _format_aux_coords(self, var: Any) -> str:
+        """Format auxiliary coordinate labels for a data variable."""
+        ds = self._dataset
+        aux_coords = [c for c in var.coords if c not in var.dims and c != var.name]
+        if not aux_coords:
+            return ""
+        labels = []
+        for ac in aux_coords:
+            long_name = ds.coords[ac].attrs.get("long_name")
+            labels.append(f"{ac} [{long_name}]" if long_name else ac)
+        return f" (auxiliary coords: {', '.join(labels)})"
+
     def _get_table_metadata(self, tables: list[str]) -> dict[str, Any]:
         """Build metadata from xarray attributes for AI table discovery."""
         ds = self._dataset
@@ -299,39 +335,11 @@ class XArraySQLSource(BaseSQLSource):
             description = attrs.get("long_name", table)
             if "units" in attrs:
                 description += f" [{attrs['units']}]"
-
-            columns = {}
-            for dim in var.dims:
-                if dim in ds.coords:
-                    coord_attrs = dict(ds.coords[dim].attrs)
-                    columns[dim] = {
-                        "data_type": str(ds.coords[dim].dtype),
-                        "description": coord_attrs.get("long_name", ""),
-                    }
-                else:
-                    columns[dim] = {
-                        "data_type": "int64",
-                        "description": f"index along {dim} dimension",
-                    }
-            columns[table] = {
-                "data_type": str(var.dtype),
-                "description": attrs.get("long_name", ""),
-            }
-
-            aux_coords = [c for c in var.coords if c not in var.dims and c != table]
-            if aux_coords:
-                aux_labels = []
-                for ac in aux_coords:
-                    label = ac
-                    ac_long = ds.coords[ac].attrs.get("long_name")
-                    if ac_long:
-                        label += f" [{ac_long}]"
-                    aux_labels.append(label)
-                description += f" (auxiliary coords: {', '.join(aux_labels)})"
+            description += self._format_aux_coords(var)
 
             metadata[table] = {
                 "description": description,
-                "columns": columns,
+                "columns": self._build_column_metadata(var, table),
                 "rows": var.size,
             }
         return metadata
