@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, ClassVar
 
+import numpy as np
 import param
 
 from ..transforms.sql import SQLFilter
@@ -83,6 +84,8 @@ class XArraySQLSource(BaseSQLSource):
 
     source_type: ClassVar[str | None] = "xarray"
 
+    dialect: ClassVar[str | None] = None  # DataFusion uses standard SQL
+
     uri = param.String(default=None, allow_None=True, doc="""
         Path or URL to the xarray-compatible data file.
         Supports NetCDF (.nc), Zarr (.zarr), HDF5 (.h5), GRIB (.grib).""")
@@ -137,6 +140,16 @@ class XArraySQLSource(BaseSQLSource):
             open_kwargs=self.open_kwargs,
             variables=self.variables,
         )
+
+        # Auto-assign integer coords for bare dimensions so DataFusion
+        # exposes them as SQL columns (fixes non-linear grid datasets like RASM).
+        bare_dims = {
+            dim: np.arange(self._dataset.sizes[dim])
+            for dim in self._dataset.dims
+            if dim not in self._dataset.coords
+        }
+        if bare_dims:
+            self._dataset = self._dataset.assign_coords(bare_dims)
 
         self._ctx = XarrayContext()
         chunk_spec = self._resolve_chunks(self._dataset, self.chunks)

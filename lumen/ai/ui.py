@@ -28,6 +28,9 @@ from panel_material_ui import (
 )
 from panel_splitjs import HSplit, MultiSplit, VSplit
 
+XARRAY_FILE_EXTENSIONS = ('.nc', '.nc4', '.netcdf', '.h5', '.hdf5', '.he5', '.zarr', '.grib', '.grib2', '.grb', '.grb2')
+XARRAY_UPLOAD_EXTENSIONS = ('nc', 'nc4', 'h5', 'hdf5')
+
 from lumen.ai.agents.deck_gl import DeckGLAgent
 
 from ..pipeline import Pipeline
@@ -502,6 +505,40 @@ class UI(Viewer):
         self._configure_session()
         self._render_page()
 
+    @staticmethod
+    def _get_xarray_upload_handlers():
+        """Build upload handlers for xarray file formats."""
+        import atexit
+        import os
+
+        _temp_files: list[str] = []
+
+        def _cleanup_temp_files():
+            for path in _temp_files:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+
+        atexit.register(_cleanup_temp_files)
+
+        def _handle_xarray_upload(context, file_obj, alias, filename):
+            try:
+                from ..sources.xarray_sql import XArraySQLSource
+            except ImportError:
+                return None
+            import tempfile
+            ext = filename.rsplit('.', 1)[-1] if '.' in filename else 'nc'
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f'.{ext}')
+            file_obj.seek(0)
+            tmp.write(file_obj.read())
+            tmp.flush()
+            tmp.close()
+            _temp_files.append(tmp.name)
+            return XArraySQLSource(uri=tmp.name, name=alias)
+
+        return {ext: _handle_xarray_upload for ext in XARRAY_UPLOAD_EXTENSIONS}
+
     @classmethod
     def _resolve_data(
         cls, data: DataT | list[DataT] | dict[DataT] | None
@@ -589,6 +626,19 @@ class UI(Viewer):
                             ) from e
                         source = SQLAlchemySource(url=f'sqlite:///{db_path}')
                         sources.append(source)
+                    continue
+
+                # Handle xarray files (NetCDF, Zarr, HDF5, GRIB)
+                if src.endswith(XARRAY_FILE_EXTENSIONS):
+                    try:
+                        from ..sources.xarray_sql import XArraySQLSource
+                    except ImportError as e:
+                        raise ImportError(
+                            "xarray and xarray-sql are required to load xarray files. "
+                            "Install them with: pip install lumen[xarray]"
+                        ) from e
+                    source = XArraySQLSource(uri=str(Path(src).absolute()))
+                    sources.append(source)
                     continue
 
                 if src.startswith('http'):
@@ -1193,6 +1243,10 @@ class UI(Viewer):
             param.parameterized.async_executor(_do_sync)
         self._source_catalog.param.watch(_schedule_visibility_change, 'visibility_changed')
 
+        # Register xarray upload handlers (if xarray-sql is available)
+        xarray_handlers = self._get_xarray_upload_handlers()
+        merged_upload_handlers = {**xarray_handlers, **self.upload_handlers}
+
         # Initialize source controls
         self._source_controls = []
         control_tabs = []
@@ -1200,7 +1254,7 @@ class UI(Viewer):
             control_kwargs = {
                 'context': self.context,
                 'source_catalog': self._source_catalog,
-                'upload_handlers': self.upload_handlers
+                'upload_handlers': merged_upload_handlers
             }
             if control is UploadControls and self.filedropper_kwargs:
                 control_kwargs['filedropper_kwargs'] = self.filedropper_kwargs

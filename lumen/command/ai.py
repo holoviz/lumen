@@ -241,10 +241,15 @@ class AIHandler(CodeHandler):
                 continue
 
             path = Path(table_path)
-            if not path.is_file():
-                if path.exists():
-                    raise ValueError(f"Table path is not a file: {table_path}")
+            if not path.exists():
                 raise FileNotFoundError(f"Table file not found: {table_path}")
+            if path.is_dir() and not table_path.endswith('.zarr'):
+                raise ValueError(
+                    f"Table path is a directory: {table_path}. "
+                    "Only .zarr directories are supported."
+                )
+            if not path.is_file() and not path.is_dir():
+                raise ValueError(f"Table path is not a file: {table_path}")
 
         source = self._build_source_code(
             tables=tables,
