@@ -11,28 +11,26 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, ClassVar
 
-import numpy as np
 import param
 
 from ..transforms.sql import SQLFilter
 from .base import BaseSQLSource, cached
 
-try:
-    import xarray as xr
 
-    from xarray_sql import XarrayContext
-    XARRAY_AVAILABLE = True
-except ImportError:
-    XARRAY_AVAILABLE = False
+def _check_xarray_available():
+    """Check xarray and xarray-sql are installed, import lazily."""
+    try:
+        import xarray  # noqa
+        import xarray_sql  # noqa
+        return True
+    except ImportError:
+        return False
 
 # Map file extensions to xarray engines
 XARRAY_ENGINES = {
     ".nc": "netcdf4",
     ".nc4": "netcdf4",
     ".netcdf": "netcdf4",
-    ".h5": "netcdf4",
-    ".hdf5": "netcdf4",
-    ".he5": "netcdf4",
     ".zarr": "zarr",
     ".grib": "cfgrib",
     ".grib2": "cfgrib",
@@ -113,7 +111,7 @@ class XArraySQLSource(BaseSQLSource):
         The SQL expression template for table queries.""")
 
     def __init__(self, _dataset=None, _ctx=None, **params):
-        if not XARRAY_AVAILABLE:
+        if not _check_xarray_available():
             raise ImportError(
                 "xarray and xarray-sql are required for XArraySQLSource. "
                 "Install them with: pip install lumen[xarray]"
@@ -143,6 +141,7 @@ class XArraySQLSource(BaseSQLSource):
 
         # Auto-assign integer coords for bare dimensions so DataFusion
         # exposes them as SQL columns (fixes non-linear grid datasets like RASM).
+        import numpy as np
         bare_dims = {
             dim: np.arange(self._dataset.sizes[dim])
             for dim in self._dataset.dims
@@ -151,6 +150,7 @@ class XArraySQLSource(BaseSQLSource):
         if bare_dims:
             self._dataset = self._dataset.assign_coords(bare_dims)
 
+        from xarray_sql import XarrayContext
         self._ctx = XarrayContext()
         chunk_spec = self._resolve_chunks(self._dataset, self.chunks)
 
@@ -183,6 +183,7 @@ class XArraySQLSource(BaseSQLSource):
                 kw["engine"] = resolved_engine
             if chunks is not None:
                 kw["chunks"] = chunks
+            import xarray as xr
             ds = xr.open_dataset(uri, **kw)
         else:
             raise ValueError("Either 'uri' or '_dataset' must be provided.")
