@@ -1,47 +1,6 @@
 # :material-puzzle-plus: Extending Lumen
 
-Lumen is designed to be extensible. While the built-in sources, agents, tools, and analyses cover a wide range of use cases, you may want to create custom components that integrate deeply with your own data infrastructure or domain logic.
-
----
-
-## Custom Components
-
-Lumen's core building blocks—[Sources](configuration/sources.md), [Agents](configuration/agents.md), [Tools](configuration/tools.md), and [Analyses](configuration/analyses.md)—are all subclassable Python classes. You can override or extend any of them and pass your custom class directly to `ExplorerUI`.
-
-For example, a minimal custom source:
-
-```python
-from lumen.sources import Source
-import pandas as pd
-
-class MyCustomSource(Source):
-    """A source that loads data from a proprietary API."""
-
-    source_type = 'my_custom'
-
-    def get(self, table, **query):
-        # Replace with your own data fetching logic
-        return pd.DataFrame({'col': [1, 2, 3]})
-
-    def get_schema(self, table=None):
-        return {'my_table': {'col': {'type': 'integer'}}}
-```
-
-Then use it like any built-in source:
-
-```python
-import lumen.ai as lmai
-
-source = MyCustomSource()
-ui = lmai.ExplorerUI(data=source)
-ui.servable()
-```
-
----
-
-## Building a Distributable Extension
-
-If your custom component is mature enough to share—with colleagues, as an open-source package, or on PyPI—consider packaging it as a proper Python extension using the **Panel Extension Copier Template**.
+Lumen's core building blocks—[Sources](configuration/sources.md), [Agents](configuration/agents.md), [Tools](configuration/tools.md), and [Analyses](configuration/analyses.md)—are all subclassable Python classes. If you've built a custom component and want to share it as a reusable, installable Python package, the **Panel Extension Copier Template** gives you a fully configured project scaffold to do just that.
 
 ### What is the Panel Extension Copier Template?
 
