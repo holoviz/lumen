@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
+import os
+import tempfile
 
 from contextlib import contextmanager
 from functools import partial
@@ -508,9 +511,6 @@ class UI(Viewer):
     @staticmethod
     def _get_xarray_upload_handlers():
         """Build upload handlers for xarray file formats."""
-        import atexit
-        import os
-
         _temp_files: list[str] = []
 
         def _cleanup_temp_files():
@@ -527,7 +527,6 @@ class UI(Viewer):
                 from ..sources.xarray_sql import XArraySQLSource
             except ImportError:
                 return None
-            import tempfile
             ext = filename.rsplit('.', 1)[-1] if '.' in filename else 'nc'
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f'.{ext}')
             file_obj.seek(0)
