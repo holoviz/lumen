@@ -138,12 +138,11 @@ class TestConstruction:
     def test_engine_detection_all_formats(self):
         assert _detect_engine("/data/file.nc") == "netcdf4"
         assert _detect_engine("/data/file.nc4") == "netcdf4"
-        assert _detect_engine("/data/file.h5") == "netcdf4"
-        assert _detect_engine("/data/file.hdf5") == "netcdf4"
         assert _detect_engine("/data/file.zarr") == "zarr"
         assert _detect_engine("/data/file.grib") == "cfgrib"
         assert _detect_engine("/data/file.grib2") == "cfgrib"
         assert _detect_engine("/data/file.grb") == "cfgrib"
+        assert _detect_engine("/data/file.h5") is None
         assert _detect_engine("/data/file.txt") is None
 
     def test_from_grib(self):
