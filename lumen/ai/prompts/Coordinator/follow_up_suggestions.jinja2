@@ -1,0 +1,31 @@
+{% extends 'Actor/main.jinja2' %}
+
+{% block instructions %}
+Suggest ONE concise follow-up question based on the user's query and the resulting data.
+
+Rules:
+- MUST reference specific column names from the data summary
+- Keep it short and actionable (under 100 characters)
+- Do NOT repeat any previous queries
+- Do NOT suggest analyses the data cannot support
+{% endblock %}
+
+{% block examples %}
+Examples:
+- "Show revenue trend over date by product"
+- "Compare revenue across region"
+- "Filter to top 5 products by revenue"
+{% endblock %}
+
+{% block context %}
+Data Summary:
+{{ data_summary }}
+{% if sql %}
+SQL Executed: {{ sql }}
+{% endif %}
+Output Type: {{ output_type }}
+{% if previous_queries %}
+Previous Queries (do NOT repeat):
+{% for q in previous_queries %}- {{ q }}
+{% endfor %}{% endif %}
+{% endblock %}

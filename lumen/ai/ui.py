@@ -410,6 +410,12 @@ class UI(Viewer):
     export_functions = param.Dict(default={}, doc="""
        Dictionary mapping from name of exporter to export function.""")
 
+    follow_up_suggestions = param.Boolean(default=True, doc="""
+        Whether to generate AI-powered follow-up suggestions after each
+        successful query. When enabled, a lightbulb icon button appears
+        in the message footer that populates the input with a follow-up
+        suggestion on click. Requires an additional LLM call per query.""")
+
     interface = param.ClassSelector(class_=ChatFeed, doc="""
         The interface for the Coordinator to interact with.""")
 
@@ -1042,6 +1048,7 @@ class UI(Viewer):
         if self.analyses:
             agents.append(AnalysisAgent(analyses=self.analyses))
 
+        self._background_tasks = set()
         self._coordinator = self.coordinator(
             agents=agents,
             context=self.context,
@@ -1596,6 +1603,67 @@ class UI(Viewer):
             num_objects=len(self.interface.objects),
         )
 
+    def _add_followup_icon_to_footer(self, suggestion: str, num_objects: int):
+        """Add a lightbulb icon button to the message footer actions.
+
+        On click, populates the ChatAreaInput with the suggestion
+        without auto-submitting, so the user can review or edit before sending.
+        """
+
+        def on_click(event):
+            with edit_readonly(self._chat_input):
+                self._chat_input.value_input = suggestion
+            followup_button.visible = False
+
+        def hide_followup(_=None):
+            if len(self.interface.objects) > num_objects:
+                followup_button.visible = False
+
+        followup_button = IconButton(
+            icon="lightbulb",
+            description=f"Suggest: {suggestion}",
+            size="small",
+            icon_size="0.9em",
+            margin=(5, 0),
+            on_click=on_click,
+            name="FollowUp",
+            disabled=self.interface.param.loading,
+            color="default",
+            sx={"color": "#FFD700", "padding": "0 0.1em"},
+        )
+
+        if len(self.interface):
+            message = self.interface.objects[-1]
+            try:
+                existing = message.footer_actions or []
+            except AttributeError:
+                existing = message.footer_objects or []
+            existing = [
+                obj for obj in existing
+                if getattr(obj, 'name', '') != "FollowUp"
+            ]
+            try:
+                message.footer_actions = existing + [followup_button]
+            except AttributeError:
+                message.footer_objects = existing + [followup_button]
+            self.interface.param.watch(hide_followup, "objects")
+
+    async def _generate_followup_suggestions(self, plan: Plan):
+        """Render follow-up suggestion from the coordinator."""
+        if not self.follow_up_suggestions:
+            return
+
+        num_objects = len(self.interface.objects)
+        suggestion = await self._coordinator.suggest_followup(plan)
+        if not suggestion:
+            return
+
+        # Guard against stale message if user sent a new query while we were generating
+        if len(self.interface.objects) != num_objects:
+            return
+
+        self._add_followup_icon_to_footer(suggestion, num_objects)
+
     def __panel__(self):
         return self._main
 
@@ -1799,6 +1867,9 @@ class ExplorerUI(UI):
         validation = Switch(label='Validation Step', description='Check if the response fully answered your question', value=True)
         self._coordinator.validation_enabled = validation
         switches.append(validation)
+        followup = Switch(label='Follow-Up Suggestions', description='Show AI-generated follow-up questions after each query', value=self.follow_up_suggestions)
+        followup.link(self, value='follow_up_suggestions', bidirectional=True)
+        switches.append(followup)
 
         # Add code execution selector if not hidden
         code_agents = False
@@ -2506,6 +2577,9 @@ class ExplorerUI(UI):
             await self._sync_sources(SimpleNamespace(new=plan.out_context), global_context=plan.out_context)
             if "pipeline" in plan.out_context:
                 await self._add_analysis_suggestions(plan)
+                task = asyncio.create_task(self._generate_followup_suggestions(plan))
+                self._background_tasks.add(task)
+                task.add_done_callback(self._background_tasks.discard)
 
             if is_new:
                 plan.param.watch(partial(self._update_views, exploration), "views")

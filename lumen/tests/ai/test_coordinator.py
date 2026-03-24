@@ -19,7 +19,7 @@ from lumen.ai.controls.base import BaseSourceControls, UploadedFileRow
 from lumen.ai.coordinator import Coordinator, Plan, Planner
 from lumen.ai.coordinator.planner import Reasoning, make_plan_model
 from lumen.ai.editors import SQLEditor
-from lumen.ai.models import ReplaceLine, RetrySpec
+from lumen.ai.models import FollowUpSuggestion, ReplaceLine, RetrySpec
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
 from lumen.ai.tools import FunctionTool, define_tool
@@ -587,3 +587,81 @@ async def test_process_files_duplicate_table_name():
     df = sources[0].get("data")
     # Should have the latest data
     assert df.iloc[0, 0] == 99
+
+
+# --- Follow-up suggestion coordinator tests ---
+
+async def test_suggest_followup_returns_suggestion(llm):
+    """Coordinator.suggest_followup should return a query string."""
+    suggestion_response = FollowUpSuggestion(query="Show value by category")
+    llm.set_responses([suggestion_response])
+
+    coordinator = Coordinator(llm=llm)
+    plan = Plan(
+        ActorTask(ChatAgent(llm=llm)),
+        history=[{"content": "Sum value column", "role": "user"}],
+        title="test",
+        context={},
+    )
+    plan.out_context = {
+        "pipeline": object(),
+        "data": "columns: category, value",
+        "sql": "SELECT * FROM t",
+    }
+
+    result = await coordinator.suggest_followup(plan)
+    assert result == "Show value by category"
+
+
+async def test_suggest_followup_no_pipeline(llm):
+    """Should return None when plan has no pipeline."""
+    coordinator = Coordinator(llm=llm)
+    plan = Plan(
+        ActorTask(ChatAgent(llm=llm)),
+        history=[],
+        title="test",
+        context={},
+    )
+    plan.out_context = {}
+
+    result = await coordinator.suggest_followup(plan)
+    assert result is None
+
+
+async def test_suggest_followup_no_data(llm):
+    """Should return None when plan has no data summary."""
+    coordinator = Coordinator(llm=llm)
+    plan = Plan(
+        ActorTask(ChatAgent(llm=llm)),
+        history=[],
+        title="test",
+        context={},
+    )
+    plan.out_context = {"pipeline": object(), "data": ""}
+
+    result = await coordinator.suggest_followup(plan)
+    assert result is None
+
+
+async def test_suggest_followup_llm_failure(llm):
+    """Should return None when LLM call fails."""
+    def raise_error():
+        raise RuntimeError("LLM unavailable")
+
+    llm.set_responses([raise_error])
+
+    coordinator = Coordinator(llm=llm)
+    plan = Plan(
+        ActorTask(ChatAgent(llm=llm)),
+        history=[{"content": "test", "role": "user"}],
+        title="test",
+        context={},
+    )
+    plan.out_context = {
+        "pipeline": object(),
+        "data": "columns: a, b",
+        "sql": "SELECT * FROM t",
+    }
+
+    result = await coordinator.suggest_followup(plan)
+    assert result is None

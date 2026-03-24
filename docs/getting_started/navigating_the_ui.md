@@ -110,6 +110,8 @@ Use **Settings** in the left sidebar to configure analysis behavior:
 
 **Validation Step** — AI validates results for correctness (enabled by default)
 
+**Follow-Up Suggestions** — After each successful query, a lightbulb icon appears in the message footer. Click it to populate the chat input with an AI-generated follow-up question. Toggle off in Settings if not needed.
+
 **Code Execution** — If enabled by administrator, controls how visualizations are generated. See [Code Execution for Visualizations](using_lumen_ai.md#code-execution-for-visualizations) for security implications.
 
 **LLM Configuration** — Choose and configure your language model
