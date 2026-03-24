@@ -1128,17 +1128,16 @@ class TestResolveData:
 
     def test_resolve_data_netcdf_file(self):
         """Test resolving a NetCDF file creates XArraySQLSource."""
-        try:
-            import xarray  # noqa
-            import xarray_sql  # noqa
-        except ImportError:
-            pytest.skip("xarray-sql not installed")
+        pytest.importorskip("xarray_sql")
         import numpy as np
+        import xarray as xr
         with tempfile.TemporaryDirectory() as tmpdir:
             nc_path = Path(tmpdir) / 'test.nc'
-            import xarray as xr
             ds = xr.Dataset({'temperature': (('lat', 'lon'), np.random.rand(3, 4))})
-            ds.to_netcdf(nc_path)
+            try:
+                ds.to_netcdf(nc_path)
+            except Exception:
+                pytest.skip("NetCDF write backend unavailable")
             result = UI._resolve_data(str(nc_path))
             assert len(result) == 1
             from lumen.sources.xarray_sql import XArraySQLSource
@@ -1153,17 +1152,16 @@ class TestResolveData:
 
     def test_resolve_data_mixed_xarray_and_csv(self):
         """Test that .nc creates separate source while .csv goes to DuckDB."""
-        try:
-            import xarray  # noqa
-            import xarray_sql  # noqa
-        except ImportError:
-            pytest.skip("xarray-sql not installed")
+        pytest.importorskip("xarray_sql")
         import numpy as np
+        import xarray as xr
         with tempfile.TemporaryDirectory() as tmpdir:
             nc_path = Path(tmpdir) / 'test.nc'
-            import xarray as xr
             ds = xr.Dataset({'temp': (('x',), np.array([1.0, 2.0]))})
-            ds.to_netcdf(nc_path)
+            try:
+                ds.to_netcdf(nc_path)
+            except Exception:
+                pytest.skip("NetCDF write backend unavailable")
             result = UI._resolve_data([str(nc_path), 'data.csv'])
             assert len(result) == 2
             from lumen.sources.xarray_sql import XArraySQLSource
@@ -1214,19 +1212,19 @@ class TestXarrayUploadHandler:
 
     def test_upload_handler_creates_source_from_nc(self):
         """Upload handler should create XArraySQLSource from NetCDF bytes."""
-        try:
-            import xarray as xr
-            import xarray_sql  # noqa
-        except ImportError:
-            pytest.skip("xarray-sql not installed")
+        pytest.importorskip("xarray_sql")
         import io
 
         import numpy as np
+        import xarray as xr
 
         # Create a NetCDF file in memory
         ds = xr.Dataset({'temp': (('x',), np.array([1.0, 2.0, 3.0]))})
         buf = io.BytesIO()
-        ds.to_netcdf(buf)
+        try:
+            ds.to_netcdf(buf)
+        except Exception:
+            pytest.skip("NetCDF write backend unavailable")
         buf.seek(0)
 
         handlers = UI._get_xarray_upload_handlers()
