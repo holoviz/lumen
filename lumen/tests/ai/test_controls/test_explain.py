@@ -1,9 +1,5 @@
 """Tests for explain controls."""
-import asyncio
-
-from unittest.mock import (
-    AsyncMock, MagicMock, Mock, patch,
-)
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -21,8 +17,6 @@ class MockView:
     def __init__(self, spec="SELECT * FROM users", language="sql"):
         self.spec = spec
         self.language = language
-        self.editor = MagicMock()
-        self.editor.code = spec
 
 
 class MockTask:
@@ -44,7 +38,6 @@ class MockInterface:
         """Mock stream method that mimics ChatFeed.stream behavior."""
         msg = {"content": content, "user": user, "replace": replace}
         if replace and message is not None:
-            # Update existing message
             self._last_message = msg
         else:
             self._last_message = msg
@@ -70,10 +63,17 @@ class TestExplainControls:
         assert controls.interface is interface
         assert controls.view is view
         assert controls.task is task
-        assert controls.layout_kwargs == {}
+        assert controls.active is False
+        assert controls._explain_count == 0
 
-    def test_creates_icon_button(self):
-        """Test that ExplainControls creates an IconButton with correct properties."""
+    def test_class_kwargs(self):
+        """Test ExplainControls has correct class-level kwargs."""
+        assert ExplainControls.toggle_kwargs["icon"] == "psychology"
+        assert "Explain" in ExplainControls.toggle_kwargs["description"]
+        assert "blank" in ExplainControls.input_kwargs["placeholder"].lower()
+
+    def test_text_input_created(self):
+        """Test that ExplainControls creates a TextInput via RevisionControls."""
         interface = MockInterface()
         view = MockView()
         task = MockTask()
@@ -84,33 +84,8 @@ class TestExplainControls:
             task=task,
         )
 
-        row = controls._row
-        assert len(row.objects) == 1
-        icon_button = row.objects[0]
-
-        assert icon_button.icon == "psychology"
-        assert icon_button.active_icon == "check"
-        assert icon_button.description == "Explain SQL"
-        assert icon_button.size == "small"
-        assert icon_button.color == "primary"
-        assert icon_button.icon_size == "0.9em"
-        assert icon_button.margin == (5, 0)
-        assert icon_button.toggle_duration == 1000
-
-    def test_description_adapts_to_language(self):
-        """Test that description tooltip changes for different languages."""
-        interface = MockInterface()
-        task = MockTask()
-
-        # SQL
-        view_sql = MockView(language="sql")
-        controls_sql = ExplainControls(interface=interface, view=view_sql, task=task)
-        assert controls_sql._row.objects[0].description == "Explain SQL"
-
-        # YAML
-        view_yaml = MockView(spec="type: bar", language="yaml")
-        controls_yaml = ExplainControls(interface=interface, view=view_yaml, task=task)
-        assert controls_yaml._row.objects[0].description == "Explain YAML"
+        assert hasattr(controls, "_text_input")
+        assert controls._text_input.max_length == 200
 
     def test_panel_returns_row(self):
         """Test __panel__ returns the row component."""
@@ -160,44 +135,54 @@ class TestExplainControls:
         assert controls1._row is not controls2._row
         assert controls1._row.objects[0] is not controls2._row.objects[0]
 
-    def test_render_system_prompt_sql(self):
-        """Test system prompt rendering for SQL language."""
+    def test_enter_reason_blank_triggers_full_explain(self):
+        """Test _enter_reason with blank input sets empty _focus and increments count."""
         interface = MockInterface()
-        view = MockView(language="sql")
+        view = MockView()
         task = MockTask()
 
         controls = ExplainControls(interface=interface, view=view, task=task)
-        prompt = controls._render_system_prompt()
+        controls.active = True
+        controls._text_input.value_input = ""
 
-        assert "sql" in prompt.lower()
-        assert "query" in prompt.lower()
-        assert "SELECT" in prompt
-        assert "FROM" in prompt
+        controls._enter_reason(None)
 
-    def test_render_system_prompt_yaml(self):
-        """Test system prompt rendering for YAML language."""
+        assert controls._focus == ""
+        assert controls.active is False
+        assert controls._explain_count == 1
+        assert controls._text_input.value == ""
+
+    def test_enter_reason_with_focus_text(self):
+        """Test _enter_reason with specific focus text."""
         interface = MockInterface()
-        view = MockView(spec="type: bar", language="yaml")
+        view = MockView()
         task = MockTask()
 
         controls = ExplainControls(interface=interface, view=view, task=task)
-        prompt = controls._render_system_prompt()
+        controls.active = True
+        controls._text_input.value_input = "  WHERE clause  "
 
-        assert "yaml" in prompt.lower()
-        assert "specification" in prompt.lower()
-        assert "top-level key" in prompt
+        controls._enter_reason(None)
 
-    def test_render_system_prompt_unknown_language(self):
-        """Test system prompt rendering for unknown language falls back gracefully."""
+        assert controls._focus == "WHERE clause"
+        assert controls.active is False
+        assert controls._explain_count == 1
+
+    def test_enter_reason_increments_count(self):
+        """Test _enter_reason increments _explain_count on each call."""
         interface = MockInterface()
-        view = MockView(spec="some code", language="python")
+        view = MockView()
         task = MockTask()
 
         controls = ExplainControls(interface=interface, view=view, task=task)
-        prompt = controls._render_system_prompt()
+        controls._text_input.value_input = ""
 
-        assert "python" in prompt.lower()
-        assert "code" in prompt.lower()
+        controls._enter_reason(None)
+        assert controls._explain_count == 1
+
+        controls._text_input.value_input = "JOIN"
+        controls._enter_reason(None)
+        assert controls._explain_count == 2
 
     @pytest.mark.asyncio
     async def test_explain_streams_progressively(self):
@@ -215,11 +200,10 @@ class TestExplainControls:
         task.actor.llm.stream = mock_stream
 
         controls = ExplainControls(interface=interface, view=view, task=task)
+        controls._focus = ""
         await controls._explain()
 
-        # Should have streamed multiple times (one per chunk)
         assert len(interface.messages) == len(chunks)
-        # Each stream call should use replace=True
         for msg in interface.messages:
             assert msg["replace"] is True
 
@@ -231,6 +215,7 @@ class TestExplainControls:
         task = MockTask()
 
         controls = ExplainControls(interface=interface, view=view, task=task)
+        controls._focus = ""
         await controls._explain()
 
         assert len(interface.messages) == 0
@@ -243,6 +228,7 @@ class TestExplainControls:
         task = MockTask()
 
         controls = ExplainControls(interface=interface, view=view, task=task)
+        controls._focus = ""
         await controls._explain()
 
         assert len(interface.messages) == 0
@@ -255,6 +241,7 @@ class TestExplainControls:
         task = MockTask()
 
         controls = ExplainControls(interface=interface, view=view, task=task)
+        controls._focus = ""
         await controls._explain()
 
         assert len(interface.messages) == 0
@@ -273,9 +260,9 @@ class TestExplainControls:
         task.actor.llm.stream = mock_stream
 
         controls = ExplainControls(interface=interface, view=view, task=task)
+        controls._focus = ""
         await controls._explain()
 
-        # Should have streamed an error card
         assert len(interface.messages) == 1
         card = interface.messages[0]["content"]
         assert hasattr(card, "title")
@@ -295,6 +282,7 @@ class TestExplainControls:
         task.actor.llm.stream = mock_stream
 
         controls = ExplainControls(interface=interface, view=view, task=task)
+        controls._focus = ""
         await controls._explain()
 
         card = interface.messages[0]["content"]
@@ -306,60 +294,6 @@ class TestExplainControls:
         )
         assert md_text.startswith("```\n")
         assert md_text.endswith("\n```")
-
-    @pytest.mark.asyncio
-    async def test_explain_disables_icon_during_execution(self):
-        """Test that the icon is disabled during LLM call and re-enabled after."""
-        interface = MockInterface()
-        view = MockView(spec="SELECT 1")
-        task = MockTask()
-
-        disabled_states = []
-
-        async def mock_stream(**kwargs):
-            disabled_states.append(True)  # capture state during streaming
-            yield "explanation"
-
-        task.actor.llm.stream = mock_stream
-
-        controls = ExplainControls(interface=interface, view=view, task=task)
-        await controls._explain()
-
-        # Icon should be re-enabled after completion
-        assert controls._icon.disabled is False
-        assert controls._clicking is False
-
-    @pytest.mark.asyncio
-    async def test_explain_resets_clicking_on_empty_spec(self):
-        """Test that _clicking is reset even when spec is empty."""
-        interface = MockInterface()
-        view = MockView(spec="")
-        task = MockTask()
-
-        controls = ExplainControls(interface=interface, view=view, task=task)
-        controls._clicking = True
-        await controls._explain()
-
-        assert controls._clicking is False
-
-    @pytest.mark.asyncio
-    async def test_explain_resets_state_on_error(self):
-        """Test that icon state is reset even when LLM errors out."""
-        interface = MockInterface()
-        view = MockView(spec="SELECT 1")
-        task = MockTask()
-
-        async def mock_stream(**kwargs):
-            raise RuntimeError("Network error")
-            yield
-
-        task.actor.llm.stream = mock_stream
-
-        controls = ExplainControls(interface=interface, view=view, task=task)
-        await controls._explain()
-
-        assert controls._icon.disabled is False
-        assert controls._clicking is False
 
     @pytest.mark.asyncio
     async def test_explain_passes_correct_messages_to_llm(self):
@@ -377,18 +311,46 @@ class TestExplainControls:
         task.actor.llm.stream = mock_stream
 
         controls = ExplainControls(interface=interface, view=view, task=task)
+        controls._focus = ""
         await controls._explain()
 
-        # Verify messages contain the spec
+        # Verify messages — user content should be minimal (spec is in system prompt context block)
         assert len(captured_kwargs["messages"]) == 1
         msg = captured_kwargs["messages"][0]
         assert msg["role"] == "user"
-        assert "SELECT name FROM users WHERE active = 1" in msg["content"]
-        assert "```sql" in msg["content"]
+        assert "Explain the spec above" in msg["content"]
 
-        # Verify system prompt was rendered
+        # Verify system prompt contains the spec and language info
         assert "system" in captured_kwargs
-        assert "sql" in captured_kwargs["system"].lower()
+        system = captured_kwargs["system"]
+        assert "SELECT name FROM users WHERE active = 1" in system
+        assert "sql" in system.lower()
+
+    @pytest.mark.asyncio
+    async def test_explain_with_focus_passes_focus_to_llm(self):
+        """Test that focused explanation passes focus text in user message."""
+        interface = MockInterface()
+        view = MockView(spec="SELECT * FROM t1 JOIN t2 ON t1.id = t2.id", language="sql")
+        task = MockTask()
+
+        captured_kwargs = {}
+
+        async def mock_stream(**kwargs):
+            captured_kwargs.update(kwargs)
+            yield "The JOIN clause..."
+
+        task.actor.llm.stream = mock_stream
+
+        controls = ExplainControls(interface=interface, view=view, task=task)
+        controls._focus = "JOIN clause"
+        await controls._explain()
+
+        msg = captured_kwargs["messages"][0]
+        assert "Focus on: JOIN clause" in msg["content"]
+
+        # System prompt should also include focus context
+        system = captured_kwargs["system"]
+        assert "JOIN clause" in system
 
     @pytest.mark.asyncio
     async def test_explain_works_with_yaml_view(self):
@@ -406,29 +368,126 @@ class TestExplainControls:
         task.actor.llm.stream = mock_stream
 
         controls = ExplainControls(interface=interface, view=view, task=task)
+        controls._focus = ""
         await controls._explain()
 
-        assert "```yaml" in captured_kwargs["messages"][0]["content"]
-        assert "yaml" in captured_kwargs["system"].lower()
+        system = captured_kwargs["system"]
+        assert "yaml" in system.lower()
+        assert "type: bar" in system
 
-    def test_on_click_prevents_double_click(self):
-        """Test that _on_click prevents concurrent executions."""
+    @pytest.mark.asyncio
+    async def test_explain_resets_state_on_error(self):
+        """Test that state is consistent even when LLM errors out."""
         interface = MockInterface()
-        view = MockView()
+        view = MockView(spec="SELECT 1")
         task = MockTask()
 
+        async def mock_stream(**kwargs):
+            raise RuntimeError("Network error")
+            yield
+
+        task.actor.llm.stream = mock_stream
+
         controls = ExplainControls(interface=interface, view=view, task=task)
+        controls._focus = ""
+        await controls._explain()
 
-        with patch("panel.io.state") as mock_state:
-            # First click should work
-            controls._on_click(None)
-            assert controls._clicking is True
-            mock_state.execute.assert_called_once()
+        # Error card should have been created
+        assert len(interface.messages) == 1
+        card = interface.messages[0]["content"]
+        assert "Failed to generate explanation" in card.title
 
-            # Second click should be ignored
-            mock_state.execute.reset_mock()
-            controls._on_click(None)
-            mock_state.execute.assert_not_called()
+    @pytest.mark.asyncio
+    async def test_explain_without_focus_attr(self):
+        """Test _explain works when _focus hasn't been set (getattr fallback)."""
+        interface = MockInterface()
+        view = MockView(spec="SELECT 1")
+        task = MockTask()
+
+        captured_kwargs = {}
+
+        async def mock_stream(**kwargs):
+            captured_kwargs.update(kwargs)
+            yield "Simple select."
+
+        task.actor.llm.stream = mock_stream
+
+        controls = ExplainControls(interface=interface, view=view, task=task)
+        # Deliberately NOT setting controls._focus — tests the getattr fallback
+        await controls._explain()
+
+        msg = captured_kwargs["messages"][0]
+        assert "Explain the spec above" in msg["content"]
+
+    @pytest.mark.asyncio
+    async def test_render_system_prompt_sql(self):
+        """Test system prompt rendering for SQL language."""
+        interface = MockInterface()
+        view = MockView(spec="SELECT 1", language="sql")
+        task = MockTask()
+
+        captured = {}
+
+        async def mock_stream(**kwargs):
+            captured.update(kwargs)
+            yield "ok"
+
+        task.actor.llm.stream = mock_stream
+
+        controls = ExplainControls(interface=interface, view=view, task=task)
+        controls._focus = ""
+        await controls._explain()
+
+        system = captured["system"]
+        assert "sql" in system.lower()
+        assert "query" in system.lower()
+        assert "SELECT" in system
+
+    @pytest.mark.asyncio
+    async def test_render_system_prompt_yaml(self):
+        """Test system prompt rendering for YAML language."""
+        interface = MockInterface()
+        view = MockView(spec="type: bar", language="yaml")
+        task = MockTask()
+
+        captured = {}
+
+        async def mock_stream(**kwargs):
+            captured.update(kwargs)
+            yield "ok"
+
+        task.actor.llm.stream = mock_stream
+
+        controls = ExplainControls(interface=interface, view=view, task=task)
+        controls._focus = ""
+        await controls._explain()
+
+        system = captured["system"]
+        assert "yaml" in system.lower()
+        assert "top-level key" in system
+
+    @pytest.mark.asyncio
+    async def test_render_system_prompt_unknown_language(self):
+        """Test system prompt rendering for unknown language falls back gracefully."""
+        interface = MockInterface()
+        view = MockView(spec="some code", language="python")
+        task = MockTask()
+
+        captured = {}
+
+        async def mock_stream(**kwargs):
+            captured.update(kwargs)
+            yield "ok"
+
+        task.actor.llm.stream = mock_stream
+
+        controls = ExplainControls(interface=interface, view=view, task=task)
+        controls._focus = ""
+        await controls._explain()
+
+        system = captured["system"]
+        assert "python" in system.lower()
+        assert "code" in system.lower()
 
 
 class TestSpecTypeMap:

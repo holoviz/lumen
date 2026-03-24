@@ -61,7 +61,7 @@ class LumenEditor(Viewer):
 
     language = "yaml"
 
-    _controls = [RetryControls, CopyControls]
+    _controls = [RetryControls, ExplainControls, CopyControls]
     _label = "Result"
 
     def __init__(self, **params):
@@ -289,7 +289,7 @@ class VegaLiteEditor(LumenEditor):
 
     _pillow_formats = ("webp", "tiff", "eps")
 
-    _controls = [RetryControls, AnnotationControls, CopyControls]
+    _controls = [RetryControls, AnnotationControls, ExplainControls, CopyControls]
     _label = "Plot"
 
     def export(self, fmt: str) -> StringIO | BytesIO:
@@ -365,7 +365,7 @@ class DeckGLEditor(LumenEditor):
 
     export_formats = ("yaml", "json", "html")
 
-    _controls = [RetryControls, CopyControls]
+    _controls = [RetryControls, ExplainControls, CopyControls]
     _label = "Map"
 
     # Required keys for a valid DeckGL spec
@@ -506,8 +506,6 @@ class AnalysisOutput(LumenEditor):
 class SQLEditor(LumenEditor):
 
     language = "sql"
-
-    _controls = [RetryControls, ExplainControls, CopyControls]
 
     export_formats = ("sql", "csv", "xlsx", "json", "markdown")
     _label = "Table"

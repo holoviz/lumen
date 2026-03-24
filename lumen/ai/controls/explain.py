@@ -1,16 +1,12 @@
 from __future__ import annotations
 
-from pathlib import Path
+from datetime import datetime
 
 import param
 
-from jinja2 import Environment, FileSystemLoader
-from panel.viewable import Viewer
-from panel_material_ui import (
-    Card, IconButton, Markdown, Row,
-)
-
-PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
+from ..config import PROMPTS_DIR
+from ..utils import render_template
+from .revision import RevisionControls
 
 SPEC_TYPE_MAP = {
     "sql": "query",
@@ -20,75 +16,59 @@ SPEC_TYPE_MAP = {
 }
 
 
-class ExplainControls(Viewer):
+class ExplainControls(RevisionControls):
     """Controls for explaining editor specs using AI.
 
     Works with any LumenEditor that has a ``spec`` and ``language``
-    attribute. The system prompt adapts based on the editor's language.
+    attribute. Clicking the icon opens a text input where the user can
+    optionally describe which part to explain. Leaving it blank
+    explains the full spec.
     """
 
-    interface = param.Parameter()
+    input_kwargs = {
+        "placeholder": "What part to explain? Leave blank for full explanation.",
+    }
 
-    layout_kwargs = param.Dict(default={})
+    toggle_kwargs = {
+        "icon": "psychology",
+        "description": "Explain this code",
+    }
 
-    task = param.Parameter()
+    _explain_count = param.Integer(default=0)
 
-    view = param.Parameter(doc="The View containing the spec to explain")
+    def _enter_reason(self, _):
+        self._focus = self._text_input.value_input.strip()
+        self._text_input.value = ""
+        self.param.update(active=False, _explain_count=self._explain_count + 1)
 
-    _clicking = param.Boolean(default=False)
-
-    def __init__(self, **params):
-        super().__init__(**params)
-        language = getattr(self.view, "language", "yaml").upper()
-        self._icon = IconButton(
-            icon="psychology",
-            active_icon="check",
-            description=f"Explain {language}",
-            margin=(5, 0),
-            toggle_duration=1000,
-            size="small",
-            color="primary",
-            icon_size="0.9em",
-        )
-        self._icon.param.watch(self._on_click, "clicks")
-        self._row = Row(self._icon, **self.layout_kwargs)
-
-    def _render_system_prompt(self) -> str:
-        language = getattr(self.view, "language", "yaml")
-        spec_type = SPEC_TYPE_MAP.get(language, "code")
-        env = Environment(
-            loader=FileSystemLoader(str(PROMPTS_DIR / "ExplainControls")),
-            keep_trailing_newline=False,
-        )
-        template = env.get_template("main.jinja2")
-        return template.render(language=language, spec_type=spec_type)
-
-    def _on_click(self, event):
-        if not self._clicking:
-            self._clicking = True
-            from panel.io import state
-            state.execute(self._explain)
-
+    @param.depends("_explain_count", watch=True)
     async def _explain(self):
         spec = self.view.spec
         if not spec or not spec.strip():
-            self._clicking = False
             return
 
-        language = getattr(self.view, "language", "yaml")
-        self._icon.disabled = True
+        focus = getattr(self, "_focus", "")
+        language = self.view.language
+        spec_type = SPEC_TYPE_MAP.get(language, "code")
+
+        system = render_template(
+            PROMPTS_DIR / "ExplainControls" / "main.jinja2",
+            language=language,
+            spec_type=spec_type,
+            spec=spec,
+            focus=focus,
+            current_datetime=datetime.now(),
+            memory={},
+            actor_name="ExplainControls",
+        )
+
+        user_content = f"Focus on: {focus}" if focus else "Explain the spec above."
+        messages = [{"role": "user", "content": user_content}]
+
+        llm = self.task.actor.llm
         message = None
         try:
-            llm = self.task.actor.llm
-            system = self._render_system_prompt()
-            messages = [
-                {"role": "user", "content": f"Explain this {language}:\n\n```{language}\n{spec}\n```"}
-            ]
-
-            async for chunk in llm.stream(
-                messages=messages,
-                system=system,
-            ):
+            async for chunk in llm.stream(messages=messages, system=system):
                 if chunk:
                     message = self.interface.stream(
                         chunk,
@@ -97,18 +77,7 @@ class ExplainControls(Viewer):
                         user="Assistant",
                     )
         except Exception as e:
-            md = Markdown(
+            self._report_status(
                 f"```\n{e}\n```",
-                margin=0,
-                sizing_mode="stretch_width",
+                title="\u274c Failed to generate explanation",
             )
-            self.interface.stream(
-                Card(md, title="\u274c Failed to generate explanation"),
-                user="Assistant",
-            )
-        finally:
-            self._icon.disabled = False
-            self._clicking = False
-
-    def __panel__(self):
-        return self._row
