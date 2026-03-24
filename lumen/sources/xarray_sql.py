@@ -16,13 +16,15 @@ import param
 from ..transforms.sql import SQLFilter
 from .base import BaseSQLSource, cached
 
-try:
-    import xarray as xr
 
-    from xarray_sql import XarrayContext
-    XARRAY_AVAILABLE = True
-except ImportError:
-    XARRAY_AVAILABLE = False
+def _check_xarray_available():
+    """Check xarray and xarray-sql are installed, import lazily."""
+    try:
+        import xarray  # noqa
+        import xarray_sql  # noqa
+        return True
+    except ImportError:
+        return False
 
 # Map file extensions to xarray engines
 XARRAY_ENGINES = {
@@ -107,7 +109,7 @@ class XArraySQLSource(BaseSQLSource):
         The SQL expression template for table queries.""")
 
     def __init__(self, _dataset=None, _ctx=None, **params):
-        if not XARRAY_AVAILABLE:
+        if not _check_xarray_available():
             raise ImportError(
                 "xarray and xarray-sql are required for XArraySQLSource. "
                 "Install them with: pip install lumen[xarray]"
@@ -135,6 +137,7 @@ class XArraySQLSource(BaseSQLSource):
             variables=self.variables,
         )
 
+        from xarray_sql import XarrayContext
         self._ctx = XarrayContext()
         chunk_spec = self._resolve_chunks(self._dataset, self.chunks)
 
@@ -167,6 +170,7 @@ class XArraySQLSource(BaseSQLSource):
                 kw["engine"] = resolved_engine
             if chunks is not None:
                 kw["chunks"] = chunks
+            import xarray as xr
             ds = xr.open_dataset(uri, **kw)
         else:
             raise ValueError("Either 'uri' or '_dataset' must be provided.")
