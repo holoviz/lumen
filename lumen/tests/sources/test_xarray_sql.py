@@ -22,7 +22,7 @@ import pytest
 xr = pytest.importorskip("xarray")
 pytest.importorskip("xarray_sql")
 
-from lumen.sources.xarray_sql import XArraySQLSource, _detect_engine
+from lumen.sources.xarray_sql import XArraySQLSource
 
 # ---- Fixtures ----
 
@@ -136,14 +136,14 @@ class TestConstruction:
         assert source.source_type == "xarray"
 
     def test_engine_detection_all_formats(self):
-        assert _detect_engine("/data/file.nc") == "netcdf4"
-        assert _detect_engine("/data/file.nc4") == "netcdf4"
-        assert _detect_engine("/data/file.zarr") == "zarr"
-        assert _detect_engine("/data/file.grib") == "cfgrib"
-        assert _detect_engine("/data/file.grib2") == "cfgrib"
-        assert _detect_engine("/data/file.grb") == "cfgrib"
-        assert _detect_engine("/data/file.h5") is None
-        assert _detect_engine("/data/file.txt") is None
+        assert XArraySQLSource._detect_engine("/data/file.nc") == "netcdf4"
+        assert XArraySQLSource._detect_engine("/data/file.nc4") == "netcdf4"
+        assert XArraySQLSource._detect_engine("/data/file.zarr") == "zarr"
+        assert XArraySQLSource._detect_engine("/data/file.grib") == "cfgrib"
+        assert XArraySQLSource._detect_engine("/data/file.grib2") == "cfgrib"
+        assert XArraySQLSource._detect_engine("/data/file.grb") == "cfgrib"
+        assert XArraySQLSource._detect_engine("/data/file.h5") is None
+        assert XArraySQLSource._detect_engine("/data/file.txt") is None
 
     def test_from_grib(self):
         """GRIB file I/O via cfgrib engine."""

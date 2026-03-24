@@ -26,25 +26,6 @@ def _check_xarray_available():
     except ImportError:
         return False
 
-# Map file extensions to xarray engines
-XARRAY_ENGINES = {
-    ".nc": "netcdf4",
-    ".nc4": "netcdf4",
-    ".netcdf": "netcdf4",
-    ".zarr": "zarr",
-    ".grib": "cfgrib",
-    ".grib2": "cfgrib",
-    ".grb": "cfgrib",
-    ".grb2": "cfgrib",
-}
-
-
-def _detect_engine(path: str) -> str | None:
-    """Detect xarray engine from file extension."""
-    suffix = Path(path).suffix.lower()
-    return XARRAY_ENGINES.get(suffix)
-
-
 class XArraySQLSource(BaseSQLSource):
     """
     SQL-queryable xarray data source for Lumen.
@@ -81,6 +62,23 @@ class XArraySQLSource(BaseSQLSource):
     """
 
     source_type: ClassVar[str | None] = "xarray"
+
+    _xarray_engines: ClassVar[dict[str, str]] = {
+        ".nc": "netcdf4",
+        ".nc4": "netcdf4",
+        ".netcdf": "netcdf4",
+        ".zarr": "zarr",
+        ".grib": "cfgrib",
+        ".grib2": "cfgrib",
+        ".grb": "cfgrib",
+        ".grb2": "cfgrib",
+    }
+
+    @classmethod
+    def _detect_engine(cls, path: str) -> str | None:
+        """Detect xarray engine from file extension."""
+        suffix = Path(path).suffix.lower()
+        return cls._xarray_engines.get(suffix)
 
     uri = param.String(default=None, allow_None=True, doc="""
         Path or URL to the xarray-compatible data file.
@@ -158,13 +156,13 @@ class XArraySQLSource(BaseSQLSource):
             return {dim: sizes[0] for dim, sizes in dataset.chunks.items()}
         return dict(dataset.sizes)
 
-    @staticmethod
-    def _load_dataset(dataset, uri, engine, chunks, open_kwargs, variables):
+    @classmethod
+    def _load_dataset(cls, dataset, uri, engine, chunks, open_kwargs, variables):
         """Load an xarray dataset from URI or use a provided one."""
         if dataset is not None:
             ds = dataset
         elif uri is not None:
-            resolved_engine = engine or _detect_engine(uri)
+            resolved_engine = engine or cls._detect_engine(uri)
             kw = dict(open_kwargs)
             if resolved_engine:
                 kw["engine"] = resolved_engine
