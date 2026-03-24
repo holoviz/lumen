@@ -7,7 +7,7 @@ Lumen's core building blocks—[Sources](configuration/sources.md), [Agents](con
 The [`copier-template-panel-extension`](https://github.com/panel-extensions/copier-template-panel-extension) is a [Copier](https://copier.readthedocs.io/en/stable/) template that scaffolds a fully configured Python package for Panel and Lumen extensions. It gives you:
 
 - **pytest** for testing
-- **MkDocs + mkdocstrings** for automatic API docs hosted on GitHub Pages
+- **Zensical + mkdocstrings** for automatic API docs hosted on GitHub Pages
 - **GitHub Actions** CI/CD for automated testing and publishing
 - **Pixi** for reproducible environment management
 
