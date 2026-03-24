@@ -135,11 +135,17 @@ class TestExplainControls:
         assert controls1._row is not controls2._row
         assert controls1._row.objects[0] is not controls2._row.objects[0]
 
-    def test_enter_reason_blank_triggers_full_explain(self):
+    @pytest.mark.asyncio
+    async def test_enter_reason_blank_triggers_full_explain(self):
         """Test _enter_reason with blank input sets empty _focus and increments count."""
         interface = MockInterface()
         view = MockView()
         task = MockTask()
+
+        async def mock_stream(**kwargs):
+            yield "ok"
+
+        task.actor.llm.stream = mock_stream
 
         controls = ExplainControls(interface=interface, view=view, task=task)
         controls.active = True
@@ -152,11 +158,17 @@ class TestExplainControls:
         assert controls._explain_count == 1
         assert controls._text_input.value == ""
 
-    def test_enter_reason_with_focus_text(self):
+    @pytest.mark.asyncio
+    async def test_enter_reason_with_focus_text(self):
         """Test _enter_reason with specific focus text."""
         interface = MockInterface()
         view = MockView()
         task = MockTask()
+
+        async def mock_stream(**kwargs):
+            yield "ok"
+
+        task.actor.llm.stream = mock_stream
 
         controls = ExplainControls(interface=interface, view=view, task=task)
         controls.active = True
@@ -168,11 +180,17 @@ class TestExplainControls:
         assert controls.active is False
         assert controls._explain_count == 1
 
-    def test_enter_reason_increments_count(self):
+    @pytest.mark.asyncio
+    async def test_enter_reason_increments_count(self):
         """Test _enter_reason increments _explain_count on each call."""
         interface = MockInterface()
         view = MockView()
         task = MockTask()
+
+        async def mock_stream(**kwargs):
+            yield "ok"
+
+        task.actor.llm.stream = mock_stream
 
         controls = ExplainControls(interface=interface, view=view, task=task)
         controls._text_input.value_input = ""
