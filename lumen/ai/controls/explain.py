@@ -22,11 +22,11 @@ class ExplainControls(RevisionControls):
     Works with any LumenEditor that has a ``spec`` and ``language``
     attribute. Clicking the icon opens a text input where the user can
     optionally describe which part to explain. Leaving it blank
-    explains the full spec.
+    explains the overall goal.
     """
 
     input_kwargs = {
-        "placeholder": "What part to explain? Leave blank for full explanation.",
+        "placeholder": "Which part? Leave blank for overview.",
     }
 
     toggle_kwargs = {
@@ -36,8 +36,12 @@ class ExplainControls(RevisionControls):
 
     _explain_count = param.Integer(default=0)
 
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._user_question = ""
+
     def _enter_reason(self, _):
-        self._focus = self._text_input.value_input.strip()
+        self._user_question = self._text_input.value_input.strip()
         self._text_input.value = ""
         self.param.update(active=False, _explain_count=self._explain_count + 1)
 
@@ -47,7 +51,6 @@ class ExplainControls(RevisionControls):
         if not spec or not spec.strip():
             return
 
-        focus = getattr(self, "_focus", "")
         language = self.view.language
         spec_type = SPEC_TYPE_MAP.get(language, "code")
 
@@ -56,13 +59,16 @@ class ExplainControls(RevisionControls):
             language=language,
             spec_type=spec_type,
             spec=spec,
-            focus=focus,
+            user_question=self._user_question,
             current_datetime=datetime.now(),
             memory={},
             actor_name="ExplainControls",
         )
 
-        user_content = f"Focus on: {focus}" if focus else "Explain the spec above."
+        if self._user_question:
+            user_content = f"Explain: {self._user_question}"
+        else:
+            user_content = "Explain what this does."
         messages = [{"role": "user", "content": user_content}]
 
         llm = self.task.actor.llm

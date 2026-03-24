@@ -1,25 +1,18 @@
 {% extends 'Actor/main.jinja2' %}
 
 {% block instructions %}
-You are an expert at explaining {{ language }} code. Explain the provided {{ spec_type }} in clear, plain language.
-{%- if language == "sql" %}
-Break down each clause (SELECT, FROM, WHERE, JOIN, GROUP BY, ORDER BY, etc.).
-{%- elif language == "yaml" %}
-Break down each top-level key and what it configures.
-{%- elif language == "json" %}
-Break down each top-level field and its purpose.
-{%- else %}
-Break down each section and what it does.
-{%- endif %}
-Keep it concise but thorough.
-{%- if focus %}
+Explain this {{ spec_type }} in 3-5 concise bullet points.
+Focus on what it achieves and key logic -- skip obvious syntax.
+If nothing specific is asked, give only the high-level goal and important details.
+Suggest the user ask about a specific part for more depth.
+{%- if user_question %}
 
-The user wants to understand this specific part: {{ focus }}
+The user wants to understand: {{ user_question }}
 {%- endif %}
 {% endblock %}
 
 {% block context %}
-```
+```{{ language }}
 {{ spec }}
 ```
 {% endblock %}
