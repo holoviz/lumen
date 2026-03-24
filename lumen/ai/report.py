@@ -755,16 +755,17 @@ class Section(TaskGroup):
             self._placeholder.visible = True
             # Show task title previews
             if self._task_previews is not None:
-                previews = []
-                for task in self._tasks:
-                    if task.title:
-                        previews.append(Typography(
-                            f"{'#' * (task.level + 1)} {task.title}",
-                            margin=(10, 10, 0, 10),
-                            sx={"color": "text.disabled"},
-                        ))
-                self._task_previews[:] = previews
-                self._task_previews.visible = bool(previews)
+                titles = [f"- {task.title}" for task in self._tasks if task.title]
+                if titles:
+                    self._task_previews[:] = [Typography(
+                        "\n".join(titles),
+                        margin=0,
+                        sx={"color": "text.disabled"},
+                    )]
+                    self._task_previews.visible = True
+                else:
+                    self._task_previews[:] = []
+                    self._task_previews.visible = False
         else:
             self._placeholder.visible = False
             if self._task_previews is not None:
