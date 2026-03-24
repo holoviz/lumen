@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 
 from typing import TYPE_CHECKING, Any
 
@@ -81,6 +82,8 @@ class DuckDBSource(BaseSQLSource):
 
     dialect = 'duckdb'
 
+    _install_extension_pattern = re.compile(r"^\s*INSTALL\s+([A-Za-z_][\w]*)\s*;?\s*$", re.IGNORECASE)
+
     def __init__(self, **params):
         connection = params.pop('_connection', None)
         params["read_only"] = params.get('read_only', params.get("uri") not in (None, ':memory:'))
@@ -90,14 +93,7 @@ class DuckDBSource(BaseSQLSource):
         else:
             self._connection = duckdb.connect(self.uri, read_only=self.read_only)
             for init in self.initializers:
-                with self._connection.cursor() as cursor:
-                    try:
-                        cursor.execute(init)
-                    except duckdb.IOException as e:
-                        if "delete file" in str(e) and "duckdb_extension" in str(e):
-                            pass
-                        else:
-                            raise
+                self._run_initializer(init)
 
         # Process tables to handle automatic file detection
         self._file_based_tables = {}
@@ -185,6 +181,28 @@ class DuckDBSource(BaseSQLSource):
     @property
     def connection(self):
         return self._connection
+
+    def _run_initializer(self, init: str) -> None:
+        try:
+            with self._connection.cursor() as cursor:
+                cursor.execute(init)
+        except duckdb.IOException as e:
+            message = str(e)
+            if "delete file" in message and "duckdb_extension" in message:
+                return
+            match = self._install_extension_pattern.match(init)
+            if (
+                sys.platform == 'win32'
+                and match is not None
+                and 'Could not move file: Access is denied.' in message
+            ):
+                # DuckDB extension installs can hit transient file locking on Windows.
+                # If the extension is already present, LOAD succeeds and we can continue.
+                extension = match.group(1)
+                with self._connection.cursor() as cursor:
+                    cursor.execute(f"LOAD {extension};")
+                return
+            raise
 
     def _is_file_path(self, table_expr: str) -> bool:
         """

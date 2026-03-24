@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 
 
 class RawStep(BaseModel):
+    title: str
     actor: str
     instruction: str = Field(
         description="""
@@ -50,7 +51,6 @@ class RawStep(BaseModel):
             "Plot a line chart of sales over time.",
         ],
     )
-    title: str
 
 
 class RawPlan(BaseModel):

@@ -3,6 +3,7 @@ import os
 import tempfile
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 import pytest
@@ -72,6 +73,42 @@ def duckdb_memory_source(mixed_df):
 def test_duckdb_resolve_module_type():
     assert DuckDBSource._get_type('lumen.sources.duckdb.DuckDBSource') is DuckDBSource
     assert DuckDBSource.source_type == 'duckdb'
+
+
+def test_duckdb_initializer_loads_extension_after_windows_install_lock(monkeypatch):
+    class MockCursor:
+        def __init__(self):
+            self.calls = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, sql):
+            self.calls.append(sql)
+            if sql == "INSTALL httpfs;":
+                raise duckdb.IOException("IO Error: Could not move file: Access is denied.")
+
+    class MockConnection:
+        def __init__(self):
+            self.cursor_instance = MockCursor()
+
+        def cursor(self):
+            return self.cursor_instance
+
+    connection = MockConnection()
+    monkeypatch.setattr("lumen.sources.duckdb.sys.platform", "win32")
+
+    with patch("lumen.sources.duckdb.duckdb.connect", return_value=connection):
+        DuckDBSource(uri=":memory:", tables={}, initializers=["INSTALL httpfs;", "LOAD httpfs;"])
+
+    assert connection.cursor_instance.calls == [
+        "INSTALL httpfs;",
+        "LOAD httpfs;",
+        "LOAD httpfs;",
+    ]
 
 
 def test_duckdb_get_tables(duckdb_source, source_tables):

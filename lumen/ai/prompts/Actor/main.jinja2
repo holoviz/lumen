@@ -34,9 +34,9 @@ Note, your last output did not work as intended:
 {% endif %}
 {%- if errors is defined and errors %}
 Your task is to expertly address these errors so they do not occur again:
-```
-{{ errors }}
-```
+{% for error in errors %}
+- {{ error }}
+{% endfor %}
 {%- endif %}
 {%- endblock -%}
 
