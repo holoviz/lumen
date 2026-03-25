@@ -531,6 +531,18 @@ class MetadataLookup(VectorLookupTool):
         else:
             results = await self._perform_search_with_refinement(query, context, filters=query_filters)
 
+        # If no results found and provenance chain is longer than ['global'],
+        # retry with progressively shorter chains to find parent-scoped tables.
+        provenance_chain = list(query_filters["provenance_chain"])
+        while not results and len(provenance_chain) > 1:
+            provenance_chain = provenance_chain[:-1]
+            fallback_filters = {**query_filters, "provenance_chain": provenance_chain}
+            log_debug(f"[MetadataLookup] No results with provenance {query_filters['provenance_chain']}, retrying with {provenance_chain}")
+            if total_tables < 5:
+                results = await self.vector_store.query(query, top_k=self.n, filters=fallback_filters)
+            else:
+                results = await self._perform_search_with_refinement(query, context, filters=fallback_filters)
+
         any_matches = any(result["similarity"] >= self.min_similarity for result in results)
         same_table = len([result["metadata"]["table_name"] for result in results])
 
