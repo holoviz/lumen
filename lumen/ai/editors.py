@@ -34,7 +34,9 @@ from ..transforms.sql import SQLLimit
 from ..views.base import Panel, Table, View
 from .analysis import Analysis
 from .config import FORMAT_ICONS, FORMAT_LABELS
-from .controls import AnnotationControls, CopyControls, RetryControls
+from .controls import (
+    AnnotationControls, CopyControls, ExplainControls, RetryControls,
+)
 from .utils import describe_data, get_data
 
 if TYPE_CHECKING:
@@ -59,7 +61,7 @@ class LumenEditor(Viewer):
 
     language = "yaml"
 
-    _controls = [RetryControls, CopyControls]
+    _controls = [RetryControls, ExplainControls, CopyControls]
     _label = "Result"
 
     def __init__(self, **params):
@@ -287,7 +289,7 @@ class VegaLiteEditor(LumenEditor):
 
     _pillow_formats = ("webp", "tiff", "eps")
 
-    _controls = [RetryControls, AnnotationControls, CopyControls]
+    _controls = [RetryControls, AnnotationControls, ExplainControls, CopyControls]
     _label = "Plot"
 
     def export(self, fmt: str) -> StringIO | BytesIO:
@@ -363,7 +365,7 @@ class DeckGLEditor(LumenEditor):
 
     export_formats = ("yaml", "json", "html")
 
-    _controls = [RetryControls, CopyControls]
+    _controls = [RetryControls, ExplainControls, CopyControls]
     _label = "Map"
 
     # Required keys for a valid DeckGL spec
