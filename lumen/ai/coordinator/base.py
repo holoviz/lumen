@@ -545,7 +545,12 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 previous_queries=previous_queries,
             )
             return result.query
-        except Exception:
+        except Exception as e:
+            if state.notifications:
+                state.notifications.warning(
+                    f"Could not generate follow-up suggestion: {e}",
+                    duration=3000,
+                )
             return None
 
     def __panel__(self):

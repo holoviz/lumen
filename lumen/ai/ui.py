@@ -1602,14 +1602,8 @@ class UI(Viewer):
         The icon appears immediately. On click, it calls the coordinator
         to generate a suggestion and populates the chat input.
         """
-        if not plan.out_context.get("pipeline"):
-            return
-        if not plan.out_context.get("data"):
-            return
 
-        num_objects = len(self.interface.objects)
-
-        async def _generate_suggestion(_=None):
+        async def _generate_follow_up():
             follow_up_button.disabled = True
             follow_up_button.description = "Generating suggestion..."
             try:
@@ -1617,14 +1611,14 @@ class UI(Viewer):
                 if suggestion:
                     with edit_readonly(self._chat_input):
                         self._chat_input.value_input = suggestion
-                follow_up_button.visible = False
-            except Exception:
+            finally:
                 follow_up_button.disabled = False
-                follow_up_button.description = "Click to retry"
+                follow_up_button.description = "Suggest a follow-up question"
 
-        def hide_follow_up(_=None):
-            if len(self.interface.objects) > num_objects:
-                follow_up_button.visible = False
+        if not plan.out_context.get("pipeline"):
+            return
+        if not plan.out_context.get("data"):
+            return
 
         follow_up_button = IconButton(
             icon="lightbulb",
@@ -1632,7 +1626,7 @@ class UI(Viewer):
             size="small",
             icon_size="0.9em",
             margin=(5, 0),
-            on_click=lambda _: state.execute(_generate_suggestion),
+            on_click=lambda _: state.execute(_generate_follow_up),
             name="FollowUp",
             disabled=self.interface.param.loading,
             color="default",
@@ -1653,7 +1647,6 @@ class UI(Viewer):
                 message.footer_actions = existing + [follow_up_button]
             except AttributeError:
                 message.footer_objects = existing + [follow_up_button]
-            self.interface.param.watch(hide_follow_up, "objects")
 
     def __panel__(self):
         return self._main
