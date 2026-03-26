@@ -514,7 +514,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
         return result.yes
 
-    async def suggest_followup(self, plan: Plan) -> str | None:
+    async def suggest_follow_up(self, plan: Plan) -> str | None:
         """Generate a single follow-up suggestion from a completed plan.
 
         Returns a suggestion query string, or None on failure.

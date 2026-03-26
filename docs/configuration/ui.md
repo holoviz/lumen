@@ -80,16 +80,7 @@ ui = lmai.ExplorerUI(
 
 ### Follow-up suggestions
 
-After each successful query, a lightbulb icon appears in the message footer. Clicking it populates the chat input with an AI-generated follow-up suggestion that references actual column names from the data.
-
-``` py title="Disable follow-up suggestions"
-ui = lmai.ExplorerUI(
-    data='penguins.csv',
-    follow_up_suggestions=False
-)
-```
-
-Users can also toggle this at runtime via **Settings > Follow-Up Suggestions**.
+After each successful query, a lightbulb icon appears in the message footer. Click it to generate an AI-powered follow-up question that references actual column names from your data. The suggestion populates the chat input so you can review or edit before sending.
 
 ## Advanced parameters
 
@@ -216,7 +207,6 @@ Quick reference:
 | `notebook_preamble` | str | Export header |
 | `provider_choices` | dict | LLM providers shown in Settings |
 | `source_controls` | list | Source control components for data |
-| `follow_up_suggestions` | bool | AI follow-up suggestion icon after queries (default: True) |
 | `suggestions` | list | Quick action buttons |
 | `title` | str | App title |
 | `tools` | list | Custom tools |
