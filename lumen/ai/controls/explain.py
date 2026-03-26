@@ -38,20 +38,21 @@ class ExplainControls(RevisionControls):
     async def _explain(self):
         messages = list(self.task.history)
         message = None
-        try:
-            with self.task.actor.param.update(interface=self.interface):
+        with self.task.actor.param.update(interface=self.interface):
+            try:
                 async for chunk in self.task.actor.explain(
                     self._user_question, messages, self.task.out_context, self.view
                 ):
-                    if chunk:
-                        message = self.interface.stream(
-                            chunk,
-                            replace=True,
-                            message=message,
-                            user="Assistant",
-                        )
-        except Exception as e:
-            self._report_status(
-                f"```\n{e}\n```",
-                title="\u274c Failed to generate explanation",
-            )
+                    if not chunk:
+                        continue
+                    message = self.interface.stream(
+                        chunk,
+                        replace=True,
+                        message=message,
+                        user="Assistant",
+                    )
+            except Exception as e:
+                self._report_status(
+                    f"```\n{e}\n```",
+                    title="\u274c Failed to generate explanation",
+                )
