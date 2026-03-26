@@ -637,25 +637,12 @@ class TaskGroup(Task):
         """
         Returns the HTML representation of the report.
         """
-        if len(self) and not self.status == "success":
+        if len(self) and self.status != "success":
             raise RuntimeError(
                 "Report has not been executed, run report before exporting to html."
             )
-        content = []
-        for out in self.views:
-            if isinstance(out, Typography):
-                level = int(out.variant[1:]) if out.variant and out.variant.startswith('h') else 0
-                prefix = f"{'#'*level} " if level else ''
-                content.append(Markdown(f"{prefix}{out.object}"))
-            elif isinstance(out, Markdown):
-                content.append(out)
-            elif isinstance(out, LumenEditor):
-                content.append(out.component.__panel__())
-            elif isinstance(out, Viewable):
-                content.append(out)
-        col = Column(*content, sizing_mode="stretch_width")
         html_buffer = io.StringIO()
-        col.save(html_buffer, title=self.title or "Report")
+        self.__panel__().save(html_buffer, title=self.title or "Report")
         html_buffer.seek(0)
         return html_buffer.getvalue()
 
@@ -870,6 +857,7 @@ class Report(TaskGroup):
             icon="settings", on_click=self._open_settings, size="large", color="default",
             margin=0, description="Configure Report", visible=False
         )
+        self._export_fmt = "ipynb"
         self._export = MenuButton(
             label="", icon="get_app", variant="text", color="default",
             margin=0, size="large", visible=False,
@@ -878,15 +866,13 @@ class Report(TaskGroup):
                 {"label": "Notebook (.ipynb)", "format": "ipynb", "icon": "description"},
                 {"label": "HTML (.html)", "format": "html", "icon": "language"},
             ],
-            on_click=lambda _: self._download._transfer(),
+            on_click=self._on_export_click,
         )
         self._download = FileDownload(
-            auto=True,
-            callback=param.bind(self._export_report, self._export),
+            callback=self._export_report,
             filename=f"{self.title or 'Report'}.ipynb",
             visible=False,
         )
-        self._export.attached.append(self._download)
         self._dialog = Dialog(
             TextInput.from_param(self.param.title, margin=(10, 0, 0, 0), sizing_mode="stretch_width"),
             show_close_button=True,
@@ -951,12 +937,15 @@ class Report(TaskGroup):
         elif icon == "settings":
             self._open_settings()
 
+    def _on_export_click(self, item):
+        fmt = item.get("format", "ipynb") if isinstance(item, dict) else "ipynb"
+        self._trigger_download(fmt=fmt)
+
     def _trigger_download(self, event=None, fmt="ipynb"):
+        self._export_fmt = fmt
         title = self.title or "Report"
         ext = "html" if fmt == "html" else "ipynb"
         self._download.filename = f"{title}.{ext}"
-        # Set MenuButton value so the bound callback gets the right format
-        self._export.value = {"format": fmt}
         self._download.transfer()
 
     @param.depends('_current', '_tasks', watch=True)
@@ -988,15 +977,11 @@ class Report(TaskGroup):
         await asyncio.sleep(0.01)  # yield the event loop to allow button loading state to update
         await self.execute()
 
-    async def _export_report(self, item):
-        fmt = item.get("format", "ipynb") if isinstance(item, dict) else "ipynb"
+    async def _export_report(self):
         if len(self) and self.status != "success":
             await self.execute()
-        title = self.title or "Report"
-        if fmt == "html":
-            self._download.filename = f"{title}.html"
+        if self._export_fmt == "html":
             return io.StringIO(self.to_html())
-        self._download.filename = f"{title}.ipynb"
         return io.StringIO(self.to_notebook())
 
     def _expand_all(self, event=None):
