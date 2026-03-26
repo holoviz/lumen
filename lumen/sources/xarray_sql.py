@@ -74,12 +74,6 @@ class XArraySQLSource(BaseSQLSource):
         ".grb2": "cfgrib",
     }
 
-    @classmethod
-    def _detect_engine(cls, path: str) -> str | None:
-        """Detect xarray engine from file extension."""
-        suffix = Path(path).suffix.lower()
-        return cls._xarray_engines.get(suffix)
-
     uri = param.String(default=None, allow_None=True, doc="""
         Path or URL to the xarray-compatible data file.
         Supports NetCDF (.nc), Zarr (.zarr), HDF5 (.h5), GRIB (.grib).""")
@@ -123,6 +117,12 @@ class XArraySQLSource(BaseSQLSource):
                 self._registered_tables = set(self._dataset.data_vars)
             if self.tables is None:
                 self.tables = list(self._registered_tables)
+
+    @classmethod
+    def _detect_engine(cls, path: str) -> str | None:
+        """Detect xarray engine from file extension."""
+        suffix = Path(path).suffix.lower()
+        return cls._xarray_engines.get(suffix)
 
     def _initialize(self):
         """Load the xarray dataset and register variables with DataFusion."""
