@@ -15,7 +15,7 @@ class ExplainControls(RevisionControls):
     """
 
     input_kwargs = {
-        "placeholder": "Which part? Leave blank for overview.",
+        "placeholder": "Explain which part? Leave blank for all.",
     }
 
     toggle_kwargs = {
