@@ -76,10 +76,6 @@ zarr = "*"
 [feature.xarray.pypi-dependencies]
 xarray-sql = "*"
 
-[feature.xarray-grib.dependencies]
-cfgrib = "*"
-eccodes = "*"
-
 # =============================================
 # =================== TESTS ===================
 # =============================================
