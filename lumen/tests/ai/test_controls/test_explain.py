@@ -83,9 +83,9 @@ class TestExplainControls:
 
     def test_class_kwargs(self):
         """Test ExplainControls has correct class-level kwargs."""
-        assert ExplainControls.toggle_kwargs["icon"] == "psychology"
+        assert ExplainControls.toggle_kwargs["icon"] == "contact_support"
         assert "Explain" in ExplainControls.toggle_kwargs["description"]
-        assert "blank" in ExplainControls.input_kwargs["placeholder"].lower() or "overview" in ExplainControls.input_kwargs["placeholder"].lower()
+        assert "blank" in ExplainControls.input_kwargs["placeholder"].lower() or "all" in ExplainControls.input_kwargs["placeholder"].lower()
 
     def test_text_input_created(self):
         """Test that ExplainControls creates a TextInput via RevisionControls."""
