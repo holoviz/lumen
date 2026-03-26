@@ -8,12 +8,20 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import duckdb
+import numpy as np
 import pytest
 
 try:
     import lumen.ai  # noqa
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
+
+try:
+    import xarray as xr
+    from lumen.sources.xarray_sql import XArraySQLSource
+    HAS_XARRAY = True
+except ImportError:
+    HAS_XARRAY = False
 
 from panel.layout import Column, Row
 from panel.tests.util import async_wait_until
@@ -1128,9 +1136,6 @@ class TestResolveData:
 
     def test_resolve_data_netcdf_file(self):
         """Test resolving a NetCDF file creates XArraySQLSource."""
-        pytest.importorskip("xarray_sql")
-        import numpy as np
-        import xarray as xr
         with tempfile.TemporaryDirectory() as tmpdir:
             nc_path = Path(tmpdir) / 'test.nc'
             ds = xr.Dataset({'temperature': (('lat', 'lon'), np.random.rand(3, 4))})
@@ -1140,21 +1145,17 @@ class TestResolveData:
                 pytest.skip("NetCDF write backend unavailable")
             result = UI._resolve_data(str(nc_path))
             assert len(result) == 1
-            from lumen.sources.xarray_sql import XArraySQLSource
             assert isinstance(result[0], XArraySQLSource)
             assert 'temperature' in result[0].get_tables()
 
     def test_resolve_data_xarray_import_error(self):
         """Test graceful error when xarray-sql not installed."""
-        with patch.dict(sys.modules, {'lumen.sources.xarray_sql': None}):
+        with patch('lumen.ai.ui._check_xarray_available', return_value=False):
             with pytest.raises(ImportError, match="xarray"):
                 UI._resolve_data('data.nc')
 
     def test_resolve_data_mixed_xarray_and_csv(self):
         """Test that .nc creates separate source while .csv goes to DuckDB."""
-        pytest.importorskip("xarray_sql")
-        import numpy as np
-        import xarray as xr
         with tempfile.TemporaryDirectory() as tmpdir:
             nc_path = Path(tmpdir) / 'test.nc'
             ds = xr.Dataset({'temp': (('x',), np.array([1.0, 2.0]))})
@@ -1164,7 +1165,6 @@ class TestResolveData:
                 pytest.skip("NetCDF write backend unavailable")
             result = UI._resolve_data([str(nc_path), 'data.csv'])
             assert len(result) == 2
-            from lumen.sources.xarray_sql import XArraySQLSource
             xarray_sources = [s for s in result if isinstance(s, XArraySQLSource)]
             duckdb_sources = [s for s in result if isinstance(s, DuckDBSource)]
             assert len(xarray_sources) == 1
@@ -1212,11 +1212,7 @@ class TestXarrayUploadHandler:
 
     def test_upload_handler_creates_source_from_nc(self):
         """Upload handler should create XArraySQLSource from NetCDF bytes."""
-        pytest.importorskip("xarray_sql")
         import io
-
-        import numpy as np
-        import xarray as xr
 
         # Create a NetCDF file in memory
         ds = xr.Dataset({'temp': (('x',), np.array([1.0, 2.0, 3.0]))})
@@ -1230,18 +1226,15 @@ class TestXarrayUploadHandler:
         handlers = UI._get_xarray_upload_handlers()
         source = handlers['nc'](context={}, file_obj=buf, alias='test_data', filename='test')
 
-        from lumen.sources.xarray_sql import XArraySQLSource
         assert isinstance(source, XArraySQLSource)
         assert 'temp' in source.get_tables()
         assert source.name == 'test_data'
 
-    def test_upload_handler_returns_none_without_xarray(self):
-        """Upload handler should return None if xarray-sql not installed."""
-        import io
-        handlers = UI._get_xarray_upload_handlers()
-        with patch.dict(sys.modules, {'lumen.sources.xarray_sql': None}):
-            result = handlers['nc'](context={}, file_obj=io.BytesIO(b'fake'), alias='test', filename='test')
-            assert result is None
+    def test_upload_handler_returns_empty_without_xarray(self):
+        """Upload handlers should be empty if xarray-sql not installed."""
+        with patch('lumen.ai.ui._check_xarray_available', return_value=False):
+            handlers = UI._get_xarray_upload_handlers()
+            assert handlers == {}
 
 
 # --- Tests for on_edit callback ---

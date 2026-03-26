@@ -31,9 +31,6 @@ from panel_material_ui import (
 )
 from panel_splitjs import HSplit, MultiSplit, VSplit
 
-XARRAY_FILE_EXTENSIONS = ('.nc', '.nc4', '.netcdf', '.h5', '.hdf5', '.he5', '.zarr', '.grib', '.grib2', '.grb', '.grb2')
-XARRAY_UPLOAD_EXTENSIONS = ('nc', 'nc4', 'h5', 'hdf5')
-
 from lumen.ai.agents.deck_gl import DeckGLAgent
 
 from ..pipeline import Pipeline
@@ -65,6 +62,20 @@ from .models import ErrorDescription
 from .report import ActorTask, Report, Section
 from .utils import log_debug, wrap_logfire
 from .vector_store import VectorStore
+
+XARRAY_FILE_EXTENSIONS = ('.nc', '.nc4', '.netcdf', '.h5', '.hdf5', '.he5', '.zarr', '.grib', '.grib2', '.grb', '.grb2')
+XARRAY_UPLOAD_EXTENSIONS = ('nc', 'nc4', 'h5', 'hdf5')
+
+
+def _check_xarray_available():
+    """Check if xarray and xarray-sql are installed."""
+    try:
+        import xarray  # noqa
+        import xarray_sql  # noqa
+        return True
+    except ImportError:
+        return False
+
 
 DataT = str | Path | Source | Pipeline
 
@@ -510,7 +521,13 @@ class UI(Viewer):
 
     @staticmethod
     def _get_xarray_upload_handlers():
-        """Build upload handlers for xarray file formats."""
+        """Build upload handlers for xarray file formats.
+
+        Returns empty dict if xarray-sql is not installed.
+        """
+        if not _check_xarray_available():
+            return {}
+
         _temp_files: list[str] = []
 
         def _cleanup_temp_files():
@@ -523,10 +540,7 @@ class UI(Viewer):
         atexit.register(_cleanup_temp_files)
 
         def _handle_xarray_upload(context, file_obj, alias, filename):
-            try:
-                from ..sources.xarray_sql import XArraySQLSource
-            except ImportError:
-                return None
+            from ..sources.xarray_sql import XArraySQLSource
             ext = filename.rsplit('.', 1)[-1] if '.' in filename else 'nc'
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f'.{ext}')
             file_obj.seek(0)
@@ -629,13 +643,12 @@ class UI(Viewer):
 
                 # Handle xarray files (NetCDF, Zarr, HDF5, GRIB)
                 if src.endswith(XARRAY_FILE_EXTENSIONS):
-                    try:
-                        from ..sources.xarray_sql import XArraySQLSource
-                    except ImportError as e:
+                    if not _check_xarray_available():
                         raise ImportError(
                             "xarray and xarray-sql are required to load xarray files. "
                             "Install them with: pip install lumen[xarray]"
-                        ) from e
+                        )
+                    from ..sources.xarray_sql import XArraySQLSource
                     source = XArraySQLSource(uri=str(Path(src).absolute()))
                     sources.append(source)
                     continue
