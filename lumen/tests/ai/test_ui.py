@@ -18,6 +18,7 @@ except ModuleNotFoundError:
 
 try:
     import xarray as xr
+
     from lumen.sources.xarray_sql import XArraySQLSource
     HAS_XARRAY = True
 except ImportError:
