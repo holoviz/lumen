@@ -670,26 +670,19 @@ class SQLPreFilter(SQLFilterBase):
             if not table_conditions:
                 return sql_in
 
-            # Find all table references in the query and replace with filtered subqueries
-            tables_to_replace = {}
+            # Use transform() to replace Table nodes with filtered subqueries.
+            # replace_tables() cannot handle Subquery replacements, so we walk
+            # the AST directly instead.
+            def _replace_matching_tables(node):
+                if isinstance(node, Table):
+                    name = str(node.this).strip('"\'')
+                    if name in table_conditions:
+                        return self._create_filtered_subquery(
+                            name, table_conditions[name], node.alias
+                        )
+                return node
 
-            for table_expr in expression.find_all(Table):
-                # Get the table name, stripping quotes for matching
-                table_name = str(table_expr.this).strip('"\'')
-
-                # Check if this table has prefilter conditions
-                if table_name in table_conditions:
-                    # Create a filtered subquery for this table
-                    filtered_subquery = self._create_filtered_subquery(
-                        table_name, table_conditions[table_name], table_expr.alias
-                    )
-                    tables_to_replace[table_expr] = filtered_subquery
-
-            if not tables_to_replace:
-                return sql_in
-
-            # Replace tables with filtered subqueries
-            replaced_expression = replace_tables(expression, tables_to_replace, dialect=self.read)
+            replaced_expression = expression.transform(_replace_matching_tables)
             return self.to_sql(replaced_expression)
 
         except Exception as e:

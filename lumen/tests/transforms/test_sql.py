@@ -650,6 +650,97 @@ def test_sql_prefilter_cte_common_table_expressions():
     assert "WITH" in result
 
 
+@pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
+def test_sql_prefilter_duckdb_integration():
+    """Test that SQLPreFilter produces valid SQL that DuckDB can execute."""
+    df = pd.DataFrame({
+        "obs_id": ["cell_0", "cell_1", "cell_2", "cell_3"],
+        "cell_type": ["B", "T", "B", "NK"],
+        "n_genes": [10, 20, 5, 15],
+    })
+    source = DuckDBSource.from_df({"obs": df})
+
+    # Prefilter then execute — the core use case that was broken
+    sql = "SELECT cell_type, COUNT(*) AS count FROM obs GROUP BY cell_type"
+    filtered_sql = SQLPreFilter.apply_to(
+        sql, conditions=[("obs", [("obs_id", ["cell_0", "cell_2"])])]
+    )
+    result = source.execute(filtered_sql)
+    assert len(result) == 1  # Only B cells remain
+    assert result.iloc[0]["cell_type"] == "B"
+    assert result.iloc[0]["count"] == 2
+
+
+@pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
+def test_sql_prefilter_duckdb_column_not_in_select():
+    """Test prefiltering when the filter column is not in the SELECT list."""
+    df = pd.DataFrame({
+        "obs_id": ["cell_0", "cell_1", "cell_2", "cell_3"],
+        "cell_type": ["B", "T", "B", "NK"],
+        "n_genes": [10, 20, 5, 15],
+    })
+    source = DuckDBSource.from_df({"obs": df})
+
+    sql = "SELECT n_genes FROM obs LIMIT 10"
+    filtered_sql = SQLPreFilter.apply_to(
+        sql, conditions=[("obs", [("obs_id", ["cell_0", "cell_2"])])]
+    )
+    result = source.execute(filtered_sql)
+    assert len(result) == 2
+    assert sorted(result["n_genes"].tolist()) == [5, 10]
+
+
+@pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
+def test_sql_prefilter_duckdb_join():
+    """Test prefiltering on joined tables in DuckDB."""
+    obs = pd.DataFrame({
+        "obs_id": ["c0", "c1", "c2"],
+        "cell_type": ["B", "T", "B"],
+    })
+    pca = pd.DataFrame({
+        "obs_id": ["c0", "c1", "c2"],
+        "pc1": [0.1, 0.2, 0.3],
+    })
+    source = DuckDBSource.from_df({"obs": obs, "pca": pca})
+
+    sql = "SELECT o.cell_type, p.pc1 FROM obs o JOIN pca p ON o.obs_id = p.obs_id"
+    filtered_sql = SQLPreFilter.apply_to(
+        sql, conditions=[("obs", [("obs_id", ["c0", "c2"])])]
+    )
+    result = source.execute(filtered_sql)
+    assert len(result) == 2
+    assert set(result["cell_type"]) == {"B"}
+
+
+def test_sql_prefilter_wrapped_subquery():
+    """Test prefiltering when SQL is wrapped: SELECT * FROM (SELECT ... FROM table) AS alias.
+
+    This is the pattern used by AnnDataSource where get_sql_expr wraps
+    user SQL in a SELECT * FROM (...) AS table_name.
+    """
+    result = SQLPreFilter.apply_to(
+        "SELECT * FROM (SELECT cell_type, COUNT(*) AS count FROM obs GROUP BY cell_type) AS count_by_type",
+        conditions=[("obs", [("obs_id", ["cell_0", "cell_2"])])]
+    )
+    assert "obs_id IN ('cell_0', 'cell_2')" in result
+    assert "GROUP BY cell_type" in result
+    assert "count_by_type" in result
+
+
+def test_sql_prefilter_does_not_double_wrap():
+    """Verify that transform() doesn't re-enter replacement nodes.
+
+    The filtered subquery itself contains a Table("obs") reference.
+    transform() must NOT replace that inner reference again.
+    """
+    result = SQLPreFilter.apply_to(
+        "SELECT n_genes FROM obs",
+        conditions=[("obs", [("obs_id", ["cell_0"])])]
+    )
+    # Should have exactly one IN clause, not nested
+    assert result.count("obs_id IN") == 1
+
+
 def test_sql_count():
     result = SQLCount.apply_to("SELECT * FROM TABLE")
     expected = "SELECT COUNT(*) AS count FROM (SELECT * FROM TABLE)"
