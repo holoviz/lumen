@@ -23,8 +23,8 @@ from panel.pane import Markdown
 from panel.viewable import Viewable, Viewer
 from panel_material_ui import (
     Accordion, BreakpointSwitcher, Button, Card, ChatFeed, ChatMessage,
-    Container, Dialog, Divider, FileDownload, IconButton, MenuButton, Progress, Select,
-    SpeedDial, TextAreaInput, TextInput, Typography,
+    Container, Dialog, Divider, FileDownload, IconButton, MenuButton, Progress,
+    Select, SpeedDial, TextAreaInput, TextInput, Typography,
 )
 
 from ..views.base import Panel, View
