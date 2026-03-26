@@ -9,7 +9,6 @@ from ..models import RetrySpec
 from ..utils import apply_changes, retry_llm_output
 from .base import Agent
 
-
 SPEC_TYPE_MAP = {
     "sql": "query",
     "yaml": "specification",
