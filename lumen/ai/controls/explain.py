@@ -1,19 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
-
 import param
 
-from ..config import PROMPTS_DIR
-from ..utils import render_template
 from .revision import RevisionControls
-
-SPEC_TYPE_MAP = {
-    "sql": "query",
-    "yaml": "specification",
-    "json": "specification",
-    "vega-lite": "visualization spec",
-}
 
 
 class ExplainControls(RevisionControls):
@@ -47,41 +36,20 @@ class ExplainControls(RevisionControls):
 
     @param.depends("_explain_count", watch=True)
     async def _explain(self):
-        spec = self.view.spec
-        if not spec or not spec.strip():
-            return
-
-        language = self.view.language
-        spec_type = SPEC_TYPE_MAP.get(language, "code")
-
-        system = render_template(
-            PROMPTS_DIR / "ExplainControls" / "main.jinja2",
-            language=language,
-            spec_type=spec_type,
-            spec=spec,
-            user_question=self._user_question,
-            current_datetime=datetime.now(),
-            memory={},
-            actor_name="ExplainControls",
-        )
-
-        if self._user_question:
-            user_content = f"Explain: {self._user_question}"
-        else:
-            user_content = "Explain what this does."
-        messages = [{"role": "user", "content": user_content}]
-
-        llm = self.task.actor.llm
+        messages = list(self.task.history)
         message = None
         try:
-            async for chunk in llm.stream(messages=messages, system=system):
-                if chunk:
-                    message = self.interface.stream(
-                        chunk,
-                        replace=True,
-                        message=message,
-                        user="Assistant",
-                    )
+            with self.task.actor.param.update(interface=self.interface):
+                async for chunk in self.task.actor.explain(
+                    self._user_question, messages, self.task.out_context, self.view
+                ):
+                    if chunk:
+                        message = self.interface.stream(
+                            chunk,
+                            replace=True,
+                            message=message,
+                            user="Assistant",
+                        )
         except Exception as e:
             self._report_status(
                 f"```\n{e}\n```",

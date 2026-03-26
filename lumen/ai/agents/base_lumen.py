@@ -10,10 +10,19 @@ from ..utils import apply_changes, retry_llm_output
 from .base import Agent
 
 
+SPEC_TYPE_MAP = {
+    "sql": "query",
+    "yaml": "specification",
+    "json": "specification",
+    "vega-lite": "visualization spec",
+}
+
+
 class BaseLumenAgent(Agent):
 
     prompts = param.Dict(
         default={
+            "explain_output": {"template": PROMPTS_DIR / "BaseLumenAgent" / "explain_output.jinja2"},
             "revise_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "BaseLumenAgent" / "revise_output.jinja2"},
         }
     )
@@ -65,3 +74,40 @@ class BaseLumenAgent(Agent):
         else:
             yaml_spec = dump_yaml(spec)
         return yaml_spec
+
+    async def explain(
+        self,
+        instruction: str,
+        messages: list[Message],
+        context: TContext,
+        view: LumenEditor | None = None,
+        spec: str | None = None,
+        language: str | None = None,
+    ):
+        """
+        Explain the current spec in plain language, streaming chunks.
+        """
+        if view is not None:
+            spec = view.spec
+            language = view.language
+        if not spec or not spec.strip():
+            return
+
+        spec_type = SPEC_TYPE_MAP.get(language, "code")
+
+        if instruction:
+            user_content = f"Explain: {instruction}"
+        else:
+            user_content = "Explain what this does."
+        messages = messages + [{"role": "user", "content": user_content}]
+
+        async for chunk in self._stream_prompt(
+            "explain_output",
+            messages,
+            context,
+            spec=spec,
+            language=language,
+            spec_type=spec_type,
+            user_question=instruction,
+        ):
+            yield chunk

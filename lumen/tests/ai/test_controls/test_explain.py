@@ -8,7 +8,7 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
-from lumen.ai.controls.explain import SPEC_TYPE_MAP, ExplainControls
+from lumen.ai.controls.explain import ExplainControls
 
 
 class MockView:
@@ -24,7 +24,22 @@ class MockTask:
 
     def __init__(self):
         self.actor = MagicMock()
-        self.actor.llm = MagicMock()
+        self.history = []
+        self.out_context = {}
+
+    def set_explain_chunks(self, chunks):
+        """Configure the mock actor.explain to yield given chunks."""
+        async def mock_explain(instruction, messages, context, view):
+            for chunk in chunks:
+                yield chunk
+        self.actor.explain = mock_explain
+
+    def set_explain_error(self, error):
+        """Configure the mock actor.explain to raise an error."""
+        async def mock_explain(instruction, messages, context, view):
+            raise error
+            yield  # make it a generator
+        self.actor.explain = mock_explain
 
 
 class MockInterface:
@@ -141,11 +156,7 @@ class TestExplainControls:
         interface = MockInterface()
         view = MockView()
         task = MockTask()
-
-        async def mock_stream(**kwargs):
-            yield "ok"
-
-        task.actor.llm.stream = mock_stream
+        task.set_explain_chunks(["ok"])
 
         controls = ExplainControls(interface=interface, view=view, task=task)
         controls.active = True
@@ -164,11 +175,7 @@ class TestExplainControls:
         interface = MockInterface()
         view = MockView()
         task = MockTask()
-
-        async def mock_stream(**kwargs):
-            yield "ok"
-
-        task.actor.llm.stream = mock_stream
+        task.set_explain_chunks(["ok"])
 
         controls = ExplainControls(interface=interface, view=view, task=task)
         controls.active = True
@@ -186,11 +193,7 @@ class TestExplainControls:
         interface = MockInterface()
         view = MockView()
         task = MockTask()
-
-        async def mock_stream(**kwargs):
-            yield "ok"
-
-        task.actor.llm.stream = mock_stream
+        task.set_explain_chunks(["ok"])
 
         controls = ExplainControls(interface=interface, view=view, task=task)
         controls._text_input.value_input = ""
@@ -203,19 +206,14 @@ class TestExplainControls:
         assert controls._explain_count == 2
 
     @pytest.mark.asyncio
-    async def test_explain_streams_progressively(self):
-        """Test that _explain streams chunks progressively to the interface."""
+    async def test_explain_delegates_to_actor(self):
+        """Test that _explain delegates to self.task.actor.explain."""
         interface = MockInterface()
         view = MockView(spec="SELECT id FROM users")
         task = MockTask()
 
         chunks = ["This query", "This query selects", "This query selects all IDs from the users table."]
-
-        async def mock_stream(**kwargs):
-            for chunk in chunks:
-                yield chunk
-
-        task.actor.llm.stream = mock_stream
+        task.set_explain_chunks(chunks)
 
         controls = ExplainControls(interface=interface, view=view, task=task)
         controls._user_question = ""
@@ -224,6 +222,35 @@ class TestExplainControls:
         assert len(interface.messages) == len(chunks)
         for msg in interface.messages:
             assert msg["replace"] is True
+
+    @pytest.mark.asyncio
+    async def test_explain_passes_args_to_actor(self):
+        """Test that _explain passes user_question, messages, context, and view to actor."""
+        interface = MockInterface()
+        view = MockView(spec="SELECT 1")
+        task = MockTask()
+        task.history = [{"role": "user", "content": "hello"}]
+        task.out_context = {"key": "value"}
+
+        captured = {}
+
+        async def mock_explain(instruction, messages, context, view_arg):
+            captured["instruction"] = instruction
+            captured["messages"] = messages
+            captured["context"] = context
+            captured["view"] = view_arg
+            yield "ok"
+
+        task.actor.explain = mock_explain
+
+        controls = ExplainControls(interface=interface, view=view, task=task)
+        controls._user_question = "JOIN clause"
+        await controls._explain()
+
+        assert captured["instruction"] == "JOIN clause"
+        assert captured["messages"] == [{"role": "user", "content": "hello"}]
+        assert captured["context"] == {"key": "value"}
+        assert captured["view"] is view
 
     @pytest.mark.asyncio
     async def test_explain_empty_spec_noop(self):
@@ -265,17 +292,12 @@ class TestExplainControls:
         assert len(interface.messages) == 0
 
     @pytest.mark.asyncio
-    async def test_explain_handles_llm_error(self):
-        """Test _explain handles LLM errors gracefully."""
+    async def test_explain_handles_error(self):
+        """Test _explain handles errors gracefully."""
         interface = MockInterface()
         view = MockView(spec="SELECT 1")
         task = MockTask()
-
-        async def mock_stream(**kwargs):
-            raise Exception("LLM connection failed")
-            yield  # make it a generator
-
-        task.actor.llm.stream = mock_stream
+        task.set_explain_error(Exception("LLM connection failed"))
 
         controls = ExplainControls(interface=interface, view=view, task=task)
         controls._user_question = ""
@@ -292,12 +314,7 @@ class TestExplainControls:
         interface = MockInterface()
         view = MockView(spec="SELECT 1")
         task = MockTask()
-
-        async def mock_stream(**kwargs):
-            raise Exception("Some error")
-            yield
-
-        task.actor.llm.stream = mock_stream
+        task.set_explain_error(Exception("Some error"))
 
         controls = ExplainControls(interface=interface, view=view, task=task)
         controls._user_question = ""
@@ -314,97 +331,12 @@ class TestExplainControls:
         assert md_text.endswith("\n```")
 
     @pytest.mark.asyncio
-    async def test_explain_passes_correct_messages_to_llm(self):
-        """Test that the correct messages and system prompt are passed to LLM."""
-        interface = MockInterface()
-        view = MockView(spec="SELECT name FROM users WHERE active = 1", language="sql")
-        task = MockTask()
-
-        captured_kwargs = {}
-
-        async def mock_stream(**kwargs):
-            captured_kwargs.update(kwargs)
-            yield "explanation"
-
-        task.actor.llm.stream = mock_stream
-
-        controls = ExplainControls(interface=interface, view=view, task=task)
-        controls._user_question = ""
-        await controls._explain()
-
-        # Verify messages — user content should be minimal (spec is in system prompt context block)
-        assert len(captured_kwargs["messages"]) == 1
-        msg = captured_kwargs["messages"][0]
-        assert msg["role"] == "user"
-        assert "Explain what this does" in msg["content"]
-
-        # Verify system prompt contains the spec and language info
-        assert "system" in captured_kwargs
-        system = captured_kwargs["system"]
-        assert "SELECT name FROM users WHERE active = 1" in system
-        assert "sql" in system.lower()
-
-    @pytest.mark.asyncio
-    async def test_explain_with_question_passes_it_to_llm(self):
-        """Test that user question passes through in user message."""
-        interface = MockInterface()
-        view = MockView(spec="SELECT * FROM t1 JOIN t2 ON t1.id = t2.id", language="sql")
-        task = MockTask()
-
-        captured_kwargs = {}
-
-        async def mock_stream(**kwargs):
-            captured_kwargs.update(kwargs)
-            yield "The JOIN clause..."
-
-        task.actor.llm.stream = mock_stream
-
-        controls = ExplainControls(interface=interface, view=view, task=task)
-        controls._user_question = "JOIN clause"
-        await controls._explain()
-
-        msg = captured_kwargs["messages"][0]
-        assert "Explain: JOIN clause" in msg["content"]
-
-        # System prompt should also include the question
-        system = captured_kwargs["system"]
-        assert "JOIN clause" in system
-
-    @pytest.mark.asyncio
-    async def test_explain_works_with_yaml_view(self):
-        """Test that explain works correctly with YAML spec."""
-        interface = MockInterface()
-        view = MockView(spec="type: bar\nx: date\ny: value", language="yaml")
-        task = MockTask()
-
-        captured_kwargs = {}
-
-        async def mock_stream(**kwargs):
-            captured_kwargs.update(kwargs)
-            yield "This YAML spec configures a bar chart."
-
-        task.actor.llm.stream = mock_stream
-
-        controls = ExplainControls(interface=interface, view=view, task=task)
-        controls._user_question = ""
-        await controls._explain()
-
-        system = captured_kwargs["system"]
-        assert "yaml" in system.lower()
-        assert "type: bar" in system
-
-    @pytest.mark.asyncio
     async def test_explain_resets_state_on_error(self):
-        """Test that state is consistent even when LLM errors out."""
+        """Test that state is consistent even when actor.explain errors out."""
         interface = MockInterface()
         view = MockView(spec="SELECT 1")
         task = MockTask()
-
-        async def mock_stream(**kwargs):
-            raise RuntimeError("Network error")
-            yield
-
-        task.actor.llm.stream = mock_stream
+        task.set_explain_error(RuntimeError("Network error"))
 
         controls = ExplainControls(interface=interface, view=view, task=task)
         controls._user_question = ""
@@ -422,99 +354,16 @@ class TestExplainControls:
         view = MockView(spec="SELECT 1")
         task = MockTask()
 
-        captured_kwargs = {}
+        captured = {}
 
-        async def mock_stream(**kwargs):
-            captured_kwargs.update(kwargs)
+        async def mock_explain(instruction, messages, context, view_arg):
+            captured["instruction"] = instruction
             yield "Simple select."
 
-        task.actor.llm.stream = mock_stream
+        task.actor.explain = mock_explain
 
         controls = ExplainControls(interface=interface, view=view, task=task)
         assert controls._user_question == ""
         await controls._explain()
 
-        msg = captured_kwargs["messages"][0]
-        assert "Explain what this does" in msg["content"]
-
-    @pytest.mark.asyncio
-    async def test_render_system_prompt_sql(self):
-        """Test system prompt rendering for SQL language."""
-        interface = MockInterface()
-        view = MockView(spec="SELECT 1", language="sql")
-        task = MockTask()
-
-        captured = {}
-
-        async def mock_stream(**kwargs):
-            captured.update(kwargs)
-            yield "ok"
-
-        task.actor.llm.stream = mock_stream
-
-        controls = ExplainControls(interface=interface, view=view, task=task)
-        await controls._explain()
-
-        system = captured["system"]
-        assert "query" in system.lower()
-        assert "SELECT" in system
-
-    @pytest.mark.asyncio
-    async def test_render_system_prompt_yaml(self):
-        """Test system prompt rendering for YAML language."""
-        interface = MockInterface()
-        view = MockView(spec="type: bar", language="yaml")
-        task = MockTask()
-
-        captured = {}
-
-        async def mock_stream(**kwargs):
-            captured.update(kwargs)
-            yield "ok"
-
-        task.actor.llm.stream = mock_stream
-
-        controls = ExplainControls(interface=interface, view=view, task=task)
-        await controls._explain()
-
-        system = captured["system"]
-        assert "specification" in system.lower()
-        assert "type: bar" in system
-
-    @pytest.mark.asyncio
-    async def test_render_system_prompt_unknown_language(self):
-        """Test system prompt rendering for unknown language falls back gracefully."""
-        interface = MockInterface()
-        view = MockView(spec="some code", language="python")
-        task = MockTask()
-
-        captured = {}
-
-        async def mock_stream(**kwargs):
-            captured.update(kwargs)
-            yield "ok"
-
-        task.actor.llm.stream = mock_stream
-
-        controls = ExplainControls(interface=interface, view=view, task=task)
-        await controls._explain()
-
-        system = captured["system"]
-        assert "python" in system
-        assert "code" in system.lower()
-
-
-class TestSpecTypeMap:
-    """Tests for SPEC_TYPE_MAP constant."""
-
-    def test_sql_maps_to_query(self):
-        assert SPEC_TYPE_MAP["sql"] == "query"
-
-    def test_yaml_maps_to_specification(self):
-        assert SPEC_TYPE_MAP["yaml"] == "specification"
-
-    def test_json_maps_to_specification(self):
-        assert SPEC_TYPE_MAP["json"] == "specification"
-
-    def test_vegalite_maps_to_visualization_spec(self):
-        assert SPEC_TYPE_MAP["vega-lite"] == "visualization spec"
+        assert captured["instruction"] == ""
