@@ -19,7 +19,7 @@ class ExplainControls(RevisionControls):
     }
 
     toggle_kwargs = {
-        "icon": "psychology",
+        "icon": "contact_support",
         "description": "Explain this code",
     }
 
