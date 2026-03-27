@@ -1609,8 +1609,7 @@ class UI(Viewer):
             try:
                 suggestion = await self._coordinator.suggest_follow_up(plan)
                 if suggestion:
-                    with edit_readonly(self._chat_input):
-                        self._chat_input.value_input = suggestion
+                    self._chat_input.value = suggestion
             finally:
                 follow_up_button.disabled = False
                 follow_up_button.description = "Suggest a follow-up question"
@@ -1635,18 +1634,11 @@ class UI(Viewer):
 
         if len(self.interface):
             message = self.interface.objects[-1]
-            try:
-                existing = message.footer_actions or []
-            except AttributeError:
-                existing = message.footer_objects or []
             existing = [
-                obj for obj in existing
+                obj for obj in (message.footer_actions or [])
                 if getattr(obj, 'name', '') != "FollowUp"
             ]
-            try:
-                message.footer_actions = existing + [follow_up_button]
-            except AttributeError:
-                message.footer_objects = existing + [follow_up_button]
+            message.footer_actions = existing + [follow_up_button]
 
     def __panel__(self):
         return self._main

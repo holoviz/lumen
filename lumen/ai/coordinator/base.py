@@ -284,7 +284,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 "template": PROMPTS_DIR / "Coordinator" / "tool_relevance.jinja2",
                 "response_model": ThinkingYesNo,
             },
-            "follow_up_suggestions": {
+            "follow_up": {
                 "template": PROMPTS_DIR / "Coordinator" / "follow_up_suggestions.jinja2",
                 "response_model": FollowUpSuggestion,
                 "llm_spec": "ui",
@@ -536,7 +536,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
         try:
             result = await self._invoke_prompt(
-                "follow_up_suggestions",
+                "follow_up",
                 messages=[{"role": "user", "content": "Generate a follow-up suggestion."}],
                 context=plan.out_context,
                 data_summary=data_summary,
