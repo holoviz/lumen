@@ -1634,11 +1634,12 @@ class UI(Viewer):
 
         if len(self.interface):
             message = self.interface.objects[-1]
+            attr = "footer_actions" if hasattr(message, "footer_actions") else "footer_objects"
             existing = [
-                obj for obj in (message.footer_actions or [])
+                obj for obj in (getattr(message, attr) or [])
                 if getattr(obj, 'name', '') != "FollowUp"
             ]
-            message.footer_actions = existing + [follow_up_button]
+            setattr(message, attr, existing + [follow_up_button])
 
     def __panel__(self):
         return self._main
