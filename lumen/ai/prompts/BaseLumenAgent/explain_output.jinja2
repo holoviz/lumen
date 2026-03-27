@@ -1,0 +1,18 @@
+{% extends 'Actor/main.jinja2' %}
+
+{% block instructions %}
+Explain this {{ spec_type }} in 3-5 concise bullet points.
+Focus on what it achieves and key logic -- skip obvious syntax.
+If nothing specific is asked, give only the high-level goal and important details.
+Suggest the user ask about a specific part for more depth.
+{%- if user_question %}
+
+The user wants to understand: {{ user_question }}
+{%- endif %}
+{% endblock %}
+
+{% block context %}
+```{{ language }}
+{{ spec }}
+```
+{% endblock %}
