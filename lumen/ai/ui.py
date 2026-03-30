@@ -2073,11 +2073,11 @@ class ExplorerUI(UI):
         if exploration.plan is None:
             return
         for child in item.get('items', []):
+            child['view'].context.clear()
             if child['view'].plan is not None:
                 child['view'].plan.cleanup()
-            child['view'].context.clear()
-        exploration.plan.cleanup()
         exploration.context.clear()
+        exploration.plan.cleanup()
         if item in self._explorations.items:
             # Top-level exploration: remove and switch to Home
             self._explorations.items = [
@@ -2485,7 +2485,8 @@ class ExplorerUI(UI):
                 partial_plan = plan
                 plan = parent.plan.merge(plan)
                 partial_plan.cleanup()
-            if replan and new_exploration:
+            if replan:
+                plan.views = []
                 watcher = plan.param.watch(partial(self._add_views, exploration), "views")
             else:
                 watcher = None
