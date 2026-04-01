@@ -641,10 +641,9 @@ class TaskGroup(Task):
             raise RuntimeError(
                 "Report has not been executed, run report before exporting to html."
             )
-        html_buffer = io.StringIO()
-        self.__panel__().save(html_buffer, title=self.title or "Report")
-        html_buffer.seek(0)
-        return html_buffer.getvalue()
+        buf = io.StringIO()
+        self.__panel__().save(buf, title=self.title or "Report")
+        return buf.getvalue()
 
     def validate(
         self,
@@ -857,7 +856,6 @@ class Report(TaskGroup):
             icon="settings", on_click=self._open_settings, size="large", color="default",
             margin=0, description="Configure Report", visible=False
         )
-        self._export_fmt = "ipynb"
         self._export = MenuButton(
             label="", icon="get_app", variant="text", color="default",
             margin=0, size="large", visible=False,
@@ -866,13 +864,25 @@ class Report(TaskGroup):
                 {"label": "Notebook (.ipynb)", "format": "ipynb", "icon": "description"},
                 {"label": "HTML (.html)", "format": "html", "icon": "language"},
             ],
-            on_click=self._on_export_click,
+            on_click=lambda _: self._download._transfer(),
+            icon_size="36px",
+            sx={
+                "& .MuiButton-endIcon": {"display": "none"},
+                "& .MuiButton-startIcon": {"margin": 0},
+                "minWidth": "unset",
+                "width": "60px",
+                "height": "60px",
+                "borderRadius": "50%",
+                "padding": 0,
+            },
         )
         self._download = FileDownload(
-            callback=self._export_report,
+            auto=True,
+            callback=param.bind(self._export_report, self._export),
             filename=f"{self.title or 'Report'}.ipynb",
             visible=False,
         )
+        self._export.attached.append(self._download)
         self._dialog = Dialog(
             TextInput.from_param(self.param.title, margin=(10, 0, 0, 0), sizing_mode="stretch_width"),
             show_close_button=True,
@@ -933,20 +943,10 @@ class Report(TaskGroup):
             self.reset()
         elif icon in ("description", "language"):
             fmt = item.get("format", "ipynb")
-            self._trigger_download(fmt=fmt)
+            self._export.value = {"format": fmt}
+            self._download._transfer()
         elif icon == "settings":
             self._open_settings()
-
-    def _on_export_click(self, item):
-        fmt = item.get("format", "ipynb") if isinstance(item, dict) else "ipynb"
-        self._trigger_download(fmt=fmt)
-
-    def _trigger_download(self, event=None, fmt="ipynb"):
-        self._export_fmt = fmt
-        title = self.title or "Report"
-        ext = "html" if fmt == "html" else "ipynb"
-        self._download.filename = f"{title}.{ext}"
-        self._download.transfer()
 
     @param.depends('_current', '_tasks', watch=True)
     def _update_run_state(self):
@@ -977,10 +977,14 @@ class Report(TaskGroup):
         await asyncio.sleep(0.01)  # yield the event loop to allow button loading state to update
         await self.execute()
 
-    async def _export_report(self):
+    async def _export_report(self, item=None):
         if len(self) and self.status != "success":
             await self.execute()
-        if self._export_fmt == "html":
+        fmt = item.get("format", "ipynb") if isinstance(item, dict) else "ipynb"
+        title = self.title or "Report"
+        ext = "html" if fmt == "html" else "ipynb"
+        self._download.filename = f"{title}.{ext}"
+        if fmt == "html":
             return io.StringIO(self.to_html())
         return io.StringIO(self.to_notebook())
 
