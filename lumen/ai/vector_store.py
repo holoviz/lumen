@@ -1134,9 +1134,22 @@ class DuckDBVectorStore(VectorStore):
                 self.embeddings = NumpyEmbeddings()
             return
         uri_exists = Path(self.uri).exists()
+        direct_connection = False
         try:
             attach_mode = "READ_ONLY" if self.read_only else "READ_WRITE"
             connection.execute(f"ATTACH DATABASE '{self.uri}' AS embedded ({attach_mode});")
+        except (duckdb.BinderException, duckdb.IOException) as e:
+            err_msg = str(e).lower()
+            if "already attached" in err_msg or "unique file handle" in err_msg:
+                # File already held by another DuckDB connection in this process
+                # (e.g., during Panel hot-reload). Connect directly to the file instead.
+                connection.close()
+                connection = duckdb.connect(self.uri, read_only=self.read_only)
+                connection.execute("LOAD 'vss';")
+                connection.execute("SET hnsw_enable_experimental_persistence = true;")
+                direct_connection = True
+            else:
+                raise
         except duckdb.CatalogException:
             # handle "Failure while replaying WAL file"
             # remove .wal uri on corruption
@@ -1145,7 +1158,8 @@ class DuckDBVectorStore(VectorStore):
                 wal_path.unlink()
             attach_mode = "READ_ONLY" if self.read_only else "READ_WRITE"
             connection.execute(f"ATTACH DATABASE '{self.uri}' AS embedded ({attach_mode});")
-        connection.execute("USE embedded;")
+        if not direct_connection:
+            connection.execute("USE embedded;")
         self.connection = connection
         has_documents = (
             connection.execute(
