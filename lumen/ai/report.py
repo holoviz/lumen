@@ -689,6 +689,7 @@ class Section(TaskGroup):
     def __init__(self, *tasks, **params):
         self._watchers = {}
         self._placeholder = None
+        self._task_previews = None
         super().__init__(*tasks, **params)
         self._update_placeholder()
 
@@ -720,6 +721,12 @@ class Section(TaskGroup):
             "", variant="body2", margin=(10, 10),
             sx={"color": "text.secondary"}
         )
+        self._task_previews = Column(
+            sizing_mode='stretch_width',
+            styles={'min-height': 'unset'},
+            height_policy='fit',
+            visible=False,
+        )
         self._view = Column(sizing_mode='stretch_width', styles={'min-height': 'unset'}, height_policy='fit')
         self._container = Column(
             Row(
@@ -744,14 +751,32 @@ class Section(TaskGroup):
         has_outputs = self.status != "idle" or bool(self.views)
         if not has_outputs:
             n = len(self._tasks)
-            task_word = "task" if n == 1 else "tasks"
-            self._placeholder.object = f"{n} {task_word} ready"
+            self._placeholder.object = f"{n} ready to launch!"
             self._placeholder.visible = True
+            # Show task title previews
+            if self._task_previews is not None:
+                previews = []
+                for task in self._tasks:
+                    if task.title:
+                        indent = max(0, task.level - self.level) * 16
+                        previews.append(Typography(
+                            task.title,
+                            variant="body2",
+                            margin=(2, 10, 2, 10 + indent),
+                            sx={"color": "text.disabled"},
+                        ))
+                self._task_previews[:] = previews
+                self._task_previews.visible = bool(previews)
         else:
             self._placeholder.visible = False
+            if self._task_previews is not None:
+                self._task_previews.visible = False
 
     def _populate_view(self):
-        self._view[:] = self._header + [self._placeholder] + list(self._tasks)
+        placeholders = [self._placeholder]
+        if self._task_previews is not None:
+            placeholders.append(self._task_previews)
+        self._view[:] = self._header + placeholders + list(self._tasks)
 
     async def _run_task(self, i: int, task: Task | Actor, context: TContext | None, **kwargs) -> list[Any]:
         if context is not None:
