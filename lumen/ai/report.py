@@ -23,8 +23,8 @@ from panel.pane import Markdown
 from panel.viewable import Viewable, Viewer
 from panel_material_ui import (
     Accordion, BreakpointSwitcher, Button, Card, ChatFeed, ChatMessage,
-    Container, Dialog, Divider, FileDownload, IconButton, Progress, Select,
-    SpeedDial, TextAreaInput, TextInput, Typography,
+    Container, Dialog, Divider, FileDownload, IconButton, MenuButton, Progress,
+    Select, SpeedDial, TextAreaInput, TextInput, Typography,
 )
 
 from ..views.base import Panel, View
@@ -633,6 +633,18 @@ class TaskGroup(Task):
         cells = make_preamble("", extensions=extensions) + cells
         return write_notebook(cells)
 
+    def to_html(self):
+        """
+        Returns the HTML representation of the report.
+        """
+        if len(self) and self.status != "success":
+            raise RuntimeError(
+                "Report has not been executed, run report before exporting to html."
+            )
+        buf = io.StringIO()
+        self._view.save(buf, title=self.title or "Report")
+        return buf.getvalue()
+
     def validate(
         self,
         context: TContext | None = None,
@@ -689,6 +701,7 @@ class Section(TaskGroup):
     def __init__(self, *tasks, **params):
         self._watchers = {}
         self._placeholder = None
+        self._task_previews = None
         super().__init__(*tasks, **params)
         self._update_placeholder()
 
@@ -720,6 +733,12 @@ class Section(TaskGroup):
             "", variant="body2", margin=(10, 10),
             sx={"color": "text.secondary"}
         )
+        self._task_previews = Column(
+            sizing_mode='stretch_width',
+            styles={'min-height': 'unset'},
+            height_policy='fit',
+            visible=False,
+        )
         self._view = Column(sizing_mode='stretch_width', styles={'min-height': 'unset'}, height_policy='fit')
         self._container = Column(
             Row(
@@ -744,14 +763,32 @@ class Section(TaskGroup):
         has_outputs = self.status != "idle" or bool(self.views)
         if not has_outputs:
             n = len(self._tasks)
-            task_word = "task" if n == 1 else "tasks"
-            self._placeholder.object = f"{n} {task_word} ready"
+            self._placeholder.object = f"{n} ready to launch!"
             self._placeholder.visible = True
+            # Show task title previews
+            if self._task_previews is not None:
+                previews = []
+                for task in self._tasks:
+                    if task.title:
+                        indent = max(0, task.level - self.level) * 16
+                        previews.append(Typography(
+                            task.title,
+                            variant="body2",
+                            margin=(2, 10, 2, 10 + indent),
+                            sx={"color": "text.disabled"},
+                        ))
+                self._task_previews[:] = previews
+                self._task_previews.visible = bool(previews)
         else:
             self._placeholder.visible = False
+            if self._task_previews is not None:
+                self._task_previews.visible = False
 
     def _populate_view(self):
-        self._view[:] = self._header + [self._placeholder] + list(self._tasks)
+        placeholders = [self._placeholder]
+        if self._task_previews is not None:
+            placeholders.append(self._task_previews)
+        self._view[:] = self._header + placeholders + list(self._tasks)
 
     async def _run_task(self, i: int, task: Task | Actor, context: TContext | None, **kwargs) -> list[Any]:
         if context is not None:
@@ -844,13 +881,34 @@ class Report(TaskGroup):
             icon="settings", on_click=self._open_settings, size="large", color="default",
             margin=0, description="Configure Report", visible=False
         )
-        self._export = IconButton(
-            icon="get_app", on_click=self._trigger_download, size="large", color="default",
-            margin=0, description="Export Report to .ipynb", visible=False
+        self._export = MenuButton(
+            label="", icon="get_app", variant="text", color="default",
+            margin=0, size="large", visible=False,
+            description="Export Report",
+            items=[
+                {"label": "Notebook (.ipynb)", "format": "ipynb", "icon": "description"},
+                {"label": "HTML (.html)", "format": "html", "icon": "language"},
+            ],
+            on_click=lambda _: self._download._transfer(),
+            icon_size="36px",
+            sx={
+                "& .MuiButton-endIcon": {"display": "none"},
+                "& .MuiButton-startIcon": {"margin": 0},
+                "& .MuiIcon-root": {"color": "var(--mui-palette-action-active)"},
+                "minWidth": "unset",
+                "width": "60px",
+                "height": "60px",
+                "borderRadius": "50%",
+                "padding": 0,
+            },
         )
         self._download = FileDownload(
-            callback=self._notebook_export, filename=f"{self.title or 'Report'}.ipynb", visible=False
+            auto=True,
+            callback=param.bind(self._export_report, self._export),
+            filename=f"{self.title or 'Report'}.ipynb",
+            visible=False,
         )
+        self._export.attached.append(self._download)
         self._dialog = Dialog(
             TextInput.from_param(self.param.title, margin=(10, 0, 0, 0), sizing_mode="stretch_width"),
             show_close_button=True,
@@ -864,14 +922,14 @@ class Report(TaskGroup):
             self._collapse,
             self._export,
             self._settings,
-            self._download,
             sizing_mode="stretch_width"
         )
         self._dial = SpeedDial(
             items=[
                 {"label": "Execute Report", "icon": "play_arrow"},
                 {"label": "Clear Report", "icon": "clear"},
-                {"label": "Export Report to Notebook", "icon": "get_app"},
+                {"label": "Export as Notebook", "icon": "description", "format": "ipynb"},
+                {"label": "Export as HTML", "icon": "language", "format": "html"},
                 {"label": "Configure Report", "icon": "settings"}
             ],
             color="default",
@@ -909,14 +967,12 @@ class Report(TaskGroup):
             await self._execute_event()
         elif icon == "clear":
             self.reset()
-        elif icon == "get_app":
-            self._trigger_download()
+        elif icon in ("description", "language"):
+            fmt = item.get("format", "ipynb")
+            self._export.value = {"format": fmt}
+            self._download._transfer()
         elif icon == "settings":
             self._open_settings()
-
-    def _trigger_download(self, event=None):
-        self._download.filename = f"{self.title or 'Report'}.ipynb"
-        self._download.transfer()
 
     @param.depends('_current', '_tasks', watch=True)
     def _update_run_state(self):
@@ -947,9 +1003,15 @@ class Report(TaskGroup):
         await asyncio.sleep(0.01)  # yield the event loop to allow button loading state to update
         await self.execute()
 
-    async def _notebook_export(self):
+    async def _export_report(self, item=None):
         if len(self) and self.status != "success":
             await self.execute()
+        fmt = item.get("format", "ipynb") if isinstance(item, dict) else "ipynb"
+        title = self.title or "Report"
+        ext = "html" if fmt == "html" else "ipynb"
+        self._download.filename = f"{title}.{ext}"
+        if fmt == "html":
+            return io.StringIO(self.to_html())
         return io.StringIO(self.to_notebook())
 
     def _expand_all(self, event=None):

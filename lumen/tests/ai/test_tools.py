@@ -130,3 +130,81 @@ async def test_metadata_lookup_source_keeps_first_provenance():
     entries = tool.vector_store.filter_by({"source": source.name, "type": "tables"})
     assert len(entries) == 1
     assert entries[0]["metadata"]["provenance_chain"] == ["global"]
+
+
+async def test_metadata_lookup_exploration_finds_global_tables():
+    """Tables stored at global provenance should be discoverable from an exploration context."""
+    source = DuckDBSource(uri=":memory:", tables={"test_table": "SELECT 1 as id"})
+    tool = MetadataLookup(vector_store=NumpyVectorStore())
+
+    # Sync at global scope — tables get stored with provenance ['global']
+    context = {
+        "sources": [source],
+        "provenance_chain": ["global"],
+        "tables_metadata": {},
+    }
+    await tool.sync(context)
+
+    # Query from an exploration context with longer provenance chain
+    exploration_context = {
+        "sources": [source],
+        "provenance_chain": ["global", "exploration_123"],
+        "tables_metadata": context["tables_metadata"],
+    }
+    messages = [{"role": "user", "content": "Show me test_table"}]
+    _, outputs = await tool.respond(messages, exploration_context)
+    metaset = outputs["metaset"]
+
+    assert len(metaset.catalog) > 0, (
+        "Exploration context should find global-scoped tables via provenance fallback"
+    )
+    slugs = list(metaset.catalog.keys())
+    assert any("test_table" in s for s in slugs)
+
+
+async def test_metadata_lookup_exploration_finds_global_tables_deeply_nested():
+    """Provenance fallback should work even for deeply nested exploration chains."""
+    source = DuckDBSource(uri=":memory:", tables={"sales": "SELECT 1 as revenue"})
+    tool = MetadataLookup(vector_store=NumpyVectorStore())
+
+    context = {
+        "sources": [source],
+        "provenance_chain": ["global"],
+        "tables_metadata": {},
+    }
+    await tool.sync(context)
+
+    # Three levels deep
+    deep_context = {
+        "sources": [source],
+        "provenance_chain": ["global", "exploration_1", "exploration_2"],
+        "tables_metadata": context["tables_metadata"],
+    }
+    messages = [{"role": "user", "content": "Show sales data"}]
+    _, outputs = await tool.respond(messages, deep_context)
+    metaset = outputs["metaset"]
+
+    assert len(metaset.catalog) > 0, (
+        "Deeply nested exploration should still find global-scoped tables"
+    )
+
+
+async def test_metadata_lookup_global_context_still_works():
+    """Querying from global context should continue to work without fallback."""
+    source = DuckDBSource(uri=":memory:", tables={"orders": "SELECT 1 as id"})
+    tool = MetadataLookup(vector_store=NumpyVectorStore())
+
+    context = {
+        "sources": [source],
+        "provenance_chain": ["global"],
+        "tables_metadata": {},
+    }
+    await tool.sync(context)
+
+    messages = [{"role": "user", "content": "What data is available?"}]
+    _, outputs = await tool.respond(messages, context)
+    metaset = outputs["metaset"]
+
+    assert len(metaset.catalog) > 0
+    slugs = list(metaset.catalog.keys())
+    assert any("orders" in s for s in slugs)

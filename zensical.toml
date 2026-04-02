@@ -66,6 +66,7 @@ nav = [
       {"Deployment" = "configuration/spec/deployment.md"}
     ]}
   ]},
+  {"Extending Lumen" = "extending.md"},
   {"Reference" = [
     {"API" = [
       {"AI" = [
