@@ -642,7 +642,7 @@ class TaskGroup(Task):
                 "Report has not been executed, run report before exporting to html."
             )
         buf = io.StringIO()
-        self.__panel__().save(buf, title=self.title or "Report")
+        self._view.save(buf, title=self.title or "Report")
         return buf.getvalue()
 
     def validate(
@@ -869,6 +869,7 @@ class Report(TaskGroup):
             sx={
                 "& .MuiButton-endIcon": {"display": "none"},
                 "& .MuiButton-startIcon": {"margin": 0},
+                "& .MuiIcon-root": {"color": "var(--mui-palette-action-active)"},
                 "minWidth": "unset",
                 "width": "60px",
                 "height": "60px",
