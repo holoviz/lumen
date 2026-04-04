@@ -491,3 +491,13 @@ def normalize_table_name(name: str) -> str:
     'table_name'
     """
     return re.sub(r'\W+', '_', name).strip('_').lower()
+
+
+def check_xarray_available():
+    """Check if xarray and xarray-sql are installed."""
+    try:
+        import xarray  # noqa
+        import xarray_sql  # noqa
+        return True
+    except ImportError:
+        return False
