@@ -1615,12 +1615,9 @@ async def test_edit_on_child_exploration_switches_to_parent(explorer_ui):
 
 # --- Follow-up suggestions tests ---
 
-def _get_footer_actions(msg):
-    """Get footer actions from message, falling back to footer_objects for older pmui."""
-    try:
-        return msg.footer_actions or []
-    except AttributeError:
-        return msg.footer_objects or []
+def _get_footer_objects(msg):
+    """Get footer objects from message."""
+    return msg.footer_objects or []
 
 
 def test_follow_up_suggestion_model():
@@ -1663,7 +1660,7 @@ async def test_follow_up_icon_after_query(explorer_ui):
 
     last_msg = ui.interface.objects[-1]
     follow_up_icons = [
-        f for f in _get_footer_actions(last_msg)
+        f for f in _get_footer_objects(last_msg)
         if getattr(f, 'name', '') == "FollowUp"
     ]
     assert len(follow_up_icons) == 1
@@ -1677,7 +1674,7 @@ async def test_follow_up_icon_not_on_error(explorer_ui_with_error):
 
     last_msg = ui.interface.objects[-1]
     follow_up_icons = [
-        f for f in _get_footer_actions(last_msg)
+        f for f in _get_footer_objects(last_msg)
         if getattr(f, 'name', '') == "FollowUp"
     ]
     assert len(follow_up_icons) == 0
@@ -1699,7 +1696,7 @@ async def test_follow_up_icon_not_shown_without_pipeline(explorer_ui):
 
     last_msg = ui.interface.objects[-1]
     follow_up_icons = [
-        f for f in _get_footer_actions(last_msg)
+        f for f in _get_footer_objects(last_msg)
         if getattr(f, 'name', '') == "FollowUp"
     ]
     assert len(follow_up_icons) == 0
@@ -1733,7 +1730,7 @@ async def test_follow_up_icon_description(explorer_ui):
 
     last_msg = ui.interface.objects[-1]
     follow_up_icons = [
-        f for f in _get_footer_actions(last_msg)
+        f for f in _get_footer_objects(last_msg)
         if getattr(f, 'name', '') == "FollowUp"
     ]
     assert len(follow_up_icons) == 1
