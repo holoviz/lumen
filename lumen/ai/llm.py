@@ -28,7 +28,9 @@ from .services import (
     PROVIDER_ENV_VARS, AnthropicMixin, AzureMistralAIMixin, AzureOpenAIMixin,
     BedrockMixin, GenAIMixin, LlamaCppMixin, MistralAIMixin, OpenAIMixin,
 )
-from .utils import format_exception, log_debug, truncate_string
+from .utils import (
+    format_exception, format_msg_content, log_debug, truncate_string,
+)
 
 if TYPE_CHECKING:
     from .tools import FunctionTool
@@ -776,24 +778,8 @@ class Llm(param.Parameterized):
             role = message["role"]
             if role == "system":
                 continue
-            content = message["content"]
             role_char = "u" if role == "user" else "a"
-            # Handle different content types for logging
-            if isinstance(content, instructor.Image):
-                log_debug(f"Message \033[95m{i} ({role_char})\033[0m: [Image data]")
-            elif isinstance(content, list):
-                # Content is a list (e.g., [text, Image, ...])
-                content_parts = []
-                for item in content:
-                    if isinstance(item, instructor.Image):
-                        content_parts.append("[Image]")
-                    elif isinstance(item, str):
-                        content_parts.append(truncate_string(item, max_length=100))
-                    else:
-                        content_parts.append(str(type(item).__name__))
-                log_debug(f"Message \033[95m{i} ({role_char})\033[0m: {' + '.join(content_parts)}")
-            else:
-                log_debug(f"Message \033[95m{i} ({role_char})\033[0m: {content}")
+            log_debug(f"Message \033[95m{i} ({role_char})\033[0m: {format_msg_content(message['content'])}")
             if previous_role == role:
                 log_debug(
                     "\033[91mWARNING: Two consecutive messages from the same role; "
@@ -805,6 +791,8 @@ class Llm(param.Parameterized):
         result = await client(messages=messages, **kwargs)
         if response_model := kwargs.get("response_model"):
             log_debug(f"Response model: \033[93m{response_model.__name__!r}\033[0m")
+            if isinstance(result, ImageResponse):
+                result = result.output
         log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
         return result
 
@@ -1342,10 +1330,8 @@ class Anthropic(Llm, AnthropicMixin):
         previous_role = None
         for i, message in enumerate(filtered_messages):
             role = message["role"]
-            if role == "user":
-                log_debug(f"Message \033[95m{i} (u)\033[0m: {message['content']}")
-            else:
-                log_debug(f"Message \033[95m{i} (a)\033[0m: {message['content']}")
+            role_char = "u" if role == "user" else "a"
+            log_debug(f"Message \033[95m{i} ({role_char})\033[0m: {format_msg_content(message['content'])}")
             if previous_role == role:
                 log_debug(
                     "\033[91mWARNING: Two consecutive messages from the same role; "
@@ -1357,6 +1343,8 @@ class Anthropic(Llm, AnthropicMixin):
         result = await client(messages=filtered_messages, **kwargs)
         if response_model := kwargs.get("response_model"):
             log_debug(f"Response model: \033[93m{response_model.__name__!r}\033[0m")
+            if isinstance(result, ImageResponse):
+                result = result.output
         log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
         return result
 

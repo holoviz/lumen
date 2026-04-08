@@ -44,7 +44,8 @@ from .export import (
 from .llm import Llm, Message
 from .tools import FunctionTool, Tool
 from .utils import (
-    extract_block_source, get_block_names, wrap_logfire_on_method,
+    content_to_text, extract_block_source, get_block_names, set_content_text,
+    wrap_logfire_on_method,
 )
 
 
@@ -160,15 +161,22 @@ class Task(Viewer):
                 break
         if not user_msg:
             messages.append({"role": "user", "content": self.instruction})
-        elif self.instruction not in user_msg.get("content"):
-            user_msg["content"] = f'{user_msg["content"]}\n\nInstruction: {self.instruction}'
+        else:
+            content = user_msg.get("content")
+            text_content = content_to_text(content)
+            if self.instruction not in text_content:
+                updated_text = f'{text_content}\n\nInstruction: {self.instruction}'
+                user_msg["content"] = set_content_text(updated_text, content)
         return messages
 
     def _render_output(self, out):
         if isinstance(out, str):
             return Typography(out, margin=(20, 10))
         elif isinstance(out, ChatMessage):
-            return Typography(out.object, margin=(20, 10))
+            obj = out.object
+            if isinstance(obj, str):
+                return Typography(obj, margin=(20, 10))
+            return obj
         elif isinstance(out, (Viewable, View, LumenEditor)):
             return out
 
