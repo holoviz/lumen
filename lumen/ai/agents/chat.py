@@ -64,5 +64,4 @@ class ChatAgent(Agent):
             context["sql"] = f"{context['sql']}\n-- No data was returned from the query."
 
         result = await self._stream(messages, context, **prompt_context)
-        chat_text = result.object if hasattr(result, 'object') else str(result)
-        return [result], {"chat": chat_text}
+        return [result], {"chat": result.object}
