@@ -31,6 +31,8 @@ class QueryCompletionValidation(BaseModel):
 
 class ValidationInputs(ContextModel):
 
+    chat: NotRequired[str]
+
     data: NotRequired[Any]
 
     sql: NotRequired[str]
