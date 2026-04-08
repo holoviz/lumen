@@ -682,7 +682,8 @@ class Llm(param.Parameterized):
         """
         combined_tools = self._combine_tools(tools)
         tool_specs, tool_instances, tool_contexts = self._normalize_tools(combined_tools)
-        if self.logfire_tags is not None:
+        messages, contains_image = self._check_for_image(messages)
+        if self.logfire_tags is not None or contains_image:
             output = await self.invoke(
                 messages,
                 system=system,
