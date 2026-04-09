@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import difflib
 import functools
 import html
@@ -26,6 +27,7 @@ import param
 import sqlglot
 import yaml
 
+from instructor import Image
 from jinja2 import (
     ChoiceLoader, DictLoader, Environment, FileSystemLoader, StrictUndefined,
     nodes,
@@ -1291,17 +1293,13 @@ def make_image_content(
         An instructor Image object ready to be included in a message
         content list, or ``None`` when the input is not an image.
     """
-    import base64
-
     ext = Path(filename).suffix.lower()
     if mime_type is None:
         mime_type = IMAGE_MIME_TYPES.get(ext)
     if mime_type is None or not mime_type.startswith('image/'):
         return None
 
-    try:
-        from instructor import Image
-    except ImportError:
+    if Image is None:
         return None
 
     b64 = base64.b64encode(data).decode('utf-8')
