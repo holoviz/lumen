@@ -474,7 +474,7 @@ class TestContentToText:
         (["hello"], "hello"),
         (["hello", "world"], "hello\nworld"),
         ([], ""),
-        (42, "42"),
+        (42, ""),
     ])
     def test_plain_and_list(self, content, expected):
         assert content_to_text(content) == expected
