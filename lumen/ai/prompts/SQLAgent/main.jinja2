@@ -4,6 +4,10 @@
 # Instructions
 Write a SQL query for the user's data transformation request, focusing on intent over literal interpretation.
 
+## Optional exploration tool
+You may call **run_exploration_sql** with a `source` and `sql_query` to run read-only `SELECT` / `WITH` previews (use `LIMIT` on raw selects). 
+Skip it if the schema and request are already clear.
+
 ## PRIMARY RULES
 1. Reuse materialized data - Check "Current Knowledge" first before writing CTEs
 2. Column quotes - Use double quotes: `"column_name"`
@@ -21,14 +25,6 @@ Write a SQL query for the user's data transformation request, focusing on intent
 - Temporal data: Check MIN/MAX dates before joining, ensure overlap validation
 - No inline comments in SQL code
 - Use CTEs only when necessary
-
-{% if not is_final_step -%}
-## Discovery Mode
-- LIMIT 100 for exploration only
-- One table at a time, no UNION
-- Entity search: Use multiple ILIKE patterns with variations
-- Format variation checking: underscores vs spaces using ILIKE
-{% endif %}
 
 ## Requesting Additional Schemas
 You can ONLY write queries using tables shown below with schema overviews.

@@ -337,6 +337,8 @@ class Llm(param.Parameterized):
             the provided response_model.
         tools: list[dict[str, Any] | FunctionTool | MCPTool] | None
             Tool definitions, FunctionTool, or MCPTool instances to pass through.
+            When ``response_model`` is also given, the client runs tool calls in a loop
+            until none are requested, then requests the structured response (tools may be unused).
         model: Literal['default' | 'reasoning' | 'sql']
             The model as listed in the model_kwargs parameter
             to invoke to answer the query.
@@ -347,6 +349,7 @@ class Llm(param.Parameterized):
         """
         system = system.strip().replace("\n\n", "\n")
         messages, input_kwargs = self._add_system_message(messages, system, input_kwargs)
+        max_tool_rounds = int(input_kwargs.pop("max_tool_rounds", 16))
 
         kwargs = dict(self._client_kwargs)
         kwargs.update(input_kwargs)
@@ -361,26 +364,56 @@ class Llm(param.Parameterized):
             # https://github.com/567-labs/instructor/issues/1872
             kwargs["stream"] = False
 
+        structured_model: type[BaseModel] | None = None
         if response_model is not None:
             if allow_partial and issubclass(response_model, BaseModel):
-                response_model = Partial[response_model]
-            kwargs["response_model"] = response_model
-        # check if any of the messages contain images
-        elif response_model is None and contains_image:
-            kwargs["response_model"] = ImageResponse
+                structured_model = Partial[response_model]  # type: ignore[assignment]
+            else:
+                structured_model = response_model  # type: ignore[assignment]
+        elif contains_image:
+            structured_model = ImageResponse
 
-        output = await self.run_client(model_spec, messages, **kwargs)
-        if tool_instances and response_model is None:
-            tool_calls = self._extract_tool_calls(output)
-            if tool_calls:
+        if tool_instances and response_model is not None:
+            messages_curr = list(messages)
+            kwargs_tools = dict(kwargs)
+            kwargs_tools.pop("response_model", None)
+            output = await self.run_client(model_spec, messages_curr, **kwargs_tools)
+            for _ in range(max_tool_rounds):
+                tool_calls = self._extract_tool_calls(output)
+                if not tool_calls:
+                    break
                 tool_calls_message = self._tool_calls_message(tool_calls)
-                tool_messages = await self._run_tool_calls(tool_instances, tool_calls, tool_contexts, messages)
-                if tool_messages:
-                    output = await self.run_client(
-                        model_spec,
-                        messages + [tool_calls_message] + tool_messages,
-                        **kwargs,
+                tool_messages = await self._run_tool_calls(
+                    tool_instances, tool_calls, tool_contexts, messages_curr
+                )
+                if not tool_messages:
+                    break
+                messages_curr = messages_curr + [tool_calls_message] + tool_messages
+                output = await self.run_client(model_spec, messages_curr, **kwargs_tools)
+
+            kwargs_final = dict(kwargs)
+            kwargs_final["response_model"] = structured_model
+            kwargs_final.pop("tools", None)
+            output = await self.run_client(model_spec, messages_curr, **kwargs_final)
+        else:
+            if structured_model is not None:
+                kwargs["response_model"] = structured_model
+            output = await self.run_client(model_spec, messages, **kwargs)
+            if tool_instances and response_model is None:
+                messages_curr = list(messages)
+                for _ in range(max_tool_rounds):
+                    tool_calls = self._extract_tool_calls(output)
+                    if not tool_calls:
+                        break
+                    tool_calls_message = self._tool_calls_message(tool_calls)
+                    tool_messages = await self._run_tool_calls(
+                        tool_instances, tool_calls, tool_contexts, messages_curr
                     )
+                    if not tool_messages:
+                        break
+                    messages_curr = messages_curr + [tool_calls_message] + tool_messages
+                    output = await self.run_client(model_spec, messages_curr, **kwargs)
+
         if output is None or output == "":
             raise ValueError("LLM failed to return valid output.")
         return output
