@@ -89,7 +89,7 @@ class Plan(Section):
         for msg in self.history:
             if msg is user_query:
                 user_content = user_query["content"]
-                if not isinstance(user_content, str):
+                if not isinstance(user_content, (str, list)):
                     user_content = [user_content]
                 user_text = content_to_text(user_content)
                 roadmap_text = (
