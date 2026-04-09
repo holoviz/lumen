@@ -19,7 +19,7 @@ import numpy.core.multiarray
 import param
 import semchunk
 
-from panel import cache as pn_cache
+from panel import cache as pn_cache, state as pn_state
 from tqdm.auto import tqdm
 
 from .actor import PROMPTS_DIR, LLMUser
@@ -1122,17 +1122,19 @@ class DuckDBVectorStore(VectorStore):
     _uri_connections: t.ClassVar[dict[str, duckdb.DuckDBPyConnection]] = {}
 
     def __init__(self, **params):
+        def session_destroyed(session_context):
+            self.close()
+
         super().__init__(**params)
         self._add_items_lock = asyncio.Lock()
 
         # If a previous connection for this URI exists (e.g. from a Panel
-        # hot-reload), close it first to release the DuckDB file handle.
+        # hot-reload), close it to release the DuckDB file handle.
         if self.uri != ":memory:" and self.uri in DuckDBVectorStore._uri_connections:
             try:
-                DuckDBVectorStore._uri_connections[self.uri].close()
+                DuckDBVectorStore._uri_connections.pop(self.uri).close()
             except Exception:
                 pass
-            del DuckDBVectorStore._uri_connections[self.uri]
 
         connection = duckdb.connect(":memory:")
         # following the instructions from
@@ -1148,34 +1150,13 @@ class DuckDBVectorStore(VectorStore):
                 self.embeddings = NumpyEmbeddings()
             return
         uri_exists = Path(self.uri).exists()
-        direct_connection = False
-        try:
-            attach_mode = "READ_ONLY" if self.read_only else "READ_WRITE"
-            connection.execute(f"ATTACH DATABASE '{self.uri}' AS embedded ({attach_mode});")
-        except (duckdb.BinderException, duckdb.IOException) as e:
-            err_msg = str(e).lower()
-            if "already attached" in err_msg or "unique file handle" in err_msg:
-                # File already held by another DuckDB connection in this process
-                # (e.g., during Panel hot-reload). Connect directly to the file instead.
-                connection.close()
-                connection = duckdb.connect(self.uri, read_only=self.read_only)
-                connection.execute("LOAD 'vss';")
-                connection.execute("SET hnsw_enable_experimental_persistence = true;")
-                direct_connection = True
-            else:
-                raise
-        except duckdb.CatalogException:
-            # handle "Failure while replaying WAL file"
-            # remove .wal uri on corruption
-            wal_path = Path(str(self.uri) + ".wal")
-            if wal_path.exists():
-                wal_path.unlink()
-            attach_mode = "READ_ONLY" if self.read_only else "READ_WRITE"
-            connection.execute(f"ATTACH DATABASE '{self.uri}' AS embedded ({attach_mode});")
-        if not direct_connection:
-            connection.execute("USE embedded;")
+        attach_mode = "READ_ONLY" if self.read_only else "READ_WRITE"
+        connection.execute(f"ATTACH DATABASE '{self.uri}' AS embedded ({attach_mode});")
+        connection.execute("USE embedded;")
         self.connection = connection
         DuckDBVectorStore._uri_connections[self.uri] = connection
+        pn_state.on_session_destroyed(session_destroyed)
+
         has_documents = (
             connection.execute(
                 "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'documents';"
