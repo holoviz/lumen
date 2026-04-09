@@ -1122,19 +1122,13 @@ class DuckDBVectorStore(VectorStore):
     _uri_connections: t.ClassVar[dict[str, duckdb.DuckDBPyConnection]] = {}
 
     def __init__(self, **params):
-        def session_destroyed(session_context):
-            self.close()
-
         super().__init__(**params)
         self._add_items_lock = asyncio.Lock()
 
         # If a previous connection for this URI exists (e.g. from a Panel
         # hot-reload), close it to release the DuckDB file handle.
         if self.uri != ":memory:" and self.uri in DuckDBVectorStore._uri_connections:
-            try:
-                DuckDBVectorStore._uri_connections.pop(self.uri).close()
-            except Exception:
-                pass
+            DuckDBVectorStore._uri_connections.pop(self.uri).close()
 
         connection = duckdb.connect(":memory:")
         # following the instructions from
@@ -1153,9 +1147,8 @@ class DuckDBVectorStore(VectorStore):
         attach_mode = "READ_ONLY" if self.read_only else "READ_WRITE"
         connection.execute(f"ATTACH DATABASE '{self.uri}' AS embedded ({attach_mode});")
         connection.execute("USE embedded;")
-        self.connection = connection
-        DuckDBVectorStore._uri_connections[self.uri] = connection
-        pn_state.on_session_destroyed(session_destroyed)
+        DuckDBVectorStore._uri_connections[self.uri] = self.connection = connection
+        pn_state.on_session_destroyed(lambda session_context: self.close())
 
         has_documents = (
             connection.execute(
