@@ -644,6 +644,38 @@ class TestDuckDBVectorStore(VectorStoreTestKit):
         assert "api_key" not in params, "api_key should not be stored in metadata"
         store.close()
 
+    @pytest.mark.asyncio
+    async def test_reuse_connection_on_same_uri(self, tmp_path):
+        """Verifies that creating a second DuckDBVectorStore with the same URI
+        reuses the existing connection instead of raising an ATTACH error."""
+        db_path = str(tmp_path / "test_reuse.db")
+        store1 = DuckDBVectorStore(uri=db_path, embeddings=NumpyEmbeddings())
+        await store1.add([{"text": "Reuse test doc", "metadata": {"n": 1}}])
+
+        # Second store with the same URI — should reuse, not crash.
+        store2 = DuckDBVectorStore(uri=db_path, embeddings=NumpyEmbeddings())
+        assert store2.connection is store1.connection
+
+        results = await store2.query("Reuse test doc")
+        assert len(results) == 1
+        assert results[0]["text"] == "Reuse test doc"
+        store2.close()
+
+    @pytest.mark.asyncio
+    async def test_fresh_connection_after_close(self, tmp_path):
+        """Verifies that after close(), a new store gets a fresh connection
+        and can still read persisted data."""
+        db_path = str(tmp_path / "test_fresh.db")
+        store1 = DuckDBVectorStore(uri=db_path, embeddings=NumpyEmbeddings())
+        await store1.add([{"text": "Persist me"}])
+        store1.close()
+
+        store2 = DuckDBVectorStore(uri=db_path, embeddings=NumpyEmbeddings())
+        assert store2.connection is not None
+        results = await store2.query("Persist me")
+        assert len(results) == 1
+        store2.close()
+
 
 # Sample readme content for testing (mimics real-world metadata files)
 SAMPLE_README = """# Population - Data package
