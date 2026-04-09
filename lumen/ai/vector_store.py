@@ -1125,10 +1125,12 @@ class DuckDBVectorStore(VectorStore):
         super().__init__(**params)
         self._add_items_lock = asyncio.Lock()
 
-        # If a previous connection for this URI exists (e.g. from a Panel
-        # hot-reload), close it to release the DuckDB file handle.
+        # Reuse existing connection for this URI if still open
+        # (e.g. on Panel hot-reload within the same process).
         if self.uri != ":memory:" and self.uri in DuckDBVectorStore._uri_connections:
-            DuckDBVectorStore._uri_connections.pop(self.uri).close()
+            self.connection = DuckDBVectorStore._uri_connections[self.uri]
+            self._resolve_state()
+            return
 
         connection = duckdb.connect(":memory:")
         # following the instructions from
@@ -1143,22 +1145,23 @@ class DuckDBVectorStore(VectorStore):
             if self.embeddings is None:
                 self.embeddings = NumpyEmbeddings()
             return
-        uri_exists = Path(self.uri).exists()
+
         attach_mode = "READ_ONLY" if self.read_only else "READ_WRITE"
         connection.execute(f"ATTACH DATABASE '{self.uri}' AS embedded ({attach_mode});")
         connection.execute("USE embedded;")
         DuckDBVectorStore._uri_connections[self.uri] = self.connection = connection
         pn_state.on_session_destroyed(lambda session_context: self.close())
+        self._resolve_state()
 
-        has_documents = (
-            connection.execute(
+    def _resolve_state(self):
+        """Set _initialized and resolve embeddings from the active connection."""
+        self._initialized = (
+            self.connection.execute(
                 "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'documents';"
             ).fetchone()[0]
             > 0
-        )
-        self._initialized = uri_exists and has_documents
-
-        if self.uri != ":memory:" and self._initialized:
+        ) and Path(self.uri).exists()
+        if self._initialized:
             config = self._get_embeddings_config()
             if config and self.embeddings is None:
                 module_name, class_name = config["class"].rsplit(".", 1)
@@ -1167,7 +1170,6 @@ class DuckDBVectorStore(VectorStore):
                 self.embeddings = embedding_class(**config["params"])
                 log_debug(f"Loaded embeddings {class_name} from database.")
             self._check_embeddings_consistency()
-
         if self.embeddings is None:
             self.embeddings = NumpyEmbeddings()
 
