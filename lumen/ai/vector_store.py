@@ -1116,9 +1116,23 @@ class DuckDBVectorStore(VectorStore):
         doc="Embeddings object for text processing. If None and a URI is provided, loads from the database; else NumpyEmbeddings.",
     )
 
+    # Class-level registry of connections by URI. Used to close stale
+    # connections on reload (e.g. Panel hot-reload) so the file handle is
+    # released and a fresh ATTACH can succeed.
+    _uri_connections: t.ClassVar[dict[str, duckdb.DuckDBPyConnection]] = {}
+
     def __init__(self, **params):
         super().__init__(**params)
         self._add_items_lock = asyncio.Lock()
+
+        # If a previous connection for this URI exists (e.g. from a Panel
+        # hot-reload), close it first to release the DuckDB file handle.
+        if self.uri != ":memory:" and self.uri in DuckDBVectorStore._uri_connections:
+            try:
+                DuckDBVectorStore._uri_connections[self.uri].close()
+            except Exception:
+                pass
+            del DuckDBVectorStore._uri_connections[self.uri]
 
         connection = duckdb.connect(":memory:")
         # following the instructions from
@@ -1161,6 +1175,7 @@ class DuckDBVectorStore(VectorStore):
         if not direct_connection:
             connection.execute("USE embedded;")
         self.connection = connection
+        DuckDBVectorStore._uri_connections[self.uri] = connection
         has_documents = (
             connection.execute(
                 "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'documents';"
@@ -1674,6 +1689,7 @@ class DuckDBVectorStore(VectorStore):
         if self.connection:
             self.connection.close()
             self.connection = None
+        DuckDBVectorStore._uri_connections.pop(self.uri, None)
 
 
 class ChromaDBVectorStore(VectorStore):
