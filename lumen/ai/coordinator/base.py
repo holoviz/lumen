@@ -88,14 +88,17 @@ class Plan(Section):
         rendered_history = []
         for msg in self.history:
             if msg is user_query:
-                user_content = content_to_text(user_query["content"])
+                user_content = user_query["content"]
+                if not isinstance(user_content, str):
+                    user_content = [user_content]
+                user_text = content_to_text(user_content)
                 roadmap_text = (
-                    f"User: {user_content!r}\n"
+                    f"User: {user_text!r}\n"
                     f"Roadmap:\n{indent(todos, '    ')}\n"
                     f"Tasks marked ⚪ are scheduled for others later. "
                     f"Your EXCLUSIVE goal is to focus on the 🟡 task"
                 )
-                formatted_content = set_content_text(roadmap_text, user_query["content"])
+                formatted_content = set_content_text(roadmap_text, user_content)
                 rendered_history.append({"content": formatted_content, "role": "user"})
             else:
                 rendered_history.append(msg)
@@ -493,7 +496,6 @@ class Coordinator(Viewer, VectorLookupToolUser):
                     elif "model_path" in default_kwargs:
                         step.stream(f"Model: `{default_kwargs['model_path']}`")
                     await self.llm.get_client("default")  # caches the model for future use
-
             messages = fuse_messages(self.interface.serialize(custom_serializer=self._serialize, limit=10) or messages, max_user_messages=self.history)
 
             # the master dict of agents / tools to be used downstream

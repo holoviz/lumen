@@ -814,7 +814,7 @@ def format_msg_content(content: Any) -> str:
     return f"<{type(content).__name__}[{id(content)}]>"
 
 
-def log_debug(msg: str | list, offset: int = 24, prefix: str = "", suffix: str = "", show_sep: Literal["above", "below"] | None = None, show_length: bool = False):
+def log_debug(msg: Any, offset: int = 24, prefix: str = "", suffix: str = "", show_sep: Literal["above", "below"] | None = None, show_length: bool = False):
     """
     Log a debug message with a separator line above and below.
     """
@@ -826,7 +826,9 @@ def log_debug(msg: str | list, offset: int = 24, prefix: str = "", suffix: str =
     if prefix:
         log.debug(prefix)
 
-    if isinstance(msg, list):
+    if not isinstance(msg, (str, list)):
+        log_debug(format_msg_content(msg))
+    elif isinstance(msg, list):
         for m in msg:
             log.debug(m if isinstance(m, str) else format_msg_content(m))
     else:
@@ -1209,7 +1211,7 @@ IMAGE_MIME_TYPES = {
 }
 
 
-def content_to_text(content: str | list) -> str:
+def content_to_text(content: Any) -> str:
     """
     Extract the text portion from a message content field.
 
@@ -1234,7 +1236,8 @@ def content_to_text(content: str | list) -> str:
         return '\n'.join(
             item for item in content if isinstance(item, str)
         )
-    return str(content)
+    # if it's neither a str nor list, it's an object type, like image bytes
+    return ''
 
 
 def set_content_text(new_text: str, content: str | list) -> str | list:

@@ -50,15 +50,14 @@ from .controls import (
 from .coordinator import Coordinator, Plan, Planner
 from .editors import AnalysisOutput, LumenEditor, SQLEditor
 from .export import export_notebook
-from .llm import (
-    Llm, Message, OpenAI, get_available_llm,
-)
+from .llm import Llm, OpenAI, get_available_llm
 from .llm_dialog import LLMConfigDialog
 from .logs import ChatLogs
 from .models import ErrorDescription
 from .report import ActorTask, Report, Section
 from .utils import (
-    IMAGE_MIME_TYPES, content_to_text, log_debug, wrap_logfire,
+    IMAGE_MIME_TYPES, content_to_text, format_msg_content, log_debug,
+    wrap_logfire,
 )
 from .vector_store import VectorStore
 
@@ -618,9 +617,10 @@ class UI(Viewer):
 
     @wrap_logfire(span_name="Chat Invoke")
     async def _chat_invoke(
-        self, messages: list[Message], user: str, instance: ChatInterface, context: TContext | None = None
+        self, messages: Any, user: str, instance: ChatInterface, context: TContext | None = None
     ):
-        log_debug(f"New Message: \033[91m{messages!r}\033[0m", show_sep="above")
+        # messages can be anything submitted through chat area input
+        log_debug(f"New Message: \033[91m{format_msg_content(messages)!r}\033[0m", show_sep="above")
         context = self.context if context is None else context
         await self._coordinator.respond(messages, context)
 
@@ -2590,9 +2590,10 @@ class ExplorerUI(UI):
 
     @wrap_logfire(span_name="Chat Invoke")
     async def _chat_invoke(
-        self, messages: list[Message], user: str, instance: ChatInterface, context: TContext | None = None
+        self, messages: Any, user: str, instance: ChatInterface, context: TContext | None = None
     ):
-        log_debug(f"New Message: \033[91m{messages!r}\033[0m", show_sep="above")
+        # messages can be anything submitted through chat area input
+        log_debug(f"New Message: \033[91m{format_msg_content(messages)!r}\033[0m", show_sep="above")
         self._update_main_view()
         with self._busy():
             exploration = self._exploration['view']

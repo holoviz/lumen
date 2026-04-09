@@ -271,33 +271,32 @@ class Llm(param.Parameterized):
             messages = [{"role": "system", "content": system}] + messages
         return messages, input_kwargs
 
-    def _serialize_image_pane(self, image: pn.pane.image.ImageBase | Image) -> Image:
+    def _serialize_image_pane(self, image: bytes | pn.pane.image.ImageBase | Image) -> Image:
         if isinstance(image, Image):
             return image
 
-        image_object = image.object
-        if isinstance(image_object, bytes):
-            # convert bytes to base64 string
-            base64_str = base64.b64encode(image_object).decode('utf-8')
-            image = Image.from_raw_base64(base64_str)
-        elif isinstance(image_object, (Path, str)) and Path(image_object).is_file():
+        image_object = image.object if isinstance(image, pn.pane.image.ImageBase) else image
+        if isinstance(image_object, (Path, str)) and Path(image_object).is_file():
             image = Image.from_path(image_object)
         elif isinstance(image_object, str):
             image = Image.from_url(image_object)
+        elif isinstance(image_object, bytes):
+            base64_str = base64.b64encode(image_object).decode('utf-8')
+            image = Image.from_raw_base64(base64_str)
         return image
 
     def _check_for_image(self, messages: list[Message]) -> tuple[list[Message], bool]:
         contains_image = False
         for i, message in enumerate(messages):
             content = message.get("content")
-            if isinstance(content, (Image, pn.pane.image.ImageBase)):
+            if isinstance(content, (bytes, Image, pn.pane.image.ImageBase)):
                 messages[i]["content"] = self._serialize_image_pane(content)
                 contains_image = True
 
             elif isinstance(content, list):
                 new_content = []
                 for item in content:
-                    if isinstance(item, (Image, pn.pane.image.ImageBase)):
+                    if isinstance(item, (bytes, Image, pn.pane.image.ImageBase)):
                         new_content.append(self._serialize_image_pane(item))
                         contains_image = True
                     else:
