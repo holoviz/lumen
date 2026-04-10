@@ -21,9 +21,9 @@ __all__ = [
     "DeckGLAgent",
     "DocumentListAgent",
     "DocumentSummarizerAgent",
-    "hvPlotAgent",
     "SQLAgent",
     "TableListAgent",
     "ValidationAgent",
     "VegaLiteAgent",
+    "hvPlotAgent",
 ]

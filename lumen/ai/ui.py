@@ -45,7 +45,8 @@ from .config import (
 )
 from .context import TContext
 from .controls import (
-    DownloadControls, SourceCatalog, TableExplorer, UploadControls,
+    DownloadSourceControls, FileSourceControls, SourceCatalog, TableExplorer,
+    UploadSourceControls,
 )
 from .coordinator import Coordinator, Plan, Planner
 from .editors import AnalysisOutput, LumenEditor, SQLEditor
@@ -440,7 +441,7 @@ class UI(Viewer):
     page_config = param.Dict(default={}, doc="""
         Configuration for the panel-material-ui Page component the UI is rendered into.""")
 
-    source_controls = param.List(default=[UploadControls, DownloadControls], doc="""
+    source_controls = param.List(default=[UploadSourceControls, DownloadSourceControls], doc="""
         List of SourceControls types to manage datasets.""")
 
     filedropper_kwargs = param.Dict(default={}, doc="""Keyword arguments to pass to FileDropper in UploadControls.
@@ -938,7 +939,7 @@ class UI(Viewer):
 
         existing_actions = self._chat_input.actions
         self._chat_input.enable_upload = any(
-            issubclass(sc, UploadControls) for sc in self.source_controls
+            issubclass(sc, UploadSourceControls) for sc in self.source_controls
         )
         self._chat_input.actions = {
             **existing_actions,
@@ -1223,15 +1224,16 @@ class UI(Viewer):
             control_kwargs = {
                 'context': self.context,
                 'source_catalog': self._source_catalog,
-                'upload_handlers': self.upload_handlers
             }
-            if control is UploadControls and self.filedropper_kwargs:
-                control_kwargs['filedropper_kwargs'] = self.filedropper_kwargs
+            if issubclass(control, FileSourceControls):
+                control_kwargs['upload_handlers'] = self.upload_handlers
+                if control is UploadSourceControls and self.filedropper_kwargs:
+                    control_kwargs['filedropper_kwargs'] = self.filedropper_kwargs
 
             control_inst = control(**control_kwargs)
             control_inst.param.watch(self._sync_sources, 'outputs')
             control_inst.param.watch(self._handle_upload_successful, 'upload_successful')
-            if isinstance(control_inst, UploadControls):
+            if isinstance(control_inst, UploadSourceControls):
                 self._upload_controls = control_inst
             control_tabs.append((control.label, control_inst))
             self._source_controls.append(control_inst)

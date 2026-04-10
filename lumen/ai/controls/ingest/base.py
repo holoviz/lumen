@@ -9,247 +9,17 @@ import zipfile
 import pandas as pd
 import param
 
-from panel.layout import HSpacer
 from panel.pane.markup import HTML
 from panel.viewable import Viewer
-from panel_material_ui import (
-    Button, Column, Column as MuiColumn, IconButton, Markdown,
-    RadioButtonGroup, Row, Select, Tabs, TextInput,
-)
+from panel_material_ui import Button, Column as MuiColumn, Tabs
 
-from ...sources.duckdb import DuckDBSource
-from ...util import detect_file_encoding, normalize_table_name
-from ..utils import log_debug
+from ....sources.duckdb import DuckDBSource
+from ....util import detect_file_encoding
+from ...utils import log_debug
+from .constants import TABLE_EXTENSIONS
+from .file_row import UploadedFileRow
 from .progress import Progress
-
-TABLE_EXTENSIONS = ("csv", "parquet", "parq", "json", "xlsx", "geojson", "wkt", "zip")
-
-METADATA_EXTENSIONS = ("md", "txt", "yaml", "yml", "json", "pdf", "docx", "doc", "pptx", "ppt")
-METADATA_FILENAME_PATTERNS = ("_metadata", "metadata_", "readme", "schema")
-
-# Download configuration constants
-class DownloadConfig:
-    CHUNK_SIZE = 1024 * 1024  # 1MB chunks
-    TIMEOUT_SECONDS = 300     # 5 minutes
-    PROGRESS_UPDATE_INTERVAL = 50  # Update every 50 chunks
-    DEFAULT_HASH_MODULO = 10000
-    UNKNOWN_SIZE_MAX = 1000000000  # 1GB max for unknown file sizes
-
-    # Connection settings
-    CONNECTION_LIMIT = 100
-    CONNECTION_LIMIT_PER_HOST = 30
-    KEEPALIVE_TIMEOUT = 30
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# RESULT TYPES
-# ─────────────────────────────────────────────────────────────────────────────
-
-class SourceResult(param.Parameterized):
-    """
-    Result of a source loading operation.
-
-    This is the return type for `_load()` methods in source controls.
-    Use the factory methods for common patterns.
-    """
-
-    sources = param.List(default=[], doc="List of data sources loaded.")
-
-    table = param.String(default=None, allow_None=True, doc="Primary table name.")
-
-    metadata = param.Dict(default={}, doc="Additional metadata about the loaded data.")
-
-    message = param.String(default=None, allow_None=True, doc="Status message to display.")
-
-    @classmethod
-    def from_dataframe(
-        cls,
-        df: pd.DataFrame,
-        table_name: str,
-        message: str | None = None,
-        **metadata
-    ) -> SourceResult:
-        """
-        Create result from a DataFrame.
-        """
-        source = DuckDBSource.from_df(tables={table_name: df})
-        source.tables[table_name] = f"SELECT * FROM {table_name}"
-        if metadata:
-            source.metadata = {table_name: metadata}
-        return cls(
-            sources=[source],
-            table=table_name,
-            metadata=metadata,
-            message=message or f"Loaded {len(df):,} rows into '{table_name}'"
-        )
-
-    @classmethod
-    def from_source(
-        cls,
-        source: DuckDBSource,
-        table: str | None = None,
-        message: str | None = None,
-    ) -> SourceResult:
-        """
-        Create result from an existing source.
-        """
-        return cls(sources=[source], table=table, message=message)
-
-    @classmethod
-    def empty(cls, message: str = "No data loaded") -> SourceResult:
-        """
-        Return an empty result.
-        """
-        return cls(message=message)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# FILE ROW COMPONENT
-# ─────────────────────────────────────────────────────────────────────────────
-
-class UploadedFileRow(Viewer):
-    """
-    Row for a single uploaded file with data/metadata classification.
-
-    Displays each file as a row where users can toggle it as data or metadata.
-    """
-
-    filename = param.String(default="", doc="Filename without extension")
-
-    extension = param.String(default="", doc="File extension")
-
-    file_type = param.Selector(default="data", objects=["data", "metadata"], doc="""
-        Classification of the file. 'data' files are processed as tables,
-        'metadata' files are added to the document vector store.""")
-
-    alias = param.String(default="", doc="Table alias (for data files only)")
-
-    sheet = param.Selector(default=None, objects=[], doc="Sheet (for xlsx files)")
-
-    delete = param.Event(doc="Delete this card")
-
-    _load_sheets = param.Event(doc="Load sheets")
-
-    def __init__(self, file_obj: io.BytesIO, **params):
-        filename = params.get("filename", "")
-        extension = params.get("extension", "")
-
-        # Parse filename if contains extension
-        if "/" in filename:
-            filename = filename.rsplit("/")[-1]
-        if "." in filename and not extension:
-            filename, extension = filename.rsplit(".", maxsplit=1)
-
-        params["filename"] = filename
-        params["extension"] = extension.lower()
-        params["alias"] = normalize_table_name(filename)
-
-        # Auto-detect file type
-        is_metadata = (
-            extension.lower() in METADATA_EXTENSIONS or
-            any(pattern in filename.lower() for pattern in METADATA_FILENAME_PATTERNS)
-        )
-        params.setdefault("file_type", "metadata" if is_metadata else "data")
-
-        super().__init__(**params)
-        self.file_obj = file_obj
-
-        # Build UI components
-        self._build_ui()
-
-    def _build_ui(self):
-        self._type_toggle = RadioButtonGroup.from_param(
-            self.param.file_type,
-            options={"data": "data", "metadata": "metadata"},
-            size="small",
-            label="",
-            margin=(0, 10),
-            align="center",
-        )
-
-        self._delete_button = IconButton.from_param(
-            self.param.delete,
-            icon="close",
-            size="small",
-            margin=(0, 5)
-        )
-
-        self._alias_input = TextInput.from_param(
-            self.param.alias,
-            placeholder="Table alias",
-            size="small",
-            visible=self.file_type == "data",
-            margin=10,
-            width=200,
-            align="center"
-        )
-
-        self._sheet_select = Select.from_param(
-            self.param.sheet,
-            name="Sheet",
-            size="small",
-            visible=False,
-            margin=(5, 10)
-        )
-
-        # Trigger sheet loading for xlsx
-        if self.extension == "xlsx":
-            self.param.trigger("_load_sheets")
-
-    @param.depends("file_type", watch=True)
-    def _update_alias_visibility(self):
-        if hasattr(self, '_alias_input'):
-            self._alias_input.visible = self.file_type == "data"
-
-    @param.depends("_load_sheets", watch=True)
-    async def _handle_load_sheets(self):
-        """Load sheet names for xlsx files."""
-        if self.extension != "xlsx":
-            return
-        import openpyxl
-        wb = openpyxl.load_workbook(self.file_obj, read_only=True)
-        self.param.sheet.objects = wb.sheetnames
-        self.sheet = wb.sheetnames[0]
-        self._sheet_select.visible = True
-        self.file_obj.seek(0)  # Reset file pointer
-
-    @param.depends("alias", watch=True)
-    def _sanitize_alias(self):
-        """Ensure alias is a valid SQL identifier.
-
-        Uses the same normalization as DuckDBSource.normalize_table.
-        """
-        sanitized = normalize_table_name(self.alias)
-        if sanitized != self.alias:
-            self.alias = sanitized
-
-    def __panel__(self):
-        filename_display = Markdown(
-            f"`{self.filename}.{self.extension}`",
-            margin=(5, 10),
-            styles={"flex-shrink": "0"}
-        )
-
-        main_row = Row(
-            filename_display,
-            self._type_toggle,
-            self._alias_input,
-            HSpacer(),
-            self._delete_button,
-            sizing_mode="stretch_width",
-            margin=(5, 0),
-        )
-
-        if self.extension == "xlsx":
-            return Column(
-                main_row,
-                self._sheet_select,
-                margin=0,
-                sizing_mode="stretch_width"
-            )
-        else:
-            return main_row
-
+from .result import SourceResult
 
 # ─────────────────────────────────────────────────────────────────────────────
 # BASE SOURCE CONTROLS
@@ -258,6 +28,10 @@ class UploadedFileRow(Viewer):
 class BaseSourceControls(Viewer):
     """
     Base class for source controls with lifecycle management.
+
+    Provides progress reporting, message display, load-button wiring,
+    and source-output registration. Subclasses implement ``_load()``
+    or call ``_run_load()`` manually for custom trigger patterns.
     """
 
     context = param.Dict(default={})
@@ -272,28 +46,14 @@ class BaseSourceControls(Viewer):
         How data loading is triggered:
         - "button": Show load button, clicking triggers _load()
         - "manual": No button, use _run_load(coro) for custom triggers
-        """
+        """,
     )
-
-    multiple = param.Boolean(default=True, doc="Allow multiple files")
-
-    clear_uploads = param.Boolean(default=True, doc="Clear uploaded file tabs")
-
-    replace_controls = param.Boolean(default=False, doc="Replace controls on add")
-
-    filedropper_kwargs = param.Dict(default={}, doc="""Keyword arguments to pass to FileDropper.
-        Common options include 'accepted_filetypes' and 'max_file_size'.
-        See https://panel.holoviz.org/reference/widgets/FileDropper.html for all available options.""")
 
     outputs = param.Dict(default={})
 
     source_catalog = param.Parameter(default=None, doc="Reference to SourceCatalog instance")
 
-    upload_handlers = param.Dict(default={}, doc="Handlers for custom file extensions")
-
     # Events
-    add = param.Event(doc="Use uploaded file(s)")
-
     cancel = param.Event(doc="Cancel")
 
     load = param.Event(doc="Trigger data loading")
@@ -306,14 +66,8 @@ class BaseSourceControls(Viewer):
     _count = param.Integer(default=0, doc="Count of sources added")
 
     # UI customization
-    add_button_icon = param.String(default="add", doc="""
-        Material icon name for the add/upload confirmation button.""")
-
-    add_button_label = param.String(default="Confirm file(s)", doc="""
-        Text label for the add/upload confirmation button.""")
-
     label = param.String(default="", constant=True, doc="""
-        HTML label shown in the sidebar for this control.""" )
+        HTML label shown in the sidebar for this control.""")
 
     load_button_label = param.String(default="Load Data", doc="""
         Text label for the load button.""")
@@ -328,8 +82,6 @@ class BaseSourceControls(Viewer):
 
     def __init__(self, **params):
         super().__init__(**params)
-        self._markitdown = None
-        self._file_cards = []
         self._init_ui_components()
         self._layout = self._render_layout()
 
@@ -342,25 +94,6 @@ class BaseSourceControls(Viewer):
         self._message_text = self._message_placeholder
 
         self.progress = self._render_progress()
-
-        self._upload_cards = MuiColumn(
-            sizing_mode="stretch_width",
-            margin=0,
-            styles={"border-top": "1px solid #e0e0e0", "padding-top": "5px"}
-        )
-        self._upload_cards.visible = False
-
-        files_to_process = self._upload_cards.param["objects"].rx.len() > 0
-        self._add_button = Button.from_param(
-            self.param.add,
-            name=self.param.add_button_label,
-            icon=self.param.add_button_icon,
-            visible=files_to_process,
-            description="",
-            align="center",
-            sizing_mode="stretch_width",
-            height=42,
-        )
 
         self._load_button = Button.from_param(
             self.param.load,
@@ -456,32 +189,92 @@ class BaseSourceControls(Viewer):
         target.visible = True
 
     def _register_source_output(self, source: DuckDBSource):
-        """
-        Record the active source while keeping ``outputs["sources"]`` deduplicated.
-        """
+        """Record the source while keeping ``outputs["sources"]`` deduplicated."""
         self.outputs["source"] = source
         sources = self.outputs.setdefault("sources", [])
         if not any(existing is source for existing in sources):
             sources.append(source)
 
+    def __panel__(self):
+        return self._layout
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FILE SOURCE CONTROLS
+# ─────────────────────────────────────────────────────────────────────────────
+
+class FileSourceControls(BaseSourceControls):
+    """
+    Intermediate base class for controls that process files (upload/download).
+
+    Adds file-card machinery on top of ``BaseSourceControls`` lifecycle
+    management. ``UploadSourceControls`` and ``DownloadSourceControls``
+    inherit from this class.
+    """
+
+    multiple = param.Boolean(default=True, doc="Allow multiple files")
+
+    clear_uploads = param.Boolean(default=True, doc="Clear uploaded file tabs")
+
+    replace_controls = param.Boolean(default=False, doc="Replace controls on add")
+
+    filedropper_kwargs = param.Dict(default={}, doc="""Keyword arguments to pass to FileDropper.
+        Common options include 'accepted_filetypes' and 'max_file_size'.
+        See https://panel.holoviz.org/reference/widgets/FileDropper.html for all options.""")
+
+    upload_handlers = param.Dict(default={}, doc="Handlers for custom file extensions")
+
+    # Events
+    add = param.Event(doc="Use uploaded file(s)")
+
+    # UI customization
+    add_button_icon = param.String(default="add", doc="""
+        Material icon name for the add/upload confirmation button.""")
+
+    add_button_label = param.String(default="Confirm file(s)", doc="""
+        Text label for the add/upload confirmation button.""")
+
+    __abstract = True
+
+    def __init__(self, **params):
+        self._markitdown = None
+        self._file_cards = []
+        super().__init__(**params)
+
+    def _init_ui_components(self):
+        """Initialize file-specific UI components on top of base components."""
+        super()._init_ui_components()
+
+        self._upload_cards = MuiColumn(
+            sizing_mode="stretch_width",
+            margin=0,
+            styles={"border-top": "1px solid #e0e0e0", "padding-top": "5px"},
+        )
+        self._upload_cards.visible = False
+
+        files_to_process = self._upload_cards.param["objects"].rx.len() > 0
+        self._add_button = Button.from_param(
+            self.param.add,
+            name=self.param.add_button_label,
+            icon=self.param.add_button_icon,
+            visible=files_to_process,
+            description="",
+            align="center",
+            sizing_mode="stretch_width",
+            height=42,
+        )
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # File card management
+    # ──────────────────────────────────────────────────────────────────────────
+
     def _create_file_object(self, file_data: bytes | io.BytesIO | io.StringIO, suffix: str):
         if isinstance(file_data, (io.BytesIO, io.StringIO)):
             return file_data
-
         if suffix == "csv" and isinstance(file_data, bytes):
             encoding = detect_file_encoding(file_data)
             file_data = file_data.decode(encoding).encode("utf-8")
         return io.BytesIO(file_data) if isinstance(file_data, bytes) else io.StringIO(file_data)
-
-    def _format_bytes(self, bytes_size):
-        if bytes_size == 0:
-            return "0 B"
-        size_names = ["B", "KB", "MB", "GB", "TB"]
-        i = 0
-        while bytes_size >= 1024 and i < len(size_names) - 1:
-            bytes_size /= 1024.0
-            i += 1
-        return f"{bytes_size:.1f} {size_names[i]}"
 
     def _generate_file_cards(self, files: dict):
         self._upload_cards.clear()
@@ -495,27 +288,31 @@ class BaseSourceControls(Viewer):
         for filename, file_data in files.items():
             suffix = pathlib.Path(filename).suffix.lstrip(".").lower()
             file_obj = self._create_file_object(file_data, suffix)
-
-            card = UploadedFileRow(
-                file_obj=file_obj,
-                filename=filename
-            )
+            card = UploadedFileRow(file_obj=file_obj, filename=filename)
             card.param.watch(lambda e, c=card: self._remove_card(c), "delete")
-
             self._upload_cards.append(card)
             self._file_cards.append(card)
 
-        self._upload_cards.visible = len(self._file_cards) > 0
-        self._add_button.visible = len(self._file_cards) > 0
+        self._upload_cards.visible = bool(self._file_cards)
+        self._add_button.visible = bool(self._file_cards)
 
     def _remove_card(self, card: UploadedFileRow):
         if card in self._file_cards:
             self._file_cards.remove(card)
         if card in self._upload_cards.objects:
             self._upload_cards.remove(card)
+        self._add_button.visible = bool(self._file_cards)
+        self._upload_cards.visible = bool(self._file_cards)
 
-        self._add_button.visible = len(self._file_cards) > 0
-        self._upload_cards.visible = len(self._file_cards) > 0
+    def _clear_uploads(self):
+        self._upload_cards.clear()
+        self._file_cards.clear()
+        self._add_button.visible = False
+        self._upload_cards.visible = False
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # File reading
+    # ──────────────────────────────────────────────────────────────────────────
 
     def _add_table(
         self,
@@ -534,27 +331,26 @@ class BaseSourceControls(Viewer):
         try:
             file.seek(0)
             if extension.endswith("csv"):
-                df = pd.read_csv(file, parse_dates=True, sep=None, engine='python')
+                df = pd.read_csv(file, parse_dates=True, sep=None, engine="python")
             elif extension.endswith(("parq", "parquet")):
                 df = pd.read_parquet(file)
             elif extension.endswith("json"):
                 df = self._read_json_file(file, filename)
             elif extension.endswith("xlsx"):
-                sheet = card.sheet
-                df = pd.read_excel(file, sheet_name=sheet)
-            elif extension.endswith(('geojson', 'wkt', 'zip')):
+                df = pd.read_excel(file, sheet_name=card.sheet)
+            elif extension.endswith(("geojson", "wkt", "zip")):
                 df, conversion, params = self._read_geo_file(file, extension, table, conn)
             else:
-                self._error_placeholder.object += f"\\n⚠️ Could not convert {filename!r}: unsupported format."
+                self._error_placeholder.object += f"\n⚠️ Could not convert {filename!r}: unsupported format."
                 self._error_placeholder.visible = True
                 return 0
         except Exception as e:
-            self._error_placeholder.object += f"\\n⚠️ Error processing {filename!r}: {e}"
+            self._error_placeholder.object += f"\n⚠️ Error processing {filename!r}: {e}"
             self._error_placeholder.visible = True
             return 0
 
         if df is None or df.empty:
-            self._error_placeholder.object += f"\\n⚠️ {filename!r} contains no data."
+            self._error_placeholder.object += f"\n⚠️ {filename!r} contains no data."
             self._error_placeholder.visible = True
             return 0
 
@@ -566,15 +362,15 @@ class BaseSourceControls(Viewer):
         duckdb_source.param.update(params)
         df_rel = conn.from_df(df)
         if conversion:
-            conn.register(f'{table}_temp', df_rel)
+            conn.register(f"{table}_temp", df_rel)
             conn.execute(conversion)
-            conn.unregister(f'{table}_temp')
+            conn.unregister(f"{table}_temp")
         else:
             df_rel.to_view(table)
         duckdb_source.tables[table] = sql_expr
         self._register_source_output(duckdb_source)
         self.outputs["table"] = table
-        self.param.trigger('outputs')
+        self.param.trigger("outputs")
         self._last_table = table
         return 1
 
@@ -582,7 +378,7 @@ class BaseSourceControls(Viewer):
         file.seek(0)
         content = file.read()
         if isinstance(content, bytes):
-            content = content.decode('utf-8')
+            content = content.decode("utf-8")
 
         content = content.strip()
         if not content:
@@ -594,24 +390,21 @@ class BaseSourceControls(Viewer):
             raise ValueError("Invalid JSON") from e
 
         if isinstance(data, list):
-            if len(data) == 0:
+            if not data:
                 raise ValueError("JSON array is empty")
             if all(isinstance(item, dict) for item in data):
                 return pd.json_normalize(data)
-            else:
-                return pd.DataFrame({"value": data})
-        elif isinstance(data, dict):
-            data_keys = ['data', 'records', 'rows', 'items', 'results']
-            for key in data_keys:
-                if key in data and isinstance(data[key], list):
-                    if len(data[key]) > 0 and all(isinstance(item, dict) for item in data[key]):
-                        return pd.json_normalize(data[key])
+            return pd.DataFrame({"value": data})
+
+        if isinstance(data, dict):
+            for key in ("data", "records", "rows", "items", "results"):
+                if key in data and isinstance(data[key], list) and data[key] and all(isinstance(i, dict) for i in data[key]):
+                    return pd.json_normalize(data[key])
             if all(isinstance(v, list) for v in data.values()):
                 lengths = [len(v) for v in data.values()]
                 if len(set(lengths)) == 1:
                     return pd.DataFrame(data)
-                else:
-                    raise ValueError(f"JSON object has arrays of different lengths: {lengths}")
+                raise ValueError(f"JSON object has arrays of different lengths: {lengths}")
             if all(not isinstance(v, (list, dict)) or v is None for v in data.values()):
                 return pd.DataFrame([data])
             file.seek(0)
@@ -619,13 +412,13 @@ class BaseSourceControls(Viewer):
                 return pd.read_json(file)
             except ValueError as e:
                 raise ValueError("JSON structure is not tabular.") from e
-        else:
-            raise ValueError(f"JSON root must be an object or array, got {type(data).__name__}")
+
+        raise ValueError(f"JSON root must be an object or array, got {type(data).__name__}")
 
     def _read_geo_file(self, file: io.BytesIO, extension: str, table: str, conn) -> tuple[pd.DataFrame, str | None, dict]:
-        if extension.endswith('zip'):
+        if extension.endswith("zip"):
             zf = zipfile.ZipFile(file)
-            if not any(f.filename.endswith('shp') for f in zf.filelist):
+            if not any(f.filename.endswith("shp") for f in zf.filelist):
                 raise ValueError("ZIP file does not contain a shapefile (.shp)")
             file.seek(0)
 
@@ -636,44 +429,37 @@ class BaseSourceControls(Viewer):
             raise ValueError("Geospatial file contains no features")
 
         df = pd.DataFrame(geo_df)
-        df['geometry'] = geo_df['geometry'].to_wkb()
+        df["geometry"] = geo_df["geometry"].to_wkb()
 
-        params = {
-            'initializers': [
-                """
-                INSTALL spatial;
-                LOAD spatial;
-                """
-            ]
-        }
-        conn.execute(params['initializers'][0])
+        params = {"initializers": ["INSTALL spatial;\nLOAD spatial;"]}
+        conn.execute(params["initializers"][0])
 
-        cols = ', '.join(f'"{c}"' for c in df.columns if c != 'geometry')
-        conversion = f'CREATE TEMP TABLE {table} AS SELECT {cols}, ST_GeomFromWKB(geometry) as geometry FROM {table}_temp'
+        cols = ", ".join(f'"{c}"' for c in df.columns if c != "geometry")
+        conversion = f"CREATE TEMP TABLE {table} AS SELECT {cols}, ST_GeomFromWKB(geometry) as geometry FROM {table}_temp"
 
         return df, conversion, params
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Metadata handling
+    # ──────────────────────────────────────────────────────────────────────────
 
     def _extract_metadata_content(self, file_obj: io.BytesIO, extension: str) -> str:
         file_obj.seek(0)
         if extension in ("md", "txt", "yaml", "yml"):
             content = file_obj.read()
-            if isinstance(content, bytes):
-                content = content.decode('utf-8')
-            return content
-        elif extension == "json":
+            return content.decode("utf-8") if isinstance(content, bytes) else content
+        if extension == "json":
             content = file_obj.read()
             if isinstance(content, bytes):
-                content = content.decode('utf-8')
+                content = content.decode("utf-8")
             try:
-                data = json.loads(content)
-                return json.dumps(data, indent=2)
+                return json.dumps(json.loads(content), indent=2)
             except json.JSONDecodeError:
                 return content
-        else:
-            from markitdown import MarkItDown
-            if self._markitdown is None:
-                self._markitdown = MarkItDown()
-            return self._markitdown.convert_stream(file_obj, file_extension=extension).text_content
+        from markitdown import MarkItDown
+        if self._markitdown is None:
+            self._markitdown = MarkItDown()
+        return self._markitdown.convert_stream(file_obj, file_extension=extension).text_content
 
     def _add_metadata_file(self, card: UploadedFileRow) -> int:
         try:
@@ -683,32 +469,29 @@ class BaseSourceControls(Viewer):
             if self.source_catalog:
                 existing = [m["filename"] for m in self.source_catalog._available_metadata]
                 if filename in existing:
-                    name_without_ext = card.filename
-                    ext = card.extension
                     counter = 1
                     while filename in existing:
-                        filename = f"{name_without_ext}_{counter}.{ext}"
+                        filename = f"{card.filename}_{counter}.{card.extension}"
                         counter += 1
                     self._message_placeholder.param.update(
                         object=f"Renamed duplicate: {base_filename} → {filename}",
-                        visible=True
+                        visible=True,
                     )
                 metadata_entry = {
                     "filename": filename,
-                    "display_name": filename.rsplit('.', 1)[0],
-                    "content": content
+                    "display_name": filename.rsplit(".", 1)[0],
+                    "content": content,
                 }
-                # Preserve raw bytes for PDF files so they can be rendered natively
                 if card.extension == "pdf":
                     card.file_obj.seek(0)
                     metadata_entry["raw_bytes"] = card.file_obj.read()
                 self.source_catalog._available_metadata.append(metadata_entry)
                 asyncio.create_task(self._sync_metadata(filename))  # noqa: RUF006
 
-            self.param.trigger('outputs')
+            self.param.trigger("outputs")
             return 1
         except Exception as e:
-            self._error_placeholder.object += f"\\nCould not process metadata file {card.filename}: {e}"
+            self._error_placeholder.object += f"\nCould not process metadata file {card.filename}: {e}"
             self._error_placeholder.visible = True
             return 0
 
@@ -717,19 +500,22 @@ class BaseSourceControls(Viewer):
             return
         await self.source_catalog._sync_metadata_to_vector_store(filename)
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # Batch processing
+    # ──────────────────────────────────────────────────────────────────────────
+
     def _process_files(self):
         self._error_placeholder.object = ""
         self._error_placeholder.visible = False
 
-        if len(self._file_cards) == 0:
+        if not self._file_cards:
             return 0, 0, 0
 
         source = None
         n_tables = 0
         n_metadata = 0
         table_upload_callbacks = {
-            key.lstrip("."): value
-            for key, value in self.upload_handlers.items()
+            key.lstrip("."): value for key, value in self.upload_handlers.items()
         }
         custom_table_extensions = tuple(table_upload_callbacks)
 
@@ -748,8 +534,6 @@ class BaseSourceControls(Viewer):
                     self.param.trigger("outputs")
             elif card.extension.endswith(TABLE_EXTENSIONS):
                 if source is None:
-                    # Reuse existing ephemeral DuckDB source to keep all
-                    # uploaded tables in one connection across chat uploads.
                     existing_sources = self.outputs.get("sources", [])
                     for existing in existing_sources:
                         if isinstance(existing, DuckDBSource) and existing.ephemeral:
@@ -761,12 +545,10 @@ class BaseSourceControls(Viewer):
                         self._count += 1
                 table_name = card.alias
                 filename = f"{card.filename}.{card.extension}"
-                if table_name not in source.metadata:
-                    source.metadata[table_name] = {}
-                source.metadata[table_name]["filename"] = filename
+                source.metadata.setdefault(table_name, {})["filename"] = filename
                 n_tables += self._add_table(source, card.file_obj, card)
             else:
-                self._error_placeholder.object += f"\\n⚠️ Skipped '{card.filename}.{card.extension}': unsupported format."
+                self._error_placeholder.object += f"\n⚠️ Skipped '{card.filename}.{card.extension}': unsupported format."
                 self._error_placeholder.visible = True
 
         for card in metadata_cards:
@@ -775,11 +557,12 @@ class BaseSourceControls(Viewer):
         log_debug(f"Processed files: {n_tables} tables, {n_metadata} metadata files")
         return n_tables, 0, n_metadata
 
-    def _clear_uploads(self):
-        self._upload_cards.clear()
-        self._file_cards.clear()
-        self._add_button.visible = False
-        self._upload_cards.visible = False
-
-    def __panel__(self):
-        return self._layout
+    def _format_bytes(self, bytes_size: int) -> str:
+        if bytes_size == 0:
+            return "0 B"
+        size_names = ["B", "KB", "MB", "GB", "TB"]
+        i = 0
+        while bytes_size >= 1024 and i < len(size_names) - 1:
+            bytes_size /= 1024.0
+            i += 1
+        return f"{bytes_size:.1f} {size_names[i]}"

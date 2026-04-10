@@ -5,10 +5,10 @@ import param
 from panel.widgets import FileDropper
 from panel_material_ui import Button, Column as MuiColumn, Row
 
-from .base import BaseSourceControls
+from .base import FileSourceControls
 
 
-class UploadControls(BaseSourceControls):
+class UploadSourceControls(FileSourceControls):
     """
     Controls for uploading files from the local filesystem.
     """
