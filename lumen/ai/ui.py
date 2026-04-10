@@ -45,8 +45,8 @@ from .config import (
 )
 from .context import TContext
 from .controls import (
-    DownloadSourceControls, FileSourceControls, SourceCatalog, TableExplorer,
-    UploadSourceControls,
+    BaseSourceControls, DownloadSourceControls, FileSourceControls,
+    SourceCatalog, TableExplorer, UploadSourceControls,
 )
 from .coordinator import Coordinator, Plan, Planner
 from .editors import AnalysisOutput, LumenEditor, SQLEditor
@@ -939,7 +939,8 @@ class UI(Viewer):
 
         existing_actions = self._chat_input.actions
         self._chat_input.enable_upload = any(
-            issubclass(sc, UploadSourceControls) for sc in self.source_controls
+            (isinstance(sc, UploadSourceControls) if isinstance(sc, BaseSourceControls) else issubclass(sc, UploadSourceControls))
+            for sc in self.source_controls
         )
         self._chat_input.actions = {
             **existing_actions,
@@ -1221,21 +1222,29 @@ class UI(Viewer):
         self._source_controls = []
         control_tabs = []
         for control in self.source_controls:
-            control_kwargs = {
-                'context': self.context,
-                'source_catalog': self._source_catalog,
-            }
-            if issubclass(control, FileSourceControls):
-                control_kwargs['upload_handlers'] = self.upload_handlers
-                if control is UploadSourceControls and self.filedropper_kwargs:
-                    control_kwargs['filedropper_kwargs'] = self.filedropper_kwargs
+            if isinstance(control, BaseSourceControls):
+                # Already instantiated — adopt it, just wire up context/catalog
+                control_inst = control
+                control_inst.context = self.context
+                control_inst.source_catalog = self._source_catalog
+            else:
+                # It's a class — instantiate with kwargs
+                control_kwargs = {
+                    'context': self.context,
+                    'source_catalog': self._source_catalog,
+                }
+                if issubclass(control, FileSourceControls):
+                    control_kwargs['upload_handlers'] = self.upload_handlers
+                    if control is UploadSourceControls and self.filedropper_kwargs:
+                        control_kwargs['filedropper_kwargs'] = self.filedropper_kwargs
+                control_inst = control(**control_kwargs)
 
-            control_inst = control(**control_kwargs)
             control_inst.param.watch(self._sync_sources, 'outputs')
             control_inst.param.watch(self._handle_upload_successful, 'upload_successful')
             if isinstance(control_inst, UploadSourceControls):
                 self._upload_controls = control_inst
-            control_tabs.append((control.label, control_inst))
+            label = control_inst.label if isinstance(control, BaseSourceControls) else control.label
+            control_tabs.append((label, control_inst))
             self._source_controls.append(control_inst)
         self._source_content = Tabs(*control_tabs, sizing_mode="stretch_width")
 

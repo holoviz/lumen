@@ -1,3 +1,4 @@
+from .api_source import APISourceControls
 from .base import BaseSourceControls, FileSourceControls
 from .catalog import CatalogSourceControls
 from .code_source import CodeSourceControls
@@ -14,6 +15,7 @@ from .url_source import URLSourceControls
 from .utils import download_file
 
 __all__ = (
+    "APISourceControls",
     "METADATA_EXTENSIONS",
     "METADATA_FILENAME_PATTERNS",
     "TABLE_EXTENSIONS",
