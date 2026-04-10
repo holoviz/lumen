@@ -22,7 +22,7 @@ from ..llm import Message
 from ..models import FollowUpClassification
 from ..report import ActorTask
 from ..tools import MetadataLookup, Tool
-from ..utils import log_debug, wrap_logfire
+from ..utils import content_to_text, log_debug, wrap_logfire
 from .base import Coordinator, Plan
 
 if TYPE_CHECKING:
@@ -221,7 +221,9 @@ class Planner(Coordinator):
         if not self.planner_tools:
             return
 
-        user_query = next((msg["content"] for msg in reversed(messages) if msg.get("role") == "user"), "")
+        # Extract user query text, handling multimodal content (list with images)
+        user_content = next((msg["content"] for msg in reversed(messages) if msg.get("role") == "user"), "")
+        user_query = content_to_text(user_content)
 
         with self._add_step(title="Gathering context for planning...", steps_layout=self.steps_layout) as step:
             # Collect all output contexts for proper merging

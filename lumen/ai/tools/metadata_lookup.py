@@ -638,6 +638,9 @@ class MetadataLookup(VectorLookupTool):
         """
         Fetches tables based on the user query and returns formatted context.
         """
+        if len(messages) == 0:
+            return [], MetadataLookupOutputs(metaset=Metaset(query=None, catalog={}))  # Don't query documents for binary content
+
         await self._wait_for_pending_updates(timeout=30)
         out_model = await self._gather_info(messages, context)
         return [self._format_context(out_model)], out_model

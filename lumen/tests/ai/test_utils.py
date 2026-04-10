@@ -19,9 +19,11 @@ except ModuleNotFoundError:
 from lumen.ai.config import PROMPTS_DIR
 from lumen.ai.models import DeleteLine, InsertLine, ReplaceLine
 from lumen.ai.utils import (
-    UNRECOVERABLE_ERRORS, apply_changes, clean_sql, describe_data,
-    find_slug_by_table_name, get_schema, parse_huggingface_url,
-    render_template, report_error, retry_llm_output, slug_to_table_name,
+    IMAGE_MIME_TYPES, UNRECOVERABLE_ERRORS, apply_changes, clean_sql,
+    content_to_text, describe_data, find_slug_by_table_name,
+    format_msg_content, fuse_messages, get_schema, mutate_user_message,
+    parse_huggingface_url, render_template, report_error, retry_llm_output,
+    serialize_image_content, set_content_text, slug_to_table_name,
 )
 from lumen.config import SOURCE_TABLE_SEPARATOR as SEP
 
@@ -458,3 +460,268 @@ class TestFindSlugByTableName:
         }
         result = find_slug_by_table_name("tbl", candidates)
         assert result in (f"SrcOld{SEP}tbl", f"SrcNew{SEP}tbl")
+
+
+# -------------------------------------------------------------------
+# content_to_text
+# -------------------------------------------------------------------
+
+class TestContentToText:
+
+    @pytest.mark.parametrize("content, expected", [
+        ("hello", "hello"),
+        ("", ""),
+        (["hello"], "hello"),
+        (["hello", "world"], "hello\nworld"),
+        ([], ""),
+        (42, ""),
+    ])
+    def test_plain_and_list(self, content, expected):
+        assert content_to_text(content) == expected
+
+    def test_list_with_non_text_items(self):
+        sentinel = object()
+        result = content_to_text(["prompt", sentinel, "follow-up"])
+        assert result == "prompt\nfollow-up"
+
+    def test_list_with_only_non_text_items(self):
+        assert content_to_text([object(), object()]) == ""
+
+# -------------------------------------------------------------------
+# set_content_text
+# -------------------------------------------------------------------
+
+class TestSetContentText:
+
+    def test_plain_string(self):
+        assert set_content_text("new", "old") == "new"
+
+    def test_list_all_strings(self):
+        # Only strings in list → collapse to plain string
+        assert set_content_text("new", ["a", "b"]) == "new"
+
+    def test_list_with_non_text_preserves_objects(self):
+        img = object()
+        result = set_content_text("updated", ["old text", img])
+        assert result == ["updated", img]
+
+    def test_list_with_multiple_non_text(self):
+        img1, img2 = object(), object()
+        result = set_content_text("txt", ["old", img1, "more", img2])
+        assert result == ["txt", img1, img2]
+
+    def test_empty_list(self):
+        assert set_content_text("new", []) == "new"
+
+    def test_roundtrip_with_content_to_text(self):
+        img = object()
+        original = ["hello world", img]
+        text = content_to_text(original)
+        restored = set_content_text(text + " extra", original)
+        assert restored == ["hello world extra", img]
+        assert content_to_text(restored) == "hello world extra"
+
+
+# -------------------------------------------------------------------
+# format_msg_content
+# -------------------------------------------------------------------
+
+class TestFormatMsgContent:
+
+    def test_string_passthrough(self):
+        assert format_msg_content("hello") == "hello"
+
+    def test_list_of_strings(self):
+        result = format_msg_content(["a", "b"])
+        assert result == "a + b"
+
+    def test_list_with_non_string_items(self):
+        class FakeImage:
+            pass
+        img = FakeImage()
+        result = format_msg_content(["prompt", img])
+        assert "prompt" in result
+        assert f"<FakeImage[{id(img)}]>" in result
+
+    def test_non_string_non_list(self):
+        obj = object()
+        result = format_msg_content(obj)
+        assert result == f"<object[{id(obj)}]>"
+
+    def test_empty_list(self):
+        assert format_msg_content([]) == ""
+
+
+# -------------------------------------------------------------------
+# serialize_image_content
+# -------------------------------------------------------------------
+
+class TestMakeImageContent:
+
+    # Minimal valid magic bytes for each format
+    _MAGIC_BYTES = {
+        "photo.png": b"\x89PNG\r\n\x1a\n" + b"\x00" * 8,
+        "photo.jpg": b"\xff\xd8\xff\xe0" + b"\x00" * 8,
+        "photo.jpeg": b"\xff\xd8\xff\xe0" + b"\x00" * 8,
+        "photo.gif": b"GIF89a" + b"\x00" * 8,
+        "photo.webp": b"RIFF\x00\x00\x00\x00WEBP" + b"\x00" * 8,
+    }
+
+    @pytest.mark.parametrize("filename", [
+        "photo.png", "photo.jpg", "photo.jpeg", "photo.gif", "photo.webp",
+    ])
+    def test_recognised_extensions(self, filename):
+        data = self._MAGIC_BYTES[filename]
+        result = serialize_image_content(filename, data)
+        assert result is not None
+
+    @pytest.mark.parametrize("filename", [
+        "data.csv", "report.pdf", "archive.zip", "notes.txt",
+    ])
+    def test_non_image_returns_none(self, filename):
+        assert serialize_image_content(filename, b"data") is None
+
+    def test_explicit_mime_type_overrides_extension(self):
+        # Use valid PNG magic bytes so instructor doesn't reject
+        data = b"\x89PNG\r\n\x1a\n" + b"\x00" * 8
+        result = serialize_image_content("file.bin", data, mime_type="image/png")
+        assert result is not None
+
+    def test_non_image_mime_type_returns_none(self):
+        assert serialize_image_content("photo.png", b"data", mime_type="text/plain") is None
+
+
+# -------------------------------------------------------------------
+# IMAGE_MIME_TYPES
+# -------------------------------------------------------------------
+
+class TestImageMimeTypes:
+
+    @pytest.mark.parametrize("ext, expected_prefix", [
+        (".png", "image/"),
+        (".jpg", "image/"),
+        (".jpeg", "image/"),
+        (".gif", "image/"),
+        (".webp", "image/"),
+        (".svg", "image/"),
+        (".bmp", "image/"),
+    ])
+    def test_all_entries_are_image_types(self, ext, expected_prefix):
+        assert IMAGE_MIME_TYPES[ext].startswith(expected_prefix)
+
+    def test_non_image_extension_absent(self):
+        assert ".csv" not in IMAGE_MIME_TYPES
+        assert ".txt" not in IMAGE_MIME_TYPES
+
+
+# -------------------------------------------------------------------
+# fuse_messages — multimodal content
+# -------------------------------------------------------------------
+
+class TestFuseMessagesMultimodal:
+
+    def test_plain_string_messages(self):
+        msgs = [
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": "reply"},
+            {"role": "user", "content": "second"},
+        ]
+        result = fuse_messages(msgs, max_user_messages=2)
+        assert len(result) == 2
+        assert result[0]["role"] == "system"
+        assert "first" in result[0]["content"]
+        assert result[1] == msgs[-1]
+
+    def test_multimodal_user_content_in_history(self):
+        img = object()
+        msgs = [
+            {"role": "user", "content": ["describe this image", img]},
+            {"role": "assistant", "content": "It shows a chart"},
+            {"role": "user", "content": "thanks"},
+        ]
+        result = fuse_messages(msgs, max_user_messages=2)
+        # History should contain the text portion of the multimodal message
+        assert "describe this image" in result[0]["content"]
+        # The last user message is kept as-is
+        assert result[1]["content"] == "thanks"
+
+    def test_multimodal_last_user_message_preserved(self):
+        img = object()
+        msgs = [
+            {"role": "user", "content": "earlier question"},
+            {"role": "assistant", "content": "answer"},
+            {"role": "user", "content": ["what is this?", img]},
+        ]
+        result = fuse_messages(msgs, max_user_messages=2)
+        # Last user message should be preserved with the image object intact
+        assert result[1]["content"] == ["what is this?", img]
+
+    def test_empty_multimodal_content_skipped_in_history(self):
+        """Multimodal list with only non-text items yields empty text -> skipped."""
+        img = object()
+        msgs = [
+            {"role": "user", "content": [img]},
+            {"role": "assistant", "content": "ok"},
+            {"role": "user", "content": "final"},
+        ]
+        result = fuse_messages(msgs, max_user_messages=2)
+        assert result[0]["role"] == "system"
+        # The image-only user message text is empty and skipped,
+        # but the assistant reply is still in history
+        assert "Assistant: ok" in result[0]["content"]
+
+    def test_multiple_user_messages_all_multimodal(self):
+        img1, img2, img3 = object(), object(), object()
+        msgs = [
+            {"role": "user", "content": ["first image", img1]},
+            {"role": "assistant", "content": "got it"},
+            {"role": "user", "content": ["second image", img2]},
+            {"role": "assistant", "content": "ok"},
+            {"role": "user", "content": ["third image", img3]},
+        ]
+        result = fuse_messages(msgs, max_user_messages=2)
+        # Last user msg preserved as multimodal list
+        assert result[-1]["content"] == ["third image", img3]
+        # History includes second image text
+        assert "second image" in result[0]["content"]
+
+
+# -------------------------------------------------------------------
+# mutate_user_message — multimodal content
+# -------------------------------------------------------------------
+
+class TestMutateUserMessageMultimodal:
+
+    def test_suffix_plain_string(self):
+        msgs = [{"role": "user", "content": "hello"}]
+        mutate_user_message("extra", msgs, suffix=True, inplace=True)
+        assert msgs[0]["content"] == "'hello' extra"
+
+    def test_suffix_multimodal_preserves_images(self):
+        img = object()
+        msgs = [{"role": "user", "content": ["hello", img]}]
+        mutate_user_message("extra", msgs, suffix=True, inplace=True)
+        content = msgs[0]["content"]
+        # Should be a list with updated text + original image
+        assert isinstance(content, list)
+        assert img in content
+        assert any("hello" in item and "extra" in item for item in content if isinstance(item, str))
+
+    def test_prefix_multimodal(self):
+        img = object()
+        msgs = [{"role": "user", "content": ["query", img]}]
+        mutate_user_message("Context: ", msgs, suffix=False, inplace=True)
+        content = msgs[0]["content"]
+        assert isinstance(content, list)
+        assert img in content
+        text = content_to_text(content)
+        assert text.startswith("Context: ")
+
+    def test_not_inplace_multimodal(self):
+        img = object()
+        original = [{"role": "user", "content": ["query", img]}]
+        result = mutate_user_message("extra", original, suffix=True, inplace=False)
+        # Original should be unchanged
+        assert original[0]["content"] == ["query", img]
+        # Result should have the mutation
+        assert img in result[0]["content"]
