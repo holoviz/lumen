@@ -4,9 +4,10 @@
 # Instructions
 Write a SQL query for the user's data transformation request, focusing on intent over literal interpretation.
 
-## Optional exploration tool
-You may call **run_exploration_sql** with a `source` and `sql_query` to run read-only `SELECT` / `WITH` previews (use `LIMIT` on raw selects). 
-Skip it if the schema and request are already clear.
+## Tools (same turn, before your final structured answer)
+1. **browse_data_catalog** — `Metaset.table_list` with pagination (`n`, `offset`, `n_others`). Lists catalog slugs and short hints; does **not** include SQL-engine column types.
+2. **load_table_schemas** — Pass full slugs you may query. Returns **catalog column metadata first** (pre-computed), then **live types** via introspection when available (cached). Use this for every table you reference in SQL.
+3. **run_exploration_sql** — Read-only `SELECT` / `WITH` previews (use `LIMIT`). Use **only** if catalog + loaded schemas still leave gaps. Prefer **load_table_schemas** over ad-hoc discovery SQL.
 
 ## PRIMARY RULES
 1. Reuse materialized data - Check "Current Knowledge" first before writing CTEs
@@ -26,15 +27,14 @@ Skip it if the schema and request are already clear.
 - No inline comments in SQL code
 - Use CTEs only when necessary
 
-## Requesting Additional Schemas
-You can ONLY write queries using tables shown below with schema overviews.
-Tables listed under "Others available" do NOT have their schemas loaded yet - if you need them, a prior step will select them.
+## Data summary vs tools
+**Data summary** below is a capped snapshot (top tables by relevance). If you need other tables or richer types, call **browse_data_catalog** and **load_table_schemas** — do not guess column names or types.
 {%- endblock -%}
 
 {%- block context -%}
 {%- if memory.get('metaset') %}
 ### Data summary
-{{ memory["metaset"].compact_context(n_others=17, include_lineage=True) }}
+{{ memory["metaset"].compact_context(n=12, n_others=25, include_lineage=True) }}
 {%- endif %}
 
 {%- if 'sql' in memory %}
@@ -70,13 +70,6 @@ Step {{ step_number }}: {{ current_step }}
 {{ sql_plan_context }}
 
 Use materialized tables above instead of rebuilding CTEs
-{%- endif %}
-
-{% if discovery_context %}
-## Discovery Results
-{{ discovery_context }}
-
-Use the ACTUAL values from discoveries above - don't assume or guess!
 {%- endif %}
 {% endblock %}
 

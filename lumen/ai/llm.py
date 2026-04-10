@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import os
+import traceback
 
 from collections.abc import Callable
 from functools import partial
@@ -645,23 +646,62 @@ class Llm(param.Parameterized):
         results: list[Message] = []
         for call in tool_calls:
             name, arguments, call_id = self._parse_tool_call(call)
-            if not name or name not in tool_instances:
+            if not name:
+                log_debug(
+                    f"LLM tool call skipped: missing tool name (call_id={call_id!r})",
+                    prefix="[LLM tools]",
+                )
+                continue
+            if name not in tool_instances:
+                log_debug(
+                    "LLM tool call skipped: unknown tool "
+                    f"{name!r} (call_id={call_id!r}); registered: {sorted(tool_instances)}",
+                    prefix="[LLM tools]",
+                )
                 continue
             tool = tool_instances[name]
             context = tool_contexts.get(name, {})
             for requirement in tool.requires:
                 if requirement not in arguments and requirement in context:
                     arguments[requirement] = context[requirement]
-            if isinstance(tool, MCPTool):
-                result = await tool.execute(**arguments)
-            elif isinstance(tool, FunctionTool):
-                if asyncio.iscoroutinefunction(tool.function):
-                    result = await tool.function(**arguments)
+            try:
+                args_repr = truncate_string(
+                    json.dumps(arguments, default=str, ensure_ascii=False),
+                    max_length=4000,
+                )
+                log_debug(
+                    f"LLM tool call start tool={name!r} call_id={call_id!r} arguments={args_repr}",
+                    prefix="[LLM tools]",
+                )
+                if isinstance(tool, MCPTool):
+                    result = await tool.execute(**arguments)
+                elif isinstance(tool, FunctionTool):
+                    if asyncio.iscoroutinefunction(tool.function):
+                        result = await tool.function(**arguments)
+                    else:
+                        result = tool.function(**arguments)
                 else:
-                    result = tool.function(**arguments)
+                    raise TypeError(f"Unsupported tool type for {name!r}: {type(tool)!r}")
+                formatted = self._format_tool_result(result)
+                log_debug(
+                    f"LLM tool call result tool={name!r} call_id={call_id!r}\n"
+                    f"{truncate_string(formatted, max_length=16000)}",
+                    prefix="[LLM tools]",
+                    show_length=True,
+                )
+            except Exception:
+                log_debug(
+                    [
+                        f"LLM tool call failed tool={name!r} call_id={call_id!r}",
+                        traceback.format_exc(),
+                    ],
+                    prefix="[LLM tools]",
+                    show_sep="above",
+                )
+                raise
             results.append({
                 "role": "tool",
-                "content": self._format_tool_result(result),
+                "content": formatted,
                 "name": name,
                 "tool_call_id": call_id,
             })

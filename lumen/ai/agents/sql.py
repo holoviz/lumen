@@ -1,10 +1,9 @@
-from typing import (
-    Annotated, Any, Literal, NotRequired,
-)
+import typing as t
 
 import param
+import yaml
 
-from panel_material_ui.chat import ChatStep
+from panel.chat import ChatStep
 from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 
@@ -21,15 +20,15 @@ from ..schemas import Metaset
 from ..tools import FunctionTool
 from ..utils import (
     clean_sql, describe_data, get_data, get_pipeline, parse_table_slug,
-    stream_details,
+    retry_llm_output, stream_details,
 )
 from .base_lumen import BaseLumenAgent
 
 
 def make_source_table_model(sources: list[tuple[str, str]]):
     class LiteralSourceTable(BaseModel):
-        source: Literal[tuple(set(src for src, _ in sources))]
-        table: Literal[tuple(set(table for _, table in sources))]
+        source: t.Literal[tuple(set(src for src, _ in sources))]
+        table: t.Literal[tuple(set(table for _, table in sources))]
     return LiteralSourceTable
 
 
@@ -38,7 +37,7 @@ def make_table_model(sources: list[tuple[str, str]]):
     Create a table model with constrained table choices.
     """
     available_tables = list(set(table for _, table in sources))
-    TableLiteral = Literal[tuple(available_tables)]  # type: ignore
+    TableLiteral = t.Literal[tuple(available_tables)]  # type: ignore
     return TableLiteral
 
 
@@ -59,29 +58,6 @@ class SQLQuery(BaseModel):
         Examples: avg_sst_by_season, top_5_athletes_2020, revenue_by_region.
         Ensure the slug does not duplicate any existing table names or slugs.
         """
-    )
-
-
-class TableSelection(BaseModel):
-    """Select tables relevant to answering the user's query."""
-
-    reasoning: str = Field(description="Brief explanation of why these tables are needed to answer the query.")
-
-    tables: list[str] = Field(
-        description="List of table slugs needed to answer the query. Select only tables that are directly relevant."
-    )
-
-
-def make_table_selection_model(available_tables: list[str]):
-    """Create a table selection model with constrained table choices."""
-    if not available_tables:
-        return TableSelection
-
-    TableLiteral = Literal[tuple(available_tables)]  # type: ignore
-    return create_model(
-        "TableSelectionConstrained",
-        tables=(list[TableLiteral], FieldInfo(description="Tables needed to answer the query.")),
-        __base__=TableSelection
     )
 
 
@@ -122,7 +98,7 @@ async def execute_exploration_sql(
     source: str,
     sql_query: str,
     *,
-    sources: dict[tuple[str, str], Source],
+    sources: dict[tuple[str, str], BaseSQLSource],
 ) -> str:
     """
     Run a read-only SQL statement on the named Lumen source and return a text preview of results.
@@ -172,7 +148,7 @@ async def execute_exploration_sql(
     return text
 
 
-def make_run_exploration_sql_tool(sources: dict[tuple[str, str], Source]) -> FunctionTool:
+def make_run_exploration_sql_tool(sources: dict[tuple[str, str], BaseSQLSource]) -> FunctionTool:
     """Build a :class:`~lumen.ai.tools.FunctionTool` that runs :func:`execute_exploration_sql` for ``sources``."""
 
     async def run_exploration_sql(source: str, sql_query: str) -> str:
@@ -192,24 +168,115 @@ def make_run_exploration_sql_tool(sources: dict[tuple[str, str], Source]) -> Fun
     )
 
 
+def make_browse_data_catalog_tool(metaset: Metaset) -> FunctionTool:
+    """
+    Tool wrapping :meth:`~lumen.ai.schemas.Metaset.table_list` for incremental catalog browsing.
+    """
+
+    def browse_data_catalog(
+        n: int = 15,
+        offset: int = 0,
+        n_others: int = 25,
+        include_metadata: bool = False,
+        include_lineage: bool = False,
+    ) -> str:
+        """
+        List tables from the metadata catalog (names, similarity ordering, optional docs).
+        Does not load SQL engine column types — use load_table_schemas for those.
+        """
+        return metaset.table_list(
+            n=n,
+            offset=offset,
+            show_source=True,
+            n_others=n_others,
+            include_metadata=include_metadata,
+            include_lineage=include_lineage,
+        )
+
+    browse_data_catalog.__doc__ = (browse_data_catalog.__doc__ or "").strip()
+    return FunctionTool(
+        browse_data_catalog,
+        purpose=(
+            "Browse available table slugs via Metaset.table_list (paginated). "
+            "Use before choosing final tables; does not include per-column SQL types."
+        ),
+    )
+
+
+def make_load_table_schemas_tool(metaset: Metaset) -> FunctionTool:
+    """
+    Tool to load and return schema details for specific catalog tables, preferring catalog metadata
+    then source introspection (cached on the metaset), not ad-hoc exploration SQL.
+    """
+
+    async def load_table_schemas(table_slugs: list[str]) -> str:
+        """
+        Return YAML combining catalog column metadata (pre-computed) with SQL-engine schema
+        (types, enums, row counts) when available. Call for every table you intend to use in SQL.
+        Use full slugs as shown by browse_data_catalog (e.g. source/table).
+        """
+        if not table_slugs:
+            return "No table_slugs provided."
+        result: dict[str, t.Any] = {}
+        for raw in table_slugs:
+            slug = metaset._resolve_table_slug(raw) or raw
+            entry = metaset.catalog.get(slug)
+            if not entry:
+                result[raw] = {"error": f"Unknown table slug {raw!r} (not in catalog)."}
+                continue
+            block: dict[str, t.Any] = {}
+            if entry.columns:
+                block["catalog_columns"] = [
+                    {"name": c.name, "description": c.description}
+                    for c in entry.columns
+                ]
+            live = await metaset.get_schema(slug)
+            if live:
+                block["row_count"] = live.get("__len__")
+                block["source_schema"] = {
+                    k: v for k, v in live.items() if k != "__len__"
+                }
+            elif not entry.columns:
+                block["note"] = "No catalog columns and no live schema could be loaded for this table."
+            else:
+                block["note"] = (
+                    "Catalog metadata only; live SQL schema was not available (no source or introspection failed)."
+                )
+            result[slug] = block
+        text = yaml.dump(result, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        if len(text) > 12000:
+            text = text[:12000] + "\n... (truncated)"
+        return text
+
+    load_table_schemas.__doc__ = (load_table_schemas.__doc__ or "").strip()
+    return FunctionTool(
+        load_table_schemas,
+        purpose=(
+            "Load detailed schema for chosen catalog tables: merge vector/catalog column metadata first, "
+            "then attach SQL-engine types via metaset introspection (cached). Prefer this over guessing "
+            "or exploratory SQL when planning which tables to use."
+        ),
+    )
+
+
 class SQLInputs(ContextModel):
 
-    data: NotRequired[Any]
+    data: t.NotRequired[t.Any]
 
     source: Source
 
-    sources: Annotated[list[Source], ("accumulate", "source")]
+    sources: t.Annotated[list[Source], ("accumulate", "source")]
 
-    sql: NotRequired[str]
+    sql: t.NotRequired[str]
 
     metaset: Metaset
 
-    visible_slugs: NotRequired[set[str]]
+    visible_slugs: t.NotRequired[set[str]]
 
 
 class SQLOutputs(ContextModel):
 
-    data: Any
+    data: t.Any
 
     table: str
 
@@ -247,10 +314,6 @@ class SQLAgent(BaseLumenAgent):
                 "response_model": make_sql_model,
                 "template": PROMPTS_DIR / "SQLAgent" / "main.jinja2",
             },
-            "select_tables": {
-                "response_model": make_table_selection_model,
-                "template": PROMPTS_DIR / "SQLAgent" / "select_tables.jinja2",
-            },
             "revise_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "SQLAgent" / "revise_output.jinja2"},
         }
     )
@@ -263,18 +326,6 @@ class SQLAgent(BaseLumenAgent):
 
     input_schema = SQLInputs
     output_schema = SQLOutputs
-
-    async def _gather_prompt_context(self, prompt_name: str, messages: list, context: TContext, **kwargs):
-        """Pre-compute metaset context for template rendering."""
-        prompt_context = await super()._gather_prompt_context(prompt_name, messages, context, **kwargs)
-
-        # Ensure schemas are loaded for schema_tables before rendering
-        if "metaset" in context:
-            metaset = context["metaset"]
-            if metaset.schema_tables:
-                await metaset.ensure_schemas(metaset.schema_tables)
-
-        return prompt_context
 
     async def _validate_sql(
         self,
@@ -409,27 +460,7 @@ class SQLAgent(BaseLumenAgent):
             mirrors[renamed_table] = (sources[(m.source, m.table)], m.table)
         return DuckDBSource(uri=":memory:", mirrors=mirrors), list(mirrors)
 
-    async def _select_tables(
-        self,
-        messages: list[Message],
-        context: TContext,
-        step: ChatStep,
-    ) -> list[str]:
-        """Select relevant tables for the query."""
-        metaset = context.get("metaset")
-        if not metaset:
-            return []
-
-        all_tables = list(metaset.catalog.keys())
-        # If 3 or fewer tables, use all of them
-        if len(all_tables) <= 3:
-            return all_tables
-
-        selection = await self._invoke_prompt("select_tables", messages, context, model_kwargs=dict(available_tables=all_tables))
-        selected = selection.tables if selection else metaset.get_top_tables(n=3)
-        step.stream(f"Selected: {selected}")
-        return selected
-
+    @retry_llm_output()
     async def _render_execute_query(
         self,
         messages: list[Message],
@@ -474,7 +505,16 @@ class SQLAgent(BaseLumenAgent):
             dialects = set(src.dialect for src in sources.values())
             dialect = "duckdb" if len(dialects) > 1 else next(iter(dialects))
 
-            tool_list = [make_run_exploration_sql_tool(sources)]
+            metaset = context.get("metaset")
+            exploration = make_run_exploration_sql_tool(sources)
+            if metaset is not None:
+                tool_list: list[FunctionTool] = [
+                    make_browse_data_catalog_tool(metaset),
+                    make_load_table_schemas_tool(metaset),
+                    exploration,
+                ]
+            else:
+                tool_list = [exploration]
 
             output = await self._invoke_prompt(
                 "main",
@@ -539,7 +579,7 @@ class SQLAgent(BaseLumenAgent):
 
     async def revise(
         self,
-        feedback: str,
+        instruction: str,
         messages: list[Message],
         context: TContext,
         view: LumenEditor | None = None,
@@ -549,7 +589,7 @@ class SQLAgent(BaseLumenAgent):
         **kwargs
     ) -> str:
         result = await super().revise(
-            feedback, messages, context, view=view, spec=spec, language=language, **kwargs
+            instruction, messages, context, view=view, spec=spec, language=language, **kwargs
         )
         if view is not None:
             result = clean_sql(result, view.component.source.dialect, prettify=True)
@@ -560,27 +600,18 @@ class SQLAgent(BaseLumenAgent):
         messages: list[Message],
         context: TContext,
         step_title: str | None = None,
-    ) -> tuple[list[Any], SQLOutputs]:
-        """Execute SQL generation with optional table selection and an optional SQL tool on the main call."""
+    ) -> tuple[list[t.Any], SQLOutputs]:
+        """Generate SQL in one step (catalog browse, schema load, optional exploration, then structured query)."""
         sources = context["sources"]
         metaset = context["metaset"]
-        selected_slugs = list(metaset.catalog)
-
-        if len(selected_slugs) > 3:
-            with self._add_step(title="Selecting relevant tables...", steps_layout=self._steps_layout) as step:
-                selected_tables = await self._select_tables(messages, context, step)
-                if selected_tables:
-                    metaset.schema_tables = selected_tables
-                    step.stream(f"\n\nWill load schemas for: {selected_tables}")
-        else:
-            # Use all tables if 3 or fewer
-            metaset.schema_tables = selected_slugs
+        # Do not pin schema_tables: initial prompt uses a capped summary; the model pulls detail via tools.
+        metaset.schema_tables = None
 
         # Build source lookup, skipping slugs whose source no longer
         # exists in the context (stale entries from prior materializations).
         available_source_names = {s.name for s in sources}
         sources = {}
-        for table_slug in selected_slugs:
+        for table_slug in metaset.catalog:
             source_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[0] if SOURCE_TABLE_SEPARATOR in table_slug else None
             if source_name and source_name not in available_source_names:
                 continue
@@ -601,5 +632,5 @@ class SQLAgent(BaseLumenAgent):
             raise_if_empty=True,
             output_title=step_title
         )
-        out_context = await out.render_context()
+        out_context = t.cast(SQLOutputs, await out.render_context())
         return [out], out_context
