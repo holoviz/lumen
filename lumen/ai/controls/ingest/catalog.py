@@ -70,8 +70,23 @@ class CatalogSourceControls(BaseSourceControls):
         pn.state.onload(self._load_catalog_wrapper)
 
     def _render_controls(self) -> list:
-        """Build an empty Tabulator browser; columns are configured once data loads."""
-        self._tabulator = Tabulator(
+        """Build a Tabulator browser pre-configured with column settings.
+
+        An empty DataFrame with the correct column names is used so that
+        the Tabulator creates its column definitions up-front.  When the
+        real data arrives in ``_load_catalog_wrapper``, only the row data
+        changes — columns are never rebuilt, which avoids a race where
+        column configuration (titles, widths, formatters) is lost during
+        a client-side column rebuild.
+        """
+        display_cols = self.display_columns
+        if display_cols:
+            empty_df = pd.DataFrame({col: pd.Series(dtype="object") for col in display_cols})
+        else:
+            empty_df = pd.DataFrame()
+
+        tabulator_kwargs = dict(
+            value=empty_df,
             page_size=5,
             pagination="local",
             sizing_mode="stretch_width",
@@ -79,28 +94,27 @@ class CatalogSourceControls(BaseSourceControls):
             buttons={"download": '<i class="fa fa-download"></i>'},
             on_click=self._on_row_click,
         )
+        if display_cols:
+            tabulator_kwargs.update(
+                titles={col: cfg.get("title", col) for col, cfg in display_cols.items()},
+                widths={col: cfg.get("width", "auto") for col, cfg in display_cols.items()},
+                formatters={
+                    col: cfg["formatter"]
+                    for col, cfg in display_cols.items()
+                    if "formatter" in cfg
+                },
+                editors={col: None for col in display_cols},
+                header_filters=self.filter_columns,
+            )
+        if self.detail_columns:
+            tabulator_kwargs["row_content"] = self._get_row_content
+
+        self._tabulator = Tabulator(**tabulator_kwargs)
 
         return [
             Markdown("*Click on download icons to ingest datasets.*", margin=(0, 10)),
             self._tabulator,
         ]
-
-    def _configure_tabulator(self):
-        """Apply display_columns / filter_columns config to the Tabulator.
-
-        Called from _load_catalog_wrapper AFTER the Tabulator's value has
-        been set, so that columns already exist and the config (titles,
-        widths, header_filters, etc.) is applied correctly.
-        """
-        display_cols = self.display_columns
-        self._tabulator.param.update(
-            titles={col: cfg.get("title", col) for col, cfg in display_cols.items()},
-            widths={col: cfg.get("width", "auto") for col, cfg in display_cols.items()},
-            formatters={col: cfg["formatter"] for col, cfg in display_cols.items() if "formatter" in cfg},
-            editors={col: None for col in display_cols},
-            header_filters=self.filter_columns,
-            row_content=self._get_row_content if self.detail_columns else None,
-        )
 
     def _render_layout(self):
         """Build layout — no load button for catalog controls."""
@@ -165,10 +179,10 @@ class CatalogSourceControls(BaseSourceControls):
                 display_df = self.catalog_df[cols]
             else:
                 display_df = self.catalog_df
-            # Set value FIRST so the Tabulator knows its columns,
-            # THEN apply titles/widths/filters/formatters on top.
+            # Only update the row data — columns were already
+            # configured in _render_controls with an empty DataFrame
+            # that has the correct column names.
             self._tabulator.value = display_df
-            self._configure_tabulator()
         except Exception as e:
             self._show_message(f"Failed to load catalog: {e}", error=True)
         finally:
