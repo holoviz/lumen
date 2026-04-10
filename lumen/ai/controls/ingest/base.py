@@ -150,6 +150,7 @@ class BaseSourceControls(Viewer):
             await asyncio.sleep(0.01)
             result = await coro
             self._handle_success(result)
+            return result
         except Exception as e:
             self._handle_error(e)
             raise

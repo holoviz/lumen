@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 import pandas as pd
+import panel as pn
 import param
 
 from panel.pane import Markdown
@@ -66,7 +67,6 @@ class CatalogSourceControls(BaseSourceControls):
     def __init__(self, **params):
         super().__init__(**params)
         self._layout.loading = True
-        import panel as pn
         pn.state.onload(self._load_catalog_wrapper)
 
     def _render_controls(self) -> list:
@@ -203,6 +203,15 @@ class CatalogSourceControls(BaseSourceControls):
         entry = self.catalog_df.iloc[row_idx]
         return await self._fetch_entry(entry)
 
+    async def load_entry(self, row_idx: int) -> SourceResult:
+        """Load a catalog entry by DataFrame index.
+
+        Public API for agents — runs the full load lifecycle
+        (progress, source registration, outputs trigger) and
+        returns the ``SourceResult`` so callers can inspect it.
+        """
+        return await self._run_load(self._fetch_entry_by_index(row_idx))
+
     def _get_row_content(self, row):
         """Render expanded row detail using detail_columns."""
         lines = []
@@ -224,14 +233,18 @@ class CatalogSourceControls(BaseSourceControls):
             return
 
         items = []
-        for _, row in self.catalog_df.iterrows():
+        for idx, row in self.catalog_df.iterrows():
             text = self._entry_to_text(row)
             if not text:
                 continue
 
             # Structured metadata for post-semantic filtering
             # VectorStore metadata values must be str/int/float/bool
-            metadata = {"type": "catalog_entry"}
+            metadata = {
+                "type": "catalog_entry",
+                "_row_idx": int(idx) if not isinstance(idx, int) else idx,
+                "_control_id": id(self),
+            }
             for col in self.filter_columns:
                 if col in row.index and pd.notna(row[col]):
                     val = row[col]
