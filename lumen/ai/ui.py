@@ -36,8 +36,8 @@ from ..sources.duckdb import DuckDBSource
 from ..util import log
 from .agents import (
     AnalysisAgent, BaseCodeAgent, ChatAgent, DocumentListAgent,
-    DocumentSummarizerAgent, SQLAgent, TableListAgent, ValidationAgent,
-    VegaLiteAgent,
+    DocumentSummarizerAgent, SourceAgent, SQLAgent, TableListAgent,
+    ValidationAgent, VegaLiteAgent,
 )
 from .config import (
     DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROVIDED_SOURCE_NAME,
@@ -1248,6 +1248,17 @@ class UI(Viewer):
             self._source_controls.append(control_inst)
         self._source_content = Tabs(*control_tabs, sizing_mode="stretch_width")
 
+        # Wire catalog/API source controls into SourceAgent
+        # so load buttons in the chat can invoke control.load_entry().
+        loadable_controls = [
+            ctrl for ctrl in self._source_controls
+            if hasattr(ctrl, 'load_entry')
+        ]
+        if loadable_controls and hasattr(self, '_coordinator'):
+            for agent in self._coordinator.agents:
+                if isinstance(agent, SourceAgent):
+                    agent.source_controls = loadable_controls
+
         self._sources_help_caption = Typography(
             "Add data to explore with Lumen AI. Supports CSV, Parquet, JSON, Excel, and databases. "
             "Select between data / metadata and set an alias.",
@@ -1350,6 +1361,11 @@ class UI(Viewer):
     async def _sync_sources(self, event=None, global_context=None):
         global_context = self.context if global_context is None else global_context
         context = event.new if event else global_context
+        # DEBUG: trace what _sync_sources receives
+        from .utils import log_debug as _ld
+        _ld(f"\033[93m[DEBUG _sync_sources] event context keys: {sorted(context.keys()) if context else 'None'}\033[0m")
+        _ld(f"\033[93m[DEBUG _sync_sources] 'source' in event ctx: {'source' in context}, 'sources' in event ctx: {'sources' in context}\033[0m")
+        _ld(f"\033[93m[DEBUG _sync_sources] 'source' in global ctx before: {'source' in global_context}\033[0m")
         if 'sources' in context:
             old_sources = global_context.get("sources", [global_context["source"]] if "source" in global_context else [])
             new_sources = [src for src in context["sources"] if src not in old_sources]

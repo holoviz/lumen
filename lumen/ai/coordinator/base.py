@@ -462,6 +462,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
         return str(obj)
 
     async def respond(self, messages: list[Message], context: TContext, **kwargs: dict[str, Any]) -> Plan | None:
+        log_debug(f"\033[93m[DEBUG respond] 'source' in context before copy: {'source' in context}\033[0m")
         context = {"agent_tool_contexts": [], **context}
         with self.interface.param.update(loading=True):
             if isinstance(self.llm, LlamaCpp):

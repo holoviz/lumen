@@ -313,6 +313,12 @@ class Planner(Coordinator):
             all_provides |= set(provider.output_schema.__annotations__)
         all_provides |= set(context)
 
+        # DEBUG: check if SQLAgent passes filter
+        for _agent in agents:
+            _missing = set(_agent.input_schema.__required_keys__) - all_provides
+            if _missing:
+                log_debug(f"\033[91m[DEBUG _make_plan] {type(_agent).__name__} FILTERED OUT - missing: {_missing}\033[0m")
+
         # filter agents using applies
         agents = [agent for agent in agents if await agent.applies(context)]
 

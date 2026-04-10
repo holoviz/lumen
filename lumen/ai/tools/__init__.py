@@ -1,12 +1,14 @@
 from .base import (
     FunctionTool, Tool, ToolUser, define_tool,
 )
+from .catalog_lookup import CatalogLookupTool
 from .dbtsl_lookup import DbtslLookup
 from .mcp import MCPTool
 from .metadata_lookup import MetadataLookup
 from .vector_lookup import VectorLookupTool, VectorLookupToolUser
 
 __all__ = [
+    "CatalogLookupTool",
     "DbtslLookup",
     "FunctionTool",
     "MCPTool",
