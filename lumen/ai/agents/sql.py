@@ -164,6 +164,8 @@ def make_run_exploration_sql_tool(sources: dict[tuple[str, str], BaseSQLSource])
         purpose=(
             "Run exploratory read-only SQL (SELECT/WITH) on a datasource by name; "
             "returns a small text preview of the result or an error message."
+            "Do not use this tool to generate the result, it is meant as an exploratory "
+            "tool to gather the information needed to generate the final SQL query."
         ),
     )
 
