@@ -54,6 +54,17 @@ if TYPE_CHECKING:
     )
 
 
+IMAGE_MIME_TYPES = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.svg': 'image/svg+xml',
+    '.bmp': 'image/bmp',
+}
+
+
 def format_float(num):
     """
     Process a float value, returning numeric types instead of strings.
@@ -1202,17 +1213,6 @@ def set_nested(data, keys, value):
     reduce(getitem, keys[:-1], data)[keys[-1]] = value
 
 
-IMAGE_MIME_TYPES = {
-    '.png': 'image/png',
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.gif': 'image/gif',
-    '.webp': 'image/webp',
-    '.svg': 'image/svg+xml',
-    '.bmp': 'image/bmp',
-}
-
-
 def content_to_text(content: Any) -> str:
     """
     Extract the text portion from a message content field.
@@ -1268,7 +1268,7 @@ def set_content_text(new_text: str, content: str | list) -> str | list:
     return new_text
 
 
-def make_image_content(
+def serialize_image_content(
     filename: str, data: bytes, mime_type: str | None = None
 ) -> Any | None:
     """

@@ -21,9 +21,9 @@ from lumen.ai.models import DeleteLine, InsertLine, ReplaceLine
 from lumen.ai.utils import (
     IMAGE_MIME_TYPES, UNRECOVERABLE_ERRORS, apply_changes, clean_sql,
     content_to_text, describe_data, find_slug_by_table_name,
-    format_msg_content, fuse_messages, get_schema, make_image_content,
-    mutate_user_message, parse_huggingface_url, render_template, report_error,
-    retry_llm_output, set_content_text, slug_to_table_name,
+    format_msg_content, fuse_messages, get_schema, mutate_user_message,
+    parse_huggingface_url, render_template, report_error, retry_llm_output,
+    serialize_image_content, set_content_text, slug_to_table_name,
 )
 from lumen.config import SOURCE_TABLE_SEPARATOR as SEP
 
@@ -553,7 +553,7 @@ class TestFormatMsgContent:
 
 
 # -------------------------------------------------------------------
-# make_image_content
+# serialize_image_content
 # -------------------------------------------------------------------
 
 class TestMakeImageContent:
@@ -572,23 +572,23 @@ class TestMakeImageContent:
     ])
     def test_recognised_extensions(self, filename):
         data = self._MAGIC_BYTES[filename]
-        result = make_image_content(filename, data)
+        result = serialize_image_content(filename, data)
         assert result is not None
 
     @pytest.mark.parametrize("filename", [
         "data.csv", "report.pdf", "archive.zip", "notes.txt",
     ])
     def test_non_image_returns_none(self, filename):
-        assert make_image_content(filename, b"data") is None
+        assert serialize_image_content(filename, b"data") is None
 
     def test_explicit_mime_type_overrides_extension(self):
         # Use valid PNG magic bytes so instructor doesn't reject
         data = b"\x89PNG\r\n\x1a\n" + b"\x00" * 8
-        result = make_image_content("file.bin", data, mime_type="image/png")
+        result = serialize_image_content("file.bin", data, mime_type="image/png")
         assert result is not None
 
     def test_non_image_mime_type_returns_none(self):
-        assert make_image_content("photo.png", b"data", mime_type="text/plain") is None
+        assert serialize_image_content("photo.png", b"data", mime_type="text/plain") is None
 
 
 # -------------------------------------------------------------------
