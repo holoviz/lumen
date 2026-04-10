@@ -13,11 +13,12 @@ import param
 
 from panel.chat import ChatFeed
 from panel.io.state import state
-from panel.pane import HTML
+from panel.layout.base import ListLike, NamedListLike
+from panel.pane import HTML, Image
 from panel.viewable import Viewer
 from panel.widgets import Tabulator
 from panel_material_ui import (
-    Card, ChatInterface, ChatStep, Column, Tabs, Typography,
+    Card, ChatInterface, ChatStep, Column, Typography,
 )
 
 from ..actor import Actor
@@ -29,8 +30,9 @@ from ..models import ThinkingYesNo
 from ..report import ActorTask, Section, TaskGroup
 from ..tools import MetadataLookup, Tool, VectorLookupToolUser
 from ..utils import (
-    describe_data_sync, fuse_messages, get_root_exception, log_debug,
-    mutate_user_message, normalized_name, wrap_logfire,
+    content_to_text, describe_data_sync, fuse_messages, get_root_exception,
+    log_debug, mutate_user_message, normalized_name, set_content_text,
+    wrap_logfire,
 )
 from ..vector_store import NumpyVectorStore
 
@@ -86,12 +88,17 @@ class Plan(Section):
         rendered_history = []
         for msg in self.history:
             if msg is user_query:
-                formatted_content = (
-                    f"User: {user_query['content']!r}\n"
+                user_content = user_query["content"]
+                if not isinstance(user_content, (str, list)):
+                    user_content = [user_content]
+                user_text = content_to_text(user_content)
+                roadmap_text = (
+                    f"User: {user_text!r}\n"
                     f"Roadmap:\n{indent(todos, '    ')}\n"
                     f"Tasks marked ⚪ are scheduled for others later. "
                     f"Your EXCLUSIVE goal is to focus on the 🟡 task"
                 )
+                formatted_content = set_content_text(roadmap_text, user_content)
                 rendered_history.append({"content": formatted_content, "role": "user"})
             else:
                 rendered_history.append(msg)
@@ -433,17 +440,28 @@ class Coordinator(Viewer, VectorLookupToolUser):
         the actions to be taken by the agents.
         """
 
-    def _serialize(self, obj: Any, exclude_passwords: bool = True) -> str:
-        if isinstance(obj, (Column, Card, Tabs)):
-            string = ""
+    def _serialize(self, obj: Any, exclude_passwords: bool = True) -> str | list:
+        if isinstance(obj, str):
+            return obj
+
+        if isinstance(obj, (ListLike, NamedListLike)):
+            return self._serialize(list(obj), exclude_passwords=exclude_passwords)
+
+        if isinstance(obj, list):
+            contents = []
             for o in obj:
-                if isinstance(o, ChatStep) or o.name == "TableSourceCard":
+                if isinstance(o, ChatStep):
                     # Drop context from steps; should be irrelevant now
                     continue
-                string += self._serialize(o)
-            if exclude_passwords:
-                string = re.sub(r"password:.*\n", "", string)
-            return string
+                if isinstance(o, Image):
+                    contents.append(o)
+                    continue
+                result = self._serialize(o, exclude_passwords=exclude_passwords)
+                if isinstance(result, list):
+                    contents.extend(result)
+                else:
+                    contents.append(result)
+            return contents
 
         if isinstance(obj, HTML) and "catalog" in obj.tags:
             return f"Summarized table listing: {obj.object[:30]}"
@@ -459,7 +477,13 @@ class Coordinator(Viewer, VectorLookupToolUser):
             obj = obj.object
         elif hasattr(obj, "value"):
             obj = obj.value
-        return str(obj)
+
+        if exclude_passwords:
+            if isinstance(obj, str):
+                obj = re.sub(r"password:.*\n", "", obj)
+            elif isinstance(obj, list):
+                obj = [re.sub(r"password:.*\n", "", item) if isinstance(item, str) else item for item in obj]
+        return obj
 
     async def respond(self, messages: list[Message], context: TContext, **kwargs: dict[str, Any]) -> Plan | None:
         context = {"agent_tool_contexts": [], **context}
@@ -472,8 +496,6 @@ class Coordinator(Viewer, VectorLookupToolUser):
                     elif "model_path" in default_kwargs:
                         step.stream(f"Model: `{default_kwargs['model_path']}`")
                     await self.llm.get_client("default")  # caches the model for future use
-
-            # TODO INVESTIGATE
             messages = fuse_messages(self.interface.serialize(custom_serializer=self._serialize, limit=10) or messages, max_user_messages=self.history)
 
             # the master dict of agents / tools to be used downstream
