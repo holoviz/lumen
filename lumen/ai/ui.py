@@ -16,7 +16,7 @@ from panel.config import panel_extension
 from panel.io.document import hold
 from panel.io.state import state
 from panel.layout import Column, FlexBox
-from panel.pane import SVG, Markdown
+from panel.pane import SVG, Image, Markdown
 from panel.util import edit_readonly
 from panel.viewable import (
     Child, Children, Viewable, Viewer,
@@ -50,14 +50,15 @@ from .controls import (
 from .coordinator import Coordinator, Plan, Planner
 from .editors import AnalysisOutput, LumenEditor, SQLEditor
 from .export import export_notebook
-from .llm import (
-    Llm, Message, OpenAI, get_available_llm,
-)
+from .llm import Llm, OpenAI, get_available_llm
 from .llm_dialog import LLMConfigDialog
 from .logs import ChatLogs
 from .models import ErrorDescription
 from .report import ActorTask, Report, Section
-from .utils import log_debug, wrap_logfire
+from .utils import (
+    IMAGE_MIME_TYPES, content_to_text, format_msg_content, log_debug,
+    wrap_logfire,
+)
 from .vector_store import VectorStore
 
 DataT = str | Path | Source | Pipeline
@@ -616,9 +617,10 @@ class UI(Viewer):
 
     @wrap_logfire(span_name="Chat Invoke")
     async def _chat_invoke(
-        self, messages: list[Message], user: str, instance: ChatInterface, context: TContext | None = None
+        self, messages: Any, user: str, instance: ChatInterface, context: TContext | None = None
     ):
-        log_debug(f"New Message: \033[91m{messages!r}\033[0m", show_sep="above")
+        # messages can be anything submitted through chat area input
+        log_debug(f"New Message: \033[91m{format_msg_content(messages)!r}\033[0m", show_sep="above")
         context = self.context if context is None else context
         await self._coordinator.respond(messages, context)
 
@@ -864,14 +866,25 @@ class UI(Viewer):
             # Clear pending query now that it's been captured
             self._pending_query = None
 
-            # Auto-process uploaded files without confirmation dialog
+            # Separate image uploads from data file uploads
+            image_uploads = {}
+            data_uploads = {}
             if uploaded:
+                for filename, file_info in uploaded.items():
+                    ext = Path(filename).suffix.lower()
+                    if ext in IMAGE_MIME_TYPES:
+                        image_uploads[filename] = file_info
+                    else:
+                        data_uploads[filename] = file_info
+
+            # Auto-process data file uploads without confirmation dialog
+            if data_uploads:
                 # Store sources snapshot before processing
                 sources_snapshot = list(self.context.get("sources", []))
 
                 # Generate file cards and process them directly
                 self._upload_controls._generate_file_cards({
-                    key: value["value"] for key, value in uploaded.items()
+                    key: value["value"] for key, value in data_uploads.items()
                 })
 
                 # Process the files
@@ -899,15 +912,34 @@ class UI(Viewer):
                     # Files uploaded but no query - just show success message
                     self._show_upload_success(n_tables, n_metadata)
                     return
-                elif not user_prompt:
-                    # No files processed and no query
+                elif not user_prompt and not image_uploads:
+                    # No files processed, no query, and no images
                     return
+
+            # Build the chat message: include Image panes for display
+            # alongside the text so they appear in the conversation
+            image_panes = []
+            for filename, file_info in image_uploads.items():
+                image_data = file_info["value"]
+                image_panes.append(Image(image_data, alt_text=filename, width=300))
 
             with self.interface.param.update(disabled=True, loading=True), hold():
                 self._update_main_view()
-                self.interface.send(user_prompt, respond=bool(user_prompt))
+                if image_panes:
+                    # Send a Column with text + images so the chat shows both
+                    msg_parts = image_panes.copy()
+                    if user_prompt:
+                        msg_parts.append(user_prompt)
+                    msg = Column(*msg_parts) if len(msg_parts) > 1 else msg_parts[0]
+                    self.interface.send(msg, respond=bool(user_prompt or image_panes))
+                else:
+                    self.interface.send(user_prompt, respond=bool(user_prompt))
                 with edit_readonly(self._chat_input):
-                    self._chat_input.value_input = ""
+                    self._chat_input.param.update(
+                        value_input="",
+                        value_uploaded={},
+                        views=[]
+                    )
 
         # Store as instance variable for access from other methods
         self._on_submit = on_submit
@@ -2534,7 +2566,7 @@ class ExplorerUI(UI):
         user_msg = ""
         for msg in plan.history[::-1]:
             if msg.get("role") == "user":
-                user_msg = msg.get("content")
+                user_msg = content_to_text(msg.get("content", ""))
                 break
 
         response = await self.llm.invoke(
@@ -2558,9 +2590,10 @@ class ExplorerUI(UI):
 
     @wrap_logfire(span_name="Chat Invoke")
     async def _chat_invoke(
-        self, messages: list[Message], user: str, instance: ChatInterface, context: TContext | None = None
+        self, messages: Any, user: str, instance: ChatInterface, context: TContext | None = None
     ):
-        log_debug(f"New Message: \033[91m{messages!r}\033[0m", show_sep="above")
+        # messages can be anything submitted through chat area input
+        log_debug(f"New Message: \033[91m{format_msg_content(messages)!r}\033[0m", show_sep="above")
         self._update_main_view()
         with self._busy():
             exploration = self._exploration['view']

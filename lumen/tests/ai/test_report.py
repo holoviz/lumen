@@ -369,3 +369,26 @@ async def test_report_to_notebook():
 
     assert cell3['cell_type'] == 'markdown'
     assert cell3['source'] == ["**Hello**"]
+
+
+async def test_report_to_html():
+    report = Report(
+        Section(
+            HelloAction()
+        ),
+        title='Hello Report'
+    )
+
+    with pytest.raises(RuntimeError):
+        report.to_html()
+
+    await report.execute()
+
+    assert len(report.views) == 2
+
+    html_string = report.to_html()
+
+    assert isinstance(html_string, str)
+    assert "<html" in html_string.lower()
+    assert "Hello Report" in html_string
+    assert "Hello" in html_string

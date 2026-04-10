@@ -19,7 +19,7 @@ import numpy.core.multiarray
 import param
 import semchunk
 
-from panel import cache as pn_cache
+from panel import cache as pn_cache, state as pn_state
 from tqdm.auto import tqdm
 
 from .actor import PROMPTS_DIR, LLMUser
@@ -1116,9 +1116,21 @@ class DuckDBVectorStore(VectorStore):
         doc="Embeddings object for text processing. If None and a URI is provided, loads from the database; else NumpyEmbeddings.",
     )
 
+    # Class-level registry of connections by URI. Used to close stale
+    # connections on reload (e.g. Panel hot-reload) so the file handle is
+    # released and a fresh ATTACH can succeed.
+    _uri_connections: t.ClassVar[dict[str, duckdb.DuckDBPyConnection]] = {}
+
     def __init__(self, **params):
         super().__init__(**params)
         self._add_items_lock = asyncio.Lock()
+
+        # Reuse existing connection for this URI if still open
+        # (e.g. on Panel hot-reload within the same process).
+        if self.uri != ":memory:" and self.uri in DuckDBVectorStore._uri_connections:
+            self.connection = DuckDBVectorStore._uri_connections[self.uri]
+            self._resolve_state()
+            return
 
         connection = duckdb.connect(":memory:")
         # following the instructions from
@@ -1133,29 +1145,23 @@ class DuckDBVectorStore(VectorStore):
             if self.embeddings is None:
                 self.embeddings = NumpyEmbeddings()
             return
-        uri_exists = Path(self.uri).exists()
-        try:
-            attach_mode = "READ_ONLY" if self.read_only else "READ_WRITE"
-            connection.execute(f"ATTACH DATABASE '{self.uri}' AS embedded ({attach_mode});")
-        except duckdb.CatalogException:
-            # handle "Failure while replaying WAL file"
-            # remove .wal uri on corruption
-            wal_path = Path(str(self.uri) + ".wal")
-            if wal_path.exists():
-                wal_path.unlink()
-            attach_mode = "READ_ONLY" if self.read_only else "READ_WRITE"
-            connection.execute(f"ATTACH DATABASE '{self.uri}' AS embedded ({attach_mode});")
+
+        attach_mode = "READ_ONLY" if self.read_only else "READ_WRITE"
+        connection.execute(f"ATTACH DATABASE '{self.uri}' AS embedded ({attach_mode});")
         connection.execute("USE embedded;")
-        self.connection = connection
-        has_documents = (
-            connection.execute(
+        DuckDBVectorStore._uri_connections[self.uri] = self.connection = connection
+        pn_state.on_session_destroyed(lambda session_context: self.close())
+        self._resolve_state()
+
+    def _resolve_state(self):
+        """Set _initialized and resolve embeddings from the active connection."""
+        self._initialized = (
+            self.connection.execute(
                 "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'documents';"
             ).fetchone()[0]
             > 0
-        )
-        self._initialized = uri_exists and has_documents
-
-        if self.uri != ":memory:" and self._initialized:
+        ) and Path(self.uri).exists()
+        if self._initialized:
             config = self._get_embeddings_config()
             if config and self.embeddings is None:
                 module_name, class_name = config["class"].rsplit(".", 1)
@@ -1164,7 +1170,6 @@ class DuckDBVectorStore(VectorStore):
                 self.embeddings = embedding_class(**config["params"])
                 log_debug(f"Loaded embeddings {class_name} from database.")
             self._check_embeddings_consistency()
-
         if self.embeddings is None:
             self.embeddings = NumpyEmbeddings()
 
@@ -1660,6 +1665,7 @@ class DuckDBVectorStore(VectorStore):
         if self.connection:
             self.connection.close()
             self.connection = None
+        DuckDBVectorStore._uri_connections.pop(self.uri, None)
 
 
 class ChromaDBVectorStore(VectorStore):

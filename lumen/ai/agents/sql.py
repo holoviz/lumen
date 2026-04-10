@@ -326,6 +326,8 @@ class SQLAgent(BaseLumenAgent):
         """Execute SQL query and return pipeline and summary."""
         # Create SQL source
         source_tables = source.tables if source.tables is not None else {}
+        if isinstance(source_tables, list):
+            source_tables = {t: source.get_sql_expr(t) for t in source_tables}
         table_defs = {table: source_tables[table] for table in tables if table in source_tables}
         table_defs[expr_slug] = sql_query
 

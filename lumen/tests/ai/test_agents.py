@@ -72,7 +72,7 @@ async def test_chat_agent_with_data(llm, duckdb_source, test_messages):
     out, out_context = await agent.respond(test_messages, context)
     assert len(out) == 1
     assert out[0].object == "Analysis of data"
-    assert out_context == {}
+    assert out_context == {'chat': 'Analysis of data'}
 
 async def test_sql_agent(llm, duckdb_source, test_messages):
     agent = SQLAgent(llm=llm)

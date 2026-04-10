@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import difflib
 import functools
 import html
@@ -26,6 +27,7 @@ import param
 import sqlglot
 import yaml
 
+from instructor import Image
 from jinja2 import (
     ChoiceLoader, DictLoader, Environment, FileSystemLoader, StrictUndefined,
     nodes,
@@ -50,6 +52,17 @@ if TYPE_CHECKING:
     from .models import (
         DeleteLine, InsertLine, LineEdit, ReplaceLine,
     )
+
+
+IMAGE_MIME_TYPES = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.svg': 'image/svg+xml',
+    '.bmp': 'image/bmp',
+}
 
 
 def format_float(num):
@@ -107,7 +120,9 @@ def fuse_messages(messages: list[dict], max_user_messages: int = 2) -> list[dict
     if not history_messages:
         return [last_user_message] if user_indices else []
     formatted_history = "\n\n".join(
-        f"{msg['role'].capitalize()}: {msg['content']}" for msg in history_messages if msg['content'].strip()
+        f"{msg['role'].capitalize()}: {content_to_text(msg['content'])}"
+        for msg in history_messages
+        if content_to_text(msg['content']).strip()
     )
     system_prompt = {
         "role": "system",
@@ -781,7 +796,38 @@ def stream_details(content: Any, step: Any, title: str = "Expand for details", a
     return content
 
 
-def log_debug(msg: str | list, offset: int = 24, prefix: str = "", suffix: str = "", show_sep: Literal["above", "below"] | None = None, show_length: bool = False):
+def format_msg_content(content: Any) -> str:
+    """
+    Format a message content field for logging.
+
+    Handles plain strings, multimodal lists (text + images), and
+    arbitrary objects.  Non-string items are represented as compact
+    ``Type[id]`` placeholders so that base64 blobs never flood logs.
+
+    Parameters
+    ----------
+    content : Any
+        The message content — a string, a list of mixed items, or any object.
+
+    Returns
+    -------
+    str
+        A human-readable, log-safe representation of the content.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            else:
+                parts.append(f"<{type(item).__name__}[{id(item)}]>")
+        return " + ".join(parts)
+    return f"<{type(content).__name__}[{id(content)}]>"
+
+
+def log_debug(msg: Any, offset: int = 24, prefix: str = "", suffix: str = "", show_sep: Literal["above", "below"] | None = None, show_length: bool = False):
     """
     Log a debug message with a separator line above and below.
     """
@@ -793,9 +839,11 @@ def log_debug(msg: str | list, offset: int = 24, prefix: str = "", suffix: str =
     if prefix:
         log.debug(prefix)
 
-    if isinstance(msg, list):
+    if not isinstance(msg, (str, list)):
+        log_debug(format_msg_content(msg))
+    elif isinstance(msg, list):
         for m in msg:
-            log.debug(m)
+            log.debug(m if isinstance(m, str) else format_msg_content(m))
     else:
         log.debug(msg)
     if show_length:
@@ -814,7 +862,7 @@ def mutate_user_message(content: str, messages: list[dict[str, str]], suffix: bo
     new = []
     for message in messages[::-1]:
         if message["role"] == "user" and not mutated:
-            user_message = message["content"]
+            user_message = content_to_text(message["content"])
             if isinstance(wrap, bool):
                 user_message = f"{user_message!r}"
             elif isinstance(wrap, str):
@@ -824,12 +872,15 @@ def mutate_user_message(content: str, messages: list[dict[str, str]], suffix: bo
                 user_message += " " + content
             else:
                 user_message = content + user_message
+
+            final_content = set_content_text(user_message, message["content"])
+
             mutated = True
             if inplace:
-                message["content"] = user_message
+                message["content"] = final_content
                 break
             else:
-                message = dict(message, content=user_message)
+                message = dict(message, content=final_content)
         new.append(message)
     return messages if inplace else new[::-1]
 
@@ -1160,6 +1211,99 @@ def normalized_name(inst: param.Parameterized):
 def set_nested(data, keys, value):
     """Set nested dictionary value"""
     reduce(getitem, keys[:-1], data)[keys[-1]] = value
+
+
+def content_to_text(content: Any) -> str:
+    """
+    Extract the text portion from a message content field.
+
+    Handles both plain string content and multimodal content lists
+    (e.g. containing both text strings and image objects). Returns
+    just the concatenated text parts.
+
+    Parameters
+    ----------
+    content : str | list
+        The message content — either a plain string or a list of
+        mixed content items (strings, Image objects, etc.).
+
+    Returns
+    -------
+    str
+        The extracted text content.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return '\n'.join(
+            item for item in content if isinstance(item, str)
+        )
+    # if it's neither a str nor list, it's an object type, like image bytes
+    return ''
+
+
+def set_content_text(new_text: str, content: str | list) -> str | list:
+    """
+    Return a new content value with the text part replaced by *new_text*,
+    preserving any non-text items (e.g. images) in a multimodal list.
+
+    Parameters
+    ----------
+    new_text : str
+        The replacement text.
+    content : str | list
+        The original message content — either a plain string or a
+        multimodal list of strings and other objects.
+
+    Returns
+    -------
+    str | list
+        *new_text* when content is a plain string, or
+        ``[new_text, *non_text_items]`` when non-text items exist,
+        or *new_text* when the list contained only strings.
+    """
+    if isinstance(content, list):
+        non_text = [item for item in content if not isinstance(item, str)]
+        return [new_text] + non_text if non_text else new_text
+    return new_text
+
+
+def serialize_image_content(
+    filename: str, data: bytes, mime_type: str | None = None
+) -> Any | None:
+    """
+    Build an ``instructor.Image`` payload from raw image bytes.
+
+    Returns ``None`` if the file extension is not a recognised image
+    type or if the ``instructor`` library is unavailable.
+
+    Parameters
+    ----------
+    filename : str
+        Original filename — used to determine the MIME type when
+        *mime_type* is not given.
+    data : bytes
+        Raw image bytes.
+    mime_type : str | None
+        Explicit MIME type.  Inferred from *filename* when ``None``.
+
+    Returns
+    -------
+    instructor.Image | None
+        An instructor Image object ready to be included in a message
+        content list, or ``None`` when the input is not an image.
+    """
+    ext = Path(filename).suffix.lower()
+    if mime_type is None:
+        mime_type = IMAGE_MIME_TYPES.get(ext)
+    if mime_type is None or not mime_type.startswith('image/'):
+        return None
+
+    if Image is None:
+        return None
+
+    b64 = base64.b64encode(data).decode('utf-8')
+    return Image.from_raw_base64(b64)
 
 
 def sanitize_column_names(df: pd.DataFrame) -> pd.DataFrame:
