@@ -200,7 +200,7 @@ def make_browse_data_catalog_tool(metaset: Metaset) -> FunctionTool:
         browse_data_catalog,
         purpose=(
             "Browse available table slugs via Metaset.table_list (paginated). "
-            "Use before choosing final tables; does not include per-column SQL types."
+            "Use before choosing final tables; does not include per-column SQL types or documentation text."
         ),
     )
 
@@ -227,23 +227,29 @@ def make_load_table_schemas_tool(metaset: Metaset) -> FunctionTool:
                 result[raw] = {"error": f"Unknown table slug {raw!r} (not in catalog)."}
                 continue
             block: dict[str, t.Any] = {}
-            if entry.columns:
-                block["catalog_columns"] = [
-                    {"name": c.name, "description": c.description}
-                    for c in entry.columns
-                ]
             live = await metaset.get_schema(slug)
             if live:
                 block["row_count"] = live.get("__len__")
-                block["source_schema"] = {
-                    k: v for k, v in live.items() if k != "__len__"
-                }
-            elif not entry.columns:
-                block["note"] = "No catalog columns and no live schema could be loaded for this table."
+                schema = {}
+                col_info = {col.name: col for col in entry.columns}
+                for k, v in live.items():
+                    if k == "__len__":
+                        continue
+                    col = col_info.get(k, {})
+                    if col.description:
+                        schema[k] = dict(col.description, **v)
+                    else:
+                        schema[k] = v
+                block["schema"] = schema
+            elif entry.columns and any(c.description for c in entry.columns):
+                block["columns"] = [
+                    {"name": c.name, "description": c.description}
+                    for c in entry.columns
+                ]
+            elif entry.columns:
+                block["catalog_columns"] = [c.name for c in entry.columns]
             else:
-                block["note"] = (
-                    "Catalog metadata only; live SQL schema was not available (no source or introspection failed)."
-                )
+                block["note"] = "No catalog columns and no live schema could be loaded for this table."
             result[slug] = block
         text = yaml.dump(result, default_flow_style=False, allow_unicode=True, sort_keys=False)
         if len(text) > 12000:
