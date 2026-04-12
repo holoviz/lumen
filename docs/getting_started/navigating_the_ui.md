@@ -106,8 +106,6 @@ Use **Settings** in the left sidebar to configure analysis behavior:
 
 **Chain of Thought** — Shows [reasoning steps](using_lumen_ai.md#understand-the-ais-reasoning) (disabled by default)
 
-**SQL Planning** — AI plans queries before executing (disabled by default)
-
 **Validation Step** — AI validates results for correctness (enabled by default)
 
 **Code Execution** — If enabled by administrator, controls how visualizations are generated. See [Code Execution for Visualizations](using_lumen_ai.md#code-execution-for-visualizations) for security implications.
