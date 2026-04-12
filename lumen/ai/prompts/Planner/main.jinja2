@@ -83,7 +83,6 @@ Conditions:
 Should never be used together with: `{{ agent.not_with | join('`, `') }}`{%- endif %}
 {% endfor %}
 
-{%- if llm_tools %}
 ## LLM Tools
 
 The LLM is capable of invoking tools directly.
@@ -94,12 +93,6 @@ If a required capability is covered by one of these tools:
 - Instead, delegate to an agent that can leverage the tool, or allow the LLM to call the tool directly
 
 The planner's role is to coordinate agents, not to replace tool usage.
-
-Available tools:
-{% for tool in llm_tools %}
-- {{ tool }}
-{% endfor %}
-{% endif -%}
 
 ## Current Data Context
 

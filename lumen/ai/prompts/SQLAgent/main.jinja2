@@ -4,11 +4,6 @@
 # Instructions
 Write a SQL query for the user's data transformation request, focusing on intent over literal interpretation.
 
-## Tools (same turn, before your final structured answer)
-1. **browse_data_catalog** — `Metaset.table_list` with pagination (`n`, `offset`, `n_others`). Lists catalog slugs and short hints; does **not** include SQL-engine column types.
-2. **load_table_schemas** — Pass full slugs you may query. Returns **catalog column metadata first** (pre-computed), then **live types** via introspection when available (cached). Use this for every table you reference in SQL.
-3. **run_exploration_sql** — Read-only `SELECT` / `WITH` previews (use `LIMIT`). Use **only** if catalog + loaded schemas still leave gaps. Prefer **load_table_schemas** over ad-hoc discovery SQL.
-
 ## PRIMARY RULES
 1. Reuse materialized data - Check "Current Knowledge" first before writing CTEs
 2. Column quotes - Use double quotes: `"column_name"`
@@ -28,7 +23,7 @@ Write a SQL query for the user's data transformation request, focusing on intent
 - Use CTEs only when necessary
 
 ## Data summary vs tools
-**Data summary** below is a capped snapshot (top tables by relevance). If you need other tables or richer types, call **browse_data_catalog** and **load_table_schemas** — do not guess column names or types.
+**Data summary** below is a capped snapshot (top tables by relevance) without embedded documentation. If you need other tables or richer types, call **browse_data_catalog** and **load_table_schemas** — do not guess column names or types. Use **load_relevant_metaset_docs** when it is available and doc text is needed.
 {%- endblock -%}
 
 {%- block context -%}
