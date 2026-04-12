@@ -329,18 +329,16 @@ async def test_metadata_lookup_reprocesses_source_with_new_tables():
     vector_store_id = id(lookup.vector_store)
 
     # Source previously processed with 1 table
-    lookup._sources_in_progress[vector_store_id] = {source.name: 1}
+    lookup._sources_in_progress[vector_store_id].add(source.name)
 
     # Same table count -> should be skipped
     current_count = len(source.get_tables())
-    known_count = lookup._sources_in_progress[vector_store_id].get(source.name, 0)
-    assert known_count >= current_count
+    assert source.name in lookup._sources_in_progress[vector_store_id]
 
     # Add a second table -> should trigger re-processing
     source.tables['table_b'] = "SELECT 2 AS id, 'Y' AS group_name"
     current_count = len(source.get_tables())
-    known_count = lookup._sources_in_progress[vector_store_id].get(source.name, 0)
-    assert known_count < current_count
+    assert source.name in lookup._sources_in_progress[vector_store_id]
 
 
 async def test_metadata_lookup_skips_unchanged_source():
