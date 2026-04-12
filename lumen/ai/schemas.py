@@ -174,7 +174,7 @@ class Metaset:
             if catalog_entry.created_order == max_order:
                 data['latest'] = True
 
-        if not catalog_entry.columns:
+        if not (catalog_entry.columns and (include_columns or include_schema)):
             return data
 
         data['columns'] = cols = self._build_columns_data(
