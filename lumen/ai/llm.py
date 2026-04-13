@@ -983,7 +983,7 @@ class OpenAI(Llm, OpenAIMixin):
     An LLM implementation using the OpenAI cloud.
     """
 
-    api = param.Selector(default="responses", objects=["chat_completions", "responses"], doc="""
+    api = param.Selector(default="chat_completions", objects=["chat_completions", "responses"], doc="""
         OpenAI API primitive to use.
         - ``chat_completions``: Uses ``/v1/chat/completions`` (default)
         - ``responses``: Uses ``/v1/responses``""")
