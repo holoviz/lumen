@@ -983,6 +983,11 @@ class OpenAI(Llm, OpenAIMixin):
     An LLM implementation using the OpenAI cloud.
     """
 
+    api = param.Selector(default="chat_completions", objects=["chat_completions", "responses"], doc="""
+        OpenAI API primitive to use.
+        - ``chat_completions``: Uses ``/v1/chat/completions`` (default)
+        - ``responses``: Uses ``/v1/responses``""")
+
     display_name = param.String(default="OpenAI", constant=True)
 
     mode = param.Selector(default=Mode.TOOLS)
@@ -1005,6 +1010,49 @@ class OpenAI(Llm, OpenAIMixin):
 
     _supports_logfire = True
 
+    @classmethod
+    def _resolve_openai_mode(cls, mode: Mode) -> Mode:
+        if mode in (Mode.RESPONSES_TOOLS, Mode.RESPONSES_TOOLS_WITH_INBUILT_TOOLS):
+            return mode
+        return Mode.RESPONSES_TOOLS
+
+    @classmethod
+    def _transform_responses_tools(cls, tools: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
+        if not tools:
+            return tools
+        transformed: list[dict[str, Any]] = []
+        for tool in tools:
+            if (
+                isinstance(tool, dict)
+                and tool.get("type") == "function"
+                and isinstance(tool.get("function"), dict)
+            ):
+                # Chat Completions format -> Responses format
+                function = tool["function"]
+                transformed.append({
+                    "type": "function",
+                    "name": function.get("name"),
+                    "description": function.get("description", ""),
+                    "parameters": function.get("parameters", {}),
+                })
+            else:
+                transformed.append(tool)
+        return transformed
+
+    @classmethod
+    def _tool_messages_to_response_inputs(cls, tool_messages: list[Message]) -> list[dict[str, Any]]:
+        inputs: list[dict[str, Any]] = []
+        for message in tool_messages:
+            call_id = message.get("tool_call_id")
+            if not call_id:
+                continue
+            inputs.append({
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": message["content"],
+            })
+        return inputs
+
     def models(self) -> set[str]:
         """Return the set of available model identifiers from OpenAI."""
         client = OpenAIClient(api_key=self.api_key, timeout=5)
@@ -1025,7 +1073,14 @@ class OpenAI(Llm, OpenAIMixin):
             self._logfire.instrument_openai(client)
         return client
 
+    def _get_completion_method(self) -> Callable:
+        if self.api == "responses":
+            return self._base_client.responses.create
+        return super()._get_completion_method()
+
     def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
+        if self.api == "responses":
+            mode = self._resolve_openai_mode(mode)
         if self.interceptor:
             self.interceptor.patch_client(base_client, mode="store_inputs")
         wrapped = instructor.from_openai(base_client, mode=mode)
@@ -1033,15 +1088,206 @@ class OpenAI(Llm, OpenAIMixin):
             self.interceptor.patch_client_response(wrapped)
         return wrapped
 
-    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
+    @classmethod
+    def _get_content(cls, response) -> str | BaseModel:
+        if hasattr(response, "output_text"):
+            return response.output_text or ""
+        return super()._get_content(response)
+
+    @classmethod
+    def _get_delta(cls, chunk) -> str:
+        event_type = getattr(chunk, "type", None)
+        if event_type == "response.output_text.delta":
+            return getattr(chunk, "delta", "") or ""
+        if isinstance(chunk, dict):
+            if chunk.get("type") == "response.output_text.delta":
+                return chunk.get("delta") or ""
+        return super()._get_delta(chunk)
+
+    @classmethod
+    def _extract_tool_calls(cls, response: Any) -> list[Any]:
+        output_items = getattr(response, "output", None)
+        if output_items is None and isinstance(response, dict):
+            output_items = response.get("output")
+        if output_items:
+            tool_calls: list[dict[str, Any]] = []
+            for item in output_items:
+                item_type = item.get("type") if isinstance(item, dict) else getattr(item, "type", None)
+                if item_type != "function_call":
+                    continue
+                call_id = item.get("call_id") if isinstance(item, dict) else getattr(item, "call_id", None)
+                name = item.get("name") if isinstance(item, dict) else getattr(item, "name", None)
+                arguments = item.get("arguments") if isinstance(item, dict) else getattr(item, "arguments", "")
+                tool_calls.append({
+                    "id": call_id,
+                    "type": "function",
+                    "function": {"name": name, "arguments": arguments or ""},
+                })
+            if tool_calls:
+                return tool_calls
+        return super()._extract_tool_calls(response)
+
+    @classmethod
+    def _extract_stream_tool_calls(cls, chunk: Any) -> list[dict[str, Any]]:
+        event_type = getattr(chunk, "type", None)
+        if event_type is None and isinstance(chunk, dict):
+            event_type = chunk.get("type")
+
+        if event_type == "response.output_item.added":
+            item = getattr(chunk, "item", None)
+            output_index = getattr(chunk, "output_index", 0)
+            if item is not None and getattr(item, "type", None) == "function_call":
+                return [{
+                    "index": output_index,
+                    "id": getattr(item, "call_id", None),
+                    "type": "function",
+                    "function": {"name": getattr(item, "name", None), "arguments": ""},
+                }]
+        elif event_type == "response.function_call_arguments.delta":
+            return [{
+                "index": getattr(chunk, "output_index", 0),
+                "type": "function",
+                "function": {"name": None, "arguments": getattr(chunk, "delta", "") or ""},
+            }]
+        elif event_type == "response.function_call_arguments.done":
+            return [{
+                "index": getattr(chunk, "output_index", 0),
+                "id": getattr(chunk, "item_id", None),
+                "type": "function",
+                "function": {
+                    "name": getattr(chunk, "name", None),
+                    "arguments": getattr(chunk, "arguments", "") or "",
+                },
+            }]
+
+        if isinstance(chunk, dict):
+            if chunk.get("type") == "response.output_item.added":
+                item = chunk.get("item") or {}
+                if item.get("type") == "function_call":
+                    return [{
+                        "index": chunk.get("output_index", 0),
+                        "id": item.get("call_id"),
+                        "type": "function",
+                        "function": {"name": item.get("name"), "arguments": ""},
+                    }]
+            elif chunk.get("type") == "response.function_call_arguments.delta":
+                return [{
+                    "index": chunk.get("output_index", 0),
+                    "type": "function",
+                    "function": {"name": None, "arguments": chunk.get("delta") or ""},
+                }]
+            elif chunk.get("type") == "response.function_call_arguments.done":
+                return [{
+                    "index": chunk.get("output_index", 0),
+                    "id": chunk.get("item_id"),
+                    "type": "function",
+                    "function": {
+                        "name": chunk.get("name"),
+                        "arguments": chunk.get("arguments") or "",
+                    },
+                }]
+
+        return super()._extract_stream_tool_calls(chunk)
+
+    async def _run_tool_loop(
+        self,
+        messages: list[Message],
+        structured_model: type[BaseModel] | None,
+        tool_instances: dict,
+        tool_contexts: dict,
+        model_spec: str | dict = "default",
+        max_tool_rounds: int = 16,
+        **kwargs
+    ) -> BaseModel | str:
+        if self.api != "responses":
+            return await super()._run_tool_loop(
+                messages, structured_model, tool_instances, tool_contexts, model_spec, max_tool_rounds, **kwargs
+            )
+
+        if structured_model is not None and not tool_instances:
+            kwargs["response_model"] = structured_model
+        else:
+            kwargs.pop("response_model", None)
+
+        output = await self.run_client(model_spec, messages, **kwargs)
+        if not tool_instances:
+            return output
+
+        for _ in range(max_tool_rounds):
+            tool_calls = self._extract_tool_calls(output)
+            if not tool_calls:
+                break
+            tool_messages = await self._run_tool_calls(
+                tool_instances, tool_calls, tool_contexts, messages
+            )
+            if not tool_messages:
+                break
+            tool_outputs = self._tool_messages_to_response_inputs(tool_messages)
+            if not tool_outputs:
+                break
+            next_kwargs = dict(kwargs)
+            response_id = getattr(output, "id", None)
+            if response_id:
+                next_kwargs["previous_response_id"] = response_id
+            output = await self.run_client(model_spec, tool_outputs, **next_kwargs)
+
+        if structured_model:
+            final_kwargs = dict(kwargs)
+            final_kwargs["response_model"] = structured_model
+            response_id = getattr(output, "id", None)
+            if response_id:
+                final_kwargs["previous_response_id"] = response_id
+            output = await self.run_client(model_spec, [], **final_kwargs)
+        return output
+
+    async def get_client(self, model_spec: str | dict, response_model: type[BaseModel] | None = None, **kwargs):
         model_kwargs = self._get_model_kwargs(model_spec)
         model = model_kwargs.pop("model")
         log_debug(f"LLM Model: \033[96m{model!r}\033[0m")
-        model_kwargs["mode"] = model_kwargs.pop("mode", self.mode)
+        mode = model_kwargs.pop("mode", self.mode)
 
-        client_callable = self._get_cached_client(response_model, model=model, **model_kwargs)
+        if self.api == "responses":
+            if self._base_client is None:
+                self._base_client = self._create_base_client(**model_kwargs)
+            if response_model:
+                mode = self._resolve_openai_mode(mode)
+                if mode not in self._instructor_clients:
+                    self._instructor_clients[mode] = self._create_instructor_client(self._base_client, mode)
+                client = self._instructor_clients[mode]
+                client_callable = partial(client.responses.create, model=model, **self._get_create_kwargs(response_model))
+            else:
+                client_callable = partial(self._base_client.responses.create, model=model, **self._get_create_kwargs(response_model))
+        else:
+            model_kwargs["mode"] = mode
+            client_callable = self._get_cached_client(response_model, model=model, **model_kwargs)
+
         # Add timeout to the partial
         return partial(client_callable.func, *client_callable.args, timeout=self.timeout, **client_callable.keywords)
+
+    async def run_client(self, model_spec: str | dict, messages: list[Message] | list[dict[str, Any]], **kwargs):
+        if self.api == "responses":
+            log_debug(f"Input messages: \033[95m{len(messages)} messages\033[0m including system")
+            for i, message in enumerate(messages):
+                role = message.get("role") if isinstance(message, dict) else None
+                content = message.get("content") if isinstance(message, dict) else None
+                if role == "system":
+                    continue
+                if role in ("user", "assistant", "tool"):
+                    role_char = "u" if role == "user" else "a"
+                    log_debug(f"Message \033[95m{i} ({role_char})\033[0m: {format_msg_content(content)}")
+                else:
+                    item_type = message.get("type") if isinstance(message, dict) else type(message).__name__
+                    log_debug(f"Message \033[95m{i}\033[0m: [{item_type}] {truncate_string(str(message), max_length=2000)}")
+
+            if kwargs.get("tools"):
+                kwargs = dict(kwargs)
+                kwargs["tools"] = self._transform_responses_tools(kwargs.get("tools"))
+            client = await self.get_client(model_spec, **kwargs)
+            result = await client(input=messages, **kwargs)
+            log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
+            return result
+
+        return await super().run_client(model_spec, messages, **kwargs)
 
 
 class AzureOpenAI(Llm, AzureOpenAIMixin):
