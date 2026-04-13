@@ -4,15 +4,14 @@ from .explain import ExplainControls
 from .explorer import TableExplorer
 from .ingest import (
     METADATA_EXTENSIONS, METADATA_FILENAME_PATTERNS, TABLE_EXTENSIONS,
-    APISourceControls, BaseSourceControls, CatalogSourceControls,
-    CodeSourceControls, DownloadConfig, DownloadSourceControls,
-    FileSourceControls, ParametricSourceControls, SourceResult,
-    UploadedFileRow, UploadSourceControls, URLSourceControls, download_file,
+    BaseSourceControls, CatalogSourceControls, CodeSourceControls,
+    DownloadConfig, DownloadSourceControls, FileSourceControls,
+    ParametricSourceControls, SourceResult, UploadedFileRow,
+    UploadSourceControls, URLSourceControls, download_file,
 )
 from .revision import AnnotationControls, RetryControls, RevisionControls
 
 __all__ = (
-    "APISourceControls",
     "METADATA_EXTENSIONS",
     "METADATA_FILENAME_PATTERNS",
     "TABLE_EXTENSIONS",

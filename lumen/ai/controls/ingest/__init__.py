@@ -1,7 +1,6 @@
-from .api_source import APISourceControls
 from .base import BaseSourceControls, FileSourceControls
 from .catalog import CatalogSourceControls
-from .code_source import CodeSourceControls
+from .code import CodeSourceControls
 from .constants import (
     METADATA_EXTENSIONS, METADATA_FILENAME_PATTERNS, TABLE_EXTENSIONS,
     DownloadConfig,
@@ -11,11 +10,10 @@ from .file_row import UploadedFileRow
 from .parametric import ParametricSourceControls
 from .result import SourceResult
 from .upload import UploadSourceControls
-from .url_source import URLSourceControls
+from .url import URLSourceControls
 from .utils import download_file
 
 __all__ = (
-    "APISourceControls",
     "METADATA_EXTENSIONS",
     "METADATA_FILENAME_PATTERNS",
     "TABLE_EXTENSIONS",
