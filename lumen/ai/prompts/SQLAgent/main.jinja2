@@ -22,23 +22,14 @@ Write a SQL query for the user's data transformation request, focusing on intent
 - No inline comments in SQL code
 - Use CTEs only when necessary
 
-{% if not is_final_step -%}
-## Discovery Mode
-- LIMIT 100 for exploration only
-- One table at a time, no UNION
-- Entity search: Use multiple ILIKE patterns with variations
-- Format variation checking: underscores vs spaces using ILIKE
-{% endif %}
-
-## Requesting Additional Schemas
-You can ONLY write queries using tables shown below with schema overviews.
-Tables listed under "Others available" do NOT have their schemas loaded yet - if you need them, a prior step will select them.
+## Data summary vs tools
+**Data summary** below is a capped snapshot (top tables by relevance) without embedded documentation. If you need other tables or richer types, call **browse_data_catalog** and **load_table_schemas** — do not guess column names or types. Use **load_relevant_metaset_docs** when it is available and doc text is needed.
 {%- endblock -%}
 
 {%- block context -%}
 {%- if memory.get('metaset') %}
 ### Data summary
-{{ memory["metaset"].compact_context(n_others=17, include_lineage=True) }}
+{{ memory["metaset"].compact_context(n=12, n_others=25, include_lineage=True) }}
 {%- endif %}
 
 {%- if 'sql' in memory %}
@@ -74,13 +65,6 @@ Step {{ step_number }}: {{ current_step }}
 {{ sql_plan_context }}
 
 Use materialized tables above instead of rebuilding CTEs
-{%- endif %}
-
-{% if discovery_context %}
-## Discovery Results
-{{ discovery_context }}
-
-Use the ACTUAL values from discoveries above - don't assume or guess!
 {%- endif %}
 {% endblock %}
 
