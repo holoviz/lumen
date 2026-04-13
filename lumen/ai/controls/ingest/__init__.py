@@ -1,3 +1,4 @@
+from .api import OpenAPISourceControls, RESTAPISourceControls
 from .base import BaseSourceControls, FileSourceControls
 from .catalog import CatalogSourceControls
 from .code import CodeSourceControls
@@ -23,7 +24,9 @@ __all__ = (
     "DownloadConfig",
     "DownloadSourceControls",
     "FileSourceControls",
+    "OpenAPISourceControls",
     "ParametricSourceControls",
+    "RESTAPISourceControls",
     "SourceResult",
     "URLSourceControls",
     "UploadSourceControls",
