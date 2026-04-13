@@ -40,7 +40,7 @@ class URLSourceControls(ParametricSourceControls):
 
     label = '<span class="material-icons" style="vertical-align: middle;">link</span> URL Data Source'
 
-    async def _fetch_data(self, **params) -> SourceResult:
+    async def _fetch_data(self, action_name: str, **params) -> SourceResult:
         try:
             url = self.url_template.format(**params)
         except KeyError as e:
