@@ -1,4 +1,3 @@
-from .api import OpenAPISourceControls, RESTAPISourceControls
 from .base import BaseSourceControls, FileSourceControls
 from .catalog import CatalogSourceControls
 from .code import CodeSourceControls
@@ -8,7 +7,9 @@ from .constants import (
 )
 from .download import DownloadSourceControls
 from .file_row import UploadedFileRow
+from .open_api import OpenAPISourceControls
 from .parametric import ParametricSourceControls
+from .rest_api import RESTAPISourceControls
 from .result import SourceResult
 from .upload import UploadSourceControls
 from .url import URLSourceControls

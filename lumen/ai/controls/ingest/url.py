@@ -17,6 +17,7 @@ from .utils import download_file
 # URL SOURCE CONTROLS
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class URLSourceControls(ParametricSourceControls):
     """
     Parametric controls where parameter values are interpolated into a URL
@@ -93,22 +94,27 @@ class URLSourceControls(ParametricSourceControls):
         """Parse file bytes into a DataFrame based on file extension."""
         if suffix == "csv":
             return pd.read_csv(file_obj, parse_dates=True, sep=None, engine="python")
-        elif suffix in ("parq", "parquet"):
+        if suffix in ("parq", "parquet"):
             return pd.read_parquet(file_obj)
-        elif suffix == "json":
-            content = file_obj.read()
-            if isinstance(content, bytes):
-                content = content.decode("utf-8")
-            data = json.loads(content)
-            if isinstance(data, list):
-                return pd.json_normalize(data)
-            elif isinstance(data, dict):
-                for key in ("data", "records", "rows", "items", "results"):
-                    if key in data and isinstance(data[key], list):
-                        return pd.json_normalize(data[key])
-                return pd.DataFrame([data])
-            raise ValueError(f"Unsupported JSON root type: {type(data).__name__}")
-        elif suffix == "xlsx":
+        if suffix == "json":
+            return self._read_json_content(file_obj)
+        if suffix == "xlsx":
             return pd.read_excel(file_obj, sheet_name=card.sheet)
-        else:
-            raise ValueError(f"Unsupported file extension: {suffix!r}")
+        raise ValueError(f"Unsupported file extension: {suffix!r}")
+
+    @staticmethod
+    def _read_json_content(file_obj) -> pd.DataFrame:
+        """Parse JSON bytes into a DataFrame."""
+        content = file_obj.read()
+        if isinstance(content, bytes):
+            content = content.decode("utf-8")
+        data = json.loads(content)
+
+        if isinstance(data, list):
+            return pd.json_normalize(data)
+        if isinstance(data, dict):
+            for key in ("data", "records", "rows", "items", "results"):
+                if key in data and isinstance(data[key], list):
+                    return pd.json_normalize(data[key])
+            return pd.DataFrame([data])
+        raise ValueError(f"Unsupported JSON root type: {type(data).__name__}")

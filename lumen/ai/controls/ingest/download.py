@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 
+from urllib.parse import urlparse
+
 import param
 
 from panel_material_ui import (
@@ -89,12 +91,12 @@ class DownloadSourceControls(FileSourceControls):
         self.progress.clear()
         self._active_download_task = None
 
-    def _is_valid_url(self, url: str) -> bool:
+    @staticmethod
+    def _is_valid_url(url: str) -> bool:
         """Basic URL validation."""
-        from urllib.parse import urlparse
         try:
             result = urlparse(url.strip())
-            return all([result.scheme, result.netloc])
+            return bool(result.scheme and result.netloc)
         except Exception:
             return False
 
@@ -108,9 +110,8 @@ class DownloadSourceControls(FileSourceControls):
         if not url_text:
             return
 
-        urls = [line.strip() for line in url_text.split('\n') if line.strip()]
+        urls = [line.strip() for line in url_text.split("\n") if line.strip()]
         valid_urls = [url for url in urls if self._is_valid_url(url)]
-
         if not valid_urls:
             return
 
@@ -200,4 +201,4 @@ class DownloadSourceControls(FileSourceControls):
         self._count += 1
 
         if (n_tables + n_docs + n_metadata) > 0:
-            self.param.trigger('upload_successful')
+            self.param.trigger("upload_successful")

@@ -20,6 +20,7 @@ from .constants import TABLE_EXTENSIONS
 from .file_row import UploadedFileRow
 from .progress import Progress
 from .result import SourceResult
+from .utils import format_bytes
 
 # ─────────────────────────────────────────────────────────────────────────────
 # BASE SOURCE CONTROLS
@@ -558,12 +559,10 @@ class FileSourceControls(BaseSourceControls):
         log_debug(f"Processed files: {n_tables} tables, {n_metadata} metadata files")
         return n_tables, 0, n_metadata
 
-    def _format_bytes(self, bytes_size: int) -> str:
-        if bytes_size == 0:
-            return "0 B"
-        size_names = ["B", "KB", "MB", "GB", "TB"]
-        i = 0
-        while bytes_size >= 1024 and i < len(size_names) - 1:
-            bytes_size /= 1024.0
-            i += 1
-        return f"{bytes_size:.1f} {size_names[i]}"
+    @staticmethod
+    def _format_bytes(bytes_size: int) -> str:
+        """Human-readable byte size string.
+
+        Delegates to :func:`utils.format_bytes`.
+        """
+        return format_bytes(bytes_size)
