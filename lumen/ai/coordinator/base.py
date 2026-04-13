@@ -4,6 +4,7 @@ import asyncio
 import re
 import traceback
 
+from copy import deepcopy
 from functools import partial
 from textwrap import dedent, indent
 from types import FunctionType
@@ -24,10 +25,12 @@ from panel_material_ui import (
 from ..actor import Actor
 from ..agents import Agent, AnalysisAgent, ChatAgent
 from ..config import PROMPTS_DIR, MissingContextError
-from ..context import TContext
+from ..context import LWW, TContext, merge_contexts
 from ..llm import LlamaCpp, Llm, Message
 from ..models import ThinkingYesNo
-from ..report import ActorTask, Section, TaskGroup
+from ..report import (
+    ActorTask, Section, Task, TaskGroup,
+)
 from ..tools import MetadataLookup, Tool, VectorLookupToolUser
 from ..utils import (
     content_to_text, describe_data_sync, fuse_messages, get_root_exception,
@@ -62,6 +65,14 @@ class Plan(Section):
     is_followup = param.Boolean(default=False)
 
     _tasks = param.List(item_type=ActorTask)
+
+    max_partial_replans = param.Integer(
+        default=3,
+        doc="""
+        Maximum number of partial replans allowed within one execute run.""",
+    )
+
+    _partial_replans = param.Integer(default=0)
 
     def render_task_history(self, i: int | None = None, failed: bool = False) -> tuple[list[Message], str]:
         i = self._current if i is None else i
@@ -139,9 +150,158 @@ class Plan(Section):
 
             context_keys = ", ".join(f"`{k}`" for k in task_context)
             step.stream(f"Generated {len(outputs)} and provided {context_keys}.")
+            outputs, task_context = await self._validate_and_maybe_replan(i, task, context, task_context, outputs, history, step)
             step.success_title = f"Task {task.title!r} successfully completed"
             log_debug(f"\033[96mCompleted: {task.title}\033[0m", show_length=False)
         return outputs, task_context
+
+    def _should_fast_validate(self, task: Task) -> bool:
+        coordinator = self.coordinator
+        if not isinstance(task, ActorTask):
+            return False
+        if not coordinator or not getattr(coordinator, "validation_enabled", False):
+            return False
+        prompts = getattr(coordinator, "prompts", {})
+        if "validate" not in prompts:
+            return False
+        actor_name = normalized_name(task.actor)
+        if actor_name == "ValidationAgent":
+            return False
+        instruction = (task.instruction or "").strip().lower()
+        if instruction.startswith("summarize the results"):
+            return False
+        return True
+
+    def _render_plan_outline(self, completed_until: int) -> str:
+        lines = []
+        for idx, task in enumerate(self._tasks):
+            prefix = "✅" if idx <= completed_until else "⬜"
+            lines.append(f"{prefix} {normalized_name(task.actor)}: {task.instruction}")
+        return "\n".join(lines)
+
+    def _serialize_step_outputs(self, outputs: list[Any]) -> str:
+        if not outputs:
+            return "No visible outputs were generated."
+        serialized = []
+        serializer = getattr(self.coordinator, "_serialize", None)
+        for out in outputs:
+            try:
+                serialized.append(serializer(out) if serializer else str(out))
+            except Exception:
+                serialized.append(str(out))
+        return "\n\n".join(serialized)
+
+    def _replace_remaining_tasks(self, start_index: int, new_tasks: list[Task]) -> None:
+        removed = list(self._tasks[start_index:])
+        for task in removed:
+            watcher = self._task_watchers.pop(task, None)
+            if watcher is not None:
+                task.param.unwatch(watcher)
+        for task in new_tasks:
+            task.parent = self
+            if isinstance(task, Task):
+                self._task_watchers[task] = task.param.watch(self._sync_context, "out_context")
+        self._tasks[start_index:] = new_tasks
+        if not self.running:
+            self._populate_view()
+            self._init_views()
+
+    def _build_partial_replan_payload(
+        self,
+        i: int,
+        task: ActorTask,
+        validation_reason: str,
+        step_result: str,
+    ) -> dict[str, Any]:
+        completed_steps = [
+            {
+                "actor": normalized_name(done_task.actor),
+                "title": done_task.title,
+                "instruction": done_task.instruction,
+            }
+            for done_task in self._tasks[:i]
+            if isinstance(done_task, ActorTask)
+        ]
+        remaining_steps = [
+            {
+                "actor": normalized_name(pending_task.actor),
+                "title": pending_task.title,
+                "instruction": pending_task.instruction,
+            }
+            for pending_task in self._tasks[i:]
+            if isinstance(pending_task, ActorTask)
+        ]
+        return {
+            "current_step_index": i,
+            "current_step": {
+                "actor": normalized_name(task.actor),
+                "title": task.title,
+                "instruction": task.instruction,
+            },
+            "validation_reason": validation_reason,
+            "step_result": step_result,
+            "completed_steps": completed_steps,
+            "remaining_steps": remaining_steps,
+        }
+
+    async def _validate_and_maybe_replan(
+        self,
+        i: int,
+        task: Task,
+        context: TContext,
+        task_context: TContext,
+        outputs: list[Any],
+        history: list[Message],
+        step: ChatStep,
+    ) -> tuple[list[Any], TContext]:
+        if not self._should_fast_validate(task):
+            return outputs, task_context
+
+        step_result = self._serialize_step_outputs(outputs)
+        validation_context = merge_contexts(LWW, [
+            context,
+            task_context,
+            {
+                "user_query": next(
+                    (msg["content"] for msg in reversed(self.history) if msg.get("role") == "user"),
+                    "",
+                ),
+                "plan": self._render_plan_outline(i),
+                "step_result": step_result,
+            },
+        ])
+        validation = await self.coordinator._invoke_prompt("validate", history, validation_context)
+        reasoning = getattr(validation, "chain_of_thought", "")
+        if reasoning:
+            step.stream(f"\n\nFast validation: {reasoning}")
+        if not getattr(validation, "yes", False):
+            return outputs, task_context
+
+        if self._partial_replans >= self.max_partial_replans:
+            step.stream("\n\nFast validation requested replanning, but the maximum replan attempts was reached. Continuing current plan.")
+            return outputs, dict(task_context, replan_trigger_reason="max_partial_replans_reached")
+
+        self._partial_replans += 1
+        payload = self._build_partial_replan_payload(i, task, reasoning or "validator requested replanning", step_result)
+        replan_context = merge_contexts(LWW, [context, task_context, payload])
+        new_plan = await self.coordinator.respond(
+            self.history,
+            replan_context,
+            partial_replan=True,
+            partial_replan_payload=payload,
+        )
+        if new_plan is None:
+            step.stream("\n\nFast validation requested replanning, but planner returned no replacement steps.")
+            return outputs, dict(task_context, replan_trigger_reason="partial_replan_failed")
+
+        new_tasks = list(new_plan)
+        if not new_tasks:
+            step.stream("\n\nFast validation requested replanning, but no replacement steps were returned.")
+            return outputs, dict(task_context, replan_trigger_reason="partial_replan_empty")
+        self._replace_remaining_tasks(i, new_tasks)
+        step.stream(f"\n\nFast validation rolled back the current step and replaced {len(new_tasks)} task(s) from this point.")
+        rewritten_outputs, rewritten_context = await self._run_task(i, self._tasks[i], context)
+        return rewritten_outputs, dict(rewritten_context, replan_trigger_reason="partial_replan_applied")
 
     async def _handle_task_execution_error(self, e: Exception, task: Self | Actor, context: TContext, step: ChatStep, i: int) -> tuple[list[Any], TContext]:
         """
@@ -244,6 +404,7 @@ class Plan(Section):
 
     async def execute(self, context: TContext = None, **kwargs) -> list[Any]:
         context = context or self.context
+        self._partial_replans = 0
         if "__error__" in context:
             del context["__error__"]
         outputs, out_context = await super().execute(context, **kwargs)
@@ -393,17 +554,21 @@ class Coordinator(Viewer, VectorLookupToolUser):
         return tools
 
     def _process_prompts(self, prompts: dict[str, dict[str, Any]], tools: list[type[Tool] | Tool]) -> dict[str, dict[str, Any]]:
-        # Add user-provided tools to the list of tools of the coordinator
-        if prompts is None:
-            prompts = {}
+        # Merge any explicit prompt overrides into class defaults, then
+        # append runtime tools to main prompt without discarding other prompts.
+        merged_prompts = deepcopy(self.prompts)
+        if prompts:
+            for prompt_name, prompt_config in prompts.items():
+                if prompt_name not in merged_prompts:
+                    merged_prompts[prompt_name] = {}
+                merged_prompts[prompt_name].update(prompt_config)
 
-        if "main" not in prompts:
-            prompts["main"] = {}
-
-        if "tools" not in prompts["main"]:
-            prompts["main"]["tools"] = []
-        prompts["main"]["tools"] += [tool for tool in tools]
-        return prompts
+        if "main" not in merged_prompts:
+            merged_prompts["main"] = {}
+        if "tools" not in merged_prompts["main"]:
+            merged_prompts["main"]["tools"] = []
+        merged_prompts["main"]["tools"] += [tool for tool in tools]
+        return merged_prompts
 
     async def _fill_model(self, messages, system, agent_model):
         model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
@@ -433,7 +598,15 @@ class Coordinator(Viewer, VectorLookupToolUser):
         tools = {tool_name: tool for (tool_name, tool), tapply in zip(tools.items(), applies, strict=False) if tapply}
         return agents, tools, {}
 
-    async def _compute_plan(self, messages: list[Message], context: TContext, agents: dict[str, Agent], tools: dict[str, Tool], pre_plan_output: dict) -> Plan:
+    async def _compute_plan(
+        self,
+        messages: list[Message],
+        context: TContext,
+        agents: dict[str, Agent],
+        tools: dict[str, Tool],
+        pre_plan_output: dict,
+        **kwargs: Any,
+    ) -> Plan:
         """
         Compute the execution graph for the given messages and agents.
         The graph is a list of ExecutionNode objects that represent
@@ -509,7 +682,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
             self.steps_layout = Card(header=todos_layout, collapsed=not self.verbose, elevation=2)
             self.interface.stream(self.steps_layout, user="Planner")
             agents, tools, pre_plan_output = await self._pre_plan(messages, context, agents, tools)
-            plan = await self._compute_plan(messages, context, agents, tools, pre_plan_output)
+            plan = await self._compute_plan(messages, context, agents, tools, pre_plan_output, **kwargs)
         if plan is not None:
             self.steps_layout.header[0].object = "🧾 Checklist ready..."
             _, todos = plan.render_task_history(-1)

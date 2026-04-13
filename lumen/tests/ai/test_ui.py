@@ -231,6 +231,27 @@ async def test_exploration_ui_error_replan(explorer_ui_with_error):
     tabs = exploration.view[0]
     assert len(tabs) == 2
 
+async def test_replan_requests_new_plan(explorer_ui_with_error, monkeypatch):
+    ui = explorer_ui_with_error
+    exploration = ui._exploration["view"]
+    current_plan = exploration.plan
+
+    new_plan = Plan(
+        ActorTask(ChatAgent(llm=ui.llm)),
+        history=current_plan.history,
+        title="Replanned",
+        context=ui.context,
+    )
+    respond = AsyncMock(return_value=new_plan)
+    execute_plan = AsyncMock()
+    monkeypatch.setattr(ui._coordinator, "respond", respond)
+    monkeypatch.setattr(ui, "_execute_plan", execute_plan)
+
+    await ui._replan(current_plan, ui._explorations.value)
+
+    assert respond.await_count == 1
+    assert execute_plan.await_count == 1
+
 async def test_add_exploration_from_explorer(explorer_ui):
     """Test creating an exploration from the table explorer."""
     # Set up the explorer to have a table selected
