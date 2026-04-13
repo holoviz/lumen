@@ -636,7 +636,7 @@ PYTHON_TYPE_TO_PARAM: dict[type, type[param.Parameter]] = {
 
 def signature_to_params(
     func: Callable,
-    skip: frozenset[str] = frozenset({"self", "cls", "return", "raw"}),
+    skip: frozenset[str] = frozenset({"self", "cls", "return"}),
 ) -> dict[str, param.Parameter]:
     """
     Convert a callable's type-annotated signature into ``param.Parameter``
