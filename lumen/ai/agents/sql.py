@@ -1,17 +1,11 @@
-import asyncio
-import difflib
-import traceback
-
-from typing import (
-    Annotated, Any, Literal, NotRequired,
-)
+import typing as t
 
 import param
+import yaml
 
-from panel_material_ui.chat import ChatStep
+from panel.chat import ChatStep
 from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
-from pydantic.json_schema import SkipJsonSchema
 
 from ...pipeline import Pipeline
 from ...sources.base import BaseSQLSource, Source
@@ -21,8 +15,9 @@ from ..config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from ..context import ContextModel, TContext
 from ..editors import LumenEditor, SQLEditor
 from ..llm import Message
-from ..models import EscapeBaseModel, RetrySpec
+from ..models import RetrySpec
 from ..schemas import Metaset
+from ..tools import FunctionTool
 from ..utils import (
     clean_sql, describe_data, get_data, get_pipeline, parse_table_slug,
     retry_llm_output, stream_details,
@@ -32,8 +27,8 @@ from .base_lumen import BaseLumenAgent
 
 def make_source_table_model(sources: list[tuple[str, str]]):
     class LiteralSourceTable(BaseModel):
-        source: Literal[tuple(set(src for src, _ in sources))]
-        table: Literal[tuple(set(table for _, table in sources))]
+        source: t.Literal[tuple(set(src for src, _ in sources))]
+        table: t.Literal[tuple(set(table for _, table in sources))]
     return LiteralSourceTable
 
 
@@ -42,178 +37,8 @@ def make_table_model(sources: list[tuple[str, str]]):
     Create a table model with constrained table choices.
     """
     available_tables = list(set(table for _, table in sources))
-    TableLiteral = Literal[tuple(available_tables)]  # type: ignore
+    TableLiteral = t.Literal[tuple(available_tables)]  # type: ignore
     return TableLiteral
-
-
-class SampleQuery(BaseModel):
-    """See actual data content - reveals format issues and patterns."""
-
-    query: SkipJsonSchema[str] = Field(default="SELECT * FROM {slug[table]} LIMIT 5")
-
-    def generate_sql(self, source: Source) -> str:
-        """Generate SQL for this query type."""
-        format_kwargs = self.dict(exclude={'query'})
-        return self.query.format(**format_kwargs)
-
-    def format_result(self, df) -> str:
-        """Format query results for display."""
-        return f"\n```\n{df.head().to_string(max_cols=10)}\n```"
-
-    def get_description(self) -> str:
-        """Get query description for logging."""
-        return f"Sample from {self.slug.table}"
-
-
-class DistinctQuery(BaseModel):
-    """Universal column analysis with optional pattern matching - handles join keys, categories, date ranges."""
-
-    query: SkipJsonSchema[str] = Field(default="SELECT DISTINCT {column} FROM {slug[table]} WHERE {column} ILIKE '%{pattern}%' LIMIT 10 OFFSET {offset}")
-    column: str = Field(description="Column to analyze unique values")
-    pattern: str = Field(default="", description="Optional pattern to search for (e.g., 'chin' for China/Chinese variations). Leave empty for all distinct values.")
-    offset: int = Field(default=0, description="Number of distinct values to skip (0 for initial, 10 for follow-up)")
-
-    def model_post_init(self, __context):
-        """Adjust query template based on whether pattern is provided."""
-        if not self.pattern.strip():
-            # No pattern - get all distinct values
-            self.query = "SELECT DISTINCT {column} FROM {slug[table]} LIMIT 10 OFFSET {offset}"
-        else:
-            # Pattern provided - use ILIKE for case-insensitive partial matching
-            self.query = "SELECT DISTINCT {column} FROM {slug[table]} WHERE {column} ILIKE '%{pattern}%' LIMIT 10 OFFSET {offset}"
-
-    def generate_sql(self, source: Source) -> str:
-        """Generate SQL for this query type."""
-        format_kwargs = self.dict(exclude={'query'})
-        return self.query.format(**format_kwargs)
-
-    def format_result(self, df) -> str:
-        """Format query results for display."""
-        return f" `{df.iloc[:10, 0].tolist()}`"
-
-    def get_description(self) -> str:
-        """Get query description for logging."""
-        return f"Distinct values from {self.slug.table!r} table column {self.column!r}"
-
-
-class TableQuery(BaseModel):
-    """Wildcard search using native source metadata to discover tables and columns by pattern."""
-
-    pattern: str = Field(description="Search pattern (e.g., 'revenue', 'customer')")
-    scope: Literal["columns", "tables", "both"] = Field(
-        default="both",
-        description="Search scope: 'columns' for column names, 'tables' for table names, 'both' for either"
-    )
-
-    def _match_string(self, pattern: str, target: str) -> float | None:
-        """Calculate match score for a pattern against a target string.
-
-        Returns:
-            Score from 0.0 to 1.0 if match is good enough, None otherwise.
-            1.0 = exact substring match, 0.6-0.99 = fuzzy match.
-        """
-        pattern_lower = pattern.lower()
-        target_lower = target.lower()
-
-        # Exact substring match gets highest score
-        if pattern_lower in target_lower:
-            return 1.0
-
-        # Fuzzy match using SequenceMatcher
-        ratio = difflib.SequenceMatcher(None, pattern_lower, target_lower).ratio()
-        return ratio if ratio > 0.6 else None
-
-    def search_metadata(self, source: Source) -> list[tuple[str, str | None]]:
-        """Search tables and columns using native source metadata with fuzzy matching.
-
-        Returns:
-            List of (table_name, column_name) tuples sorted by match quality.
-            column_name is None for table matches.
-        """
-        matches = []  # List of (table, column, score)
-
-        # Get all tables and their metadata
-        tables = source.get_tables()
-        metadata = source._get_table_metadata(tables)
-
-        for table_name, table_meta in metadata.items():
-            # Check if table name matches
-            if self.scope in ("tables", "both"):
-                score = self._match_string(self.pattern, table_name)
-                if score is not None:
-                    matches.append((table_name, None, score))
-
-            # Check if any column names match
-            if self.scope in ("columns", "both") and "columns" in table_meta:
-                for col_name in table_meta["columns"].keys():
-                    score = self._match_string(self.pattern, col_name)
-                    if score is not None:
-                        matches.append((table_name, col_name, score))
-
-        # Sort by score (highest first) and limit to top 20
-        matches.sort(key=lambda x: x[2], reverse=True)
-        return [(table, col) for table, col, _ in matches[:20]]
-
-    def format_result(self, matches: list[tuple[str, str | None]]) -> str:
-        """Format search results for display."""
-        if not matches:
-            return f" No matches found for pattern '{self.pattern}'"
-
-        formatted = []
-        for table_name, col_name in matches:
-            if col_name:
-                formatted.append(f"{table_name}.{col_name}")
-            else:
-                formatted.append(table_name)
-
-        return f" `{formatted}`"
-
-    def get_description(self) -> str:
-        """Get query description for logging."""
-        return f"Wildcard search for '{self.pattern}' in {self.scope}"
-
-
-def make_discovery_model(sources: list[tuple[str, str]]):
-
-    SourceTable = make_source_table_model(sources)
-
-    SampleQueryLiteral = create_model(
-        "LiteralSampleQuery",
-        slug=(
-                SourceTable, FieldInfo(description="The source and table identifier(s) referenced in the SQL query.")
-        ),
-        __base__=SampleQuery
-    )
-
-    DistinctQueryLiteral = create_model(
-        "LiteralDistinctQuery",
-        slug=(
-                SourceTable, FieldInfo(description="The source and table identifier(s) referenced in the SQL query.")
-        ),
-        __base__=DistinctQuery
-    )
-
-    class DiscoveryQueries(BaseModel):
-        """LLM selects 2-4 essential discoveries using the core toolkit."""
-
-        reasoning: str = Field(description="Brief discovery strategy")
-        queries: list[SampleQueryLiteral | DistinctQueryLiteral | TableQuery] = Field(
-            description="Choose 2-4 discovery queries. Use SampleQuery/DistinctQuery for known tables, TableQuery for wildcard searches."
-        )
-
-    class DiscoverySufficiency(EscapeBaseModel):
-        """Evaluate if discovery results provide enough context to fix the original error."""
-
-        reasoning: str = Field(description="Analyze discovery results - do they reveal the cause of the error?")
-
-        sufficient: bool = Field(description="True if discoveries provide enough context to fix the error")
-
-        follow_up_needed: list[SampleQueryLiteral | DistinctQueryLiteral | TableQuery] = Field(
-            default_factory=list,
-            description="If insufficient, specify 1-3 follow-up discoveries (e.g., OFFSET for more values, or TableQuery for wildcards)"
-        )
-
-    return DiscoveryQueries, DiscoverySufficiency
 
 
 class SQLQuery(BaseModel):
@@ -233,29 +58,6 @@ class SQLQuery(BaseModel):
         Examples: avg_sst_by_season, top_5_athletes_2020, revenue_by_region.
         Ensure the slug does not duplicate any existing table names or slugs.
         """
-    )
-
-
-class TableSelection(BaseModel):
-    """Select tables relevant to answering the user's query."""
-
-    reasoning: str = Field(description="Brief explanation of why these tables are needed to answer the query.")
-
-    tables: list[str] = Field(
-        description="List of table slugs needed to answer the query. Select only tables that are directly relevant."
-    )
-
-
-def make_table_selection_model(available_tables: list[str]):
-    """Create a table selection model with constrained table choices."""
-    if not available_tables:
-        return TableSelection
-
-    TableLiteral = Literal[tuple(available_tables)]  # type: ignore
-    return create_model(
-        "TableSelectionConstrained",
-        tables=(list[TableLiteral], FieldInfo(description="Tables needed to answer the query.")),
-        __base__=TableSelection
     )
 
 
@@ -292,25 +94,197 @@ def make_sql_model(sources: list[tuple[str, str]]):
     )
 
 
+async def execute_exploration_sql(
+    source: str,
+    sql_query: str,
+    *,
+    sources: dict[tuple[str, str], BaseSQLSource],
+) -> str:
+    """
+    Run a read-only SQL statement on the named Lumen source and return a text preview of results.
+
+    Intended for LLM tool calls: the model supplies the logical ``source`` name and ``sql_query``;
+    the ``sources`` map must be provided by the caller (e.g. closed over when building the tool).
+
+    Parameters
+    ----------
+    source : str
+        Name of the data source (key prefix before the source/table separator in slugs).
+    sql_query : str
+        SQL to execute (SELECT or WITH only).
+    sources : dict[tuple[str, str], Source]
+        Mapping from ``(source_name, table_name)`` to :class:`~lumen.sources.base.Source` instances.
+
+    Returns
+    -------
+    str
+        Tabular preview, or an error message string if execution fails.
+    """
+    try:
+        base = next(obj for (s, _), obj in sources.items() if s == source)
+    except StopIteration:
+        avail = sorted({s for s, _ in sources})
+        return f"Unknown source {source!r}. Available sources: {avail}"
+
+    raw = sql_query.strip()
+    leader = raw.lstrip().upper()
+    if not leader.startswith(("SELECT", "WITH")):
+        return "Only read-only SELECT or WITH queries are allowed for exploration."
+
+    try:
+        sql_clean = clean_sql(raw, base.dialect, prettify=False)
+    except Exception as e:
+        return f"SQL parse/clean error: {e}"
+
+    try:
+        df = base.execute(sql_clean)
+    except Exception as e:
+        return f"{type(e).__name__}: {e}"
+
+    preview = df.head(100)
+    text = preview.to_string(max_cols=25, max_rows=50)
+    if len(text) > 8000:
+        text = text[:8000] + "\n... (truncated)"
+    return text
+
+
+def make_run_exploration_sql_tool(sources: dict[tuple[str, str], BaseSQLSource]) -> FunctionTool:
+    """Build a :class:`~lumen.ai.tools.FunctionTool` that runs :func:`execute_exploration_sql` for ``sources``."""
+
+    async def run_exploration_sql(source: str, sql_query: str) -> str:
+        return await execute_exploration_sql(source, sql_query, sources=sources)
+
+    names = ", ".join(sorted({s for s, _ in sources})) or "(none)"
+    run_exploration_sql.__doc__ = (
+        f"Execute read-only SQL on the named source to inspect data (use LIMIT on raw selects). "
+        f"Sources: {names}."
+    )
+    return FunctionTool(
+        run_exploration_sql,
+        purpose=(
+            "Run exploratory read-only SQL (SELECT/WITH) on a datasource by name; "
+            "returns a small text preview of the result or an error message."
+            "Do not use this tool to generate the result, it is meant as an exploratory "
+            "tool to gather the information needed to generate the final SQL query."
+        ),
+    )
+
+
+def make_browse_data_catalog_tool(metaset: Metaset) -> FunctionTool:
+    """
+    Tool wrapping :meth:`~lumen.ai.schemas.Metaset.table_list` for incremental catalog browsing.
+    """
+
+    def browse_data_catalog(
+        n: int = 15,
+        offset: int = 0,
+        n_others: int = 25,
+        include_metadata: bool = False,
+        include_lineage: bool = False,
+    ) -> str:
+        """
+        List tables from the metadata catalog (names, similarity ordering, optional docs).
+        Does not load SQL engine column types — use load_table_schemas for those.
+        """
+        return metaset.table_list(
+            n=n,
+            offset=offset,
+            show_source=True,
+            n_others=n_others,
+            include_metadata=include_metadata,
+            include_lineage=include_lineage,
+        )
+
+    browse_data_catalog.__doc__ = (browse_data_catalog.__doc__ or "").strip()
+    return FunctionTool(
+        browse_data_catalog,
+        purpose=(
+            "Browse available table slugs via Metaset.table_list (paginated). "
+            "Use before choosing final tables; does not include per-column SQL types or documentation text."
+        ),
+    )
+
+
+def make_load_table_schemas_tool(metaset: Metaset) -> FunctionTool:
+    """
+    Tool to load and return schema details for specific catalog tables, preferring catalog metadata
+    then source introspection (cached on the metaset), not ad-hoc exploration SQL.
+    """
+
+    async def load_table_schemas(table_slugs: list[str]) -> str:
+        """
+        Return YAML combining catalog column metadata (pre-computed) with SQL-engine schema
+        (types, enums, row counts) when available. Call for every table you intend to use in SQL.
+        Use full slugs as shown by browse_data_catalog (e.g. source/table).
+        """
+        if not table_slugs:
+            return "No table_slugs provided."
+        result: dict[str, t.Any] = {}
+        for raw in table_slugs:
+            slug = metaset._resolve_table_slug(raw) or raw
+            entry = metaset.catalog.get(slug)
+            if not entry:
+                result[raw] = {"error": f"Unknown table slug {raw!r} (not in catalog)."}
+                continue
+            block: dict[str, t.Any] = {}
+            live = await metaset.get_schema(slug)
+            if live:
+                block["row_count"] = live.get("__len__")
+                schema = {}
+                col_info = {col.name: col for col in entry.columns}
+                for k, v in live.items():
+                    if k == "__len__":
+                        continue
+                    col = col_info.get(k, {})
+                    if col.description:
+                        schema[k] = dict(col.description, **v)
+                    else:
+                        schema[k] = v
+                block["schema"] = schema
+            elif entry.columns and any(c.description for c in entry.columns):
+                block["columns"] = [
+                    {"name": c.name, "description": c.description}
+                    for c in entry.columns
+                ]
+            elif entry.columns:
+                block["catalog_columns"] = [c.name for c in entry.columns]
+            else:
+                block["note"] = "No catalog columns and no live schema could be loaded for this table."
+            result[slug] = block
+        text = yaml.dump(result, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        if len(text) > 12000:
+            text = text[:12000] + "\n... (truncated)"
+        return text
+
+    load_table_schemas.__doc__ = (load_table_schemas.__doc__ or "").strip()
+    return FunctionTool(
+        load_table_schemas,
+        purpose=(
+            "Load detailed schema for chosen catalog tables: merge vector/catalog column metadata first, "
+            "then attach SQL-engine types via metaset introspection (cached). Prefer this over guessing "
+            "or exploratory SQL when planning which tables to use."
+        ),
+    )
+
 
 class SQLInputs(ContextModel):
 
-    data: NotRequired[Any]
+    data: t.NotRequired[t.Any]
 
     source: Source
 
-    sources: Annotated[list[Source], ("accumulate", "source")]
+    sources: t.Annotated[list[Source], ("accumulate", "source")]
 
-    sql: NotRequired[str]
+    sql: t.NotRequired[str]
 
     metaset: Metaset
 
-    visible_slugs: NotRequired[set[str]]
+    visible_slugs: t.NotRequired[set[str]]
 
 
 class SQLOutputs(ContextModel):
 
-    data: Any
+    data: t.Any
 
     table: str
 
@@ -335,9 +309,6 @@ class SQLAgent(BaseLumenAgent):
 
     not_with = param.List(default=["DbtslAgent", "MetadataLookup", "TableListAgent"])
 
-    exploration_enabled = param.Boolean(default=True, allow_refs=True, doc="""
-        Whether to enable SQL exploration mode. When False, only attempts oneshot SQL generation.""")
-
     purpose = param.String(
         default="""
         Creates and executes SQL queries to retrieve, filter, aggregate, or transform data.
@@ -351,18 +322,6 @@ class SQLAgent(BaseLumenAgent):
                 "response_model": make_sql_model,
                 "template": PROMPTS_DIR / "SQLAgent" / "main.jinja2",
             },
-            "select_tables": {
-                "response_model": make_table_selection_model,
-                "template": PROMPTS_DIR / "SQLAgent" / "select_tables.jinja2",
-            },
-            "select_discoveries": {
-                "response_model": make_discovery_model,
-                "template": PROMPTS_DIR / "SQLAgent" / "select_discoveries.jinja2",
-            },
-            "check_sufficiency": {
-                "response_model": make_discovery_model,
-                "template": PROMPTS_DIR / "SQLAgent" / "check_sufficiency.jinja2",
-            },
             "revise_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "SQLAgent" / "revise_output.jinja2"},
         }
     )
@@ -375,18 +334,6 @@ class SQLAgent(BaseLumenAgent):
 
     input_schema = SQLInputs
     output_schema = SQLOutputs
-
-    async def _gather_prompt_context(self, prompt_name: str, messages: list, context: TContext, **kwargs):
-        """Pre-compute metaset context for template rendering."""
-        prompt_context = await super()._gather_prompt_context(prompt_name, messages, context, **kwargs)
-
-        # Ensure schemas are loaded for schema_tables before rendering
-        if "metaset" in context:
-            metaset = context["metaset"]
-            if metaset.schema_tables:
-                await metaset.ensure_schemas(metaset.schema_tables)
-
-        return prompt_context
 
     async def _validate_sql(
         self,
@@ -521,27 +468,7 @@ class SQLAgent(BaseLumenAgent):
             mirrors[renamed_table] = (sources[(m.source, m.table)], m.table)
         return DuckDBSource(uri=":memory:", mirrors=mirrors), list(mirrors)
 
-    async def _select_tables(
-        self,
-        messages: list[Message],
-        context: TContext,
-        step: ChatStep,
-    ) -> list[str]:
-        """Select relevant tables for the query."""
-        metaset = context.get("metaset")
-        if not metaset:
-            return []
-
-        all_tables = list(metaset.catalog.keys())
-        # If 3 or fewer tables, use all of them
-        if len(all_tables) <= 3:
-            return all_tables
-
-        selection = await self._invoke_prompt("select_tables", messages, context, model_kwargs=dict(available_tables=all_tables))
-        selected = selection.tables if selection else metaset.get_top_tables(n=3)
-        step.stream(f"Selected: {selected}")
-        return selected
-
+    @retry_llm_output()
     async def _render_execute_query(
         self,
         messages: list[Message],
@@ -586,6 +513,17 @@ class SQLAgent(BaseLumenAgent):
             dialects = set(src.dialect for src in sources.values())
             dialect = "duckdb" if len(dialects) > 1 else next(iter(dialects))
 
+            metaset = context.get("metaset")
+            exploration = make_run_exploration_sql_tool(sources)
+            if metaset is not None:
+                tool_list: list[FunctionTool] = [
+                    make_browse_data_catalog_tool(metaset),
+                    make_load_table_schemas_tool(metaset),
+                    exploration,
+                ]
+            else:
+                tool_list = [exploration]
+
             output = await self._invoke_prompt(
                 "main",
                 messages,
@@ -600,6 +538,8 @@ class SQLAgent(BaseLumenAgent):
                 sql_plan_context=None,
                 errors=errors,
                 discovery_context=discovery_context,
+                source_names=sorted({s for s, _ in sources}),
+                tools=tool_list,
             )
 
             if not output:
@@ -645,184 +585,9 @@ class SQLAgent(BaseLumenAgent):
 
         return view
 
-    async def _select_discoveries(
-        self,
-        messages: list[Message],
-        context: TContext,
-        sources: dict[tuple[str, str], BaseSQLSource],
-        error_context: str,
-    ) -> BaseModel:
-        """Let LLM choose which discoveries to run based on error and available tables."""
-        selection = await self._invoke_prompt(
-            "select_discoveries",
-            messages,
-            context,
-            model_kwargs=dict(sources=list(sources)),
-            model_index=0,
-            error_context=error_context,
-        )
-        return selection
-
-    async def _check_discovery_sufficiency(
-        self,
-        messages: list[Message],
-        context: TContext,
-        error_context: str,
-        discovery_results: list[tuple[str, str]],
-    ) -> BaseModel:
-        """Check if discovery results are sufficient to fix the error."""
-        # Get sources from context for the discovery models
-        metaset = context["metaset"]
-        selected_slugs = list(metaset.catalog)
-        sources_list = [
-            tuple(table_slug.split(SOURCE_TABLE_SEPARATOR))
-            for table_slug in selected_slugs
-        ]
-
-        sufficiency = await self._invoke_prompt(
-            "check_sufficiency",
-            messages,
-            context,
-            model_kwargs=dict(sources=sources_list),
-            model_index=1,
-            error_context=error_context,
-            discovery_results=discovery_results,
-        )
-        return sufficiency
-
-    async def _execute_discovery_query(
-        self,
-        query_model: SampleQuery | DistinctQuery | TableQuery,
-        sources: dict[tuple[str, str], Source],
-    ) -> tuple[str, str]:
-        """Execute a single discovery query and return formatted result."""
-        if isinstance(query_model, TableQuery):
-            # TableQuery searches ALL unique sources using native metadata
-            unique_sources = {}
-            for (source_name, _), source in sources.items():
-                if source_name not in unique_sources:
-                    unique_sources[source_name] = source
-
-            # Search metadata in all sources in parallel
-            tasks = [
-                asyncio.create_task(
-                    self._execute_table_query_on_source(query_model, source_name, source)
-                )
-                for source_name, source in unique_sources.items()
-            ]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            # Combine non-empty results
-            combined_results = []
-            for source_name, result in zip(unique_sources.keys(), results, strict=False):
-                if isinstance(result, Exception):
-                    continue  # Skip failed sources
-                if result and "No matches" not in result:
-                    combined_results.append(f"`{source_name}`: {result}")
-            return query_model.get_description(), "\n".join(combined_results)
-
-        # SampleQuery/DistinctQuery use the specific table's source
-        source = sources[(query_model.slug.source, query_model.slug.table)]
-        sql = query_model.generate_sql(source)
-        query_type = query_model.get_description()
-
-        # Execute query
-        try:
-            df = source.execute(sql)
-        except Exception as e:
-            return f"Discovery query {query_type[0].lower()}{query_type[1:]} failed", str(e)
-
-        # Format results
-        result = query_model.format_result(df)
-        return query_type, result
-
-    async def _execute_table_query_on_source(
-        self,
-        query_model: TableQuery,
-        source_name: str,
-        source: Source,
-    ) -> str:
-        """Execute TableQuery on a single source using native metadata."""
-        try:
-            matches = query_model.search_metadata(source)
-            return query_model.format_result(matches)
-        except Exception:
-            # Some sources might not support metadata retrieval
-            return ""
-
-    async def _run_discoveries_parallel(
-        self,
-        discovery_queries: list[SampleQuery | DistinctQuery | TableQuery],
-        sources: dict[tuple[str, str], Source],
-    ) -> list[str]:
-        """Execute all discoveries concurrently and stream results as they complete."""
-        # Create all tasks
-        tasks = [
-            asyncio.create_task(self._execute_discovery_query(query, sources))
-            for query in discovery_queries
-        ]
-
-        results = []
-        for completed_task in asyncio.as_completed(tasks):
-            query_type, result = await completed_task
-            with self._add_step(title=query_type, steps_layout=self._steps_layout) as step:
-                step.stream(result)
-            results.append((query_type, result))
-        return results
-
-    async def _explore_tables(
-        self,
-        messages: list[Message],
-        context: TContext,
-        sources: dict[tuple[str, str], Source],
-        error_context: str,
-        step_title: str | None = None,
-    ) -> SQLEditor:
-        """Run adaptive exploration: initial discoveries → sufficiency check → optional follow-ups → final answer."""
-        # Step 1: LLM selects initial discoveries
-        with self._add_step(title="Selecting initial discoveries", steps_layout=self._steps_layout) as step:
-            selection = await self._select_discoveries(messages, context, sources, error_context)
-            step.stream(f"Strategy: {selection.reasoning}\n\nSelected {len(selection.queries)} initial discoveries")
-
-        # Step 2: Run initial discoveries in parallel
-        initial_results = await self._run_discoveries_parallel(selection.queries, sources)
-
-        # Step 3: Check if discoveries are sufficient
-        with self._add_step(title="Evaluating discovery sufficiency", steps_layout=self._steps_layout) as step:
-            sufficiency = await self._check_discovery_sufficiency(messages, context, error_context, initial_results)
-            step.stream(f"Assessment: {sufficiency.reasoning}")
-
-            if sufficiency.sufficient:
-                step.stream("\n✅ Sufficient context - proceeding to final answer")
-                final_results = initial_results
-            else:
-                step.stream(f"\n⚠️ Insufficient - running {len(sufficiency.follow_up_needed)} follow-ups")
-
-        # Step 4: Run follow-up discoveries if needed
-        if not sufficiency.sufficient and sufficiency.follow_up_needed:
-            follow_up_results = await self._run_discoveries_parallel(sufficiency.follow_up_needed, sources)
-            final_results = initial_results + follow_up_results
-        else:
-            final_results = initial_results
-
-        # Step 5: Generate final answer with all discovery context
-        discovery_context = "\n".join([
-            f"- **{query_type}:** {result}" for query_type, result in final_results
-        ])
-
-        return await self._render_execute_query(
-            messages,
-            context,
-            sources=sources,
-            step_title="Generating final answer with discoveries",
-            success_message="Final answer generated with discovery context",
-            discovery_context=discovery_context,
-            raise_if_empty=False,
-            output_title=step_title
-        )
-
     async def revise(
         self,
-        feedback: str,
+        instruction: str,
         messages: list[Message],
         context: TContext,
         view: LumenEditor | None = None,
@@ -832,7 +597,7 @@ class SQLAgent(BaseLumenAgent):
         **kwargs
     ) -> str:
         result = await super().revise(
-            feedback, messages, context, view=view, spec=spec, language=language, **kwargs
+            instruction, messages, context, view=view, spec=spec, language=language, **kwargs
         )
         if view is not None:
             result = clean_sql(result, view.component.source.dialect, prettify=True)
@@ -843,27 +608,18 @@ class SQLAgent(BaseLumenAgent):
         messages: list[Message],
         context: TContext,
         step_title: str | None = None,
-    ) -> tuple[list[Any], SQLOutputs]:
-        """Execute SQL generation with table selection, then one-shot attempt, then exploration if needed."""
+    ) -> tuple[list[t.Any], SQLOutputs]:
+        """Generate SQL in one step (catalog browse, schema load, optional exploration, then structured query)."""
         sources = context["sources"]
         metaset = context["metaset"]
-        selected_slugs = list(metaset.catalog)
-
-        if len(selected_slugs) > 3:
-            with self._add_step(title="Selecting relevant tables...", steps_layout=self._steps_layout) as step:
-                selected_tables = await self._select_tables(messages, context, step)
-                if selected_tables:
-                    metaset.schema_tables = selected_tables
-                    step.stream(f"\n\nWill load schemas for: {selected_tables}")
-        else:
-            # Use all tables if 3 or fewer
-            metaset.schema_tables = selected_slugs
+        # Do not pin schema_tables: initial prompt uses a capped summary; the model pulls detail via tools.
+        metaset.schema_tables = None
 
         # Build source lookup, skipping slugs whose source no longer
         # exists in the context (stale entries from prior materializations).
         available_source_names = {s.name for s in sources}
         sources = {}
-        for table_slug in selected_slugs:
+        for table_slug in metaset.catalog:
             source_name = table_slug.split(SOURCE_TABLE_SEPARATOR)[0] if SOURCE_TABLE_SEPARATOR in table_slug else None
             if source_name and source_name not in available_source_names:
                 continue
@@ -874,32 +630,15 @@ class SQLAgent(BaseLumenAgent):
         if not sources:
             raise ValueError("No valid SQL sources available for querying.")
 
-        try:
-            if not self.exploration_enabled:
-                # Try retry-wrapped one-shot approach
-                execute_method = retry_llm_output()(self._render_execute_query)
-            else:
-                # Try one-shot approach first
-                execute_method = self._render_execute_query
-
-            out = await execute_method(
-                messages,
-                context,
-                sources=sources,
-                step_title="Generating SQL...",
-                success_message="SQL generation successful",
-                discovery_context=None,
-                raise_if_empty=True,
-                output_title=step_title
-            )
-        except Exception as e:
-            if not self.exploration_enabled:
-                traceback.print_exc()
-                # If exploration is disabled, re-raise the error instead of falling back
-                raise e
-            # Fall back to exploration mode if enabled
-            out = await self._explore_tables(
-                messages, context, sources, str(e), step_title
-            )
-        out_context = await out.render_context()
+        out = await self._render_execute_query(
+            messages,
+            context,
+            sources=sources,
+            step_title="Generating SQL...",
+            success_message="SQL generation successful",
+            discovery_context=None,
+            raise_if_empty=True,
+            output_title=step_title
+        )
+        out_context = t.cast(SQLOutputs, await out.render_context())
         return [out], out_context

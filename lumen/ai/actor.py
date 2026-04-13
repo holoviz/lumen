@@ -210,6 +210,7 @@ class LLMUser(param.Parameterized):
         model_spec: str | None = None,
         model_index: int | None = None,
         model_kwargs: dict | None = None,
+        tools: list | None = None,
         **prompt_kwargs
     ) -> Any:
         """
@@ -231,6 +232,8 @@ class LLMUser(param.Parameterized):
             Additional context variables for determining the model_spec or response_model
         model_index : int, optional
             The index of the model to subset if the model spec returns a list of models
+        tools : list, optional
+            Tool specs or FunctionTool instances forwarded to ``llm.invoke``.
         **kwargs : dict
             Additional context variables for the prompt template
 
@@ -254,11 +257,16 @@ class LLMUser(param.Parameterized):
         if model_index is not None:
             model_spec = model_spec[model_index]
 
+        invoke_kw: dict = {}
+        if tools is not None:
+            invoke_kw["tools"] = tools
+
         result = await self.llm.invoke(
             messages=messages,
             system=system,
             response_model=response_model,
             model_spec=model_spec,
+            **invoke_kw,
         )
         return result
 

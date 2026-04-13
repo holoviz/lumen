@@ -4,12 +4,13 @@ import asyncio
 import base64
 import json
 import os
+import traceback
 
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 from typing import (
-    TYPE_CHECKING, Any, Literal, TypedDict,
+    TYPE_CHECKING, Any, Literal, NotRequired, TypedDict,
 )
 
 import instructor
@@ -38,10 +39,10 @@ if TYPE_CHECKING:
 
 class Message(TypedDict):
     role: Literal["system", "user", "assistant", "tool"]
-    content: str
-    name: str | None
-    tool_call_id: str | None
-    tool_calls: list[dict[str, Any]] | None
+    content: str | Image | list[dict[str, Any]]
+    name: NotRequired[str]
+    tool_call_id: NotRequired[str]
+    tool_calls: NotRequired[list[dict[str, Any]]]
 
 
 class ImageResponse(BaseModel):
@@ -243,7 +244,7 @@ class Llm(param.Parameterized):
 
     def _get_cached_client(
         self,
-        response_model: BaseModel | None = None,
+        response_model: type[BaseModel] | None = None,
         model: str | None = None,
         **kwargs
     ) -> Callable:
@@ -268,22 +269,24 @@ class Llm(param.Parameterized):
         input_kwargs: dict[str, Any]
     ) -> tuple[list[Message], dict[str, Any]]:
         if system:
-            messages = [{"role": "system", "content": system}] + messages
+            messages = [Message(role="system", content=system)] + messages
         return messages, input_kwargs
 
-    def _serialize_image_pane(self, image: bytes | pn.pane.image.ImageBase | Image) -> Image:
+    def _serialize_image_pane(self, image: bytes | pn.pane.image.ImageBase | Image) -> Image | None:
         if isinstance(image, Image):
             return image
 
-        image_object = image.object if isinstance(image, pn.pane.image.ImageBase) else image
-        if isinstance(image_object, (Path, str)) and Path(image_object).is_file():
-            image = Image.from_path(image_object)
-        elif isinstance(image_object, str):
-            image = Image.from_url(image_object)
-        elif isinstance(image_object, bytes):
-            base64_str = base64.b64encode(image_object).decode('utf-8')
-            image = Image.from_raw_base64(base64_str)
-        return image
+        image = image.object if isinstance(image, pn.pane.image.ImageBase) else image
+        if isinstance(image, (Path, str)) and Path(image).is_file():
+            image_object = Image.from_path(image)
+        elif isinstance(image, str):
+            image_object = Image.from_url(image)
+        elif isinstance(image, bytes):
+            base64_str = base64.b64encode(image).decode('utf-8')
+            image_object = Image.from_raw_base64(base64_str)
+        else:
+            image_object = None
+        return image_object
 
     def _check_for_image(self, messages: list[Message]) -> tuple[list[Message], bool]:
         contains_image = False
@@ -316,12 +319,12 @@ class Llm(param.Parameterized):
         self,
         messages: list[Message],
         system: str = "",
-        response_model: BaseModel | None = None,
+        response_model: type[BaseModel] | None = None,
         allow_partial: bool = False,
         model_spec: str | dict = "default",
         tools: list[dict[str, Any] | FunctionTool | MCPTool] | None = None,
         **input_kwargs,
-    ) -> BaseModel:
+    ) -> BaseModel | str:
         """
         Invokes the LLM and returns its response.
 
@@ -338,6 +341,8 @@ class Llm(param.Parameterized):
             the provided response_model.
         tools: list[dict[str, Any] | FunctionTool | MCPTool] | None
             Tool definitions, FunctionTool, or MCPTool instances to pass through.
+            When ``response_model`` is also given, the client runs tool calls in a loop
+            until none are requested, then requests the structured response (tools may be unused).
         model: Literal['default' | 'reasoning' | 'sql']
             The model as listed in the model_kwargs parameter
             to invoke to answer the query.
@@ -348,6 +353,7 @@ class Llm(param.Parameterized):
         """
         system = system.strip().replace("\n\n", "\n")
         messages, input_kwargs = self._add_system_message(messages, system, input_kwargs)
+        max_tool_rounds = int(input_kwargs.pop("max_tool_rounds", 16))
 
         kwargs = dict(self._client_kwargs)
         kwargs.update(input_kwargs)
@@ -362,28 +368,64 @@ class Llm(param.Parameterized):
             # https://github.com/567-labs/instructor/issues/1872
             kwargs["stream"] = False
 
+        structured_model: type[BaseModel] | None = None
         if response_model is not None:
             if allow_partial and issubclass(response_model, BaseModel):
-                response_model = Partial[response_model]
-            kwargs["response_model"] = response_model
-        # check if any of the messages contain images
-        elif response_model is None and contains_image:
-            kwargs["response_model"] = ImageResponse
+                structured_model = Partial[response_model]  # type: ignore[assignment]
+            else:
+                structured_model = response_model  # type: ignore[assignment]
+        elif contains_image:
+            structured_model = ImageResponse
 
-        output = await self.run_client(model_spec, messages, **kwargs)
-        if tool_instances and response_model is None:
-            tool_calls = self._extract_tool_calls(output)
-            if tool_calls:
-                tool_calls_message = self._tool_calls_message(tool_calls)
-                tool_messages = await self._run_tool_calls(tool_instances, tool_calls, tool_contexts, messages)
-                if tool_messages:
-                    output = await self.run_client(
-                        model_spec,
-                        messages + [tool_calls_message] + tool_messages,
-                        **kwargs,
-                    )
+        output = await self._run_tool_loop(
+            messages,
+            structured_model,
+            tool_instances,
+            tool_contexts,
+            model_spec=model_spec,
+            max_tool_rounds=max_tool_rounds,
+            **kwargs
+        )
         if output is None or output == "":
             raise ValueError("LLM failed to return valid output.")
+        return output
+
+    async def _run_tool_loop(
+        self,
+        messages: list[Message],
+        structured_model: type[BaseModel] | None,
+        tool_instances: dict,
+        tool_contexts: dict,
+        model_spec: str | dict = "default",
+        max_tool_rounds: int = 16,
+        **kwargs
+    ) -> BaseModel | str:
+        if structured_model is not None and not tool_instances:
+            kwargs["response_model"] = structured_model
+        else:
+            kwargs.pop("response_model", None)
+
+        output = await self.run_client(model_spec, messages, **kwargs)
+        if not tool_instances:
+            return output
+
+        messages_curr = list(messages)
+        for _ in range(max_tool_rounds):
+            tool_calls = self._extract_tool_calls(output)
+            if not tool_calls:
+                break
+            tool_calls_message = self._tool_calls_message(tool_calls)
+            tool_messages = await self._run_tool_calls(
+                tool_instances, tool_calls, tool_contexts, messages_curr
+            )
+            if not tool_messages:
+                break
+            messages_curr = messages_curr + [tool_calls_message] + tool_messages
+            output = await self.run_client(model_spec, messages_curr, **kwargs)
+
+        if structured_model:
+            kwargs["response_model"] = structured_model
+            output = await self.run_client(model_spec, messages_curr, **kwargs)
         return output
 
     @classmethod
@@ -393,7 +435,7 @@ class Llm(param.Parameterized):
         return ""
 
     @classmethod
-    def _get_content(cls, response) -> str:
+    def _get_content(cls, response) -> str | BaseModel:
         """Extract content from a non-streaming response. Override for non-OpenAI APIs."""
         if hasattr(response, "choices"):
             return response.choices[0].message.content
@@ -564,13 +606,11 @@ class Llm(param.Parameterized):
 
     @classmethod
     def _tool_calls_message(cls, tool_calls: list[dict[str, Any]]) -> Message:
-        return {
-            "role": "assistant",
-            "content": "",
-            "name": None,
-            "tool_call_id": None,
-            "tool_calls": [cls._normalize_tool_call_for_message(call) for call in tool_calls],
-        }
+        return Message(
+            role="assistant",
+            content="",
+            tool_calls=[cls._normalize_tool_call_for_message(call) for call in tool_calls],
+        )
 
     @classmethod
     def _format_tool_result(cls, result: Any) -> str:
@@ -609,30 +649,72 @@ class Llm(param.Parameterized):
     ) -> list[Message]:
         from .tools import FunctionTool, MCPTool
 
-        results: list[Message] = []
-        for call in tool_calls:
+        async def run_single_tool_call(call: Any) -> Message | None:
             name, arguments, call_id = self._parse_tool_call(call)
-            if not name or name not in tool_instances:
-                continue
+            if not name:
+                log_debug(
+                    f"LLM tool call skipped: missing tool name (call_id={call_id!r})",
+                    prefix="[LLM tools]",
+                )
+                return None
+            if name not in tool_instances:
+                log_debug(
+                    "LLM tool call skipped: unknown tool "
+                    f"{name!r} (call_id={call_id!r}); registered: {sorted(tool_instances)}",
+                    prefix="[LLM tools]",
+                )
+                return None
             tool = tool_instances[name]
             context = tool_contexts.get(name, {})
             for requirement in tool.requires:
                 if requirement not in arguments and requirement in context:
                     arguments[requirement] = context[requirement]
-            if isinstance(tool, MCPTool):
-                result = await tool.execute(**arguments)
-            elif isinstance(tool, FunctionTool):
-                if asyncio.iscoroutinefunction(tool.function):
-                    result = await tool.function(**arguments)
+            try:
+                args_repr = truncate_string(
+                    json.dumps(arguments, default=str, ensure_ascii=False),
+                    max_length=4000,
+                )
+                log_debug(
+                    f"LLM tool call start tool={name!r} call_id={call_id!r} arguments={args_repr}",
+                    prefix="[LLM tools]",
+                )
+                if isinstance(tool, MCPTool):
+                    result = await tool.execute(**arguments)
+                elif isinstance(tool, FunctionTool):
+                    if asyncio.iscoroutinefunction(tool.function):
+                        result = await tool.function(**arguments)
+                    else:
+                        # Synchronous function, run in thread
+                        result = await asyncio.to_thread(tool.function, **arguments)
                 else:
-                    result = tool.function(**arguments)
-            results.append({
-                "role": "tool",
-                "content": self._format_tool_result(result),
-                "name": name,
-                "tool_call_id": call_id,
-            })
-        return results
+                    raise TypeError(f"Unsupported tool type for {name!r}: {type(tool)!r}")
+                formatted = self._format_tool_result(result)
+                log_debug(
+                    f"LLM tool call result tool={name!r} call_id={call_id!r}\n"
+                    f"{truncate_string(formatted, max_length=16000)}",
+                    prefix="[LLM tools]",
+                    show_length=True,
+                )
+            except Exception:
+                log_debug(
+                    [
+                        f"LLM tool call failed tool={name!r} call_id={call_id!r}",
+                        traceback.format_exc(),
+                    ],
+                    prefix="[LLM tools]",
+                    show_sep="above",
+                )
+                raise
+            return Message(
+                role="tool",
+                content=formatted,
+                name=name,
+                tool_call_id=call_id,
+            )
+        results = await asyncio.gather(
+            *(run_single_tool_call(call) for call in tool_calls)
+        )
+        return [msg for msg in results if msg is not None]
 
     async def initialize(self, log_level: str):
         try:
@@ -650,7 +732,7 @@ class Llm(param.Parameterized):
         self,
         messages: list[Message],
         system: str = "",
-        response_model: BaseModel | None = None,
+        response_model: type[BaseModel] | None = None,
         field: str | None = None,
         model_spec: str | dict = "default",
         tools: list[dict[str, Any] | FunctionTool | MCPTool] | None = None,
@@ -665,7 +747,7 @@ class Llm(param.Parameterized):
             A list of messages to feed to the LLM.
         system: str
             A system message to provide to the LLM.
-        response_model: BaseModel | None
+        response_model: type[BaseModel] | None
             A Pydantic model that the LLM should materialize.
         field: str
             The field in the response_model to stream.
@@ -1007,7 +1089,7 @@ class AzureOpenAI(Llm, AzureOpenAIMixin):
             self.interceptor.patch_client_response(wrapped)
         return wrapped
 
-    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
+    async def get_client(self, model_spec: str | dict, response_model: type[BaseModel] | None = None, **kwargs):
         model_kwargs = self._get_model_kwargs(model_spec)
         model = model_kwargs.pop("model")
         model_kwargs["mode"] = model_kwargs.pop("mode", self.mode)
@@ -1065,7 +1147,7 @@ class MistralAI(Llm, MistralAIMixin):
     def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
         return instructor.from_mistral(base_client, mode=mode, use_async=True)
 
-    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
+    async def get_client(self, model_spec: str | dict, response_model: type[BaseModel] | None = None, **kwargs):
         model_kwargs = self._get_model_kwargs(model_spec)
         model = model_kwargs.pop("model")
         mode = model_kwargs.pop("mode", self.mode)
@@ -1159,7 +1241,7 @@ class Anthropic(Llm, AnthropicMixin):
 
     def _get_cached_client(
         self,
-        response_model: BaseModel | None = None,
+        response_model: type[BaseModel] | None = None,
         model: str | None = None,
         **kwargs
     ) -> Callable:
@@ -1183,7 +1265,7 @@ class Anthropic(Llm, AnthropicMixin):
         Tool-call and tool-result messages are converted into the content-block
         format that the Anthropic API expects.
         """
-        filtered: list[dict[str, Any]] = []
+        filtered: list[Message] = []
         system_text = None
         pending_tool_results: list[dict[str, Any]] = []
 
@@ -1224,13 +1306,13 @@ class Anthropic(Llm, AnthropicMixin):
 
             # Flush pending tool results before any other message
             if pending_tool_results:
-                filtered.append({"role": "user", "content": pending_tool_results})
+                filtered.append(Message(role="user", content=pending_tool_results))
                 pending_tool_results = []
 
             filtered.append(msg)
 
         if pending_tool_results:
-            filtered.append({"role": "user", "content": pending_tool_results})
+            filtered.append(Message(role="user", content=pending_tool_results))
 
         return filtered, system_text
 
@@ -1621,21 +1703,7 @@ class Google(Llm, GenAIMixin):
         return instructor.from_genai(base_client, mode=mode, use_async=True)
 
     @classmethod
-    def _get_delta(cls, chunk: Any) -> str:
-        """Extract delta content from streaming response or full response."""
-        if hasattr(chunk, 'text'):
-            return chunk.text or ""
-        if hasattr(chunk, 'content') and chunk.content:
-            return chunk.content
-        if hasattr(chunk, 'candidates') and chunk.candidates:
-            candidate = chunk.candidates[0]
-            if hasattr(candidate, 'content') and candidate.content:
-                if hasattr(candidate.content, 'parts') and candidate.content.parts:
-                    return candidate.content.parts[0].text or ""
-        return ""
-
-    @classmethod
-    def _get_content(cls, response: Any) -> str:
+    def _get_content(cls, response: Any) -> str | BaseModel:
         """Extract content from a non-streaming Google GenAI response."""
         if hasattr(response, 'candidates') and response.candidates:
             candidate = response.candidates[0]
@@ -1833,7 +1901,7 @@ class Google(Llm, GenAIMixin):
             ) from exc
 
         response_model = kwargs.get("response_model")
-        http_options = HttpOptions(timeout=self.timeout * 1000)  # timeout is in milliseconds
+        http_options = HttpOptions(timeout=int(self.timeout * 1000))  # timeout is in milliseconds
         thinking_config = ThinkingConfig(thinking_budget=0, include_thoughts=False)
 
         tools = self._translate_tool_specs(kwargs.pop("tools", []))
@@ -2198,7 +2266,7 @@ class LiteLLM(Llm):
     def _get_completion_method(self) -> Callable:
         return self._get_router().acompletion
 
-    async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
+    async def get_client(self, model_spec: str | dict, response_model: type[BaseModel] | None = None, **kwargs):
         model_kwargs = self._get_model_kwargs(model_spec)
         model = model_kwargs.pop("model")
         mode = model_kwargs.pop("mode", self.mode)

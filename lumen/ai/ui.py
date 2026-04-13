@@ -1831,14 +1831,6 @@ class ExplorerUI(UI):
 
         switches = [llm_config_button, Divider(sizing_mode="stretch_width"), cot]
 
-        sql_agent = next(
-            (agent for agent in self._coordinator.agents if isinstance(agent, SQLAgent)),
-            None
-        )
-        if sql_agent:
-            sql_planning = Switch(label='SQL Planning', description='Run discovery queries and adaptive exploration before final SQL')
-            sql_agent.exploration_enabled = sql_planning
-            switches.append(sql_planning)
         validation = Switch(label='Validation Step', description='Check if the response fully answered your question', value=True)
         self._coordinator.validation_enabled = validation
         switches.append(validation)

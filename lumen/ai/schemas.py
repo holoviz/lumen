@@ -174,17 +174,14 @@ class Metaset:
             if catalog_entry.created_order == max_order:
                 data['latest'] = True
 
-        if include_columns:
-            if catalog_entry.columns:
-                data['columns'] = self._build_columns_data(
-                    table_slug, catalog_entry.columns, include_schema, truncate
-                )
-        elif include_schema and catalog_entry.columns:
-            # Show full column schema even without include_columns
-            data['columns'] = self._build_columns_data(
-                table_slug, catalog_entry.columns, include_schema, truncate
-            )
+        if not (catalog_entry.columns and (include_columns or include_schema)):
+            return data
 
+        data['columns'] = cols = self._build_columns_data(
+            table_slug, catalog_entry.columns, include_schema, truncate
+        )
+        if isinstance(cols, dict) and not any(info for info in cols.values()):
+            data['columns'] = list(cols)
         return data
 
     def _build_columns_data(

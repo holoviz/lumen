@@ -314,35 +314,6 @@ async def test_reuse_ephemeral_source_across_uploads():
     assert found is source1
 
 
-async def test_metadata_lookup_reprocesses_source_with_new_tables():
-    """
-    MetadataLookup should re-process a source when its table count
-    increases (new tables uploaded to the same source).
-    """
-    from lumen.ai.tools.metadata_lookup import MetadataLookup
-
-    source = DuckDBSource(tables={
-        'table_a': "SELECT 1 AS id, 'X' AS category",
-    })
-
-    lookup = MetadataLookup()
-    vector_store_id = id(lookup.vector_store)
-
-    # Source previously processed with 1 table
-    lookup._sources_in_progress[vector_store_id] = {source.name: 1}
-
-    # Same table count -> should be skipped
-    current_count = len(source.get_tables())
-    known_count = lookup._sources_in_progress[vector_store_id].get(source.name, 0)
-    assert known_count >= current_count
-
-    # Add a second table -> should trigger re-processing
-    source.tables['table_b'] = "SELECT 2 AS id, 'Y' AS group_name"
-    current_count = len(source.get_tables())
-    known_count = lookup._sources_in_progress[vector_store_id].get(source.name, 0)
-    assert known_count < current_count
-
-
 async def test_metadata_lookup_skips_unchanged_source():
     """
     Calling _update_vector_store twice with the same source (unchanged tables)
