@@ -417,6 +417,10 @@ class UI(Viewer):
     llm = param.ClassSelector(class_=Llm, default=_get_default_llm(), doc="""
         The LLM provider to be used by default""")
 
+    llm_tools = param.List(default=[], doc="""
+        Extra tools for the coordinator's :attr:`~lumen.ai.actor.LLMUser.llm_tools`
+        (expanded in ``_invoke_prompt`` / ``_stream_prompt`` only).""")
+
     llm_choices = param.List(default=[], doc="""
         List of available LLM model choices to show in the configuration dialog.""")
 
@@ -1079,6 +1083,7 @@ class UI(Viewer):
             context=self.context,
             interface=self.interface,
             llm=self.llm,
+            llm_tools=self.llm_tools,
             tools=self.tools,
             within_ui=True,
             vector_store=self.vector_store,

@@ -81,11 +81,10 @@ class DocumentSummarizerAgent(BaseLumenAgent):
             fallback_content = "\n\n".join(
                 f"- {chunk.text.strip()}" for chunk in chunks if chunk.text and chunk.text.strip()
             )
-            similarity = max((c.similarity for c in chunks), default=0)
             documents.append(
                 {
                     "filename": filename,
-                    "similarity": similarity,
+                    "similarity": max((c.similarity for c in chunks), default=0),
                     "content": source_meta.get("content") or fallback_content or "*No textual content available.*",
                     "raw_bytes": source_meta.get("raw_bytes"),
                 }
@@ -122,13 +121,9 @@ class DocumentSummarizerAgent(BaseLumenAgent):
             query=messages[-1]["content"] if messages else None,
             title="Relevant document tabs",
         )
-        system_prompt = await self._render_prompt(
-            "main",
-            messages,
-            context,
-            document_context=self._build_document_context(documents),
-        )
-        summary_message = await self._stream(messages, system_prompt)
-        return [summary_message, document_editor], {
-            "document_summary": summary_message.object, **(await document_editor.render_context())
-        }
+        if self.interface is not None:
+            self.interface.send(document_editor, user=self.__class__.__name__)
+
+        summary_message = await self._stream(messages, context, document_context=self._build_document_context(documents))
+        summary_text = getattr(summary_message, "object", str(summary_message))
+        return [document_editor, summary_message], {**await document_editor.render_context(), "document_summary": summary_text}

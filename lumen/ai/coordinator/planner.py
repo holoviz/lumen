@@ -13,6 +13,7 @@ from panel_material_ui import ChatStep
 from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 
+from ..actor import _merge_prompt_tools
 from ..agents import Agent
 from ..config import PROMPTS_DIR
 from ..context import (
@@ -22,6 +23,8 @@ from ..llm import Message
 from ..models import FollowUpClassification
 from ..report import ActorTask
 from ..tools import MetadataLookup, Tool
+from ..tools.document_llm_tools import make_document_vector_llm_tools
+from ..tools.metaset_docs_llm_tools import make_load_metaset_relevant_docs_tool
 from ..utils import content_to_text, log_debug, wrap_logfire
 from .base import Coordinator, Plan
 
@@ -104,6 +107,12 @@ class Planner(Coordinator):
     The Planner develops a plan to solve the user query step-by-step
     and then executes it.
     """
+
+    llm_tools = param.List(
+        default=[make_load_metaset_relevant_docs_tool, make_document_vector_llm_tools],
+        doc="""
+        List of tools to use for the planner.""",
+    )
 
     planner_tools = param.List(
         default=[MetadataLookup],
@@ -324,13 +333,13 @@ class Planner(Coordinator):
         # also filter out agents where excluded keys exist in context
         agents = [agent for agent in agents if len(set(agent.input_schema.__required_keys__) - all_provides) == 0 and type(agent).__name__ != "ValidationAgent"]
         tools = [tool for tool in tools if len(set(tool.input_schema.__required_keys__) - all_provides) == 0]
+        llm_tools = _merge_prompt_tools(self.llm_tools, None, context)
         reasoning = None
         while reasoning is None:
             # candidates = agents and tools that can provide
             # the unmet dependencies
             agent_candidates = [agent for agent in agents if not unmet_dependencies or set(agent.output_schema.__annotations__) & unmet_dependencies]
             tool_candidates = [tool for tool in tools if not unmet_dependencies or set(tool.output_schema.__annotations__) & unmet_dependencies]
-            llm_tools, _, _ = self.llm._normalize_tools(self.llm.tools)
             model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
             system = await self._render_prompt(
                 "main",
@@ -345,7 +354,6 @@ class Planner(Coordinator):
                 previous_actors=previous_actors,
                 previous_plans=previous_plans,
                 follow_up_type=follow_up_type,
-                llm_tools=llm_tools
             )
             async for reasoning in self.llm.stream(
                 messages=messages,
@@ -353,6 +361,7 @@ class Planner(Coordinator):
                 model_spec=model_spec,
                 response_model=Reasoning,
                 max_retries=3,
+                tools=llm_tools,
             ):
                 if reasoning.chain_of_thought:  # do not replace with empty string
                     context["reasoning"] = reasoning.chain_of_thought
@@ -366,6 +375,7 @@ class Planner(Coordinator):
             model_spec=model_spec,
             response_model=plan_model,
             max_retries=3,
+            tools=llm_tools,
         ):
             partial_todos = self._render_partial_todos(raw_plan)
             if partial_todos and self.steps_layout is not None:

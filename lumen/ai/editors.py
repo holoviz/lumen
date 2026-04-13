@@ -630,17 +630,17 @@ class DocumentEditor(LumenEditor):
         self,
         documents: list[dict[str, Any]] | None = None
     ) -> Panel:
-        documents = [
+        matching_documents = [
             doc for doc in (documents or self.documents)
             if doc.get("similarity", 0) > self.min_similarity
         ]
-        if not documents:
+        if not matching_documents:
             return Panel(
                 object=Markdown("*No relevant documents found.*")
             )
 
         tabs = []
-        for doc in documents:
+        for doc in matching_documents:
             filename = doc.get("filename", "Unknown document")
             tabs.append((filename, self._render_document(doc)))
 

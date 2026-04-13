@@ -78,6 +78,16 @@ class Metaset:
         """Get document chunks (already filtered by MetadataLookup)."""
         return self.docs if self.docs else []
 
+    def docs_retrieval_stats(self) -> tuple[int, float, float] | None:
+        """
+        Return (chunk_count, min_similarity, max_similarity) for retrieved docs, or None if none.
+        """
+        docs = self.get_docs()
+        if not docs:
+            return None
+        sims = [float(c.similarity) for c in docs]
+        return (len(docs), min(sims), max(sims))
+
     async def get_schema(self, table_slug: str) -> dict[str, Any] | None:
         """
         Lazily fetch and cache schema for a specific table.
@@ -255,7 +265,7 @@ class Metaset:
         truncate: bool = False,
         include_sql: bool = True,
         include_metadata: bool = True,
-        include_docs: bool = True,
+        include_docs: bool = False,
         include_lineage: bool = False,
         n: int | None = None,
         offset: int = 0,
@@ -389,7 +399,7 @@ class Metaset:
             "truncate": False,
             "include_sql": False,
             "include_metadata": include_metadata,
-            "include_docs": True,
+            "include_docs": False,
             "include_lineage": include_lineage,
         }
         generate_kwargs.update(override_kwargs)
@@ -402,7 +412,7 @@ class Metaset:
             "truncate": False,
             "include_sql": False,
             "include_metadata": include_metadata,
-            "include_docs": True,
+            "include_docs": False,
             "include_lineage": include_lineage,
         }
         generate_kwargs.update(override_kwargs)
@@ -428,7 +438,7 @@ class Metaset:
             "truncate": True,
             "include_sql": False,
             "include_metadata": include_metadata,
-            "include_docs": True,
+            "include_docs": False,
             "include_lineage": include_lineage,
         }
         generate_kwargs.update(override_kwargs)

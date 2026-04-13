@@ -4,6 +4,7 @@ import asyncio
 import re
 import traceback
 
+from collections.abc import Callable
 from functools import partial
 from textwrap import dedent, indent
 from types import FunctionType
@@ -323,6 +324,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
         interface: ChatFeed | None = None,
         agents: list[Agent | type[Agent]] | None = None,
         tools: list[Tool | type[Tool]] | None = None,
+        llm_tools: list[Tool | type[Tool] | Callable[[TContext], list[Tool]]] | None = None,
         context: TContext | None = None,
         vector_store: VectorStore | None = None,
         document_vector_store: VectorStore | None = None,
@@ -330,6 +332,12 @@ class Coordinator(Viewer, VectorLookupToolUser):
     ):
         if context is None:
             context = {}
+        if llm_tools is None:
+            llm_tools = []
+
+        # Expose vector stores on working memory so LLM tools (see document_llm_tools) can use them.
+        context["vector_store"] = vector_store
+        context["document_vector_store"] = document_vector_store
 
         if interface is None:
             interface = ChatInterface(
@@ -361,13 +369,19 @@ class Coordinator(Viewer, VectorLookupToolUser):
             # must use the same interface or else nothing shows
             if agent.llm is None:
                 agent.llm = llm
+
+            for tool in llm_tools:
+                if tool not in agent.llm_tools:
+                    agent.llm_tools.append(tool)
+
             instantiated.append(agent)
 
         params["tools"] = tools = self._process_tools(tools)
         params["prompts"] = self._process_prompts(params.get("prompts"), tools)
 
         super().__init__(
-            llm=llm, agents=instantiated, interface=interface, vector_store=vector_store, document_vector_store=document_vector_store, context=context, **params
+            llm=llm, agents=instantiated, interface=interface, vector_store=vector_store,
+            document_vector_store=document_vector_store, context=context, llm_tools=llm_tools, **params
         )
         for tools in self._tools.values():
             for tool in tools:
