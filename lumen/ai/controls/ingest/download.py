@@ -10,7 +10,7 @@ from panel_material_ui import (
     Button, Column as MuiColumn, Row, TextAreaInput,
 )
 
-from .base import FileSourceControls
+from .file import FileSourceControls
 from .utils import download_file
 
 
