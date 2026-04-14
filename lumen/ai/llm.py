@@ -815,8 +815,13 @@ class Llm(param.Parameterized):
 
         tool_call_accum: dict[int, dict[str, Any]] = {}
         tool_call_order: list[int] = []
+        response_id: str | None = None
         try:
             async for chunk in chunks:
+                chunk_response = getattr(chunk, "response", None)
+                chunk_response_id = getattr(chunk_response, "id", None)
+                if chunk_response_id:
+                    response_id = chunk_response_id
                 if response_model is None:
                     string += self._get_delta(chunk)
                     yield string
@@ -828,6 +833,10 @@ class Llm(param.Parameterized):
         except TypeError:
             # Handle synchronous iterators
             for chunk in chunks:
+                chunk_response = getattr(chunk, "response", None)
+                chunk_response_id = getattr(chunk_response, "id", None)
+                if chunk_response_id:
+                    response_id = chunk_response_id
                 if response_model is None:
                     string += self._get_delta(chunk)
                     yield string
@@ -839,19 +848,38 @@ class Llm(param.Parameterized):
 
         if response_model is None and tool_instances and tool_call_accum:
             tool_calls = self._tool_calls_from_accum(tool_call_accum, tool_call_order)
-            tool_calls_message = self._tool_calls_message(tool_calls)
             tool_messages = await self._run_tool_calls(tool_instances, tool_calls, tool_contexts, messages)
             if tool_messages:
-                async for chunk in self.stream(
-                    messages + [tool_calls_message] + tool_messages,
-                    system=system,
-                    response_model=response_model,
-                    field=field,
-                    model_spec=model_spec,
-                    tools=tools,
-                    **kwargs,
+                if (
+                    getattr(self, "api", None) == "responses"
+                    and hasattr(self, "_tool_messages_to_response_inputs")
                 ):
-                    yield chunk
+                    next_messages = self._tool_messages_to_response_inputs(tool_messages)
+                    next_kwargs = dict(kwargs)
+                    if response_id:
+                        next_kwargs["previous_response_id"] = response_id
+                    async for chunk in self.stream(
+                        next_messages,  # type: ignore[arg-type]
+                        system=system,
+                        response_model=response_model,
+                        field=field,
+                        model_spec=model_spec,
+                        tools=tools,
+                        **next_kwargs,
+                    ):
+                        yield chunk
+                else:
+                    tool_calls_message = self._tool_calls_message(tool_calls)
+                    async for chunk in self.stream(
+                        messages + [tool_calls_message] + tool_messages,
+                        system=system,
+                        response_model=response_model,
+                        field=field,
+                        model_spec=model_spec,
+                        tools=tools,
+                        **kwargs,
+                    ):
+                        yield chunk
 
     async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
         log_debug(f"Input messages: \033[95m{len(messages)} messages\033[0m including system")
@@ -1097,10 +1125,17 @@ class OpenAI(Llm, OpenAIMixin):
     @classmethod
     def _get_delta(cls, chunk) -> str:
         event_type = getattr(chunk, "type", None)
-        if event_type == "response.output_text.delta":
-            return getattr(chunk, "delta", "") or ""
+        if isinstance(event_type, str) and event_type.startswith("response."):
+            if event_type == "response.output_text.delta":
+                return getattr(chunk, "delta", "") or ""
+            return ""
         if isinstance(chunk, dict):
-            if chunk.get("type") == "response.output_text.delta":
+            chunk_type = chunk.get("type")
+            if isinstance(chunk_type, str) and chunk_type.startswith("response."):
+                if chunk_type == "response.output_text.delta":
+                    return chunk.get("delta") or ""
+                return ""
+            if chunk_type == "response.output_text.delta":
                 return chunk.get("delta") or ""
         return super()._get_delta(chunk)
 
@@ -1152,7 +1187,6 @@ class OpenAI(Llm, OpenAIMixin):
         elif event_type == "response.function_call_arguments.done":
             return [{
                 "index": getattr(chunk, "output_index", 0),
-                "id": getattr(chunk, "item_id", None),
                 "type": "function",
                 "function": {
                     "name": getattr(chunk, "name", None),
@@ -1179,7 +1213,6 @@ class OpenAI(Llm, OpenAIMixin):
             elif chunk.get("type") == "response.function_call_arguments.done":
                 return [{
                     "index": chunk.get("output_index", 0),
-                    "id": chunk.get("item_id"),
                     "type": "function",
                     "function": {
                         "name": chunk.get("name"),
