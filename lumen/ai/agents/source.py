@@ -192,7 +192,8 @@ class SourceAgent(Agent):
             "Use when the user asks for data from an external API or service",
             "Use when the loaded data does not cover the requested scope (e.g. user asks for 'whole month' but data summary only shows a week)",
             "Prefer over metadata discovery when no data sources are loaded but source controls exist",
-            "This agent only fetches and registers data \u2014 it never presents results to the user; always follow with a presentation or query step",
+            "This agent only fetches and registers data — it never presents results to the user; always follow with a presentation or query step",
+            "Output is queryable tabular data — enables filtering, aggregation, joins, and transformation by downstream agents",
             "NOT for listing configured external source actions or answering 'what data is available' before a concrete dataset request",
             "NOT when the loaded data already covers the requested scope and user just wants to query/visualize it",
         ]

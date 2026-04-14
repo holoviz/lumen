@@ -169,8 +169,14 @@ class ParametricSourceControls(BaseSourceControls):
         model = self._action_models.get(active)
         children = []
         if model is not None:
+            # Build widgets dict to stretch all widgets
+            widgets = {
+                name: {"sizing_mode": "stretch_width"}
+                for name in model.param
+                if name != "name"
+            }
             children.append(
-                pn.Param(model, show_name=False, sizing_mode="stretch_width")
+                pn.Param(model, show_name=False, sizing_mode="stretch_width", widgets=widgets)
             )
         self._controls_area[:] = children
 
@@ -209,12 +215,17 @@ class ParametricSourceControls(BaseSourceControls):
         if not self._uses_actions:
             query_names = self._get_query_param_names()
             if query_names:
+                widgets = {
+                    name: {"sizing_mode": "stretch_width"}
+                    for name in query_names
+                }
                 self._controls_area[:] = [
                     pn.Param(
                         self,
                         parameters=query_names,
                         show_name=False,
                         sizing_mode="stretch_width",
+                        widgets=widgets,
                     )
                 ]
         # Action selector lives outside _controls_area to avoid
