@@ -30,6 +30,8 @@ from ..llm import LlamaCpp, Llm, Message
 from ..models import ThinkingYesNo
 from ..report import ActorTask, Section, TaskGroup
 from ..tools import MetadataLookup, Tool, VectorLookupToolUser
+from ..tools.document_llm_tools import make_document_vector_llm_tools
+from ..tools.metaset_docs_llm_tools import make_load_metaset_relevant_docs_tool
 from ..utils import (
     content_to_text, describe_data_sync, fuse_messages, get_root_exception,
     log_debug, mutate_user_message, normalized_name, set_content_text,
@@ -283,6 +285,13 @@ class Coordinator(Viewer, VectorLookupToolUser):
         Number of previous user-assistant interactions to include in the chat history.""",
     )
 
+    llm_tools = param.List(
+        default=[make_load_metaset_relevant_docs_tool, make_document_vector_llm_tools],
+        doc="""
+        List of tools for the Planner to make available to the LLM. The tools are also
+        made available to the agents.""",
+    )
+
     prompts = param.Dict(
         default={
             "main": {
@@ -335,10 +344,6 @@ class Coordinator(Viewer, VectorLookupToolUser):
         if llm_tools is None:
             llm_tools = []
 
-        # Expose vector stores on working memory so LLM tools (see document_llm_tools) can use them.
-        context["vector_store"] = vector_store
-        context["document_vector_store"] = document_vector_store
-
         if interface is None:
             interface = ChatInterface(
                 callback=self._chat_invoke, callback_exception="raise", load_buffer=5, show_button_tooltips=True, show_button_name=False, sizing_mode="stretch_both"
@@ -350,6 +355,10 @@ class Coordinator(Viewer, VectorLookupToolUser):
         # Use the same vector_store for documents if not explicitly provided
         if document_vector_store is None:
             document_vector_store = vector_store
+
+        # Expose vector stores on working memory so LLM tools (see document_llm_tools) can use them.
+        context["vector_store"] = vector_store
+        context["document_vector_store"] = document_vector_store
 
         llm = llm or self.llm
         instantiated = []

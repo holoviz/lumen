@@ -23,8 +23,6 @@ from ..llm import Message
 from ..models import FollowUpClassification
 from ..report import ActorTask
 from ..tools import MetadataLookup, Tool
-from ..tools.document_llm_tools import make_document_vector_llm_tools
-from ..tools.metaset_docs_llm_tools import make_load_metaset_relevant_docs_tool
 from ..utils import content_to_text, log_debug, wrap_logfire
 from .base import Coordinator, Plan
 
@@ -108,11 +106,6 @@ class Planner(Coordinator):
     and then executes it.
     """
 
-    llm_tools = param.List(
-        default=[make_load_metaset_relevant_docs_tool, make_document_vector_llm_tools],
-        doc="""
-        List of tools to use for the planner.""",
-    )
 
     planner_tools = param.List(
         default=[MetadataLookup],

@@ -1078,18 +1078,26 @@ class UI(Viewer):
         if self.analyses:
             agents.append(AnalysisAgent(analyses=self.analyses))
 
+        llm_tools = list(self.coordinator.llm_tools)
+        if self.llm_tools:
+            llm_tools.extend(self.llm_tools)
+
         self._coordinator = self.coordinator(
             agents=agents,
             context=self.context,
+            document_vector_store=self.document_vector_store,
             interface=self.interface,
             llm=self.llm,
-            llm_tools=self.llm_tools,
+            llm_tools=llm_tools,
             tools=self.tools,
             within_ui=True,
             vector_store=self.vector_store,
-            document_vector_store=self.document_vector_store,
             **self.coordinator_params
         )
+        if self.vector_store is None:
+            self.vector_store = self._coordinator.vector_store
+        if self.document_vector_store is None:
+            self.document_vector_store = self._coordinator.document_vector_store
 
     def _get_status_text(self) -> str:
         """Generate the status text showing sources and LLM provider."""
