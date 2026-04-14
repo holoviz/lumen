@@ -1,6 +1,6 @@
 # :material-weather-partly-cloudy: Building a Weather Data Explorer
 
-<!-- TODO: Add screenshot at docs/assets/tutorials/mesonet_full.png -->
+![Mesonet Auto Ingestion](../../assets/tutorials/mesonet.png)
 
 Build a data exploration application that fetches weather observations from the Iowa Environmental Mesonet (IEM) using URL-based source controls.
 

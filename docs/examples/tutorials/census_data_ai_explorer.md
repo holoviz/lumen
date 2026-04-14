@@ -1,6 +1,6 @@
 # :material-map: Building a Census Data AI Explorer
 
-![Census Data Explorer UI](../../assets/tutorials/census_full.png)
+![Census Data Explorer UI](../../assets/tutorials/census.png)
 
 Build a data exploration application that integrates U.S. Census Bureau data using Lumen AI.
 
@@ -39,8 +39,6 @@ pip install lumen-ai censusdis
 ```
 
 ## 1. Minimal example with CodeSourceControls
-
-![Census Data Explorer UI](../../assets/tutorials/census_minimal.png)
 
 The simplest approach wraps standalone functions with `CodeSourceControls`. Copy this to `census_explorer.py` and run with `panel serve census_explorer.py --show`:
 
@@ -144,9 +142,17 @@ param_overrides={
 
 ## 3. Adding reactive options
 
-The minimal example has static dropdowns. But Census variable groups depend on the dataset and year - selecting ACS 2022 vs 2018 may offer different groups.
+The minimal example has static dropdowns — the same choices appear regardless of what the user selects. But Census variable groups depend on the dataset and year. Selecting ACS 2022 vs 2018 may offer different groups, and the dropdown should reflect that.
 
-Subclass `CodeSourceControls` to add reactive behavior:
+Subclass `CodeSourceControls` to make the group dropdown update automatically when the dataset or year changes.
+
+### The goal
+
+When a user switches the dataset from `acs/acs5` to `acs/acs1`, the group dropdown should fetch the available variable groups for that dataset and repopulate itself, without the user needing to reload the page or click anything extra.
+
+### Step by step
+
+**Override `_setup_actions()` to add watchers.** `_setup_actions()` is called after the base class creates the internal `_action_models` dictionary — one `Parameterized` object per registered function. Override it to attach `param.watch` callbacks that fire when specific parameters change:
 
 ``` py title="census_explorer_reactive.py" linenums="1"
 import pandas as pd
@@ -181,17 +187,18 @@ class CensusdisControls(CodeSourceControls):
     label = '<span class="material-icons">assessment</span> Census Data'
 
     def __init__(self, **params):
-        self._groups_cache = {}
+        self._groups_cache = {}  # (1)!
         super().__init__(**params)
 
     def _setup_actions(self):
-        super()._setup_actions()  # (1)!
+        super()._setup_actions()  # (2)!
 
-        model = self._action_models.get("Download Census Data")
+        model = self._action_models.get("Download Census Data")  # (3)!
         if model:
-            # Watch dataset and vintage, update group options
-            model.param.watch(self._on_dataset_vintage_change, ["dataset", "vintage"])
-            self._update_group_options(model)
+            model.param.watch(  # (4)!
+                self._on_dataset_vintage_change, ["dataset", "vintage"]
+            )
+            self._update_group_options(model)  # (5)!
 
     def _on_dataset_vintage_change(self, event):
         model = self._action_models["Download Census Data"]
@@ -201,7 +208,7 @@ class CensusdisControls(CodeSourceControls):
         """Fetch and update group options based on current dataset/vintage."""
         groups = self._fetch_groups(model.dataset, model.vintage)
         current = model.group
-        model.param.group.objects = list(groups.keys())
+        model.param.group.objects = list(groups.keys())  # (6)!
         # Preserve selection if still valid
         if current in groups:
             model.group = current
@@ -213,7 +220,7 @@ class CensusdisControls(CodeSourceControls):
         import censusdis.data as ced
 
         key = (dataset, vintage)
-        if key not in self._groups_cache:
+        if key not in self._groups_cache:  # (7)!
             try:
                 groups_df = ced.variables.all_groups(dataset, vintage)
                 self._groups_cache[key] = {
@@ -223,8 +230,61 @@ class CensusdisControls(CodeSourceControls):
             except Exception:
                 self._groups_cache[key] = {"B01003": "Total Population"}
         return self._groups_cache[key]
+```
 
+1. Initialize the cache *before* `super().__init__()`, because the base class calls `_setup_actions()` during init
+2. Always call `super()._setup_actions()` first — this creates `_action_models` from the functions you registered
+3. `_action_models` is a dict mapping action display names to `Parameterized` objects. Each object has one param attribute per function argument.
+4. `param.watch` calls `_on_dataset_vintage_change` whenever `dataset` or `vintage` changes
+5. Populate the group dropdown immediately so it has valid options on first render
+6. Setting `.objects` on a `Selector` param updates the dropdown choices in the UI
+7. Cache API responses to avoid fetching the same group list repeatedly
 
+### How the pieces connect
+
+The reactive flow has four participants:
+
+| Component | Role |
+|-----------|------|
+| `_action_models["Download Census Data"]` | `Parameterized` object holding current widget values |
+| `param.watch(callback, ["dataset", "vintage"])` | Fires `callback` whenever `dataset` or `vintage` changes |
+| `_update_group_options(model)` | Fetches groups for the current dataset/vintage and sets `model.param.group.objects` |
+| `_fetch_groups(dataset, vintage)` | Calls the Census API (or returns a cached result) |
+
+When a user selects a different dataset in the dropdown, `param.watch` fires. The callback fetches the available variable groups for that dataset/year combination and replaces the group dropdown's options. If the user's current group selection is still valid, it stays selected; otherwise the dropdown resets to the first option.
+
+### Why cache API responses
+
+Census API calls can be slow — fetching the full list of variable groups for a dataset/vintage combination may take a few seconds. Without caching, every switch between datasets would trigger a network request, even if the user switches back to a dataset they already visited.
+
+The `_groups_cache` dictionary uses `(dataset, vintage)` tuples as keys:
+
+```python
+# First call for ("acs/acs5", 2022): fetches from API, stores result
+groups = self._fetch_groups("acs/acs5", 2022)
+
+# Second call for ("acs/acs5", 2022): returns cached result immediately
+groups = self._fetch_groups("acs/acs5", 2022)
+
+# First call for ("acs/acs1", 2022): different key, fetches from API
+groups = self._fetch_groups("acs/acs1", 2022)
+```
+
+### Why initialize the cache before `super().__init__()`
+
+`CodeSourceControls.__init__` calls `_setup_actions()` during initialization. If `_setup_actions()` tries to access `self._groups_cache` before it exists, you'll get an `AttributeError`. Setting `self._groups_cache = {}` before calling `super().__init__()` avoids this:
+
+```python
+def __init__(self, **params):
+    self._groups_cache = {}    # ← must come first
+    super().__init__(**params)  # ← calls _setup_actions() → _fetch_groups()
+```
+
+### Wire up the application
+
+Pass `CensusdisControls` to `ExplorerUI` with the same `param_overrides` as before, but add `group` as a `Selector` so it can receive dynamic options:
+
+``` py title="census_explorer_reactive.py" linenums="74"
 ui = lmai.ExplorerUI(
     agents=[SourceAgent()],
     source_controls=[
@@ -242,7 +302,7 @@ ui = lmai.ExplorerUI(
                     ),
                     "group": param.Selector(
                         default="B01003",
-                        objects=["B01003"],  # Will be updated reactively
+                        objects=["B01003"],  # Placeholder — replaced by _setup_actions
                     ),
                 },
             },
@@ -256,35 +316,35 @@ ui = lmai.ExplorerUI(
 ui.servable()
 ```
 
-1. Call `super()._setup_actions()` first - this creates `_action_models` from the functions
+The `group` selector starts with a single placeholder option (`"B01003"`). As soon as the controls initialize, `_setup_actions` replaces it with the full list fetched from the Census API.
 
-### Key patterns
+### Patterns to reuse
 
-**Override `_setup_actions()`** to add watchers after action models are created:
+**Override `_setup_actions()` to add watchers** whenever you need one dropdown to control another:
 
 ```python
 def _setup_actions(self):
-    super()._setup_actions()  # Creates _action_models
+    super()._setup_actions()
     model = self._action_models.get("Action Name")
     model.param.watch(self._on_change, ["param1", "param2"])
 ```
 
-**Access action models** via `self._action_models[action_name]`:
+**Read and write action model state** via `self._action_models[action_name]`:
 
 ```python
 model = self._action_models["Download Census Data"]
-model.param.group.objects = ["B01003", "B19013"]  # Update options
-model.group = "B01003"  # Set value
+model.param.group.objects = ["B01003", "B19013"]  # Update dropdown options
+model.group = "B01003"                             # Set selected value
+current_value = model.dataset                      # Read current value
 ```
 
-**Cache API responses** to avoid redundant calls:
+**Cache expensive API calls** with a dictionary keyed by the input parameters:
 
 ```python
-def _fetch_groups(self, dataset, vintage):
-    key = (dataset, vintage)
-    if key not in self._groups_cache:
-        self._groups_cache[key] = fetch_from_api(dataset, vintage)
-    return self._groups_cache[key]
+def _fetch_options(self, key_param):
+    if key_param not in self._cache:
+        self._cache[key_param] = expensive_api_call(key_param)
+    return self._cache[key_param]
 ```
 
 ## Full example with multiple functions
