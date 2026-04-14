@@ -8,8 +8,14 @@ except ModuleNotFoundError:
 from panel.viewable import Viewable
 
 from lumen.ai.coordinator import Coordinator
+from lumen.ai.schemas import DocumentChunk, Metaset, TableCatalogEntry
 from lumen.ai.tools import FunctionTool, MetadataLookup, define_tool
+from lumen.ai.tools.document_llm_tools import (
+    make_document_vector_llm_tools, merge_document_vector_llm_tools,
+    merge_invocation_llm_tools,
+)
 from lumen.ai.vector_store import NumpyVectorStore
+from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.sources.duckdb import DuckDBSource
 
 
@@ -208,3 +214,46 @@ async def test_metadata_lookup_global_context_still_works():
     assert len(metaset.catalog) > 0
     slugs = list(metaset.catalog.keys())
     assert any("orders" in s for s in slugs)
+
+@pytest.mark.asyncio
+async def test_document_llm_tools_list_and_search():
+    store = NumpyVectorStore()
+    await store.add(
+        [{"text": "penguins like cold water", "metadata": {"filename": "zoo.md", "type": "document"}}]
+    )
+    ctx: dict = {"document_vector_store": store, "_document_vector_store_shared": False}
+    tools = make_document_vector_llm_tools(ctx)
+    assert len(tools) == 2
+    listed = tools[0].function(limit=10, offset=0)
+    assert "zoo.md" in listed
+    searched = await tools[1].function(query="penguins", top_k=3, min_similarity=-1.0)
+    assert "cold water" in searched
+    assert merge_document_vector_llm_tools(None, {}) is None
+    merged = merge_document_vector_llm_tools(None, ctx)
+    assert merged is not None and len(merged) == 2
+
+
+@pytest.mark.asyncio
+async def test_merge_invocation_llm_tools_includes_metaset_doc_tool():
+    store = NumpyVectorStore()
+    await store.add(
+        [{"text": "penguins like cold water", "metadata": {"filename": "zoo.md", "type": "document"}}]
+    )
+    slug = f"Src{SOURCE_TABLE_SEPARATOR}t"
+    entry = TableCatalogEntry(table_slug=slug, similarity=1.0, columns=[])
+    ms = Metaset(
+        query="q",
+        catalog={slug: entry},
+        docs=[DocumentChunk(filename="readme.md", text="definitions here", similarity=0.88)],
+    )
+    ctx = {
+        "document_vector_store": store,
+        "_document_vector_store_shared": False,
+        "metaset": ms,
+    }
+    merged = merge_invocation_llm_tools(None, ctx)
+    assert merged is not None
+    names = {t.name for t in merged}
+    assert "list_indexed_documents" in names
+    assert "search_document_chunks" in names
+    assert "load_relevant_metaset_docs" in names

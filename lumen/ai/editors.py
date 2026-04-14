@@ -616,7 +616,7 @@ class DocumentEditor(LumenEditor):
             )
 
         return Column(
-            Markdown(content, sizing_mode="stretch_width"),
+            Markdown(content, sizing_mode="stretch_width", margin=(0, 20)),
             max_height=self._max_preview_height,
             scroll="y-auto",
             sizing_mode="stretch_both",
@@ -630,17 +630,17 @@ class DocumentEditor(LumenEditor):
         self,
         documents: list[dict[str, Any]] | None = None
     ) -> Panel:
-        documents = [
+        matching_documents = [
             doc for doc in (documents or self.documents)
             if doc.get("similarity", 0) > self.min_similarity
         ]
-        if not documents:
+        if not matching_documents:
             return Panel(
                 object=Markdown("*No relevant documents found.*")
             )
 
         tabs = []
-        for doc in documents:
+        for doc in matching_documents:
             filename = doc.get("filename", "Unknown document")
             tabs.append((filename, self._render_document(doc)))
 
