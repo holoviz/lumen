@@ -7,7 +7,7 @@ Classify the user's query as one of three follow-up types based on the data cont
 
 - **direct**: The data already in memory answers the question. No SQL needed (e.g. visualization change, reorder).
 - **derived**: A previously computed table (marked with `derived_from` or ★) can answer with a simple filter or subset. Prefer this over recomputing from raw sources.
-- **new**: Requires fresh computation from original sources, or is a different topic entirely.
+- **new**: Requires fresh computation from original sources, a different topic, or data outside the scope of what was fetched from an external source.
 {%- endblock -%}
 
 {% block examples %}
@@ -44,10 +44,19 @@ new:
 User: "What's the average order value?"
 In-memory data: customer_signups — unrelated topic
 → new — different metric entirely
+
+new:
+User: "Show me the whole month"
+In-memory data: daily weather for Apr 7–13 (fetched from external API for that date range)
+→ new — data was fetched for a narrow date range; broadening requires a fresh external fetch
 {% endblock %}
 
 {% block context -%}
 ## Context
+
+{%- if memory.get('source_actions') %}
+⚠️ Tables loaded from external API — rows limited to fetched parameters.
+{%- endif %}
 
 {%- if 'sql' in memory %}
 🗃️ Current SQL:
@@ -62,7 +71,7 @@ In-memory data: customer_signups — unrelated topic
 {%- endif %}
 
 {%- if memory.get('metaset') %}
-📋 All available tables:
-{{ memory['metaset'].table_list() }}
+📋 Available tables:
+{{ memory['metaset'].compact_context(include_docs=False) }}
 {%- endif %}
 {%- endblock -%}

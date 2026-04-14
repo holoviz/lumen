@@ -36,7 +36,7 @@ class URLSourceControls(ParametricSourceControls):
     ``{region}`` is replaced by the current value of the ``region`` param.
     """
 
-    url_template = param.String(default="", doc="""
+    url_template = param.String(default="", precedence=-1, doc="""
         URL template with ``{param_name}`` placeholders matching query param names.""")
 
     label = '<span class="material-icons" style="vertical-align: middle;">link</span> URL Data Source'
@@ -62,6 +62,14 @@ class URLSourceControls(ParametricSourceControls):
         Creates a temporary ``UploadedFileRow`` for alias/extension metadata,
         then reads the content into a ``DuckDBSource``. Override for custom parsing.
         """
+        # Detect API error responses before parsing
+        try:
+            text_preview = content[:500].decode("utf-8", errors="replace").strip()
+        except Exception:
+            text_preview = ""
+        if text_preview.upper().startswith("ERROR"):
+            return SourceResult.empty(f"API error: {text_preview[:200]}")
+
         suffix = pathlib.Path(filename).suffix.lstrip(".").lower()
         file_obj = io.BytesIO(content)
         card = UploadedFileRow(file_obj=file_obj, filename=filename)
@@ -76,8 +84,13 @@ class URLSourceControls(ParametricSourceControls):
         except Exception as e:
             return SourceResult.empty(f"Could not parse {filename!r}: {e}")
 
-        if df is None or df.empty:
-            return SourceResult.empty(f"{filename!r} contains no data.")
+        if df is None:
+            return SourceResult.empty(f"Could not parse {filename!r}.")
+        if df.empty:
+            return SourceResult.empty(
+                "The API returned no data rows. The request may have "
+                "returned headers only (e.g. today's data not yet available)."
+            )
 
         table = card.alias
         source._connection.from_df(df).to_view(table)

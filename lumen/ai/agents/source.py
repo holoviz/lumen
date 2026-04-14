@@ -9,6 +9,7 @@ the function.  Results are normalized to DataFrames and registered as new
 """
 from __future__ import annotations
 
+import asyncio
 import inspect
 import typing as t
 
@@ -21,12 +22,14 @@ from ...sources.duckdb import DuckDBSource
 from ..config import PROMPTS_DIR
 from ..context import ContextModel, TContext
 from ..controls import ParametricSourceControls
+from ..controls.ingest.result import SourceResult
 from ..llm import Message
 from ..schemas import Metaset, get_metaset
 from ..tools import FunctionTool
 from ..translate import doc_descriptions
 from ..utils import (
     describe_data, get_pipeline, log_debug, result_to_dataframe,
+    retry_llm_output,
 )
 from .base import Agent
 
@@ -85,41 +88,55 @@ def _sanitize_tool_callable(
     skip_params: list[str],
     result_store: dict[str, t.Any] | None = None,
 ) -> t.Callable:
-    """Hide SDK/internal params from FunctionTool schema generation."""
-    if not skip_params:
+    """Hide SDK/internal params from FunctionTool schema generation.
+
+    Also wraps the callable to capture its return value in
+    ``result_store`` when provided, even if no params need skipping.
+    """
+    needs_skip = bool(skip_params)
+    needs_capture = result_store is not None
+
+    if not needs_skip and not needs_capture:
         return func
 
     sig = inspect.signature(func)
-    filtered_params = [
-        parameter
-        for name, parameter in sig.parameters.items()
-        if name not in skip_params
-    ]
-    filtered_signature = inspect.Signature(filtered_params)
-    kept_param_names = {parameter.name for parameter in filtered_params}
 
-    annotations = dict(getattr(func, "__annotations__", {}))
-    # Also pick up annotations from signature parameters (e.g. Literal types
-    # on dynamically-built closures that don't populate __annotations__).
-    for p in sig.parameters.values():
-        if p.annotation is not inspect.Parameter.empty and p.name not in annotations:
-            annotations[p.name] = p.annotation
-    filtered_annotations = {
-        name: annotation
-        for name, annotation in annotations.items()
-        if name not in skip_params
-    }
+    if needs_skip:
+        filtered_params = [
+            parameter
+            for name, parameter in sig.parameters.items()
+            if name not in skip_params
+        ]
+        filtered_signature = inspect.Signature(filtered_params)
+        kept_param_names = {parameter.name for parameter in filtered_params}
 
-    description, param_docs = doc_descriptions(func, sig)
-    filtered_doc_lines = [description] if description else []
-    filtered_param_docs = [
-        f"    {name}: {param_docs[name]}"
-        for name in sig.parameters
-        if name in kept_param_names and name in param_docs
-    ]
-    if filtered_param_docs:
-        filtered_doc_lines.extend(["", "Args:", *filtered_param_docs])
-    filtered_doc = "\n".join(filtered_doc_lines) or getattr(func, "__doc__", None)
+        annotations = dict(getattr(func, "__annotations__", {}))
+        for p in sig.parameters.values():
+            if p.annotation is not inspect.Parameter.empty and p.name not in annotations:
+                annotations[p.name] = p.annotation
+        filtered_annotations = {
+            name: annotation
+            for name, annotation in annotations.items()
+            if name not in skip_params
+        }
+
+        description, param_docs = doc_descriptions(func, sig)
+        filtered_doc_lines = [description] if description else []
+        filtered_param_docs = [
+            f"    {name}: {param_docs[name]}"
+            for name in sig.parameters
+            if name in kept_param_names and name in param_docs
+        ]
+        if filtered_param_docs:
+            filtered_doc_lines.extend(["", "Args:", *filtered_param_docs])
+        filtered_doc = "\n".join(filtered_doc_lines) or getattr(func, "__doc__", None)
+    else:
+        filtered_signature = sig
+        filtered_annotations = dict(getattr(func, "__annotations__", {}))
+        for p in sig.parameters.values():
+            if p.annotation is not inspect.Parameter.empty and p.name not in filtered_annotations:
+                filtered_annotations[p.name] = p.annotation
+        filtered_doc = getattr(func, "__doc__", None)
 
     if param.parameterized.iscoroutinefunction(func):
         async def wrapped_async(**kwargs):
@@ -167,10 +184,11 @@ class SourceAgent(Agent):
         default=[
             "Use when no existing data source can answer the query and external source controls are configured",
             "Use when the user asks for data from an external API or service",
+            "Use when the loaded data does not cover the requested scope (e.g. user asks for 'whole month' but data summary only shows a week)",
             "Prefer over metadata discovery when no data sources are loaded but source controls exist",
-            "This agent only fetches and registers data — it never presents results to the user; always follow with a presentation or query step",
+            "This agent only fetches and registers data \u2014 it never presents results to the user; always follow with a presentation or query step",
             "NOT for listing configured external source actions or answering 'what data is available' before a concrete dataset request",
-            "NOT when data is already loaded and user wants to query/visualize it",
+            "NOT when the loaded data already covers the requested scope and user just wants to query/visualize it",
         ]
     )
 
@@ -298,54 +316,22 @@ class SourceAgent(Agent):
         catalog_summary = _build_catalog_summary(context)
 
         with self._add_step(
-            title=step_title or "Fetching external data…",
+            title=step_title or "Fetching external data\u2026",
             steps_layout=self._steps_layout,
         ) as step:
             step.stream(
                 f"Found {len(tool_list)} available action(s). "
-                "Asking LLM to select and call the right one…"
+                "Asking LLM to select and call the right one\u2026"
             )
 
-            result = await self._invoke_prompt(
-                "main",
-                messages,
-                context,
-                tools=tool_list,
-                catalog_summary=catalog_summary,
+            source, table_name, df, summary, pipeline, metaset = (
+                await self._invoke_and_process(
+                    messages, context, tool_list, tool_results,
+                    source_actions, catalog_summary, step,
+                )
             )
 
-            step.stream("\n\nProcessing result…")
-
-            payload = next(
-                (r["result"] for r in reversed(tool_results.values())),
-                result,
-            ) if tool_results else result
-            df = result_to_dataframe(payload)
-
-            if df is None or (hasattr(df, "empty") and df.empty):
-                step.stream("\n\n⚠️ The action returned no data.")
-                raise ValueError("The source action returned no data.")
-
-            # Determine a table name
-            table_name = self._derive_table_name(messages, source_actions, tool_results)
-
-            # Register as DuckDBSource
-            source = DuckDBSource.from_df(tables={table_name: df})
-            source.tables[table_name] = f"SELECT * FROM {table_name}"
-
-            # Update context
-            context["source"] = source
-
-            # Create pipeline and metaset
-            pipeline = await get_pipeline(source=source, table=table_name)
-            metaset = await get_metaset([source], [table_name])
-            summary = await describe_data(df, reduce_enums=False)
-            if len(summary) >= 4000:
-                summary = summary[:3997] + "..."
-
-            step.stream(f"\n\n✅ Loaded **{len(df):,}** rows into `{table_name}`")
-            step.stream(f"\n```\n{summary}\n```")
-
+            step.stream(f"\n\n\u2705 Loaded **{len(df):,}** rows into `{table_name}`")
             if isinstance(step, ChatStep):
                 step.param.update(
                     status="success",
@@ -360,6 +346,85 @@ class SourceAgent(Agent):
             "metaset": metaset,
         }
         return [], out_context
+
+    @retry_llm_output()
+    async def _invoke_and_process(
+        self,
+        messages: list[Message],
+        context: TContext,
+        tool_list: list[FunctionTool],
+        tool_results: dict[str, t.Any],
+        source_actions: dict[str, t.Any] | None,
+        catalog_summary: str,
+        step: t.Any,
+        errors: list[str] | None = None,
+    ) -> tuple[DuckDBSource, str, t.Any, str, Pipeline, Metaset]:
+        """Call the LLM, execute the tool, and process the result.
+
+        Decorated with ``@retry_llm_output`` so that recoverable
+        errors (missing params, API errors, empty data) are fed back
+        to the LLM for a retry.
+        """
+        # Clear previous tool results so retries start fresh
+        tool_results.clear()
+
+        result = await self._invoke_prompt(
+            "main",
+            messages,
+            context,
+            tools=tool_list,
+            catalog_summary=catalog_summary,
+            errors=errors,
+        )
+
+        step.stream("\n\nProcessing result\u2026")
+
+        payload = next(
+            (r["result"] for r in reversed(tool_results.values())),
+            result,
+        ) if tool_results else result
+
+        # --- SourceResult path (URLSourceControls, CatalogSourceControls) ---
+        if isinstance(payload, SourceResult):
+            if not payload.sources:
+                msg = payload.message or "The source action returned no data."
+                step.stream(f"\n\n\u26a0\ufe0f {msg}")
+                raise Exception(msg)
+            source = payload.sources[0]
+            table_name = payload.table or self._derive_table_name(
+                messages, source_actions, tool_results
+            )
+            if table_name not in source.tables:
+                table_name = next(iter(source.tables), table_name)
+            context["source"] = source
+            pipeline = await get_pipeline(source=source, table=table_name)
+            metaset = await get_metaset([source], [table_name])
+            df = await asyncio.to_thread(lambda: pipeline.data)
+            summary = await describe_data(df, reduce_enums=False)
+            if len(summary) >= 4000:
+                summary = summary[:3997] + "..."
+            return source, table_name, df, summary, pipeline, metaset
+
+        # --- DataFrame path (CodeSourceControls, raw callables) ---
+        df = result_to_dataframe(payload)
+
+        if df is None or (hasattr(df, "empty") and df.empty):
+            step.stream("\n\n\u26a0\ufe0f The action returned no data.")
+            raise Exception("The source action returned no data.")
+
+        table_name = self._derive_table_name(messages, source_actions, tool_results)
+
+        source = DuckDBSource.from_df(tables={table_name: df})
+        source.tables[table_name] = f"SELECT * FROM {table_name}"
+        context["source"] = source
+
+        pipeline = await get_pipeline(source=source, table=table_name)
+        metaset = await get_metaset([source], [table_name])
+        summary = await describe_data(df, reduce_enums=False)
+        if len(summary) >= 4000:
+            summary = summary[:3997] + "..."
+
+        return source, table_name, df, summary, pipeline, metaset
 
     # ------------------------------------------------------------------
     # Helpers
@@ -377,8 +442,8 @@ class SourceAgent(Agent):
         avoid silently overwriting previously-registered tables.
 
         Examples:
-            List Aggs {ticker: AAPL, timespan: day} → list_aggs_aapl_day
-            (second call with same args)             → list_aggs_aapl_day_2
+            List Aggs {ticker: AAPL, timespan: day} \u2192 list_aggs_aapl_day
+            (second call with same args)             \u2192 list_aggs_aapl_day_2
         """
         from ...util import normalize_table_name
 

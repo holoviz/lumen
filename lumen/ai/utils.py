@@ -602,10 +602,10 @@ def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool
     """
     size = df.size
     shape = df.shape
-    if len(df) < 5:
+    if shape[0] == 1 or size < 10:
         # df -> dict -> YAML
         return yaml.dump(df.to_dict(orient='records'), default_flow_style=False, allow_unicode=True, sort_keys=False)
-    if size < 250:
+    if size < 100:
         return df.to_markdown(index=False)
 
     is_sampled = False
@@ -1354,6 +1354,18 @@ def result_to_dataframe(result) -> pd.DataFrame | None:
         return result
     if isinstance(result, Source):
         return None
+
+    # SourceResult from controls — extract the DataFrame from the first source
+    from .controls.ingest.result import SourceResult
+    if isinstance(result, SourceResult):
+        if not result.sources or not result.table:
+            return None
+        src = result.sources[0]
+        table = result.table
+        try:
+            return src.get(table)
+        except Exception:
+            return None
 
     # Materialise iterators / generators
     if isinstance(result, (Iterator, Generator)):
