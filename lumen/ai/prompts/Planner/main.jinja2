@@ -126,6 +126,23 @@ The previously used visualization type was `{{ view_type }}`, please consider us
 {%- endif %}
 {%- endif -%}
 
+{%- if memory.get("document_vector_store") %}
+## Available documents
+These documents are available and agents may query/summarize them:
+{%- set document_list = memory.document_vector_store.metadata %}
+{%- set filenames = document_list | selectattr("type", "equalto", "document") | map(attribute="filename") | unique | list %}
+{%- if filenames | length > 20 %}
+{%- for filename in filenames[:20] %}
+- {{ filename }}
+{%- endfor %}
+- … and {{ filenames | length - 20 }} more ({{ filenames | length }} total)
+{%- else %}
+{%- for filename in filenames %}
+- {{ filename }}
+{%- endfor %}
+{%- endif %}
+{% endif %}
+
 {%- if follow_up_type == 'direct' %}
 👉 **Direct follow-up**: The data in memory is sufficient. Do NOT run a new SQL query — use existing data directly (e.g., for visualization or reordering).
 {%- elif follow_up_type == 'derived' %}

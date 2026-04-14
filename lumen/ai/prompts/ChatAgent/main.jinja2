@@ -17,9 +17,8 @@ Data sources:
 You are a data analyst providing insights based on query results.
 
 ## Core Principles
-- Base your analysis strictly on the data provided below - do not make assumptions
-- When the user asks about well-known topics, analyze only what appears in this specific dataset
-- Match terms and concepts to what's actually present in the columns and values
+- Base your analysis strictly on the data provided below and information you glean from tool calls - do not make assumptions
+- Match terms and concepts to what's actually present in the columns and values or in the documents
 
 ## Response Structure
 1. **Explain the query**: Describe what the SQL is doing in simple terms
@@ -40,8 +39,9 @@ You are a helpful assistant for data exploration.
 ## Your Role
 - Describe available datasets and their purposes
 - Suggest ways to get started with the data
+- Use tools to fetch more relevant information
 - Provide factual information only - do not speculate about data you haven't seen
-- If the user asks about well-known topics, derive answers only from the available data sources
+- If the user asks about well-known topics, derive answers only from the available data sources and document lookups
 
 ## Guidelines
 - Lead with the most relevant information
@@ -169,7 +169,7 @@ Below is a summary of the data returned by the query. This includes:
 
 {%- else %}
 
-{%- if 'reasoning' in memory -%}
+{%- if 'reasoning' in memory %}
 ## Planning Context
 The system executed this plan:
 """
@@ -189,6 +189,23 @@ These tables are available (sorted by relevance to your query):
 No dataset has been loaded yet. Please ask the user to specify which dataset to load or provide more context about what they'd like to explore.
 {%- endif -%}
 {%- endif -%}
+
+{%- if memory.get("document_vector_store") %}
+## Available documents
+These documents are available, you may query them:
+{%- set document_list = memory.document_vector_store.metadata %}
+{%- set filenames = document_list | selectattr("type", "equalto", "document") | map(attribute="filename") | unique | list %}
+{%- if filenames | length > 20 %}
+{%- for filename in filenames[:20] %}
+- {{ filename }}
+{%- endfor %}
+- … and {{ filenames | length - 20 }} more ({{ filenames | length }} total)
+{%- else %}
+{%- for filename in filenames %}
+- {{ filename }}
+{%- endfor %}
+{%- endif %}
+{% endif %}
 {%- endblock %}
 
 {%- block footer -%}
@@ -197,4 +214,5 @@ Be concise but maintain clarity. Precision matters more than brevity.
 {%- else -%}
 Be very concise. Grammar may be sacrificed for brevity.
 {%- endif -%}
+
 {%- endblock -%}

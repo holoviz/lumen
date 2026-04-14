@@ -1738,6 +1738,16 @@ class ChromaDBVectorStore(VectorStore):
         else:
             self._current_id = 0
 
+    @property
+    def metadata(self):
+        items = self._collection.get(include=["metadatas"])
+        metadatas = []
+        for item in items["metadatas"]:
+            metadatas.append(
+                {k: v for k, v in item.items() if not k.startswith(("_text_hash", "_metadata_json"))}
+            )
+        return metadatas
+
     def _get_next_id(self) -> int:
         """Generate the next available ID.
 
