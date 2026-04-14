@@ -16,8 +16,25 @@ from ..context import ContextModel, TContext
 from ..controls import ParametricSourceControls
 from ..llm import Message
 from ..translate import doc_descriptions, function_to_model
-from ..utils import log_debug
+from ..utils import deterministic_hash, log_debug
 from .vector_lookup import VectorLookupTool, make_refined_query_model
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _control_hash(ctrl: ParametricSourceControls) -> str:
+    """Stable hash for a control based on its class name + action signatures.
+
+    Unlike ``id(ctrl)``, this survives garbage-collection and
+    re-instantiation (e.g. across page reloads).
+    """
+    parts = [type(ctrl).__qualname__]
+    for name, func in ctrl.as_tools():
+        sig = getattr(func, "__signature__", None)
+        parts.append(f"{name}:{sig}")
+    return format(deterministic_hash("|".join(parts)), "08x")
+
 
 # ---------------------------------------------------------------------------
 # Context models
@@ -91,8 +108,7 @@ class SourceLookup(VectorLookupTool):
 
     def __init__(self, **params):
         super().__init__(**params)
-        self._indexed_controls: set[int] = set()
-        self._cached_outputs: SourceLookupOutputs | None = None
+        self._indexed_controls: set[str] = set()
 
     async def prepare(self, context: TContext):
         """Override base to call sync instead of _update_vector_store."""
@@ -114,16 +130,14 @@ class SourceLookup(VectorLookupTool):
             self._ready = True
             return
 
-        new_entries = False
         entries = []
         for ctrl in controls:
             if not isinstance(ctrl, ParametricSourceControls):
                 continue
-            ctrl_id = id(ctrl)
-            if ctrl_id in self._indexed_controls:
+            ctrl_key = _control_hash(ctrl)
+            if ctrl_key in self._indexed_controls:
                 continue
-            self._indexed_controls.add(ctrl_id)
-            new_entries = True
+            self._indexed_controls.add(ctrl_key)
 
             for action_name, func in ctrl.as_tools():
                 text = self._build_action_text(action_name, func)
@@ -132,17 +146,13 @@ class SourceLookup(VectorLookupTool):
                     "metadata": {
                         "type": self._item_type_name,
                         "action_name": action_name,
-                        "control_id": ctrl_id,
+                        "control_key": ctrl_key,
                     },
                 })
 
         if entries:
             log_debug(f"[SourceLookup] Upserting {len(entries)} action entries")
             await self.vector_store.upsert(entries)
-
-        # Invalidate cached outputs when new controls are indexed
-        if new_entries:
-            self._cached_outputs = None
 
         self._ready = True
 
@@ -199,7 +209,7 @@ class SourceLookup(VectorLookupTool):
         # Build action info mapping
         controls = context.get("source_controls", [])
         ctrl_map = {
-            id(c): c for c in controls if isinstance(c, ParametricSourceControls)
+            _control_hash(c): c for c in controls if isinstance(c, ParametricSourceControls)
         }
 
         source_actions: dict[str, Any] = {}
@@ -208,12 +218,13 @@ class SourceLookup(VectorLookupTool):
                 continue
             meta = result["metadata"]
             action_name = meta["action_name"]
-            ctrl_id = meta.get("control_id")
-            ctrl = ctrl_map.get(ctrl_id)
+            ctrl_key = meta.get("control_key")
+            ctrl = ctrl_map.get(ctrl_key)
             if ctrl is None:
                 continue
 
-            func = dict(ctrl.as_tools()).get(action_name)
+            tools_dict = dict(ctrl.as_tools())
+            func = tools_dict.get(action_name)
             if func is None:
                 continue
 
@@ -246,7 +257,7 @@ class SourceLookup(VectorLookupTool):
                 "description": description or "(no description)",
                 "parameters": param_schema,
                 "similarity": result.get("similarity", 0),
-                "control_id": ctrl_id,
+                "control_key": ctrl_key,
             }
 
         return {"source_actions": source_actions}
@@ -281,9 +292,5 @@ class SourceLookup(VectorLookupTool):
         if not messages:
             return [], {"source_actions": {}}
 
-        if self._cached_outputs is not None:
-            return [self._format_context(self._cached_outputs)], self._cached_outputs
-
         out_model = await self._gather_info(messages, context)
-        self._cached_outputs = out_model
         return [self._format_context(out_model)], out_model

@@ -99,6 +99,11 @@ def _sanitize_tool_callable(
     kept_param_names = {parameter.name for parameter in filtered_params}
 
     annotations = dict(getattr(func, "__annotations__", {}))
+    # Also pick up annotations from signature parameters (e.g. Literal types
+    # on dynamically-built closures that don't populate __annotations__).
+    for p in sig.parameters.values():
+        if p.annotation is not inspect.Parameter.empty and p.name not in annotations:
+            annotations[p.name] = p.annotation
     filtered_annotations = {
         name: annotation
         for name, annotation in annotations.items()
@@ -190,6 +195,9 @@ class SourceAgent(Agent):
     input_schema = SourceInputs
     output_schema = SourceOutputs
 
+    # Counter to disambiguate repeated table names
+    _table_name_counts: dict[str, int] = {}
+
     @classmethod
     async def applies(cls, context: TContext) -> bool:
         controls = context.get("source_controls", [])
@@ -213,9 +221,11 @@ class SourceAgent(Agent):
         in all controls.
         """
         controls = context.get("source_controls", [])
-        ctrl_map: dict[int, ParametricSourceControls] = {
-            id(c): c for c in controls if isinstance(c, ParametricSourceControls)
-        }
+        ctrl_map: dict[str, ParametricSourceControls] = {}
+        for c in controls:
+            if isinstance(c, ParametricSourceControls):
+                from ..tools.source_lookup import _control_hash
+                ctrl_map[_control_hash(c)] = c
 
         tools: list[FunctionTool] = []
 
@@ -246,8 +256,8 @@ class SourceAgent(Agent):
 
         if source_actions:
             for action_name, info in source_actions.items():
-                ctrl_id = info.get("control_id")
-                ctrl = ctrl_map.get(ctrl_id)
+                ctrl_key = info.get("control_key")
+                ctrl = ctrl_map.get(ctrl_key)
                 if ctrl is None:
                     continue
                 func = dict(ctrl.as_tools()).get(action_name)
@@ -363,9 +373,12 @@ class SourceAgent(Agent):
     ) -> str:
         """Derive a table name from the action name + argument values.
 
+        Appends a numeric suffix when a name has been used before to
+        avoid silently overwriting previously-registered tables.
+
         Examples:
             List Aggs {ticker: AAPL, timespan: day} → list_aggs_aapl_day
-            Get Ticker Details {ticker: AAPL}        → get_ticker_details_aapl
+            (second call with same args)             → list_aggs_aapl_day_2
         """
         from ...util import normalize_table_name
 
@@ -377,10 +390,15 @@ class SourceAgent(Agent):
                 s = str(v).strip()
                 if s and len(s) <= 20:
                     slug += f" {s}"
-            return normalize_table_name(slug)
-
-        if source_actions and len(source_actions) == 1:
+            base = normalize_table_name(slug)
+        elif source_actions and len(source_actions) == 1:
             name = next(iter(source_actions))
-            return normalize_table_name(name)
+            base = normalize_table_name(name)
+        else:
+            base = "source_data"
 
-        return "source_data"
+        # Disambiguate repeated names
+        counts = SourceAgent._table_name_counts
+        count = counts.get(base, 0) + 1
+        counts[base] = count
+        return base if count == 1 else f"{base}_{count}"

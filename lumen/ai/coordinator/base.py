@@ -8,7 +8,9 @@ from collections.abc import Callable
 from functools import partial
 from textwrap import dedent, indent
 from types import FunctionType
-from typing import TYPE_CHECKING, Any, Self
+from typing import (
+    TYPE_CHECKING, Any, Self, get_type_hints,
+)
 
 import param
 
@@ -408,9 +410,20 @@ class Coordinator(Viewer, VectorLookupToolUser):
     def _process_tools(self, tools: list[type[Tool] | Tool] | None) -> list[type[Tool] | Tool | FunctionType]:
         tools = list(tools) if tools else []
 
+        def _schema_provides(tool, key: str) -> bool:
+            """Check if a tool's output_schema provides a given key,
+            using get_type_hints to handle inheritance correctly."""
+            schema = getattr(tool, 'output_schema', None)
+            if schema is None:
+                return False
+            try:
+                return key in get_type_hints(schema)
+            except Exception:
+                return key in getattr(schema, '__annotations__', {})
+
         # If none of the tools provide metaset, add MetadataLookup
         provides_metaset = any(
-            "metaset" in tool.output_schema.__annotations__ for tool in tools
+            _schema_provides(tool, "metaset") for tool in tools
             if isinstance(tool, Tool) or (isinstance(tool, type) and issubclass(tool, Tool))
         )
         if not provides_metaset:
@@ -424,7 +437,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
             for a in self.agents
         )
         provides_source_actions = any(
-            "source_actions" in tool.output_schema.__annotations__ for tool in tools
+            _schema_provides(tool, "source_actions") for tool in tools
             if isinstance(tool, Tool) or (isinstance(tool, type) and issubclass(tool, Tool))
         )
         if has_source_agent and not provides_source_actions:

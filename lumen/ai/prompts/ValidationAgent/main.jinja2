@@ -20,6 +20,7 @@ VALID = view type, encodings, and data mappings reflect the user's intent
 {% if memory.get('chat') %}
 Analyze if the assistant's response answers the user's request.
 VALID = all parts of the query addressed using available data context correctly
+Note: configured external sources count as available data when no tables are loaded yet.
 {% endif %}
 {%- endblock %}
 
@@ -80,5 +81,11 @@ Assistant Response:
 """
 {{ memory['chat'] }}
 """
+{%- endif -%}
+{%- if memory.get('source_actions') %}
+Configured external data sources:
+{%- for name, info in memory['source_actions'].items() %}
+- {{ name }}: {{ info.get('description', '(no description)') }}
+{%- endfor %}
 {%- endif -%}
 {%- endblock -%}

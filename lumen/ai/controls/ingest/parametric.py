@@ -63,6 +63,7 @@ class ParametricSourceControls(BaseSourceControls):
         # which accesses these attributes.
         self._actions: dict[str, callable] = {}
         self._implicit_action: callable | None = None
+        self._cached_tools: list[tuple[str, callable]] | None = None
         self._action_models: dict[str, param.Parameterized] = {}
         self._action_selector = Select(
             name="Action", options=[], sizing_mode="stretch_width",
@@ -111,6 +112,7 @@ class ParametricSourceControls(BaseSourceControls):
             ``{"self", "cls", "return"}``.
         """
         self._actions = dict(actions)
+        self._cached_tools = None  # invalidate cache
         param_overrides = param_overrides or {}
 
         for name, func in self._actions.items():
@@ -280,11 +282,17 @@ class ParametricSourceControls(BaseSourceControls):
         """
         Return ``(display_name, callable)`` pairs for the coordinator
         to wrap in ``FunctionTool``.
+
+        Results are cached until ``_register_actions`` is called again.
         """
+        if self._cached_tools is not None:
+            return self._cached_tools
         if self._uses_actions:
-            return list(self._actions.items())
-        implicit = self._get_implicit_action()
-        return [implicit] if implicit is not None else []
+            self._cached_tools = list(self._actions.items())
+        else:
+            implicit = self._get_implicit_action()
+            self._cached_tools = [implicit] if implicit is not None else []
+        return self._cached_tools
 
     async def as_tools_async(
         self, query: str | None = None, top_k: int = 5,

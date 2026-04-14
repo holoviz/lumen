@@ -4,6 +4,7 @@ import asyncio
 import base64
 import difflib
 import functools
+import hashlib
 import html
 import inspect
 import json
@@ -63,6 +64,13 @@ IMAGE_MIME_TYPES = {
     '.svg': 'image/svg+xml',
     '.bmp': 'image/bmp',
 }
+
+
+def deterministic_hash(text: str) -> int:
+    """Stable hash using MD5, consistent across Python sessions."""
+    return int.from_bytes(
+        hashlib.md5(text.encode("utf-8")).digest()[:4], byteorder="big"
+    )
 
 
 def format_float(num):
@@ -1351,7 +1359,8 @@ def result_to_dataframe(result) -> pd.DataFrame | None:
     if isinstance(result, (Iterator, Generator)):
         try:
             result = list(result)
-        except Exception:
+        except Exception as exc:
+            log.warning(f"result_to_dataframe: failed to materialise iterator: {exc}")
             return None
 
     if isinstance(result, list):

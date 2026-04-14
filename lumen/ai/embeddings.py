@@ -1,4 +1,3 @@
-import hashlib
 import re
 
 from abc import abstractmethod
@@ -8,18 +7,14 @@ import numpy as np
 import param
 
 from .services import AzureOpenAIMixin, LlamaCppMixin, OpenAIMixin
+from .utils import deterministic_hash
 
 STOP_WORDS = (Path(__file__).parent / "embeddings_stop_words.txt").read_text().splitlines()
 STOP_WORDS_RE = re.compile(r"\b(?:{})\b".format("|".join(STOP_WORDS)), re.IGNORECASE)
 
 
-def _deterministic_hash(text):
-    """
-    Deterministic hash function using MD5.
-    Returns a stable integer hash that is consistent across Python sessions.
-    """
-    hash_bytes = hashlib.md5(text.encode('utf-8')).digest()
-    return int.from_bytes(hash_bytes[:4], byteorder='big')
+# Backward compat alias
+_deterministic_hash = deterministic_hash
 
 
 class Embeddings(param.Parameterized):

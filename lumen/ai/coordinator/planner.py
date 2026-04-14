@@ -471,7 +471,7 @@ class Planner(Coordinator):
         needs_presentation = (
             last_task and (
                 isinstance(last_task.actor, Tool)
-                or "chat" not in last_task.actor.output_schema.__annotations__
+                or isinstance(last_task.actor, SourceAgent)
             )
         )
         if needs_presentation:
