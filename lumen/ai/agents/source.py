@@ -13,6 +13,7 @@ import asyncio
 import inspect
 import typing as t
 
+import pandas as pd
 import param
 
 from panel.chat import ChatStep
@@ -87,12 +88,16 @@ def _sanitize_tool_callable(
     func: t.Callable,
     action_name: str,
     skip_params: list[str],
-    result_store: dict[str, t.Any] | None = None,
+    result_store: list[dict[str, t.Any]] | None = None,
 ) -> t.Callable:
     """Hide SDK/internal params from FunctionTool schema generation.
 
     Also wraps the callable to capture its return value in
     ``result_store`` when provided, even if no params need skipping.
+    Results are appended as dicts with ``action``, ``result``, and
+    ``kwargs`` keys so that multiple calls to the same tool (e.g.
+    ``get_ticker_details(AAPL)`` then ``get_ticker_details(GOOG)``)
+    are all preserved.
     """
     needs_skip = bool(skip_params)
     needs_capture = result_store is not None
@@ -143,14 +148,14 @@ def _sanitize_tool_callable(
         async def wrapped_async(**kwargs):
             result = await func(**kwargs)
             if result_store is not None:
-                result_store[action_name] = {"result": result, "kwargs": kwargs}
+                result_store.append({"action": action_name, "result": result, "kwargs": kwargs})
             return result
         wrapped_func = wrapped_async
     else:
         def wrapped_sync(**kwargs):
             result = func(**kwargs)
             if result_store is not None:
-                result_store[action_name] = {"result": result, "kwargs": kwargs}
+                result_store.append({"action": action_name, "result": result, "kwargs": kwargs})
             return result
         wrapped_func = wrapped_sync
 
@@ -304,7 +309,7 @@ class SourceAgent(Agent):
         step_title: str | None = None,
     ) -> tuple[list[t.Any], SourceOutputs]:
         source_actions = context.get("source_actions")
-        tool_results: dict[str, t.Any] = {}
+        tool_results: list[dict[str, t.Any]] = []
         tool_list = self._build_tools(context, source_actions, result_store=tool_results)
 
         if not tool_list:
@@ -353,7 +358,7 @@ class SourceAgent(Agent):
         messages: list[Message],
         context: TContext,
         tool_list: list[FunctionTool],
-        tool_results: dict[str, t.Any],
+        tool_results: list[dict[str, t.Any]],
         source_actions: dict[str, t.Any] | None,
         catalog_summary: str,
         step: t.Any,
@@ -379,13 +384,13 @@ class SourceAgent(Agent):
 
         step.stream("\n\nProcessing result\u2026")
 
-        payload = next(
-            (r["result"] for r in reversed(tool_results.values())),
-            result,
-        ) if tool_results else result
+        # Collect all payloads from tool calls (may be >1 if LLM
+        # called the same tool with different args, e.g. AAPL + GOOG)
+        payloads = [r["result"] for r in tool_results] if tool_results else [result]
 
         # --- SourceResult path (URLSourceControls, CatalogSourceControls) ---
-        if isinstance(payload, SourceResult):
+        if isinstance(payloads[0], SourceResult):
+            payload = payloads[0]
             if not payload.sources:
                 msg = payload.message or "The source action returned no data."
                 step.stream(f"\n\n\u26a0\ufe0f {msg}")
@@ -407,11 +412,18 @@ class SourceAgent(Agent):
             return source, table_name, df, summary, pipeline, metaset
 
         # --- DataFrame path (CodeSourceControls, raw callables) ---
-        df = result_to_dataframe(payload)
+        # Convert each payload to a DataFrame and concatenate
+        dfs = []
+        for payload in payloads:
+            df = result_to_dataframe(payload)
+            if df is not None and not (hasattr(df, "empty") and df.empty):
+                dfs.append(df)
 
-        if df is None or (hasattr(df, "empty") and df.empty):
+        if not dfs:
             step.stream("\n\n\u26a0\ufe0f The action returned no data.")
             raise Exception("The source action returned no data.")
+
+        df = pd.concat(dfs, ignore_index=True) if len(dfs) > 1 else dfs[0]
 
         existing_tables = set()
         existing_source = context.get("source")
@@ -441,7 +453,7 @@ class SourceAgent(Agent):
     @staticmethod
     def _derive_table_name(
         source_actions: dict[str, t.Any] | None = None,
-        tool_results: dict[str, t.Any] | None = None,
+        tool_results: list[dict[str, t.Any]] | None = None,
         existing_tables: set[str] | None = None,
     ) -> str:
         """Derive a table name from the action name + argument values.
@@ -450,25 +462,31 @@ class SourceAgent(Agent):
         short identifiers (e.g. ``"AAPL"``, ``"day"``) appear before
         longer values like dates or URLs.  A cap keeps slugs readable.
 
+        When multiple tool calls were made (e.g. AAPL + GOOG), values
+        from all calls are collected before sorting.
+
         Deduplicates against *existing_tables* (actual registered
         tables) instead of a global counter.
 
         Examples:
             List Aggs {ticker: AAPL, timespan: day, from_: 2024-01-01}
             \u2192 day_aapl_2024_01_01_list_aggs
+
+            get_ticker_details(AAPL) + get_ticker_details(GOOG)
+            \u2192 aapl_goog_get_ticker_details
         """
         MAX_PARTS = 4
 
-        if tool_results and len(tool_results) == 1:
-            action_name, info = next(iter(tool_results.items()))
-            kwargs = info.get("kwargs", {})
-            # Collect stringified values, filter empties and very long ones
-            items = [
-                str(v).strip()
-                for v in kwargs.values()
-                if v is not None and str(v).strip() and len(str(v).strip()) <= 30
-            ]
-            # Shortest first: identifiers before dates/URLs
+        if tool_results:
+            # Use the action name from the first call
+            action_name = tool_results[0]["action"]
+            # Collect distinguishing kwarg values across all calls
+            items = []
+            for entry in tool_results:
+                for v in entry.get("kwargs", {}).values():
+                    s = str(v).strip()
+                    if s and len(s) <= 30:
+                        items.append(s)
             items.sort(key=len)
             parts = items[:MAX_PARTS]
             parts.append(action_name)

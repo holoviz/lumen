@@ -602,7 +602,7 @@ def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool
     """
     size = df.size
     shape = df.shape
-    if shape[0] == 1 or size < 10:
+    if shape[0] == 1 or size < 10 or (shape[1] > 8 and size < 100):
         # df -> dict -> YAML
         return yaml.dump(df.to_dict(orient='records'), default_flow_style=False, allow_unicode=True, sort_keys=False)
     if size < 100:
