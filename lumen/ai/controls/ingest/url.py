@@ -8,6 +8,7 @@ import pandas as pd
 import param
 
 from ....sources.duckdb import DuckDBSource
+from ...translate import params_to_callable
 from .file_row import UploadedFileRow
 from .parametric import ParametricSourceControls
 from .result import SourceResult
@@ -40,6 +41,62 @@ class URLSourceControls(ParametricSourceControls):
         URL template with ``{param_name}`` placeholders matching query param names.""")
 
     label = '<span class="material-icons" style="vertical-align: middle;">link</span> URL Data Source'
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Agent integration
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def as_tools(
+        self, query: str | None = None, top_k: int = 5,
+    ) -> list[tuple[str, callable]]:
+        """Build a synthetic callable from class-level params for the agent.
+
+        Unlike action-based controls (``CodeSourceControls``,
+        ``RESTAPISourceControls``) which register explicit callables,
+        ``URLSourceControls`` subclasses declare their inputs as
+        class-level ``param`` attributes.  This override synthesizes a
+        single callable whose signature and annotations mirror those
+        params so ``FunctionTool`` can generate a schema for the LLM.
+
+        Example::
+
+            class PopulationControls(URLSourceControls):
+                url_template = "https://api.example.com/data?region={region}&year={year}"
+                region = param.Selector(default="us", objects=["us", "eu", "apac"])
+                year = param.Integer(default=2024, bounds=(2000, 2030))
+
+        ``as_tools()`` returns
+        ``[("Population", <async callable(region, year)>)]`` so the
+        agent sees a single tool named ``"Population"`` with typed
+        ``region`` and ``year`` parameters.
+        """
+        if self._cached_tools is not None:
+            return self._cached_tools
+
+        query_names = self._get_query_param_names()
+        if not query_names:
+            self._cached_tools = []
+            return self._cached_tools
+
+        action_name = self.__class__.__name__.removesuffix("Controls")
+
+        async def _tool_callable(**kwargs) -> SourceResult:
+            return await self.load_action(action_name, **kwargs)
+
+        query_params = {name: self.param[name] for name in query_names}
+        doc = (self.__doc__ or f"Fetch data using {self.__class__.__name__}.").strip()
+        params_to_callable(
+            _tool_callable, query_params,
+            name=action_name.lower() or "load_data",
+            doc=doc,
+        )
+
+        self._cached_tools = [(action_name, _tool_callable)]
+        return self._cached_tools
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Data fetching
+    # ──────────────────────────────────────────────────────────────────────────
 
     async def _fetch_data(self, action_name: str, **params) -> SourceResult:
         try:

@@ -1,15 +1,11 @@
 from __future__ import annotations
 
-import inspect
-
 import panel as pn
 import param
 
 from panel_material_ui import Column as MuiColumn, Select
 
-from ...translate import (
-    doc_descriptions, parameter_to_annotation, signature_to_params,
-)
+from ...translate import doc_descriptions, signature_to_params
 from .base import BaseSourceControls
 from .result import SourceResult
 
@@ -62,7 +58,6 @@ class ParametricSourceControls(BaseSourceControls):
         # class __init__ calls _render_layout() → _render_controls()
         # which accesses these attributes.
         self._actions: dict[str, callable] = {}
-        self._implicit_action: callable | None = None
         self._cached_tools: list[tuple[str, callable]] | None = None
         self._action_models: dict[str, param.Parameterized] = {}
         self._action_selector = Select(
@@ -284,14 +279,15 @@ class ParametricSourceControls(BaseSourceControls):
         to wrap in ``FunctionTool``.
 
         Results are cached until ``_register_actions`` is called again.
+
+        Subclass-pattern controls (e.g. ``URLSourceControls``) that
+        declare class-level params instead of registering actions should
+        override this method to return a synthetic callable whose
+        signature mirrors the class-level params.
         """
         if self._cached_tools is not None:
             return self._cached_tools
-        if self._uses_actions:
-            self._cached_tools = list(self._actions.items())
-        else:
-            implicit = self._get_implicit_action()
-            self._cached_tools = [implicit] if implicit is not None else []
+        self._cached_tools = list(self._actions.items())
         return self._cached_tools
 
     async def as_tools_async(
@@ -312,58 +308,3 @@ class ParametricSourceControls(BaseSourceControls):
     async def load_action(self, action_name: str, **params) -> SourceResult:
         """Programmatic entry point for AI agents."""
         return await self._run_load(self._fetch_data(action_name, **params))
-
-    def _get_implicit_action(self) -> tuple[str, callable] | None:
-        """Build a synthetic action for subclass-defined query params."""
-        if self._uses_actions:
-            return None
-
-        query_names = self._get_query_param_names()
-        if not query_names:
-            return None
-
-        action_name = self.__class__.__name__.removesuffix("Controls")
-        if self._implicit_action is None:
-            async def implicit_action(**kwargs) -> SourceResult:
-                return await self.load_action(action_name, **kwargs)
-
-            implicit_action.__name__ = self.__class__.__name__.removesuffix("Controls").lower() or "load_data"
-            implicit_action.__qualname__ = implicit_action.__name__
-            implicit_action.__doc__ = self._build_implicit_action_doc(query_names)
-            implicit_action.__signature__ = self._build_implicit_action_signature(query_names)
-            implicit_action.__annotations__ = {
-                name: parameter_to_annotation(self.param[name])
-                for name in query_names
-            }
-            self._implicit_action = implicit_action
-
-        return action_name, self._implicit_action
-
-    def _build_implicit_action_doc(self, query_names: list[str]) -> str:
-        title = (self.__doc__ or f"Fetch data using {self.__class__.__name__}.").strip()
-        lines = [title]
-        param_lines = []
-        for name in query_names:
-            description = (self.param[name].doc or "").strip()
-            if description:
-                param_lines.append(f"    {name}: {description}")
-        if param_lines:
-            lines.extend(["", "Args:", *param_lines])
-        return "\n".join(lines)
-
-    def _build_implicit_action_signature(self, query_names: list[str]) -> inspect.Signature:
-        params = []
-        for name in query_names:
-            parameter = self.param[name]
-            default = parameter.default
-            if default is None and not getattr(parameter, "allow_None", True):
-                default = inspect.Parameter.empty
-            params.append(
-                inspect.Parameter(
-                    name,
-                    inspect.Parameter.KEYWORD_ONLY,
-                    default=default,
-                    annotation=parameter_to_annotation(parameter),
-                )
-            )
-        return inspect.Signature(params)

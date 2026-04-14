@@ -19,6 +19,7 @@ from panel.chat import ChatStep
 
 from ...pipeline import Pipeline
 from ...sources.duckdb import DuckDBSource
+from ...util import normalize_table_name
 from ..config import PROMPTS_DIR
 from ..context import ContextModel, TContext
 from ..controls import ParametricSourceControls
@@ -213,8 +214,7 @@ class SourceAgent(Agent):
     input_schema = SourceInputs
     output_schema = SourceOutputs
 
-    # Counter to disambiguate repeated table names
-    _table_name_counts: dict[str, int] = {}
+
 
     @classmethod
     async def applies(cls, context: TContext) -> bool:
@@ -392,7 +392,8 @@ class SourceAgent(Agent):
                 raise Exception(msg)
             source = payload.sources[0]
             table_name = payload.table or self._derive_table_name(
-                messages, source_actions, tool_results
+                source_actions, tool_results,
+                existing_tables=set(source.tables or {}),
             )
             if table_name not in source.tables:
                 table_name = next(iter(source.tables), table_name)
@@ -412,7 +413,14 @@ class SourceAgent(Agent):
             step.stream("\n\n\u26a0\ufe0f The action returned no data.")
             raise Exception("The source action returned no data.")
 
-        table_name = self._derive_table_name(messages, source_actions, tool_results)
+        existing_tables = set()
+        existing_source = context.get("source")
+        if existing_source is not None and hasattr(existing_source, "tables"):
+            existing_tables = set(existing_source.tables or {})
+
+        table_name = self._derive_table_name(
+            source_actions, tool_results, existing_tables=existing_tables,
+        )
 
         source = DuckDBSource.from_df(tables={table_name: df})
         source.tables[table_name] = f"SELECT * FROM {table_name}"
@@ -432,38 +440,50 @@ class SourceAgent(Agent):
 
     @staticmethod
     def _derive_table_name(
-        messages: list[Message],
         source_actions: dict[str, t.Any] | None = None,
         tool_results: dict[str, t.Any] | None = None,
+        existing_tables: set[str] | None = None,
     ) -> str:
         """Derive a table name from the action name + argument values.
 
-        Appends a numeric suffix when a name has been used before to
-        avoid silently overwriting previously-registered tables.
+        Kwarg values are sorted by length (shortest first) so that
+        short identifiers (e.g. ``"AAPL"``, ``"day"``) appear before
+        longer values like dates or URLs.  A cap keeps slugs readable.
+
+        Deduplicates against *existing_tables* (actual registered
+        tables) instead of a global counter.
 
         Examples:
-            List Aggs {ticker: AAPL, timespan: day} \u2192 list_aggs_aapl_day
-            (second call with same args)             \u2192 list_aggs_aapl_day_2
+            List Aggs {ticker: AAPL, timespan: day, from_: 2024-01-01}
+            \u2192 day_aapl_2024_01_01_list_aggs
         """
-        from ...util import normalize_table_name
+        MAX_PARTS = 4
 
         if tool_results and len(tool_results) == 1:
             action_name, info = next(iter(tool_results.items()))
             kwargs = info.get("kwargs", {})
-            slug = action_name
-            for v in kwargs.values():
-                s = str(v).strip()
-                if s and len(s) <= 20:
-                    slug += f" {s}"
-            base = normalize_table_name(slug)
+            # Collect stringified values, filter empties and very long ones
+            items = [
+                str(v).strip()
+                for v in kwargs.values()
+                if v is not None and str(v).strip() and len(str(v).strip()) <= 30
+            ]
+            # Shortest first: identifiers before dates/URLs
+            items.sort(key=len)
+            parts = items[:MAX_PARTS]
+            parts.append(action_name)
+            base = normalize_table_name("_".join(parts))
         elif source_actions and len(source_actions) == 1:
             name = next(iter(source_actions))
             base = normalize_table_name(name)
         else:
             base = "source_data"
 
-        # Disambiguate repeated names
-        counts = SourceAgent._table_name_counts
-        count = counts.get(base, 0) + 1
-        counts[base] = count
-        return base if count == 1 else f"{base}_{count}"
+        # Deduplicate against actual registered tables
+        if existing_tables:
+            name, i = base, 2
+            while name in existing_tables:
+                name = f"{base}_{i}"
+                i += 1
+            return name
+        return base

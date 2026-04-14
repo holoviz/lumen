@@ -26,7 +26,6 @@ class ChatAgent(Agent):
             "Use for general conversation that doesn't require fetching or querying data",
             "Use for technical questions about programming, functions, methods, libraries, or APIs",
             "Use when user asks to 'explain', 'interpret', 'analyze', 'summarize', or 'comment on' existing data in context",
-            "Use to present or describe data that was just loaded into context by a prior step",
             "NOT when user asks to 'query', 'filter', 'calculate', 'aggregate', or 'transform' data",
             "NOT for creating new data transformations - only for explaining data that already exists",
         ]
