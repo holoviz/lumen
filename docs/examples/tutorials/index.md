@@ -24,6 +24,16 @@ Build a custom data source control that integrates U.S. Census Bureau data with 
 - Registering dynamic data sources with DuckDB
 - Best practices for API integration
 
+### [Mesonet Weather Explorer](mesonet_weather_explorer.md)
+Build a weather data explorer that fetches daily observations from the Iowa Environmental Mesonet. Learn how to create URL-based source controls with parameter preprocessing.
+
+**You'll learn:**
+
+- Creating URLSourceControls subclasses for REST APIs
+- URL template interpolation with typed parameters
+- Preprocessing user input before API calls
+- Working with date parameters and network selectors
+
 ### [Build Dashboard with Spec](penguins_dashboard_spec.md)
 Create a complete Lumen dashboard in under 15 minutes using YAML specifications. While Lumen AI can generate these specs automatically, understanding them gives you full control.
 
