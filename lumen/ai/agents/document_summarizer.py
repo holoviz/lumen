@@ -121,9 +121,6 @@ class DocumentSummarizerAgent(BaseLumenAgent):
             query=messages[-1]["content"] if messages else None,
             title="Relevant document tabs",
         )
-        if self.interface is not None:
-            self.interface.send(document_editor, user=self.__class__.__name__)
-
         summary_message = await self._stream(messages, context, document_context=self._build_document_context(documents))
         summary_text = getattr(summary_message, "object", str(summary_message))
         return [document_editor, summary_message], {**await document_editor.render_context(), "document_summary": summary_text}

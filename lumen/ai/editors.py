@@ -616,7 +616,7 @@ class DocumentEditor(LumenEditor):
             )
 
         return Column(
-            Markdown(content, sizing_mode="stretch_width"),
+            Markdown(content, sizing_mode="stretch_width", margin=(0, 20)),
             max_height=self._max_preview_height,
             scroll="y-auto",
             sizing_mode="stretch_both",
