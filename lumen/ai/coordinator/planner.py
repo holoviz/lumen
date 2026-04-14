@@ -106,7 +106,6 @@ class Planner(Coordinator):
     and then executes it.
     """
 
-
     planner_tools = param.List(
         default=[MetadataLookup],
         doc="""
