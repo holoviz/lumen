@@ -609,6 +609,8 @@ class DocumentEditor(LumenEditor):
                 pdf_data = raw_bytes
             elif pathlib.Path(filename).is_file():
                 pdf_data = filename
+            else:
+                pdf_data = None
             return PDF(
                 pdf_data,
                 height=self._max_preview_height,
