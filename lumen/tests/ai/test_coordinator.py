@@ -18,7 +18,9 @@ from panel_material_ui import (
 
 from lumen.ai.agents import ChatAgent, SQLAgent
 from lumen.ai.agents.sql import make_sql_model
-from lumen.ai.controls.base import BaseSourceControls, UploadedFileRow
+from lumen.ai.controls.ingest import (
+    BaseSourceControls, FileSourceControls, UploadedFileRow,
+)
 from lumen.ai.coordinator import Coordinator, Plan, Planner
 from lumen.ai.coordinator.planner import Reasoning, make_plan_model
 from lumen.ai.editors import SQLEditor
@@ -354,7 +356,7 @@ async def test_process_files_reuses_ephemeral_source():
     should reuse the same DuckDBSource so all tables share one connection.
     """
 
-    controls = BaseSourceControls()
+    controls = FileSourceControls()
 
     # First upload: one CSV
     csv1 = io.BytesIO(b"name,salary\nAlice,100\nBob,200\n")
@@ -401,7 +403,7 @@ async def test_process_files_creates_new_source_when_none_exists():
     and increment _count.
     """
 
-    controls = BaseSourceControls()
+    controls = FileSourceControls()
     assert controls._count == 0
 
     csv = io.BytesIO(b"x,y\n1,2\n3,4\n")
@@ -493,7 +495,7 @@ async def test_process_files_partial_failure():
     other valid files should still be processed successfully.
     """
 
-    controls = BaseSourceControls()
+    controls = FileSourceControls()
 
     good_csv = io.BytesIO(b"a,b\n1,2\n")
     bad_file = io.BytesIO(b"not a valid file")
@@ -517,7 +519,7 @@ async def test_process_files_concurrent_uploads_same_source():
     the same DuckDBSource without conflicts.
     """
 
-    controls = BaseSourceControls()
+    controls = FileSourceControls()
 
     for i in range(3):
         csv = io.BytesIO(f"col_{i}\n{i}\n".encode())
@@ -543,7 +545,7 @@ async def test_process_files_duplicate_table_name():
     the table data, not error out.
     """
 
-    controls = BaseSourceControls()
+    controls = FileSourceControls()
 
     # First upload
     csv1 = io.BytesIO(b"val\n10\n")
