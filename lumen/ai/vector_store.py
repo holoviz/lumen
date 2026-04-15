@@ -1700,6 +1700,7 @@ class ChromaDBVectorStore(VectorStore):
         class_=Embeddings,
         default=None,
         allow_None=True,
+        constant=True,
         doc="Embeddings object for text processing.",
     )
 
@@ -1725,11 +1726,7 @@ class ChromaDBVectorStore(VectorStore):
             self._client = chromadb.Client()
         else:
             self._client = chromadb.PersistentClient(path=self.uri)
-
-        self._collection = self._client.get_or_create_collection(
-            name=self.collection_name,
-            metadata={"hnsw:space": "cosine"},
-        )
+        self._create_collection()
 
         # Recover current ID counter from existing data
         if self._collection.count() > 0:
@@ -1737,6 +1734,15 @@ class ChromaDBVectorStore(VectorStore):
             self._current_id = max(int(id_) for id_ in result["ids"])
         else:
             self._current_id = 0
+
+    def _create_collection(self):
+        kwargs = {"embedding_function": None} if self.embeddings else {}
+        self._collection = self._client.get_or_create_collection(
+            name=self.collection_name,
+            metadata={"hnsw:space": "cosine"},
+            **kwargs
+        )
+
 
     @property
     def metadata(self):
@@ -2202,10 +2208,7 @@ class ChromaDBVectorStore(VectorStore):
         Deletes and recreates the underlying ChromaDB collection.
         """
         self._client.delete_collection(self.collection_name)
-        self._collection = self._client.get_or_create_collection(
-            name=self.collection_name,
-            metadata={"hnsw:space": "cosine"},
-        )
+        self._create_collection()
         self._current_id = 0
 
     def __len__(self) -> int:
