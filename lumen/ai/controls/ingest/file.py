@@ -363,7 +363,8 @@ class FileSourceControls(BaseSourceControls):
                 table_name = card.alias
                 filename = f"{card.filename}.{card.extension}"
                 source.metadata.setdefault(table_name, {})["filename"] = filename
-                n_tables += self._add_table(source, card.file_obj, card)
+                added = self._add_table(source, card.file_obj, card)
+                n_tables += added
             else:
                 self._error_placeholder.object += f"\n⚠️ Skipped '{card.filename}.{card.extension}': unsupported format."
                 self._error_placeholder.visible = True

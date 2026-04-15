@@ -882,6 +882,7 @@ class UI(Viewer):
                     else:
                         data_uploads[filename] = file_info
 
+
             # Auto-process data file uploads without confirmation dialog
             if data_uploads:
                 # Store sources snapshot before processing
@@ -945,6 +946,7 @@ class UI(Viewer):
                         value_input="",
                         value_uploaded={},
                         views=[],
+                        pending_uploads=0,
                     )
 
         # Store as instance variable for access from other methods
