@@ -10,6 +10,9 @@ except ModuleNotFoundError:
 from lumen.ai.schemas import (
     Column, DocumentChunk, Metaset, TableCatalogEntry,
 )
+from lumen.ai.tools.metaset_docs_llm_tools import (
+    make_load_metaset_relevant_docs_tool,
+)
 from lumen.config import SOURCE_TABLE_SEPARATOR
 
 SEP = SOURCE_TABLE_SEPARATOR
@@ -263,23 +266,21 @@ class TestDocRendering:
         assert _metaset([e]).docs_retrieval_stats() is None
 
     def test_load_metaset_relevant_docs_tool(self):
-        from lumen.ai.tools.metaset_docs_llm_tools import (
-            make_load_metaset_relevant_docs_tool,
-        )
 
         e = _entry(f"S{SEP}t")
         ms = _metaset(
             [e],
             docs=[DocumentChunk(filename="g.md", text="hello world", similarity=0.77)],
         )
-        tool = make_load_metaset_relevant_docs_tool({"metaset": ms})
-        assert tool is not None
+        tools = make_load_metaset_relevant_docs_tool({"metaset": ms})
+        assert len(tools) == 1
+        tool = tools[0]
         assert "0.770" in tool.purpose or "0.77" in tool.purpose
         assert "chunk(s)" in tool.purpose
         out = tool.function(max_chunks=5)
         assert "hello world" in out
         assert "similarity range" in out.lower()
-        assert make_load_metaset_relevant_docs_tool(_metaset([e])) is None
+        assert not make_load_metaset_relevant_docs_tool({"metaset": _metaset([e])})
 
 
 # ---------------------------------------------------------------
