@@ -231,7 +231,11 @@ class OpenAPISourceControls(RESTAPISourceControls):
         """
         Resolve a ``$ref`` parameter reference and flatten into a
         simple dict with ``name``, ``in``, ``type``, ``required``,
-        ``description``, ``default``.
+        ``description``, ``default``, and optionally ``enum`` and
+        ``format``.
+
+        Falls back to ``example`` when no ``default`` is provided,
+        which is common in OpenAPI specs (e.g. Massive/Polygon).
 
         .. note::
             Only handles single-level ``$ref`` resolution.  Nested
@@ -256,8 +260,15 @@ class OpenAPISourceControls(RESTAPISourceControls):
             "required": param_spec.get("required", False),
             "description": param_spec.get("description", ""),
         }
+
+        # Prefer schema.default, fall back to param-level example
         if "default" in schema:
             result["default"] = schema["default"]
+        elif "example" in param_spec:
+            result["default"] = param_spec["example"]
+        elif "example" in schema:
+            result["default"] = schema["example"]
+
         if enum:
             result["enum"] = enum
 
