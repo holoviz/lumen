@@ -218,7 +218,7 @@ async def test_document_llm_tools_list_and_search():
     await store.add(
         [{"text": "penguins like cold water", "metadata": {"filename": "zoo.md", "type": "document"}}]
     )
-    ctx: dict = {"document_vector_store": store, "_document_vector_store_shared": False}
+    ctx: dict = {"document_vector_store": store}
     tools = make_document_vector_llm_tools(ctx)
     assert len(tools) == 2
     listed = tools[0].function(limit=10, offset=0)

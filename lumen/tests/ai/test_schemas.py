@@ -272,7 +272,7 @@ class TestDocRendering:
             [e],
             docs=[DocumentChunk(filename="g.md", text="hello world", similarity=0.77)],
         )
-        tool = make_load_metaset_relevant_docs_tool(ms)
+        tool = make_load_metaset_relevant_docs_tool({"metaset": ms})
         assert tool is not None
         assert "0.770" in tool.purpose or "0.77" in tool.purpose
         assert "chunk(s)" in tool.purpose
