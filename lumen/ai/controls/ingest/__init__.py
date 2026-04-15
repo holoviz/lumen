@@ -1,4 +1,4 @@
-from .base import BaseSourceControls, FileSourceControls
+from .base import BaseSourceControls
 from .catalog import CatalogSourceControls
 from .code import CodeSourceControls
 from .constants import (
@@ -6,6 +6,7 @@ from .constants import (
     DownloadConfig,
 )
 from .download import DownloadSourceControls
+from .file import FileSourceControls
 from .file_row import UploadedFileRow
 from .open_api import OpenAPISourceControls
 from .parametric import ParametricSourceControls
