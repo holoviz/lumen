@@ -15,7 +15,7 @@ import param
 from panel.config import config
 from panel.layout import Column, Row
 from panel.pane import (
-    PDF, DeckGL, Markdown, panel as as_panel,
+    PDF, DeckGL, Image as PnImage, Markdown, panel as as_panel,
 )
 from panel.param import ParamMethod
 from panel.viewable import Viewable, Viewer
@@ -594,31 +594,47 @@ class DocumentEditor(LumenEditor):
 
     def render_controls(self, task, interface):
         controls = super().render_controls(task, interface)
-        controls.append(FloatInput.from_param(self.param.min_similarity))
-        return controls
+        return Column(controls, FloatInput.from_param(self.param.min_similarity))
 
     def _render_document(self, doc: dict[str, Any]):
         filename = doc.get("filename", "Unknown document")
         extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
         raw_bytes = doc.get("raw_bytes")
         content = doc.get("content", "") or "*No preview available for this document.*"
+        file_path = pathlib.Path(filename)
+        has_file = file_path.is_file()
 
         # Render PDFs natively when bytes are available for a high-fidelity preview.
-        if extension == "pdf":
-            if raw_bytes:
-                pdf_data = raw_bytes
-            elif pathlib.Path(filename).is_file():
-                pdf_data = filename
-            else:
-                pdf_data = None
+        data = None
+        if raw_bytes:
+            data = raw_bytes
+        elif has_file:
+            data = filename
+
+        if data is None:
+            data = content
+        elif extension == "pdf":
             return PDF(
-                pdf_data,
+                data,
                 height=self._max_preview_height,
                 sizing_mode="stretch_both",
             )
+        elif PnImage.applies(data):
+            return PnImage(
+                data,
+                height=self._max_preview_height,
+                sizing_mode="stretch_both",
+            )
+        elif extension in ("md", "html"):
+            try:
+                data = file_path.read(encoding="utf-8")
+            except Exception:
+                data = content
+        else:
+            data = content
 
         return Column(
-            Markdown(content, sizing_mode="stretch_width", margin=(0, 20)),
+            Markdown(data, sizing_mode="stretch_width", margin=(0, 20)),
             max_height=self._max_preview_height,
             scroll="y-auto",
             sizing_mode="stretch_both",
@@ -626,6 +642,7 @@ class DocumentEditor(LumenEditor):
 
     @param.depends("min_similarity", watch=True)
     def _update_documents(self):
+        self._last_output.clear()
         self.component = self._render_component()
 
     def _render_component(
@@ -643,7 +660,7 @@ class DocumentEditor(LumenEditor):
 
         tabs = []
         for doc in matching_documents:
-            filename = doc.get("filename", "Unknown document")
+            filename = pathlib.Path(doc.get("filename", "Unknown document")).name
             tabs.append((filename, self._render_document(doc)))
 
         return Panel(object=Tabs(*tabs, dynamic=True, sizing_mode="stretch_both"))
