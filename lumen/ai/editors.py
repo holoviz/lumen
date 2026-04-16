@@ -626,11 +626,13 @@ class DocumentEditor(LumenEditor):
                 height=self._max_preview_height,
                 sizing_mode="stretch_both",
             )
-        else:
+        elif extension in ("md", "html"):
             try:
                 data = file_path.read(encoding="utf-8")
             except Exception:
                 data = content
+        else:
+            data = content
 
         return Column(
             Markdown(data, sizing_mode="stretch_width", margin=(0, 20)),
