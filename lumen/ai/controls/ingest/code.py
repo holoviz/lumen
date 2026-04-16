@@ -6,6 +6,13 @@ import panel as pn
 import param
 
 from ...utils import result_to_dataframe
+import collections.abc
+
+import pandas as pd
+import panel as pn
+import param
+
+from ....sources.base import Source
 from .parametric import ParametricSourceControls
 from .result import SourceResult
 

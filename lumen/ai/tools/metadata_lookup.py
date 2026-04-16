@@ -456,8 +456,7 @@ class MetadataLookup(VectorLookupTool):
             filters = {"type": "document"}
 
         # Get all document filenames from vector store
-        all_doc_results = await doc_store.query(text="", top_k=1000, filters=filters)
-        all_filenames = {r["metadata"]["filename"] for r in all_doc_results if "filename" in r["metadata"]}
+        all_filenames = {md["filename"] for md in doc_store.metadata if "filename" in md}
 
         # Get visible docs (if specified, only include these; otherwise include all)
         visible_docs = context.get("visible_docs")
