@@ -292,7 +292,10 @@ class MetadataLookup(VectorLookupTool):
                 processed_sources.append(source_key)
                 log_debug(f"[MetadataLookup] Processing source {source.name}")
 
-            if self.include_metadata and self._raw_metadata.get(source.name) is None:
+            if self.include_metadata and (
+                self._raw_metadata.get(source.name) is None
+                or known_count < current_table_count
+            ):
                 if isinstance(source, DuckDBSource):
                     self._raw_metadata[source.name] = source.get_metadata()
                 else:
