@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import keyword
 import re
 
 from typing import Literal
@@ -41,12 +42,7 @@ def _sanitize_param_name(name: str) -> str:
     if sanitized and sanitized[0].isdigit():
         sanitized = f"_{sanitized}"
     # Avoid Python keywords
-    if sanitized in ("from", "to", "in", "is", "and", "or", "not", "class",
-                     "return", "import", "global", "pass", "raise", "yield",
-                     "del", "with", "as", "try", "except", "finally",
-                     "for", "while", "if", "elif", "else", "break",
-                     "continue", "def", "lambda", "assert", "True",
-                     "False", "None"):
+    if keyword.iskeyword(sanitized):
         sanitized = f"{sanitized}_"
     return sanitized
 
