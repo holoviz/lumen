@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import collections.abc
 
-import pandas as pd
 import panel as pn
 import param
 
-from ....sources.base import Source
+from ...utils import result_to_dataframe
 from .parametric import ParametricSourceControls
 from .result import SourceResult
 
@@ -151,63 +149,7 @@ class CodeSourceControls(ParametricSourceControls):
         except Exception as e:
             return SourceResult.empty(f"Error calling {action_name}: {e}")
 
-        df = self._result_to_dataframe(result)
+        df = result_to_dataframe(result)
         if df is None:
             return SourceResult.empty(f"{action_name} returned no data.")
         return SourceResult.from_dataframe(df, self.table_name)
-
-    @staticmethod
-    def _result_to_dataframe(result) -> pd.DataFrame | None:
-        """
-        Normalize a raw function return value into a DataFrame.
-
-        Handles the common shapes returned by Python API clients:
-        DataFrame, iterator/generator of model objects, list[dict],
-        single model object, dict.
-        """
-        if isinstance(result, pd.DataFrame):
-            return result
-        if isinstance(result, Source):
-            return None
-
-        # Materialise iterators / generators
-        if isinstance(result, (collections.abc.Iterator, collections.abc.Generator)):
-            try:
-                result = list(result)
-            except Exception:
-                return None
-
-        if isinstance(result, list):
-            if not result:
-                return pd.DataFrame()
-            first = result[0]
-            if isinstance(first, dict):
-                return pd.json_normalize(result)
-            if isinstance(first, (str, int, float, bool)):
-                return pd.DataFrame({"value": result})
-            # Typed model objects — try __dict__, fall back to vars()
-            rows = []
-            for obj in result:
-                if isinstance(obj, dict):
-                    rows.append(obj)
-                else:
-                    try:
-                        rows.append(vars(obj))
-                    except TypeError:
-                        rows.append({"value": str(obj)})
-            return pd.json_normalize(rows)
-
-        if isinstance(result, dict):
-            try:
-                return pd.json_normalize(result)
-            except Exception:
-                return pd.DataFrame([result])
-
-        # Single model object — try vars() for __slots__ support
-        if not isinstance(result, (str, int, float, bool, type(None))):
-            try:
-                return pd.json_normalize([vars(result)])
-            except TypeError:
-                return None
-
-        return None

@@ -13,7 +13,7 @@ import textwrap
 import time
 import traceback
 
-from collections.abc import Callable
+from collections.abc import Callable, Generator, Iterator
 from functools import reduce, wraps
 from operator import getitem
 from pathlib import Path
@@ -38,6 +38,7 @@ from markupsafe import escape
 from panel_material_ui import Details
 
 from ..pipeline import Pipeline
+from ..sources.base import Source
 from ..transforms import SQLRemoveSourceSeparator
 from ..util import log
 from .config import (
@@ -48,7 +49,6 @@ from .config import (
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
 
-    from ...sources.base import Source
     from .models import (
         DeleteLine, InsertLine, LineEdit, ReplaceLine,
     )
@@ -594,6 +594,9 @@ def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool
     """
     size = df.size
     shape = df.shape
+    if len(df) < 5:
+        # df -> dict -> YAML
+        return yaml.dump(df.to_dict(orient='records'), default_flow_style=False, allow_unicode=True, sort_keys=False)
     if size < 250:
         return df.to_markdown(index=False)
 
@@ -1329,3 +1332,59 @@ def sanitize_column_names(df: pd.DataFrame) -> pd.DataFrame:
         for col in df.columns
     ]
     return df
+
+
+def result_to_dataframe(result) -> pd.DataFrame | None:
+    """
+    Normalize a raw function return value into a DataFrame.
+
+    Handles the common shapes returned by Python API clients:
+    DataFrame, iterator/generator of model objects, list[dict],
+    single model object, dict.
+    """
+    if isinstance(result, pd.DataFrame):
+        return result
+    if isinstance(result, Source):
+        return None
+
+    # Materialise iterators / generators
+    if isinstance(result, (Iterator, Generator)):
+        try:
+            result = list(result)
+        except Exception:
+            return None
+
+    if isinstance(result, list):
+        if not result:
+            return pd.DataFrame()
+        first = result[0]
+        if isinstance(first, dict):
+            return pd.json_normalize(result)
+        if isinstance(first, (str, int, float, bool)):
+            return pd.DataFrame({"value": result})
+        # Typed model objects — try __dict__, fall back to vars()
+        rows = []
+        for obj in result:
+            if isinstance(obj, dict):
+                rows.append(obj)
+            else:
+                try:
+                    rows.append(vars(obj))
+                except TypeError:
+                    rows.append({"value": str(obj)})
+        return pd.json_normalize(rows)
+
+    if isinstance(result, dict):
+        try:
+            return pd.json_normalize(result)
+        except Exception:
+            return pd.DataFrame([result])
+
+    # Single model object — try vars() for __slots__ support
+    if not isinstance(result, (str, int, float, bool, type(None))):
+        try:
+            return pd.json_normalize([vars(result)])
+        except TypeError:
+            return None
+
+    return None

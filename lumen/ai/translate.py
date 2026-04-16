@@ -618,6 +618,28 @@ def function_to_model(function: FunctionType, skipped: list[str] | None = None) 
     return model
 
 
+def parameter_to_annotation(parameter: param.Parameter) -> Any:
+    """Map a Param parameter instance to a best-effort Python annotation."""
+    annotation = PARAM_TYPE_MAPPING.get(type(parameter))
+    if annotation is not None:
+        pass
+    elif isinstance(parameter, param.List):
+        annotation = list
+    elif isinstance(parameter, param.Dict):
+        annotation = dict
+    elif isinstance(parameter, param.Tuple):
+        annotation = tuple
+    elif isinstance(parameter, param.Selector):
+        objects = list(getattr(parameter, "objects", []) or [])
+        annotation = type(objects[0]) if objects else str
+    else:
+        annotation = str
+
+    if parameter.allow_None:
+        return annotation | None
+    return annotation
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Function signature → param.Parameter (inverse of PARAM_TYPE_MAPPING)
 # ─────────────────────────────────────────────────────────────────────────────

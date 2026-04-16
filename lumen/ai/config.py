@@ -17,6 +17,7 @@ ChatMessage.default_avatars.update({
     "Planner": {"type": "icon", "icon": "checklist"},
     "Runner": {"type": "icon", "icon": "playlist_play"},
     "SQL": {"type": "icon", "icon": "storage"},
+    "Source": {"type": "icon", "icon": "cloud_download"},
     "DBT": {"type": "icon", "icon": "analytics"}
 })
 

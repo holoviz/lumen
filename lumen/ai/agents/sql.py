@@ -300,7 +300,9 @@ class SQLAgent(BaseLumenAgent):
             "Use for querying, filtering, aggregating, or transforming data with SQL",
             "Use for calculations that require executing SQL (e.g., 'calculate average', 'sum by category')",
             "Use when user asks to 'show', 'get', 'fetch', 'query', 'find', 'filter', 'calculate', 'aggregate', or 'transform' data",
+            "Use after external data has been fetched and the user expects the fetched fields/rows to be presented, selected, filtered, or otherwise queried",
             "NOT when user asks to 'explain', 'interpret', 'analyze', 'summarize', or 'comment on' existing data",
+            "NOT required when a prior step already returned a single, directly presentable answer without further querying",
             "NOT useful if the user is using the same data for plotting",
         ]
     )

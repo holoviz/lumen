@@ -23,13 +23,17 @@ from panel_material_ui import (
 )
 
 from ..actor import Actor
-from ..agents import Agent, AnalysisAgent, ChatAgent
+from ..agents import (
+    Agent, AnalysisAgent, ChatAgent, SourceAgent,
+)
 from ..config import PROMPTS_DIR, MissingContextError
 from ..context import TContext
 from ..llm import LlamaCpp, Llm, Message
 from ..models import ThinkingYesNo
 from ..report import ActorTask, Section, TaskGroup
-from ..tools import MetadataLookup, Tool, VectorLookupToolUser
+from ..tools import (
+    MetadataLookup, SourceLookup, Tool, VectorLookupToolUser,
+)
 from ..tools.document_llm_tools import make_document_vector_llm_tools
 from ..tools.metaset_docs_llm_tools import make_load_metaset_relevant_docs_tool
 from ..utils import (
@@ -413,6 +417,18 @@ class Coordinator(Viewer, VectorLookupToolUser):
             # Add both tools - they will share the same vector store through VectorLookupToolUser
             # Both need to be added as classes, not instances, for proper initialization
             tools += [MetadataLookup]
+
+        # If any agent is a SourceAgent and no tool provides source_actions, add SourceLookup
+        has_source_agent = any(
+            (isinstance(a, SourceAgent) if isinstance(a, Agent) else (isinstance(a, type) and issubclass(a, SourceAgent)))
+            for a in self.agents
+        )
+        provides_source_actions = any(
+            "source_actions" in tool.output_schema.__annotations__ for tool in tools
+            if isinstance(tool, Tool) or (isinstance(tool, type) and issubclass(tool, Tool))
+        )
+        if has_source_agent and not provides_source_actions:
+            tools += [SourceLookup]
         return tools
 
     def _process_prompts(self, prompts: dict[str, dict[str, Any]], tools: list[type[Tool] | Tool]) -> dict[str, dict[str, Any]]:

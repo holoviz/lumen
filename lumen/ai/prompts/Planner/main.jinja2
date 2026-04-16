@@ -21,6 +21,7 @@ Ground Rules:
 - **Visualization continuity**: Prefer the previously used visualization agent if its conditions still apply to the current request
 - **Derived table preference**: When a derived table (marked with `derived_from` or ★) already contains the columns and data needed, query it directly rather than recomputing from the original source
 - **Multi-metric queries**: When user asks for multiple metrics (e.g., "GDP and life expectancy", "sales and revenue"), join tables in a single query rather than creating separate steps. Example instruction: "Join GDP and life expectancy tables on country and year, selecting all metrics needed for visualization"
+- **Fetched-data handoff**: If one step fetches external data and the user wants the fetched rows or fields shown, selected, filtered, or queried, prefer a follow-up query/transform step before a presentation step. Skip the intermediate query step only when the fetched payload is already a complete, directly presentable answer.
 {%- if tools %}
 - Tools require actor interpretation - always follow-up tools with agents
 {%- endif %}
@@ -95,6 +96,13 @@ If a required capability is covered by one of these tools:
 The planner's role is to coordinate agents, not to replace tool usage.
 
 ## Current Data Context
+
+{%- if memory.get('source_actions') %}
+Configured external data sources:
+{%- for name, info in memory['source_actions'].items() %}
+- {{ name }}: {{ info.get('description', '(no description)')[:120] }}
+{%- endfor %}
+{%- endif %}
 
 {%- if memory.get('metaset') %}
 {%- set table_list = memory['metaset'].table_list(n=3, n_others=17, show_source=True) %}
