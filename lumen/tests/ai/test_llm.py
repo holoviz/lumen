@@ -3,6 +3,7 @@
 import base64
 import os
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -213,6 +214,88 @@ def test_get_available_llm_selects_groq(monkeypatch):
         monkeypatch.delenv(env_var, raising=False)
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
     assert lmai.llm.get_available_llm() is Groq
+
+
+def test_openai_get_delta_ignores_non_text_responses_events():
+    """OpenAI._get_delta safely ignores non-text Responses stream events."""
+    created_event = SimpleNamespace(type="response.created")
+    assert OpenAI._get_delta(created_event) == ""
+
+
+async def test_openai_responses_stream_tool_loop_uses_function_call_output(monkeypatch):
+    """Responses stream recursion should pass function_call_output items, not tool_calls."""
+    llm = OpenAI(api="responses", model_kwargs={"default": {"model": "gpt-4.1-mini"}})
+    captured_calls: list[tuple[list[dict], dict]] = []
+    call_count = 0
+
+    async def fake_invoke(messages, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        captured_calls.append((messages, kwargs))
+        if kwargs.get("stream"):
+            if call_count == 1:
+                return [
+                    SimpleNamespace(type="response.created", response=SimpleNamespace(id="resp_1")),
+                    SimpleNamespace(
+                        type="response.function_call_arguments.done",
+                        output_index=0,
+                        item_id="item_1",
+                        name="lookup",
+                        arguments='{"query":"x"}',
+                    ),
+                ]
+            return [SimpleNamespace(type="response.output_text.delta", delta="done")]
+        return "done"
+
+    async def fake_run_tool_calls(*args, **kwargs):
+        return [{"role": "tool", "content": "{}", "name": "lookup", "tool_call_id": "call_1"}]
+
+    def fake_normalize_tools(_tools):
+        return (
+            [{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}}],
+            {"lookup": object()},
+            {},
+        )
+
+    monkeypatch.setattr(llm, "invoke", fake_invoke)
+    monkeypatch.setattr(llm, "_run_tool_calls", fake_run_tool_calls)
+    monkeypatch.setattr(llm, "_normalize_tools", fake_normalize_tools)
+
+    outputs = []
+    async for chunk in llm.stream(
+        [{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}}],
+    ):
+        outputs.append(chunk)
+
+    assert outputs[-1] == "done"
+    second_messages, second_kwargs = captured_calls[1]
+    assert second_messages[0]["type"] == "function_call_output"
+    assert second_messages[0]["call_id"] == "call_1"
+    assert "tool_calls" not in second_messages[0]
+    assert second_kwargs["previous_response_id"] == "resp_1"
+
+
+def test_openai_responses_stream_tool_call_id_preserved_from_added_event():
+    """Tool output call_id should come from function_call item (call_id), not item_id."""
+    added_event = SimpleNamespace(
+        type="response.output_item.added",
+        output_index=0,
+        item=SimpleNamespace(type="function_call", call_id="call_abc", name="lookup"),
+    )
+    done_event = SimpleNamespace(
+        type="response.function_call_arguments.done",
+        output_index=0,
+        item_id="item_xyz",
+        name="lookup",
+        arguments='{"query":"x"}',
+    )
+    accum: dict[int, dict] = {}
+    order: list[int] = []
+    OpenAI._accumulate_tool_calls(accum, order, OpenAI._extract_stream_tool_calls(added_event))
+    OpenAI._accumulate_tool_calls(accum, order, OpenAI._extract_stream_tool_calls(done_event))
+    tool_calls = OpenAI._tool_calls_from_accum(accum, order)
+    assert tool_calls[0]["id"] == "call_abc"
 # ---------------------------------------------------------------------------
 # _check_for_image tests
 # ---------------------------------------------------------------------------

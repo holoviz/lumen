@@ -8,8 +8,11 @@ except ModuleNotFoundError:
 from panel.viewable import Viewable
 
 from lumen.ai.coordinator import Coordinator
+from lumen.ai.schemas import DocumentChunk, Metaset, TableCatalogEntry
 from lumen.ai.tools import FunctionTool, MetadataLookup, define_tool
+from lumen.ai.tools.document_llm_tools import make_document_vector_llm_tools
 from lumen.ai.vector_store import NumpyVectorStore
+from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.sources.duckdb import DuckDBSource
 
 
@@ -208,3 +211,17 @@ async def test_metadata_lookup_global_context_still_works():
     assert len(metaset.catalog) > 0
     slugs = list(metaset.catalog.keys())
     assert any("orders" in s for s in slugs)
+
+
+async def test_document_llm_tools_list_and_search():
+    store = NumpyVectorStore()
+    await store.add(
+        [{"text": "penguins like cold water", "metadata": {"filename": "zoo.md", "type": "document"}}]
+    )
+    ctx: dict = {"document_vector_store": store}
+    tools = make_document_vector_llm_tools(ctx)
+    assert len(tools) == 2
+    listed = tools[0].function(limit=10, offset=0)
+    assert "zoo.md" in listed
+    searched = await tools[1].function(query="penguins", top_k=3, min_similarity=-1.0)
+    assert "cold water" in searched
