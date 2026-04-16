@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import panel as pn
 import param
 
@@ -57,8 +59,8 @@ class ParametricSourceControls(BaseSourceControls):
         # Set instance state BEFORE super().__init__ because the base
         # class __init__ calls _render_layout() → _render_controls()
         # which accesses these attributes.
-        self._actions: dict[str, callable] = {}
-        self._cached_tools: list[tuple[str, callable]] | None = None
+        self._actions: dict[str, Callable] = {}
+        self._cached_tools: list[tuple[str, Callable]] | None = None
         self._action_models: dict[str, param.Parameterized] = {}
         self._action_selector = Select(
             name="Action", options=[], sizing_mode="stretch_width",
@@ -85,7 +87,7 @@ class ParametricSourceControls(BaseSourceControls):
 
     def _register_actions(
         self,
-        actions: dict[str, callable],
+        actions: dict[str, Callable],
         param_overrides: dict[str, dict[str, param.Parameter | dict]] | None = None,
         skip_params: frozenset[str] | None = None,
     ):
@@ -94,7 +96,7 @@ class ParametricSourceControls(BaseSourceControls):
 
         Parameters
         ----------
-        actions : dict[str, callable]
+        actions : dict[str, Callable]
             ``{display_name: callable}``.
         param_overrides : dict, optional
             ``{action_name: {param_name: override}}`` where *override* is
@@ -284,7 +286,7 @@ class ParametricSourceControls(BaseSourceControls):
 
     def as_tools(
         self, query: str | None = None, top_k: int = 5,
-    ) -> list[tuple[str, callable]]:
+    ) -> list[tuple[str, Callable]]:
         """
         Return ``(display_name, callable)`` pairs for the coordinator
         to wrap in ``FunctionTool``.
@@ -303,7 +305,7 @@ class ParametricSourceControls(BaseSourceControls):
 
     async def as_tools_async(
         self, query: str | None = None, top_k: int = 5,
-    ) -> list[tuple[str, callable]]:
+    ) -> list[tuple[str, Callable]]:
         """Async version with vector-store filtering."""
         tools = self.as_tools()
         if query and self.vector_store and len(tools) > top_k:

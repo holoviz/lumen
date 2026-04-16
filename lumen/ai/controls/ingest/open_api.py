@@ -194,13 +194,13 @@ class OpenAPISourceControls(RESTAPISourceControls):
 
         return endpoints
 
-    @staticmethod
+    @classmethod
     def _merge_params(
-        path_params: list[dict], operation: dict, components: dict,
+        cls, path_params: list[dict], operation: dict, components: dict,
     ) -> list[dict]:
         """Merge path-level and operation-level parameters, filtering to path+query only."""
         op_params = [
-            OpenAPISourceControls._resolve_param(p, components)
+            cls._resolve_param(p, components)
             for p in operation.get("parameters", [])
         ]
         merged = {p["name"]: p for p in path_params}

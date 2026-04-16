@@ -7,6 +7,7 @@ then returns a formatted listing of relevant actions with parameter schemas.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, NotRequired
 
 import param
@@ -157,7 +158,7 @@ class SourceLookup(VectorLookupTool):
         self._ready = True
 
     @staticmethod
-    def _build_action_text(action_name: str, func: callable) -> str:
+    def _build_action_text(action_name: str, func: Callable) -> str:
         """Build a rich text representation for embedding."""
         description, param_docs = doc_descriptions(func)
         parts = [f"Action: {action_name}"]

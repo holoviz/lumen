@@ -4,6 +4,7 @@ import inspect
 import keyword
 import re
 
+from collections.abc import Callable
 from typing import Literal
 
 import httpx
@@ -108,7 +109,7 @@ def _build_endpoint_closure(
     base_url: str,
     headers: dict,
     py_to_api: dict[str, str] | None = None,
-) -> callable:
+) -> Callable:
     """Create an async closure that performs the HTTP request."""
 
     async def endpoint_func(**kwargs) -> pd.DataFrame:
@@ -199,7 +200,7 @@ class RESTAPISourceControls(ParametricSourceControls):
         if self.vector_store is not None:
             pn.state.execute(self._embed_actions)
 
-    def _make_endpoint_callable(self, spec: dict) -> callable:
+    def _make_endpoint_callable(self, spec: dict) -> Callable:
         """
         Build a typed callable from an endpoint specification dict.
 

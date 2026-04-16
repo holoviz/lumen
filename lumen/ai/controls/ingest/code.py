@@ -2,17 +2,12 @@ from __future__ import annotations
 
 import asyncio
 
+from collections.abc import Callable
+
 import panel as pn
 import param
 
 from ...utils import result_to_dataframe
-import collections.abc
-
-import pandas as pd
-import panel as pn
-import param
-
-from ....sources.base import Source
 from .parametric import ParametricSourceControls
 from .result import SourceResult
 
@@ -117,7 +112,7 @@ class CodeSourceControls(ParametricSourceControls):
 
     def _setup_actions(self):
         """Resolve and register actions after layout is built."""
-        actions: dict[str, callable] = {}
+        actions: dict[str, Callable] = {}
 
         # Instance + methods → bound methods
         if self.instance is not None:
