@@ -522,17 +522,6 @@ class Planner(Coordinator):
 
         raw_plan.steps = steps
 
-        # Clear stale context keys that no actor in this plan will refresh.
-        # Prevents e.g. an old ChatAgent response from being validated
-        # against new SQL results.
-        plan_provides: set[str] = set()
-        for task in tasks:
-            if hasattr(task.actor, 'output_schema'):
-                plan_provides |= set(task.actor.output_schema.__annotations__)
-        for key in ('chat', 'sql', 'view'):
-            if key in context and key not in plan_provides:
-                context.pop(key, None)
-
         plan = Plan(
             *tasks, title=raw_plan.title, history=messages, context=context, coordinator=self, steps_layout=self.steps_layout, is_followup=is_followup
         )

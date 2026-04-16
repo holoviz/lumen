@@ -13,10 +13,6 @@ STOP_WORDS = (Path(__file__).parent / "embeddings_stop_words.txt").read_text().s
 STOP_WORDS_RE = re.compile(r"\b(?:{})\b".format("|".join(STOP_WORDS)), re.IGNORECASE)
 
 
-# Backward compat alias
-_deterministic_hash = deterministic_hash
-
-
 class Embeddings(param.Parameterized):
     @abstractmethod
     async def embed(self, texts: list[str]) -> list[list[float]]:
@@ -39,7 +35,7 @@ class NumpyEmbeddings(Embeddings):
 
     embedding_dim = param.Integer(default=256, doc="The size of the embedding vector")
 
-    hash_func = param.Callable(default=_deterministic_hash, doc="""
+    hash_func = param.Callable(default=deterministic_hash, doc="""
         The hashing function to use to map n-grams to the vocabulary.""")
 
     seed = param.Integer(default=42, doc="The seed for the random number generator.")
