@@ -247,7 +247,7 @@ controls = CodeSourceControls(
 
 **Customizing parameters with `param_overrides`**
 
-Replace auto-detected parameter types with custom widgets:
+Replace auto-detected parameter types with custom widgets.
 
 ```python
 import param
@@ -256,7 +256,7 @@ controls = CodeSourceControls(
     instance=client,
     methods=["list_aggs"],
     param_overrides={
-        "List Aggs": {
+        "list_aggs": {
             # Full replacement with param.Selector
             "ticker": param.Selector(
                 default="AAPL",
@@ -280,7 +280,7 @@ controls = CodeSourceControls(
 | `instance` | Object whose methods to expose |
 | `methods` | List of method names to expose |
 | `functions` | Single callable or `{name: callable}` dict |
-| `param_overrides` | `{action_name: {param: override}}` — override is `param.Parameter` or dict of kwargs |
+| `param_overrides` | `{action_key: {param: override}}` &mdash; `action_key` is the method name (or function/dict key); override is a `param.Parameter` or dict of kwargs |
 | `skip_params` | Parameter names to exclude from UI |
 | `table_name` | Default table name for results |
 

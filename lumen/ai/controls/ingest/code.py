@@ -32,9 +32,13 @@ class CodeSourceControls(ParametricSourceControls):
     methods : list[str], optional
         Method names on ``instance`` to expose.
     functions : callable | dict[str, callable], optional
-        A single callable, or ``{display_name: callable}``.
+        A single callable, or ``{name: callable}``.
     param_overrides : dict, optional
-        ``{action_name: {param_name: override}}``.
+        ``{action_key: {param_name: override}}``.
+        The *action key* is the original method or function name
+        (e.g. ``"list_aggs"``), not the title-cased display label
+        shown in the UI.  For ``functions={name: callable}`` the
+        action key is the dict key you provided.
         Override is either a ``param.Parameter`` (full replacement)
         or a ``dict`` of keyword overrides (merged into auto-detected).
     skip_params : frozenset[str], optional
@@ -61,7 +65,7 @@ class CodeSourceControls(ParametricSourceControls):
             instance=client,
             methods=["list_aggs", "get_ticker_details"],
             param_overrides={
-                "List Aggs": {
+                "list_aggs": {  # keyed by the method name, not the UI label
                     "ticker": param.Selector(
                         default="AAPL",
                         objects=["AAPL", "MSFT", "GOOGL", "TSLA"],
@@ -91,9 +95,13 @@ class CodeSourceControls(ParametricSourceControls):
         A single callable, or a ``dict[str, callable]``.""")
 
     param_overrides = param.Parameter(default=None, precedence=-1, doc="""
-        ``{action_name: {param_name: override}}``. Override is either
-        a ``param.Parameter`` (full replacement) or a ``dict`` of
-        keyword overrides merged into the auto-detected parameter.""")
+        ``{action_key: {param_name: override}}`` where *action_key* is
+        the original method or function name (e.g. ``"list_aggs"``),
+        not the title-cased display label.  For ``functions={name:
+        callable}`` the action key is the dict key you provided.
+        Override is either a ``param.Parameter`` (full replacement)
+        or a ``dict`` of keyword overrides merged into the
+        auto-detected parameter.""")
 
     skip_params = param.Parameter(default=None, precedence=-1, doc="""
         Parameter names to skip during signature introspection.
@@ -110,30 +118,71 @@ class CodeSourceControls(ParametricSourceControls):
         "</span> Code"
     )
 
-    def _setup_actions(self):
-        """Resolve and register actions after layout is built."""
-        actions: dict[str, Callable] = {}
+    @staticmethod
+    def _to_display_name(raw_name: str) -> str:
+        """Convert an action key (e.g. ``"list_aggs"``) into a UI label."""
+        return raw_name.replace("_", " ").title()
 
-        # Instance + methods → bound methods
+    def _setup_actions(self):
+        """Resolve and register actions after layout is built.
+
+        ``param_overrides`` is keyed by the original method/function
+        name (the *action key*).  Display names shown in the UI are
+        derived from the action key via ``_to_display_name`` and are
+        not part of the public API surface for ``param_overrides``.
+        """
+        # {action_key: callable} — action_key is the name the user
+        # wrote (method name, dict key, or callable's __name__).
+        raw_actions: dict[str, Callable] = {}
+
+        # Instance + methods → bound methods, keyed by method name.
         if self.instance is not None:
             for method_name in self.methods:
-                bound_method = getattr(self.instance, method_name)
-                display = method_name.replace("_", " ").title()
-                actions[display] = bound_method
+                raw_actions[method_name] = getattr(self.instance, method_name)
 
-        # Functions: single callable or dict
+        # Functions: single callable or dict.
         if callable(self.functions):
-            name = self.functions.__name__.replace("_", " ").title()
-            actions.setdefault(name, self.functions)
+            raw_actions.setdefault(self.functions.__name__, self.functions)
         elif isinstance(self.functions, dict):
-            actions.update(self.functions)
+            # User-provided dict keys ARE the action keys — use as-is.
+            raw_actions.update(self.functions)
 
-        if actions:
-            self._register_actions(
-                actions,
-                param_overrides=self.param_overrides,
-                skip_params=self.skip_params,
+        if not raw_actions:
+            return
+
+        # Translate to the {display_name: callable} shape that
+        # _register_actions expects, and translate param_overrides
+        # keys from raw → display in lockstep so the override lookup
+        # inside _register_actions still works.
+        actions: dict[str, Callable] = {}
+        display_overrides: dict[str, dict] = {}
+        raw_overrides = self.param_overrides or {}
+        known_raw = set(raw_actions)
+
+        for raw_name, func in raw_actions.items():
+            display = self._to_display_name(raw_name)
+            actions[display] = func
+            if raw_name in raw_overrides:
+                display_overrides[display] = raw_overrides[raw_name]
+
+        # Surface typos early — an override key that doesn't match any
+        # registered action is almost always a mistake (and was
+        # previously silent).
+        unknown = set(raw_overrides) - known_raw
+        if unknown:
+            known = sorted(known_raw)
+            raise ValueError(
+                f"param_overrides references unknown action(s): "
+                f"{sorted(unknown)}. Known actions: {known}. "
+                f"Keys must match the original method or function name "
+                f"(e.g. 'list_aggs'), not the UI display label."
             )
+
+        self._register_actions(
+            actions,
+            param_overrides=display_overrides,
+            skip_params=self.skip_params,
+        )
 
         # Background embed — fire and forget
         if self.vector_store is not None:

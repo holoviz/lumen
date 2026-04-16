@@ -156,7 +156,7 @@ controls = CodeSourceControls(
     instance=client,
     methods=["list_aggs", "get_last_trade", "get_ticker_details"],
     param_overrides={
-        "List Aggs": {  # (1)!
+        "list_aggs": {  # (1)!
             "ticker": param.Selector(  # (2)!
                 default="AAPL",
                 objects=["AAPL", "MSFT", "NVDA", "GOOGL", "TSLA", "AMZN"],
@@ -190,7 +190,7 @@ ui = ExplorerUI(
 ui.servable()
 ```
 
-1. Keys in `param_overrides` match the display name (title-cased method name)
+1. Keys in `param_overrides` are the original method names (e.g. `list_aggs`), not the UI display labels
 2. Full replacement — a `param.Selector` replaces the auto-detected `param.String` with a dropdown
 3. Dict merge — modifies the existing parameter's `default` and `bounds` without full replacement
 
