@@ -118,65 +118,36 @@ class CodeSourceControls(ParametricSourceControls):
         "</span> Code"
     )
 
-    @staticmethod
-    def _to_display_name(raw_name: str) -> str:
-        """Convert an action key (e.g. ``"list_aggs"``) into a UI label."""
-        return raw_name.replace("_", " ").title()
-
     def _setup_actions(self):
         """Resolve and register actions after layout is built.
 
         ``param_overrides`` is keyed by the original method/function
-        name (the *action key*).  Display names shown in the UI are
-        derived from the action key via ``_to_display_name`` and are
-        not part of the public API surface for ``param_overrides``.
+        name; UI display labels are derived by title-casing.
         """
-        # {action_key: callable} — action_key is the name the user
-        # wrote (method name, dict key, or callable's __name__).
         raw_actions: dict[str, Callable] = {}
 
-        # Instance + methods → bound methods, keyed by method name.
         if self.instance is not None:
             for method_name in self.methods:
                 raw_actions[method_name] = getattr(self.instance, method_name)
 
-        # Functions: single callable or dict.
         if callable(self.functions):
             raw_actions.setdefault(self.functions.__name__, self.functions)
         elif isinstance(self.functions, dict):
-            # User-provided dict keys ARE the action keys — use as-is.
             raw_actions.update(self.functions)
 
         if not raw_actions:
             return
 
-        # Translate to the {display_name: callable} shape that
-        # _register_actions expects, and translate param_overrides
-        # keys from raw → display in lockstep so the override lookup
-        # inside _register_actions still works.
-        actions: dict[str, Callable] = {}
-        display_overrides: dict[str, dict] = {}
-        raw_overrides = self.param_overrides or {}
-        known_raw = set(raw_actions)
-
-        for raw_name, func in raw_actions.items():
-            display = self._to_display_name(raw_name)
-            actions[display] = func
-            if raw_name in raw_overrides:
-                display_overrides[display] = raw_overrides[raw_name]
-
-        # Surface typos early — an override key that doesn't match any
-        # registered action is almost always a mistake (and was
-        # previously silent).
-        unknown = set(raw_overrides) - known_raw
-        if unknown:
-            known = sorted(known_raw)
-            raise ValueError(
-                f"param_overrides references unknown action(s): "
-                f"{sorted(unknown)}. Known actions: {known}. "
-                f"Keys must match the original method or function name "
-                f"(e.g. 'list_aggs'), not the UI display label."
-            )
+        overrides = self.param_overrides or {}
+        actions = {
+            raw.replace("_", " ").title(): func
+            for raw, func in raw_actions.items()
+        }
+        display_overrides = {
+            raw.replace("_", " ").title(): overrides[raw]
+            for raw in raw_actions
+            if raw in overrides
+        }
 
         self._register_actions(
             actions,
@@ -184,7 +155,6 @@ class CodeSourceControls(ParametricSourceControls):
             skip_params=self.skip_params,
         )
 
-        # Background embed — fire and forget
         if self.vector_store is not None:
             pn.state.execute(self._embed_actions)
 
