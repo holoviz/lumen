@@ -594,8 +594,7 @@ class DocumentEditor(LumenEditor):
 
     def render_controls(self, task, interface):
         controls = super().render_controls(task, interface)
-        controls.append(FloatInput.from_param(self.param.min_similarity))
-        return controls
+        return Column(controls, FloatInput.from_param(self.param.min_similarity))
 
     def _render_document(self, doc: dict[str, Any]):
         filename = doc.get("filename", "Unknown document")
@@ -643,6 +642,7 @@ class DocumentEditor(LumenEditor):
 
     @param.depends("min_similarity", watch=True)
     def _update_documents(self):
+        self._last_output.clear()
         self.component = self._render_component()
 
     def _render_component(
