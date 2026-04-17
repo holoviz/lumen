@@ -27,7 +27,7 @@ from ..agents import Agent, AnalysisAgent, ChatAgent
 from ..config import PROMPTS_DIR, MissingContextError
 from ..context import TContext
 from ..llm import LlamaCpp, Llm, Message
-from ..models import ThinkingYesNo
+from ..models import FollowUpSuggestion, ThinkingYesNo
 from ..report import ActorTask, Section, TaskGroup
 from ..tools import MetadataLookup, Tool, VectorLookupToolUser
 from ..tools.document_llm_tools import make_document_vector_llm_tools
@@ -301,6 +301,11 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 "template": PROMPTS_DIR / "Coordinator" / "tool_relevance.jinja2",
                 "response_model": ThinkingYesNo,
             },
+            "follow_up": {
+                "template": PROMPTS_DIR / "Coordinator" / "follow_up_suggestions.jinja2",
+                "response_model": FollowUpSuggestion,
+                "llm_spec": "ui",
+            },
         },
     )
 
@@ -553,6 +558,45 @@ class Coordinator(Viewer, VectorLookupToolUser):
         )
 
         return result.yes
+
+    async def suggest_follow_up(self, plan: Plan) -> str | None:
+        """Generate a single follow-up suggestion from a completed plan.
+
+        Returns a suggestion query string, or None on failure.
+        """
+        pipeline = plan.out_context.get("pipeline")
+        if pipeline is None:
+            return None
+
+        data_summary = plan.out_context.get("data", "")
+        if not data_summary:
+            return None
+
+        sql = plan.out_context.get("sql", "")
+        previous_queries = [
+            m["content"] for m in plan.history
+            if m.get("role") == "user"
+        ]
+        output_type = "chart" if plan.out_context.get("view") else "table"
+
+        try:
+            result = await self._invoke_prompt(
+                "follow_up",
+                messages=[{"role": "user", "content": "Generate a follow-up suggestion."}],
+                context=plan.out_context,
+                data_summary=data_summary,
+                sql=sql,
+                output_type=output_type,
+                previous_queries=previous_queries,
+            )
+            return result.query
+        except Exception as e:
+            if state.notifications:
+                state.notifications.warning(
+                    f"Could not generate follow-up suggestion: {e}",
+                    duration=3000,
+                )
+            return None
 
     def __panel__(self):
         return self.interface

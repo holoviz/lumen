@@ -15,6 +15,7 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
+from panel.io import state
 from panel.layout import Column, Row
 from panel.tests.util import async_wait_until
 from panel.util import edit_readonly
@@ -26,7 +27,7 @@ from lumen.ai.agents.sql import SQLAgent, make_sql_model
 from lumen.ai.config import PROVIDED_SOURCE_NAME
 from lumen.ai.coordinator import Plan
 from lumen.ai.editors import SQLEditor
-from lumen.ai.models import ErrorDescription
+from lumen.ai.models import ErrorDescription, FollowUpSuggestion
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
 from lumen.ai.ui import UI, Exploration, ExplorerUI
@@ -1610,3 +1611,128 @@ async def test_edit_on_child_exploration_switches_to_parent(explorer_ui):
     # Parent and Home still intact
     assert len(ui._explorations.items) == 2
     assert parent_exploration.plan is not None
+
+
+# --- Follow-up suggestions tests ---
+
+def _get_footer_objects(msg):
+    """Get footer objects from message."""
+    return msg.footer_objects or []
+
+
+def test_follow_up_suggestion_model():
+    """FollowUpSuggestion model should validate correctly."""
+    result = FollowUpSuggestion(query="Show value by category")
+    assert result.query == "Show value by category"
+
+
+def test_follow_up_suggestion_model_max_length():
+    """FollowUpSuggestion should reject queries over 100 characters."""
+    with pytest.raises(Exception):
+        FollowUpSuggestion(query="x" * 101)
+
+
+async def test_follow_up_icon_after_query(explorer_ui):
+    """After a successful SQL query, a follow-up icon should appear in footer (no LLM call)."""
+    ui = explorer_ui
+    test_source = ui.context["source"]
+    SQLQueryWithTables = make_sql_model([(test_source.name, "test_table")])
+
+    ui.llm.set_responses([
+        SQLQueryWithTables(
+            query="SELECT SUM(value) as value_sum FROM test_table",
+            table_slug="test_sql_agg",
+            tables=["test_table"]
+        ),
+        "Summary of results",
+    ])
+
+    sql_agent = SQLAgent(llm=ui.llm)
+    chat_agent = ChatAgent(llm=ui.llm)
+    plan = Plan(
+        ActorTask(sql_agent),
+        ActorTask(chat_agent),
+        history=[{"content": "Sum value column", "role": "user"}],
+        title="Sum of value",
+        context=ui.context
+    )
+    await ui._execute_plan(plan)
+
+    last_msg = ui.interface.objects[-1]
+    follow_up_icons = [
+        f for f in _get_footer_objects(last_msg)
+        if getattr(f, 'name', '') == "FollowUp"
+    ]
+    assert len(follow_up_icons) == 1
+    assert follow_up_icons[0].icon == "lightbulb"
+
+
+async def test_follow_up_icon_not_on_error(explorer_ui_with_error):
+    """Follow-up icon should NOT appear when plan errors."""
+    ui = explorer_ui_with_error
+    await asyncio.sleep(0.3)
+
+    last_msg = ui.interface.objects[-1]
+    follow_up_icons = [
+        f for f in _get_footer_objects(last_msg)
+        if getattr(f, 'name', '') == "FollowUp"
+    ]
+    assert len(follow_up_icons) == 0
+
+
+async def test_follow_up_icon_not_shown_without_pipeline(explorer_ui):
+    """Follow-up icon should NOT appear when plan has no pipeline in context."""
+    ui = explorer_ui
+
+    chat_agent = ChatAgent(llm=ui.llm)
+    ui.llm.set_responses(["Here is my answer"])
+    plan = Plan(
+        ActorTask(chat_agent),
+        history=[{"content": "What is lumen?", "role": "user"}],
+        title="Chat only",
+        context=ui.context,
+    )
+    await ui._execute_plan(plan)
+
+    last_msg = ui.interface.objects[-1]
+    follow_up_icons = [
+        f for f in _get_footer_objects(last_msg)
+        if getattr(f, 'name', '') == "FollowUp"
+    ]
+    assert len(follow_up_icons) == 0
+
+
+async def test_follow_up_icon_description(explorer_ui):
+    """Follow-up icon should have the correct description."""
+    ui = explorer_ui
+    test_source = ui.context["source"]
+    SQLQueryWithTables = make_sql_model([(test_source.name, "test_table")])
+
+    ui.llm.set_responses([
+        SQLQueryWithTables(
+            query="SELECT SUM(value) as value_sum FROM test_table",
+            table_slug="test_sql_agg",
+            tables=["test_table"]
+        ),
+        "Summary of results",
+    ])
+
+    sql_agent = SQLAgent(llm=ui.llm)
+    chat_agent = ChatAgent(llm=ui.llm)
+    plan = Plan(
+        ActorTask(sql_agent),
+        ActorTask(chat_agent),
+        history=[{"content": "Sum value column", "role": "user"}],
+        title="Sum of value",
+        context=ui.context
+    )
+    await ui._execute_plan(plan)
+
+    last_msg = ui.interface.objects[-1]
+    follow_up_icons = [
+        f for f in _get_footer_objects(last_msg)
+        if getattr(f, 'name', '') == "FollowUp"
+    ]
+    assert len(follow_up_icons) == 1
+    assert follow_up_icons[0].description == "Suggest a follow-up question"
+    assert follow_up_icons[0].icon == "lightbulb"
