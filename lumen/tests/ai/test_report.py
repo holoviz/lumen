@@ -392,3 +392,98 @@ async def test_report_to_html():
     assert "<html" in html_string.lower()
     assert "Hello Report" in html_string
     assert "Hello" in html_string
+
+
+class BlockingAction(Action):
+    """Action that waits on a signal before returning, so tests can deterministically cancel mid-execution."""
+
+    def __init__(self, started, release, **params):
+        super().__init__(**params)
+        self._started = started
+        self._release = release
+
+    async def _execute(self, context, **kwargs):
+        self._started.set()
+        await self._release.wait()
+        return [Markdown("should not render")], {"text": "never"}
+
+
+async def test_task_execute_marks_cancelled():
+    started = asyncio.Event()
+    release = asyncio.Event()
+    action = BlockingAction(started, release, title="Blocks")
+
+    task = asyncio.create_task(action.execute())
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert action.status == "cancelled"
+    assert action.running is False
+
+
+async def test_taskgroup_cancel_propagates():
+    started = asyncio.Event()
+    release = asyncio.Event()
+    tg = TaskGroup(BlockingAction(started, release, title="Blocks"), B(), title="Group")
+
+    task = asyncio.create_task(tg.execute())
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert tg.status == "cancelled"
+    assert tg[0].status == "cancelled"
+    assert tg[1].status == "idle"
+
+
+async def test_report_cancel_mid_execution():
+    started = asyncio.Event()
+    release = asyncio.Event()
+    report = Report(
+        Section(BlockingAction(started, release, title="Blocks"), title="S1"),
+        Section(B(), title="S2"),
+        title="Cancellable",
+    )
+
+    await report._execute_event()
+    await started.wait()
+    assert report._active_task is not None and not report._active_task.done()
+
+    report._handle_cancel()
+    # Wait for the task to finish reacting to the cancel
+    while report._active_task is not None:
+        await asyncio.sleep(0.01)
+
+    assert report.status == "cancelled"
+    assert report[0].status == "cancelled"
+    assert report[1].status == "idle"
+
+
+async def test_report_handle_cancel_idempotent():
+    report = Report(Section(HelloAction(), title="S1"), title="NoOp")
+    # No task running: _handle_cancel must not raise
+    report._handle_cancel()
+    assert report._active_task is None
+
+
+async def test_report_completed_sections_preserved_on_cancel():
+    started = asyncio.Event()
+    release = asyncio.Event()
+    report = Report(
+        Section(HelloAction(), title="Done"),
+        Section(BlockingAction(started, release, title="Blocks"), title="S2"),
+        title="Partial",
+    )
+
+    await report._execute_event()
+    await started.wait()
+    report._handle_cancel()
+    while report._active_task is not None:
+        await asyncio.sleep(0.01)
+
+    assert report[0].status == "success"
+    assert report[1].status == "cancelled"
+    assert report.status == "cancelled"

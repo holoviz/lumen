@@ -81,7 +81,7 @@ class Task(Viewer):
     running = param.Boolean(doc="""
         Whether the task is currently running.""")
 
-    status = param.Selector(objects=["idle", "running", "success", "error"], default="idle", doc="""
+    status = param.Selector(objects=["idle", "running", "success", "error", "cancelled"], default="idle", doc="""
         The current status of the task.""")
 
     steps_layout = param.ClassSelector(default=None, class_=(ListLike, NamedListLike), allow_None=True, doc="""
@@ -230,11 +230,14 @@ class Task(Viewer):
             if not self._prepared:
                 await self.prepare(context)
             views, out_context = await self._execute(context, **kwargs)
+        except asyncio.CancelledError:
+            self.status = "cancelled"
+            raise
         except Exception:
             self.status = "error"
             raise
         finally:
-            if self.status != "error":
+            if self.status not in ("error", "cancelled"):
                 self.status = "success"
             self.running = False
         self.out_context = out_context
@@ -411,6 +414,9 @@ class TaskGroup(Task):
             new = []
             try:
                 new, new_context = await self._run_task(i, task, context, **kwargs)
+            except asyncio.CancelledError:
+                self.status = "cancelled"
+                raise
             except MissingContextError:
                 # Re-raise MissingContextError to allow retry logic at Plan level
                 raise
@@ -432,8 +438,8 @@ class TaskGroup(Task):
                         break
                 views += new
             finally:
-                self._current = i + (0 if task.status == "error" else 1)
-        if self.status != "error":
+                self._current = i + (0 if task.status in ("error", "cancelled") else 1)
+        if self.status not in ("error", "cancelled"):
             self.status = "success"
         contexts = [self.context] if self.context else []
         contexts += [task.out_context for task in self]
@@ -845,6 +851,8 @@ class Report(TaskGroup):
     auto_execute = param.Boolean(default=False, doc="""
         If True, automatically execute the report on initialization.""")
 
+    _active_task = param.ClassSelector(class_=asyncio.Task, default=None, allow_None=True)
+
     _tasks = param.List(item_type=Section)
 
     level = 1
@@ -875,6 +883,12 @@ class Report(TaskGroup):
         self._run = IconButton(
             icon="play_arrow", on_click=self._execute_event, margin=0, size="large",
             description="Execute Report", loading=self.param.running,
+            visible=self.param._active_task.rx.is_(None),
+        )
+        self._stop = IconButton(
+            icon="stop", on_click=self._handle_cancel, margin=0, size="large",
+            description="Stop Report", color="error",
+            visible=self.param._active_task.rx.is_not(None),
         )
         self._clear = IconButton(
             icon="clear", on_click=lambda _: self.reset(), margin=0, size="large",
@@ -926,6 +940,7 @@ class Report(TaskGroup):
         self._menu = Row(
             self._header_title,
             self._run,
+            self._stop,
             self._clear,
             self._collapse,
             self._export,
@@ -935,6 +950,7 @@ class Report(TaskGroup):
         self._dial = SpeedDial(
             items=[
                 {"label": "Execute Report", "icon": "play_arrow"},
+                {"label": "Stop Report", "icon": "stop"},
                 {"label": "Clear Report", "icon": "clear"},
                 {"label": "Export as Notebook", "icon": "description", "format": "ipynb"},
                 {"label": "Export as HTML", "icon": "language", "format": "html"},
@@ -972,7 +988,12 @@ class Report(TaskGroup):
     async def _trigger_event(self, item: dict):
         icon = item["icon"]
         if icon == "play_arrow":
-            await self._execute_event()
+            if self._active_task is not None and not self._active_task.done():
+                self._handle_cancel()
+            else:
+                await self._execute_event()
+        elif icon == "stop":
+            self._handle_cancel()
         elif icon == "clear":
             self.reset()
         elif icon in ("description", "language"):
@@ -990,7 +1011,7 @@ class Report(TaskGroup):
     @param.depends('status', 'views', watch=True)
     def _update_icon_visibility(self):
         """Show/hide icons based on whether report has outputs."""
-        has_outputs = self.status in ("success", "error") or bool(self.views)
+        has_outputs = self.status in ("success", "error", "cancelled") or bool(self.views)
         self._clear.visible = has_outputs
         self._collapse.visible = has_outputs
         self._export.visible = has_outputs
@@ -1008,11 +1029,27 @@ class Report(TaskGroup):
             }
 
     async def _execute_event(self, event=None):
+        if self._active_task is not None and not self._active_task.done():
+            # Already running; the stop button handles cancellation
+            return
         await asyncio.sleep(0.01)  # yield the event loop to allow button loading state to update
-        await self.execute()
+        task = asyncio.create_task(self.execute())
+        self._active_task = task
+        task.add_done_callback(self._on_execute_done)
+
+    def _on_execute_done(self, task):
+        """Clear the active task reference so UI controls flip back to idle."""
+        if task is not self._active_task:
+            return
+        self._active_task = None
+
+    def _handle_cancel(self, event=None):
+        """Cancel the in-flight report execution, if any."""
+        if self._active_task is not None and not self._active_task.done():
+            self._active_task.cancel()
 
     async def _export_report(self, item=None):
-        if len(self) and self.status != "success":
+        if len(self) and self.status not in ("success", "cancelled", "error"):
             await self.execute()
         fmt = item.get("format", "ipynb") if isinstance(item, dict) else "ipynb"
         title = self.title or "Report"
@@ -1035,7 +1072,7 @@ class Report(TaskGroup):
 
     def _populate_view(self):
         self._view[:] = objects = [(task.title, task) for task in self]
-        has_outputs = self.status in ("success", "error") or bool(self.views)
+        has_outputs = self.status in ("success", "error", "cancelled") or bool(self.views)
         if has_outputs:
             self._view.active = list(range(len(objects)))
         else:
