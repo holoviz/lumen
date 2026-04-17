@@ -1205,15 +1205,12 @@ class TestXarrayUploadHandler:
     """Tests for the xarray upload handler."""
 
     def test_upload_handler_returns_dict(self):
-        """Upload handlers should be returned for all xarray upload extensions."""
+        """Upload handlers should be returned for all xarray extensions."""
         handlers = UI._get_xarray_upload_handlers()
         assert isinstance(handlers, dict)
-        assert 'nc' in handlers
-        assert 'nc4' in handlers
-        assert 'h5' in handlers
-        assert 'hdf5' in handlers
-        # zarr is directory-only, not uploadable
-        assert 'zarr' not in handlers
+        for ext in ('nc', 'nc4', 'netcdf', 'h5', 'hdf5', 'he5', 'zarr',
+                    'grib', 'grib2', 'grb', 'grb2'):
+            assert ext in handlers
 
     def test_upload_handler_creates_source_from_nc(self):
         """Upload handler should create XArraySQLSource from NetCDF bytes."""
