@@ -147,7 +147,7 @@ class Plan(Section):
                 raise RuntimeError(f"{task.title!r} task failed to provide declared context.")
 
             context_keys = ", ".join(f"`{k}`" for k in task_context)
-            step.stream(f"Generated {len(outputs)} and provided {context_keys}.")
+            step.stream(f"\n\nGenerated {len(outputs)} outputs and provided {context_keys}.")
             step.success_title = f"Task {task.title!r} successfully completed"
             log_debug(f"\033[96mCompleted: {task.title}\033[0m", show_length=False)
         return outputs, task_context
@@ -255,6 +255,7 @@ class Plan(Section):
         context = context or self.context
         if "__error__" in context:
             del context["__error__"]
+        context["plan"] = self
         outputs, out_context = await super().execute(context, **kwargs)
         _, todos = self.render_task_history(failed=self.status == "error")
         if self.steps_layout is not None:
