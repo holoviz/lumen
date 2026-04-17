@@ -69,8 +69,6 @@ from .vector_store import VectorStore
 
 DataT = str | Path | Source | Pipeline
 
-XARRAY_DOTTED_EXTENSIONS = tuple(f'.{ext}' for ext in XARRAY_EXTENSIONS)
-
 PAGE_SX = {
     ".sidebar": {"transition": "width 0.2s ease-in-out"},
     ".sidebar:hover": {"width": "140px", "transitionDelay": "0.5s"},
@@ -635,7 +633,7 @@ class UI(Viewer):
                     continue
 
                 # Handle xarray files (NetCDF, Zarr, HDF5, GRIB)
-                if src.endswith(XARRAY_DOTTED_EXTENSIONS):
+                if Path(src).suffix.lstrip('.').lower() in XARRAY_EXTENSIONS:
                     source = XArraySQLSource(uri=str(Path(src).absolute()))
                     sources.append(source)
                     continue
