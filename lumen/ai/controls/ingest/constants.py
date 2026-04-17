@@ -4,9 +4,12 @@ from __future__ import annotations
 # File type constants
 # ─────────────────────────────────────────────────────────────────────────────
 
-XARRAY_UPLOAD_EXTENSIONS = ("nc", "nc4", "h5", "hdf5")
+XARRAY_EXTENSIONS = (
+    "nc", "nc4", "netcdf", "h5", "hdf5", "he5", "zarr",
+    "grib", "grib2", "grb", "grb2",
+)
 
-TABLE_EXTENSIONS = ("csv", "parquet", "parq", "json", "xlsx", "geojson", "wkt", "zip", *XARRAY_UPLOAD_EXTENSIONS)
+TABLE_EXTENSIONS = ("csv", "parquet", "parq", "json", "xlsx", "geojson", "wkt", "zip", *XARRAY_EXTENSIONS)
 
 METADATA_EXTENSIONS = ("md", "txt", "yaml", "yml", "json", "pdf", "docx", "doc", "pptx", "ppt")
 METADATA_FILENAME_PATTERNS = ("_metadata", "metadata_", "readme", "schema")

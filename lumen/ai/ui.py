@@ -52,7 +52,7 @@ from .controls import (
     BaseSourceControls, DownloadSourceControls, FileSourceControls,
     SourceCatalog, TableExplorer, UploadSourceControls,
 )
-from .controls.ingest.constants import XARRAY_UPLOAD_EXTENSIONS
+from .controls.ingest.constants import XARRAY_EXTENSIONS
 from .coordinator import Coordinator, Plan, Planner
 from .editors import AnalysisOutput, LumenEditor, SQLEditor
 from .export import export_notebook
@@ -69,9 +69,7 @@ from .vector_store import VectorStore
 
 DataT = str | Path | Source | Pipeline
 
-XARRAY_FILE_EXTENSIONS = tuple(f'.{ext}' for ext in XARRAY_UPLOAD_EXTENSIONS) + (
-    '.netcdf', '.he5', '.zarr', '.grib', '.grib2', '.grb', '.grb2',
-)
+XARRAY_DOTTED_EXTENSIONS = tuple(f'.{ext}' for ext in XARRAY_EXTENSIONS)
 
 PAGE_SX = {
     ".sidebar": {"transition": "width 0.2s ease-in-out"},
@@ -545,7 +543,7 @@ class UI(Viewer):
 
         _temp_files: list[str] = []
         atexit.register(_cleanup_temp_files)
-        return {ext: _handle_xarray_upload for ext in XARRAY_UPLOAD_EXTENSIONS}
+        return {ext: _handle_xarray_upload for ext in XARRAY_EXTENSIONS}
 
     @classmethod
     def _resolve_data(
@@ -637,7 +635,7 @@ class UI(Viewer):
                     continue
 
                 # Handle xarray files (NetCDF, Zarr, HDF5, GRIB)
-                if src.endswith(XARRAY_FILE_EXTENSIONS):
+                if src.endswith(XARRAY_DOTTED_EXTENSIONS):
                     source = XArraySQLSource(uri=str(Path(src).absolute()))
                     sources.append(source)
                     continue
