@@ -292,7 +292,10 @@ class MetadataLookup(VectorLookupTool):
                 processed_sources.append(source_key)
                 log_debug(f"[MetadataLookup] Processing source {source.name}")
 
-            if self.include_metadata and self._raw_metadata.get(source.name) is None:
+            if self.include_metadata and (
+                self._raw_metadata.get(source.name) is None
+                or known_count < current_table_count
+            ):
                 if isinstance(source, DuckDBSource):
                     self._raw_metadata[source.name] = source.get_metadata()
                 else:
@@ -453,8 +456,7 @@ class MetadataLookup(VectorLookupTool):
             filters = {"type": "document"}
 
         # Get all document filenames from vector store
-        all_doc_results = await doc_store.query(text="", top_k=1000, filters=filters)
-        all_filenames = {r["metadata"]["filename"] for r in all_doc_results if "filename" in r["metadata"]}
+        all_filenames = {md["filename"] for md in doc_store.metadata if "filename" in md}
 
         # Get visible docs (if specified, only include these; otherwise include all)
         visible_docs = context.get("visible_docs")
@@ -638,6 +640,9 @@ class MetadataLookup(VectorLookupTool):
         """
         Fetches tables based on the user query and returns formatted context.
         """
+        if len(messages) == 0:
+            return [], MetadataLookupOutputs(metaset=Metaset(query=None, catalog={}))  # Don't query documents for binary content
+
         await self._wait_for_pending_updates(timeout=30)
         out_model = await self._gather_info(messages, context)
         return [self._format_context(out_model)], out_model

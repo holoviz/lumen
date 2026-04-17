@@ -4,7 +4,7 @@ from .planner import Planner
 
 __all__ = [
     "Coordinator",
-    "Plan",
     "DependencyResolver",
+    "Plan",
     "Planner",
 ]

@@ -19,7 +19,7 @@ import numpy.core.multiarray
 import param
 import semchunk
 
-from panel import cache as pn_cache
+from panel import cache as pn_cache, state as pn_state
 from tqdm.auto import tqdm
 
 from .actor import PROMPTS_DIR, LLMUser
@@ -1116,9 +1116,21 @@ class DuckDBVectorStore(VectorStore):
         doc="Embeddings object for text processing. If None and a URI is provided, loads from the database; else NumpyEmbeddings.",
     )
 
+    # Class-level registry of connections by URI. Used to close stale
+    # connections on reload (e.g. Panel hot-reload) so the file handle is
+    # released and a fresh ATTACH can succeed.
+    _uri_connections: t.ClassVar[dict[str, duckdb.DuckDBPyConnection]] = {}
+
     def __init__(self, **params):
         super().__init__(**params)
         self._add_items_lock = asyncio.Lock()
+
+        # Reuse existing connection for this URI if still open
+        # (e.g. on Panel hot-reload within the same process).
+        if self.uri != ":memory:" and self.uri in DuckDBVectorStore._uri_connections:
+            self.connection = DuckDBVectorStore._uri_connections[self.uri]
+            self._resolve_state()
+            return
 
         connection = duckdb.connect(":memory:")
         # following the instructions from
@@ -1133,43 +1145,23 @@ class DuckDBVectorStore(VectorStore):
             if self.embeddings is None:
                 self.embeddings = NumpyEmbeddings()
             return
-        uri_exists = Path(self.uri).exists()
-        direct_connection = False
-        try:
-            attach_mode = "READ_ONLY" if self.read_only else "READ_WRITE"
-            connection.execute(f"ATTACH DATABASE '{self.uri}' AS embedded ({attach_mode});")
-        except (duckdb.BinderException, duckdb.IOException) as e:
-            err_msg = str(e).lower()
-            if "already attached" in err_msg or "unique file handle" in err_msg:
-                # File already held by another DuckDB connection in this process
-                # (e.g., during Panel hot-reload). Connect directly to the file instead.
-                connection.close()
-                connection = duckdb.connect(self.uri, read_only=self.read_only)
-                connection.execute("LOAD 'vss';")
-                connection.execute("SET hnsw_enable_experimental_persistence = true;")
-                direct_connection = True
-            else:
-                raise
-        except duckdb.CatalogException:
-            # handle "Failure while replaying WAL file"
-            # remove .wal uri on corruption
-            wal_path = Path(str(self.uri) + ".wal")
-            if wal_path.exists():
-                wal_path.unlink()
-            attach_mode = "READ_ONLY" if self.read_only else "READ_WRITE"
-            connection.execute(f"ATTACH DATABASE '{self.uri}' AS embedded ({attach_mode});")
-        if not direct_connection:
-            connection.execute("USE embedded;")
-        self.connection = connection
-        has_documents = (
-            connection.execute(
+
+        attach_mode = "READ_ONLY" if self.read_only else "READ_WRITE"
+        connection.execute(f"ATTACH DATABASE '{self.uri}' AS embedded ({attach_mode});")
+        connection.execute("USE embedded;")
+        DuckDBVectorStore._uri_connections[self.uri] = self.connection = connection
+        pn_state.on_session_destroyed(lambda session_context: self.close())
+        self._resolve_state()
+
+    def _resolve_state(self):
+        """Set _initialized and resolve embeddings from the active connection."""
+        self._initialized = (
+            self.connection.execute(
                 "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'documents';"
             ).fetchone()[0]
             > 0
-        )
-        self._initialized = uri_exists and has_documents
-
-        if self.uri != ":memory:" and self._initialized:
+        ) and Path(self.uri).exists()
+        if self._initialized:
             config = self._get_embeddings_config()
             if config and self.embeddings is None:
                 module_name, class_name = config["class"].rsplit(".", 1)
@@ -1178,7 +1170,6 @@ class DuckDBVectorStore(VectorStore):
                 self.embeddings = embedding_class(**config["params"])
                 log_debug(f"Loaded embeddings {class_name} from database.")
             self._check_embeddings_consistency()
-
         if self.embeddings is None:
             self.embeddings = NumpyEmbeddings()
 
@@ -1674,6 +1665,7 @@ class DuckDBVectorStore(VectorStore):
         if self.connection:
             self.connection.close()
             self.connection = None
+        DuckDBVectorStore._uri_connections.pop(self.uri, None)
 
 
 class ChromaDBVectorStore(VectorStore):
@@ -1708,6 +1700,7 @@ class ChromaDBVectorStore(VectorStore):
         class_=Embeddings,
         default=None,
         allow_None=True,
+        constant=True,
         doc="Embeddings object for text processing.",
     )
 
@@ -1733,11 +1726,7 @@ class ChromaDBVectorStore(VectorStore):
             self._client = chromadb.Client()
         else:
             self._client = chromadb.PersistentClient(path=self.uri)
-
-        self._collection = self._client.get_or_create_collection(
-            name=self.collection_name,
-            metadata={"hnsw:space": "cosine"},
-        )
+        self._create_collection()
 
         # Recover current ID counter from existing data
         if self._collection.count() > 0:
@@ -1745,6 +1734,25 @@ class ChromaDBVectorStore(VectorStore):
             self._current_id = max(int(id_) for id_ in result["ids"])
         else:
             self._current_id = 0
+
+    def _create_collection(self):
+        kwargs = {"embedding_function": None} if self.embeddings else {}
+        self._collection = self._client.get_or_create_collection(
+            name=self.collection_name,
+            metadata={"hnsw:space": "cosine"},
+            **kwargs
+        )
+
+
+    @property
+    def metadata(self):
+        items = self._collection.get(include=["metadatas"])
+        metadatas = []
+        for item in items["metadatas"]:
+            metadatas.append(
+                {k: v for k, v in item.items() if not k.startswith(("_text_hash", "_metadata_json"))}
+            )
+        return metadatas
 
     def _get_next_id(self) -> int:
         """Generate the next available ID.
@@ -2200,10 +2208,7 @@ class ChromaDBVectorStore(VectorStore):
         Deletes and recreates the underlying ChromaDB collection.
         """
         self._client.delete_collection(self.collection_name)
-        self._collection = self._client.get_or_create_collection(
-            name=self.collection_name,
-            metadata={"hnsw:space": "cosine"},
-        )
+        self._create_collection()
         self._current_id = 0
 
     def __len__(self) -> int:

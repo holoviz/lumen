@@ -10,12 +10,17 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
+from panel.pane import Image
 from panel.tests.util import async_wait_until
-from panel_material_ui import Card, ChatMessage, Typography
+from panel_material_ui import (
+    Card, ChatMessage, ChatStep, Typography,
+)
 
 from lumen.ai.agents import ChatAgent, SQLAgent
 from lumen.ai.agents.sql import make_sql_model
-from lumen.ai.controls.base import BaseSourceControls, UploadedFileRow
+from lumen.ai.controls.ingest import (
+    BaseSourceControls, FileSourceControls, UploadedFileRow,
+)
 from lumen.ai.coordinator import Coordinator, Plan, Planner
 from lumen.ai.coordinator.planner import Reasoning, make_plan_model
 from lumen.ai.editors import SQLEditor
@@ -23,6 +28,7 @@ from lumen.ai.models import FollowUpSuggestion, ReplaceLine, RetrySpec
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
 from lumen.ai.tools import FunctionTool, define_tool
+from lumen.ai.utils import content_to_text
 from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.sources.duckdb import DuckDBSource
 
@@ -310,35 +316,6 @@ async def test_reuse_ephemeral_source_across_uploads():
     assert found is source1
 
 
-async def test_metadata_lookup_reprocesses_source_with_new_tables():
-    """
-    MetadataLookup should re-process a source when its table count
-    increases (new tables uploaded to the same source).
-    """
-    from lumen.ai.tools.metadata_lookup import MetadataLookup
-
-    source = DuckDBSource(tables={
-        'table_a': "SELECT 1 AS id, 'X' AS category",
-    })
-
-    lookup = MetadataLookup()
-    vector_store_id = id(lookup.vector_store)
-
-    # Source previously processed with 1 table
-    lookup._sources_in_progress[vector_store_id] = {source.name: 1}
-
-    # Same table count -> should be skipped
-    current_count = len(source.get_tables())
-    known_count = lookup._sources_in_progress[vector_store_id].get(source.name, 0)
-    assert known_count >= current_count
-
-    # Add a second table -> should trigger re-processing
-    source.tables['table_b'] = "SELECT 2 AS id, 'Y' AS group_name"
-    current_count = len(source.get_tables())
-    known_count = lookup._sources_in_progress[vector_store_id].get(source.name, 0)
-    assert known_count < current_count
-
-
 async def test_metadata_lookup_skips_unchanged_source():
     """
     Calling _update_vector_store twice with the same source (unchanged tables)
@@ -379,7 +356,7 @@ async def test_process_files_reuses_ephemeral_source():
     should reuse the same DuckDBSource so all tables share one connection.
     """
 
-    controls = BaseSourceControls()
+    controls = FileSourceControls()
 
     # First upload: one CSV
     csv1 = io.BytesIO(b"name,salary\nAlice,100\nBob,200\n")
@@ -426,7 +403,7 @@ async def test_process_files_creates_new_source_when_none_exists():
     and increment _count.
     """
 
-    controls = BaseSourceControls()
+    controls = FileSourceControls()
     assert controls._count == 0
 
     csv = io.BytesIO(b"x,y\n1,2\n3,4\n")
@@ -518,7 +495,7 @@ async def test_process_files_partial_failure():
     other valid files should still be processed successfully.
     """
 
-    controls = BaseSourceControls()
+    controls = FileSourceControls()
 
     good_csv = io.BytesIO(b"a,b\n1,2\n")
     bad_file = io.BytesIO(b"not a valid file")
@@ -542,7 +519,7 @@ async def test_process_files_concurrent_uploads_same_source():
     the same DuckDBSource without conflicts.
     """
 
-    controls = BaseSourceControls()
+    controls = FileSourceControls()
 
     for i in range(3):
         csv = io.BytesIO(f"col_{i}\n{i}\n".encode())
@@ -568,7 +545,7 @@ async def test_process_files_duplicate_table_name():
     the table data, not error out.
     """
 
-    controls = BaseSourceControls()
+    controls = FileSourceControls()
 
     # First upload
     csv1 = io.BytesIO(b"val\n10\n")
@@ -665,3 +642,174 @@ async def test_suggest_follow_up_llm_failure(llm):
 
     result = await coordinator.suggest_follow_up(plan)
     assert result is None
+
+
+# -------------------------------------------------------------------
+# _serialize — image propagation
+# -------------------------------------------------------------------
+
+class TestSerializeImagePropagation:
+
+    def _make_coordinator(self, llm):
+        return Coordinator(llm=llm)
+
+    def test_serialize_string_passthrough(self, llm):
+        coord = self._make_coordinator(llm)
+        assert coord._serialize("hello") == "hello"
+
+    def test_serialize_image_preserved_in_list(self, llm):
+        coord = self._make_coordinator(llm)
+        img = Image("https://example.com/img.png")
+        result = coord._serialize([img])
+        assert isinstance(result, list)
+        assert img in result
+
+    def test_serialize_mixed_list_text_and_image(self, llm):
+        from panel.pane import Markdown
+        coord = self._make_coordinator(llm)
+        img = Image("https://example.com/img.png")
+        md = Markdown("hello world")
+        result = coord._serialize([md, img])
+        assert isinstance(result, list)
+        assert img in result
+        assert any(isinstance(item, str) and "hello" in item for item in result)
+
+    def test_serialize_chat_step_dropped(self, llm):
+        coord = self._make_coordinator(llm)
+        step = ChatStep()
+        img = Image("https://example.com/img.png")
+        result = coord._serialize([step, img, "text"])
+        assert isinstance(result, list)
+        assert img in result
+        assert "text" in result
+        assert step not in result
+
+    def test_serialize_password_stripped_from_pane(self, llm):
+        from panel.pane import HTML as HTMLPane
+        coord = self._make_coordinator(llm)
+        pane = HTMLPane("password: secret123\nvisible text")
+        result = coord._serialize(pane)
+        assert "secret" not in str(result)
+        assert "visible text" in str(result)
+
+    def test_serialize_password_stripped_from_list(self, llm):
+        coord = self._make_coordinator(llm)
+        from panel.pane import HTML as HTMLPane
+        img = Image("https://example.com/img.png")
+        pane = HTMLPane("password: secret\nmore text")
+        result = coord._serialize([pane, img])
+        assert isinstance(result, list)
+        assert img in result
+        text_parts = [item for item in result if isinstance(item, str)]
+        for part in text_parts:
+            assert "secret" not in part
+
+    def test_serialize_nested_column(self, llm):
+        from panel.layout import Column
+        coord = self._make_coordinator(llm)
+        img = Image("https://example.com/img.png")
+        col = Column("some text", img)
+        result = coord._serialize(col)
+        assert isinstance(result, list)
+        assert img in result
+
+
+# -------------------------------------------------------------------
+# Plan.render_task_history — multimodal content
+# -------------------------------------------------------------------
+
+class TestRenderTaskHistoryMultimodal:
+
+    def test_plain_string_content(self, llm):
+        task = ActorTask(ChatAgent(), instruction="say hi", title="Greet")
+        plan = Plan(
+            task,
+            history=[{"role": "user", "content": "Hello"}],
+            llm=llm,
+        )
+        rendered, todos = plan.render_task_history(0)
+        user_msg = next(m for m in rendered if m["role"] == "user")
+        assert isinstance(user_msg["content"], str)
+        assert "Hello" in user_msg["content"]
+        assert "🟡" in user_msg["content"]
+
+    def test_multimodal_content_preserves_image(self, llm):
+        img = object()
+        task = ActorTask(ChatAgent(), instruction="describe", title="Describe")
+        plan = Plan(
+            task,
+            history=[{"role": "user", "content": ["What is this?", img]}],
+            llm=llm,
+        )
+        rendered, todos = plan.render_task_history(0)
+        user_msg = next(m for m in rendered if m["role"] == "user")
+        # Should be a list with formatted text + original image
+        assert isinstance(user_msg["content"], list)
+        assert img in user_msg["content"]
+        text = content_to_text(user_msg["content"])
+        assert "What is this?" in text
+        assert "🟡" in text
+
+    def test_multimodal_multiple_tasks(self, llm):
+        img = object()
+        tasks = [
+            ActorTask(ChatAgent(), instruction="step 1", title="First"),
+            ActorTask(ChatAgent(), instruction="step 2", title="Second"),
+        ]
+        plan = Plan(
+            *tasks,
+            history=[{"role": "user", "content": ["do both", img]}],
+            llm=llm,
+        )
+        rendered, todos = plan.render_task_history(0)
+        user_msg = next(m for m in rendered if m["role"] == "user")
+        assert isinstance(user_msg["content"], list)
+        assert img in user_msg["content"]
+        text = content_to_text(user_msg["content"])
+        assert "🟡 step 1" in text
+        assert "⚪ step 2" in text
+
+    def test_assistant_messages_unchanged(self, llm):
+        task = ActorTask(ChatAgent(), instruction="reply", title="Reply")
+        assistant_msg = {"role": "assistant", "content": "I helped"}
+        plan = Plan(
+            task,
+            history=[
+                {"role": "user", "content": "help"},
+                assistant_msg,
+            ],
+            llm=llm,
+        )
+        rendered, _ = plan.render_task_history(0)
+        assert assistant_msg in rendered
+
+
+# -------------------------------------------------------------------
+# Planner with multimodal user messages
+# -------------------------------------------------------------------
+
+async def test_planner_multimodal_user_message(llm):
+    """Planner should handle multimodal (text + image) user messages."""
+    PlanModel = make_plan_model(["ChatAgent"], [])
+    (StepModel,) = get_args(PlanModel.__annotations__['steps'])
+
+    llm.set_responses([
+        Reasoning(chain_of_thought="Describe the image"),
+        PlanModel(title="Image Q&A", steps=[
+            StepModel(
+                actor="ChatAgent",
+                instruction="Describe the uploaded image",
+                title="Describe Image"
+            )
+        ])
+    ])
+
+    planner = Planner(llm=llm)
+    img = object()
+    plan = await planner.respond(
+        [{'role': 'user', 'content': ['What is in this image?', img]}], {}
+    )
+
+    assert isinstance(plan, Plan)
+    assert plan.title == "Image Q&A"
+    assert len(plan) == 1

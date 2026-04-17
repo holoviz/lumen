@@ -10,6 +10,9 @@ except ModuleNotFoundError:
 from lumen.ai.schemas import (
     Column, DocumentChunk, Metaset, TableCatalogEntry,
 )
+from lumen.ai.tools.metaset_docs_llm_tools import (
+    make_load_metaset_relevant_docs_tool,
+)
 from lumen.config import SOURCE_TABLE_SEPARATOR
 
 SEP = SOURCE_TABLE_SEPARATOR
@@ -244,6 +247,40 @@ class TestDocRendering:
         ms = _metaset([e], docs=[doc])
         output = ms.table_list(include_docs=False)
         assert "<documentation>" not in output
+
+    def test_docs_omitted_from_list_and_compact_by_default(self):
+        e = _entry(f"S{SEP}t")
+        doc = DocumentChunk(filename="guide.md", text="Use this table for analysis", similarity=0.8)
+        ms = _metaset([e], docs=[doc])
+        assert ms.table_list().count("<documentation>") == 0
+        assert ms.compact_context().count("<documentation>") == 0
+
+    def test_docs_retrieval_stats(self):
+        e = _entry(f"S{SEP}t")
+        docs = [
+            DocumentChunk(filename="a.md", text="x", similarity=0.5),
+            DocumentChunk(filename="b.md", text="y", similarity=0.9),
+        ]
+        ms = _metaset([e], docs=docs)
+        assert ms.docs_retrieval_stats() == (2, 0.5, 0.9)
+        assert _metaset([e]).docs_retrieval_stats() is None
+
+    def test_load_metaset_relevant_docs_tool(self):
+
+        e = _entry(f"S{SEP}t")
+        ms = _metaset(
+            [e],
+            docs=[DocumentChunk(filename="g.md", text="hello world", similarity=0.77)],
+        )
+        tools = make_load_metaset_relevant_docs_tool({"metaset": ms})
+        assert len(tools) == 1
+        tool = tools[0]
+        assert "0.770" in tool.purpose or "0.77" in tool.purpose
+        assert "chunk(s)" in tool.purpose
+        out = tool.function(max_chunks=5)
+        assert "hello world" in out
+        assert "similarity range" in out.lower()
+        assert not make_load_metaset_relevant_docs_tool({"metaset": _metaset([e])})
 
 
 # ---------------------------------------------------------------

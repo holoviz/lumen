@@ -5,7 +5,9 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
-from lumen.ai.controls import DownloadControls, SourceCatalog, UploadControls
+from lumen.ai.controls import (
+    DownloadSourceControls, SourceCatalog, UploadSourceControls,
+)
 from lumen.ai.embeddings import NumpyEmbeddings
 from lumen.ai.vector_store import NumpyVectorStore
 
@@ -35,13 +37,13 @@ def source_catalog(context, vector_store):
 
 @pytest.fixture
 def upload_controls(context, source_catalog):
-    """Create UploadControls with reference to catalog."""
-    controls = UploadControls(context=context, source_catalog=source_catalog)
+    """Create UploadSourceControls with reference to catalog."""
+    controls = UploadSourceControls(context=context, source_catalog=source_catalog)
     return controls
 
 
 @pytest.fixture
 def download_controls(context, source_catalog):
-    """Create DownloadControls with reference to catalog."""
-    controls = DownloadControls(context=context, source_catalog=source_catalog)
+    """Create DownloadSourceControls with reference to catalog."""
+    controls = DownloadSourceControls(context=context, source_catalog=source_catalog)
     return controls
