@@ -19,7 +19,7 @@ from panel.config import panel_extension
 from panel.io.document import hold
 from panel.io.state import state
 from panel.layout import Column, FlexBox
-from panel.pane import SVG, Markdown
+from panel.pane import SVG, Image, Markdown
 from panel.util import edit_readonly
 from panel.viewable import (
     Child, Children, Viewable, Viewer,
@@ -36,6 +36,7 @@ from lumen.ai.agents.deck_gl import DeckGLAgent
 from ..pipeline import Pipeline
 from ..sources import Source
 from ..sources.duckdb import DuckDBSource
+from ..sources.xarray_sql import XArraySQLSource
 from ..util import check_xarray_available, log
 from .agents import (
     AnalysisAgent, BaseCodeAgent, ChatAgent, DocumentListAgent,
@@ -48,25 +49,29 @@ from .config import (
 )
 from .context import TContext
 from .controls import (
-    DownloadControls, SourceCatalog, TableExplorer, UploadControls,
+    BaseSourceControls, DownloadSourceControls, FileSourceControls,
+    SourceCatalog, TableExplorer, UploadSourceControls,
 )
+from .controls.ingest.constants import XARRAY_UPLOAD_EXTENSIONS
 from .coordinator import Coordinator, Plan, Planner
 from .editors import AnalysisOutput, LumenEditor, SQLEditor
 from .export import export_notebook
-from .llm import (
-    Llm, Message, OpenAI, get_available_llm,
-)
+from .llm import Llm, OpenAI, get_available_llm
 from .llm_dialog import LLMConfigDialog
 from .logs import ChatLogs
 from .models import ErrorDescription
 from .report import ActorTask, Report, Section
-from .utils import log_debug, wrap_logfire
+from .utils import (
+    IMAGE_MIME_TYPES, content_to_text, format_msg_content, log_debug,
+    wrap_logfire,
+)
 from .vector_store import VectorStore
 
 DataT = str | Path | Source | Pipeline
 
-XARRAY_FILE_EXTENSIONS = ('.nc', '.nc4', '.netcdf', '.h5', '.hdf5', '.he5', '.zarr', '.grib', '.grib2', '.grb', '.grb2')
-XARRAY_UPLOAD_EXTENSIONS = ('nc', 'nc4', 'h5', 'hdf5')
+XARRAY_FILE_EXTENSIONS = tuple(f'.{ext}' for ext in XARRAY_UPLOAD_EXTENSIONS) + (
+    '.netcdf', '.he5', '.zarr', '.grib', '.grib2', '.grb', '.grb2',
+)
 
 PAGE_SX = {
     ".sidebar": {"transition": "width 0.2s ease-in-out"},
@@ -422,6 +427,10 @@ class UI(Viewer):
     llm = param.ClassSelector(class_=Llm, default=_get_default_llm(), doc="""
         The LLM provider to be used by default""")
 
+    llm_tools = param.List(default=[], doc="""
+        Extra tools for the coordinator's :attr:`~lumen.ai.actor.LLMUser.llm_tools`
+        (expanded in ``_invoke_prompt`` / ``_stream_prompt`` only).""")
+
     llm_choices = param.List(default=[], doc="""
         List of available LLM model choices to show in the configuration dialog.""")
 
@@ -446,7 +455,7 @@ class UI(Viewer):
     page_config = param.Dict(default={}, doc="""
         Configuration for the panel-material-ui Page component the UI is rendered into.""")
 
-    source_controls = param.List(default=[UploadControls, DownloadControls], doc="""
+    source_controls = param.List(default=[UploadSourceControls, DownloadSourceControls], doc="""
         List of SourceControls types to manage datasets.""")
 
     filedropper_kwargs = param.Dict(default={}, doc="""Keyword arguments to pass to FileDropper in UploadControls.
@@ -514,11 +523,6 @@ class UI(Viewer):
 
         Returns empty dict if xarray-sql is not installed.
         """
-        if not check_xarray_available():
-            return {}
-
-        _temp_files: list[str] = []
-
         def _cleanup_temp_files():
             for path in _temp_files:
                 try:
@@ -527,7 +531,6 @@ class UI(Viewer):
                     pass
 
         def _handle_xarray_upload(context, file_obj, alias, filename):
-            from ..sources.xarray_sql import XArraySQLSource
             ext = filename.rsplit('.', 1)[-1] if '.' in filename else 'nc'
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f'.{ext}')
             file_obj.seek(0)
@@ -537,6 +540,10 @@ class UI(Viewer):
             _temp_files.append(tmp.name)
             return XArraySQLSource(uri=tmp.name, name=alias)
 
+        if not check_xarray_available():
+            return {}
+
+        _temp_files: list[str] = []
         atexit.register(_cleanup_temp_files)
         return {ext: _handle_xarray_upload for ext in XARRAY_UPLOAD_EXTENSIONS}
 
@@ -631,7 +638,6 @@ class UI(Viewer):
 
                 # Handle xarray files (NetCDF, Zarr, HDF5, GRIB)
                 if src.endswith(XARRAY_FILE_EXTENSIONS):
-                    from ..sources.xarray_sql import XArraySQLSource
                     source = XArraySQLSource(uri=str(Path(src).absolute()))
                     sources.append(source)
                     continue
@@ -661,9 +667,10 @@ class UI(Viewer):
 
     @wrap_logfire(span_name="Chat Invoke")
     async def _chat_invoke(
-        self, messages: list[Message], user: str, instance: ChatInterface, context: TContext | None = None
+        self, messages: Any, user: str, instance: ChatInterface, context: TContext | None = None
     ):
-        log_debug(f"New Message: \033[91m{messages!r}\033[0m", show_sep="above")
+        # messages can be anything submitted through chat area input
+        log_debug(f"New Message: \033[91m{format_msg_content(messages)!r}\033[0m", show_sep="above")
         context = self.context if context is None else context
         await self._coordinator.respond(messages, context)
 
@@ -909,15 +916,28 @@ class UI(Viewer):
             # Clear pending query now that it's been captured
             self._pending_query = None
 
-            # Auto-process uploaded files without confirmation dialog
+            # Separate image uploads from data file uploads
+            image_uploads = {}
+            data_uploads = {}
             if uploaded:
+                for filename, file_info in uploaded.items():
+                    ext = Path(filename).suffix.lower()
+                    if ext in IMAGE_MIME_TYPES:
+                        image_uploads[filename] = file_info
+                    else:
+                        data_uploads[filename] = file_info
+
+
+            # Auto-process data file uploads without confirmation dialog
+            if data_uploads:
                 # Store sources snapshot before processing
                 sources_snapshot = list(self.context.get("sources", []))
 
                 # Generate file cards and process them directly
-                self._upload_controls._generate_file_cards({
-                    key: value["value"] for key, value in uploaded.items()
-                })
+                file_cards_input = {
+                    key: value["value"] for key, value in data_uploads.items()
+                }
+                self._upload_controls._generate_file_cards(file_cards_input)
 
                 # Process the files
                 with self._chat_input.param.update(loading=True), self._upload_controls._layout.param.update(loading=True):
@@ -937,22 +957,42 @@ class UI(Viewer):
 
                 # If files were successfully processed, execute the query with source info
                 if (n_tables + n_docs + n_metadata) > 0 and user_prompt:
-                    self._show_upload_success(n_tables, n_metadata)
+                    self._show_upload_success(n_tables, n_metadata, data_uploads)
                     self._execute_pending_query_with(user_prompt, sources_snapshot)
                     return
                 elif (n_tables + n_docs + n_metadata) > 0:
                     # Files uploaded but no query - just show success message
-                    self._show_upload_success(n_tables, n_metadata)
+                    self._show_upload_success(n_tables, n_metadata, data_uploads)
                     return
-                elif not user_prompt:
-                    # No files processed and no query
+                elif not user_prompt and not image_uploads:
+                    # No files processed, no query, and no images
                     return
+
+            # Build the chat message: include Image panes for display
+            # alongside the text so they appear in the conversation
+            image_panes = []
+            for filename, file_info in image_uploads.items():
+                image_data = file_info["value"]
+                image_panes.append(Image(image_data, alt_text=filename, width=300))
 
             with self.interface.param.update(disabled=True, loading=True), hold():
                 self._update_main_view()
-                self.interface.send(user_prompt, respond=bool(user_prompt))
+                if image_panes:
+                    # Send a Column with text + images so the chat shows both
+                    msg_parts = image_panes.copy()
+                    if user_prompt:
+                        msg_parts.append(user_prompt)
+                    msg = Column(*msg_parts) if len(msg_parts) > 1 else msg_parts[0]
+                    self.interface.send(msg, respond=bool(user_prompt or image_panes))
+                else:
+                    self.interface.send(user_prompt, respond=bool(user_prompt))
                 with edit_readonly(self._chat_input):
-                    self._chat_input.value_input = ""
+                    self._chat_input.param.update(
+                        value_input="",
+                        value_uploaded={},
+                        views=[],
+                        pending_uploads=0,
+                    )
 
         # Store as instance variable for access from other methods
         self._on_submit = on_submit
@@ -983,7 +1023,8 @@ class UI(Viewer):
 
         existing_actions = self._chat_input.actions
         self._chat_input.enable_upload = any(
-            issubclass(sc, UploadControls) for sc in self.source_controls
+            (isinstance(sc, UploadSourceControls) if isinstance(sc, BaseSourceControls) else issubclass(sc, UploadSourceControls))
+            for sc in self.source_controls
         )
         self._chat_input.actions = {
             **existing_actions,
@@ -1012,7 +1053,7 @@ class UI(Viewer):
         if query:
             self._execute_pending_query_with(query, sources_snapshot)
 
-    def _show_upload_success(self, n_tables: int, n_metadata: int):
+    def _show_upload_success(self, n_tables: int, n_metadata: int, data_uploads: dict | None = None):
         """Show a success message after files are uploaded, then auto-hide after a delay."""
         parts = []
         if n_tables > 0:
@@ -1020,6 +1061,12 @@ class UI(Viewer):
         if n_metadata > 0:
             parts.append(f"{n_metadata} metadata file{'s' if n_metadata > 1 else ''}")
         message = f"Successfully uploaded {' and '.join(parts)}."
+        if data_uploads:
+            filenames = list(data_uploads.keys())
+            if len(filenames) <= 3:
+                message += f" ({', '.join(filenames)})"
+            else:
+                message += f" ({', '.join(filenames[:3])}, +{len(filenames) - 3} more)"
 
         if self._success_alert is not None:
             self._success_alert.object = message
@@ -1087,17 +1134,26 @@ class UI(Viewer):
         if self.analyses:
             agents.append(AnalysisAgent(analyses=self.analyses))
 
+        llm_tools = list(self.coordinator.llm_tools)
+        if self.llm_tools:
+            llm_tools.extend(self.llm_tools)
+
         self._coordinator = self.coordinator(
             agents=agents,
             context=self.context,
+            document_vector_store=self.document_vector_store,
             interface=self.interface,
             llm=self.llm,
+            llm_tools=llm_tools,
             tools=self.tools,
             within_ui=True,
             vector_store=self.vector_store,
-            document_vector_store=self.document_vector_store,
             **self.coordinator_params
         )
+        if self.vector_store is None:
+            self.vector_store = self._coordinator.vector_store
+        if self.document_vector_store is None:
+            self.document_vector_store = self._coordinator.document_vector_store
 
     def _get_status_text(self) -> str:
         """Generate the status text showing sources and LLM provider."""
@@ -1269,20 +1325,29 @@ class UI(Viewer):
         self._source_controls = []
         control_tabs = []
         for control in self.source_controls:
-            control_kwargs = {
-                'context': self.context,
-                'source_catalog': self._source_catalog,
-                'upload_handlers': merged_upload_handlers
-            }
-            if control is UploadControls and self.filedropper_kwargs:
-                control_kwargs['filedropper_kwargs'] = self.filedropper_kwargs
+            if isinstance(control, BaseSourceControls):
+                # Already instantiated — adopt it, just wire up context/catalog
+                control_inst = control
+                control_inst.context = self.context
+                control_inst.source_catalog = self._source_catalog
+            else:
+                # It's a class — instantiate with kwargs
+                control_kwargs = {
+                    'context': self.context,
+                    'source_catalog': self._source_catalog,
+                }
+                if issubclass(control, FileSourceControls):
+                    control_kwargs['upload_handlers'] = merged_upload_handlers
+                    if control is UploadSourceControls and self.filedropper_kwargs:
+                        control_kwargs['filedropper_kwargs'] = self.filedropper_kwargs
+                control_inst = control(**control_kwargs)
 
-            control_inst = control(**control_kwargs)
             control_inst.param.watch(self._sync_sources, 'outputs')
             control_inst.param.watch(self._handle_upload_successful, 'upload_successful')
-            if isinstance(control_inst, UploadControls):
+            if isinstance(control_inst, UploadSourceControls):
                 self._upload_controls = control_inst
-            control_tabs.append((control.label, control_inst))
+            label = control_inst.label if isinstance(control, BaseSourceControls) else control.label
+            control_tabs.append((label, control_inst))
             self._source_controls.append(control_inst)
         self._source_content = Tabs(*control_tabs, sizing_mode="stretch_width")
 
@@ -1393,14 +1458,7 @@ class UI(Viewer):
             new_sources = [src for src in context["sources"] if src not in old_sources]
             global_context["sources"] = old_sources + new_sources
 
-            # Compute table slugs for old, new, and all sources
-            old_slugs = set()
-            for source in old_sources:
-                tables = source.get_tables()
-                for table in tables:
-                    table_slug = f'{source.name}{SOURCE_TABLE_SEPARATOR}{table}'
-                    old_slugs.add(table_slug)
-
+            # Compute all current table slugs across all sources
             all_slugs = set()
             for source in global_context["sources"]:
                 tables = source.get_tables()
@@ -1408,14 +1466,24 @@ class UI(Viewer):
                     table_slug = f'{source.name}{SOURCE_TABLE_SEPARATOR}{table}'
                     all_slugs.add(table_slug)
 
-            new_slugs = all_slugs - old_slugs
+            # Use _known_slugs to track all table slugs we've ever seen.
+            # This avoids relying on old_sources.get_tables() which returns
+            # mutated state when tables are added to an existing source.
+            known_slugs = global_context.get("_known_slugs", set())
+            new_slugs = all_slugs - known_slugs
 
-            # Update visible_slugs: preserve old table visibility, auto-check new tables
+            # Update visible_slugs: auto-check truly new tables,
+            # preserve existing visibility for previously known tables
+            # (i.e. if a user unchecked a table, it stays unchecked).
             current_visible = global_context.get("visible_slugs")
             if current_visible is not None:  # Check for None, not truthiness (empty set is valid!)
-                global_context["visible_slugs"] = current_visible.intersection(old_slugs) | new_slugs
+                global_context["visible_slugs"] = (current_visible & all_slugs) | new_slugs
             elif all_slugs:
                 global_context["visible_slugs"] = all_slugs
+
+            # Record all slugs as known so future uploads can distinguish
+            # genuinely new tables from previously unchecked ones.
+            global_context["_known_slugs"] = all_slugs.copy()
 
         if "source" in context:
             source = context["source"]
@@ -1837,14 +1905,6 @@ class ExplorerUI(UI):
 
         switches = [llm_config_button, Divider(sizing_mode="stretch_width"), cot]
 
-        sql_agent = next(
-            (agent for agent in self._coordinator.agents if isinstance(agent, SQLAgent)),
-            None
-        )
-        if sql_agent:
-            sql_planning = Switch(label='SQL Planning', description='Run discovery queries and adaptive exploration before final SQL')
-            sql_agent.exploration_enabled = sql_planning
-            switches.append(sql_planning)
         validation = Switch(label='Validation Step', description='Check if the response fully answered your question', value=True)
         self._coordinator.validation_enabled = validation
         switches.append(validation)
@@ -2583,7 +2643,7 @@ class ExplorerUI(UI):
         user_msg = ""
         for msg in plan.history[::-1]:
             if msg.get("role") == "user":
-                user_msg = msg.get("content")
+                user_msg = content_to_text(msg.get("content", ""))
                 break
 
         response = await self.llm.invoke(
@@ -2607,9 +2667,10 @@ class ExplorerUI(UI):
 
     @wrap_logfire(span_name="Chat Invoke")
     async def _chat_invoke(
-        self, messages: list[Message], user: str, instance: ChatInterface, context: TContext | None = None
+        self, messages: Any, user: str, instance: ChatInterface, context: TContext | None = None
     ):
-        log_debug(f"New Message: \033[91m{messages!r}\033[0m", show_sep="above")
+        # messages can be anything submitted through chat area input
+        log_debug(f"New Message: \033[91m{format_msg_content(messages)!r}\033[0m", show_sep="above")
         self._update_main_view()
         with self._busy():
             exploration = self._exploration['view']

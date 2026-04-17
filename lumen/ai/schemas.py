@@ -78,6 +78,16 @@ class Metaset:
         """Get document chunks (already filtered by MetadataLookup)."""
         return self.docs if self.docs else []
 
+    def docs_retrieval_stats(self) -> tuple[int, float, float] | None:
+        """
+        Return (chunk_count, min_similarity, max_similarity) for retrieved docs, or None if none.
+        """
+        docs = self.get_docs()
+        if not docs:
+            return None
+        sims = [float(c.similarity) for c in docs]
+        return (len(docs), min(sims), max(sims))
+
     async def get_schema(self, table_slug: str) -> dict[str, Any] | None:
         """
         Lazily fetch and cache schema for a specific table.
@@ -174,17 +184,14 @@ class Metaset:
             if catalog_entry.created_order == max_order:
                 data['latest'] = True
 
-        if include_columns:
-            if catalog_entry.columns:
-                data['columns'] = self._build_columns_data(
-                    table_slug, catalog_entry.columns, include_schema, truncate
-                )
-        elif include_schema and catalog_entry.columns:
-            # Show full column schema even without include_columns
-            data['columns'] = self._build_columns_data(
-                table_slug, catalog_entry.columns, include_schema, truncate
-            )
+        if not (catalog_entry.columns and (include_columns or include_schema)):
+            return data
 
+        data['columns'] = cols = self._build_columns_data(
+            table_slug, catalog_entry.columns, include_schema, truncate
+        )
+        if isinstance(cols, dict) and not any(info for info in cols.values()):
+            data['columns'] = list(cols)
         return data
 
     def _build_columns_data(
@@ -258,7 +265,7 @@ class Metaset:
         truncate: bool = False,
         include_sql: bool = True,
         include_metadata: bool = True,
-        include_docs: bool = True,
+        include_docs: bool = False,
         include_lineage: bool = False,
         n: int | None = None,
         offset: int = 0,
@@ -392,7 +399,7 @@ class Metaset:
             "truncate": False,
             "include_sql": False,
             "include_metadata": include_metadata,
-            "include_docs": True,
+            "include_docs": False,
             "include_lineage": include_lineage,
         }
         generate_kwargs.update(override_kwargs)
@@ -405,7 +412,7 @@ class Metaset:
             "truncate": False,
             "include_sql": False,
             "include_metadata": include_metadata,
-            "include_docs": True,
+            "include_docs": False,
             "include_lineage": include_lineage,
         }
         generate_kwargs.update(override_kwargs)
@@ -431,7 +438,7 @@ class Metaset:
             "truncate": True,
             "include_sql": False,
             "include_metadata": include_metadata,
-            "include_docs": True,
+            "include_docs": False,
             "include_lineage": include_lineage,
         }
         generate_kwargs.update(override_kwargs)

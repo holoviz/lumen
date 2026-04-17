@@ -292,7 +292,10 @@ class MetadataLookup(VectorLookupTool):
                 processed_sources.append(source_key)
                 log_debug(f"[MetadataLookup] Processing source {source.name}")
 
-            if self.include_metadata and self._raw_metadata.get(source.name) is None:
+            if self.include_metadata and (
+                self._raw_metadata.get(source.name) is None
+                or known_count < current_table_count
+            ):
                 if isinstance(source, DuckDBSource):
                     self._raw_metadata[source.name] = source.get_metadata()
                 else:
@@ -453,8 +456,7 @@ class MetadataLookup(VectorLookupTool):
             filters = {"type": "document"}
 
         # Get all document filenames from vector store
-        all_doc_results = await doc_store.query(text="", top_k=1000, filters=filters)
-        all_filenames = {r["metadata"]["filename"] for r in all_doc_results if "filename" in r["metadata"]}
+        all_filenames = {md["filename"] for md in doc_store.metadata if "filename" in md}
 
         # Get visible docs (if specified, only include these; otherwise include all)
         visible_docs = context.get("visible_docs")
@@ -530,6 +532,18 @@ class MetadataLookup(VectorLookupTool):
             results = await self.vector_store.query(query, top_k=self.n, filters=query_filters)
         else:
             results = await self._perform_search_with_refinement(query, context, filters=query_filters)
+
+        # If no results found and provenance chain is longer than ['global'],
+        # retry with progressively shorter chains to find parent-scoped tables.
+        provenance_chain = list(query_filters["provenance_chain"])
+        while not results and len(provenance_chain) > 1:
+            provenance_chain = provenance_chain[:-1]
+            fallback_filters = {**query_filters, "provenance_chain": provenance_chain}
+            log_debug(f"[MetadataLookup] No results with provenance {query_filters['provenance_chain']}, retrying with {provenance_chain}")
+            if total_tables < 5:
+                results = await self.vector_store.query(query, top_k=self.n, filters=fallback_filters)
+            else:
+                results = await self._perform_search_with_refinement(query, context, filters=fallback_filters)
 
         any_matches = any(result["similarity"] >= self.min_similarity for result in results)
         same_table = len([result["metadata"]["table_name"] for result in results])
@@ -626,6 +640,9 @@ class MetadataLookup(VectorLookupTool):
         """
         Fetches tables based on the user query and returns formatted context.
         """
+        if len(messages) == 0:
+            return [], MetadataLookupOutputs(metaset=Metaset(query=None, catalog={}))  # Don't query documents for binary content
+
         await self._wait_for_pending_updates(timeout=30)
         out_model = await self._gather_info(messages, context)
         return [self._format_context(out_model)], out_model

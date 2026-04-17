@@ -6,7 +6,7 @@ import tempfile
 
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import duckdb
 import numpy as np
@@ -1342,7 +1342,6 @@ async def test_edit_updates_logs(explorer_ui, tmp_path):
     ui = explorer_ui
 
     # Set up a mock for _logs
-    from unittest.mock import MagicMock
     mock_logs = MagicMock()
     ui._logs = mock_logs
 
