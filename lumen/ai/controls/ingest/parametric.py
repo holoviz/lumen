@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import panel as pn
 import param
 
@@ -57,7 +59,8 @@ class ParametricSourceControls(BaseSourceControls):
         # Set instance state BEFORE super().__init__ because the base
         # class __init__ calls _render_layout() → _render_controls()
         # which accesses these attributes.
-        self._actions: dict[str, callable] = {}
+        self._actions: dict[str, Callable] = {}
+        self._cached_tools: list[tuple[str, Callable]] | None = None
         self._action_models: dict[str, param.Parameterized] = {}
         self._action_selector = Select(
             name="Action", options=[], sizing_mode="stretch_width",
@@ -84,7 +87,7 @@ class ParametricSourceControls(BaseSourceControls):
 
     def _register_actions(
         self,
-        actions: dict[str, callable],
+        actions: dict[str, Callable],
         param_overrides: dict[str, dict[str, param.Parameter | dict]] | None = None,
         skip_params: frozenset[str] | None = None,
     ):
@@ -93,7 +96,7 @@ class ParametricSourceControls(BaseSourceControls):
 
         Parameters
         ----------
-        actions : dict[str, callable]
+        actions : dict[str, Callable]
             ``{display_name: callable}``.
         param_overrides : dict, optional
             ``{action_name: {param_name: override}}`` where *override* is
@@ -106,6 +109,7 @@ class ParametricSourceControls(BaseSourceControls):
             ``{"self", "cls", "return"}``.
         """
         self._actions = dict(actions)
+        self._cached_tools = None  # invalidate cache
         param_overrides = param_overrides or {}
 
         for name, func in self._actions.items():
@@ -167,8 +171,14 @@ class ParametricSourceControls(BaseSourceControls):
         model = self._action_models.get(active)
         children = []
         if model is not None:
+            # Build widgets dict to stretch all widgets
+            widgets = {
+                name: {"sizing_mode": "stretch_width"}
+                for name in model.param
+                if name != "name"
+            }
             children.append(
-                pn.Param(model, show_name=False, sizing_mode="stretch_width")
+                pn.Param(model, show_name=False, sizing_mode="stretch_width", widgets=widgets)
             )
         self._controls_area[:] = children
 
@@ -207,12 +217,17 @@ class ParametricSourceControls(BaseSourceControls):
         if not self._uses_actions:
             query_names = self._get_query_param_names()
             if query_names:
+                widgets = {
+                    name: {"sizing_mode": "stretch_width"}
+                    for name in query_names
+                }
                 self._controls_area[:] = [
                     pn.Param(
                         self,
                         parameters=query_names,
                         show_name=False,
                         sizing_mode="stretch_width",
+                        widgets=widgets,
                     )
                 ]
         # Action selector lives outside _controls_area to avoid
@@ -260,7 +275,7 @@ class ParametricSourceControls(BaseSourceControls):
         if self.vector_store is None:
             return
         items = []
-        for name, func in self._actions.items():
+        for name, func in self.as_tools():
             description, _ = doc_descriptions(func)
             items.append({
                 "text": f"{name}: {description}" if description else name,
@@ -271,26 +286,37 @@ class ParametricSourceControls(BaseSourceControls):
 
     def as_tools(
         self, query: str | None = None, top_k: int = 5,
-    ) -> list[tuple[str, callable]]:
+    ) -> list[tuple[str, Callable]]:
         """
         Return ``(display_name, callable)`` pairs for the coordinator
         to wrap in ``FunctionTool``.
+
+        Results are cached until ``_register_actions`` is called again.
+
+        Subclass-pattern controls (e.g. ``URLSourceControls``) that
+        declare class-level params instead of registering actions should
+        override this method to return a synthetic callable whose
+        signature mirrors the class-level params.
         """
-        return list(self._actions.items())
+        if self._cached_tools is not None:
+            return self._cached_tools
+        self._cached_tools = list(self._actions.items())
+        return self._cached_tools
 
     async def as_tools_async(
         self, query: str | None = None, top_k: int = 5,
-    ) -> list[tuple[str, callable]]:
+    ) -> list[tuple[str, Callable]]:
         """Async version with vector-store filtering."""
-        if query and self.vector_store and len(self._actions) > top_k:
+        tools = self.as_tools()
+        if query and self.vector_store and len(tools) > top_k:
             results = await self.vector_store.query(query, top_k=top_k)
             relevant = {r["metadata"]["action_name"] for r in results}
             return [
                 (name, func)
-                for name, func in self._actions.items()
+                for name, func in tools
                 if name in relevant
             ]
-        return list(self._actions.items())
+        return tools
 
     async def load_action(self, action_name: str, **params) -> SourceResult:
         """Programmatic entry point for AI agents."""

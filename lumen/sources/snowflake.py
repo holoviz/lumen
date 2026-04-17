@@ -329,18 +329,28 @@ class SnowflakeSource(BaseSQLSource):
             self._cursor.execute_async(sql_query, *args, **kwargs)
         query_id = self._cursor.sfqid
 
+        # Poll query status. Each status check is a small HTTPS request
+        # — keep it on a worker thread so we don't block the loop even
+        # briefly, and await asyncio.sleep between polls as before.
+        terminal_statuses = (
+            QueryStatus.SUCCESS,
+            QueryStatus.FAILED_WITH_ERROR,
+            QueryStatus.ABORTED,
+            QueryStatus.FAILED_WITH_INCIDENT,
+        )
         while True:
-            status = self._conn.get_query_status(query_id)
-            if status in (QueryStatus.SUCCESS, QueryStatus.FAILED_WITH_ERROR, QueryStatus.ABORTED, QueryStatus.FAILED_WITH_INCIDENT):
+            status = await asyncio.to_thread(
+                self._conn.get_query_status, query_id
+            )
+            if status in terminal_statuses:
                 break
-            await asyncio.sleep(0.1)  # Check every 100ms
+            await asyncio.sleep(0.5)  # Check every 500ms
 
         if status != QueryStatus.SUCCESS:
             raise snowflake.connector.errors.ProgrammingError(
                 f"Query failed with status: {status}")
 
         self._cursor.get_results_from_sfqid(query_id)
-
         df = self._cursor.fetch_pandas_all()
         return self._cast_to_supported_dtypes(df)
 

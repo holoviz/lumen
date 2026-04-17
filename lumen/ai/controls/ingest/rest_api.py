@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import inspect
+import keyword
+import re
 
+from collections.abc import Callable
 from typing import Literal
 
 import httpx
@@ -18,22 +21,67 @@ from .utils import normalize_json_response, serialize_param_value
 # Pure helpers (module-level, not meant for subclass override)
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Pattern for characters that are invalid in Python identifiers
+_INVALID_IDENT_RE = re.compile(r"[^a-zA-Z0-9_]")
+
+
+def _sanitize_param_name(name: str) -> str:
+    """
+    Convert an API parameter name into a valid Python identifier.
+
+    Replaces dots, hyphens, and other non-identifier characters with
+    underscores.  Prepends ``_`` if the result starts with a digit.
+
+    Examples
+    --------
+    >>> _sanitize_param_name("ticker.any_of")
+    'ticker_any_of'
+    >>> _sanitize_param_name("from")
+    'from_'
+    """
+    sanitized = _INVALID_IDENT_RE.sub("_", name)
+    if sanitized and sanitized[0].isdigit():
+        sanitized = f"_{sanitized}"
+    # Avoid Python keywords
+    if keyword.iskeyword(sanitized):
+        sanitized = f"{sanitized}_"
+    return sanitized
+
 
 def _split_params(
     parameters: list[dict], kwargs: dict,
+    py_to_api: dict[str, str] | None = None,
 ) -> tuple[dict, dict]:
-    """Separate path params from query params, serializing values."""
+    """Separate path params from query params, serializing values.
+
+    Parameters
+    ----------
+    parameters : list[dict]
+        Endpoint parameter specs (with original API ``"name"`` keys).
+    kwargs : dict
+        Keyword arguments from the Python callable (sanitized names).
+    py_to_api : dict, optional
+        Mapping from sanitized Python names back to original API names.
+        When ``None``, parameter names are assumed to be identical.
+    """
+    api_to_py = {}
+    if py_to_api:
+        api_to_py = {v: k for k, v in py_to_api.items()}
+
     path_params: dict = {}
     query_params: dict = {}
     for p in parameters:
-        val = kwargs.get(p["name"])
+        api_name = p["name"]
+        # Look up the value using the sanitized Python name
+        py_name = api_to_py.get(api_name, api_name)
+        val = kwargs.get(py_name)
         if val is None or val == "":
             continue
         val = serialize_param_value(val)
         if p.get("in") == "path":
-            path_params[p["name"]] = val
+            path_params[api_name] = val
         else:
-            query_params[p["name"]] = val
+            query_params[api_name] = val
     return path_params, query_params
 
 
@@ -60,17 +108,24 @@ def _build_endpoint_closure(
     parameters: list[dict],
     base_url: str,
     headers: dict,
-) -> callable:
+    py_to_api: dict[str, str] | None = None,
+) -> Callable:
     """Create an async closure that performs the HTTP request."""
 
     async def endpoint_func(**kwargs) -> pd.DataFrame:
-        path_params, query_params = _split_params(parameters, kwargs)
+        path_params, query_params = _split_params(
+            parameters, kwargs, py_to_api=py_to_api,
+        )
 
         url = f"{base_url}{path}"
         for k, v in path_params.items():
             url = url.replace(f"{{{k}}}", str(v))
 
-        async with httpx.AsyncClient(headers=headers, timeout=HTTP_TIMEOUT_SECONDS) as client:
+        async with httpx.AsyncClient(
+            headers=headers,
+            timeout=HTTP_TIMEOUT_SECONDS,
+            follow_redirects=True,
+        ) as client:
             resp = await client.request(method, url, params=query_params)
             resp.raise_for_status()
 
@@ -145,7 +200,7 @@ class RESTAPISourceControls(ParametricSourceControls):
         if self.vector_store is not None:
             pn.state.execute(self._embed_actions)
 
-    def _make_endpoint_callable(self, spec: dict) -> callable:
+    def _make_endpoint_callable(self, spec: dict) -> Callable:
         """
         Build a typed callable from an endpoint specification dict.
 
@@ -163,10 +218,11 @@ class RESTAPISourceControls(ParametricSourceControls):
         operation_id = _operation_id_from_spec(spec)
         parameters = spec.get("parameters", [])
 
-        py_params, annotations, param_docs = self._build_signature(parameters)
+        py_params, annotations, param_docs, py_to_api = self._build_signature(parameters)
         docstring = _build_docstring(description, param_docs)
         endpoint_func = _build_endpoint_closure(
             method, path, parameters, self.base_url, dict(self.headers),
+            py_to_api=py_to_api if py_to_api else None,
         )
 
         endpoint_func.__name__ = operation_id
@@ -178,9 +234,15 @@ class RESTAPISourceControls(ParametricSourceControls):
 
     def _build_signature(
         self, parameters: list[dict],
-    ) -> tuple[list[inspect.Parameter], dict[str, type], list[str]]:
+    ) -> tuple[list[inspect.Parameter], dict[str, type], list[str], dict[str, str]]:
         """
         Convert endpoint parameter dicts into ``inspect.Parameter`` objects.
+
+        API parameter names that are not valid Python identifiers (e.g.
+        ``ticker.any_of``) are sanitized to underscored equivalents
+        (``ticker_any_of``).  A mapping from sanitized → original names
+        is returned so that ``_split_params`` can reconstruct the
+        correct API query.
 
         Delegates per-parameter type resolution to
         ``_resolve_param_type`` so subclasses (e.g.
@@ -188,14 +250,31 @@ class RESTAPISourceControls(ParametricSourceControls):
 
         Returns
         -------
-        tuple of (py_params, annotations, param_doc_lines)
+        tuple of (py_params, annotations, param_doc_lines, py_to_api)
+            ``py_to_api`` maps sanitized Python names to original API
+            names.  Empty when no renaming was needed.
         """
         py_params: list[inspect.Parameter] = []
         annotations: dict[str, type] = {}
         param_docs: list[str] = []
+        py_to_api: dict[str, str] = {}
+        seen_names: set[str] = set()
 
         for p in parameters:
-            pname = p["name"]
+            api_name = p["name"]
+            py_name = _sanitize_param_name(api_name)
+
+            # Ensure uniqueness after sanitization
+            base = py_name
+            counter = 2
+            while py_name in seen_names:
+                py_name = f"{base}_{counter}"
+                counter += 1
+            seen_names.add(py_name)
+
+            if py_name != api_name:
+                py_to_api[py_name] = api_name
+
             required = p.get("required", False)
             enum = p.get("enum")
             pdesc = p.get("description", "")
@@ -211,16 +290,16 @@ class RESTAPISourceControls(ParametricSourceControls):
                     default = p.get("default", None)
 
             py_params.append(inspect.Parameter(
-                pname,
+                py_name,
                 inspect.Parameter.KEYWORD_ONLY,
                 default=default,
                 annotation=ptype,
             ))
-            annotations[pname] = ptype
+            annotations[py_name] = ptype
             if pdesc:
-                param_docs.append(f"    {pname}: {pdesc}")
+                param_docs.append(f"    {py_name}: {pdesc}")
 
-        return py_params, annotations, param_docs
+        return py_params, annotations, param_docs, py_to_api
 
     def _resolve_param_type(self, p: dict) -> type:
         """

@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 
 from ..actor import _merge_prompt_tools
-from ..agents import Agent, SQLAgent
+from ..agents import Agent, SQLAgent, SourceAgent
 from ..config import PROMPTS_DIR
 from ..context import (
     LWW, ContextError, TContext, merge_contexts,
@@ -22,7 +22,7 @@ from ..context import (
 from ..llm import Message
 from ..models import FollowUpClassification
 from ..report import ActorTask
-from ..tools import MetadataLookup, Tool
+from ..tools import MetadataLookup, SourceLookup, Tool
 from ..utils import content_to_text, log_debug, wrap_logfire
 from .base import Coordinator, Plan
 
@@ -132,6 +132,14 @@ class Planner(Coordinator):
 
         # Initialize coordinator first so self.vector_store is available
         super().__init__(**params)
+
+        # Auto-add SourceLookup to planner_tools if SourceAgent is present
+        has_source_agent = any(
+            isinstance(a, SourceAgent) for a in self.agents
+        )
+        planner_tool_types = {t if isinstance(t, type) else type(t) for t in planner_tools_input}
+        if has_source_agent and SourceLookup not in planner_tool_types:
+            planner_tools_input = list(planner_tools_input) + [SourceLookup]
 
         # Now initialize planner_tools, reusing instances from _tools["main"] where possible
         if planner_tools_input:
@@ -462,7 +470,7 @@ class Planner(Coordinator):
         last_task = tasks[-1] if tasks else None
         not_with = getattr(agents["ChatAgent"], "not_with", [])
         conflicts = [actor for actor in actors_in_graph if actor in not_with]
-        if last_task and isinstance(last_task.actor, (SQLAgent, Tool)) and not conflicts:
+        if last_task and isinstance(last_task.actor, (SourceAgent, SQLAgent, Tool)) and not conflicts:
             summarize_step = type(step)(
                 actor="ChatAgent",
                 instruction="Summarize the results.",
@@ -499,6 +507,7 @@ class Planner(Coordinator):
             actors_in_graph.add("ValidationAgent")
 
         raw_plan.steps = steps
+
         plan = Plan(
             *tasks,
             title=raw_plan.title,

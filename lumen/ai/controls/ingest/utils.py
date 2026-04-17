@@ -110,8 +110,6 @@ def format_download_error(error: Exception) -> str:
 
 def serialize_param_value(val):
     """Serialize date/datetime values to ISO strings for API requests."""
-    if isinstance(val, datetime.datetime):
-        return val.isoformat()
     if isinstance(val, datetime.date):
         return val.isoformat()
     return val

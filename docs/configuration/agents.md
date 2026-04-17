@@ -26,6 +26,7 @@ Lumen includes eight agents automatically. You don't need to configure anything.
 | **VegaLiteAgent** | Creates charts and visualizations |
 | **DeckGLAgent** | Creates 3D map visualizations for geographic data |
 | **ChatAgent** | Answers questions and provides guidance |
+| **SourceAgent** | Fetches data from configured source controls |
 | **TableListAgent** | Lists available tables and columns |
 | **DocumentListAgent** | Manages uploaded documents |
 | **ValidationAgent** | Checks if results answer the question |

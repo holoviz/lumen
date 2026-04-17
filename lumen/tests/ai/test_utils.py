@@ -281,7 +281,8 @@ class TestDescribeData:
     async def test_describe_small_data(self):
         df = pd.DataFrame({"col1": [1, 2], "col2": [3, 4]})
         result = await describe_data(df)
-        assert "|   col1 |   col2 |" in result
+        assert "col1: 1" in result
+        assert "col2: 3" in result
 
 
 def test_clean_sql_removes_backticks():

@@ -176,7 +176,22 @@ The system executed this plan:
 """
 {%- endif %}
 
-{%- if memory.get('metaset') -%}
+{%- if memory.get('source_actions') -%}
+
+## Configured External Data Sources
+The following external source actions are configured:
+{%- for name, info in memory['source_actions'].items() %}
+- {{ name }}: {{ info.get('description', '(no description)') }}
+{%- endfor %}
+
+{%- if memory.get('metaset') %}
+{%- set table_list = memory['metaset'].table_context(n=3, n_others=17) %}
+
+## Loaded Data Sources
+These tables are already available:
+{{ table_list }}
+{%- endif -%}
+{%- elif memory.get('metaset') -%}
 {%- set table_list = memory['metaset'].table_context(n=3, n_others=17) %}
 
 ## Available Data Sources

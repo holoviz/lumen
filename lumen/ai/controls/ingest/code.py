@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import collections.abc
 
-import pandas as pd
+from collections.abc import Callable
+
 import panel as pn
 import param
 
-from ....sources.base import Source
+from ...utils import result_to_dataframe
 from .parametric import ParametricSourceControls
 from .result import SourceResult
 
@@ -32,9 +32,13 @@ class CodeSourceControls(ParametricSourceControls):
     methods : list[str], optional
         Method names on ``instance`` to expose.
     functions : callable | dict[str, callable], optional
-        A single callable, or ``{display_name: callable}``.
+        A single callable, or ``{name: callable}``.
     param_overrides : dict, optional
-        ``{action_name: {param_name: override}}``.
+        ``{action_key: {param_name: override}}``.
+        The *action key* is the original method or function name
+        (e.g. ``"list_aggs"``), not the title-cased display label
+        shown in the UI.  For ``functions={name: callable}`` the
+        action key is the dict key you provided.
         Override is either a ``param.Parameter`` (full replacement)
         or a ``dict`` of keyword overrides (merged into auto-detected).
     skip_params : frozenset[str], optional
@@ -61,7 +65,7 @@ class CodeSourceControls(ParametricSourceControls):
             instance=client,
             methods=["list_aggs", "get_ticker_details"],
             param_overrides={
-                "List Aggs": {
+                "list_aggs": {  # keyed by the method name, not the UI label
                     "ticker": param.Selector(
                         default="AAPL",
                         objects=["AAPL", "MSFT", "GOOGL", "TSLA"],
@@ -91,9 +95,13 @@ class CodeSourceControls(ParametricSourceControls):
         A single callable, or a ``dict[str, callable]``.""")
 
     param_overrides = param.Parameter(default=None, precedence=-1, doc="""
-        ``{action_name: {param_name: override}}``. Override is either
-        a ``param.Parameter`` (full replacement) or a ``dict`` of
-        keyword overrides merged into the auto-detected parameter.""")
+        ``{action_key: {param_name: override}}`` where *action_key* is
+        the original method or function name (e.g. ``"list_aggs"``),
+        not the title-cased display label.  For ``functions={name:
+        callable}`` the action key is the dict key you provided.
+        Override is either a ``param.Parameter`` (full replacement)
+        or a ``dict`` of keyword overrides merged into the
+        auto-detected parameter.""")
 
     skip_params = param.Parameter(default=None, precedence=-1, doc="""
         Parameter names to skip during signature introspection.
@@ -111,31 +119,42 @@ class CodeSourceControls(ParametricSourceControls):
     )
 
     def _setup_actions(self):
-        """Resolve and register actions after layout is built."""
-        actions: dict[str, callable] = {}
+        """Resolve and register actions after layout is built.
 
-        # Instance + methods → bound methods
+        ``param_overrides`` is keyed by the original method/function
+        name; UI display labels are derived by title-casing.
+        """
+        raw_actions: dict[str, Callable] = {}
+
         if self.instance is not None:
             for method_name in self.methods:
-                bound_method = getattr(self.instance, method_name)
-                display = method_name.replace("_", " ").title()
-                actions[display] = bound_method
+                raw_actions[method_name] = getattr(self.instance, method_name)
 
-        # Functions: single callable or dict
         if callable(self.functions):
-            name = self.functions.__name__.replace("_", " ").title()
-            actions.setdefault(name, self.functions)
+            raw_actions.setdefault(self.functions.__name__, self.functions)
         elif isinstance(self.functions, dict):
-            actions.update(self.functions)
+            raw_actions.update(self.functions)
 
-        if actions:
-            self._register_actions(
-                actions,
-                param_overrides=self.param_overrides,
-                skip_params=self.skip_params,
-            )
+        if not raw_actions:
+            return
 
-        # Background embed — fire and forget
+        overrides = self.param_overrides or {}
+        actions = {
+            raw.replace("_", " ").title(): func
+            for raw, func in raw_actions.items()
+        }
+        display_overrides = {
+            raw.replace("_", " ").title(): overrides[raw]
+            for raw in raw_actions
+            if raw in overrides
+        }
+
+        self._register_actions(
+            actions,
+            param_overrides=display_overrides,
+            skip_params=self.skip_params,
+        )
+
         if self.vector_store is not None:
             pn.state.execute(self._embed_actions)
 
@@ -151,63 +170,7 @@ class CodeSourceControls(ParametricSourceControls):
         except Exception as e:
             return SourceResult.empty(f"Error calling {action_name}: {e}")
 
-        df = self._result_to_dataframe(result)
+        df = result_to_dataframe(result)
         if df is None:
             return SourceResult.empty(f"{action_name} returned no data.")
         return SourceResult.from_dataframe(df, self.table_name)
-
-    @staticmethod
-    def _result_to_dataframe(result) -> pd.DataFrame | None:
-        """
-        Normalize a raw function return value into a DataFrame.
-
-        Handles the common shapes returned by Python API clients:
-        DataFrame, iterator/generator of model objects, list[dict],
-        single model object, dict.
-        """
-        if isinstance(result, pd.DataFrame):
-            return result
-        if isinstance(result, Source):
-            return None
-
-        # Materialise iterators / generators
-        if isinstance(result, (collections.abc.Iterator, collections.abc.Generator)):
-            try:
-                result = list(result)
-            except Exception:
-                return None
-
-        if isinstance(result, list):
-            if not result:
-                return pd.DataFrame()
-            first = result[0]
-            if isinstance(first, dict):
-                return pd.json_normalize(result)
-            if isinstance(first, (str, int, float, bool)):
-                return pd.DataFrame({"value": result})
-            # Typed model objects — try __dict__, fall back to vars()
-            rows = []
-            for obj in result:
-                if isinstance(obj, dict):
-                    rows.append(obj)
-                else:
-                    try:
-                        rows.append(vars(obj))
-                    except TypeError:
-                        rows.append({"value": str(obj)})
-            return pd.json_normalize(rows)
-
-        if isinstance(result, dict):
-            try:
-                return pd.json_normalize(result)
-            except Exception:
-                return pd.DataFrame([result])
-
-        # Single model object — try vars() for __slots__ support
-        if not isinstance(result, (str, int, float, bool, type(None))):
-            try:
-                return pd.json_normalize([vars(result)])
-            except TypeError:
-                return None
-
-        return None
