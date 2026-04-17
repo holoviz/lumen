@@ -4,6 +4,7 @@ import asyncio
 
 from pathlib import Path, PosixPath
 
+import numpy as np
 import panel as pn
 import platformdirs
 import yaml
@@ -17,6 +18,7 @@ ChatMessage.default_avatars.update({
     "Planner": {"type": "icon", "icon": "checklist"},
     "Runner": {"type": "icon", "icon": "playlist_play"},
     "SQL": {"type": "icon", "icon": "storage"},
+    "Source": {"type": "icon", "icon": "cloud_download"},
     "DBT": {"type": "icon", "icon": "analytics"}
 })
 
@@ -174,10 +176,17 @@ def path_representer(dumper, data):
 
 def numpy_representer(dumper, data):
     """Convert numpy types to native Python types for YAML serialization."""
-    if hasattr(data, 'item'):  # Scalar types (integers, floats, bools)
+    # np.generic covers all numpy scalar types (np.int64, np.float32, etc.)
+    if isinstance(data, np.generic):
         return dumper.represent_data(data.item())
-    elif hasattr(data, 'tolist'):  # Arrays
+
+    # np.ndarray — convert to a Python list
+    if isinstance(data, np.ndarray):
+        if data.ndim == 0:
+            # 0-d array (scalar wrapped in array)
+            return dumper.represent_data(data.item())
         return dumper.represent_list(data.tolist())
+
     return dumper.represent_data(data)
 
 pn.chat.ChatStep.min_width = 375

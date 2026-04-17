@@ -203,6 +203,165 @@ def _update_year_options(self):
 - **Cache API responses** when possible to avoid redundant calls
 - **Use `normalize_table_name()`** to ensure DuckDB-compatible table names
 
+## Parametric controls
+
+For common patterns like wrapping Python functions or fetching from URL templates, Lumen provides higher-level controls that handle widget generation automatically.
+
+### CodeSourceControls
+
+Wrap Python functions or object methods as data sources. Signatures are introspected to generate widgets automatically.
+
+**Pattern 1: Wrap standalone functions**
+
+```python
+from lumen.ai.controls import CodeSourceControls
+
+def download_census_data(
+    dataset: str = "acs/acs5",
+    vintage: int = 2022,
+    state: str = "*",
+) -> pd.DataFrame:
+    """Download Census data for US geographies."""
+    import censusdis.data as ced
+    return ced.download(dataset=dataset, vintage=vintage, state=state)
+
+controls = CodeSourceControls(
+    functions={"Download Census Data": download_census_data},
+    table_name="census_data",
+)
+```
+
+**Pattern 2: Wrap object methods**
+
+```python
+from massive import RESTClient
+
+client = RESTClient(api_key=os.environ["MASSIVE_API_KEY"])
+
+controls = CodeSourceControls(
+    instance=client,
+    methods=["list_aggs", "get_last_trade", "get_ticker_details"],
+    table_name="prices",
+)
+```
+
+**Customizing parameters with `param_overrides`**
+
+Replace auto-detected parameter types with custom widgets.
+
+```python
+import param
+
+controls = CodeSourceControls(
+    instance=client,
+    methods=["list_aggs"],
+    param_overrides={
+        "list_aggs": {
+            # Full replacement with param.Selector
+            "ticker": param.Selector(
+                default="AAPL",
+                objects=["AAPL", "MSFT", "NVDA", "GOOGL"],
+            ),
+            "timespan": param.Selector(
+                default="day",
+                objects=["minute", "hour", "day", "week"],
+            ),
+            # Dict merge for simple overrides
+            "multiplier": {"default": 1, "bounds": (1, 100)},
+            "limit": {"default": 5000, "bounds": (1, 50000)},
+        },
+    },
+    skip_params=frozenset({"self", "cls", "return", "raw", "params"}),
+)
+```
+
+| Parameter | Purpose |
+|-----------|---------|
+| `instance` | Object whose methods to expose |
+| `methods` | List of method names to expose |
+| `functions` | Single callable or `{name: callable}` dict |
+| `param_overrides` | `{action_key: {param: override}}` &mdash; `action_key` is the method name (or function/dict key); override is a `param.Parameter` or dict of kwargs |
+| `skip_params` | Parameter names to exclude from UI |
+| `table_name` | Default table name for results |
+
+### URLSourceControls
+
+Subclass to fetch data from URL templates. Parameters declared as class attributes become UI widgets, and their values are interpolated into the URL.
+
+```python
+import datetime
+import param
+from lumen.ai.controls import URLSourceControls
+
+class MesonetDailyControls(URLSourceControls):
+    """Fetch daily weather observations from Iowa Environmental Mesonet."""
+
+    url_template = (
+        "https://mesonet.agron.iastate.edu/cgi-bin/request/daily.py"
+        "?stations={stations}&network={network}&sts={sts}&ets={ets}&format=csv"
+    )
+
+    stations = param.String(default="SEA", doc="Station identifier(s)")
+
+    network = param.Selector(
+        default="WA_ASOS",
+        objects=["CA_ASOS", "IL_ASOS", "NY_ASOS", "WA_ASOS"],
+    )
+
+    sts = param.CalendarDate(
+        default=datetime.date.today() - datetime.timedelta(days=7),
+        doc="Start date",
+    )
+
+    ets = param.CalendarDate(
+        default=datetime.date.today() - datetime.timedelta(days=1),
+        doc="End date",
+    )
+
+    label = '<span class="material-icons">thermostat</span> Weather Data'
+```
+
+**Preprocessing parameters**
+
+Override `_fetch_data` to transform user input before the URL is built:
+
+```python
+class MesonetDailyControls(URLSourceControls):
+    # ... params as above ...
+
+    async def _fetch_data(self, action_name: str, **params) -> SourceResult:
+        # IEM uses 3-letter FAA codes; strip ICAO 'K' prefix users often add
+        raw = params.get("stations", "")
+        params["stations"] = ",".join(
+            s[1:] if len(s) == 4 and s.startswith("K") else s
+            for s in (t.strip() for t in raw.split(","))
+        )
+        return await super()._fetch_data(action_name, **params)
+```
+
+| Class attribute | Purpose |
+|-----------------|---------|
+| `url_template` | URL with `{param_name}` placeholders |
+| Class-level params | Become UI widgets; values interpolate into URL |
+| `label` | HTML label in sidebar |
+
+### Using with SourceAgent
+
+When you pass `source_controls` to `ExplorerUI`, the `SourceAgent` can invoke them programmatically based on user queries:
+
+```python
+from lumen.ai.agents import SourceAgent
+from lumen.ai.ui import ExplorerUI
+
+ui = ExplorerUI(
+    agents=[SourceAgent()],
+    source_controls=[MesonetDailyControls(), UploadSourceControls()],
+)
+```
+
+The agent sees each control's actions as tools and can call them with appropriate parameters extracted from the user's question.
+
 ### See also
 
-- [Building a Census Data Explorer](../examples/tutorials/census_data_ai_explorer.md) — Complete walkthrough with minimal and full examples
+- [Building a Census Data Explorer](../examples/tutorials/census_data_ai_explorer.md) — Complete walkthrough with BaseSourceControls
+- [Building a Weather Data Explorer](../examples/tutorials/mesonet_weather_explorer.md) — URLSourceControls tutorial with preprocessing

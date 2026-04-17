@@ -17,14 +17,16 @@ nav = [
   {"Getting Started" = [
     {"Launching Lumen" = "getting_started/launching_lumen.md"},
     {"Navigating the UI" = "getting_started/navigating_the_ui.md"},
-    {"Using Lumen AI" = "getting_started/using_lumen_ai.md"}
+    {"Using Lumen AI" = "getting_started/using_lumen_ai.md"},
+    {"Building Lumen Apps" = "getting_started/building_lumen_apps.md"}
   ]},
   {"Examples" = [
     {"Tutorials" = [
       {"Overview" = "examples/tutorials/index.md"},
       {"Weather Data AI Explorer" = "examples/tutorials/weather_data_ai_explorer.md"},
       {"SaaS Company Report Dashboard" = "examples/tutorials/saas_company_report_dashboard.md"},
-      {"Census Data AI Explorer" = "examples/tutorials/census_data_ai_explorer.md"}
+      {"Census Data AI Explorer" = "examples/tutorials/census_data_ai_explorer.md"},
+      {"Mesonet Weather Explorer" = "examples/tutorials/mesonet_weather_explorer.md"}
     ]},
     {"Gallery" = [
       {"Overview" = "examples/gallery/index.md"},

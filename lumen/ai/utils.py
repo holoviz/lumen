@@ -4,6 +4,7 @@ import asyncio
 import base64
 import difflib
 import functools
+import hashlib
 import html
 import inspect
 import json
@@ -13,7 +14,7 @@ import textwrap
 import time
 import traceback
 
-from collections.abc import Callable
+from collections.abc import Callable, Generator, Iterator
 from functools import reduce, wraps
 from operator import getitem
 from pathlib import Path
@@ -38,6 +39,7 @@ from markupsafe import escape
 from panel_material_ui import Details
 
 from ..pipeline import Pipeline
+from ..sources.base import Source
 from ..transforms import SQLRemoveSourceSeparator
 from ..util import log
 from .config import (
@@ -48,7 +50,6 @@ from .config import (
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
 
-    from ...sources.base import Source
     from .models import (
         DeleteLine, InsertLine, LineEdit, ReplaceLine,
     )
@@ -63,6 +64,13 @@ IMAGE_MIME_TYPES = {
     '.svg': 'image/svg+xml',
     '.bmp': 'image/bmp',
 }
+
+
+def deterministic_hash(text: str) -> int:
+    """Stable hash using MD5, consistent across Python sessions."""
+    return int.from_bytes(
+        hashlib.md5(text.encode("utf-8")).digest()[:4], byteorder="big"
+    )
 
 
 def format_float(num):
@@ -594,7 +602,10 @@ def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool
     """
     size = df.size
     shape = df.shape
-    if size < 250:
+    if shape[0] == 1 or size < 10 or (shape[1] > 8 and size < 100):
+        # df -> dict -> YAML
+        return yaml.dump(df.to_dict(orient='records'), default_flow_style=False, allow_unicode=True, sort_keys=False)
+    if size < 100:
         return df.to_markdown(index=False)
 
     is_sampled = False
@@ -1329,3 +1340,72 @@ def sanitize_column_names(df: pd.DataFrame) -> pd.DataFrame:
         for col in df.columns
     ]
     return df
+
+
+def result_to_dataframe(result) -> pd.DataFrame | None:
+    """
+    Normalize a raw function return value into a DataFrame.
+
+    Handles the common shapes returned by Python API clients:
+    DataFrame, iterator/generator of model objects, list[dict],
+    single model object, dict.
+    """
+    if isinstance(result, pd.DataFrame):
+        return result
+    if isinstance(result, Source):
+        return None
+
+    # SourceResult from controls — extract the DataFrame from the first source
+    from .controls.ingest.result import SourceResult
+    if isinstance(result, SourceResult):
+        if not result.sources or not result.table:
+            return None
+        src = result.sources[0]
+        table = result.table
+        try:
+            return src.get(table)
+        except Exception:
+            return None
+
+    # Materialise iterators / generators
+    if isinstance(result, (Iterator, Generator)):
+        try:
+            result = list(result)
+        except Exception as exc:
+            log.warning(f"result_to_dataframe: failed to materialise iterator: {exc}")
+            return None
+
+    if isinstance(result, list):
+        if not result:
+            return pd.DataFrame()
+        first = result[0]
+        if isinstance(first, dict):
+            return pd.json_normalize(result)
+        if isinstance(first, (str, int, float, bool)):
+            return pd.DataFrame({"value": result})
+        # Typed model objects — try __dict__, fall back to vars()
+        rows = []
+        for obj in result:
+            if isinstance(obj, dict):
+                rows.append(obj)
+            else:
+                try:
+                    rows.append(vars(obj))
+                except TypeError:
+                    rows.append({"value": str(obj)})
+        return pd.json_normalize(rows)
+
+    if isinstance(result, dict):
+        try:
+            return pd.json_normalize(result)
+        except Exception:
+            return pd.DataFrame([result])
+
+    # Single model object — try vars() for __slots__ support
+    if not isinstance(result, (str, int, float, bool, type(None))):
+        try:
+            return pd.json_normalize([vars(result)])
+        except TypeError:
+            return None
+
+    return None

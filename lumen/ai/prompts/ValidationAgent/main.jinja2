@@ -12,14 +12,15 @@ VALID = SQL implements the user's intent correctly
 - Check actual SQL syntax, not assumptions
 - Verify GROUP BY, WHERE, SELECT match request
 - Accept reasonable interpretations; do not over-interpret `limit` (100,000 is default)
+- When data was fetched from an external source, the table is already scoped to the fetched parameters. A `SELECT *` or unfiltered query against such a table is valid if the data overview shows it contains the requested rows.
 {% endif %}
 {% if memory.get('view') %}
 Analyze if the generated view matches the user's visualization request.
 VALID = view type, encodings, and data mappings reflect the user's intent
 {% endif %}
 {% if memory.get('chat') %}
-Analyze if the assistant's response answers the user's request.
-VALID = all parts of the query addressed using available data context correctly
+Analyze if the assistant's response addresses the user's request given the context it had.
+VALID = response uses the available context to answer; do not penalize for missing data that was never loaded or available.
 {% endif %}
 {%- endblock %}
 
@@ -80,5 +81,11 @@ Assistant Response:
 """
 {{ memory['chat'] }}
 """
+{%- endif -%}
+{%- if memory.get('source_actions') %}
+Configured external data sources:
+{%- for name, info in memory['source_actions'].items() %}
+- {{ name }}: {{ info.get('description', '(no description)') }}
+{%- endfor %}
 {%- endif -%}
 {%- endblock -%}

@@ -618,6 +618,28 @@ def function_to_model(function: FunctionType, skipped: list[str] | None = None) 
     return model
 
 
+def parameter_to_annotation(parameter: param.Parameter) -> Any:
+    """Map a Param parameter instance to a best-effort Python annotation."""
+    annotation = PARAM_TYPE_MAPPING.get(type(parameter))
+    if annotation is not None:
+        pass
+    elif isinstance(parameter, param.List):
+        annotation = list
+    elif isinstance(parameter, param.Dict):
+        annotation = dict
+    elif isinstance(parameter, param.Tuple):
+        annotation = tuple
+    elif isinstance(parameter, param.Selector):
+        objects = list(getattr(parameter, "objects", []) or [])
+        annotation = type(objects[0]) if objects else str
+    else:
+        annotation = str
+
+    if parameter.allow_None:
+        return annotation | None
+    return annotation
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Function signature → param.Parameter (inverse of PARAM_TYPE_MAPPING)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -632,6 +654,73 @@ PYTHON_TYPE_TO_PARAM: dict[type, type[param.Parameter]] = {
     datetime.date: param.CalendarDate,
     datetime.datetime: param.Date,
 }
+
+
+def params_to_callable(
+    func: Callable,
+    params: dict[str, param.Parameter],
+    name: str | None = None,
+    doc: str | None = None,
+) -> Callable:
+    """
+    Dress a callable with signature, annotations, and docstring
+    derived from ``param.Parameter`` instances.
+
+    This is the inverse of :func:`signature_to_params`: given a set
+    of ``param.Parameter`` objects, it attaches an
+    ``inspect.Signature``, ``__annotations__``, and a docstring to
+    *func* so that :func:`function_to_model` (and therefore
+    ``FunctionTool``) can introspect it.
+
+    Parameters
+    ----------
+    func : Callable
+        The callable to decorate (modified in place and returned).
+    params : dict[str, param.Parameter]
+        Mapping of parameter name → ``param.Parameter`` instance.
+    name : str, optional
+        Override ``__name__`` and ``__qualname__``.
+    doc : str, optional
+        Base description. Parameter docs from *params* are appended
+        as a Google-style ``Args:`` block.
+
+    Returns
+    -------
+    Callable
+        The same *func*, now with ``__signature__``, ``__annotations__``,
+        ``__doc__`` (and optionally ``__name__``) set.
+    """
+    annotations: dict[str, Any] = {}
+    sig_params: list[inspect.Parameter] = []
+    doc_lines: list[str] = []
+
+    for param_name, parameter in params.items():
+        annotation = parameter_to_annotation(parameter)
+        annotations[param_name] = annotation
+        default = parameter.default
+        if default is None and not getattr(parameter, "allow_None", True):
+            default = inspect.Parameter.empty
+        sig_params.append(inspect.Parameter(
+            param_name,
+            inspect.Parameter.KEYWORD_ONLY,
+            default=default,
+            annotation=annotation,
+        ))
+        param_doc = (parameter.doc or "").strip()
+        if param_doc:
+            doc_lines.append(f"    {param_name}: {param_doc}")
+
+    if name is not None:
+        func.__name__ = name
+        func.__qualname__ = name
+    if doc is not None:
+        full_doc = doc
+        if doc_lines:
+            full_doc += "\n\nArgs:\n" + "\n".join(doc_lines)
+        func.__doc__ = full_doc
+    func.__signature__ = inspect.Signature(sig_params)
+    func.__annotations__ = annotations
+    return func
 
 
 def signature_to_params(

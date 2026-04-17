@@ -17,7 +17,6 @@ from ...utils import log_debug
 from .base import BaseSourceControls
 from .constants import TABLE_EXTENSIONS
 from .file_row import UploadedFileRow
-from .utils import format_bytes
 
 
 class FileSourceControls(BaseSourceControls):
@@ -374,11 +373,3 @@ class FileSourceControls(BaseSourceControls):
 
         log_debug(f"Processed files: {n_tables} tables, {n_metadata} metadata files")
         return n_tables, 0, n_metadata
-
-    @staticmethod
-    def _format_bytes(bytes_size: int) -> str:
-        """Human-readable byte size string.
-
-        Delegates to :func:`utils.format_bytes`.
-        """
-        return format_bytes(bytes_size)

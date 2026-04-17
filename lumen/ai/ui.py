@@ -1300,6 +1300,7 @@ class UI(Viewer):
             label = control_inst.label if isinstance(control, BaseSourceControls) else control.label
             control_tabs.append((label, control_inst))
             self._source_controls.append(control_inst)
+        self.context["source_controls"] = self._source_controls
         self._source_content = Tabs(*control_tabs, sizing_mode="stretch_width")
 
         self._sources_help_caption = Typography(

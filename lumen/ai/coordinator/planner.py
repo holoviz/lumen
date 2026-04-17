@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 
 from ..actor import _merge_prompt_tools
-from ..agents import Agent
+from ..agents import Agent, SourceAgent
 from ..config import PROMPTS_DIR
 from ..context import (
     LWW, ContextError, TContext, merge_contexts,
@@ -22,7 +22,7 @@ from ..context import (
 from ..llm import Message
 from ..models import FollowUpClassification
 from ..report import ActorTask
-from ..tools import MetadataLookup, Tool
+from ..tools import MetadataLookup, SourceLookup, Tool
 from ..utils import content_to_text, log_debug, wrap_logfire
 from .base import Coordinator, Plan
 
@@ -132,6 +132,14 @@ class Planner(Coordinator):
 
         # Initialize coordinator first so self.vector_store is available
         super().__init__(**params)
+
+        # Auto-add SourceLookup to planner_tools if SourceAgent is present
+        has_source_agent = any(
+            isinstance(a, SourceAgent) for a in self.agents
+        )
+        planner_tool_types = {t if isinstance(t, type) else type(t) for t in planner_tools_input}
+        if has_source_agent and SourceLookup not in planner_tool_types:
+            planner_tools_input = list(planner_tools_input) + [SourceLookup]
 
         # Now initialize planner_tools, reusing instances from _tools["main"] where possible
         if planner_tools_input:
@@ -460,7 +468,13 @@ class Planner(Coordinator):
             actors_in_graph.add(key)
 
         last_task = tasks[-1] if tasks else None
-        if last_task and isinstance(last_task.actor, Tool):
+        needs_presentation = (
+            last_task and (
+                isinstance(last_task.actor, Tool)
+                or isinstance(last_task.actor, SourceAgent)
+            )
+        )
+        if needs_presentation:
             actor = "ChatAgent"
 
             # Check if the actor conflicts with any actor in the graph
@@ -507,6 +521,7 @@ class Planner(Coordinator):
             actors_in_graph.add("ValidationAgent")
 
         raw_plan.steps = steps
+
         plan = Plan(
             *tasks, title=raw_plan.title, history=messages, context=context, coordinator=self, steps_layout=self.steps_layout, is_followup=is_followup
         )
