@@ -14,17 +14,9 @@ from typing import Any, ClassVar
 import param
 
 from ..transforms.sql import SQLFilter
+from ..util import check_xarray_available
 from .base import BaseSQLSource, cached
 
-
-def _check_xarray_available():
-    """Check xarray and xarray-sql are installed, import lazily."""
-    try:
-        import xarray  # noqa
-        import xarray_sql  # noqa
-        return True
-    except ImportError:
-        return False
 
 class XArraySQLSource(BaseSQLSource):
     """
@@ -101,7 +93,7 @@ class XArraySQLSource(BaseSQLSource):
         The SQL expression template for table queries.""")
 
     def __init__(self, _dataset=None, _ctx=None, **params):
-        if not _check_xarray_available():
+        if not check_xarray_available():
             raise ImportError(
                 "xarray and xarray-sql are required for XArraySQLSource. "
                 "Install them with: pip install lumen[xarray]"

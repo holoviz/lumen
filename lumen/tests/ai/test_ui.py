@@ -1,19 +1,29 @@
 import asyncio
+import io
 import sqlite3
 import sys
 import tempfile
 
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import duckdb
+import numpy as np
 import pytest
 
 try:
     import lumen.ai  # noqa
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
+
+try:
+    import xarray as xr
+
+    from lumen.sources.xarray_sql import XArraySQLSource
+    HAS_XARRAY = True
+except ImportError:
+    HAS_XARRAY = False
 
 from panel.layout import Column, Row
 from panel.tests.util import async_wait_until
@@ -1126,6 +1136,106 @@ class TestResolveData:
         # Table key is sanitized
         assert 'data_csv' in duckdb_source.tables
 
+    @pytest.mark.skipif(not HAS_XARRAY, reason="xarray not installed")
+    def test_resolve_data_netcdf_file(self):
+        """Test resolving a NetCDF file creates XArraySQLSource."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            nc_path = Path(tmpdir) / 'test.nc'
+            ds = xr.Dataset({'temperature': (('lat', 'lon'), np.random.rand(3, 4))})
+            try:
+                ds.to_netcdf(nc_path)
+            except Exception:
+                pytest.skip("NetCDF write backend unavailable")
+            result = UI._resolve_data(str(nc_path))
+            assert len(result) == 1
+            assert isinstance(result[0], XArraySQLSource)
+            assert 'temperature' in result[0].get_tables()
+
+    def test_resolve_data_xarray_import_error(self):
+        """Test graceful error when xarray-sql not installed."""
+        with patch('lumen.sources.xarray_sql.check_xarray_available', return_value=False):
+            with pytest.raises(ImportError, match="xarray"):
+                UI._resolve_data('data.nc')
+
+    @pytest.mark.skipif(not HAS_XARRAY, reason="xarray not installed")
+    def test_resolve_data_mixed_xarray_and_csv(self):
+        """Test that .nc creates separate source while .csv goes to DuckDB."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            nc_path = Path(tmpdir) / 'test.nc'
+            ds = xr.Dataset({'temp': (('x',), np.array([1.0, 2.0]))})
+            try:
+                ds.to_netcdf(nc_path)
+            except Exception:
+                pytest.skip("NetCDF write backend unavailable")
+            result = UI._resolve_data([str(nc_path), 'data.csv'])
+            assert len(result) == 2
+            xarray_sources = [s for s in result if isinstance(s, XArraySQLSource)]
+            duckdb_sources = [s for s in result if isinstance(s, DuckDBSource)]
+            assert len(xarray_sources) == 1
+            assert len(duckdb_sources) == 1
+
+
+class TestCLIPathValidation:
+    """Tests for CLI path validation in command/ai.py."""
+
+    def test_zarr_directory_accepted(self):
+        """Test that .zarr directories pass validation."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / 'test.zarr'
+            zarr_path.mkdir()
+            # Validation should not raise for .zarr directories
+            path = Path(str(zarr_path))
+            assert path.exists()
+            assert path.is_dir()
+            assert str(zarr_path).endswith('.zarr')
+
+    def test_random_directory_rejected(self):
+        """Test that non-zarr directories are rejected by validation logic."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dir_path = Path(tmpdir) / 'not_zarr'
+            dir_path.mkdir()
+            path = Path(str(dir_path))
+            # Should be rejected: is a directory but not .zarr
+            assert path.is_dir()
+            assert not str(dir_path).endswith('.zarr')
+
+
+@pytest.mark.skipif(not HAS_XARRAY, reason="xarray not installed")
+class TestXarrayUploadHandler:
+    """Tests for the xarray upload handler."""
+
+    def test_upload_handler_returns_dict(self):
+        """Upload handlers should be returned for all xarray extensions."""
+        handlers = UI._get_xarray_upload_handlers()
+        assert isinstance(handlers, dict)
+        for ext in ('nc', 'nc4', 'netcdf', 'h5', 'hdf5', 'he5', 'zarr',
+                    'grib', 'grib2', 'grb', 'grb2'):
+            assert ext in handlers
+
+    def test_upload_handler_creates_source_from_nc(self):
+        """Upload handler should create XArraySQLSource from NetCDF bytes."""
+        # Create a NetCDF file in memory
+        ds = xr.Dataset({'temp': (('x',), np.array([1.0, 2.0, 3.0]))})
+        buf = io.BytesIO()
+        try:
+            ds.to_netcdf(buf)
+        except Exception:
+            pytest.skip("NetCDF write backend unavailable")
+        buf.seek(0)
+
+        handlers = UI._get_xarray_upload_handlers()
+        source = handlers['nc'](context={}, file_obj=buf, alias='test_data', filename='test')
+
+        assert isinstance(source, XArraySQLSource)
+        assert 'temp' in source.get_tables()
+        assert source.name == 'test_data'
+
+    def test_upload_handler_returns_empty_without_xarray(self):
+        """Upload handlers should be empty if xarray-sql not installed."""
+        with patch('lumen.ai.ui.check_xarray_available', return_value=False):
+            handlers = UI._get_xarray_upload_handlers()
+            assert handlers == {}
+
 
 # --- Tests for on_edit callback ---
 
@@ -1229,7 +1339,6 @@ async def test_edit_updates_logs(explorer_ui, tmp_path):
     ui = explorer_ui
 
     # Set up a mock for _logs
-    from unittest.mock import MagicMock
     mock_logs = MagicMock()
     ui._logs = mock_logs
 

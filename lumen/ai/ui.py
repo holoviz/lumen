@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
+import os
+import tempfile
 
 from contextlib import contextmanager
 from functools import partial
@@ -33,7 +36,8 @@ from lumen.ai.agents.deck_gl import DeckGLAgent
 from ..pipeline import Pipeline
 from ..sources import Source
 from ..sources.duckdb import DuckDBSource
-from ..util import log
+from ..sources.xarray_sql import XArraySQLSource
+from ..util import check_xarray_available, log
 from .agents import (
     AnalysisAgent, BaseCodeAgent, ChatAgent, DocumentListAgent,
     DocumentSummarizerAgent, SQLAgent, TableListAgent, ValidationAgent,
@@ -48,6 +52,7 @@ from .controls import (
     BaseSourceControls, DownloadSourceControls, FileSourceControls,
     SourceCatalog, TableExplorer, UploadSourceControls,
 )
+from .controls.ingest.constants import XARRAY_EXTENSIONS
 from .coordinator import Coordinator, Plan, Planner
 from .editors import AnalysisOutput, LumenEditor, SQLEditor
 from .export import export_notebook
@@ -508,6 +513,36 @@ class UI(Viewer):
         self._configure_session()
         self._render_page()
 
+    @staticmethod
+    def _get_xarray_upload_handlers():
+        """Build upload handlers for xarray file formats.
+
+        Returns empty dict if xarray-sql is not installed.
+        """
+        def _cleanup_temp_files():
+            for path in _temp_files:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+
+        def _handle_xarray_upload(context, file_obj, alias, filename):
+            ext = filename.rsplit('.', 1)[-1] if '.' in filename else 'nc'
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f'.{ext}')
+            file_obj.seek(0)
+            tmp.write(file_obj.read())
+            tmp.flush()
+            tmp.close()
+            _temp_files.append(tmp.name)
+            return XArraySQLSource(uri=tmp.name, name=alias)
+
+        if not check_xarray_available():
+            return {}
+
+        _temp_files: list[str] = []
+        atexit.register(_cleanup_temp_files)
+        return {ext: _handle_xarray_upload for ext in XARRAY_EXTENSIONS}
+
     @classmethod
     def _resolve_data(
         cls, data: DataT | list[DataT] | dict[DataT] | None
@@ -595,6 +630,12 @@ class UI(Viewer):
                             ) from e
                         source = SQLAlchemySource(url=f'sqlite:///{db_path}')
                         sources.append(source)
+                    continue
+
+                # Handle xarray files (NetCDF, Zarr, HDF5, GRIB)
+                if Path(src).suffix.lstrip('.').lower() in XARRAY_EXTENSIONS:
+                    source = XArraySQLSource(uri=str(Path(src).absolute()))
+                    sources.append(source)
                     continue
 
                 if src.startswith('http'):
@@ -1272,6 +1313,10 @@ class UI(Viewer):
             param.parameterized.async_executor(_do_sync)
         self._source_catalog.param.watch(_schedule_visibility_change, 'visibility_changed')
 
+        # Register xarray upload handlers (if xarray-sql is available)
+        xarray_handlers = self._get_xarray_upload_handlers()
+        merged_upload_handlers = {**xarray_handlers, **self.upload_handlers}
+
         # Initialize source controls
         self._source_controls = []
         control_tabs = []
@@ -1288,7 +1333,7 @@ class UI(Viewer):
                     'source_catalog': self._source_catalog,
                 }
                 if issubclass(control, FileSourceControls):
-                    control_kwargs['upload_handlers'] = self.upload_handlers
+                    control_kwargs['upload_handlers'] = merged_upload_handlers
                     if control is UploadSourceControls and self.filedropper_kwargs:
                         control_kwargs['filedropper_kwargs'] = self.filedropper_kwargs
                 control_inst = control(**control_kwargs)
