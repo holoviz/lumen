@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 
 from ..actor import _merge_prompt_tools
-from ..agents import Agent, SQLAgent, SourceAgent
+from ..agents import Agent, SourceAgent, SQLAgent
 from ..config import PROMPTS_DIR
 from ..context import (
     LWW, ContextError, TContext, merge_contexts,
