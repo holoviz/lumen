@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 
 from ..actor import _merge_prompt_tools
-from ..agents import Agent
+from ..agents import Agent, SQLAgent
 from ..config import PROMPTS_DIR
 from ..context import (
     LWW, ContextError, TContext, merge_contexts,
@@ -460,40 +460,26 @@ class Planner(Coordinator):
             actors_in_graph.add(key)
 
         last_task = tasks[-1] if tasks else None
-        if last_task and isinstance(last_task.actor, Tool):
-            actor = "ChatAgent"
-
-            # Check if the actor conflicts with any actor in the graph
-            not_with = getattr(agents[actor], "not_with", [])
-            conflicts = [actor for actor in actors_in_graph if actor in not_with]
-            if conflicts:
-                # Skip the summarization step if there's a conflict
-                log_debug(f"Skipping summarization with {actor} due to conflicts: {conflicts}")
-                raw_plan.steps = steps
-                previous_actors = actors
-                plan = Plan(
-                    *tasks, title=raw_plan.title, history=messages, context=context, coordinator=self, steps_layout=self.steps_layout, is_followup=is_followup
-                )
-                return plan, previous_actors
-
+        not_with = getattr(agents["ChatAgent"], "not_with", [])
+        conflicts = [actor for actor in actors_in_graph if actor in not_with]
+        if last_task and isinstance(last_task.actor, (SQLAgent, Tool)) and not conflicts:
             summarize_step = type(step)(
-                actor=actor,
+                actor="ChatAgent",
                 instruction="Summarize the results.",
                 title="Summarizing results",
             )
             steps.append(summarize_step)
             tasks.append(
                 ActorTask(
-                    agents[actor],
+                    agents["ChatAgent"],
                     instruction=summarize_step.instruction,
                     title=summarize_step.title,
                 )
             )
-            actors_in_graph.add(actor)
+            actors_in_graph.add("ChatAgent")
 
         if (
             "ValidationAgent" in agents and
-            len(actors_in_graph) > 1 and
             self.validation_enabled and
             "ValidationAgent" not in actors_in_graph
         ):
@@ -503,12 +489,24 @@ class Planner(Coordinator):
                 title="Validating results",
             )
             steps.append(validation_step)
-            tasks.append(ActorTask(agents["ValidationAgent"], instruction=validation_step.instruction, title=validation_step.title))
+            tasks.append(
+                ActorTask(
+                    agents["ValidationAgent"],
+                    instruction=validation_step.instruction,
+                    title=validation_step.title
+                )
+            )
             actors_in_graph.add("ValidationAgent")
 
         raw_plan.steps = steps
         plan = Plan(
-            *tasks, title=raw_plan.title, history=messages, context=context, coordinator=self, steps_layout=self.steps_layout, is_followup=is_followup
+            *tasks,
+            title=raw_plan.title,
+            history=messages,
+            context=context,
+            coordinator=self,
+            steps_layout=self.steps_layout,
+            is_followup=is_followup
         )
         return plan, actors
 

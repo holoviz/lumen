@@ -91,18 +91,11 @@ class ValidationAgent(Agent):
             suggestions_list = '\n- '.join(result.suggestions)
             interface.send(f"Follow these suggestions to fulfill the original intent {original_query}\n\n{suggestions_list}")
 
-        executed_steps = None
-        if "plan" in context:
-            executed_steps = [
-                f"{step[0].__class__.__name__}: {step.instruction}" for step in context["plan"]
-            ]
-
-        result = await self._invoke_prompt("main", messages, context, executed_steps=executed_steps)
-        response_parts = []
+        result = await self._invoke_prompt("main", messages, context)
         if result.correct:
             return [result], {"validation_result": result}
 
-        response_parts.append(f"**Query Validation: ✗ Incomplete** - {result.chain_of_thought}")
+        response_parts = [f"**Query Validation: ✗ Incomplete** - {result.chain_of_thought}"]
         if result.missing_elements:
             response_parts.append(f"**Missing Elements:** {', '.join(result.missing_elements)}")
         if result.suggestions:
@@ -113,5 +106,6 @@ class ValidationAgent(Agent):
         button = Button(name="Rerun", on_click=on_click)
         footer_objects = [button]
         formatted_response = "\n\n".join(response_parts)
-        interface.stream(formatted_response, user=self.user, max_width=self._max_width, footer_objects=footer_objects)
+        if interface is not None:
+            interface.stream(formatted_response, user=self.user, max_width=self._max_width, footer_objects=footer_objects)
         return [result], {"validation_result": result}

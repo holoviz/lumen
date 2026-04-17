@@ -2,7 +2,7 @@
 
 {%- block instructions %}
 ## Instructions
-{% if memory.get('sql') %}
+{%- if memory.get('sql') -%}
 Analyze if the SQL query matches the user's request by checking:
 1. What the user asked for
 2. What the SQL actually does (read it carefully)
@@ -14,18 +14,16 @@ VALID = SQL implements the user's intent correctly
 - Accept reasonable interpretations; do not over-interpret `limit` (100,000 is default)
 {% endif %}
 {% if memory.get('view') %}
-Analyze if the generated view matches the user's visualization request.
-VALID = view type, encodings, and data mappings reflect the user's intent
+Analyze if the generated view and responses match the user's request.
 {% endif %}
 {% if memory.get('chat') %}
 Analyze if the assistant's response answers the user's request.
-VALID = all parts of the query addressed using available data context correctly
 {% endif %}
-{%- endblock %}
+{%- endblock -%}
 
 {%- block examples %}
 ## Examples
-{% if memory.get('sql') %}
+{% if memory.get('sql') -%}
 User: "by region?"
 SQL: SELECT region, SUM(sales) FROM data GROUP BY region
 ✓ VALID - has GROUP BY region
@@ -46,23 +44,26 @@ User: "total by state"
 SQL: SELECT state, SUM(amount) FROM data GROUP BY state
 ✓ VALID - groups by state with SUM
 {% endif %}
-{% if memory.get('chat') %}
+{% if memory.get('chat') -%}
 User: "Summarize the survey results" → Response with field breakdowns and patterns → ✓ VALID
 User: "What are the top selling products?" → Generic discussion, no rankings → ✗ INVALID
 {% endif %}
-{% if memory.get('view') %}
+{% if memory.get('view') -%}
 User: "bar chart of sales by region" → bar mark with region on x, sales on y → ✓ VALID
 User: "line chart over time" → bar chart with no time axis → ✗ INVALID
 {% endif %}
-{%- endblock %}
+{%- endblock -%}
 
-{% block context %}
-{%- if executed_steps %}
-Steps: {% for step in executed_steps %}{{ step }}{% if not loop.last %}, {% endif %}{% endfor %}
-{% endif %}
+{%- block context %}
+## Context
+{%- if memory.get('plan') %}
+Response Plan:
+{{ memory.plan.render_task_history()[-1] }}
+{% endif -%}
+
 Current context contains the following keys: {{ ", ".join(memory) }}
 
-{% if memory.get('sql') %}
+{%- if memory.get('sql') %}
 SQL: `{{ memory['sql'] }}`
 {%- endif -%}
 {%- if memory.get('data') is not none %}
@@ -75,10 +76,8 @@ Generated View:
 {{ memory["view"] | json_to_yaml }}
 ```
 {%- endif -%}
-{% if memory.get('chat') %}
-Assistant Response:
-"""
-{{ memory['chat'] }}
-"""
+{% if chat_history is defined %}
+Assistant Responses:
+{{ chat_history }}
 {%- endif -%}
 {%- endblock -%}

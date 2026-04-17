@@ -224,6 +224,16 @@ class LLMUser(param.Parameterized):
         prompt_context = dict(kwargs)
         prompt_context["memory"] = context
         prompt_context["current_datetime"] = datetime.datetime.now()
+        if self.interface:
+            msgs = self.interface.serialize(
+                filter_by=lambda msgs: [msg for msg in msgs if isinstance(msg.object, str)]
+            )
+            history = []
+            for msg in reversed(msgs):
+                if msg["role"].lower() == "user":
+                    break
+                history.append(f"{msg['role']}: {msg['content']}")
+            prompt_context["chat_history"] = "\n".join(reversed(history))
         return prompt_context
 
     async def _render_prompt(self, prompt_name: str, messages: list[Message], context: TContext, **kwargs) -> str:
