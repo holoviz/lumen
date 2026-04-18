@@ -64,6 +64,9 @@ class hvPlotAgent(BaseViewAgent):
 
         # Add defaults
         spec["responsive"] = True
+        if spec.get("kind") == "heatmap":
+            spec.pop("by", None)
+            spec.pop("groupby", None)
         data = await get_data(pipeline)
         if len(data) > 20000 and spec["kind"] in ("line", "scatter", "points"):
             spec["rasterize"] = True

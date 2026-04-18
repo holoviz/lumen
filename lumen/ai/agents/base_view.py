@@ -10,6 +10,7 @@ from ..config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, MissingContextError
 from ..context import ContextModel, TContext
 from ..llm import Message
 from ..schemas import Metaset
+from ..gridded import detect_gridded
 from ..utils import (
     get_root_exception, get_schema, log_debug, report_error, retry_llm_output,
 )
@@ -88,12 +89,14 @@ class BaseViewAgent(BaseLumenAgent):
     ) -> dict[str, Any]:
         errors_context = self._build_errors_context(pipeline, context, errors)
         doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
+        gridded = detect_gridded(pipeline)
         response = await self._stream_prompt(
             "main",
             messages,
             context,
             table=pipeline.table,
             doc=doc,
+            gridded=gridded,
             model_kwargs=dict(schema=schema),
             **errors_context,
         )
