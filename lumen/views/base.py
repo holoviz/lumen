@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from holoviews.selection import link_selections  # type: ignore
 
 DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
+_DECKGL_ROW_LIMIT = 250_000
 
 
 class View(MultiTypeComponent, Viewer):
@@ -1406,6 +1407,11 @@ class DeckGLView(View):
 
     def _get_params(self) -> dict[str, Any]:
         df = self.get_data()
+        if len(df) > _DECKGL_ROW_LIMIT:
+            raise ValueError(
+                f"DeckGLView received {len(df):,} rows which may cause browser "
+                f"memory issues. Set limit={_DECKGL_ROW_LIMIT:,} or less on this view."
+            )
         # Deep copy to avoid modifying self.spec when injecting data
         spec = copy.deepcopy(self.spec)
 

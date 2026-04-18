@@ -45,6 +45,15 @@ Column names: spaces→underscores, non-alphanumeric removed (e.g., "Plant latit
 - **Elevation/Radius:** Use simple math only: `"@@=value"` or `"@@=value * 100"` (NO Math.min, Math.max, etc.)
 - Zoom levels: 1-3 continent, 4-6 country, 7-10 city, 11+ street
 - Pitch: 45-60 for good 3D perspective
+{%- if gridded is defined and gridded %}
+
+**Gridded xarray data**: The data is a long-form grid from an xarray dataset.
+- dimensions: {{ gridded.dims | join(', ') }}
+- data variables: {{ gridded.data_vars | join(', ') }}
+Use HexagonLayer with `getPosition: "@@=[{{ gridded.dims[1] if gridded.dims | length > 1 else gridded.dims[0] }}, {{ gridded.dims[0] }}]"` for 3D aggregation.
+Alternatively use ColumnLayer with `getElevation: "@@={{ gridded.data_vars[0] }}"` for per-cell elevation.
+Large grids (>250,000 rows) require setting `limit` on the view to avoid browser OOM.
+{%- endif %}
 {% endblock %}
 
 {% block examples %}
@@ -125,4 +134,27 @@ ArcLayer (connections):
   "mapStyle": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
 }
 ```
+
+{%- if gridded is defined and gridded %}
+Gridded data — ColumnLayer (per-cell elevation from value field):
+```json
+{
+  "initialViewState": {"latitude": 0, "longitude": 30, "zoom": 3, "pitch": 50, "bearing": 0},
+  "layers": [{
+    "@@type": "ColumnLayer",
+    "id": "grid-values",
+    "getPosition": "@@=[{{ gridded.dims[1] if gridded.dims | length > 1 else gridded.dims[0] }}, {{ gridded.dims[0] }}]",
+    "getElevation": "@@={{ gridded.data_vars[0] }}",
+    "getFillColor": [65, 182, 196, 220],
+    "diskResolution": 6,
+    "radius": 50000,
+    "elevationScale": 10,
+    "extruded": true,
+    "pickable": true
+  }],
+  "views": [{"@@type": "MapView", "controller": true}],
+  "mapStyle": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+}
+```
+{%- endif %}
 {% endblock %}
