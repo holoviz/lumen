@@ -6,7 +6,6 @@ from lumen.pipeline import Pipeline
 from lumen.sources.base import InMemorySource
 from lumen.views.base import hvPlotView
 
-
 # ---- Fixtures ----
 
 @pytest.fixture

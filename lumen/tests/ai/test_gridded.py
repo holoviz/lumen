@@ -15,7 +15,6 @@ from lumen.sources.base import InMemorySource
 from lumen.sources.xarray_sql import XArraySQLSource
 from lumen.util import check_xarray_available
 
-
 pytestmark = pytest.mark.skipif(
     not check_xarray_available(), reason="xarray not installed"
 )
