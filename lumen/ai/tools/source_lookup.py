@@ -14,7 +14,7 @@ import param
 
 from ..config import PROMPTS_DIR
 from ..context import ContextModel, TContext
-from ..controls import ParametricSourceControls
+from ..controls import CatalogSourceControls, ParametricSourceControls
 from ..llm import Message
 from ..translate import doc_descriptions, function_to_model
 from ..utils import deterministic_hash, log_debug
@@ -24,7 +24,7 @@ from .vector_lookup import VectorLookupTool, make_refined_query_model
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _control_hash(ctrl: ParametricSourceControls) -> str:
+def _control_hash(ctrl: ParametricSourceControls | CatalogSourceControls) -> str:
     """Stable hash for a control based on its class name + action signatures.
 
     Unlike ``id(ctrl)``, this survives garbage-collection and
@@ -118,7 +118,10 @@ class SourceLookup(VectorLookupTool):
     @classmethod
     async def applies(cls, context: TContext) -> bool:
         controls = context.get("source_controls", [])
-        return any(isinstance(c, ParametricSourceControls) for c in controls)
+        return any(
+            isinstance(c, (ParametricSourceControls, CatalogSourceControls))
+            for c in controls
+        )
 
     # ------------------------------------------------------------------
     # Sync / index
@@ -133,7 +136,7 @@ class SourceLookup(VectorLookupTool):
 
         entries = []
         for ctrl in controls:
-            if not isinstance(ctrl, ParametricSourceControls):
+            if not isinstance(ctrl, (ParametricSourceControls, CatalogSourceControls)):
                 continue
             ctrl_key = _control_hash(ctrl)
             if ctrl_key in self._indexed_controls:
@@ -197,7 +200,7 @@ class SourceLookup(VectorLookupTool):
         total_actions = sum(
             len(ctrl.as_tools())
             for ctrl in context.get("source_controls", [])
-            if isinstance(ctrl, ParametricSourceControls)
+            if isinstance(ctrl, (ParametricSourceControls, CatalogSourceControls))
         )
 
         if total_actions < 5:
@@ -210,7 +213,8 @@ class SourceLookup(VectorLookupTool):
         # Build action info mapping
         controls = context.get("source_controls", [])
         ctrl_map = {
-            _control_hash(c): c for c in controls if isinstance(c, ParametricSourceControls)
+            _control_hash(c): c for c in controls
+            if isinstance(c, (ParametricSourceControls, CatalogSourceControls))
         }
 
         source_actions: dict[str, Any] = {}

@@ -23,7 +23,7 @@ from ...sources.duckdb import DuckDBSource
 from ...util import normalize_table_name
 from ..config import PROMPTS_DIR
 from ..context import ContextModel, TContext
-from ..controls import ParametricSourceControls
+from ..controls import CatalogSourceControls, ParametricSourceControls
 from ..controls.ingest.result import SourceResult
 from ..llm import Message
 from ..schemas import Metaset, get_metaset
@@ -67,7 +67,7 @@ def _build_catalog_summary(context: TContext) -> str:
 
     lines = []
     for ctrl in controls:
-        if not isinstance(ctrl, ParametricSourceControls):
+        if not isinstance(ctrl, (ParametricSourceControls, CatalogSourceControls)):
             continue
         ctrl_label = getattr(ctrl, "label", ctrl.__class__.__name__)
         lines.append(f"### {ctrl_label}")
@@ -220,12 +220,13 @@ class SourceAgent(Agent):
     input_schema = SourceInputs
     output_schema = SourceOutputs
 
-
-
     @classmethod
     async def applies(cls, context: TContext) -> bool:
         controls = context.get("source_controls", [])
-        return any(isinstance(c, ParametricSourceControls) for c in controls)
+        return any(
+            isinstance(c, (ParametricSourceControls, CatalogSourceControls))
+            for c in controls
+        )
 
     # ------------------------------------------------------------------
     # Tool building
@@ -245,9 +246,9 @@ class SourceAgent(Agent):
         in all controls.
         """
         controls = context.get("source_controls", [])
-        ctrl_map: dict[str, ParametricSourceControls] = {}
+        ctrl_map: dict[str, ParametricSourceControls | CatalogSourceControls] = {}
         for c in controls:
-            if isinstance(c, ParametricSourceControls):
+            if isinstance(c, (ParametricSourceControls, CatalogSourceControls)):
                 from ..tools.source_lookup import _control_hash
                 ctrl_map[_control_hash(c)] = c
 

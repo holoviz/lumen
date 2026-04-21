@@ -40,8 +40,8 @@ from ..sources.xarray_sql import XArraySQLSource
 from ..util import check_xarray_available, log
 from .agents import (
     AnalysisAgent, BaseCodeAgent, ChatAgent, DocumentListAgent,
-    DocumentSummarizerAgent, SQLAgent, TableListAgent, ValidationAgent,
-    VegaLiteAgent,
+    DocumentSummarizerAgent, SourceAgent, SQLAgent, TableListAgent,
+    ValidationAgent, VegaLiteAgent,
 )
 from .config import (
     DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROVIDED_SOURCE_NAME,
@@ -408,7 +408,7 @@ class UI(Viewer):
 
     default_agents = param.List(default=[
         TableListAgent, ChatAgent, DocumentListAgent, DocumentSummarizerAgent,
-        SQLAgent, VegaLiteAgent, ValidationAgent, DeckGLAgent
+        SQLAgent, SourceAgent, VegaLiteAgent, ValidationAgent, DeckGLAgent
     ], doc="""List of default agents which will always be added.""")
 
     demo_inputs = param.List(default=DEMO_MESSAGES, doc="""
