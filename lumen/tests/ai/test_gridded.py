@@ -131,7 +131,7 @@ def test_hvplot_prompt_includes_gridded_rules():
         **_base_context(gridded=gridded),
     )
     assert "heatmap" in rendered
-    assert "C" in rendered
+    assert "z" in rendered
 
 
 def test_hvplot_prompt_no_gridded_rules_for_tabular():

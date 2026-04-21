@@ -14,7 +14,7 @@ Here is the current dataset to use:
 Data originates from an xarray dataset.
 - dimensions: {{ gridded.dims | join(', ') }}
 - data variables: {{ gridded.data_vars | join(', ') }}
-Use kind='heatmap' with x/y set to coordinate dimensions and C set to the value column.
+Use kind='heatmap' (or 'quadmesh'/'image'/'contourf') with x/y set to coordinate dimensions and z set to the value column.
 {%- endif %}
 
 {%- if "view" in memory and memory["view"].get("agent") and actor_name.startswith(memory["view"].get("agent")) %}

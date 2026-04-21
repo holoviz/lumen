@@ -939,14 +939,15 @@ class hvPlotBaseView(View):
 
     groupby = param.ListSelector(doc="The column(s) to group by.")
 
-    C = param.Selector(doc="""
-        Column of z-values for gridded plot kinds (image, quadmesh, heatmap, contourf).""")
+    z = param.Selector(doc="""
+        Column of z-values for gridded plot kinds (image, quadmesh, heatmap, contourf).
+        Internally mapped to hvPlot's C= for kind='heatmap' and z= for other kinds.""")
 
     geo = param.Boolean(
         default=False, doc="Toggle True if the plot is on a geographic map."
     )
 
-    _field_params = ['x', 'y', 'by', 'groupby', 'C']
+    _field_params = ['x', 'y', 'by', 'groupby', 'z']
 
     __abstract = True
 
@@ -1043,8 +1044,8 @@ class hvPlotView(hvPlotBaseView):
             processed[k] = v
         if self.streaming:
             processed['stream'] = self._data_stream
-        if self.C is not None:
-            processed['C'] = self.C
+        if self.z is not None:
+            processed['C' if self.kind == 'heatmap' else 'z'] = self.z
 
         plot = df.hvplot(
             kind=self.kind, x=self.x, y=self.y, by=self.by, groupby=self.groupby, **processed

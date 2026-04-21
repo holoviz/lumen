@@ -9,8 +9,9 @@ the values.
 
 For gridded xarray data:
 - Set x and y to coordinate names (e.g. x='lon', y='lat').
-- Set C to the value column (e.g. C='air').
-- Use kind='heatmap'.
+- Set z to the value column (e.g. z='air'). This maps internally to
+  hvPlot's C= for kind='heatmap' and z= for 'quadmesh', 'image', 'contourf'.
+- Use kind='heatmap' (or 'quadmesh', 'image', 'contourf' as appropriate).
 - Do not set by or groupby.
 {%- endif %}
 {% endblock %}
