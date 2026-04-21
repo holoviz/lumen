@@ -63,6 +63,8 @@ class CatalogSourceControls(BaseSourceControls):
 
     label = "Catalog"
 
+    _supports_tools = True
+
     _cached_catalog_tools: list[tuple[str, callable]] | None = None
 
     __abstract = True
@@ -193,7 +195,7 @@ class CatalogSourceControls(BaseSourceControls):
 
         # Background embed — fire and forget, same pattern as SourceCatalog
         if self.vector_store is not None and self.catalog_df is not None:
-            asyncio.create_task(self._embed_catalog())  # noqa: RUF006
+            asyncio.create_task(self._embed())  # noqa: RUF006
 
     async def _on_row_click(self, event):
         """Handle Tabulator row click — delegates to _run_load."""
@@ -226,7 +228,7 @@ class CatalogSourceControls(BaseSourceControls):
             sizing_mode="stretch_width",
         )
 
-    async def _embed_catalog(self):
+    async def _embed(self):
         """
         Embed all catalog entries into the vector store for agent search.
         Called as a background asyncio task after _load_catalog completes.
