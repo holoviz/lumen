@@ -272,7 +272,7 @@ class CatalogSourceControls(BaseSourceControls):
         clean = re.sub(r'<[^>]+>', '', self.label).strip() if self.label else type(self).__name__
         return f"Search and load from {clean}"
 
-    async def _agent_load_dataset(self, query: str) -> SourceResult:
+    async def _load_from_query(self, query: str) -> SourceResult:
         """Search the catalog for a dataset matching the query and load it.
 
         Args:
@@ -322,7 +322,7 @@ class CatalogSourceControls(BaseSourceControls):
         """
         if self._cached_catalog_tools is not None:
             return self._cached_catalog_tools
-        tools = [(self._tool_name(), self._agent_load_dataset)]
+        tools = [(self._tool_name(), self._load_from_query)]
         self._cached_catalog_tools = tools
         return tools
 
