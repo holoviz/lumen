@@ -107,7 +107,7 @@ def test_baseview_prompt_includes_gridded_block():
     assert "xarray dataset" in rendered
     assert "lat, lon" in rendered
     assert "air" in rendered
-    assert "kind='heatmap'" in rendered
+    assert "kind='quadmesh'" in rendered
 
 
 def test_baseview_prompt_no_gridded_block_for_tabular():
@@ -130,7 +130,7 @@ def test_hvplot_prompt_includes_gridded_rules():
         PROMPTS_DIR / "hvPlotAgent" / "main.jinja2",
         **_base_context(gridded=gridded),
     )
-    assert "heatmap" in rendered
+    assert "quadmesh" in rendered
     assert "z" in rendered
 
 
