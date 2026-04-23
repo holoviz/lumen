@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 
 import pandas as pd
 import panel as pn
@@ -61,6 +62,10 @@ class CatalogSourceControls(BaseSourceControls):
     load_mode = "manual"  # Row clicks trigger loading, not a button
 
     label = "Catalog"
+
+    _supports_tools = True
+
+    _cached_catalog_tools: list[tuple[str, callable]] | None = None
 
     __abstract = True
 
@@ -190,7 +195,7 @@ class CatalogSourceControls(BaseSourceControls):
 
         # Background embed — fire and forget, same pattern as SourceCatalog
         if self.vector_store is not None and self.catalog_df is not None:
-            asyncio.create_task(self._embed_catalog())  # noqa: RUF006
+            asyncio.create_task(self._embed())  # noqa: RUF006
 
     async def _on_row_click(self, event):
         """Handle Tabulator row click — delegates to _run_load."""
@@ -223,7 +228,7 @@ class CatalogSourceControls(BaseSourceControls):
             sizing_mode="stretch_width",
         )
 
-    async def _embed_catalog(self):
+    async def _embed(self):
         """
         Embed all catalog entries into the vector store for agent search.
         Called as a background asyncio task after _load_catalog completes.
@@ -254,3 +259,107 @@ class CatalogSourceControls(BaseSourceControls):
 
         if items:
             await self.vector_store.upsert(items)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Agent / tool integration
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _tool_name(self) -> str:
+        """Display name for the tool returned by ``as_tools()``.
+
+        Override in subclasses for a custom name.
+        """
+        clean = re.sub(r'<[^>]+>', '', self.label).strip() if self.label else type(self).__name__
+        return f"Search and load from {clean}"
+
+    async def _load_from_query(self, query: str) -> SourceResult:
+        """Search the catalog for a dataset matching the query and load it.
+
+        Args:
+            query: Natural language description, dataset name, collection
+                name, or identifier to search for in the catalog.
+        """
+        if self.catalog_df is None or self.catalog_df.empty:
+            return SourceResult.empty("Catalog not yet loaded.")
+
+        match_idx = await self._search_catalog(query)
+        if match_idx is None:
+            return SourceResult.empty(
+                f"No dataset matching '{query}' found in catalog."
+            )
+
+        entry = self.catalog_df.iloc[match_idx]
+        try:
+            result = await self._fetch_entry(entry)
+            # Register the source on the control so the UI's
+            # _sync_sources watcher fires and the SourceCatalog
+            # ("Available Sources") is updated.  When invoked
+            # via the Tabulator click path this happens inside
+            # _run_load → _handle_success; the SourceAgent path
+            # bypasses _run_load so we do it explicitly here.
+            if result and result.sources:
+                existing = self.context.get("sources", [])
+                for src in result.sources:
+                    if src not in existing:
+                        self._register_source_output(src)
+                self.param.trigger("outputs")
+            return result
+        finally:
+            # _fetch_entry may update the progress bar (e.g.
+            # "Processing …") but only _run_load clears it.
+            # When called via SourceAgent we bypass _run_load,
+            # so clean up here to avoid a stuck progress bar.
+            self.progress.clear()
+
+    def as_tools(
+        self, query: str | None = None, top_k: int = 5,
+    ) -> list[tuple[str, callable]]:
+        """Return ``(name, callable)`` pairs for SourceAgent / SourceLookup.
+
+        Exposes one tool that searches the catalog via vector similarity
+        (or text fallback) and loads the best-matching entry.
+        Results are cached so ``_control_hash`` remains stable.
+        """
+        if self._cached_catalog_tools is not None:
+            return self._cached_catalog_tools
+        tools = [(self._tool_name(), self._load_from_query)]
+        self._cached_catalog_tools = tools
+        return tools
+
+    async def _search_catalog(self, query: str) -> int | None:
+        """Find the best matching catalog row index for *query*.
+
+        Uses vector search when a ``vector_store`` is available and
+        falls back to keyword matching on ``search_columns``.
+        """
+        # ── vector search path ──
+        if self.vector_store is not None:
+            try:
+                results = await self.vector_store.query(query, top_k=5)
+                for r in results:
+                    meta = r.get("metadata", {})
+                    if (
+                        meta.get("type") == "catalog_entry"
+                        and meta.get("_control_id") == id(self)
+                    ):
+                        return meta["_row_idx"]
+            except Exception:
+                pass  # fall through to text search
+
+        # ── text fallback ──
+        if self.catalog_df is None or not self.search_columns:
+            return None
+
+        query_lower = query.lower()
+        query_words = query_lower.split()
+        best_idx = None
+        best_score = 0
+
+        for idx, row in self.catalog_df.iterrows():
+            text = self._entry_to_text(row).lower()
+            score = sum(1 for word in query_words if word in text)
+            if score > best_score:
+                best_score = score
+                best_idx = idx
+
+        return best_idx if best_score > 0 else None

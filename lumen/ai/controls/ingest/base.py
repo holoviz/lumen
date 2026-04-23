@@ -71,6 +71,8 @@ class BaseSourceControls(Viewer):
 
     __abstract = True
 
+    _supports_tools = False
+
     def __init__(self, **params):
         super().__init__(**params)
         self._init_ui_components()

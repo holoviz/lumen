@@ -53,6 +53,8 @@ class ParametricSourceControls(BaseSourceControls):
     load_button_label = "Fetch Data"
     load_button_icon = "download"
 
+    _supports_tools = True
+
     __abstract = True
 
     def __init__(self, **params):
@@ -270,7 +272,7 @@ class ParametricSourceControls(BaseSourceControls):
     # Agent integration
     # ──────────────────────────────────────────────────────────────────────────
 
-    async def _embed_actions(self):
+    async def _embed(self):
         """Embed action names + docstrings into vector store."""
         if self.vector_store is None:
             return
