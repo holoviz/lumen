@@ -963,7 +963,7 @@ class hvPlotBaseView(View):
             type(self)._hvplot_xarray_available = True
         if 'dask' in sys.modules:
             try:
-                import hvplot.dask  # type: ignore
+                import hvplot.dask  # type: ignore  # noqa: F401
             except Exception:
                 pass
         if 'by' in params and isinstance(params['by'], str):
