@@ -22,6 +22,7 @@ Analyze if the assistant's response addresses the user's request given the conte
 VALID = response uses the available context to answer; do not penalize for missing data that was never loaded or available.
 A clarifying question IS a valid response when the user's request is ambiguous or when the assistant lacks sufficient context to act directly.
 {% endif %}
+Items labeled "(From previous plan)" are leftover context from an earlier plan. They may provide useful background context, but the current plan's outputs are what should be directly validated against the user's request.
 {%- endblock -%}
 
 {%- block examples %}
@@ -68,26 +69,27 @@ Response Plan:
 Current context contains the following keys: {{ ", ".join(memory) }}
 
 {%- if memory.get('sql') %}
-SQL: `{{ memory['sql'] }}`
+{% if 'sql' in previous_keys %}(From previous plan) {% endif %}SQL: `{{ memory['sql'] }}`
 {%- endif -%}
 {%- if memory.get('data') is not none %}
-Data Overview:
+{% if 'data' in previous_keys %}(From previous plan) {% endif %}Data Overview:
 {{ memory["data"] }}
 {%- endif -%}
 {% if memory.get('view') %}
-Generated View:
+{% if 'view' in previous_keys %}(From previous plan) {% endif %}Generated View:
 ```yaml
 {{ memory["view"] | json_to_yaml }}
 ```
 {%- endif -%}
-{# NOTE: We use memory['chat'] (typed output from ChatAgent) instead of chat_history
-   (from the interface) because the interface's chat_history can contain stale responses
-   from previous interactions that don't correspond to the current plan. #}
 {%- if memory.get('chat') %}
-Assistant Response:
+{% if 'chat' in previous_keys %}(From previous plan) {% endif %}Assistant Response:
 """
 {{ memory['chat'] }}
 """
+{%- endif -%}
+{% if chat_history is defined and chat_history %}
+Recent Chat History:
+{{ chat_history }}
 {%- endif -%}
 {%- if memory.get('source_actions') %}
 Configured external data sources:

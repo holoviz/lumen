@@ -83,19 +83,20 @@ class ValidationAgent(Agent):
         """
         The coordinator's context persists across plans, so keys like
         'chat' from a *previous* plan can leak into this plan's
-        validation.  Only keep a validation-relevant key when a task
-        in the *current* plan actually produced it to prevent false flags.
+        validation.  Rather than removing stale keys (which could lose
+        useful context), we label them so the prompt can distinguish
+        current-plan outputs from previous-plan leftovers.
         """
         ctx = await super()._gather_prompt_context(prompt_name, messages, context, **kwargs)
-        ctx.pop("chat_history", None)
 
         plan = context.get("plan")
+        previous_keys = set()
         if plan is not None:
             produced = {k for task in plan for k in task.out_context}
-            memory = ctx.get("memory", {})
             for key in ("chat", "sql", "data", "view"):
-                if key not in produced:
-                    memory.pop(key, None)
+                if key in context and key not in produced:
+                    previous_keys.add(key)
+        ctx["previous_keys"] = previous_keys
         return ctx
 
     async def respond(
