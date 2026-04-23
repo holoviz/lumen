@@ -20,6 +20,7 @@ Analyze if the generated view and responses match the user's request.
 {% if memory.get('chat') %}
 Analyze if the assistant's response addresses the user's request given the context it had.
 VALID = response uses the available context to answer; do not penalize for missing data that was never loaded or available.
+A clarifying question IS a valid response when the user's request is ambiguous or when the assistant lacks sufficient context to act directly.
 {% endif %}
 {%- endblock -%}
 
@@ -49,6 +50,7 @@ SQL: SELECT state, SUM(amount) FROM data GROUP BY state
 {% if memory.get('chat') -%}
 User: "Summarize the survey results" → Response with field breakdowns and patterns → ✓ VALID
 User: "What are the top selling products?" → Generic discussion, no rankings → ✗ INVALID
+User: "Show me data" → Response listing available columns and asking what to explore → ✓ VALID (clarifying question when request is ambiguous)
 {% endif %}
 {% if memory.get('view') -%}
 User: "bar chart of sales by region" → bar mark with region on x, sales on y → ✓ VALID
@@ -78,9 +80,14 @@ Generated View:
 {{ memory["view"] | json_to_yaml }}
 ```
 {%- endif -%}
-{% if chat_history is defined %}
-Assistant Responses:
-{{ chat_history }}
+{# NOTE: We use memory['chat'] (typed output from ChatAgent) instead of chat_history
+   (from the interface) because the interface's chat_history can contain stale responses
+   from previous interactions that don't correspond to the current plan. #}
+{%- if memory.get('chat') %}
+Assistant Response:
+"""
+{{ memory['chat'] }}
+"""
 {%- endif -%}
 {%- if memory.get('source_actions') %}
 Configured external data sources:
