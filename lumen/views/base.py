@@ -956,14 +956,14 @@ class hvPlotBaseView(View):
     def __init__(self, **params):
         import hvplot.pandas  # type: ignore
         try:
-            import hvplot.xarray  # type: ignore # noqa
+            import hvplot.xarray  # type: ignore
         except Exception:
             type(self)._hvplot_xarray_available = False
         else:
             type(self)._hvplot_xarray_available = True
         if 'dask' in sys.modules:
             try:
-                import hvplot.dask  # type: ignore # noqa
+                import hvplot.dask  # type: ignore
             except Exception:
                 pass
         if 'by' in params and isinstance(params['by'], str):
