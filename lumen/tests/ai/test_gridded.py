@@ -107,7 +107,11 @@ def test_baseview_prompt_includes_gridded_block():
     assert "xarray dataset" in rendered
     assert "lat, lon" in rendered
     assert "air" in rendered
-    assert "kind='quadmesh'" in rendered
+    # The base prompt must stay agent-agnostic: no hvPlot-specific kind
+    # values, since VegaLite and DeckGL inherit this template too.
+    assert "kind=" not in rendered
+    assert "quadmesh" not in rendered
+    assert "heatmap" not in rendered
 
 
 def test_baseview_prompt_no_gridded_block_for_tabular():

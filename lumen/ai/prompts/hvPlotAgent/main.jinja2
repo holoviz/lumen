@@ -8,7 +8,7 @@ the values.
 {%- if gridded is defined and gridded %}
 
 For gridded xarray data:
-- Prefer kind='quadmesh' — it preserves continuous coordinate axes and is
+- Prefer kind='quadmesh'. It preserves continuous coordinate axes and is
   the right default for xarray-derived grids. Use 'image' only for strictly
   regular grids, 'contourf' for filled contours, or 'heatmap' if you
   specifically want ordinal/categorical axes.

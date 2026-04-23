@@ -1,3 +1,6 @@
+from unittest.mock import MagicMock, patch
+
+import holoviews as hv
 import numpy as np
 import pandas as pd
 import pytest
@@ -37,7 +40,7 @@ def tabular_pipeline(tabular_df):
 # ---- Tests ----
 
 def test_hvplot_z_param_accepted():
-    """z param is a valid Selector on hvPlotBaseView — no AttributeError."""
+    """z param is a valid Selector on hvPlotBaseView (no AttributeError)."""
     assert "z" in hvPlotView.param
 
 
@@ -51,7 +54,6 @@ def test_hvplot_heatmap_from_longform_df(gridded_pipeline):
 
     The public z= param is mapped internally to hvPlot's C= for heatmap.
     """
-    import holoviews as hv
     view = hvPlotView(
         pipeline=gridded_pipeline,
         kind="heatmap",
@@ -72,8 +74,7 @@ def test_hvplot_z_maps_to_C_only_for_heatmap(gridded_pipeline):
     For contourf/quadmesh/image the view pivots to xarray, so we patch the
     pivoted DataArray's hvplot accessor instead.
     """
-    from unittest.mock import MagicMock, patch
-
+    pytest.importorskip("xarray")
     heatmap_view = hvPlotView(
         pipeline=gridded_pipeline, kind="heatmap", x="lon", y="lat", z="air",
     )
@@ -113,11 +114,11 @@ def test_hvplot_quadmesh_from_longform_df(gridded_pipeline):
 
     Long-form pandas is the only data format XArraySQLSource produces, so the
     view must pivot it to a 2D array before handing to hvPlot, otherwise
-    hvPlot raises NotImplementedError for quadmesh on pandas. Addresses
-    @ahuang11's review: quadmesh/image are semantically more correct than
+    hvPlot raises NotImplementedError for quadmesh on pandas. Addresses the
+    review on #1823: quadmesh/image are semantically more correct than
     heatmap for continuous-coordinate gridded data.
     """
-    import holoviews as hv
+    pytest.importorskip("xarray")
     view = hvPlotView(
         pipeline=gridded_pipeline,
         kind="quadmesh",
@@ -131,7 +132,7 @@ def test_hvplot_quadmesh_from_longform_df(gridded_pipeline):
 
 def test_hvplot_image_from_longform_df(gridded_pipeline):
     """kind=image renders an Image from a long-form pandas DataFrame via pivot."""
-    import holoviews as hv
+    pytest.importorskip("xarray")
     view = hvPlotView(
         pipeline=gridded_pipeline,
         kind="image",
@@ -145,6 +146,7 @@ def test_hvplot_image_from_longform_df(gridded_pipeline):
 
 def test_hvplot_gridded_size_guard_raises(gridded_pipeline):
     """Pivoting a grid larger than _GRIDDED_MAX_CELLS raises ValueError."""
+    pytest.importorskip("xarray")
     view = hvPlotView(
         pipeline=gridded_pipeline,
         kind="quadmesh",
@@ -163,7 +165,6 @@ def test_hvplot_gridded_skips_pivot_if_xarray_unavailable(gridded_pipeline):
     Build a view with a non-gridded kind so construction doesn't trigger the
     quadmesh render path, then flip the flag and call _to_gridded directly.
     """
-    import pandas as pd
     view = hvPlotView(
         pipeline=gridded_pipeline,
         kind="scatter",
@@ -178,7 +179,7 @@ def test_hvplot_gridded_skips_pivot_if_xarray_unavailable(gridded_pipeline):
 
 def test_hvplot_gridded_passes_through_non_dataframe(gridded_pipeline):
     """If the pipeline hands over an already-gridded xarray object, skip pivot."""
-    import xarray as xr
+    xr = pytest.importorskip("xarray")
     view = hvPlotView(
         pipeline=gridded_pipeline,
         kind="quadmesh",

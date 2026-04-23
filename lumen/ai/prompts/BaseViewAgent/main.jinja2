@@ -14,10 +14,9 @@ Here is the current dataset to use:
 Data originates from an xarray dataset.
 - dimensions: {{ gridded.dims | join(', ') }}
 - data variables: {{ gridded.data_vars | join(', ') }}
-Prefer kind='quadmesh' for this data (it preserves continuous coordinate
-axes). Fall back to 'image' for strictly regular grids, 'contourf' for
-filled contour plots, or 'heatmap' if ordinal/categorical axes are wanted.
-Set x/y to coordinate dimensions and z to the value column.
+Use a 2D gridded encoding with axes on the coordinate dimensions and
+colour/value on the data variable, using whichever syntax this agent
+accepts (see agent-specific instructions below).
 {%- endif %}
 
 {%- if "view" in memory and memory["view"].get("agent") and actor_name.startswith(memory["view"].get("agent")) %}
