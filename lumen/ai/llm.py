@@ -307,6 +307,37 @@ class Llm(param.Parameterized):
                 messages[i]["content"] = new_content
         return messages, contains_image
 
+    @staticmethod
+    def _normalize_multimodal_messages(messages: list[Message]) -> list[Message]:
+        """Convert instructor Image objects and bare strings in list content
+        to OpenAI-native content-part dicts.
+
+        When response_model is absent (e.g. during the tool-loop phase),
+        the raw OpenAI client is used and it cannot handle instructor
+        Image objects.  This method normalises them.
+        """
+        for message in messages:
+            content = message.get("content")
+            if isinstance(content, Image):
+                message["content"] = [{
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{content.media_type};base64,{content.source}"},
+                }]
+            elif isinstance(content, list):
+                new_content = []
+                for item in content:
+                    if isinstance(item, Image):
+                        new_content.append({
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{item.media_type};base64,{item.source}"},
+                        })
+                    elif isinstance(item, str):
+                        new_content.append({"type": "text", "text": item})
+                    else:
+                        new_content.append(item)
+                message["content"] = new_content
+        return messages
+
     @classmethod
     def warmup(cls, model_kwargs: dict | None):
         """
@@ -404,6 +435,9 @@ class Llm(param.Parameterized):
             kwargs["response_model"] = structured_model
         else:
             kwargs.pop("response_model", None)
+            # Without response_model the raw client is used, which
+            # cannot handle instructor Image objects in list content.
+            messages = self._normalize_multimodal_messages(messages)
 
         output = await self.run_client(model_spec, messages, **kwargs)
         if not tool_instances:
