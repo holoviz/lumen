@@ -13,7 +13,7 @@ try:
 
     from lumen.ai.agents.vega_lite import VegaLiteAgent
     from lumen.ai.llm import (
-        Anthropic, AzureOpenAI, Google, Groq, Message, MistralAI, OpenAI,
+        Anthropic, AzureOpenAI, Google, Groq, Llm, Message, MistralAI, OpenAI,
     )
 
 except ModuleNotFoundError:
@@ -296,6 +296,90 @@ def test_openai_responses_stream_tool_call_id_preserved_from_added_event():
     OpenAI._accumulate_tool_calls(accum, order, OpenAI._extract_stream_tool_calls(done_event))
     tool_calls = OpenAI._tool_calls_from_accum(accum, order)
     assert tool_calls[0]["id"] == "call_abc"
+# ---------------------------------------------------------------------------
+# _normalize_multimodal_messages tests
+# ---------------------------------------------------------------------------
+
+class TestNormalizeMultimodalMessages:
+    """Tests for Llm._normalize_multimodal_messages.
+
+    When response_model is absent (e.g. during the tool-loop phase),
+    the raw OpenAI client is used and cannot handle instructor Image
+    objects.  _normalize_multimodal_messages converts them to
+    OpenAI-native content-part dicts.
+    """
+
+    def test_standalone_image_converted(self):
+        """A bare Image as content is wrapped in an image_url dict list."""
+        img = _make_test_image()
+        messages: list[Message] = [{"role": "user", "content": img}]
+        result = Llm._normalize_multimodal_messages(messages)
+        content = result[0]["content"]
+        assert isinstance(content, list)
+        assert len(content) == 1
+        assert content[0]["type"] == "image_url"
+        assert "base64," in content[0]["image_url"]["url"]
+
+    def test_list_image_and_string_converted(self):
+        """A [str, Image] list is converted to [{type: text}, {type: image_url}]."""
+        img = _make_test_image()
+        messages: list[Message] = [
+            {"role": "user", "content": ["Describe this:", img]},
+        ]
+        result = Llm._normalize_multimodal_messages(messages)
+        content = result[0]["content"]
+        assert isinstance(content, list)
+        assert len(content) == 2
+        assert content[0] == {"type": "text", "text": "Describe this:"}
+        assert content[1]["type"] == "image_url"
+        assert "base64," in content[1]["image_url"]["url"]
+
+    def test_plain_text_unchanged(self):
+        """Plain string content passes through untouched."""
+        messages: list[Message] = [{"role": "user", "content": "Hello"}]
+        result = Llm._normalize_multimodal_messages(messages)
+        assert result[0]["content"] == "Hello"
+
+    def test_already_normalized_dicts_unchanged(self):
+        """Content that is already OpenAI-native dicts passes through."""
+        messages: list[Message] = [{"role": "user", "content": [
+            {"type": "text", "text": "Hi"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+        ]}]
+        result = Llm._normalize_multimodal_messages(messages)
+        content = result[0]["content"]
+        assert content[0] == {"type": "text", "text": "Hi"}
+        assert content[1] == {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}}
+
+    def test_multiple_images_in_list(self):
+        """Multiple Image objects in a list are all converted."""
+        img1 = _make_test_image()
+        img2 = _make_test_image()
+        messages: list[Message] = [
+            {"role": "user", "content": ["Compare:", img1, img2]},
+        ]
+        result = Llm._normalize_multimodal_messages(messages)
+        content = result[0]["content"]
+        assert len(content) == 3
+        assert content[0] == {"type": "text", "text": "Compare:"}
+        assert content[1]["type"] == "image_url"
+        assert content[2]["type"] == "image_url"
+
+    def test_mixed_messages_only_image_ones_affected(self):
+        """Non-image messages in the list are left alone."""
+        img = _make_test_image()
+        messages: list[Message] = [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "Hello"},
+            {"role": "user", "content": ["Chart:", img]},
+        ]
+        result = Llm._normalize_multimodal_messages(messages)
+        assert result[0]["content"] == "You are helpful."
+        assert result[1]["content"] == "Hello"
+        assert result[2]["content"][0] == {"type": "text", "text": "Chart:"}
+        assert result[2]["content"][1]["type"] == "image_url"
+
+
 # ---------------------------------------------------------------------------
 # _check_for_image tests
 # ---------------------------------------------------------------------------
