@@ -73,9 +73,31 @@ class ValidationAgent(Agent):
         }
     )
 
+    user = param.String(default="Validation")
+
     input_schema = ValidationInputs
 
     output_schema = ValidationOutputs
+
+    async def _gather_prompt_context(self, prompt_name, messages, context, **kwargs):
+        """
+        The coordinator's context persists across plans, so keys like
+        'chat' from a *previous* plan can leak into this plan's
+        validation.  Rather than removing stale keys (which could lose
+        useful context), we label them so the prompt can distinguish
+        current-plan outputs from previous-plan leftovers.
+        """
+        ctx = await super()._gather_prompt_context(prompt_name, messages, context, **kwargs)
+
+        plan = context.get("plan")
+        previous_keys = set()
+        if plan is not None:
+            produced = {k for task in plan for k in task.out_context}
+            for key in ("chat", "sql", "data", "view"):
+                if key in context and key not in produced:
+                    previous_keys.add(key)
+        ctx["previous_keys"] = previous_keys
+        return ctx
 
     async def respond(
         self,

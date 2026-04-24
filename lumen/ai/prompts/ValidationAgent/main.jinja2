@@ -17,10 +17,12 @@ VALID = SQL implements the user's intent correctly
 {% if memory.get('view') %}
 Analyze if the generated view and responses match the user's request.
 {% endif %}
-{% if memory.get('chat') %}
+{% if chat_history is defined and chat_history %}
 Analyze if the assistant's response addresses the user's request given the context it had.
 VALID = response uses the available context to answer; do not penalize for missing data that was never loaded or available.
+A clarifying question IS a valid response when the user's request is ambiguous or when the assistant lacks sufficient context to act directly.
 {% endif %}
+Items labeled "(From previous plan)" are leftover context from an earlier plan. They may provide useful background context, but the current plan's outputs are what should be directly validated against the user's request.
 {%- endblock -%}
 
 {%- block examples %}
@@ -46,9 +48,10 @@ User: "total by state"
 SQL: SELECT state, SUM(amount) FROM data GROUP BY state
 ✓ VALID - groups by state with SUM
 {% endif %}
-{% if memory.get('chat') -%}
+{% if chat_history is defined and chat_history -%}
 User: "Summarize the survey results" → Response with field breakdowns and patterns → ✓ VALID
 User: "What are the top selling products?" → Generic discussion, no rankings → ✗ INVALID
+User: "Show me data" → Response listing available columns and asking what to explore → ✓ VALID (clarifying question when request is ambiguous)
 {% endif %}
 {% if memory.get('view') -%}
 User: "bar chart of sales by region" → bar mark with region on x, sales on y → ✓ VALID
@@ -66,20 +69,20 @@ Response Plan:
 Current context contains the following keys: {{ ", ".join(memory) }}
 
 {%- if memory.get('sql') %}
-SQL: `{{ memory['sql'] }}`
+{% if 'sql' in previous_keys %}(From previous plan) {% endif %}SQL: `{{ memory['sql'] }}`
 {%- endif -%}
 {%- if memory.get('data') is not none %}
-Data Overview:
+{% if 'data' in previous_keys %}(From previous plan) {% endif %}Data Overview:
 {{ memory["data"] }}
 {%- endif -%}
 {% if memory.get('view') %}
-Generated View:
+{% if 'view' in previous_keys %}(From previous plan) {% endif %}Generated View:
 ```yaml
 {{ memory["view"] | json_to_yaml }}
 ```
 {%- endif -%}
-{% if chat_history is defined %}
-Assistant Responses:
+{%- if chat_history is defined and chat_history %}
+Chat History:
 {{ chat_history }}
 {%- endif -%}
 {%- if memory.get('source_actions') %}
