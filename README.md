@@ -1,4 +1,4 @@
-# Lumen <img src="./docs/assets/logo.png" width="48">
+# Lumen <img src="https://raw.githubusercontent.com/holoviz/lumen/main/docs/assets/logo.png" width="48">
 
 *Illuminate your data*
 
