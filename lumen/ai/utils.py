@@ -40,8 +40,9 @@ from panel_material_ui import Details
 
 from ..pipeline import Pipeline
 from ..sources.base import Source
+from ..sources.xarray_sql import XArraySQLSource
 from ..transforms import SQLRemoveSourceSeparator
-from ..util import log
+from ..util import check_xarray_available, log
 from .config import (
     PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, UNRECOVERABLE_ERRORS,
     MissingContextError, RetriesExceededError,
@@ -1409,3 +1410,23 @@ def result_to_dataframe(result) -> pd.DataFrame | None:
             return None
 
     return None
+
+
+def detect_gridded(pipeline: Pipeline) -> dict[str, Any] | None:
+    """Return gridded metadata if pipeline.source is an XArraySQLSource, else None.
+
+    Returns a dict with keys ``dims``, ``coords``, ``data_vars``, ``source_type``,
+    or ``None`` for tabular pipelines.
+    """
+    source = pipeline.source
+    if not isinstance(source, XArraySQLSource):
+        return None
+    if not check_xarray_available():
+        return None
+    ds = source.dataset
+    return {
+        'source_type': 'xarray',
+        'dims': list(ds.dims),
+        'coords': {k: list(ds.coords[k].shape) for k in ds.coords},
+        'data_vars': list(ds.data_vars),
+    }

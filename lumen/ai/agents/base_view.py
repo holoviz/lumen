@@ -8,11 +8,11 @@ from ...config import dump_yaml, load_yaml
 from ...pipeline import Pipeline
 from ..config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, MissingContextError
 from ..context import ContextModel, TContext
-from ..gridded import detect_gridded
 from ..llm import Message
 from ..schemas import Metaset
 from ..utils import (
-    get_root_exception, get_schema, log_debug, report_error, retry_llm_output,
+    detect_gridded, get_root_exception, get_schema, log_debug, report_error,
+    retry_llm_output,
 )
 from .base_lumen import BaseLumenAgent
 

@@ -8,8 +8,7 @@ xr = pytest.importorskip("xarray")
 pytest.importorskip("xarray_sql")
 
 from lumen.ai.config import PROMPTS_DIR
-from lumen.ai.gridded import detect_gridded
-from lumen.ai.utils import render_template
+from lumen.ai.utils import detect_gridded, render_template
 from lumen.pipeline import Pipeline
 from lumen.sources.base import InMemorySource
 from lumen.sources.xarray_sql import XArraySQLSource
