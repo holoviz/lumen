@@ -1271,13 +1271,21 @@ class OpenAI(Llm, OpenAIMixin):
                 messages, structured_model, tool_instances, tool_contexts, model_spec, max_tool_rounds, **kwargs
             )
 
-        if structured_model is not None and not tool_instances:
+        has_inbuilt = any(
+            isinstance(t, dict) and t.get("type") not in (None, "function")
+            for t in kwargs.get("tools")
+        )
+
+        # When there are NO inbuilt tools and NO function-tool instances we
+        # can ask for the structured response in a single round-trip.
+        if structured_model is not None and not tool_instances and not has_inbuilt:
             kwargs["response_model"] = structured_model
         else:
             kwargs.pop("response_model", None)
 
         output = await self.run_client(model_spec, messages, **kwargs)
-        if not tool_instances:
+
+        if not tool_instances and not has_inbuilt:
             return output
 
         for _ in range(max_tool_rounds):
