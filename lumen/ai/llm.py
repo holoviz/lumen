@@ -1256,6 +1256,21 @@ class OpenAI(Llm, OpenAIMixin):
 
         return super()._extract_stream_tool_calls(chunk)
 
+    @staticmethod
+    def _has_inbuilt_tools(tools: list[dict[str, Any]] | None) -> bool:
+        """Return True if *tools* contains any OpenAI inbuilt tool.
+
+        Inbuilt tools (e.g. ``web_search``, ``code_interpreter``) are
+        handled server-side by the Responses API.  They are plain dicts
+        whose ``type`` is **not** ``"function"``.
+        """
+        if not tools:
+            return False
+        return any(
+            isinstance(t, dict) and t.get("type") not in (None, "function")
+            for t in tools
+        )
+
     async def _run_tool_loop(
         self,
         messages: list[Message],
@@ -1271,15 +1286,21 @@ class OpenAI(Llm, OpenAIMixin):
                 messages, structured_model, tool_instances, tool_contexts, model_spec, max_tool_rounds, **kwargs
             )
 
-        if structured_model is not None and not tool_instances:
+        has_inbuilt = self._has_inbuilt_tools(kwargs.get("tools"))
+
+        # When there are NO inbuilt tools and NO function-tool instances we
+        # can ask for the structured response in a single round-trip.
+        if structured_model is not None and not tool_instances and not has_inbuilt:
             kwargs["response_model"] = structured_model
         else:
             kwargs.pop("response_model", None)
 
         output = await self.run_client(model_spec, messages, **kwargs)
-        if not tool_instances:
+
+        if not tool_instances and not has_inbuilt:
             return output
 
+        # --- function-tool loop (unchanged) ---
         for _ in range(max_tool_rounds):
             tool_calls = self._extract_tool_calls(output)
             if not tool_calls:
@@ -1298,9 +1319,15 @@ class OpenAI(Llm, OpenAIMixin):
                 next_kwargs["previous_response_id"] = response_id
             output = await self.run_client(model_spec, tool_outputs, **next_kwargs)
 
+        # --- structured-output pass ---
         if structured_model:
             final_kwargs = dict(kwargs)
             final_kwargs["response_model"] = structured_model
+            # Drop inbuilt tools from the final call so the model
+            # produces only the structured output.
+            if has_inbuilt:
+                final_kwargs.pop("tools", None)
+                final_kwargs.pop("tool_choice", None)
             response_id = getattr(output, "id", None)
             if response_id:
                 final_kwargs["previous_response_id"] = response_id
