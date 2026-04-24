@@ -1288,7 +1288,6 @@ class OpenAI(Llm, OpenAIMixin):
         if not tool_instances and not has_inbuilt:
             return output
 
-        # --- function-tool loop ---
         for _ in range(max_tool_rounds):
             tool_calls = self._extract_tool_calls(output)
             if not tool_calls:
@@ -1307,7 +1306,6 @@ class OpenAI(Llm, OpenAIMixin):
                 next_kwargs["previous_response_id"] = response_id
             output = await self.run_client(model_spec, tool_outputs, **next_kwargs)
 
-        # --- structured-output pass ---
         if structured_model:
             final_kwargs = dict(kwargs)
             final_kwargs["response_model"] = structured_model
