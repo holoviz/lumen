@@ -19,10 +19,10 @@ from ...views.base import DeckGLView
 from ..code_executor import CodeSafetyCheck, PyDeckExecutor
 from ..config import PROMPTS_DIR, UserCancelledError
 from ..editors import DeckGLEditor
-from ..gridded import detect_gridded
 from ..models import BaseModel, EscapeBaseModel, RetrySpec
 from ..utils import (
-    get_data, get_schema, retry_llm_output, sanitize_column_names,
+    detect_gridded, get_data, get_schema, retry_llm_output,
+    sanitize_column_names,
 )
 from .base_code import BaseCodeAgent
 
