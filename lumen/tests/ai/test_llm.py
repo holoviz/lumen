@@ -276,6 +276,41 @@ async def test_openai_responses_stream_tool_loop_uses_function_call_output(monke
     assert second_kwargs["previous_response_id"] == "resp_1"
 
 
+async def test_stream_keeps_streaming_when_tools_registered_but_unused(monkeypatch):
+    """stream() should still yield deltas when tools are present but not called."""
+    llm = OpenAI(model_kwargs={"default": {"model": "gpt-4.1-mini"}})
+
+    def fake_normalize_tools(_tools):
+        return (
+            [{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}}],
+            {"lookup": object()},
+            {},
+        )
+
+    async def fake_run_client(_model_spec, _messages, **kwargs):
+        assert kwargs.get("stream") is True
+        return [
+            SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(content="he", tool_calls=None))]
+            ),
+            SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(content="llo", tool_calls=None))]
+            ),
+        ]
+
+    monkeypatch.setattr(llm, "_normalize_tools", fake_normalize_tools)
+    monkeypatch.setattr(llm, "run_client", fake_run_client)
+
+    outputs = []
+    async for chunk in llm.stream(
+        [{"role": "user", "content": "say hello"}],
+        tools=[{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}}],
+    ):
+        outputs.append(chunk)
+
+    assert outputs == ["he", "hello"]
+
+
 def test_openai_responses_stream_tool_call_id_preserved_from_added_event():
     """Tool output call_id should come from function_call item (call_id), not item_id."""
     added_event = SimpleNamespace(

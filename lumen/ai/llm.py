@@ -431,9 +431,20 @@ class Llm(param.Parameterized):
         max_tool_rounds: int = 16,
         **kwargs
     ) -> BaseModel | str:
+        requested_stream = bool(kwargs.get("stream", False))
+        if requested_stream and structured_model is None:
+            # In stream mode we can't know upfront whether a tool will be called.
+            # Return the provider stream and let stream() inspect chunks for tool calls.
+            kwargs.pop("response_model", None)
+            messages = self._normalize_multimodal_messages(messages)
+            return await self.run_client(model_spec, messages, **kwargs)
+
+        stream = False
         if structured_model is not None and not tool_instances:
             kwargs["response_model"] = structured_model
         else:
+            if tool_instances:
+                stream = kwargs.pop("stream", False)
             kwargs.pop("response_model", None)
             # Without response_model the raw client is used, which
             # cannot handle instructor Image objects in list content.
@@ -459,7 +470,7 @@ class Llm(param.Parameterized):
 
         if structured_model:
             kwargs["response_model"] = structured_model
-            output = await self.run_client(model_spec, messages_curr, **kwargs)
+            output = await self.run_client(model_spec, messages_curr, stream=stream, **kwargs)
         return output
 
     @classmethod
@@ -796,7 +807,7 @@ class Llm(param.Parameterized):
         The string or response_model field.
         """
         combined_tools = self._combine_tools(tools)
-        tool_specs, tool_instances, tool_contexts = self._normalize_tools(combined_tools)
+        _, tool_instances, tool_contexts = self._normalize_tools(combined_tools)
         messages, contains_image = self._check_for_image(messages)
         if self.logfire_tags is not None or contains_image:
             output = await self.invoke(
@@ -804,7 +815,7 @@ class Llm(param.Parameterized):
                 system=system,
                 response_model=response_model,
                 model_spec=model_spec,
-                tools=tool_specs,
+                tools=combined_tools,
                 **kwargs,
             )
             if response_model is not None:
@@ -826,7 +837,7 @@ class Llm(param.Parameterized):
                 system=system,
                 response_model=response_model,
                 model_spec=model_spec,
-                tools=tool_specs,
+                tools=combined_tools,
                 **kwargs,
             )
             yield self._get_content(output)
@@ -840,7 +851,7 @@ class Llm(param.Parameterized):
             stream=True,
             allow_partial=True,
             model_spec=model_spec,
-            tools=tool_specs,
+            tools=combined_tools,
             **kwargs,
         )
         if isinstance(chunks, BaseModel):
@@ -1271,6 +1282,11 @@ class OpenAI(Llm, OpenAIMixin):
                 messages, structured_model, tool_instances, tool_contexts, model_spec, max_tool_rounds, **kwargs
             )
 
+        requested_stream = bool(kwargs.get("stream", False))
+        if requested_stream and structured_model is None:
+            kwargs.pop("response_model", None)
+            return await self.run_client(model_spec, messages, **kwargs)
+
         has_inbuilt = any(
             isinstance(t, dict) and t.get("type") not in (None, "function")
             for t in kwargs.get("tools")
@@ -1284,7 +1300,6 @@ class OpenAI(Llm, OpenAIMixin):
             kwargs.pop("response_model", None)
 
         output = await self.run_client(model_spec, messages, **kwargs)
-
         if not tool_instances and not has_inbuilt:
             return output
 
