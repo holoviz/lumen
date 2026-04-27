@@ -267,8 +267,8 @@ async def test_clarification_tool_requires_confirm_click_for_options():
 
     confirm.clicks += 1
     result = await asyncio.wait_for(task, timeout=1)
-    assert result == "User clarification: Option A"
-    assert context["clarification"] == "Option A"
+    assert result == "User provided following clarification: Option A"
+    assert "clarification" not in context
 
 
 async def test_clarification_tool_requires_confirm_click_for_text():
@@ -293,5 +293,5 @@ async def test_clarification_tool_requires_confirm_click_for_text():
 
     confirm.clicks += 1
     result = await asyncio.wait_for(task, timeout=1)
-    assert result == "User clarification: concise answers"
-    assert context["clarification"] == "concise answers"
+    assert result == "User provided following clarification: concise answers"
+    assert "clarification" not in context
