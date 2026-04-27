@@ -9,6 +9,7 @@ from ..config import PROMPTS_DIR
 from ..context import ContextModel, TContext
 from ..llm import Message
 from ..models import BaseModel
+from ..utils import content_to_text
 from .base import Agent
 
 
@@ -107,11 +108,12 @@ class ValidationAgent(Agent):
     ) -> tuple[list[Any], ValidationOutputs]:
         interface = self.interface
         def on_click(event):
-            if messages:
-                user_messages = [msg for msg in reversed(messages) if msg.get("role") == "user"]
-                original_query = user_messages[0].get("content", "").split("-- For context...")[0]
+            user_messages = [msg for msg in reversed(messages) if msg.get("role") == "user"]
+            if not user_messages:
+                return
+            text_content = content_to_text(user_messages[0].get("content", ""))
             suggestions_list = '\n- '.join(result.suggestions)
-            interface.send(f"Follow these suggestions to fulfill the original intent {original_query}\n\n{suggestions_list}")
+            interface.send(f"Follow these suggestions to fulfill the original intent:\n\n> {text_content}\n\n{suggestions_list}")
 
         result = await self._invoke_prompt("main", messages, context)
         if result.correct:

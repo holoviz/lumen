@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 try:
@@ -6,10 +8,14 @@ except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
 from panel.viewable import Viewable
+from panel_material_ui import (
+    Button, Column, RadioButtonGroup, TextInput,
+)
 
 from lumen.ai.coordinator import Coordinator
 from lumen.ai.schemas import DocumentChunk, Metaset, TableCatalogEntry
 from lumen.ai.tools import FunctionTool, MetadataLookup, define_tool
+from lumen.ai.tools.clarification_llm_tool import make_clarification_llm_tool
 from lumen.ai.tools.document_llm_tools import make_document_vector_llm_tools
 from lumen.ai.vector_store import NumpyVectorStore
 from lumen.config import SOURCE_TABLE_SEPARATOR
@@ -225,3 +231,67 @@ async def test_document_llm_tools_list_and_search():
     assert "zoo.md" in listed
     searched = await tools[1].function(query="penguins", top_k=3, min_similarity=-1.0)
     assert "cold water" in searched
+
+
+class _DummyInterface:
+
+    def __init__(self):
+        self.objects = []
+
+    def send(self, obj, **kwargs):
+        self.objects.append(obj)
+
+
+async def test_clarification_tool_requires_confirm_click_for_options():
+    context: dict = {}
+    interface = _DummyInterface()
+    tool = make_clarification_llm_tool(interface=interface, context=context)
+
+    task = asyncio.create_task(
+        tool.function("Pick one", options=["Option A", "Option B"])
+    )
+
+    await asyncio.sleep(0.05)
+    assert interface.objects
+    layout = interface.objects[-1]
+    assert isinstance(layout, Column)
+    widget = layout[1]
+    confirm = layout[2]
+    assert isinstance(widget, RadioButtonGroup)
+    assert isinstance(confirm, Button)
+    assert confirm.icon == "check"
+
+    widget.value = "Option A"
+    await asyncio.sleep(0.2)
+    assert not task.done()
+
+    confirm.clicks += 1
+    result = await asyncio.wait_for(task, timeout=1)
+    assert result == "User clarification: Option A"
+    assert context["clarification"] == "Option A"
+
+
+async def test_clarification_tool_requires_confirm_click_for_text():
+    context: dict = {}
+    interface = _DummyInterface()
+    tool = make_clarification_llm_tool(interface=interface, context=context)
+
+    task = asyncio.create_task(tool.function("Describe preference"))
+
+    await asyncio.sleep(0.05)
+    layout = interface.objects[-1]
+    assert isinstance(layout, Column)
+    widget = layout[1]
+    confirm = layout[2]
+    assert isinstance(widget, TextInput)
+    assert isinstance(confirm, Button)
+    assert confirm.icon == "check"
+
+    widget.value = "   concise answers   "
+    await asyncio.sleep(0.2)
+    assert not task.done()
+
+    confirm.clicks += 1
+    result = await asyncio.wait_for(task, timeout=1)
+    assert result == "User clarification: concise answers"
+    assert context["clarification"] == "concise answers"

@@ -942,9 +942,12 @@ class Llm(param.Parameterized):
                 )
             previous_role = role
 
+        response_model = kwargs.get("response_model")
         client = await self.get_client(model_spec, **kwargs)
+        if not response_model:
+            kwargs.pop("max_retries", None)
         result = await client(messages=messages, **kwargs)
-        if response_model := kwargs.get("response_model"):
+        if response_model:
             log_debug(f"Response model: \033[93m{response_model.__name__!r}\033[0m")
             if isinstance(result, ImageResponse):
                 result = result.output
