@@ -23,6 +23,7 @@ from ..llm import Message
 from ..models import FollowUpClassification
 from ..report import ActorTask
 from ..tools import MetadataLookup, SourceLookup, Tool
+from ..tools.clarification_llm_tool import make_clarification_llm_tool
 from ..utils import content_to_text, log_debug, wrap_logfire
 from .base import Coordinator, Plan
 
@@ -333,7 +334,8 @@ class Planner(Coordinator):
         # also filter out agents where excluded keys exist in context
         agents = [agent for agent in agents if len(set(agent.input_schema.__required_keys__) - all_provides) == 0 and type(agent).__name__ != "ValidationAgent"]
         tools = [tool for tool in tools if len(set(tool.input_schema.__required_keys__) - all_provides) == 0]
-        llm_tools = _merge_prompt_tools(self.llm_tools, None, context)
+        llm_tools = list(_merge_prompt_tools(self.llm_tools, None, context) or [])
+        llm_tools.append(make_clarification_llm_tool(self.interface, context))
         reasoning = None
         while reasoning is None:
             # candidates = agents and tools that can provide

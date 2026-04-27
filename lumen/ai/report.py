@@ -151,23 +151,28 @@ class Task(Viewer):
 
     def _render_message_history(self, context: TContext) -> list[Message]:
         messages = list(self.history)
-        if not self.instruction:
+        if not self.instruction or any(self.instruction in content_to_text(msg.get("content")) for msg in messages):
             return messages
 
-        user_msg = None
-        for msg in messages[::-1]:
-            if msg.get("role") == "user":
-                user_msg = msg
+        # Find the last user message
+        last_user_idx = None
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("role") == "user":
+                last_user_idx = i
                 break
-        if not user_msg:
-            messages.append({"role": "user", "content": self.instruction})
-        else:
-            content = user_msg.get("content")
-            text_content = content_to_text(content)
-            if self.instruction not in text_content:
-                updated_text = f'{text_content}\n\nInstruction: {self.instruction}'
-                user_msg["content"] = set_content_text(updated_text, content)
-        return messages
+
+        if last_user_idx is None:
+            return [*messages, {"role": "user", "content": self.instruction}]
+
+        user_msg = messages[last_user_idx]
+        content = user_msg.get("content")
+        text_content = content_to_text(content)
+        updated_text = f"{text_content}\n\nInstruction: {self.instruction}"
+        updated_msg = {
+            **user_msg,
+            "content": set_content_text(updated_text, content),
+        }
+        return [*messages[:last_user_idx], updated_msg, *messages[last_user_idx + 1:]]
 
     def _render_output(self, out):
         if isinstance(out, str):
