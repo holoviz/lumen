@@ -109,15 +109,23 @@ loop includes them.
 - Do not replicate an LLM tool's behavior in the plan as a sequence of steps.
   If the capability exists as a tool, the tool is the correct mechanism.
 
-### The clarification tool — always yours
-The clarification tool is the one exception to "default to delegate." Use it
-directly whenever the user's request is ambiguous or underspecified in a way
-that affects the plan. Resolve ambiguity *before* planning, not within it —
-agents cannot ask the user, only execute. By the time the plan runs, every
-term in it must have a definite meaning. After the user replies, you will
-plan again with the clarification in context.
+### The clarification tool
+The clarification tool is the one exception to "default to delegate". It is
+also the *only* channel for resolving ambiguity — never ask the user
+anything in message content, as content-mode questions do not reach the user
+in this system. If you find yourself wanting to ask, call the tool.
 
-- Ask one question per call. For multiple independent decisions, ask in
+Only resolve when:
+- no reasonable default would produce a meaningful plan
+- there are typos or abbreviations that are nonsensical
+- proceeding without an answer would clearly misrepresent the user's intent
+
+Resolve the ambiguity *before* planning, not within it — agents cannot ask
+the user, only execute. By the time the plan runs, every term in it must
+have a definite meaning. After the user replies, you will plan again with
+the resolved intent in context.
+
+- One question per call. For multiple independent decisions, resolve in
   sequence across separate calls — do not staple them together.
 - Frame each question so any plausible answer unblocks planning. If you
   cannot imagine an answer that lets you proceed, rewrite the question.
