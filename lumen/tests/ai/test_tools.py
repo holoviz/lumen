@@ -9,7 +9,7 @@ except ModuleNotFoundError:
 
 from panel.viewable import Viewable
 from panel_material_ui import (
-    Button, Column, RadioButtonGroup, TextInput,
+    Button, ChatAreaInput, Column, RadioBoxGroup,
 )
 
 from lumen.ai.coordinator import Coordinator
@@ -257,7 +257,7 @@ async def test_clarification_tool_requires_confirm_click_for_options():
     assert isinstance(layout, Column)
     widget = layout[1]
     confirm = layout[2]
-    assert isinstance(widget, RadioButtonGroup)
+    assert isinstance(widget, RadioBoxGroup)
     assert isinstance(confirm, Button)
     assert confirm.icon == "check"
 
@@ -282,16 +282,14 @@ async def test_clarification_tool_requires_confirm_click_for_text():
     layout = interface.objects[-1]
     assert isinstance(layout, Column)
     widget = layout[1]
-    confirm = layout[2]
-    assert isinstance(widget, TextInput)
-    assert isinstance(confirm, Button)
-    assert confirm.icon == "check"
+    assert isinstance(widget, ChatAreaInput)
+    assert len(layout) == 2
 
     widget.value = "   concise answers   "
     await asyncio.sleep(0.2)
     assert not task.done()
 
-    confirm.clicks += 1
+    widget.param.trigger("enter_pressed")
     result = await asyncio.wait_for(task, timeout=1)
     assert result == "User provided following clarification: concise answers"
     assert "clarification" not in context
