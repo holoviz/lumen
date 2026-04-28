@@ -144,9 +144,10 @@ async def test_planner_error(llm):
     (StepModel,) = get_args(PlanModel.__annotations__['steps'])
 
     llm.set_responses([
-        Reasoning(chain_of_thought="Just use ChatAgent"),
         lambda: PlanModel(
-            title="Hello!", steps=[
+            chain_of_thought="Just use ChatAgent",
+            title="Hello!",
+            steps=[
                 StepModel(
                     actor="Invalid",
                     instruction="Say Hello!",
