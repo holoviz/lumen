@@ -74,8 +74,7 @@ async def test_planner_empty_plan(llm):
     plan_model = make_plan_model(["ChatAgent"], [])
 
     llm.set_responses([
-        Reasoning(chain_of_thought="Just use ChatAgent"),
-        plan_model(title="Hello!", steps=[])
+        plan_model(chain_of_thought="Say Hello", title="Hello!", steps=[])
     ])
 
     planner = Planner(llm=llm)
@@ -100,8 +99,10 @@ async def test_planner_simple_plan(llm):
     (StepModel,) = get_args(PlanModel.__annotations__['steps'])
 
     llm.set_responses([
-        Reasoning(chain_of_thought="Just use ChatAgent"),
-        PlanModel(title="Hello!", steps=[
+        PlanModel(
+            chain_of_thought="Just use ChatAgent",
+            title="Hello!",
+            steps=[
             StepModel(
                 actor="ChatAgent",
                 instruction="Say Hello!",
