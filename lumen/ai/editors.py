@@ -469,7 +469,7 @@ class AnalysisOutput(LumenEditor):
     def _render_editor(self):
         controls = self.analysis.controls(self.context)
         if controls is None and self.analysis.autorun:
-            return super()._render_editor()
+            return None
 
         if self.analysis._run_button:
             run_button = self.analysis._run_button
