@@ -2618,18 +2618,27 @@ class ExplorerUI(UI):
             return
 
         # On error we have to sync the conversation, unwatch the plan,
-        # and remove the exploration if it was newly created
-        replan_button = Button(
-            label="Replan", icon="alt_route", on_click=lambda _: state.execute(partial(self._replan, plan, prev, partial_plan)),
-            description="Replan and generate a new execution strategy"
-        )
-        rerun_button = Button(
-            label="Rerun", icon="autorenew", on_click=lambda _: state.execute(partial(self._execute_plan, plan, rerun=True)),
-            description="Rerun with the same plan and context"
-        )
+        # and remove the exploration if it was newly create
         last_message = self.interface.objects[-1]
         footer_objects = last_message.footer_objects or []
-        last_message.footer_objects = footer_objects + [rerun_button, replan_button]
+        buttons = []
+        if is_new:
+            replan_button = Button(
+                label="Replan", icon="alt_route", on_click=lambda _: state.execute(partial(self._replan, plan, prev, partial_plan)),
+                description="Replan and generate a new execution strategy"
+            )
+            rerun_button = Button(
+                label="Rerun", icon="autorenew", on_click=lambda _: state.execute(partial(self._execute_plan, plan, rerun=True)),
+                description="Rerun with the same plan and context"
+            )
+            buttons = [rerun_button, replan_button]
+        elif not any(isinstance(fo, Button) and fo.label == "Retry" for fo in footer_objects):
+            retry_button = Button(
+                label="Retry", icon="replay", on_click=lambda _: state.execute(partial(self._execute_plan, plan, rerun=True)),
+                description="Try re-running failed steps"
+            )
+            buttons = [retry_button]
+        last_message.footer_objects = footer_objects + buttons
         if exploration.parent:
             exploration.parent.conversation = exploration.conversation
 

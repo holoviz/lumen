@@ -127,7 +127,7 @@ class ValidationAgent(Agent):
             for i, suggestion in enumerate(result.suggestions, 1):
                 response_parts.append(f"{i}. {suggestion}")
 
-        button = Button(name="Rerun", on_click=on_click)
+        button = Button(icon="autorenew", label="Rerun", on_click=on_click)
         footer_objects = [button]
         formatted_response = "\n\n".join(response_parts)
         if interface is not None:
