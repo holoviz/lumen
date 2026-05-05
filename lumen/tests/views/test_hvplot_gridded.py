@@ -7,6 +7,7 @@ import pytest
 
 from lumen.pipeline import Pipeline
 from lumen.sources.base import InMemorySource
+from lumen.views import base as views_base
 from lumen.views.base import hvPlotView
 
 # ---- Fixtures ----
@@ -144,6 +145,26 @@ def test_hvplot_image_from_longform_df(gridded_pipeline):
     assert isinstance(plot, hv.Image)
 
 
+def test_hvplot_quadmesh_raises_on_duplicate_rows(gridded_df):
+    """Duplicate (y, x) rows + a gridded kind must surface a clear ValueError,
+    not hvPlot's opaque NotImplementedError on pandas."""
+    pytest.importorskip("xarray")
+    dup = pd.concat([gridded_df, gridded_df.iloc[[0]]], ignore_index=True)
+    source = InMemorySource(tables={"grid": dup})
+    pipeline = Pipeline(source=source, table="grid")
+    view = hvPlotView(pipeline=pipeline, kind="quadmesh", x="lon", y="lat", z="air")
+    with pytest.raises(ValueError, match="duplicate"):
+        view.get_plot(view.get_data())
+
+
+def test_hvplot_quadmesh_raises_when_z_missing(gridded_pipeline):
+    """A gridded kind without z= must surface a clear ValueError."""
+    pytest.importorskip("xarray")
+    view = hvPlotView(pipeline=gridded_pipeline, kind="quadmesh", x="lon", y="lat")
+    with pytest.raises(ValueError, match="x, y, and z must all be set"):
+        view.get_plot(view.get_data())
+
+
 def test_hvplot_gridded_size_guard_raises(gridded_pipeline):
     """Pivoting a grid larger than _GRIDDED_MAX_CELLS raises ValueError."""
     pytest.importorskip("xarray")
@@ -159,11 +180,12 @@ def test_hvplot_gridded_size_guard_raises(gridded_pipeline):
         view.get_plot(view.get_data())
 
 
-def test_hvplot_gridded_skips_pivot_if_xarray_unavailable(gridded_pipeline):
+def test_hvplot_gridded_skips_pivot_if_xarray_unavailable(gridded_pipeline, monkeypatch):
     """If hvplot.xarray failed to import, _to_gridded returns the df unchanged.
 
     Build a view with a non-gridded kind so construction doesn't trigger the
-    quadmesh render path, then flip the flag and call _to_gridded directly.
+    quadmesh render path, then flip the module-level flag and call
+    _to_gridded directly.
     """
     view = hvPlotView(
         pipeline=gridded_pipeline,
@@ -172,7 +194,7 @@ def test_hvplot_gridded_skips_pivot_if_xarray_unavailable(gridded_pipeline):
         y="lat",
         z="air",
     )
-    view._hvplot_xarray_available = False
+    monkeypatch.setattr(views_base, "_HVPLOT_XARRAY_AVAILABLE", False)
     result = view._to_gridded(view.get_data())
     assert isinstance(result, pd.DataFrame), "expected df fallback when xarray unavailable"
 
