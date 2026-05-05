@@ -14,9 +14,9 @@ class SourceResult(param.Parameterized):
     Use the factory methods for common patterns.
     """
 
-    sources = param.List(default=[], doc="List of data sources loaded.")
+    sources = param.List(default=[], doc="List of data sources loaded. Each source may contain multiple tables in source.tables.")
 
-    table = param.String(default=None, allow_None=True, doc="Primary table name.")
+    table = param.String(default=None, allow_None=True, doc="Primary table name for display/default selection. All tables are in source.tables.")
 
     metadata = param.Dict(default={}, doc="Additional metadata about the loaded data.")
 
@@ -51,7 +51,10 @@ class SourceResult(param.Parameterized):
         table: str | None = None,
         message: str | None = None,
     ) -> SourceResult:
-        """Create a result from an existing source."""
+        """Create a result from an existing source.
+
+        All tables in source.tables are available; `table` is the primary/default.
+        """
         return cls(sources=[source], table=table, message=message)
 
     @classmethod

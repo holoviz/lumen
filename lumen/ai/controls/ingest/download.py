@@ -346,6 +346,7 @@ class DownloadSourceControls(FileSourceControls):
         if not tables_loaded and doc_added:
             return SourceResult.from_document(". ".join(messages))
 
+        # All tables are in source.tables; first_table is for default selection
         first_table = next(iter(source.tables), None)
         return SourceResult.from_source(source, table=first_table, message=". ".join(messages))
 

@@ -167,6 +167,7 @@ class URLSourceControls(ParametricSourceControls):
         else:
             message = f"Loaded {len(tables_loaded)} tables from '{filename}': {', '.join(tables_loaded)}"
 
+        # All tables are in source.tables; first_table is for default selection
         return SourceResult.from_source(
             source,
             table=first_table,
