@@ -484,8 +484,8 @@ class TestSourceResult:
 class TestDownloadSourceControlsDocumentExtraction:
     """Tests for HTML document text extraction in DownloadSourceControls."""
 
-    def test_extract_html_text_removes_scripts_and_styles(self):
-        """_extract_html_text removes script and style elements."""
+    def test_extract_metadata_content_removes_scripts_and_styles(self):
+        """_extract_metadata_content removes script and style elements from HTML."""
         controls = DownloadSourceControls()
         html = b"""
         <html>
@@ -498,18 +498,18 @@ class TestDownloadSourceControlsDocumentExtraction:
         </body>
         </html>
         """
-        text = controls._extract_html_text(html)
+        text = controls._extract_metadata_content(io.BytesIO(html), ".html")
 
         assert "Important content" in text
         assert "alert" not in text
         assert "color: red" not in text
 
-    def test_extract_html_text_handles_bytes(self):
-        """_extract_html_text handles bytes input."""
+    def test_extract_metadata_content_handles_bytes(self):
+        """_extract_metadata_content handles bytes input for HTML."""
         controls = DownloadSourceControls()
         html = b"<html><body><p>Test content</p></body></html>"
 
-        text = controls._extract_html_text(html)
+        text = controls._extract_metadata_content(io.BytesIO(html), ".html")
 
         assert "Test content" in text
 
