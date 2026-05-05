@@ -22,6 +22,8 @@ class SourceResult(param.Parameterized):
 
     message = param.String(default=None, allow_None=True, doc="Status message to display.")
 
+    document_only = param.Boolean(default=False, doc="True if only a document was indexed (no tables).")
+
     @classmethod
     def from_dataframe(
         cls,
@@ -56,3 +58,15 @@ class SourceResult(param.Parameterized):
     def empty(cls, message: str = "No data loaded") -> SourceResult:
         """Return an empty result with an optional message."""
         return cls(message=message)
+
+    @classmethod
+    def from_document(cls, message: str) -> SourceResult:
+        """Return a result indicating only a document was indexed (no tables)."""
+        return cls(message=message, document_only=True)
+
+    def __str__(self) -> str:
+        """Return the message for LLM tool responses."""
+        return self.message or "No data loaded"
+
+    def __repr__(self) -> str:
+        return self.__str__()

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import io
+import json
 import re
 
 from urllib.parse import parse_qs, urlparse
@@ -38,8 +39,16 @@ def format_bytes(bytes_size: int) -> str:
 # Filename extraction
 # ─────────────────────────────────────────────────────────────────────────────
 
-def extract_filename_from_url(url: str) -> str:
-    """Extract a filename from a URL, falling back to a hash-based name."""
+def extract_filename_from_url(url: str) -> tuple[str, bool]:
+    """
+    Extract a filename from a URL, falling back to a hash-based name.
+
+    Returns
+    -------
+    tuple[str, bool]
+        ``(filename, extension_was_guessed)`` — second value is True if we
+        defaulted to an extension rather than finding one in the URL.
+    """
     parsed = urlparse(url)
     filename = parsed.path.split("/")[-1] if parsed.path else "downloaded_file"
 
@@ -54,14 +63,18 @@ def extract_filename_from_url(url: str) -> str:
         if format_param and format_param.lower() in _VALID_EXTENSIONS:
             base_name = filename.rsplit(".", 1)[0] if "." in filename else filename
             filename = f"{base_name}.{format_param.lower()}"
+            return filename, False
 
     if not filename or "." not in filename:
-        filename = f"data_{abs(hash(url)) % DownloadConfig.DEFAULT_HASH_MODULO}.json"
+        filename = f"data_{abs(hash(url)) % DownloadConfig.DEFAULT_HASH_MODULO}"
+        return filename, True
 
-    return filename
+    return filename, False
 
 
-def extract_filename_from_headers(response_headers: dict, default_filename: str) -> str:
+def extract_filename_from_headers(
+    response_headers: dict, default_filename: str, extension_was_guessed: bool = False
+) -> str:
     """Refine a filename using Content-Disposition or Content-Type headers."""
     if "content-disposition" in response_headers:
         cd = response_headers["content-disposition"]
@@ -71,7 +84,8 @@ def extract_filename_from_headers(response_headers: dict, default_filename: str)
 
     current_ext = default_filename.rsplit(".", 1)[-1].lower() if "." in default_filename else ""
 
-    if current_ext in _VALID_EXTENSIONS:
+    # Only trust URL extension if it wasn't guessed
+    if current_ext in _VALID_EXTENSIONS and not extension_was_guessed:
         return default_filename
 
     content_type_raw = response_headers.get("content-type", "")
@@ -113,6 +127,76 @@ def serialize_param_value(val):
     if isinstance(val, datetime.date):
         return val.isoformat()
     return val
+
+
+def read_html_tables(content: str | bytes, base_alias: str) -> dict[str, pd.DataFrame]:
+    """
+    Parse HTML content and return all tables as a dict of {table_name: DataFrame}.
+
+    Parameters
+    ----------
+    content : str | bytes
+        HTML content to parse.
+    base_alias : str
+        Base name for tables. Single table uses this directly; multiple tables
+        get suffixed as ``{base_alias}_table0``, ``{base_alias}_table1``, etc.
+
+    Returns
+    -------
+    dict[str, pd.DataFrame]
+        Mapping of table names to DataFrames.
+
+    Raises
+    ------
+    ValueError
+        If no HTML tables are found.
+    """
+    if isinstance(content, bytes):
+        content = content.decode("utf-8")
+    tables = pd.read_html(io.StringIO(content))
+    if not tables:
+        raise ValueError("No HTML tables found")
+    if len(tables) == 1:
+        return {base_alias: tables[0]}
+    return {f"{base_alias}_table{i}": df for i, df in enumerate(tables)}
+
+
+def read_json_to_dataframe(content: str | bytes) -> pd.DataFrame:
+    """
+    Parse JSON content into a DataFrame, handling common API response patterns.
+
+    Supports:
+    - JSON arrays of objects
+    - JSON objects with nested data keys (data, records, rows, items, results)
+    - Single JSON objects (converted to single-row DataFrame)
+
+    Parameters
+    ----------
+    content : str | bytes
+        JSON content to parse.
+
+    Returns
+    -------
+    pd.DataFrame
+        Parsed DataFrame.
+
+    Raises
+    ------
+    ValueError
+        If JSON structure is unsupported.
+    """
+    if isinstance(content, bytes):
+        content = content.decode("utf-8")
+    data = json.loads(content)
+
+    if isinstance(data, list):
+        return pd.json_normalize(data)
+    if isinstance(data, dict):
+        for key in ("data", "records", "rows", "items", "results"):
+            if key in data and isinstance(data[key], list):
+                return pd.json_normalize(data[key])
+        return pd.DataFrame([data])
+    raise ValueError(f"Unsupported JSON root type: {type(data).__name__}")
 
 
 def normalize_json_response(data) -> pd.DataFrame:
@@ -215,14 +299,14 @@ async def download_file(
         On failure: ``(None, None, error_string)``
     """
     try:
-        filename = extract_filename_from_url(url)
+        filename, extension_was_guessed = extract_filename_from_url(url)
 
         async with httpx.AsyncClient(timeout=DownloadConfig.TIMEOUT_SECONDS) as client:
             async with client.stream("GET", url) as response:
                 response.raise_for_status()
 
                 filename = extract_filename_from_headers(
-                    dict(response.headers), filename,
+                    dict(response.headers), filename, extension_was_guessed,
                 )
                 content_length = response.headers.get("content-length")
 

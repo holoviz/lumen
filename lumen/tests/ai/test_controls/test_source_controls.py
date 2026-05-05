@@ -18,7 +18,12 @@ except ModuleNotFoundError:
 from lumen.ai.controls import (
     CodeSourceControls, SourceResult, URLSourceControls,
 )
+from lumen.ai.controls.ingest.download import DownloadSourceControls
 from lumen.ai.controls.ingest.parametric import ParametricSourceControls
+from lumen.ai.controls.ingest.utils import (
+    read_html_tables, read_json_to_dataframe,
+)
+from lumen.sources.duckdb import DuckDBSource
 
 from .conftest import (
     async_fetch_data, raises_error, returns_list_of_dicts, returns_none,
@@ -286,8 +291,16 @@ class TestURLSourceControlsFetchData:
                 "x",
                 [10, 20],
             ),
+            (
+                "page.html",
+                b"<html><body><table><tr><th>col1</th><th>col2</th></tr><tr><td>a</td><td>1</td></tr><tr><td>b</td><td>2</td></tr></table></body></html>",
+                "page",
+                2,
+                "col1",
+                ["a", "b"],
+            ),
         ],
-        ids=["csv", "json_array", "json_nested_data_key"],
+        ids=["csv", "json_array", "json_nested_data_key", "html_table"],
     )
     async def test_file_format_parsing(
         self, url_controls, filename, content, expected_table, expected_len, expected_col, expected_values
@@ -358,8 +371,8 @@ class TestURLSourceControlsFetchData:
         assert expected_message_contains in result.message.lower()
 
 
-class TestURLSourceControlsJSONParsing:
-    """Tests for _read_json_content static method."""
+class TestJSONParsing:
+    """Tests for read_json_to_dataframe utility."""
 
     @pytest.mark.parametrize(
         "json_data,expected_len,expected_col,expected_values",
@@ -374,11 +387,144 @@ class TestURLSourceControlsJSONParsing:
     )
     def test_json_structures(self, json_data, expected_len, expected_col, expected_values):
         """Various JSON structures parsed to DataFrame correctly."""
-        file_obj = io.BytesIO(json.dumps(json_data).encode())
-        df = URLSourceControls._read_json_content(file_obj)
+        content = json.dumps(json_data).encode()
+        df = read_json_to_dataframe(content)
 
         assert len(df) == expected_len
         assert list(df[expected_col]) == expected_values
+
+
+class TestHTMLParsing:
+    """Tests for read_html_tables utility."""
+
+    @pytest.mark.parametrize(
+        "html_content,expected_len,expected_col,expected_values",
+        [
+            (
+                "<table><tr><th>name</th></tr><tr><td>alice</td></tr><tr><td>bob</td></tr></table>",
+                2,
+                "name",
+                ["alice", "bob"],
+            ),
+            (
+                "<html><body><table><tr><th>x</th><th>y</th></tr><tr><td>1</td><td>2</td></tr></table></body></html>",
+                1,
+                "x",
+                [1],
+            ),
+        ],
+        ids=["simple_table", "full_html_doc"],
+    )
+    def test_html_table_structures(self, html_content, expected_len, expected_col, expected_values):
+        """Various HTML table structures parsed to DataFrame correctly."""
+        result = read_html_tables(html_content, "data")
+
+        assert len(result) == 1
+        df = result["data"]
+        assert len(df) == expected_len
+        assert list(df[expected_col]) == expected_values
+
+    def test_html_multiple_tables_returns_all(self):
+        """When multiple tables exist, returns all as separate tables."""
+        html = """
+        <html>
+        <table><tr><th>small</th></tr><tr><td>1</td></tr></table>
+        <table><tr><th>large</th></tr><tr><td>a</td></tr><tr><td>b</td></tr><tr><td>c</td></tr></table>
+        </html>
+        """
+        result = read_html_tables(html, "page")
+
+        assert len(result) == 2
+        assert "page_table0" in result
+        assert "page_table1" in result
+        assert len(result["page_table0"]) == 1
+        assert len(result["page_table1"]) == 3
+
+    def test_html_no_tables_raises(self):
+        """HTML with no tables raises an error."""
+        html = "<html><body><p>No tables here</p></body></html>"
+
+        with pytest.raises((ValueError, ImportError)):
+            read_html_tables(html, "data")
+
+
+class TestSourceResult:
+    """Tests for SourceResult factory methods and document handling."""
+
+    def test_from_document_sets_document_only_flag(self):
+        """from_document() creates result with document_only=True."""
+        from lumen.ai.controls.ingest.result import SourceResult
+
+        result = SourceResult.from_document("Indexed content as 'page'")
+
+        assert result.document_only is True
+        assert result.sources == []
+        assert "Indexed" in result.message
+
+    def test_from_source_has_document_only_false(self):
+        """from_source() creates result with document_only=False."""
+        from lumen.ai.controls.ingest.result import SourceResult
+        from lumen.sources.duckdb import DuckDBSource
+
+        source = DuckDBSource(uri=":memory:", ephemeral=True, tables={})
+        result = SourceResult.from_source(source, table="test", message="Loaded data")
+
+        assert result.document_only is False
+        assert len(result.sources) == 1
+
+    def test_empty_result_has_document_only_false(self):
+        """empty() creates result with document_only=False."""
+        from lumen.ai.controls.ingest.result import SourceResult
+
+        result = SourceResult.empty("No data found")
+
+        assert result.document_only is False
+        assert result.sources == []
+
+    def test_str_returns_message(self):
+        """__str__ returns the message for LLM responses."""
+        from lumen.ai.controls.ingest.result import SourceResult
+
+        result = SourceResult.from_document("Document indexed successfully")
+
+        assert str(result) == "Document indexed successfully"
+
+
+class TestDownloadSourceControlsDocumentExtraction:
+    """Tests for HTML document text extraction in DownloadSourceControls."""
+
+    def test_extract_html_text_removes_scripts_and_styles(self):
+        """_extract_html_text removes script and style elements."""
+        from lumen.ai.controls.ingest.download import DownloadSourceControls
+
+        controls = DownloadSourceControls()
+        html = b"""
+        <html>
+        <head><style>body { color: red; }</style></head>
+        <body>
+        <script>alert('hello');</script>
+        <p>Important content here</p>
+        <nav>Navigation links</nav>
+        <footer>Footer text</footer>
+        </body>
+        </html>
+        """
+        text = controls._extract_html_text(html)
+
+        assert "Important content" in text
+        assert "alert" not in text
+        assert "color: red" not in text
+
+    def test_extract_html_text_handles_bytes(self):
+        """_extract_html_text handles bytes input."""
+        from lumen.ai.controls.ingest.download import DownloadSourceControls
+
+        controls = DownloadSourceControls()
+        html = b"<html><body><p>Test content</p></body></html>"
+
+        text = controls._extract_html_text(html)
+
+        assert "Test content" in text
 
 
 # ─────────────────────────────────────────────────────────────────────────────

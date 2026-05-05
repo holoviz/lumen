@@ -9,7 +9,7 @@ XARRAY_EXTENSIONS = (
     "grib", "grib2", "grb", "grb2",
 )
 
-TABLE_EXTENSIONS = ("csv", "parquet", "parq", "json", "xlsx", "geojson", "wkt", "zip", *XARRAY_EXTENSIONS)
+TABLE_EXTENSIONS = ("csv", "parquet", "parq", "json", "xlsx", "geojson", "wkt", "zip", "html", "htm", *XARRAY_EXTENSIONS)
 
 METADATA_EXTENSIONS = ("md", "txt", "yaml", "yml", "json", "pdf", "docx", "doc", "pptx", "ppt")
 METADATA_FILENAME_PATTERNS = ("_metadata", "metadata_", "readme", "schema")
@@ -32,6 +32,7 @@ CONTENT_TYPE_TO_EXTENSION: dict[str, str] = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
     "application/vnd.ms-excel": "xlsx",
     "text/plain": "csv",
+    "text/html": "html",
 }
 
 

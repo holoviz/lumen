@@ -17,6 +17,7 @@ from ...utils import log_debug
 from .base import BaseSourceControls
 from .constants import TABLE_EXTENSIONS
 from .file_row import UploadedFileRow
+from .utils import read_html_tables
 
 
 class FileSourceControls(BaseSourceControls):
@@ -156,6 +157,8 @@ class FileSourceControls(BaseSourceControls):
                 df = pd.read_excel(file, sheet_name=card.sheet)
             elif extension.endswith(("geojson", "wkt", "zip")):
                 df, conversion, params = self._read_geo_file(file, extension, table, conn)
+            elif extension.endswith(("html", "htm")):
+                return self._add_html_tables(duckdb_source, file, card)
             else:
                 self._error_placeholder.object += f"\n⚠️ Could not convert {filename!r}: unsupported format."
                 self._error_placeholder.visible = True
@@ -254,6 +257,52 @@ class FileSourceControls(BaseSourceControls):
         conversion = f"CREATE TEMP TABLE {table} AS SELECT {cols}, ST_GeomFromWKB(geometry) as geometry FROM {table}_temp"
 
         return df, conversion, params
+
+    def _add_html_tables(
+        self,
+        duckdb_source: DuckDBSource,
+        file: io.BytesIO | io.StringIO,
+        card: UploadedFileRow,
+    ) -> int:
+        """Read all HTML tables from file and add each as a separate table."""
+        conn = duckdb_source._connection
+        filename = f"{card.filename}.{card.extension}"
+
+        file.seek(0)
+        content = file.read()
+
+        try:
+            tables = read_html_tables(content, card.alias)
+        except Exception as e:
+            self._error_placeholder.object += f"\n⚠️ Error processing {filename!r}: {e}"
+            self._error_placeholder.visible = True
+            return 0
+
+        added = 0
+        first_table = None
+        for table_name, df in tables.items():
+            if df.empty:
+                continue
+
+            sql_expr = f"SELECT * FROM {table_name}"
+
+            for col in df.columns:
+                if isinstance(df[col].dtype, pd.StringDtype):
+                    df[col] = df[col].astype(object)
+
+            conn.from_df(df).to_view(table_name)
+            duckdb_source.tables[table_name] = sql_expr
+            if first_table is None:
+                first_table = table_name
+            added += 1
+
+        if added > 0:
+            self._register_source_output(duckdb_source)
+            self.outputs["table"] = first_table
+            self.param.trigger("outputs")
+            self._last_table = first_table
+
+        return added
 
     # ──────────────────────────────────────────────────────────────────────────
     # Metadata handling
