@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import io
 import pathlib
-import re
 
 from urllib.parse import urlparse
 
@@ -326,7 +325,7 @@ class DownloadSourceControls(FileSourceControls):
         # For HTML, also extract text content as a document
         doc_added = False
         if is_html and self.source_catalog:
-            text_content = self._extract_html_text(content)
+            text_content = self._extract_metadata_content(io.BytesIO(content), ".html")
             if text_content and len(text_content.strip()) > 100:
                 doc_added = await self._add_document(url, alias, text_content)
 
@@ -349,23 +348,6 @@ class DownloadSourceControls(FileSourceControls):
 
         first_table = next(iter(source.tables), None)
         return SourceResult.from_source(source, table=first_table, message=". ".join(messages))
-
-    def _extract_html_text(self, content: bytes) -> str:
-        """Extract readable text from HTML content."""
-        try:
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(content, "html.parser")
-            # Remove script and style elements
-            for element in soup(["script", "style", "nav", "footer", "header"]):
-                element.decompose()
-            return soup.get_text(separator="\n", strip=True)
-        except ImportError:
-            # Fallback: basic tag stripping
-            text = content.decode("utf-8", errors="replace")
-            text = re.sub(r"<script[^>]*>.*?</script>", "", text, flags=re.DOTALL | re.IGNORECASE)
-            text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE)
-            text = re.sub(r"<[^>]+>", " ", text)
-            return re.sub(r"\s+", " ", text).strip()
 
     async def _add_document(self, url: str, alias: str, text_content: str) -> bool:
         """Add text content as a document to the vector store."""

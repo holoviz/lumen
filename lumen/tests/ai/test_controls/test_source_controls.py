@@ -453,8 +453,6 @@ class TestSourceResult:
 
     def test_from_document_sets_document_only_flag(self):
         """from_document() creates result with document_only=True."""
-        from lumen.ai.controls.ingest.result import SourceResult
-
         result = SourceResult.from_document("Indexed content as 'page'")
 
         assert result.document_only is True
@@ -463,9 +461,6 @@ class TestSourceResult:
 
     def test_from_source_has_document_only_false(self):
         """from_source() creates result with document_only=False."""
-        from lumen.ai.controls.ingest.result import SourceResult
-        from lumen.sources.duckdb import DuckDBSource
-
         source = DuckDBSource(uri=":memory:", ephemeral=True, tables={})
         result = SourceResult.from_source(source, table="test", message="Loaded data")
 
@@ -474,8 +469,6 @@ class TestSourceResult:
 
     def test_empty_result_has_document_only_false(self):
         """empty() creates result with document_only=False."""
-        from lumen.ai.controls.ingest.result import SourceResult
-
         result = SourceResult.empty("No data found")
 
         assert result.document_only is False
@@ -483,8 +476,6 @@ class TestSourceResult:
 
     def test_str_returns_message(self):
         """__str__ returns the message for LLM responses."""
-        from lumen.ai.controls.ingest.result import SourceResult
-
         result = SourceResult.from_document("Document indexed successfully")
 
         assert str(result) == "Document indexed successfully"
@@ -495,8 +486,6 @@ class TestDownloadSourceControlsDocumentExtraction:
 
     def test_extract_html_text_removes_scripts_and_styles(self):
         """_extract_html_text removes script and style elements."""
-        from lumen.ai.controls.ingest.download import DownloadSourceControls
-
         controls = DownloadSourceControls()
         html = b"""
         <html>
@@ -517,8 +506,6 @@ class TestDownloadSourceControlsDocumentExtraction:
 
     def test_extract_html_text_handles_bytes(self):
         """_extract_html_text handles bytes input."""
-        from lumen.ai.controls.ingest.download import DownloadSourceControls
-
         controls = DownloadSourceControls()
         html = b"<html><body><p>Test content</p></body></html>"
 
