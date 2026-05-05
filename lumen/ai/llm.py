@@ -926,15 +926,18 @@ class Llm(param.Parameterized):
                     ):
                         yield chunk
 
-    async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
+    def _log_messages(self, messages: list[Message]):
         log_debug(f"Input messages: \033[95m{len(messages)} messages\033[0m including system")
         previous_role = None
         for i, message in enumerate(messages):
             role = message["role"]
             if role == "system":
                 continue
-            role_char = "u" if role == "user" else "a"
-            log_debug(f"Message \033[95m{i} ({role_char})\033[0m: {format_msg_content(message['content'])}")
+            content = message.get("content") if isinstance(message, dict) else None
+            if not content and "tool_calls" in message:
+                content = truncate_string(json.dumps(message["tool_calls"], indent=2), max_length=1000)
+            role_char = role[0]
+            log_debug(f"Message \033[95m{i} ({role_char})\033[0m: {format_msg_content(content)}")
             if previous_role == role:
                 log_debug(
                     "\033[91mWARNING: Two consecutive messages from the same role; "
@@ -942,6 +945,8 @@ class Llm(param.Parameterized):
                 )
             previous_role = role
 
+    async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
+        self._log_messages(messages)
         response_model = kwargs.get("response_model")
         client = await self.get_client(model_spec, **kwargs)
         if not response_model:
@@ -1358,29 +1363,18 @@ class OpenAI(Llm, OpenAIMixin):
         return partial(client_callable.func, *client_callable.args, timeout=self.timeout, **client_callable.keywords)
 
     async def run_client(self, model_spec: str | dict, messages: list[Message] | list[dict[str, Any]], **kwargs):
-        if self.api == "responses":
-            log_debug(f"Input messages: \033[95m{len(messages)} messages\033[0m including system")
-            for i, message in enumerate(messages):
-                role = message.get("role") if isinstance(message, dict) else None
-                content = message.get("content") if isinstance(message, dict) else None
-                if role == "system":
-                    continue
-                if role in ("user", "assistant", "tool"):
-                    role_char = "u" if role == "user" else "a"
-                    log_debug(f"Message \033[95m{i} ({role_char})\033[0m: {format_msg_content(content)}")
-                else:
-                    item_type = message.get("type") if isinstance(message, dict) else type(message).__name__
-                    log_debug(f"Message \033[95m{i}\033[0m: [{item_type}] {truncate_string(str(message), max_length=2000)}")
+        if self.api == "chat_completions":
+            return await super().run_client(model_spec, messages, **kwargs)
 
-            if kwargs.get("tools"):
-                kwargs = dict(kwargs)
-                kwargs["tools"] = self._transform_responses_tools(kwargs.get("tools"))
-            client = await self.get_client(model_spec, **kwargs)
-            result = await client(input=messages, **kwargs)
-            log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
-            return result
+        self._log_messages(messages)
+        if kwargs.get("tools"):
+            kwargs = dict(kwargs)
+            kwargs["tools"] = self._transform_responses_tools(kwargs.get("tools"))
+        client = await self.get_client(model_spec, **kwargs)
+        result = await client(input=messages, **kwargs)
+        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
+        return result
 
-        return await super().run_client(model_spec, messages, **kwargs)
 
 
 class AzureOpenAI(Llm, AzureOpenAIMixin):
