@@ -254,6 +254,7 @@ def read_file_to_dataframes(
     FileReadResult | None
     """
     file_obj.seek(0)
+    sheet = read_kwargs.pop("sheet_name", None)
 
     # ── single-DataFrame formats ──────────────────────────────────────────
     if extension == "csv":
@@ -271,7 +272,6 @@ def read_file_to_dataframes(
 
     # ── Excel (single sheet or all sheets) ────────────────────────────────
     if extension == "xlsx":
-        sheet = read_kwargs.pop("sheet_name", None)
         if sheet is not None:
             df = pd.read_excel(file_obj, sheet_name=sheet, **read_kwargs)
             return FileReadResult(tables={alias: df})
