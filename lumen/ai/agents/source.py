@@ -191,11 +191,12 @@ class SourceAgent(Agent):
         default=[
             "Use when no existing data source can answer the query and external source controls are configured",
             "Use when the user asks for data from an external API or service",
-            "Use when the user provides a URL to read, fetch, summarize, or extract data from",
+            "Use when the user provides a URL to read, fetch, discuss, or extract content from — the content must be fetched before any other agent can address it",
             "Use when the loaded data does not cover the requested scope (e.g. user asks for 'whole month' but data summary only shows a week)",
             "Prefer over metadata discovery when no data sources are loaded but source controls exist",
-            "This agent only fetches and registers data — it never presents results to the user; always follow with a presentation or query step",
-            "Output is queryable tabular data — enables filtering, aggregation, joins, and transformation by downstream agents",
+            "This agent fetches and registers data or indexes page content as documents — always follow with a presentation, query, or chat step",
+            "For HTML pages, this agent extracts both tabular data and page text (indexed as a searchable document for ChatAgent)",
+            "Output is queryable tabular data and/or indexed documents — enables filtering, aggregation, joins, transformation, and conversation by downstream agents",
             "NOT for listing configured external source actions or answering 'what data is available' before a concrete dataset request",
             "NOT when the loaded data already covers the requested scope and user just wants to query/visualize it",
         ]
@@ -206,7 +207,8 @@ class SourceAgent(Agent):
         Fetches data from configured external sources (APIs, Python callables,
         URL templates).  Discovers relevant endpoints, fills parameters via
         LLM, executes the call, and registers the resulting DataFrame for
-        downstream querying and visualization."""
+        downstream querying and visualization.  For HTML pages, also indexes
+        page text as a searchable document for conversational agents."""
     )
 
     prompts = param.Dict(
