@@ -17,6 +17,9 @@ VALID = SQL implements the user's intent correctly
 {% if memory.get('view') %}
 Analyze if the generated view and responses match the user's request.
 {% endif %}
+{% if memory.get('listing') %}
+A listing of items was displayed to the user. VALID if it matches what they asked to see.
+{% endif %}
 {% if chat_history is defined and chat_history %}
 Analyze if the assistant's response addresses the user's request given the context it had.
 VALID = response uses the available context to answer; do not penalize for missing data that was never loaded or available.
@@ -84,6 +87,10 @@ Current context contains the following keys: {{ ", ".join(memory) }}
 {%- if chat_history is defined and chat_history %}
 Chat History:
 {{ chat_history }}
+{%- endif -%}
+{%- if memory.get('listing') and 'listing' not in previous_keys %}
+Listing displayed:
+{{ memory['listing'] }}
 {%- endif -%}
 {%- if memory.get('source_actions') %}
 Configured external data sources:
