@@ -337,8 +337,7 @@ def retry_llm_output(retries=3, sleep=1):
                         else:
                             errors.append(
                                 f"{error_str}\n"
-                                "(Same error repeated — try a fundamentally different approach, "
-                                "e.g. use exploration tools to verify filter values exist.)"
+                                "(Same error repeated — try a fundamentally different approach)."
                             )
                         traceback.print_exc()
                         if sleep:
@@ -374,8 +373,7 @@ def retry_llm_output(retries=3, sleep=1):
                         else:
                             errors.append(
                                 f"{error_str}\n"
-                                "(Same error repeated — try a fundamentally different approach, "
-                                "e.g. use exploration tools to verify filter values exist.)"
+                                "(Same error repeated — try a fundamentally different approach)."
                             )
                         traceback.print_exc()
                         if sleep:
