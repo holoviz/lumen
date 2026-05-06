@@ -49,7 +49,7 @@ Requires the `kagglehub` package:
 pip install kagglehub
 ```
 
-On first use, `kagglehub` will prompt for Kaggle API credentials (or reads them from `~/.kaggle/kaggle.json`). If `kagglehub` is not installed, Kaggle URL support is silently disabled.
+If `kagglehub` is not installed, Kaggle URL support is silently disabled.
 
 ### Creating custom controls
 
