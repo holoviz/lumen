@@ -617,10 +617,19 @@ def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool
     size = df.size
     shape = df.shape
     if shape[0] == 1 or size < 10 or (shape[1] > 8 and size < 100):
-        # df -> dict -> YAML
-        return yaml.dump(df.to_dict(orient='records'), default_flow_style=False, allow_unicode=True, sort_keys=False)
+        records = df.to_dict(orient='records')
+        result = {
+            "data_shape": [int(shape[0]), int(shape[1])],
+            "is_sampled": False,
+            "records": records,
+        }
+        return yaml.dump(result, default_flow_style=False, allow_unicode=True, sort_keys=False)
     if size < 100:
-        return df.to_markdown(index=False)
+        header = yaml.dump(
+            {"data_shape": [int(shape[0]), int(shape[1])], "is_sampled": False},
+            default_flow_style=False, allow_unicode=True, sort_keys=False,
+        )
+        return header + df.to_markdown(index=False)
 
     is_sampled = False
     if shape[0] > 5000:
@@ -671,6 +680,25 @@ def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool
         except AttributeError:
             pass
 
+    # Low-cardinality integer columns (e.g. status codes, ratings)
+    for col in df.select_dtypes(include=["int64"]).columns:
+        nunique = df[col].nunique()
+        if nunique <= 10:
+            if col not in df_describe_dict:
+                df_describe_dict[col] = {}
+            unique_values = sorted(df[col].dropna().unique().tolist())
+            temp_spec = {"enum": unique_values}
+            updated_spec, _ = process_enums(
+                temp_spec,
+                num_cols=len(df.columns),
+                limit=enum_limit,
+                include_enum=True,
+                reduce_enums=reduce_enums,
+            )
+            if "enum" in updated_spec:
+                df_describe_dict[col]["enum"] = updated_spec["enum"]
+            df_describe_dict[col]["nunique"] = int(nunique)
+
     for col in df.columns:
         if col not in df_describe_dict:
             df_describe_dict[col] = {}
@@ -692,22 +720,46 @@ def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool
     for col in df.select_dtypes(include=["float64"]).columns:
         df[col] = df[col].apply(format_float)
 
-    # Add head and tail samples (2 row each)
+    # === Detect structural patterns ===
+    n_rows, n_cols = shape
+    structure = {}
+
+    # Dimension vs measure classification
+    dimensions, measures = [], []
+    for col in df.columns:
+        dtype = df[col].dtype
+        nunique = df[col].nunique()
+        ratio = nunique / n_rows if n_rows else 0
+        if ratio <= 0.8:  # Not an identifier
+            if dtype == 'object' or nunique <= max(20, n_rows * 0.1):
+                dimensions.append(col)
+            elif dtype in ('int64', 'float64'):
+                measures.append(col)
+    if dimensions:
+        structure["dimensions"] = dimensions
+    if measures:
+        structure["measures"] = measures
+
+    # Add head and tail samples (2 rows each); deduplicate if identical
     head_sample = df.head(2).to_dict('records')
     tail_sample = df.tail(2).to_dict('records')
 
     result = {
         "summary": {
             "n_cells": size,
-            "n_rows": shape[0],
-            "n_cols": shape[1],
+            "data_shape": [n_rows, n_cols],
             "sampled_cols": sampled_columns,
             "is_sampled": is_sampled,
         },
         "stats": df_describe_dict,
-        "head": head_sample[0] if head_sample else {},
-        "tail": tail_sample[0] if tail_sample else {},
     }
+    if structure:
+        result["summary"]["structure"] = structure
+    if head_sample == tail_sample:
+        result["sample"] = head_sample[0] if head_sample else {}
+    else:
+        result["head"] = head_sample[0] if head_sample else {}
+        result["tail"] = tail_sample[0] if tail_sample else {}
 
     return yaml.dump(result, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
