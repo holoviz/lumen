@@ -720,25 +720,7 @@ def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool
     for col in df.select_dtypes(include=["float64"]).columns:
         df[col] = df[col].apply(format_float)
 
-    # === Detect structural patterns ===
     n_rows, n_cols = shape
-    structure = {}
-
-    # Dimension vs measure classification
-    dimensions, measures = [], []
-    for col in df.columns:
-        dtype = df[col].dtype
-        nunique = df[col].nunique()
-        ratio = nunique / n_rows if n_rows else 0
-        if ratio <= 0.8:  # Not an identifier
-            if dtype == 'object' or nunique <= max(20, n_rows * 0.1):
-                dimensions.append(col)
-            elif dtype in ('int64', 'float64'):
-                measures.append(col)
-    if dimensions:
-        structure["dimensions"] = dimensions
-    if measures:
-        structure["measures"] = measures
 
     # Add head and tail samples (2 rows each); deduplicate if identical
     head_sample = df.head(2).to_dict('records')
@@ -753,8 +735,6 @@ def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool
         },
         "stats": df_describe_dict,
     }
-    if structure:
-        result["summary"]["structure"] = structure
     if head_sample == tail_sample:
         result["sample"] = head_sample[0] if head_sample else {}
     else:
