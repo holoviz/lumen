@@ -24,7 +24,7 @@ from lumen.ai.controls.ingest import (
 from lumen.ai.coordinator import Coordinator, Plan, Planner
 from lumen.ai.coordinator.planner import make_plan_model
 from lumen.ai.editors import SQLEditor
-from lumen.ai.models import ReplaceLine, RetrySpec
+from lumen.ai.models import ReplaceLine, RetrySpec, ThinkingYesNo
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
 from lumen.ai.tools import FunctionTool, define_tool
@@ -74,6 +74,7 @@ async def test_planner_empty_plan(llm):
     plan_model = make_plan_model(["ChatAgent"], [])
 
     llm.set_responses([
+        ThinkingYesNo(chain_of_thought="Simple greeting", yes=False),
         plan_model(chain_of_thought="Say Hello", title="Hello!", steps=[])
     ])
 
@@ -99,6 +100,7 @@ async def test_planner_simple_plan(llm):
     (StepModel,) = get_args(PlanModel.__annotations__['steps'])
 
     llm.set_responses([
+        ThinkingYesNo(chain_of_thought="Simple greeting", yes=False),
         PlanModel(
             chain_of_thought="Just use ChatAgent",
             title="Hello!",
@@ -144,6 +146,7 @@ async def test_planner_error(llm):
     (StepModel,) = get_args(PlanModel.__annotations__['steps'])
 
     llm.set_responses([
+        ThinkingYesNo(chain_of_thought="Invalid plan", yes=False),
         lambda: PlanModel(
             chain_of_thought="Just use ChatAgent",
             title="Hello!",
@@ -721,6 +724,7 @@ async def test_planner_multimodal_user_message(llm):
     (StepModel,) = get_args(PlanModel.__annotations__['steps'])
 
     llm.set_responses([
+        ThinkingYesNo(chain_of_thought="Multimodal query", yes=False),
         PlanModel(
             chain_of_thought="Describe the Image",
             title="Image Q&A",
