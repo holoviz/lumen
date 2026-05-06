@@ -191,8 +191,7 @@ class SourceAgent(Agent):
         default=[
             "Use when no existing data source can answer the query and external source controls are configured",
             "Use when the user asks for data from an external API or service",
-            "Use when the user provides a URL to read, fetch, summarize, or extract content or data from",
-            "Use when the user shares a URL they want to discuss, chat about, or ask questions about — the content must be fetched before any conversation agent can address it",
+            "Use when the user provides a URL to read, fetch, discuss, or extract content from — the content must be fetched before any other agent can address it",
             "Use when the loaded data does not cover the requested scope (e.g. user asks for 'whole month' but data summary only shows a week)",
             "Prefer over metadata discovery when no data sources are loaded but source controls exist",
             "This agent fetches and registers data or indexes page content as documents — always follow with a presentation, query, or chat step",
