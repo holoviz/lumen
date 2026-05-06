@@ -616,19 +616,13 @@ def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool
     """
     size = df.size
     shape = df.shape
+    shape_header = {"data_shape": [int(shape[0]), int(shape[1])], "is_sampled": False}
     if shape[0] == 1 or size < 10 or (shape[1] > 8 and size < 100):
         records = df.to_dict(orient='records')
-        result = {
-            "data_shape": [int(shape[0]), int(shape[1])],
-            "is_sampled": False,
-            "records": records,
-        }
+        result = {**shape_header, "records": records}
         return yaml.dump(result, default_flow_style=False, allow_unicode=True, sort_keys=False)
     if size < 100:
-        header = yaml.dump(
-            {"data_shape": [int(shape[0]), int(shape[1])], "is_sampled": False},
-            default_flow_style=False, allow_unicode=True, sort_keys=False,
-        )
+        header = yaml.dump(shape_header, default_flow_style=False, allow_unicode=True, sort_keys=False)
         return header + df.to_markdown(index=False)
 
     is_sampled = False
