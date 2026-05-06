@@ -331,7 +331,15 @@ def retry_llm_output(retries=3, sleep=1):
                             raise e
                         if i == retries - 1:
                             raise RetriesExceededError("Maximum number of retries exceeded.") from e
-                        errors.append(str(e))
+                        error_str = str(e)
+                        if error_str not in errors:
+                            errors.append(error_str)
+                        else:
+                            errors.append(
+                                f"{error_str}\n"
+                                "(Same error repeated — try a fundamentally different approach, "
+                                "e.g. use exploration tools to verify filter values exist.)"
+                            )
                         traceback.print_exc()
                         if sleep:
                             await asyncio.sleep(sleep)
@@ -360,7 +368,15 @@ def retry_llm_output(retries=3, sleep=1):
                             raise e
                         if i == retries - 1:
                             raise RetriesExceededError("Maximum number of retries exceeded.") from e
-                        errors.append(str(e))
+                        error_str = str(e)
+                        if error_str not in errors:
+                            errors.append(error_str)
+                        else:
+                            errors.append(
+                                f"{error_str}\n"
+                                "(Same error repeated — try a fundamentally different approach, "
+                                "e.g. use exploration tools to verify filter values exist.)"
+                            )
                         traceback.print_exc()
                         if sleep:
                             time.sleep(sleep)
