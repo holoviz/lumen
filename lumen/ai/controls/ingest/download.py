@@ -18,7 +18,7 @@ from ....util import normalize_table_name
 from .constants import TABLE_EXTENSIONS
 from .file import FileSourceControls
 from .result import SourceResult
-from .utils import download_file, read_file_to_dataframe, read_html_tables
+from .utils import download_file, read_file_to_dataframes
 
 _KAGGLE_URL_RE = re.compile(
     r'(?:https?://)?(?:www\.)?kaggle\.com/datasets/([^/?#]+/[^/?#]+)',
@@ -367,6 +367,7 @@ class DownloadSourceControls(FileSourceControls):
         source_id = f"{self.source_name_prefix}{self._count:06d}"
         source = DuckDBSource(uri=":memory:", ephemeral=True, name=source_id, tables={})
         self._count += 1
+        conn = source._connection
 
         total_rows = 0
         tables_loaded = []
@@ -377,19 +378,32 @@ class DownloadSourceControls(FileSourceControls):
 
             file_obj = io.BytesIO(content)
             try:
-                df = read_file_to_dataframe(file_obj, suffix)
+                result = read_file_to_dataframes(file_obj, suffix, alias=alias)
             except Exception as e:
                 tables_loaded.append(f"'{filename}' (error: {e})")
                 continue
 
-            if df is None or df.empty:
+            if result is None:
                 continue
 
-            source._connection.from_df(df).to_view(alias)
-            source.tables[alias] = f"SELECT * FROM {alias}"
-            source.metadata[alias] = {"filename": filename, "kaggle_ref": ref}
-            total_rows += len(df)
-            tables_loaded.append(f"'{alias}' ({len(df):,} rows)")
+            source.param.update(result.source_params)
+            for init in result.source_params.get("initializers", []):
+                conn.execute(init)
+
+            for tbl_name, df in result.tables.items():
+                if df is None or df.empty:
+                    continue
+                df_rel = conn.from_df(df)
+                if tbl_name in result.conversions:
+                    conn.register(f"{tbl_name}_temp", df_rel)
+                    conn.execute(result.conversions[tbl_name])
+                    conn.unregister(f"{tbl_name}_temp")
+                else:
+                    df_rel.to_view(tbl_name)
+                source.tables[tbl_name] = f"SELECT * FROM {tbl_name}"
+                source.metadata[tbl_name] = {"filename": filename, "kaggle_ref": ref}
+                total_rows += len(df)
+                tables_loaded.append(f"'{tbl_name}' ({len(df):,} rows)")
 
         if not source.tables:
             return SourceResult.empty(
@@ -425,24 +439,16 @@ class DownloadSourceControls(FileSourceControls):
         alias = normalize_table_name(base_name) or "data"
 
         file_obj = io.BytesIO(content)
-        dfs = {}
         is_html = suffix in ("html", "htm") or suffix not in ("csv", "parq", "parquet", "json", "xlsx")
 
         # Try to extract tabular data
         try:
-            df = read_file_to_dataframe(file_obj, suffix)
-            if df is not None:
-                dfs = {alias: df}
-            else:
-                # HTML or unknown — try to extract tables
-                try:
-                    dfs = read_html_tables(content, alias)
-                except ValueError:
-                    dfs = {}  # No tables found, will extract as document
+            result = read_file_to_dataframes(file_obj, suffix, alias=alias)
+            dfs = result.tables if result is not None else {}
         except Exception as e:
             if not is_html:
                 return SourceResult.empty(f"Could not parse {filename!r}: {e}")
-            # For HTML, continue to try document extraction
+            dfs = {}  # For HTML, continue to try document extraction
 
         # Load tables into DuckDB
         total_rows = 0

@@ -14,6 +14,7 @@ from .rest_api import RESTAPISourceControls
 from .result import SourceResult
 from .upload import UploadSourceControls
 from .url import URLSourceControls
+from .utils import FileReadResult  # noqa: F401 — re-exported
 from .utils import download_file
 
 __all__ = (
