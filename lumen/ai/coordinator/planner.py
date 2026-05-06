@@ -20,7 +20,7 @@ from ..context import (
     LWW, ContextError, TContext, merge_contexts,
 )
 from ..llm import Message
-from ..models import FollowUpClassification
+from ..models import FollowUpClassification, ThinkingYesNo
 from ..report import ActorTask
 from ..tools import MetadataLookup, SourceLookup, Tool
 from ..tools.clarification_llm_tool import make_clarification_llm_tool
@@ -107,6 +107,10 @@ class Planner(Coordinator):
             "follow_up": {
                 "template": PROMPTS_DIR / "Planner" / "follow_up.jinja2",
                 "response_model": FollowUpClassification,
+            },
+            "clarification_check": {
+                "template": PROMPTS_DIR / "Planner" / "clarification_check.jinja2",
+                "response_model": ThinkingYesNo,
             },
         }
     )
@@ -210,6 +214,23 @@ class Planner(Coordinator):
 
         return follow_up_type
 
+    async def _check_clarification_needed(self, messages: list[Message], context: TContext) -> bool:
+        """
+        Lightweight pre-check: does the user's query need clarification?
+
+        Returns True only if the query is genuinely ambiguous.
+        """
+        try:
+            result = await self._invoke_prompt("clarification_check", messages, context)
+            log_debug(
+                f"Clarification check: needs_clarification={result.yes} "
+                f"({result.chain_of_thought})",
+                prefix="[clarification]",
+            )
+            return result.yes
+        except Exception:
+            return False  # On failure, default to not clarifying
+
     async def _execute_planner_tools(self, messages: list[Message], context: TContext):
         """Execute planner tools to gather context before planning."""
         if not self.planner_tools:
@@ -267,6 +288,7 @@ class Planner(Coordinator):
         tools: dict[str, Tool],
     ) -> tuple[dict[str, Agent], dict[str, Tool], dict[str, Any]]:
         follow_up_type = await self._check_follow_up_question(messages, context)
+        self._clarification_enabled = await self._check_clarification_needed(messages, context)
         await self._execute_planner_tools(messages, context)
         agents, tools, pre_plan_output = await super()._pre_plan(messages, context, agents, tools)
         pre_plan_output["follow_up_type"] = follow_up_type
@@ -319,7 +341,8 @@ class Planner(Coordinator):
         agents = [agent for agent in agents if len(set(agent.input_schema.__required_keys__) - all_provides) == 0 and type(agent).__name__ != "ValidationAgent"]
         tools = [tool for tool in tools if len(set(tool.input_schema.__required_keys__) - all_provides) == 0]
         llm_tools = list(_merge_prompt_tools(self.llm_tools, None, context) or [])
-        llm_tools.append(make_clarification_llm_tool(self.interface, context))
+        if self._clarification_enabled:
+            llm_tools.append(make_clarification_llm_tool(self.interface, context))
 
         # candidates = agents and tools that can provide
         # the unmet dependencies
