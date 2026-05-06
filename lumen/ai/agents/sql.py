@@ -446,12 +446,16 @@ class SQLAgent(BaseLumenAgent):
 
         df = await get_data(pipeline)
         if df.empty and raise_if_empty:
-            raise ValueError(f"\nQuery `{sql}` returned empty results; ensure all the WHERE filter values exist in the dataset.")
+            raise ValueError(
+                f"\nQuery `{sql}` returned empty results."
+                "\nUse `run_exploration_sql` to check what values actually exist before filtering."
+            )
 
         view = self._editor_type(
             component=pipeline, title=step_title, spec=sql
         )
         return view
+
 
     def _merge_sources(
         self, sources: dict[tuple[str, str], BaseSQLSource], tables: list[tuple[str, str]]
