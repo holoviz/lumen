@@ -45,7 +45,7 @@ class SourceInputs(ContextModel):
     source_actions: t.NotRequired[dict[str, t.Any]]
 
 
-class SourceOutputs(ContextModel):
+class SourceOutputs(ContextModel, total=False):
     source: DuckDBSource
     data: t.Any
     table: str
@@ -191,6 +191,7 @@ class SourceAgent(Agent):
         default=[
             "Use when no existing data source can answer the query and external source controls are configured",
             "Use when the user asks for data from an external API or service",
+            "Use when the user provides a URL to read, fetch, summarize, or extract data from",
             "Use when the loaded data does not cover the requested scope (e.g. user asks for 'whole month' but data summary only shows a week)",
             "Prefer over metadata discovery when no data sources are loaded but source controls exist",
             "This agent only fetches and registers data — it never presents results to the user; always follow with a presentation or query step",
@@ -336,6 +337,12 @@ class SourceAgent(Agent):
                 )
             )
 
+            # Document-only result (no tables, just indexed text)
+            if df is None:
+                if isinstance(step, ChatStep):
+                    step.param.update(status="success", success_title="Indexed document")
+                return [], {}
+
             step.stream(f"\n\n\u2705 Loaded **{len(df):,}** rows into `{table_name}`")
             if isinstance(step, ChatStep):
                 step.param.update(
@@ -391,6 +398,10 @@ class SourceAgent(Agent):
         # --- SourceResult path (URLSourceControls, CatalogSourceControls) ---
         if isinstance(payloads[0], SourceResult):
             payload = payloads[0]
+            # Document-only result (no tables, just indexed text)
+            if payload.document_only:
+                step.stream(f"\n\n\u2713 {payload.message}")
+                return None, None, None, None, None, None
             if not payload.sources:
                 msg = payload.message or "The source action returned no data."
                 step.stream(f"\n\n\u26a0\ufe0f {msg}")
