@@ -148,7 +148,7 @@ class FileSourceControls(BaseSourceControls):
                 result = FileReadResult(tables={alias: df})
             else:
                 result = read_file_to_dataframes(
-                    file, extension, alias=alias, sheet=card.sheet,
+                    file, extension, alias=alias, sheet_name=card.sheet,
                 )
                 if result is None:
                     self._error_placeholder.object += (

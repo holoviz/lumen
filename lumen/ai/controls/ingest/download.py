@@ -439,16 +439,13 @@ class DownloadSourceControls(FileSourceControls):
         alias = normalize_table_name(base_name) or "data"
 
         file_obj = io.BytesIO(content)
-        is_html = suffix in ("html", "htm") or suffix not in ("csv", "parq", "parquet", "json", "xlsx")
 
         # Try to extract tabular data
         try:
             result = read_file_to_dataframes(file_obj, suffix, alias=alias)
             dfs = result.tables if result is not None else {}
         except Exception as e:
-            if not is_html:
-                return SourceResult.empty(f"Could not parse {filename!r}: {e}")
-            dfs = {}  # For HTML, continue to try document extraction
+            return SourceResult.empty(f"Could not parse {filename!r}: {e}")
 
         # Load tables into DuckDB
         total_rows = 0
@@ -462,9 +459,9 @@ class DownloadSourceControls(FileSourceControls):
             total_rows += len(df)
             tables_loaded.append(f"'{table_name}' ({len(df):,} rows)")
 
-        # For HTML, also extract text content as a document
+        # For HTML pages, also extract text content as a document
         doc_added = False
-        if is_html and self.source_catalog:
+        if suffix in ("html", "htm") and self.source_catalog:
             text_content = self._extract_metadata_content(io.BytesIO(content), ".html")
             if text_content and len(text_content.strip()) > 100:
                 doc_added = await self._add_document(url, alias, text_content)

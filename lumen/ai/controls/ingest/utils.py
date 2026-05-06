@@ -227,7 +227,7 @@ def read_file_to_dataframes(
     extension: str,
     *,
     alias: str = "data",
-    sheet: str | int | None = None,
+    **read_kwargs,
 ) -> FileReadResult | None:
     """
     Parse a file object into one or more DataFrames.
@@ -245,8 +245,9 @@ def read_file_to_dataframes(
     alias : str
         Base table name.  Single-result formats use this directly;
         multi-result formats append a suffix.
-    sheet : str | int | None
-        For xlsx: specific sheet name/index, or ``None`` to read all.
+    **read_kwargs
+        Passed through to the underlying reader.  Common examples:
+        ``sheet_name`` for Excel files, ``sep`` for CSV.
 
     Returns
     -------
@@ -256,11 +257,13 @@ def read_file_to_dataframes(
 
     # ── single-DataFrame formats ──────────────────────────────────────────
     if extension == "csv":
-        df = pd.read_csv(file_obj, parse_dates=True, sep=None, engine="python")
+        csv_kwargs = {"parse_dates": True, "sep": None, "engine": "python"}
+        csv_kwargs.update(read_kwargs)
+        df = pd.read_csv(file_obj, **csv_kwargs)
         return FileReadResult(tables={alias: df})
 
     if extension in ("parq", "parquet"):
-        return FileReadResult(tables={alias: pd.read_parquet(file_obj)})
+        return FileReadResult(tables={alias: pd.read_parquet(file_obj, **read_kwargs)})
 
     if extension == "json":
         content = file_obj.read()
@@ -268,11 +271,12 @@ def read_file_to_dataframes(
 
     # ── Excel (single sheet or all sheets) ────────────────────────────────
     if extension == "xlsx":
+        sheet = read_kwargs.pop("sheet_name", None)
         if sheet is not None:
-            df = pd.read_excel(file_obj, sheet_name=sheet)
+            df = pd.read_excel(file_obj, sheet_name=sheet, **read_kwargs)
             return FileReadResult(tables={alias: df})
         # Read all sheets
-        sheets = pd.read_excel(file_obj, sheet_name=None)  # dict[str, DataFrame]
+        sheets = pd.read_excel(file_obj, sheet_name=None, **read_kwargs)
         if len(sheets) == 1:
             return FileReadResult(tables={alias: next(iter(sheets.values()))})
         tables = {
