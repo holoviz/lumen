@@ -17,7 +17,7 @@ from ...utils import log_debug
 from .base import BaseSourceControls
 from .constants import TABLE_EXTENSIONS
 from .file_row import UploadedFileRow
-from .utils import read_html_tables
+from .utils import read_file_to_dataframe, read_html_tables
 
 
 class FileSourceControls(BaseSourceControls):
@@ -147,22 +147,18 @@ class FileSourceControls(BaseSourceControls):
 
         try:
             file.seek(0)
-            if extension.endswith("csv"):
-                df = pd.read_csv(file, parse_dates=True, sep=None, engine="python")
-            elif extension.endswith(("parq", "parquet")):
-                df = pd.read_parquet(file)
-            elif extension.endswith("json"):
+            if extension.endswith("json"):
                 df = self._read_json_file(file, filename)
-            elif extension.endswith("xlsx"):
-                df = pd.read_excel(file, sheet_name=card.sheet)
             elif extension.endswith(("geojson", "wkt", "zip")):
                 df, conversion, params = self._read_geo_file(file, extension, table, conn)
             elif extension.endswith(("html", "htm")):
                 return self._add_html_tables(duckdb_source, file, card)
             else:
-                self._error_placeholder.object += f"\n⚠️ Could not convert {filename!r}: unsupported format."
-                self._error_placeholder.visible = True
-                return 0
+                df = read_file_to_dataframe(file, extension, sheet=card.sheet)
+                if df is None:
+                    self._error_placeholder.object += f"\n⚠️ Could not convert {filename!r}: unsupported format."
+                    self._error_placeholder.visible = True
+                    return 0
         except Exception as e:
             self._error_placeholder.object += f"\n⚠️ Error processing {filename!r}: {e}"
             self._error_placeholder.visible = True

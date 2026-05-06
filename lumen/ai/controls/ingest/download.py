@@ -3,10 +3,10 @@ from __future__ import annotations
 import asyncio
 import io
 import pathlib
+import re
 
 from urllib.parse import urlparse
 
-import pandas as pd
 import param
 
 from panel_material_ui import (
@@ -15,9 +15,14 @@ from panel_material_ui import (
 
 from ....sources.duckdb import DuckDBSource
 from ....util import normalize_table_name
+from .constants import TABLE_EXTENSIONS
 from .file import FileSourceControls
 from .result import SourceResult
-from .utils import download_file, read_html_tables, read_json_to_dataframe
+from .utils import download_file, read_file_to_dataframe, read_html_tables
+
+_KAGGLE_URL_RE = re.compile(
+    r'(?:https?://)?(?:www\.)?kaggle\.com/datasets/([^/?#]+/[^/?#]+)',
+)
 
 
 class DownloadSourceControls(FileSourceControls):
@@ -26,6 +31,10 @@ class DownloadSourceControls(FileSourceControls):
 
     Supports CSV, JSON, Parquet, Excel, and HTML files. For HTML pages,
     all tables are extracted and loaded as separate database tables.
+
+    Kaggle dataset URLs (e.g. ``https://www.kaggle.com/datasets/owner/name``)
+    are also supported and will download all data files in the dataset into
+    a single source with one table per file.
     """
 
     download_url = param.String(
@@ -49,6 +58,74 @@ class DownloadSourceControls(FileSourceControls):
     label = '<span class="material-icons" style="vertical-align: middle;">download</span> Fetch Remote Data'
 
     _supports_tools = True
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        try:
+            import kagglehub
+            self._kagglehub = kagglehub
+        except ModuleNotFoundError:
+            self._kagglehub = None
+        if self._kagglehub is not None:
+            self.input_placeholder = (
+                "Enter URLs, one per line, and press <Shift+Enter> to download.\n"
+                "Kaggle dataset URLs are also supported."
+            )
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Kaggle helpers
+    # ──────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _parse_kaggle_ref(url: str) -> str | None:
+        """Extract ``'owner/dataset'`` from a Kaggle URL, or ``None``."""
+        m = _KAGGLE_URL_RE.match(url.strip())
+        return m.group(1).rstrip("/") if m else None
+
+    async def _download_kaggle_files(self, ref: str) -> tuple[dict[str, bytes], str | None]:
+        """
+        Download a Kaggle dataset and read supported files into memory.
+
+        Returns
+        -------
+        tuple[dict[str, bytes], str | None]
+            ``(files_dict, error_message)``
+        """
+        if self._kagglehub is None:
+            return {}, (
+                "kagglehub is required to download Kaggle datasets. "
+                "Install it with: pip install kagglehub"
+            )
+
+        self.progress(f"Downloading Kaggle dataset '{ref}'…")
+
+        try:
+            path = await asyncio.get_event_loop().run_in_executor(
+                None, self._kagglehub.dataset_download, ref,
+            )
+        except Exception as e:
+            return {}, f"Kaggle download failed for '{ref}': {e}"
+
+        dataset_dir = pathlib.Path(path)
+        if not dataset_dir.is_dir():
+            return {}, f"Kaggle download path is not a directory: {path}"
+
+        self.progress("Reading downloaded files…")
+
+        files: dict[str, bytes] = {}
+        for file_path in sorted(dataset_dir.rglob("*")):
+            if not file_path.is_file():
+                continue
+            if file_path.suffix.lstrip(".").lower() in TABLE_EXTENSIONS:
+                files[file_path.name] = file_path.read_bytes()
+
+        if not files:
+            return {}, (
+                f"No supported data files found in Kaggle dataset '{ref}'. "
+                f"Directory contained: {[f.name for f in dataset_dir.rglob('*') if f.is_file()]}"
+            )
+
+        return files, None
 
     def _render_layout(self):
         """Build download-specific layout with URL input."""
@@ -155,14 +232,22 @@ class DownloadSourceControls(FileSourceControls):
                 self._message_placeholder.object = (
                     f"Processing {i} of {len(urls)}: {url[:50]}{'...' if len(url) > 50 else ''}"
                 )
-                filename, content, error = await self._download_file(url)
 
-                if error:
-                    if "cancelled" in error.lower():
-                        break
-                    errors.append(f"{url}: {error}")
+                kaggle_ref = self._parse_kaggle_ref(url)
+                if kaggle_ref:
+                    files, error = await self._download_kaggle_files(kaggle_ref)
+                    if error:
+                        errors.append(f"{url}: {error}")
+                    else:
+                        downloaded_files.update(files)
                 else:
-                    downloaded_files[filename] = content
+                    filename, content, error = await self._download_file(url)
+                    if error:
+                        if "cancelled" in error.lower():
+                            break
+                        errors.append(f"{url}: {error}")
+                    else:
+                        downloaded_files[filename] = content
 
         except asyncio.CancelledError:
             self.progress.bar.visible = False
@@ -238,6 +323,8 @@ class DownloadSourceControls(FileSourceControls):
 
             Supports CSV, JSON, Parquet, Excel (.xlsx), and HTML files.
             For HTML pages, extracts all tables found on the page.
+            Kaggle dataset URLs are also supported (e.g.
+            ``https://www.kaggle.com/datasets/owner/dataset``).
 
             Parameters
             ----------
@@ -259,6 +346,10 @@ class DownloadSourceControls(FileSourceControls):
         if not self._is_valid_url(url):
             return SourceResult.empty(f"Invalid URL: {url}")
 
+        kaggle_ref = self._parse_kaggle_ref(url)
+        if kaggle_ref:
+            return await self._fetch_kaggle(kaggle_ref)
+
         self.progress(f"Fetching {url[:80]}{'…' if len(url) > 80 else ''}…")
         filename, content, error = await download_file(url, progress=self.progress)
 
@@ -266,6 +357,55 @@ class DownloadSourceControls(FileSourceControls):
             return SourceResult.empty(f"Download failed: {error}")
 
         return await self._content_to_result(url, filename, content)
+
+    async def _fetch_kaggle(self, ref: str) -> SourceResult:
+        """Download a Kaggle dataset and load all files into a single source."""
+        files, error = await self._download_kaggle_files(ref)
+        if error:
+            return SourceResult.empty(error)
+
+        source_id = f"{self.source_name_prefix}{self._count:06d}"
+        source = DuckDBSource(uri=":memory:", ephemeral=True, name=source_id, tables={})
+        self._count += 1
+
+        total_rows = 0
+        tables_loaded = []
+        for filename, content in files.items():
+            suffix = pathlib.Path(filename).suffix.lstrip(".").lower()
+            base_name = pathlib.Path(filename).stem
+            alias = normalize_table_name(base_name) or "data"
+
+            file_obj = io.BytesIO(content)
+            try:
+                df = read_file_to_dataframe(file_obj, suffix)
+            except Exception as e:
+                tables_loaded.append(f"'{filename}' (error: {e})")
+                continue
+
+            if df is None or df.empty:
+                continue
+
+            source._connection.from_df(df).to_view(alias)
+            source.tables[alias] = f"SELECT * FROM {alias}"
+            source.metadata[alias] = {"filename": filename, "kaggle_ref": ref}
+            total_rows += len(df)
+            tables_loaded.append(f"'{alias}' ({len(df):,} rows)")
+
+        if not source.tables:
+            return SourceResult.empty(
+                f"No tables could be parsed from Kaggle dataset '{ref}'."
+            )
+
+        first_table = next(iter(source.tables))
+        if len(source.tables) == 1:
+            message = f"Loaded {total_rows:,} rows from Kaggle dataset '{ref}' into '{first_table}'"
+        else:
+            message = (
+                f"Loaded {len(source.tables)} tables ({total_rows:,} total rows) "
+                f"from Kaggle dataset '{ref}': {', '.join(tables_loaded)}"
+            )
+
+        return SourceResult.from_source(source, table=first_table, message=message)
 
     async def _content_to_result(self, url: str, filename: str, content: bytes) -> SourceResult:
         """Convert downloaded content to a SourceResult with DuckDB tables and/or document."""
@@ -290,17 +430,11 @@ class DownloadSourceControls(FileSourceControls):
 
         # Try to extract tabular data
         try:
-            file_obj.seek(0)
-            if suffix == "csv":
-                dfs = {alias: pd.read_csv(file_obj, parse_dates=True, sep=None, engine="python")}
-            elif suffix in ("parq", "parquet"):
-                dfs = {alias: pd.read_parquet(file_obj)}
-            elif suffix == "json":
-                dfs = {alias: read_json_to_dataframe(file_obj.read())}
-            elif suffix == "xlsx":
-                dfs = {alias: pd.read_excel(file_obj)}
+            df = read_file_to_dataframe(file_obj, suffix)
+            if df is not None:
+                dfs = {alias: df}
             else:
-                # HTML - try to extract tables, but don't fail if none found
+                # HTML or unknown — try to extract tables
                 try:
                     dfs = read_html_tables(content, alias)
                 except ValueError:

@@ -199,6 +199,48 @@ def read_json_to_dataframe(content: str | bytes) -> pd.DataFrame:
     raise ValueError(f"Unsupported JSON root type: {type(data).__name__}")
 
 
+def read_file_to_dataframe(
+    file_obj: io.BytesIO | io.StringIO,
+    extension: str,
+    *,
+    sheet: str | int = 0,
+) -> pd.DataFrame | None:
+    """
+    Parse a file object into a DataFrame based on its extension.
+
+    Handles CSV, Parquet, JSON, and Excel. Returns ``None`` for
+    unrecognised extensions so the caller can fall back to format-specific
+    logic (HTML tables, geospatial, etc.).
+
+    Parameters
+    ----------
+    file_obj : io.BytesIO | io.StringIO
+        Seekable file-like object containing the data.
+    extension : str
+        Lowercase file extension without the leading dot
+        (e.g. ``"csv"``, ``"parquet"``).
+    sheet : str | int, optional
+        Sheet name or index for Excel files (default ``0``).
+
+    Returns
+    -------
+    pd.DataFrame | None
+        The parsed DataFrame, or ``None`` if the extension is not
+        one of the four supported formats.
+    """
+    file_obj.seek(0)
+    if extension == "csv":
+        return pd.read_csv(file_obj, parse_dates=True, sep=None, engine="python")
+    if extension in ("parq", "parquet"):
+        return pd.read_parquet(file_obj)
+    if extension == "json":
+        content = file_obj.read()
+        return read_json_to_dataframe(content)
+    if extension == "xlsx":
+        return pd.read_excel(file_obj, sheet_name=sheet)
+    return None
+
+
 def normalize_json_response(data) -> pd.DataFrame:
     """
     Flatten a JSON API response into a DataFrame.
