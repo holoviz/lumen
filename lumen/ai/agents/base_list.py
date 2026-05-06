@@ -102,14 +102,14 @@ class BaseListAgent(Agent):
             item_list_str = f"{shown}, ... and {total - max_shown} more"
         else:
             item_list_str = ", ".join(all_items)
-        chat_summary = (
+        listing = (
             f"Displayed {total} {self._column_name.lower()}(s) to the user: {item_list_str}"
         )
 
         self.interface.stream(
             pn.Column(
-                chat_summary,
+                listing,
                 self._tabs
             ), user=self.__class__.__name__
         )
-        return [self._tabs], {"listing": chat_summary}
+        return [self._tabs], {"listing": listing}
