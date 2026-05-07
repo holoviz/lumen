@@ -42,7 +42,7 @@ def make_clarification_llm_tool(
             cleaned_options = [opt.strip() for opt in options if isinstance(opt, str) and opt.strip()]
 
         label = Typography(question, margin=10)
-        enter_pressed = []
+        submitted = []
         if cleaned_options:
             cleaned_options.append(OTHER_OPTION)
             confirm = Button(icon="check", label="Confirm", margin=(5, 0, 10, 20))
@@ -53,38 +53,39 @@ def make_clarification_llm_tool(
                 margin=(0, 20, 10, 20),
                 visible=False,
             )
-            text_input.param.watch(lambda _: enter_pressed.append(text_input.value), "enter_pressed")
+
+            def _on_confirm(_):
+                if widget.value == OTHER_OPTION:
+                    val = text_input.value.strip()
+                else:
+                    val = widget.value.strip()
+                if val:
+                    submitted.append(val)
+
+            def _on_text_enter(_):
+                val = text_input.value.strip()
+                if val:
+                    submitted.append(val)
+
+            confirm.on_click(_on_confirm)
+            text_input.param.watch(_on_text_enter, "enter_pressed")
             widget.param.watch(
                 lambda e: setattr(text_input, "visible", e.new == OTHER_OPTION), "value"
             )
             out = Column(label, widget, text_input, confirm, max_width=600)
         else:
             widget = ChatAreaInput(enable_upload=False, width=500, margin=(0, 20, 20, 20))
-            widget.param.watch(lambda _: enter_pressed.append(widget.value), "enter_pressed")
+            widget.param.watch(lambda _: submitted.append(widget.value), "enter_pressed")
             out = Column(label, widget, max_width=600)
         interface.send(out, user=user, respond=False)
 
         while True:
             await asyncio.sleep(0.1)
-            if cleaned_options:
-                # Resolve when confirm is clicked or text is submitted via Enter
-                if not (confirm.clicks or enter_pressed):
-                    continue
-                if widget.value == OTHER_OPTION:
-                    if enter_pressed:
-                        value = enter_pressed[-1].strip()
-                    elif confirm.clicks:
-                        value = text_input.value.strip()
-                    else:
-                        value = ""
-                else:
-                    value = widget.value.strip() if confirm.clicks else ""
-            else:
+            if not cleaned_options:
                 widget.focus()
-                if not enter_pressed:
-                    continue
-                value = enter_pressed[-1].strip()
-
+            if not submitted:
+                continue
+            value = submitted[-1].strip()
             if not value:
                 continue
 
@@ -93,7 +94,7 @@ def make_clarification_llm_tool(
                 out[:] = [label]
 
             # Store clarification in context for downstream agents (e.g. validation)
-            entry = f"Q: {question}\nA: {value}"
+            entry = f"Q: '{question}' | User Later Input: '{value}'"
             existing = context.get("clarifications", [])
             context["clarifications"] = existing + [entry]
 

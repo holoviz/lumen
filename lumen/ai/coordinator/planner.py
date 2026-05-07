@@ -24,7 +24,9 @@ from ..models import FollowUpClassification, ThinkingYesNo
 from ..report import ActorTask
 from ..tools import MetadataLookup, SourceLookup, Tool
 from ..tools.clarification_llm_tool import make_clarification_llm_tool
-from ..utils import content_to_text, log_debug, wrap_logfire
+from ..utils import (
+    content_to_text, log_debug, mutate_user_message, wrap_logfire,
+)
 from .base import Coordinator, Plan
 
 if TYPE_CHECKING:
@@ -557,6 +559,15 @@ class Planner(Coordinator):
                     self._todos_title.object = "Planner could not settle on a plan of action to perform the requested query. Please restate your request."
                     traceback.print_exception(e)
                     raise e
+                # Inject clarifications into messages so downstream agents see the clarified intent
+                clarifications = context.get("clarifications")
+                if clarifications:
+                    last_user = next((m for m in reversed(messages) if m.get("role") == "user"), None)
+                    if last_user and "[For Clarity]" not in content_to_text(last_user.get("content", "")):
+                        suffix = "\n" + "\n".join(
+                            f"[For Clarity]: {c}" for c in clarifications
+                        )
+                        mutate_user_message(suffix, messages, wrap=False)
                 plan, previous_actors = await self._resolve_plan(
                     raw_plan, agents, tools, messages, context, previous_actors, is_followup=is_followup
                 )
