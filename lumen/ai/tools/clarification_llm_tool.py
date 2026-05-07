@@ -62,13 +62,8 @@ def make_clarification_llm_tool(
                 if val:
                     submitted.append(val)
 
-            def _on_text_enter(_):
-                val = text_input.value.strip()
-                if val:
-                    submitted.append(val)
-
             confirm.on_click(_on_confirm)
-            text_input.param.watch(_on_text_enter, "enter_pressed")
+            text_input.param.watch(_on_confirm, "enter_pressed")
             widget.param.watch(
                 lambda e: setattr(text_input, "visible", e.new == OTHER_OPTION), "value"
             )
