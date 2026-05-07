@@ -44,8 +44,13 @@ def make_clarification_llm_tool(
         label = Typography(question, margin=10)
         submitted = []
         if cleaned_options:
+            def _on_confirm(_):
+                val = text_input.value.strip() if widget.value == OTHER_OPTION else widget.value.strip()
+                if val:
+                    submitted.append(val)
+
             cleaned_options.append(OTHER_OPTION)
-            confirm = Button(icon="check", label="Confirm", margin=(5, 0, 10, 20))
+            confirm = Button(icon="check", label="Confirm", margin=(5, 0, 10, 20), on_click=_on_confirm)
             widget = RadioBoxGroup(options=cleaned_options, inline=False, margin=(0, 20))
             text_input = TextInput(
                 placeholder="Type your own response...",
@@ -53,16 +58,6 @@ def make_clarification_llm_tool(
                 margin=(0, 20, 10, 20),
                 visible=False,
             )
-
-            def _on_confirm(_):
-                if widget.value == OTHER_OPTION:
-                    val = text_input.value.strip()
-                else:
-                    val = widget.value.strip()
-                if val:
-                    submitted.append(val)
-
-            confirm.on_click(_on_confirm)
             text_input.param.watch(_on_confirm, "enter_pressed")
             widget.param.watch(
                 lambda e: setattr(text_input, "visible", e.new == OTHER_OPTION), "value"
@@ -78,10 +73,8 @@ def make_clarification_llm_tool(
             await asyncio.sleep(0.1)
             if not cleaned_options:
                 widget.focus()
-            if not submitted:
-                continue
             value = submitted[-1].strip()
-            if not value:
+            if not submitted or not value:
                 continue
 
             with pn.io.hold():
@@ -92,7 +85,6 @@ def make_clarification_llm_tool(
             entry = f"Q: '{question}' | User Later Input: '{value}'"
             existing = context.get("clarifications", [])
             context["clarifications"] = existing + [entry]
-
             return f"User provided following clarification: {value}"
 
     return FunctionTool(
