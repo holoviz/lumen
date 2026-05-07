@@ -616,11 +616,14 @@ def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool
     """
     size = df.size
     shape = df.shape
+    shape_header = {"data_shape": [int(shape[0]), int(shape[1])], "is_sampled": False}
     if shape[0] == 1 or size < 10 or (shape[1] > 8 and size < 100):
-        # df -> dict -> YAML
-        return yaml.dump(df.to_dict(orient='records'), default_flow_style=False, allow_unicode=True, sort_keys=False)
+        records = df.to_dict(orient='records')
+        result = {**shape_header, "records": records}
+        return yaml.dump(result, default_flow_style=False, allow_unicode=True, sort_keys=False)
     if size < 100:
-        return df.to_markdown(index=False)
+        header = yaml.dump(shape_header, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        return header + df.to_markdown(index=False)
 
     is_sampled = False
     if shape[0] > 5000:
@@ -671,6 +674,25 @@ def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool
         except AttributeError:
             pass
 
+    # Low-cardinality integer columns (e.g. status codes, ratings)
+    for col in df.select_dtypes(include=["int64"]).columns:
+        nunique = df[col].nunique()
+        if nunique <= 10:
+            if col not in df_describe_dict:
+                df_describe_dict[col] = {}
+            unique_values = sorted(df[col].dropna().unique().tolist())
+            temp_spec = {"enum": unique_values}
+            updated_spec, _ = process_enums(
+                temp_spec,
+                num_cols=len(df.columns),
+                limit=enum_limit,
+                include_enum=True,
+                reduce_enums=reduce_enums,
+            )
+            if "enum" in updated_spec:
+                df_describe_dict[col]["enum"] = updated_spec["enum"]
+            df_describe_dict[col]["nunique"] = int(nunique)
+
     for col in df.columns:
         if col not in df_describe_dict:
             df_describe_dict[col] = {}
@@ -692,22 +714,26 @@ def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool
     for col in df.select_dtypes(include=["float64"]).columns:
         df[col] = df[col].apply(format_float)
 
-    # Add head and tail samples (2 row each)
+    n_rows, n_cols = shape
+
+    # Add head and tail samples (2 rows each); deduplicate if identical
     head_sample = df.head(2).to_dict('records')
     tail_sample = df.tail(2).to_dict('records')
 
     result = {
         "summary": {
             "n_cells": size,
-            "n_rows": shape[0],
-            "n_cols": shape[1],
+            "data_shape": [n_rows, n_cols],
             "sampled_cols": sampled_columns,
             "is_sampled": is_sampled,
         },
         "stats": df_describe_dict,
-        "head": head_sample[0] if head_sample else {},
-        "tail": tail_sample[0] if tail_sample else {},
     }
+    if head_sample == tail_sample:
+        result["sample"] = head_sample[0] if head_sample else {}
+    else:
+        result["head"] = head_sample[0] if head_sample else {}
+        result["tail"] = tail_sample[0] if tail_sample else {}
 
     return yaml.dump(result, default_flow_style=False, allow_unicode=True, sort_keys=False)
 

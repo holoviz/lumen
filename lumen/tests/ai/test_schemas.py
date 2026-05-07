@@ -198,7 +198,7 @@ class TestRowCount:
         output = ms.compact_context()
         parsed = yaml.safe_load(output)
         assert "n_rows" in parsed["t"]
-        assert parsed["t"]["n_rows"] == len(schemas[slug])
+        assert parsed["t"]["n_rows"] == schemas[slug]["__len__"]
 
     def test_n_rows_absent_without_schema(self):
         e = _entry(f"S{SEP}t")
