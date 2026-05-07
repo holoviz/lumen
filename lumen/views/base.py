@@ -1074,9 +1074,7 @@ class hvPlotView(hvPlotBaseView):
         the pivot is blocked (see ``_gridded_pivot_blocker``); callers that
         require gridded data should check the blocker themselves and raise.
         """
-        if not isinstance(df, pd.DataFrame):
-            return df
-        if self._gridded_pivot_blocker(df) is not None:
+        if not isinstance(df, pd.DataFrame) or self._gridded_pivot_blocker(df) is not None:
             return df
         return df.set_index([self.y, self.x])[self.z].to_xarray()
 

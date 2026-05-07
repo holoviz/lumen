@@ -214,3 +214,26 @@ def test_hvplot_gridded_passes_through_non_dataframe(gridded_pipeline):
     assert isinstance(already_gridded, xr.DataArray)
     result = view._to_gridded(already_gridded)
     assert result is already_gridded, "xarray input should pass through unchanged"
+
+
+def test_hvplot_gridded_xarray_dataset_renders(gridded_pipeline, gridded_df):
+    """An xarray Dataset (not DataArray) handed to get_plot must actually render.
+
+    The pass-through branch in _to_gridded skips pivot for any non-DataFrame;
+    we need to confirm that downstream .hvplot(kind='quadmesh', z=...) on a
+    Dataset succeeds, not just that the object is returned unchanged. Standard
+    Lumen sources only emit DataFrames, so we bypass the pipeline and pass a
+    Dataset directly into get_plot.
+    """
+    xr = pytest.importorskip("xarray")
+    ds = (
+        gridded_df.set_index(["lat", "lon"])["air"]
+        .to_xarray()
+        .to_dataset(name="air")
+    )
+    assert isinstance(ds, xr.Dataset)
+    view = hvPlotView(
+        pipeline=gridded_pipeline, kind="quadmesh", x="lon", y="lat", z="air",
+    )
+    plot = view.get_plot(ds)
+    assert isinstance(plot, hv.QuadMesh)
