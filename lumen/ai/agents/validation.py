@@ -36,6 +36,8 @@ class ValidationInputs(ContextModel):
 
     data: NotRequired[Any]
 
+    listing: NotRequired[str]
+
     sql: NotRequired[str]
 
     view: NotRequired[Any]
@@ -94,7 +96,7 @@ class ValidationAgent(Agent):
         previous_keys = set()
         if plan is not None:
             produced = {k for task in plan for k in task.out_context}
-            for key in ("chat", "sql", "data", "view"):
+            for key in ("chat", "sql", "data", "view", "listing"):
                 if key in context and key not in produced:
                     previous_keys.add(key)
         ctx["previous_keys"] = previous_keys
