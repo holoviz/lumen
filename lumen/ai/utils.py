@@ -709,7 +709,7 @@ def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool
     # select all numeric columns and round
     for col in df.select_dtypes(include=["int64", "float64"]).columns:
         for key in df_describe_dict[col]:
-            values = format_float(df_describe_dict[col][key])
+            values = df_describe_dict[col][key]
             if isinstance(values, list):
                 values = [format_float(v) for v in values]
             else:
