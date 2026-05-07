@@ -128,6 +128,11 @@ Premium plans maintain **87-92% retention** consistently, while Basic plans fluc
 {%- block context -%}
 {%- if memory.get('data') is not none %}
 
+{%- if memory.get('plan') %}
+## Response Plan:
+{{ memory.plan.render_task_history()[-1] }}
+{% endif -%}
+
 {%- if memory.get('reasoning') -%}
 ## Planning Context
 The system executed this plan:
@@ -141,7 +146,7 @@ The system executed this plan:
 **The query returned no rows.**
 
 Your task: Analyze the SQL query below to identify why it returned empty results. Suggest specific corrections (which columns to use, what values to filter for, etc.). Then prompt the user to click the rerun button if they'd like to try the corrected query.
-{%- else -%}
+{%- else %}
 Below is a summary of the data returned by the query. This includes:
 - **Shape**: number of rows and columns
 - **Statistics**: min, max, mean, standard deviation for numeric columns
