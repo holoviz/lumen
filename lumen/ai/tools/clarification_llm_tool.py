@@ -4,11 +4,13 @@ import panel as pn
 
 from panel.chat import ChatFeed
 from panel_material_ui import (
-    Button, ChatAreaInput, Column, RadioBoxGroup, Typography,
+    Button, ChatAreaInput, Column, RadioBoxGroup, TextInput, Typography,
 )
 
 from ..context import TContext
 from .base import FunctionTool
+
+OTHER_OPTION = "Other"
 
 
 def make_clarification_llm_tool(
@@ -42,9 +44,20 @@ def make_clarification_llm_tool(
         label = Typography(question, margin=10)
         enter_pressed = []
         if cleaned_options:
-            confirm = Button(icon="check", label="Confirm", margin=(5, 0, 20, 20))
+            cleaned_options.append(OTHER_OPTION)
+            confirm = Button(icon="check", label="Confirm", margin=(5, 0, 10, 20))
             widget = RadioBoxGroup(options=cleaned_options, inline=False, margin=(0, 20))
-            out = Column(label, widget, confirm, max_width=600)
+            text_input = TextInput(
+                placeholder="Type your own response...",
+                width=500,
+                margin=(0, 20, 10, 20),
+                visible=False,
+            )
+            text_input.param.watch(lambda _: enter_pressed.append(text_input.value), "enter_pressed")
+            widget.param.watch(
+                lambda e: setattr(text_input, "visible", e.new == OTHER_OPTION), "value"
+            )
+            out = Column(label, widget, text_input, confirm, max_width=600)
         else:
             widget = ChatAreaInput(enable_upload=False, width=500, margin=(0, 20, 20, 20))
             widget.param.watch(lambda _: enter_pressed.append(widget.value), "enter_pressed")
@@ -53,13 +66,37 @@ def make_clarification_llm_tool(
 
         while True:
             await asyncio.sleep(0.1)
-            widget.focus()
-            if not ((options and confirm.clicks) or enter_pressed):
+            if cleaned_options:
+                # Resolve when confirm is clicked or text is submitted via Enter
+                if not (confirm.clicks or enter_pressed):
+                    continue
+                if widget.value == OTHER_OPTION:
+                    if enter_pressed:
+                        value = enter_pressed[-1].strip()
+                    elif confirm.clicks:
+                        value = text_input.value.strip()
+                    else:
+                        value = ""
+                else:
+                    value = widget.value.strip() if confirm.clicks else ""
+            else:
+                widget.focus()
+                if not enter_pressed:
+                    continue
+                value = enter_pressed[-1].strip()
+
+            if not value:
                 continue
-            value = (enter_pressed[-1] if enter_pressed else widget.value).strip()
+
             with pn.io.hold():
                 label.object = f"{label.object}\n\n> {value}"
                 out[:] = [label]
+
+            # Store clarification in context for downstream agents (e.g. validation)
+            entry = f"Q: {question}\nA: {value}"
+            existing = context.get("clarifications", [])
+            context["clarifications"] = existing + [entry]
+
             return f"User provided following clarification: {value}"
 
     return FunctionTool(

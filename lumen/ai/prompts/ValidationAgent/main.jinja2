@@ -92,6 +92,12 @@ Chat History:
 Listing displayed:
 {{ memory['listing'] }}
 {%- endif -%}
+{%- if memory.get('clarifications') %}
+User Clarifications (collected during planning):
+{%- for clarification in memory['clarifications'] %}
+{{ clarification }}
+{%- endfor %}
+{%- endif -%}
 {%- if memory.get('source_actions') %}
 Configured external data sources:
 {%- for name, info in memory['source_actions'].items() %}
