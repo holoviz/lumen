@@ -20,6 +20,7 @@ except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
 from instructor.processing.multimodal import Image
+from pydantic import BaseModel
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -331,6 +332,53 @@ def test_openai_responses_stream_tool_call_id_preserved_from_added_event():
     OpenAI._accumulate_tool_calls(accum, order, OpenAI._extract_stream_tool_calls(done_event))
     tool_calls = OpenAI._tool_calls_from_accum(accum, order)
     assert tool_calls[0]["id"] == "call_abc"
+
+
+async def test_run_tool_loop_drops_max_retries_on_bare_client(monkeypatch):
+    """Regression: ``max_retries`` is an instructor-only kwarg.
+
+    When both ``response_model`` and ``tools`` are supplied (the planner's
+    path), ``_run_tool_loop`` drops ``response_model`` and routes to the bare
+    SDK client.  Before the fix, ``max_retries`` was left in ``kwargs`` and
+    leaked through to ``AsyncMessages.create`` / ``AsyncCompletions.create``,
+    raising ``TypeError: got an unexpected keyword argument 'max_retries'``.
+    """
+
+    class _Plan(BaseModel):
+        next_step: str
+
+    llm = OpenAI(model_kwargs={"default": {"model": "gpt-4.1-mini"}})
+    calls: list[dict] = []
+
+    async def fake_run_client(_model_spec, _messages, **kwargs):
+        calls.append(dict(kwargs))
+        return SimpleNamespace(content="done", tool_calls=None)
+
+    monkeypatch.setattr(llm, "run_client", fake_run_client)
+    monkeypatch.setattr(llm, "_extract_tool_calls", lambda _output: [])
+
+    await llm._run_tool_loop(
+        messages=[{"role": "user", "content": "hi"}],
+        structured_model=_Plan,
+        tool_instances={"lookup": object()},
+        tool_contexts={},
+        max_retries=3,
+    )
+    # The first call uses the bare client (no response_model). It must not
+    # carry max_retries through, since the bare SDK rejects it.
+    bare_call = calls[0]
+    assert "response_model" not in bare_call
+    assert "max_retries" not in bare_call, (
+        "max_retries must be popped from kwargs on the bare-client path; "
+        "it is consumed by the instructor wrapper, not the underlying SDK."
+    )
+    # Final structured-output call (instructor) should still carry the
+    # user-passed max_retries so retry semantics are preserved end to end.
+    final_call = calls[-1]
+    assert final_call.get("response_model") is _Plan
+    assert final_call.get("max_retries") == 3
+
+
 # ---------------------------------------------------------------------------
 # _normalize_multimodal_messages tests
 # ---------------------------------------------------------------------------

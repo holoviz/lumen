@@ -431,6 +431,10 @@ class Llm(param.Parameterized):
         max_tool_rounds: int = 16,
         **kwargs
     ) -> BaseModel | str:
+        # ``max_retries`` is consumed by the instructor wrapper; on bare-client
+        # paths it leaks to the SDK and raises ``TypeError``. Pop once and
+        # re-attach only to the instructor (response_model) round-trip.
+        max_retries = kwargs.pop("max_retries", None)
         requested_stream = bool(kwargs.get("stream", False))
         if requested_stream and structured_model is None:
             # In stream mode we can't know upfront whether a tool will be called.
@@ -442,6 +446,8 @@ class Llm(param.Parameterized):
         stream = False
         if structured_model is not None and not tool_instances:
             kwargs["response_model"] = structured_model
+            if max_retries is not None:
+                kwargs["max_retries"] = max_retries
         else:
             if tool_instances:
                 stream = kwargs.pop("stream", False)
@@ -470,6 +476,8 @@ class Llm(param.Parameterized):
 
         if structured_model:
             kwargs["response_model"] = structured_model
+            if max_retries is not None:
+                kwargs["max_retries"] = max_retries
             output = await self.run_client(model_spec, messages_curr, stream=stream, **kwargs)
         return output
 
@@ -1290,6 +1298,7 @@ class OpenAI(Llm, OpenAIMixin):
                 messages, structured_model, tool_instances, tool_contexts, model_spec, max_tool_rounds, **kwargs
             )
 
+        max_retries = kwargs.pop("max_retries", None)
         requested_stream = bool(kwargs.get("stream", False))
         if requested_stream and structured_model is None:
             kwargs.pop("response_model", None)
@@ -1304,6 +1313,8 @@ class OpenAI(Llm, OpenAIMixin):
         # can ask for the structured response in a single round-trip.
         if structured_model is not None and not tool_instances and not has_inbuilt:
             kwargs["response_model"] = structured_model
+            if max_retries is not None:
+                kwargs["max_retries"] = max_retries
         else:
             kwargs.pop("response_model", None)
 
@@ -1332,6 +1343,8 @@ class OpenAI(Llm, OpenAIMixin):
         if structured_model:
             final_kwargs = dict(kwargs)
             final_kwargs["response_model"] = structured_model
+            if max_retries is not None:
+                final_kwargs["max_retries"] = max_retries
             response_id = getattr(output, "id", None)
             if response_id:
                 final_kwargs["previous_response_id"] = response_id
