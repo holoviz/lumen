@@ -155,15 +155,18 @@ def make_run_exploration_sql_tool(sources: dict[tuple[str, str], BaseSQLSource])
         return await execute_exploration_sql(source, sql_query, sources=sources)
 
     names = ", ".join(sorted({s for s, _ in sources})) or "(none)"
+    tables = ", ".join(sorted({t for _, t in sources})) or "(none)"
     run_exploration_sql.__doc__ = (
         f"Execute read-only SQL on the named source to inspect data (use LIMIT on raw selects). "
-        f"Sources: {names}."
+        f"Sources: {names}. "
+        f"Tables: {tables}. "
+        f"Reference tables by name directly (e.g. SELECT * FROM my_table), not with read_csv() or read_parquet()."
     )
     return FunctionTool(
         run_exploration_sql,
         purpose=(
             "Run exploratory read-only SQL (SELECT/WITH) on a datasource by name; "
-            "returns a small text preview of the result or an error message."
+            "returns a small text preview of the result or an error message. "
             "Do not use this tool to generate the result, it is meant as an exploratory "
             "tool to gather the information needed to generate the final SQL query."
         ),
