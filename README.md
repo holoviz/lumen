@@ -1,6 +1,6 @@
 # Lumen <img src="https://raw.githubusercontent.com/holoviz/lumen/main/docs/assets/logo.png" width="48">
 
-*Illuminate your data*
+*Illuminate your data 💡*
 
 |    |    |
 | --- | --- |
