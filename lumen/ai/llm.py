@@ -431,27 +431,27 @@ class Llm(param.Parameterized):
         max_tool_rounds: int = 16,
         **kwargs
     ) -> BaseModel | str:
+        # ``max_retries`` is consumed by the instructor wrapper; on bare-client
+        # paths it leaks to the SDK and raises ``TypeError``. Pop once and
+        # re-attach only to the instructor (response_model) round-trip.
+        max_retries = kwargs.pop("max_retries", None)
         requested_stream = bool(kwargs.get("stream", False))
         if requested_stream and structured_model is None:
             # In stream mode we can't know upfront whether a tool will be called.
             # Return the provider stream and let stream() inspect chunks for tool calls.
             kwargs.pop("response_model", None)
-            kwargs.pop("max_retries", None)
             messages = self._normalize_multimodal_messages(messages)
             return await self.run_client(model_spec, messages, **kwargs)
 
         stream = False
-        # ``max_retries`` is consumed by the instructor wrapper; on the raw
-        # client path it leaks through to the SDK and raises ``TypeError``.
-        # Stash it so the final structured-output round-trip can still use it.
-        saved_max_retries = None
         if structured_model is not None and not tool_instances:
             kwargs["response_model"] = structured_model
+            if max_retries is not None:
+                kwargs["max_retries"] = max_retries
         else:
             if tool_instances:
                 stream = kwargs.pop("stream", False)
             kwargs.pop("response_model", None)
-            saved_max_retries = kwargs.pop("max_retries", None)
             # Without response_model the raw client is used, which
             # cannot handle instructor Image objects in list content.
             messages = self._normalize_multimodal_messages(messages)
@@ -476,8 +476,8 @@ class Llm(param.Parameterized):
 
         if structured_model:
             kwargs["response_model"] = structured_model
-            if saved_max_retries is not None:
-                kwargs["max_retries"] = saved_max_retries
+            if max_retries is not None:
+                kwargs["max_retries"] = max_retries
             output = await self.run_client(model_spec, messages_curr, stream=stream, **kwargs)
         return output
 
@@ -1298,10 +1298,10 @@ class OpenAI(Llm, OpenAIMixin):
                 messages, structured_model, tool_instances, tool_contexts, model_spec, max_tool_rounds, **kwargs
             )
 
+        max_retries = kwargs.pop("max_retries", None)
         requested_stream = bool(kwargs.get("stream", False))
         if requested_stream and structured_model is None:
             kwargs.pop("response_model", None)
-            kwargs.pop("max_retries", None)
             return await self.run_client(model_spec, messages, **kwargs)
 
         has_inbuilt = any(
@@ -1311,12 +1311,12 @@ class OpenAI(Llm, OpenAIMixin):
 
         # When there are NO inbuilt tools and NO function-tool instances we
         # can ask for the structured response in a single round-trip.
-        saved_max_retries = None
         if structured_model is not None and not tool_instances and not has_inbuilt:
             kwargs["response_model"] = structured_model
+            if max_retries is not None:
+                kwargs["max_retries"] = max_retries
         else:
             kwargs.pop("response_model", None)
-            saved_max_retries = kwargs.pop("max_retries", None)
 
         output = await self.run_client(model_spec, messages, **kwargs)
         if not tool_instances and not has_inbuilt:
@@ -1343,8 +1343,8 @@ class OpenAI(Llm, OpenAIMixin):
         if structured_model:
             final_kwargs = dict(kwargs)
             final_kwargs["response_model"] = structured_model
-            if saved_max_retries is not None:
-                final_kwargs["max_retries"] = saved_max_retries
+            if max_retries is not None:
+                final_kwargs["max_retries"] = max_retries
             response_id = getattr(output, "id", None)
             if response_id:
                 final_kwargs["previous_response_id"] = response_id
