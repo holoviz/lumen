@@ -2609,7 +2609,9 @@ class ExplorerUI(UI):
     ):
         self._exploration['view'].conversation = self.interface.objects
         if "__error__" not in plan.out_context and plan.status != "error":
-            await self._sync_sources(SimpleNamespace(new=plan.out_context), global_context=plan.out_context)
+            # Propagate sources produced by the plan (out_context) into
+            # the global UI context so the source catalog and CTA update.
+            await self._sync_sources(SimpleNamespace(new=plan.out_context), global_context=self.context)
             if "pipeline" in plan.out_context:
                 await self._add_analysis_suggestions(plan)
 
