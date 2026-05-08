@@ -62,7 +62,7 @@ def make_clarification_llm_tool(
             widget.param.watch(
                 lambda e: setattr(text_input, "visible", e.new == OTHER_OPTION), "value"
             )
-            out = Column(label, widget, text_input, confirm, max_width=600)
+            out = Column(label, widget, confirm, text_input, max_width=600)
         else:
             widget = ChatAreaInput(enable_upload=False, width=500, margin=(0, 20, 20, 20))
             widget.param.watch(lambda _: submitted.append(widget.value), "enter_pressed")
@@ -73,8 +73,10 @@ def make_clarification_llm_tool(
             await asyncio.sleep(0.1)
             if not cleaned_options:
                 widget.focus()
+            if not submitted:
+                continue
             value = submitted[-1].strip()
-            if not submitted or not value:
+            if not value:
                 continue
 
             with pn.io.hold():
