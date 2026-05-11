@@ -1446,6 +1446,9 @@ class UI(Viewer):
         else:
             self._current_help_text = HELP_GETTING_STARTED
 
+    def _propagate_sources_to_exploration(self, global_context: TContext):
+        """No-op; overridden by ExplorerUI."""
+
     @param.depends('context', on_init=True, watch=True)
     async def _sync_sources(self, event=None, global_context=None):
         global_context = self.context if global_context is None else global_context
@@ -1497,6 +1500,8 @@ class UI(Viewer):
             global_context["source"] = source
         if "table" in context:
             global_context["table"] = context["table"]
+
+        self._propagate_sources_to_exploration(global_context)
 
         # Guard against early calls during init when components don't exist yet
         if hasattr(self, '_explorer'):
@@ -2152,6 +2157,25 @@ class ExplorerUI(UI):
             exploration = await self._add_exploration(plan, self._home)
             self._add_views(exploration, items=plan.views)
             await self._postprocess_exploration(plan, exploration, prev, is_new=True)
+
+    def _propagate_sources_to_exploration(self, global_context: TContext):
+        """Propagate _SOURCE_INFRA_KEYS into the active exploration's context."""
+        exploration = self._exploration.get('view')
+        if exploration is None or exploration is self._home:
+            return
+        exp_ctx = exploration.context
+        for key in ("source", "sources", "visible_slugs"):
+            if key not in global_context:
+                continue
+            if key == "sources":
+                # Merge: keep exploration's own sources, add new global ones.
+                existing = exp_ctx.get("sources", [])
+                for src in global_context["sources"]:
+                    if src not in existing:
+                        existing = [*existing, src]
+                exp_ctx["sources"] = existing
+            else:
+                exp_ctx[key] = global_context[key]
 
     def _configure_session(self):
         self._home = self._last_synced = Exploration(
