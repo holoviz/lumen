@@ -5,12 +5,15 @@ import datetime
 import io
 import json
 import re
+import zipfile
 
+from dataclasses import dataclass, field
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pandas as pd
 
+from ....util import normalize_table_name
 from .constants import (
     CONTENT_TYPE_TO_EXTENSION, METADATA_EXTENSIONS, TABLE_EXTENSIONS,
     DownloadConfig,
@@ -197,6 +200,133 @@ def read_json_to_dataframe(content: str | bytes) -> pd.DataFrame:
                 return pd.json_normalize(data[key])
         return pd.DataFrame([data])
     raise ValueError(f"Unsupported JSON root type: {type(data).__name__}")
+
+
+@dataclass
+class FileReadResult:
+    """Result of parsing a file into DataFrames."""
+
+    tables: dict[str, pd.DataFrame]
+    """Mapping of table names to DataFrames."""
+
+    source_params: dict = field(default_factory=dict)
+    """Extra params for ``DuckDBSource`` (e.g. spatial initializers)."""
+
+    conversions: dict[str, str] = field(default_factory=dict)
+    """Per-table SQL to execute after registering the DataFrame as
+    ``{table}_temp``.  When present the caller should:
+
+    1. ``conn.register(f"{table}_temp", df_rel)``
+    2. ``conn.execute(conversion)``
+    3. ``conn.unregister(f"{table}_temp")``
+    """
+
+
+def read_file_to_dataframes(
+    file_obj: io.BytesIO | io.StringIO,
+    extension: str,
+    *,
+    alias: str = "data",
+    **read_kwargs,
+) -> FileReadResult | None:
+    """
+    Parse a file object into one or more DataFrames.
+
+    Handles CSV, Parquet, JSON, Excel (single or all sheets), HTML
+    (all tables), and geospatial formats (GeoJSON, WKT, zipped
+    shapefiles).  Returns ``None`` for unrecognised extensions.
+
+    Parameters
+    ----------
+    file_obj : io.BytesIO | io.StringIO
+        Seekable file-like object.
+    extension : str
+        Lowercase extension without dot (e.g. ``"csv"``).
+    alias : str
+        Base table name.  Single-result formats use this directly;
+        multi-result formats append a suffix.
+    **read_kwargs
+        Passed through to the underlying reader.  Common examples:
+        ``sheet_name`` for Excel files, ``sep`` for CSV.
+
+    Returns
+    -------
+    FileReadResult | None
+    """
+    file_obj.seek(0)
+    sheet = read_kwargs.pop("sheet_name", None)
+
+    # ── single-DataFrame formats ──────────────────────────────────────────
+    if extension == "csv":
+        csv_kwargs = {"parse_dates": True, "sep": None, "engine": "python"}
+        csv_kwargs.update(read_kwargs)
+        df = pd.read_csv(file_obj, **csv_kwargs)
+        return FileReadResult(tables={alias: df})
+
+    if extension in ("parq", "parquet"):
+        return FileReadResult(tables={alias: pd.read_parquet(file_obj, **read_kwargs)})
+
+    if extension == "json":
+        content = file_obj.read()
+        return FileReadResult(tables={alias: read_json_to_dataframe(content)})
+
+    # ── Excel (single sheet or all sheets) ────────────────────────────────
+    if extension == "xlsx":
+        if sheet is not None:
+            df = pd.read_excel(file_obj, sheet_name=sheet, **read_kwargs)
+            return FileReadResult(tables={alias: df})
+        # Read all sheets
+        sheets = pd.read_excel(file_obj, sheet_name=None, **read_kwargs)
+        if len(sheets) == 1:
+            return FileReadResult(tables={alias: next(iter(sheets.values()))})
+        tables = {
+            f"{alias}_{normalize_table_name(name)}": df
+            for name, df in sheets.items()
+        }
+        return FileReadResult(tables=tables)
+
+    # ── HTML tables ───────────────────────────────────────────────────────
+    if extension in ("html", "htm"):
+        content = file_obj.read()
+        return FileReadResult(tables=read_html_tables(content, alias))
+
+    # ── Geospatial (GeoJSON / WKT / zipped shapefile) ─────────────────────
+    if extension in ("geojson", "wkt", "zip"):
+        return read_geo_file(file_obj, extension, alias)
+
+    return None
+
+
+def read_geo_file(
+    file_obj: io.BytesIO, extension: str, alias: str,
+) -> FileReadResult:
+    """Parse a geospatial file, returning WKB geometry + conversion SQL."""
+    if extension == "zip":
+        zf = zipfile.ZipFile(file_obj)
+        if not any(f.filename.endswith("shp") for f in zf.filelist):
+            raise ValueError("ZIP file does not contain a shapefile (.shp)")
+        file_obj.seek(0)
+
+    import geopandas as gpd
+
+    geo_df = gpd.read_file(file_obj)
+    if geo_df.empty:
+        raise ValueError("Geospatial file contains no features")
+
+    df = pd.DataFrame(geo_df)
+    df["geometry"] = geo_df["geometry"].to_wkb()
+
+    cols = ", ".join(f'"{c}"' for c in df.columns if c != "geometry")
+    conversion = (
+        f"CREATE TEMP TABLE {alias} AS SELECT {cols}, "
+        f"ST_GeomFromWKB(geometry) as geometry FROM {alias}_temp"
+    )
+
+    return FileReadResult(
+        tables={alias: df},
+        source_params={"initializers": ["INSTALL spatial;\nLOAD spatial;"]},
+        conversions={alias: conversion},
+    )
 
 
 def normalize_json_response(data) -> pd.DataFrame:

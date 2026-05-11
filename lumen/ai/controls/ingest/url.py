@@ -11,7 +11,7 @@ from ...translate import params_to_callable
 from .file_row import UploadedFileRow
 from .parametric import ParametricSourceControls
 from .result import SourceResult
-from .utils import download_file, read_html_tables, read_json_to_dataframe
+from .utils import download_file, read_file_to_dataframes, read_html_tables
 
 # ─────────────────────────────────────────────────────────────────────────────
 # URL SOURCE CONTROLS
@@ -177,12 +177,7 @@ class URLSourceControls(ParametricSourceControls):
     def _read_content(self, file_obj, suffix: str, card) -> dict[str, pd.DataFrame]:
         """Parse file bytes into a dict of {table_name: DataFrame}."""
         alias = card.alias
-        if suffix == "csv":
-            return {alias: pd.read_csv(file_obj, parse_dates=True, sep=None, engine="python")}
-        if suffix in ("parq", "parquet"):
-            return {alias: pd.read_parquet(file_obj)}
-        if suffix == "json":
-            return {alias: read_json_to_dataframe(file_obj.read())}
-        if suffix == "xlsx":
-            return {alias: pd.read_excel(file_obj, sheet_name=card.sheet)}
+        result = read_file_to_dataframes(file_obj, suffix, alias=alias, sheet_name=card.sheet)
+        if result is not None:
+            return result.tables
         return read_html_tables(file_obj.read(), alias)
