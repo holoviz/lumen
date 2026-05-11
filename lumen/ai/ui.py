@@ -2159,7 +2159,7 @@ class ExplorerUI(UI):
             await self._postprocess_exploration(plan, exploration, prev, is_new=True)
 
     def _propagate_sources_to_exploration(self, global_context: TContext):
-        """Propagate _SOURCE_INFRA_KEYS into the active exploration's context."""
+        """Propagate source keys into the active exploration's context."""
         exploration = self._exploration.get('view')
         if exploration is None or exploration is self._home:
             return
