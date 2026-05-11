@@ -4,11 +4,13 @@ import panel as pn
 
 from panel.chat import ChatFeed
 from panel_material_ui import (
-    Button, ChatAreaInput, Column, RadioBoxGroup, Typography,
+    Button, ChatAreaInput, Column, RadioBoxGroup, TextInput, Typography,
 )
 
 from ..context import TContext
 from .base import FunctionTool
+
+OTHER_OPTION = "Other"
 
 
 def make_clarification_llm_tool(
@@ -40,26 +42,51 @@ def make_clarification_llm_tool(
             cleaned_options = [opt.strip() for opt in options if isinstance(opt, str) and opt.strip()]
 
         label = Typography(question, margin=10)
-        enter_pressed = []
+        submitted = []
         if cleaned_options:
-            confirm = Button(icon="check", label="Confirm", margin=(5, 0, 20, 20))
+            def _on_confirm(_):
+                val = text_input.value.strip() if widget.value == OTHER_OPTION else widget.value.strip()
+                if val:
+                    submitted.append(val)
+
+            cleaned_options.append(OTHER_OPTION)
+            confirm = Button(icon="check", label="Confirm", margin=(5, 0, 10, 20), on_click=_on_confirm)
             widget = RadioBoxGroup(options=cleaned_options, inline=False, margin=(0, 20))
-            out = Column(label, widget, confirm, max_width=600)
+            text_input = TextInput(
+                placeholder="Type your own response...",
+                width=500,
+                margin=(0, 20, 10, 20),
+                visible=False,
+            )
+            text_input.param.watch(_on_confirm, "enter_pressed")
+            widget.param.watch(
+                lambda e: setattr(text_input, "visible", e.new == OTHER_OPTION), "value"
+            )
+            out = Column(label, widget, confirm, text_input, max_width=600)
         else:
             widget = ChatAreaInput(enable_upload=False, width=500, margin=(0, 20, 20, 20))
-            widget.param.watch(lambda _: enter_pressed.append(widget.value), "enter_pressed")
+            widget.param.watch(lambda _: submitted.append(widget.value), "enter_pressed")
             out = Column(label, widget, max_width=600)
         interface.send(out, user=user, respond=False)
 
         while True:
             await asyncio.sleep(0.1)
-            widget.focus()
-            if not ((options and confirm.clicks) or enter_pressed):
+            if not cleaned_options:
+                widget.focus()
+            if not submitted:
                 continue
-            value = (enter_pressed[-1] if enter_pressed else widget.value).strip()
+            value = submitted[-1].strip()
+            if not value:
+                continue
+
             with pn.io.hold():
                 label.object = f"{label.object}\n\n> {value}"
                 out[:] = [label]
+
+            # Store clarification in context for downstream agents (e.g. validation)
+            entry = f"Q: '{question}' | User Later Input: '{value}'"
+            existing = context.get("clarifications", [])
+            context["clarifications"] = existing + [entry]
             return f"User provided following clarification: {value}"
 
     return FunctionTool(
