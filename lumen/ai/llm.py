@@ -963,6 +963,8 @@ class Llm(param.Parameterized):
         for i, message in enumerate(messages):
             role = message["role"]
             if role == "system":
+                content = message.get("content", "")
+                log_debug(f"System prompt ({len(content)} chars):\n\033[90m{truncate_string(content, max_length=4000)}\033[0m")
                 continue
             content = message.get("content") if isinstance(message, dict) else None
             if not content and "tool_calls" in message:

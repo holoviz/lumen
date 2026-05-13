@@ -275,7 +275,7 @@ class LLMUser(param.Parameterized):
                 **prompt_context
             )
         prompt = prompt.strip()
-        log_debug(f"{prompt_label}:\n\033[90m{prompt}\033[0m", show_length=True)
+        log_debug(prompt_label)
         return prompt
 
     async def _invoke_prompt(
