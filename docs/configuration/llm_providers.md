@@ -25,6 +25,7 @@ lumen-ai serve penguins.csv --provider anthropic
 lumen-ai serve penguins.csv --provider google --model 'gemini-2.5-flash'
 lumen-ai serve penguins.csv --provider openrouter --model 'openai/gpt-4o-mini'
 lumen-ai serve penguins.csv --provider ollama --model 'qwen3:32b'
+lumen-ai serve penguins.csv --provider mlx
 ```
 
 For more CLI options, see the [CLI guide](../configuration/cli.md#configure-llm).
@@ -94,6 +95,7 @@ For installation and API key setup instructions, see the [Installation guide](..
 |----------|---------------|-------------|
 | **Ollama** | `qwen3:32b` | External service; requires `ollama pull` to manage and run models. |
 | **Llama.cpp** | `unsloth/Qwen3-32B-GGUF` | Embedded runner; automatically downloads GGUF models from HuggingFace. |
+| **MLX** | `mlx-community/Qwen3.5-9B-MLX-4bit` | Apple Silicon native; runs models in-process via Metal GPU or connects to `mlx_lm.server`. |
 | **AI Navigator** | `server-model` | Desktop GUI; provides a local OpenAI-compatible API once the API server is started. |
 
 **Recommended local models:**
@@ -201,7 +203,7 @@ The default values for each provider are:
 | `AzureOpenAI` / `AzureMistralAI` | `AZUREAI_ENDPOINT_KEY` |
 | `Bedrock` / `AnthropicBedrock` | `AWS_ACCESS_KEY_ID` |
 | `AICatalyst` | `AI_CATALYST_API_KEY` |
-| `Ollama`, `LlamaCpp`, `AINavigator` | *(none required)* |
+| `Ollama`, `LlamaCpp`, `MLX`, `AINavigator` | *(none required)* |
 
 ### Checking available models
 
@@ -311,6 +313,65 @@ llm = lmai.llm.AINavigator()
 ```
 
 By default, it uses `http://localhost:8080/v1`.
+
+### MLX (Apple Silicon)
+
+Run models natively on Apple Silicon Macs using the [MLX](https://github.com/ml-explore/mlx-lm) framework. Requires `pip install mlx-lm`.
+
+**Two modes of operation:**
+
+=== "Server mode (default)"
+
+    Connect to a running `mlx_lm.server`:
+
+    ``` bash title="Start the server"
+    mlx_lm.server \
+      --model mlx-community/Qwen3.5-9B-MLX-4bit \
+      --port 8080 \
+      --max-tokens 8192 \
+      --chat-template-args '{"enable_thinking":false}'
+    ```
+
+    ``` py title="Connect from Lumen"
+    llm = lmai.llm.MLX(
+        endpoint="http://localhost:8080/v1",
+        model_kwargs={"default": {"model": "mlx-community/Qwen3.5-9B-MLX-4bit"}},
+    )
+    ```
+
+=== "In-process mode"
+
+    Load the model directly — no server needed:
+
+    ``` py title="In-process inference"
+    llm = lmai.llm.MLX(
+        endpoint=None,  # disables server mode
+        model_kwargs={"default": {"model": "mlx-community/Qwen3.5-9B-MLX-4bit"}},
+    )
+    ```
+
+    The model is downloaded from HuggingFace on first use and cached.
+
+**Key parameters:**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `endpoint` | `http://localhost:8080/v1` | Set to `None` for in-process mode |
+| `enable_thinking` | `False` | Enable model reasoning/thinking mode |
+| `max_tokens` | `8192` | Max tokens per response (per-request, does not change server defaults) |
+| `temperature` | `0.4` | Sampling temperature (per-request, does not change server defaults) |
+| `chat_template_kwargs` | `{}` | Extra args for `apply_chat_template` (in-process mode only) |
+
+**Recommended models for Apple Silicon:**
+
+| Memory | Model | Size |
+|--------|-------|------|
+| 16 GB | `mlx-community/Qwen3.5-9B-MLX-4bit` | ~5 GB |
+| 32 GB | `mlx-community/Qwen3.5-27B-4bit` | ~15 GB |
+| 64 GB+ | `mlx-community/Qwen3.6-35B-A3B-4bit` | ~20 GB |
+
+!!! tip "Server mode vs in-process"
+    Server mode keeps the model loaded between requests and supports multiple clients. In-process mode is simpler (no separate terminal) but loads the model into your Python process.
 
 ### AI Catalyst (Enterprise)
 
