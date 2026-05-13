@@ -268,6 +268,29 @@ class Llm(param.Parameterized):
         system: str,
         input_kwargs: dict[str, Any]
     ) -> tuple[list[Message], dict[str, Any]]:
+        # Collect all system content: the rendered prompt + any system messages in the history
+        system_parts = []
+        if system:
+            system_parts.append(system)
+        non_system = []
+        for msg in messages:
+            if msg["role"] == "system":
+                content = msg.get("content", "")
+                if content:
+                    system_parts.append(content if isinstance(content, str) else str(content))
+            else:
+                non_system.append(msg)
+        merged = "\n\n".join(system_parts) if system_parts else ""
+        return self._apply_system(merged, non_system, input_kwargs)
+
+    def _apply_system(
+        self,
+        system: str,
+        messages: list[Message],
+        input_kwargs: dict[str, Any]
+    ) -> tuple[list[Message], dict[str, Any]]:
+        """Place the consolidated system prompt. Override for providers that
+        take system as a separate parameter (e.g. Anthropic, Bedrock)."""
         if system:
             messages = [Message(role="system", content=system)] + messages
         return messages, input_kwargs
@@ -1662,7 +1685,7 @@ class Anthropic(Llm, AnthropicMixin):
 
         return filtered, system_text
 
-    def _add_system_message(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
+    def _apply_system(self, system: str, messages: list[Message], input_kwargs: dict[str, Any]):
         if system:
             input_kwargs["system"] = system
         return messages, input_kwargs
@@ -1929,7 +1952,7 @@ class Bedrock(Llm, BedrockMixin):
 
         return bedrock_messages, system_text
 
-    def _add_system_message(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
+    def _apply_system(self, system: str, messages: list[Message], input_kwargs: dict[str, Any]):
         if system:
             input_kwargs["system"] = [{"text": system}]
         return messages, input_kwargs
