@@ -87,10 +87,6 @@ Current context contains the following keys: {{ ", ".join(memory) }}
 {{ memory["view"] | json_to_yaml }}
 ```
 {%- endif -%}
-{%- if chat_history is defined and chat_history %}
-Chat History:
-{{ chat_history }}
-{%- endif -%}
 {%- if memory.get('listing') and 'listing' not in previous_keys %}
 Listing displayed:
 {{ memory['listing'] }}
