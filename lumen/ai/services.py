@@ -18,6 +18,7 @@ PROVIDER_ENV_VARS = {
     "google": "GEMINI_API_KEY",
     "groq": "GROQ_API_KEY",
     "ai-catalyst": "AI_CATALYST_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
 }
 
 
@@ -423,3 +424,4 @@ class BedrockMixin(param.Parameterized):
         if "aws_session_token" not in params:
             params["aws_session_token"] = os.environ.get("AWS_SESSION_TOKEN")
         super().__init__(**params)
+
