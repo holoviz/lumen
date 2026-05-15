@@ -134,7 +134,7 @@ llm = lmai.llm.OpenRouter(
 )
 
 | Key | Agent |
-|-----|-------|
+|-----|-------| 
 | `default` | Fallback for all agents |
 | `sql` | SQLAgent |
 | `vega_lite` | VegaLiteAgent |
