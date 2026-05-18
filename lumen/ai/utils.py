@@ -78,6 +78,8 @@ def format_float(num):
     Process a float value, returning numeric types instead of strings.
     For very large/small numbers, returns a float that will display in scientific notation.
     """
+    if not isinstance(num, (int, float)):
+        return num
     if pd.isna(num) or math.isinf(num):
         return num
 
