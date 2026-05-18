@@ -2632,7 +2632,8 @@ class LiteLLM(Llm):
             if hasattr(choice, 'delta') and hasattr(choice.delta, 'content'):
                 return choice.delta.content or ""
         return ""
-    
+
+
 class OpenRouter(OpenAI):
     """
     An LLM implementation using the OpenRouter API.
