@@ -27,7 +27,7 @@ from pydantic import BaseModel
 from .interceptor import Interceptor
 from .services import (
     PROVIDER_ENV_VARS, AnthropicMixin, AzureMistralAIMixin, AzureOpenAIMixin,
-    BedrockMixin, GenAIMixin, LlamaCppMixin, MistralAIMixin, OpenAIMixin
+    BedrockMixin, GenAIMixin, LlamaCppMixin, MistralAIMixin, OpenAIMixin,
 )
 from .utils import (
     format_exception, format_msg_content, log_debug, truncate_string,

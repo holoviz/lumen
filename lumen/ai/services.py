@@ -424,4 +424,3 @@ class BedrockMixin(param.Parameterized):
         if "aws_session_token" not in params:
             params["aws_session_token"] = os.environ.get("AWS_SESSION_TOKEN")
         super().__init__(**params)
-
