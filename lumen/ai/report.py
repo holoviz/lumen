@@ -634,14 +634,14 @@ class TaskGroup(Task):
                 "Report has not been executed, run report before exporting to_notebook."
             )
         cells, extensions = [], ['tabulator']
-        pending_header = None
+        pending_headers = []
         for out in self.views:
             cell = ext = None
             if isinstance(out, Typography):
                 # Buffer headers; only emit them if followed by exportable content
                 level = int(out.variant[1:]) if out.variant and out.variant.startswith('h') else 0
                 prefix = f"{'#'*level} " if level else ''
-                pending_header = make_md_cell(f"{prefix}{out.object}")
+                pending_headers.append(make_md_cell(f"{prefix}{out.object}"))
                 continue
             elif isinstance(out, Markdown):
                 cell = make_md_cell(out.object)
@@ -659,10 +659,9 @@ class TaskGroup(Task):
 
             if cell is None:
                 continue
-            # Flush buffered header before the content cell
-            if pending_header is not None:
-                cells.append(pending_header)
-                pending_header = None
+            # Flush buffered headers before the content cell
+            cells.extend(pending_headers)
+            pending_headers.clear()
             cells.append(cell)
             if ext and ext not in extensions:
                 extensions.append(ext)
