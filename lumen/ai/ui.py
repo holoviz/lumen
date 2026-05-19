@@ -2447,8 +2447,18 @@ class ExplorerUI(UI):
 
         pop_button = IconButton(
             description="Open this tab in a split view", icon="vertical_split", icon_size="1.1em", size="small",
-            margin=(5, 0, 0, 0), on_click=pop_out, styles={"margin-left": "auto"}
+            margin=(5, 0, 0, 0), on_click=pop_out, styles={"margin-left": "auto"},
+            visible=len(tabs) > 1, color="primary"
         )
+
+        def _sync_pop_button_visibility(*events):
+            if _tab_index() is None:
+                # Popped out: always show (to allow closing the split)
+                pop_button.visible = True
+            else:
+                pop_button.visible = len(tabs) > 1
+
+        tabs.param.watch(_sync_pop_button_visibility, 'objects')
         return pop_button
 
     def _render_view(self, exploration: Exploration, view: LumenEditor) -> VSplit:
