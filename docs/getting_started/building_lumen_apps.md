@@ -122,9 +122,19 @@ llm = lmai.llm.OpenAI(
     }
 )
 ```
+Use OpenRouter to route different agents to models from different providers:
+
+```py
+llm = lmai.llm.OpenRouter(
+    model_kwargs={
+        "default": {"model": "openai/gpt-4o-mini", "temperature": 0.2},
+        "sql": {"model": "anthropic/claude-3.5-sonnet", "temperature": 0.1},
+        "vega_lite": {"model": "google/gemini-2.5-flash"},
+    }
+)
 
 | Key | Agent |
-|-----|-------|
+|-----|-------| 
 | `default` | Fallback for all agents |
 | `sql` | SQLAgent |
 | `vega_lite` | VegaLiteAgent |
@@ -132,7 +142,7 @@ llm = lmai.llm.OpenAI(
 | `chat` | ChatAgent |
 | `source` | SourceAgent |
 
-**Providers:** `OpenAI`, `Anthropic`, `Google`, `Ollama`, `AnthropicBedrock`, `Bedrock`, `LiteLLM`, `Mistral`, `LlamaCpp`
+**Providers:** `OpenAI`,`OpenRouter`,`Anthropic`, `Google`, `Ollama`, `AnthropicBedrock`, `Bedrock`, `LiteLLM`, `Mistral`, `LlamaCpp`
 
 See [LLM Providers](../configuration/llm_providers.md) for setup and model recommendations.
 
@@ -278,6 +288,7 @@ ui = lmai.ExplorerUI(
 lumen-ai serve data.csv                           # Basic
 lumen-ai serve data.csv --provider anthropic      # Change provider
 lumen-ai serve data.csv --model gpt-4.1           # Change model
+lumen-ai serve data.csv --provider openrouter --model openai/gpt-4o-mini
 lumen-ai serve data.csv --agents sql vega_lite    # Limit agents
 lumen-ai serve data.csv --code-execution prompt   # Enable code execution
 lumen-ai serve data.csv --temperature 0.1         # Set temperature
