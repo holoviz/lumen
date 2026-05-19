@@ -501,3 +501,13 @@ def check_xarray_available():
         return True
     except ImportError:
         return False
+
+
+def check_stac_available():
+    """Check if pystac-client and xpystac are installed."""
+    try:
+        import pystac_client  # noqa
+        import xpystac  # noqa
+        return check_xarray_available()
+    except ImportError:
+        return False

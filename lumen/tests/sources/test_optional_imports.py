@@ -20,13 +20,14 @@ OPTIONAL_SOURCES = [
     ("lumen.sources.bigquery", "BigQuerySource", "google.auth", "bigquery"),
     ("lumen.sources.snowflake", "SnowflakeSource", "snowflake", "snowflake"),
     ("lumen.sources.ae5", "AE5Source", "ae5_tools", "ae5"),
+    ("lumen.sources.stac", "STACSource", "pystac_client", "stac"),
 ]
 
 
 @pytest.mark.parametrize(
     "module_path,class_name,guard_package,pip_extra",
     OPTIONAL_SOURCES,
-    ids=["sqlalchemy", "bigquery", "snowflake", "ae5"],
+    ids=["sqlalchemy", "bigquery", "snowflake", "ae5", "stac"],
 )
 def test_error_message_contains_pip_install(module_path, class_name, guard_package, pip_extra):
     """Error messages should include the correct pip install command."""
@@ -41,7 +42,7 @@ def test_error_message_contains_pip_install(module_path, class_name, guard_packa
 @pytest.mark.parametrize(
     "module_path,class_name,guard_package,pip_extra",
     OPTIONAL_SOURCES,
-    ids=["sqlalchemy", "bigquery", "snowflake", "ae5"],
+    ids=["sqlalchemy", "bigquery", "snowflake", "ae5", "stac"],
 )
 def test_import_guard_uses_try_except(module_path, class_name, guard_package, pip_extra):
     """Each module should have a try/except guard around the optional import."""
@@ -58,7 +59,7 @@ def test_import_guard_uses_try_except(module_path, class_name, guard_package, pi
 @pytest.mark.parametrize(
     "module_path,class_name,guard_package,pip_extra",
     OPTIONAL_SOURCES,
-    ids=["sqlalchemy", "bigquery", "snowflake", "ae5"],
+    ids=["sqlalchemy", "bigquery", "snowflake", "ae5", "stac"],
 )
 def test_import_raises_when_dependency_missing(module_path, class_name, guard_package, pip_extra):
     """Importing the module should raise ImportError with a helpful message

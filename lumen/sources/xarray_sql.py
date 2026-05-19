@@ -13,9 +13,9 @@ from typing import Any, ClassVar
 
 import param
 
-from ..transforms.sql import SQLFilter
-from ..util import check_xarray_available
-from .base import BaseSQLSource, cached
+from ..transforms.sql import SQLFilter, SQLLimit
+from ..util import check_xarray_available, get_dataframe_schema
+from .base import BaseSQLSource, cached, cached_schema
 
 
 class XArraySQLSource(BaseSQLSource):
@@ -133,7 +133,12 @@ class XArraySQLSource(BaseSQLSource):
 
         for var_name in self._dataset.data_vars:
             var_ds = self._dataset[[var_name]]
-            self._ctx.from_dataset(var_name, var_ds, chunks=chunk_spec)
+            # Filter the chunk spec to this variable's own dimensions:
+            # variables in a dataset can have heterogeneous dimensionality.
+            var_chunks = {
+                dim: size for dim, size in chunk_spec.items() if dim in var_ds.dims
+            }
+            self._ctx.from_dataset(var_name, var_ds, chunks=var_chunks)
             self._registered_tables.add(var_name)
 
         if self.tables is None:
@@ -201,10 +206,23 @@ class XArraySQLSource(BaseSQLSource):
         """Access the underlying xarray Dataset."""
         return self._dataset
 
+    @cached_schema
     def get_schema(self, table=None, limit=None, shuffle=False):
-        # DataFusion supports neither TABLESAMPLE nor ORDER BY RAND(),
-        # so force shuffle=False to make the parent use SQLLimit instead.
-        return super().get_schema(table, limit, shuffle=False)
+        # Build the schema from a bounded sample and take __len__ from
+        # xarray metadata (product of the variable's dim sizes, O(1)).
+        # Never issue COUNT(*)/DISTINCT/MIN/MAX over the full grid: those
+        # scan the entire (possibly cloud-scale, multi-TB) dataset and make
+        # schema introspection unusable. DataFusion also supports neither
+        # TABLESAMPLE nor ORDER BY RAND(), so shuffle is ignored.
+        if table is None:
+            return {t: self.get_schema(t, limit) for t in self.get_tables()}
+        sample = self.get(table, sql_transforms=[SQLLimit(limit=limit or 1000)])
+        schema = get_dataframe_schema(sample)["items"]["properties"]
+        if table in self._dataset.data_vars:
+            schema["__len__"] = int(self._dataset[table].size)
+        else:
+            schema["__len__"] = len(sample)
+        return schema
 
     # ---- BaseSQLSource required overrides ----
 
