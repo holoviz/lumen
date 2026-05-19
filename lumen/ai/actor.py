@@ -224,26 +224,6 @@ class LLMUser(param.Parameterized):
         prompt_context = dict(kwargs)
         prompt_context["memory"] = context
         prompt_context["current_datetime"] = datetime.datetime.now()
-        if self.interface:
-            msgs = self.interface.serialize(
-                filter_by=lambda msgs: [msg for msg in msgs if isinstance(msg.object, str)]
-            )
-            # Walk backward collecting assistant messages.
-            # Messages after the last user message are "current";
-            # messages before it (but after an earlier user message)
-            # are labeled "from previous" so downstream consumers
-            # can distinguish stale context from fresh output.
-            history = []
-            found_user = False
-            for msg in reversed(msgs):
-                if msg["role"].lower() == "user":
-                    if found_user:
-                        break
-                    found_user = True
-                    continue
-                prefix = "(from previous) " if found_user else ""
-                history.append(f'{prefix}{msg["role"]}: """\n{msg["content"]}\n"""\n')
-            prompt_context["chat_history"] = "\n".join(reversed(history))
         return prompt_context
 
     async def _render_prompt(self, prompt_name: str, messages: list[Message], context: TContext, **kwargs) -> str:

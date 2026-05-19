@@ -74,6 +74,12 @@ class Plan(Section):
     def render_task_history(self, i: int | None = None, failed: bool = False) -> tuple[list[Message], str]:
         i = self._current if i is None else i
 
+        user_query = None
+        for msg in reversed(self.history):
+            if msg.get("role") == "user":
+                user_query = msg
+                break
+
         todos_list = []
         for idx, task in enumerate(self):
             instruction = task.instruction
@@ -86,10 +92,25 @@ class Plan(Section):
             else:
                 status = "⚪"
             todos_list.append(f"- {status} {instruction}")
-        todos_list.append("\nTasks marked 🟢 are completed, ⚪ are pending, 🟡 is current.")
         todos = "\n".join(todos_list)
 
-        rendered_history = list(self.history)
+        roadmap_system = (
+            f"<roadmap>\n{indent(todos, '  ')}\n</roadmap>\n"
+            "Tasks marked 🟢 are completed, ⚪ are pending, 🟡 is current."
+        )
+        if user_query is None:
+            rendered_history = list(self.history)
+            rendered_history.append(
+                {"role": "system", "content": roadmap_system}
+            )
+        else:
+            rendered_history = []
+            for msg in self.history:
+                rendered_history.append(msg)
+                if msg is user_query:
+                    rendered_history.append(
+                        {"role": "system", "content": roadmap_system}
+                    )
         return rendered_history, todos
 
     async def _run_task(self, i: int, task: Self | Actor, context: TContext, **kwargs):
