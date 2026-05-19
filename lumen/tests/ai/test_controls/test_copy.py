@@ -18,8 +18,7 @@ class MockView:
         self.spec = spec
         self.language = language
         self.editor = MagicMock()
-        self._editor = MagicMock()
-        self._editor.code = spec
+        self.editor.code = spec
 
 
 class MockTask:
