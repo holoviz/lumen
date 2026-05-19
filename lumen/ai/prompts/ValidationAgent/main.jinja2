@@ -63,11 +63,6 @@ User: "line chart over time" → bar chart with no time axis → ✗ INVALID
 
 {%- block context %}
 ## Context
-{%- if memory.get('plan') %}
-Response Plan:
-{{ memory.plan.render_task_history()[-1] }}
-{% endif -%}
-
 Current context contains the following keys: {{ ", ".join(memory) }}
 
 {%- if memory.get('sql') %}
