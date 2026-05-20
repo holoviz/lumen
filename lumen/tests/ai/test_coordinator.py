@@ -656,10 +656,9 @@ class TestRenderTaskHistoryMultimodal:
         )
         rendered, todos = plan.render_task_history(0)
         user_msg = next(m for m in rendered if m["role"] == "user")
-        roadmap_msg = next(m for m in rendered if m["role"] == "system" and "<roadmap>" in m["content"])
         assert isinstance(user_msg["content"], str)
         assert "Hello" in user_msg["content"]
-        assert "🟡 say hi" in roadmap_msg["content"]
+        assert "🟡 say hi" in todos
 
     def test_multimodal_content_preserves_image(self, llm):
         img = object()
@@ -671,13 +670,12 @@ class TestRenderTaskHistoryMultimodal:
         )
         rendered, todos = plan.render_task_history(0)
         user_msg = next(m for m in rendered if m["role"] == "user")
-        roadmap_msg = next(m for m in rendered if m["role"] == "system" and "<roadmap>" in m["content"])
         # Should be a list with formatted text + original image
         assert isinstance(user_msg["content"], list)
         assert img in user_msg["content"]
         text = content_to_text(user_msg["content"])
         assert "What is this?" in text
-        assert "🟡 describe" in roadmap_msg["content"]
+        assert "🟡 describe" in todos
 
     def test_multimodal_multiple_tasks(self, llm):
         img = object()
@@ -692,12 +690,11 @@ class TestRenderTaskHistoryMultimodal:
         )
         rendered, todos = plan.render_task_history(0)
         user_msg = next(m for m in rendered if m["role"] == "user")
-        roadmap_msg = next(m for m in rendered if m["role"] == "system" and "<roadmap>" in m["content"])
         assert isinstance(user_msg["content"], list)
         assert img in user_msg["content"]
         text = content_to_text(user_msg["content"])
-        assert "🟡 step 1" in roadmap_msg["content"]
-        assert "⚪ step 2" in roadmap_msg["content"]
+        assert "🟡 step 1" in todos
+        assert "⚪ step 2" in todos
 
     def test_assistant_messages_unchanged(self, llm):
         task = ActorTask(ChatAgent(), instruction="reply", title="Reply")
