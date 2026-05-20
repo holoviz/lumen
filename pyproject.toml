@@ -61,26 +61,10 @@ Source = "https://github.com/holoviz/lumen"
 HoloViz = "https://holoviz.org/"
 
 [project.optional-dependencies]
-tests = ['pytest', 'pytest-rerunfailures', 'pytest-asyncio', 'pytest-xdist']
+tests = ['pytest', 'pytest-rerunfailures', 'pytest-asyncio', 'pytest-xdist', 'lxml']
 dev = [
     'lumen[tests,sql,ai-openai,xarray]',
     'panel>=1.9.0rc0',
-    'panel-material-ui>=0.8.1',
-    'panel-splitjs>=0.3.2',
-    'panel-graphic-walker>=0.6.4',
-    'duckdb>=1.2.0',
-    'instructor>=1.14.3',
-    'griffe',
-    'nbformat',
-    'pyarrow',
-    'pydantic>=2.8.0',
-    'pydantic-extra-types',
-    'semchunk',
-    'tiktoken',
-    'tabulate',
-    'vl-convert-python',
-    'markitdown',
-    'lxml',
 ]
 sql = ['sqlalchemy']
 ai-local = ['huggingface_hub', 'hf_xet']
