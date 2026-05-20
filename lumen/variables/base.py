@@ -312,6 +312,7 @@ class Widget(Variable):
             default=default, refs=refs, name=params.get('name'), label=label,
             throttled=throttled, kind=kind,
         )
+        params.pop('name', None)  # Variable name is for the lumen Variable, not the underlying widget
         if '.' in self.kind:
             widget_type = resolve_module_reference(self.kind, _PnWidget)
         else:
