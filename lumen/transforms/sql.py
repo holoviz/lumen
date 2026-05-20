@@ -363,11 +363,9 @@ class SQLSelectFrom(SQLFormat):
                 return sql_in
             # if Select is found, replace tables
             name_mapping = {key.name: value for key, value in tables.items()}
-            def _replace_table(node):
-                if isinstance(node, Table) and node.name in name_mapping:
-                    return name_mapping[node.name]
-                return node
-            replaced_expression = expression.transform(_replace_table)
+            replaced_expression = expression.transform(
+                lambda node: name_mapping[node.name] if isinstance(node, Table) and node.name in name_mapping else node
+            )
             return self.to_sql(replaced_expression)
 
         # if Select is NOT found, use the default sql_expr
