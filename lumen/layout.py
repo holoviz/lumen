@@ -277,7 +277,7 @@ class Facet(Component):
         )
         self._sort_widget.link(self, value='sort')
         self._reverse_widget = pn.widgets.Checkbox(
-            value=self.reverse, name='Reverse', margin=(5, 0, 0, 10)
+            value=self.reverse, label='Reverse', margin=(5, 0, 0, 10)
         )
         self._reverse_widget.link(self, value='reverse')
 
@@ -356,7 +356,7 @@ class Download(Component, Viewer):
         if default_table in self.labels:
             button_params['label'] = self.labels[default_table]
         self._select_download = pn.widgets.Select(
-            name='Select table to download', options=self.tables, value=default_table,
+            label='Select table to download', options=self.tables, value=default_table,
             sizing_mode='stretch_width'
         )
         self._select_download.param.watch(self._update_button, 'value')
@@ -508,7 +508,7 @@ class Layout(Component, Viewer):
         self._cb = None
         self._scheduled = False
         self._updates = []
-        self._update_button = pn.widgets.Button(name='Apply update')
+        self._update_button = pn.widgets.Button(label='Apply update')
         self._update_button.on_click(self._manual_update)
         self._timestamp = pn.pane.HTML(
             align='center', margin=(10, 0), sizing_mode='stretch_width'

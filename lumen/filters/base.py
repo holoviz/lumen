@@ -327,7 +327,7 @@ class WidgetFilter(BaseWidgetFilter):
                 'type would be more sensible or raise the max_options. '
             )
             self.widget.options = options
-        self.widget.name = self.label
+        self.widget.label = self.label
         self.widget.visible = self.visible
         self.widget.disabled = self.disabled
         val = self.value
@@ -419,7 +419,7 @@ class BinFilter(BaseWidgetFilter):
             value = [] if self.multi else None
         else:
             value = tuple(self.default)
-        self.widget = widget(name=self.label, options=options, value=value)
+        self.widget = widget(label=self.label, options=options, value=value)
         self.widget.link(self, value='value', visible='visible', disabled='disabled', bidirectional=True)
         self._setup_sync()
 
@@ -463,7 +463,7 @@ class BaseDateFilter(BaseWidgetFilter):
     def _widget_kwargs(self, as_date: bool) -> dict[str, Any]:
         field_schema = self.schema.get(self.field, {})
         kwargs = {
-            'name': self.label,
+            'label': self.label,
             'start': pd.to_datetime(field_schema.get('inclusiveMinimum', None)),
             'end': pd.to_datetime(field_schema.get('inclusiveMaximum', None)),
         }
