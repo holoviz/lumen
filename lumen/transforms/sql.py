@@ -15,7 +15,7 @@ from sqlglot.dialects.dialect import Dialect
 from sqlglot.expressions import (
     LT, Alias, Column, Expression, Identifier, Literal as SQLLiteral, Max, Min,
     Null, ReadCSV, Select, Star, Table, TableSample, and_, func, or_,
-    replace_placeholders, replace_tables, select,
+    replace_placeholders, select,
 )
 from sqlglot.optimizer import optimize
 
@@ -362,7 +362,12 @@ class SQLSelectFrom(SQLFormat):
             if not tables:
                 return sql_in
             # if Select is found, replace tables
-            replaced_expression = replace_tables(expression, tables, dialect=self.read)
+            name_mapping = {key.name: value for key, value in tables.items()}
+            def _replace_table(node):
+                if isinstance(node, Table) and node.name in name_mapping:
+                    return name_mapping[node.name]
+                return node
+            replaced_expression = expression.transform(_replace_table)
             return self.to_sql(replaced_expression)
 
         # if Select is NOT found, use the default sql_expr
