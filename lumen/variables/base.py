@@ -80,13 +80,13 @@ class Variables(param.Parameterized):
             var_type = None
 
         if isinstance(var, _PnWidget):
-            var_name = var.name
+            var_name = var.label or var.name
             widget_type = type(var).__name__
             if not var_name:
                 raise ValueError(
                     f'Cannot use {widget_type} widget without an explicit '
-                    'name as a reference. Ensure any Widget passed in as '
-                    'a reference has been given a name.'
+                    'label or name as a reference. Ensure any Widget passed in as '
+                    'a reference has been given a label.'
                 )
             var_type = Widget
             extras = {k: v for k, v in var.param.values().items() if k != 'name'}
@@ -320,7 +320,7 @@ class Widget(Variable):
             params['value'] = default
 
         if self.label:
-            params['name'] = self.label
+            params['label'] = self.label
         deserialized = {}
         for k, v in params.items():
             if k in widget_type.param:

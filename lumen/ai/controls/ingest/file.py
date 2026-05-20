@@ -71,7 +71,7 @@ class FileSourceControls(BaseSourceControls):
         files_to_process = self._upload_cards.param["objects"].rx.len() > 0
         self._add_button = Button.from_param(
             self.param.add,
-            name=self.param.add_button_label,
+            label=self.param.add_button_label,
             icon=self.param.add_button_icon,
             visible=files_to_process,
             description="",

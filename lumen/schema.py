@@ -182,7 +182,7 @@ class JSONSchema(pn.pane.PaneBase):
             else:
                 if p in values:
                     kwargs['value'] = values[p]
-                widget = wtype(name=schema.get('title', p), **kwargs)
+                widget = wtype(label=schema.get('title', p), **kwargs)
             self._widgets[p] = widget
             widgets.append(widget)
         self.layout[:] = widgets

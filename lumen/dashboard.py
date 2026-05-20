@@ -801,7 +801,7 @@ class Dashboard(Component, Viewer):
 
     def _create_sidebar(self):
         self._sidebar = pn.Accordion(margin=0, sizing_mode='stretch_width')
-        self._update_button = pn.widgets.Button(name='Apply Update')
+        self._update_button = pn.widgets.Button(label='Apply Update')
         self._update_button.on_click(self._update_pipelines)
 
     def _populate_template(self):
