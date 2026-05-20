@@ -216,7 +216,7 @@ class LumenEditor(Viewer):
                 def unlimit(e):
                     sql_limit.limit = None if e.new else 1_000_000
                 full_data = Checkbox(
-                    name='Full data', width=100, visible=limited
+                    label='Full data', width=100, visible=limited
                 )
                 full_data.param.watch(unlimit, 'value')
                 controls.insert(0, full_data)

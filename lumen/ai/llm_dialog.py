@@ -77,7 +77,7 @@ class LLMModelCard(Viewer):
 
         # Create model selector
         self.model_select = Select(
-            name=f"{self.model_type.title()} Model",
+            label=f"{self.model_type.title()} Model",
             value=default_value,
             options=self.llm_choices,
             sizing_mode="stretch_width",
@@ -158,7 +158,7 @@ class LLMConfigDialog(Viewer):
         # Provider selection
         current_provider_class = type(self.llm)
         self._provider_select = Select(
-            name="LLM Provider",
+            label="LLM Provider",
             value=current_provider_class,
             options=self.provider_choices,
             sizing_mode="stretch_width",

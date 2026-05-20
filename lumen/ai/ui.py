@@ -1249,7 +1249,7 @@ class UI(Viewer):
         )
 
         self._next_help_button = Button(
-            name="Next",
+            label="Next",
             variant="outlined",
             sizing_mode="stretch_width",
             align="end",
@@ -1665,7 +1665,7 @@ class UI(Viewer):
 
         if append_demo and self.demo_inputs:
             suggestion_buttons.append(Button(
-                name="Show a demo",
+                label="Show a demo",
                 icon="play_arrow",
                 color="primary",
                 variant="outlined",
