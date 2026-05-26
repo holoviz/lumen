@@ -1605,9 +1605,6 @@ class UI(Viewer):
                     if event.new > 1:  # prevent double clicks
                         return
                 self._update_main_view()
-                if hasattr(self, "_coordinator") and self.context.get("sources"):
-                
-                    await self._sync_sources(global_context=self.context)
 
                 if not analysis:
                     with edit_readonly(self._chat_input):
