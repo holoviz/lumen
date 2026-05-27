@@ -320,7 +320,7 @@ class Widget(Variable):
             params['value'] = default
 
         if self.label:
-            params['name'] = self.label
+            params['label'] = self.label
         deserialized = {}
         for k, v in params.items():
             if k in widget_type.param:
