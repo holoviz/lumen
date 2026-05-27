@@ -20,11 +20,9 @@ Analyze if the generated view and responses match the user's request.
 {% if memory.get('listing') %}
 A listing of items was displayed to the user. VALID if it matches what they asked to see.
 {% endif %}
-{% if chat_history is defined and chat_history %}
 Analyze if the assistant's response addresses the user's request given the context it had.
 VALID = response uses the available context to answer; do not penalize for missing data that was never loaded or available.
 A clarifying question IS a valid response when the user's request is ambiguous or when the assistant lacks sufficient context to act directly.
-{% endif %}
 {%- if memory.get('clarifications') %}
 Clarifications were collected from the user during planning. The user's answers refine or override the original request. Validate against the CLARIFIED intent, not the original ambiguous request.
 {%- endif %}
@@ -54,11 +52,9 @@ User: "total by state"
 SQL: SELECT state, SUM(amount) FROM data GROUP BY state
 ✓ VALID - groups by state with SUM
 {% endif %}
-{% if chat_history is defined and chat_history -%}
 User: "Summarize the survey results" → Response with field breakdowns and patterns → ✓ VALID
 User: "What are the top selling products?" → Generic discussion, no rankings → ✗ INVALID
 User: "Show me data" → Response listing available columns and asking what to explore → ✓ VALID (clarifying question when request is ambiguous)
-{% endif %}
 {% if memory.get('view') -%}
 User: "bar chart of sales by region" → bar mark with region on x, sales on y → ✓ VALID
 User: "line chart over time" → bar chart with no time axis → ✗ INVALID
@@ -67,11 +63,6 @@ User: "line chart over time" → bar chart with no time axis → ✗ INVALID
 
 {%- block context %}
 ## Context
-{%- if memory.get('plan') %}
-Response Plan:
-{{ memory.plan.render_task_history()[-1] }}
-{% endif -%}
-
 Current context contains the following keys: {{ ", ".join(memory) }}
 
 {%- if memory.get('sql') %}
@@ -86,10 +77,6 @@ Current context contains the following keys: {{ ", ".join(memory) }}
 ```yaml
 {{ memory["view"] | json_to_yaml }}
 ```
-{%- endif -%}
-{%- if chat_history is defined and chat_history %}
-Chat History:
-{{ chat_history }}
 {%- endif -%}
 {%- if memory.get('listing') and 'listing' not in previous_keys %}
 Listing displayed:

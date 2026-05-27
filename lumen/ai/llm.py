@@ -70,6 +70,7 @@ LLM_PROVIDERS = {
     'ollama': 'Ollama',
     'llama-cpp': 'LlamaCpp',
     'litellm': 'LiteLLM',
+    'openrouter': 'OpenRouter'
 }
 
 
@@ -268,6 +269,29 @@ class Llm(param.Parameterized):
         system: str,
         input_kwargs: dict[str, Any]
     ) -> tuple[list[Message], dict[str, Any]]:
+        # Collect all system content: the rendered prompt + any system messages in the history
+        system_parts = []
+        if system:
+            system_parts.append(system)
+        non_system_messages = []
+        for msg in messages:
+            if msg["role"] == "system":
+                content = msg.get("content", "")
+                if content:
+                    system_parts.append(content if isinstance(content, str) else str(content))
+            else:
+                non_system_messages.append(msg)
+        merged_system = "\n\n".join(system_parts) if system_parts else ""
+        return self._apply_system(non_system_messages, merged_system, input_kwargs)
+
+    def _apply_system(
+        self,
+        messages: list[Message],
+        system: str,
+        input_kwargs: dict[str, Any]
+    ) -> tuple[list[Message], dict[str, Any]]:
+        """Place the consolidated system prompt. Override for providers that
+        take system as a separate parameter (e.g. Anthropic, Bedrock)."""
         if system:
             messages = [Message(role="system", content=system)] + messages
         return messages, input_kwargs
@@ -940,6 +964,8 @@ class Llm(param.Parameterized):
         for i, message in enumerate(messages):
             role = message["role"]
             if role == "system":
+                content = message.get("content", "")
+                log_debug(f"System prompt ({len(content)} chars):\n\033[90m{truncate_string(content, max_length=4000)}\033[0m")
                 continue
             content = message.get("content") if isinstance(message, dict) else None
             if not content and "tool_calls" in message:
@@ -1662,7 +1688,7 @@ class Anthropic(Llm, AnthropicMixin):
 
         return filtered, system_text
 
-    def _add_system_message(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
+    def _apply_system(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
         if system:
             input_kwargs["system"] = system
         return messages, input_kwargs
@@ -1929,7 +1955,7 @@ class Bedrock(Llm, BedrockMixin):
 
         return bedrock_messages, system_text
 
-    def _add_system_message(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
+    def _apply_system(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
         if system:
             input_kwargs["system"] = [{"text": system}]
         return messages, input_kwargs
@@ -2631,3 +2657,64 @@ class LiteLLM(Llm):
             if hasattr(choice, 'delta') and hasattr(choice.delta, 'content'):
                 return choice.delta.content or ""
         return ""
+
+
+class OpenRouter(OpenAI):
+    """
+    An LLM implementation using the OpenRouter API.
+
+    OpenRouter provides an OpenAI-compatible endpoint that routes requests to
+    models from multiple providers. Set the ``OPENROUTER_API_KEY`` environment
+    variable or pass ``api_key`` directly. The provider is auto-detected when
+    ``OPENROUTER_API_KEY`` is present, or can be selected explicitly with
+    ``--provider openrouter``.
+    """
+
+    api_key_env_var: str = PROVIDER_ENV_VARS["openrouter"]
+
+    display_name = param.String(
+        default="OpenRouter",
+        constant=True,
+        doc="Display name for UI",
+    )
+
+    endpoint = param.String(
+        default="https://openrouter.ai/api/v1",
+        doc="The OpenRouter API endpoint.",
+    )
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "openai/gpt-4o-mini"},
+    })
+
+    select_models = param.List(default=[
+        "openai/gpt-4o-mini",
+        "openai/gpt-4o",
+        "anthropic/claude-3.5-sonnet",
+        "anthropic/claude-3.5-haiku",
+        "google/gemini-2.5-flash",
+        "google/gemini-2.5-pro",
+        "mistralai/mistral-large",
+        "mistralai/mistral-small",
+        "meta-llama/llama-3.3-70b-instruct",
+    ], constant=True, doc="Available OpenRouter models for selection dropdowns.")
+
+    def models(self) -> set[str]:
+        """Return the set of available model identifiers from OpenRouter."""
+        headers = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        response = requests.get(
+            f"{self.endpoint.rstrip('/')}/models",
+            headers=headers,
+            timeout=5,
+        )
+        if response.status_code != 200:
+            return set()
+
+        return {
+            model["id"]
+            for model in response.json().get("data", [])
+            if model.get("id")
+        }

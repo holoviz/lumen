@@ -18,6 +18,7 @@ PROVIDER_ENV_VARS = {
     "google": "GEMINI_API_KEY",
     "groq": "GROQ_API_KEY",
     "ai-catalyst": "AI_CATALYST_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
 }
 
 

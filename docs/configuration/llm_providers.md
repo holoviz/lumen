@@ -23,6 +23,7 @@ To use a specific provider, pass the `--provider` flag:
 ``` bash
 lumen-ai serve penguins.csv --provider anthropic
 lumen-ai serve penguins.csv --provider google --model 'gemini-2.5-flash'
+lumen-ai serve penguins.csv --provider openrouter --model 'openai/gpt-4o-mini'
 lumen-ai serve penguins.csv --provider ollama --model 'qwen3:32b'
 ```
 
@@ -111,6 +112,7 @@ For installation and API key setup instructions, see the [Installation guide](..
 
 | Provider | Default Model | Description |
 |----------|---------------|-------------|
+| **OpenRouter** | `openai/gpt-4o-mini` | OpenAI-compatible gateway providing access to models from OpenAI, Anthropic, Google, Meta, Mistral, and more through a single API key. |
 | **AWS Bedrock** | `us.anthropic.claude-sonnet-4-6-20250929-v1:0` | Enterprise gateway providing access to models from Anthropic, Meta, Mistral, and more. |
 | **LiteLLM** | `gpt-5.4-mini` | Unified router to access 100+ models across all supported LLM providers. |
 | **AI Catalyst** | `ai_catalyst` | Enterprise model server; provides access to validated, governed open-source models. |
@@ -119,6 +121,24 @@ For installation and API key setup instructions, see the [Installation guide](..
 
 - **AnthropicBedrock** - Optimized for Claude models using Anthropic's SDK
 - **Bedrock** - Universal access to all Bedrock models (Claude, Llama, Mistral, Titan, etc.)
+
+### OpenRouter
+
+OpenRouter provides an OpenAI-compatible API for routing requests to models from multiple providers.
+
+``` py title="OpenRouter configuration"
+import lumen.ai as lmai
+
+llm = lmai.llm.OpenRouter(
+    model_kwargs={
+        "default": {"model": "openai/gpt-4o-mini"},
+        "sql": {"model": "anthropic/claude-3.5-sonnet"},
+        "vega_lite": {"model": "google/gemini-2.5-flash"},
+    }
+)
+
+ui = lmai.ExplorerUI(data='penguins.csv', llm=llm)
+ui.servable()
 
 ## Advanced configuration
 
@@ -174,6 +194,7 @@ The default values for each provider are:
 | Provider | Default `api_key_env_var` |
 |----------|---------------------------|
 | `OpenAI` | `OPENAI_API_KEY` |
+| `OpenRouter` | `OPENROUTER_API_KEY` |
 | `Anthropic` | `ANTHROPIC_API_KEY` |
 | `Google` | `GEMINI_API_KEY` |
 | `MistralAI` | `MISTRAL_API_KEY` |
@@ -193,6 +214,9 @@ print(lmai.llm.OpenAI.models())
 
 print(lmai.llm.Anthropic.models())
 # {'claude-haiku-4-5', 'claude-sonnet-4-6', 'claude-opus-4-5', ...}
+
+print(lmai.llm.OpenRouter.models())
+# {'openai/gpt-4o-mini', 'anthropic/claude-3.5-sonnet', ...}
 ```
 
 Providers that don't support listing models (e.g. `AzureOpenAI`, `LiteLLM`) return
@@ -332,13 +356,14 @@ Different providers use different model string formats:
 
 - **OpenAI**: `"gpt-5.4"`, `"gpt-5.4-mini"`, `"gpt-5.4-nano"`, `"gpt-5.4"`
 - **Anthropic**: `"claude-sonnet-4-6"`, `"claude-haiku-4-5"`, `"claude-opus-4-5"`
+- **OpenRouter**: `"openai/gpt-4o-mini"`, `"anthropic/claude-3.5-sonnet"`, `"google/gemini-2.5-flash"`
 - **Google**: `"gemini-3-flash-preview"`, `"gemini-2.5-flash"`
 - **Mistral**: `"mistral-large-latest"`, `"mistral-small-latest"`
 - **Azure**: `"your-deployment-name"` (use your Azure deployment name)
 - **Bedrock**: `"us.anthropic.claude-sonnet-4-6-20250929-v1:0"`, `"meta.llama3-70b-instruct-v1:0"`
 - **LiteLLM**: `"gpt-5.4-mini"` (OpenAI), `"anthropic/claude-sonnet-4-6"` (Anthropic), `"gemini/gemini-2.5-flash"` (Google)
 
-For LiteLLM, use the `provider/model` format for non-OpenAI models.
+For OpenRouter and LiteLLM, use the `provider/model` format for routed models.
 
 ## Troubleshooting
 
