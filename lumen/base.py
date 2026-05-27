@@ -302,6 +302,9 @@ class Component(Parameterized):
                 value = pobj.serialize(value)
             params[p] = value
 
+        if isinstance(obj, WidgetBase) and 'name' in params:
+            del params['name']
+
         if depth != 0:
             return {'type': type_spec, **params}
 

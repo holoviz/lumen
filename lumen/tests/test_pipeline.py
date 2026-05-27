@@ -347,7 +347,7 @@ def test_pipeline_with_sql_transform_nested_widget_vars(mixed_df_object_type):
         uri=str(root / 'catalog.yml'), root=str(root)
     )
 
-    sel = Select(options=['A', 'B'], value='A', name='Agg')
+    sel = Select(options=['A', 'B'], value='A', label='Agg')
     transform = SQLGroupBy(aggregates={'AVG': sel}, by=['C'])
     pipeline = Pipeline(source=source, table='test_sql', sql_transforms=[transform])
 
