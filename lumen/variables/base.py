@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, ClassVar, Literal
 import panel as pn
 import param  # type: ignore
 
-from panel.widgets import Widget as _PnWidget
+from panel.widgets.base import WidgetBase
 
 from ..base import MultiTypeComponent
 from ..state import state
@@ -66,10 +66,10 @@ class Variables(param.Parameterized):
             variables.add_variable(var)
         return variables
 
-    def _convert_to_variable(self, var: param.Parameter | _PnWidget) -> Variable:
+    def _convert_to_variable(self, var: param.Parameter | WidgetBase) -> Variable:
         throttled = False
         if isinstance(var, param.Parameter):
-            if isinstance(var.owner, pn.widgets.Widget) and var.name in ('value', 'value_throttled'):
+            if isinstance(var.owner, WidgetBase) and var.name in ('value', 'value_throttled'):
                 throttled = var.name == 'value_throttled'
                 var = var.owner
             else:
@@ -79,7 +79,7 @@ class Variables(param.Parameterized):
         else:
             var_type = None
 
-        if isinstance(var, _PnWidget):
+        if isinstance(var, WidgetBase):
             var_name = var.name
             widget_type = type(var).__name__
             if not var_name:
@@ -111,7 +111,7 @@ class Variables(param.Parameterized):
             return old_var
         return var_type(name=var_name, **var_kwargs)
 
-    def add_variable(self, var: Variable | _PnWidget | param.Parameter) -> Variable:
+    def add_variable(self, var: Variable | WidgetBase | param.Parameter) -> Variable:
         """
         Adds a new variable to the Variables instance and sets up
         a parameter that can be watched.
@@ -313,7 +313,7 @@ class Widget(Variable):
             throttled=throttled, kind=kind,
         )
         if '.' in self.kind:
-            widget_type = resolve_module_reference(self.kind, _PnWidget)
+            widget_type = resolve_module_reference(self.kind, WidgetBase)
         else:
             widget_type = getattr(pn.widgets, self.kind)
         if 'value' not in params and default is not None:
