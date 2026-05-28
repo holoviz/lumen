@@ -2037,6 +2037,7 @@ class Google(Llm, GenAIMixin):
     })
 
     select_models = param.List(default=[
+        "gemini-3.5-flash",
         "gemini-3-flash-preview",
         "gemini-3-pro-preview",
         "gemini-2.5-pro",
@@ -2089,12 +2090,16 @@ class Google(Llm, GenAIMixin):
         return str(response)
 
     @classmethod
-    def _messages_to_contents(cls, messages: list[Message]) -> tuple[list[dict[str, Any]], str | None]:
+    def _messages_to_contents(
+        cls, messages: list[Message]
+    ) -> tuple[list[dict[str, Any]], str | None, list[dict[str, Any]]]:
         """
         Transform messages into contents format expected by Google GenAI API.
 
         Extracts system messages and returns them separately since Google
-        requires them via the system_instruction parameter.
+        requires them via the system_instruction parameter. Also returns a
+        role-normalized (assistant → model) flat messages list for use with
+        instructor's Gemini provider, which rejects role="assistant".
 
         Parameters
         ----------
@@ -2103,21 +2108,29 @@ class Google(Llm, GenAIMixin):
 
         Returns
         -------
-        tuple[list[dict[str, Any]], str | None]
-            Tuple of (contents list, system_instruction)
+        tuple[list[dict[str, Any]], str | None, list[dict[str, Any]]]
+            Tuple of (contents list, system_instruction, instructor_messages)
         """
+        # Normalize roles up front: Gemini (and instructor's Gemini converter)
+        # use "model" instead of "assistant".
+        normalized = [
+            {**m, "role": "model"} if m.get("role") == "assistant" else m
+            for m in messages
+        ]
+
         contents = []
         system_instruction = None
+        instructor_messages = []
 
-        for message in messages:
+        for message in normalized:
             role = message["role"]
             content = message["content"]
             if role == "system":
                 system_instruction = content
                 continue
 
-            # Assistant message containing tool calls → model with function_call parts
-            if role == "assistant" and message.get("tool_calls"):
+            # Model message containing tool calls → function_call parts
+            if role == "model" and message.get("tool_calls"):
                 parts = []
                 for tc in message["tool_calls"]:
                     name, args, _ = cls._parse_tool_call(tc)
@@ -2158,8 +2171,9 @@ class Google(Llm, GenAIMixin):
                     "role": role,
                     "parts": [{"text": content}]
                 })
+                instructor_messages.append({"role": role, "content": content})
 
-        return contents, system_instruction
+        return contents, system_instruction, instructor_messages
 
     async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         model_kwargs = self._get_model_kwargs(model_spec)
@@ -2241,7 +2255,7 @@ class Google(Llm, GenAIMixin):
                 description=func.get("description", ""),
                 parameters=parameters,
             ))
-        return Tool(function_declarations=declarations) if declarations else None
+        return [Tool(function_declarations=declarations)] if declarations else None
 
     @classmethod
     def _get_delta(cls, chunk: Any) -> str:
@@ -2280,7 +2294,7 @@ class Google(Llm, GenAIMixin):
 
         tools = self._translate_tool_specs(kwargs.pop("tools", []))
         client = await self.get_client(model_spec, **kwargs)
-        contents, system_instruction = self._messages_to_contents(messages)
+        contents, system_instruction, instructor_messages = self._messages_to_contents(messages)
         config = GenerateContentConfig(
             http_options=http_options,
             temperature=self.temperature,
@@ -2290,7 +2304,7 @@ class Google(Llm, GenAIMixin):
         )
 
         if response_model:
-            result = await client(messages=messages, config=config, **kwargs)
+            result = await client(messages=instructor_messages, config=config, **kwargs)
             return result
 
         kwargs.pop("stream", None)
