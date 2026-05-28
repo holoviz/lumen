@@ -65,7 +65,7 @@ def test_panel_cross_reference_param():
                     'name': f'{b.name}',
                     'visible': {
                         'name': 'value',
-                        'owner': 'A',
+                        'owner': f'{a.name}',
                         'type': 'param'
                     }
                 }
@@ -110,7 +110,7 @@ def test_panel_cross_reference_rx():
                             'operation': None,
                             'prev': {
                                 'name': 'value',
-                                'owner': 'A',
+                                'owner': f'{a.name}',
                                 'type': 'param'
                             }
                         },

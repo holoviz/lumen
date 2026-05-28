@@ -899,7 +899,7 @@ class IndicatorView(View):
             params['indicator'] = _INDICATORS[params['indicator']]
         super().__init__(**params)
         name = params.get('label', params.get('field', ''))
-        self.kwargs['name'] = name
+        self.kwargs['label'] = name
 
     @property
     def _panel_type(self):

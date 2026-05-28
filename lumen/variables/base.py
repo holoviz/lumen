@@ -85,8 +85,8 @@ class Variables(param.Parameterized):
             if not var_name:
                 raise ValueError(
                     f'Cannot use {widget_type} widget without an explicit '
-                    'name as a reference. Ensure any Widget passed in as '
-                    'a reference has been given a name.'
+                    'label or name as a reference. Ensure any Widget passed in as '
+                    'a reference has been given a label.'
                 )
             var_type = Widget
             extras = {k: v for k, v in var.param.values().items() if k != 'name'}
@@ -312,6 +312,7 @@ class Widget(Variable):
             default=default, refs=refs, name=params.get('name'), label=label,
             throttled=throttled, kind=kind,
         )
+        params.pop('name', None)  # Variable name is for the lumen Variable, not the underlying widget
         if '.' in self.kind:
             widget_type = resolve_module_reference(self.kind, WidgetBase)
         else:
