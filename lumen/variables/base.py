@@ -80,7 +80,7 @@ class Variables(param.Parameterized):
             var_type = None
 
         if isinstance(var, WidgetBase):
-            var_name = var.name
+            var_name = var.label
             widget_type = type(var).__name__
             if not var_name:
                 raise ValueError(
@@ -321,6 +321,8 @@ class Widget(Variable):
 
         if self.label:
             params['label'] = self.label
+        elif 'name' in params:
+            params['label'] = params.pop('name')
         deserialized = {}
         for k, v in params.items():
             if k in widget_type.param:

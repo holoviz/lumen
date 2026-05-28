@@ -341,7 +341,7 @@ class WidgetFilter(BaseWidgetFilter):
         if val is not None:
             self.widget.value = val
         elif self.default is not None:
-            self.widget.value = self.default
+            self.widget.value = self.value = self.default
         self.widget.link(self, bidirectional=True, value='value')
         self._setup_sync()
 
