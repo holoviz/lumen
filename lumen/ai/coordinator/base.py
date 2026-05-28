@@ -73,6 +73,7 @@ class Plan(Section):
 
     def render_task_history(self, i: int | None = None, failed: bool = False) -> tuple[list[Message], str]:
         i = self._current if i is None else i
+
         user_query = None
         for msg in reversed(self.history):
             if msg.get("role") == "user":
@@ -93,18 +94,23 @@ class Plan(Section):
             todos_list.append(f"- {status} {instruction}")
         todos = "\n".join(todos_list)
 
-        rendered_history = []
-        for msg in self.history:
-            rendered_history.append(msg)
-            if msg is user_query:
-                roadmap_system = (
-                    f"<roadmap>\n{indent(todos, '  ')}\n</roadmap>\n"
-                    f"Tasks marked ⚪ are scheduled for others later. "
-                    f"Your exclusive goal is the 🟡 task."
-                )
-                rendered_history.append(
-                    {"role": "system", "content": roadmap_system}
-                )
+        roadmap_system = (
+            f"<roadmap>\n{indent(todos, '  ')}\n</roadmap>\n"
+            "Tasks marked 🟢 are completed, ⚪ are pending, 🟡 is current."
+        )
+        if user_query is None:
+            rendered_history = list(self.history)
+            rendered_history.append(
+                {"role": "system", "content": roadmap_system}
+            )
+        else:
+            rendered_history = []
+            for msg in self.history:
+                rendered_history.append(msg)
+                if msg is user_query:
+                    rendered_history.append(
+                        {"role": "system", "content": roadmap_system}
+                    )
         return rendered_history, todos
 
     async def _run_task(self, i: int, task: Self | Actor, context: TContext, **kwargs):

@@ -13,6 +13,9 @@ import param  # type: ignore
 
 from panel.util import PARAM_NAME_PATTERN
 from panel.viewable import Layoutable, Viewable, Viewer
+from panel_material_ui import (
+    Button, Checkbox, FileDownload, MultiSelect, Select,
+)
 from param import edit_constant
 
 from .base import Component
@@ -269,14 +272,14 @@ class Facet(Component):
 
     def __init__(self, **params):
         super().__init__(**params)
-        self._sort_widget = pn.widgets.MultiSelect(
+        self._sort_widget = MultiSelect(
             options=self.param.sort.objects,
             sizing_mode='stretch_width',
             size=len(self.sort),
             value=self.sort,
         )
         self._sort_widget.link(self, value='sort')
-        self._reverse_widget = pn.widgets.Checkbox(
+        self._reverse_widget = Checkbox(
             value=self.reverse, label='Reverse', margin=(5, 0, 0, 10)
         )
         self._reverse_widget.link(self, value='reverse')
@@ -355,12 +358,12 @@ class Download(Component, Viewer):
         button_params = {'filename': f'{default_table}.{self.format}'}
         if default_table in self.labels:
             button_params['label'] = self.labels[default_table]
-        self._select_download = pn.widgets.Select(
+        self._select_download = Select(
             label='Select table to download', options=self.tables, value=default_table,
             sizing_mode='stretch_width'
         )
         self._select_download.param.watch(self._update_button, 'value')
-        self._download_button = pn.widgets.FileDownload(
+        self._download_button = FileDownload(
             callback=self._table_data, align='end',
             sizing_mode='stretch_width', **button_params
         )
@@ -508,8 +511,7 @@ class Layout(Component, Viewer):
         self._cb = None
         self._scheduled = False
         self._updates = []
-        self._update_button = pn.widgets.Button(label='Apply update')
-        self._update_button.on_click(self._manual_update)
+        self._update_button = Button(label='Apply update', on_click=self._manual_update)
         self._timestamp = pn.pane.HTML(
             align='center', margin=(10, 0), sizing_mode='stretch_width'
         )

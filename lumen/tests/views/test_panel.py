@@ -57,8 +57,7 @@ def test_panel_cross_reference_param():
             'objects': [
                 {
                     'type': 'panel.widgets.input.Checkbox',
-                    'name': f'{a.name}',
-                    'label': 'A'
+                    'label': f'{a.name}'
                 },
                 {
                     'type': 'panel.pane.markup.Markdown',
@@ -87,8 +86,7 @@ def test_panel_cross_reference_rx():
             'objects': [
                 {
                     'type': 'panel.widgets.input.Checkbox',
-                    'name': f'{a.name}',
-                    'label': 'A'
+                    'label': f'{a.name}'
                 },
                 {
                     'type': 'panel.pane.markup.Markdown',

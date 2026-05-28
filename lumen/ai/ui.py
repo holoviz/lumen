@@ -808,7 +808,6 @@ class UI(Viewer):
                 back_button = Button(
                     label="Back to Exploration",
                     icon="insights",
-                    color="primary",
                     on_click=lambda e: self._handle_sidebar_event(self._sidebar_menu.items[0]),
                 )
                 main_content = Column(no_explorations_msg, back_button, styles={"margin": "auto"})
@@ -1667,7 +1666,6 @@ class UI(Viewer):
             suggestion_buttons.append(Button(
                 label="Show a demo",
                 icon="play_arrow",
-                color="primary",
                 variant="outlined",
                 on_click=run_demo,
                 margin=5,
@@ -2119,7 +2117,6 @@ class ExplorerUI(UI):
                     ),
                     Button(
                         label="Disable exec",
-                        color="primary",
                         on_click=cancel_code_execution,
                     ),
                     align="end",

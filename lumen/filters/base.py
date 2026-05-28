@@ -18,6 +18,11 @@ import param  # type: ignore
 
 from packaging.version import Version
 from panel.util import classproperty
+from panel.widgets.base import WidgetBase
+from panel_material_ui import (
+    DatePicker, DateRangeSlider, DateSlider, DatetimePicker,
+    DatetimeRangeSlider, MultiSelect, Select,
+)
 
 from ..base import MultiTypeComponent
 from ..schema import JSONSchema
@@ -294,7 +299,7 @@ class WidgetFilter(BaseWidgetFilter):
         e.g. for a numeric value this could be a regular slider or a
         range slider.""")
 
-    widget = param.ClassSelector(class_=pn.widgets.Widget, allow_refs=False, doc="""
+    widget = param.ClassSelector(class_=WidgetBase, allow_refs=False, doc="""
         The widget instance. When declared in a specification a full
         module path to a Panel widget class can be provided to override
         the default inferred widget.""")
@@ -311,7 +316,7 @@ class WidgetFilter(BaseWidgetFilter):
             schema=self.schema, sizing_mode='stretch_width', multi=self.multi,
             widgets={self.field: wtype} if wtype else {}
         )._widgets[self.field]
-        if isinstance(self.widget, pn.widgets.Select) and self.empty_select:
+        if isinstance(self.widget, (Select, pn.widgets.Select)) and self.empty_select:
             if self.widget.options[0] != ' ':
                 self.widget.options.insert(0, ' ')
             self.widget.value = ' '
@@ -327,21 +332,25 @@ class WidgetFilter(BaseWidgetFilter):
                 'type would be more sensible or raise the max_options. '
             )
             self.widget.options = options
-        self.widget.label = self.label
-        self.widget.visible = self.visible
-        self.widget.disabled = self.disabled
+        self.widget.param.update(
+            disabled=self.disabled,
+            label=self.label,
+            visible=self.visible
+        )
         val = self.value
-        self.widget.link(self, bidirectional=True, value='value', visible='visible', disabled='disabled')
         if val is not None:
             self.widget.value = val
         elif self.default is not None:
-            self.widget.value = self.default
+            self.widget.value = self.value = self.default
+        self.widget.link(
+            self, bidirectional=True, disabled='disabled', label='label', value='value', visible='visible'
+        )
         self._setup_sync()
 
     @classmethod
     def _validate_widget(cls, widget: str, spec: dict[str, Any], context: dict[str, Any]) -> str:
         try:
-            resolve_module_reference(widget, pn.widgets.Widget)
+            resolve_module_reference(widget, WidgetBase)
         except Exception as exc:
             raise ValidationError(
                 f'{cls.__name__} could not resolve widget module reference {widget!r}.', spec
@@ -407,9 +416,9 @@ class BinFilter(BaseWidgetFilter):
     def __init__(self, **params):
         super().__init__(**params)
         if self.multi:
-            widget = pn.widgets.MultiSelect
+            widget = MultiSelect
         else:
-            widget = pn.widgets.Select
+            widget = Select
         if self.labels:
             options = dict(zip(self.labels, [tuple(b) for b in self.bins], strict=False))
         else:
@@ -518,8 +527,8 @@ class _SingleCalendarDateFilter(BaseDateFilter):
     _as_date: ClassVar[bool] = True
 
     _widget_mode_mapping = {
-        'slider': pn.widgets.DateSlider,
-        'picker': pn.widgets.DatePicker,
+        'slider': DateSlider,
+        'picker': DatePicker,
     }
 
     value = param.CalendarDate()
@@ -530,7 +539,7 @@ class _MultiCalendarDateFilter(BaseDateFilter):
     _as_date: ClassVar[bool] = True
 
     _widget_mode_mapping = {
-        'slider': pn.widgets.DateRangeSlider,
+        'slider': DateRangeSlider,
         #'picker': pn.widgets.DateRangePicker,
     }
 
@@ -569,7 +578,7 @@ class _SingleDatetimeFilter(BaseDateFilter):
 
     _widget_mode_mapping = {
         'slider': _fallback_to_datetimepicker,
-        'picker': pn.widgets.DatetimePicker,
+        'picker': DatetimePicker,
     }
 
     value = param.Date()
@@ -583,7 +592,7 @@ def _handle_datetimerangeslider(inst):
         )
         return pn.widgets.DatetimeRangePicker, {'mode': 'picker'}
     else:
-        return pn.widgets.DatetimeRangeSlider, {}
+        return DatetimeRangeSlider, {}
 
 
 class _MultiDatetimeFilter(BaseDateFilter):

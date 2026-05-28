@@ -128,11 +128,6 @@ Premium plans maintain **87-92% retention** consistently, while Basic plans fluc
 {%- block context -%}
 {%- if memory.get('data') is not none %}
 
-{%- if memory.get('plan') %}
-## Response Plan:
-{{ memory.plan.render_task_history()[-1] }}
-{% endif -%}
-
 {%- if memory.get('reasoning') -%}
 ## Planning Context
 The system executed this plan:

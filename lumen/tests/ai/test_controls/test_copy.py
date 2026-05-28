@@ -17,8 +17,8 @@ class MockView:
     def __init__(self, spec="type: bar", language="yaml"):
         self.spec = spec
         self.language = language
-        self.editor = MagicMock()
-        self.editor.code = spec
+        self._editor = MagicMock()
+        self._editor.code = spec
 
 
 class MockTask:
@@ -193,7 +193,7 @@ class TestCopyControls:
 
             # Verify the editor reference matches the view's editor
             assert len(captured_args) > 0
-            assert captured_args[0]['code_editor'] is view.editor
+            assert captured_args[0]['code_editor'] is view._editor
 
     def test_multiple_instances_independent(self):
         """Test that multiple CopyControls instances are independent."""
