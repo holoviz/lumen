@@ -14,6 +14,7 @@ from typing import (
 )
 
 import instructor
+import openai
 import panel as pn
 import param
 import requests
@@ -69,6 +70,7 @@ LLM_PROVIDERS = {
     "ai-catalyst": "AICatalyst",
     'ollama': 'Ollama',
     'llama-cpp': 'LlamaCpp',
+    'mlx': 'MLX',
     'litellm': 'LiteLLM',
     'openrouter': 'OpenRouter'
 }
@@ -2381,6 +2383,232 @@ class Ollama(OpenAI):
         if tags_response.status_code != 200:
             return set()
         return {m.get("name", "") for m in tags_response.json().get("models", [])}
+
+
+class MLX(Llm):
+    """
+    An LLM implementation using Apple MLX via mlx-lm.
+
+    Requires ``mlx-lm`` (``pip install mlx-lm``).
+
+    Two modes of operation:
+
+    - **In-process** (default, ``endpoint=None``): Loads the model
+      directly into the Python process via ``mlx_lm.load`` and runs
+      inference on the Metal GPU. No server needed.
+    - **Server** (``endpoint="http://localhost:8080/v1"``): Connects
+      to a running ``mlx_lm.server`` via its OpenAI-compatible API.
+      Start the server separately with::
+
+          mlx_lm.server --model mlx-community/Qwen3.5-27B-4bit --port 8080
+    """
+
+    display_name = param.String(default="MLX", constant=True, doc="""
+        Display name shown in the UI.""")
+
+    endpoint = param.String(default="http://localhost:8080/v1", allow_None=True, doc="""
+        If set, connect to a running mlx_lm.server at this URL
+        (e.g. 'http://localhost:8080/v1') instead of loading the
+        model in-process. When None, the model is loaded directly
+        via mlx_lm.load.""")
+
+    mode = param.Selector(default=Mode.JSON, objects=BASE_MODES, doc="""
+        The instructor calling mode. Defaults to JSON for
+        structured output from local MLX models.""")
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "mlx-community/Qwen3.5-9B-MLX-4bit"},
+    }, doc="""
+        Model definitions indexed by type. Each value is a dict
+        with at least a 'model' key naming a Hugging Face model ID.""")
+
+    select_models = param.List(default=[
+        "mlx-community/Qwen3.5-9B-MLX-4bit",
+        "mlx-community/Qwen3.5-27B-4bit",
+        "mlx-community/Qwen3.6-35B-A3B-4bit",
+    ], constant=True, doc="""
+        Available MLX models for selection dropdowns.""")
+
+    chat_template_kwargs = param.Dict(default={}, doc="""
+        Additional keyword arguments passed to the tokenizer's
+        apply_chat_template. Only used in in-process mode.
+        In server mode, set these via the server's
+        --chat-template-args flag instead.
+        Note: 'enable_thinking' is set automatically from the
+        enable_thinking param; no need to include it here.""")
+
+    enable_thinking = param.Boolean(default=False, doc="""
+        Whether to enable the model's thinking/reasoning mode.
+        In in-process mode this is passed to apply_chat_template.
+        In server mode this is sent per-request and does NOT
+        change the server's --chat-template-args flag.""")
+
+    max_tokens = param.Integer(default=8192, bounds=(1, None), constant=True, doc="""
+        Default maximum number of tokens to generate per request.
+        Can be overridden per-call via invoke/stream kwargs.
+        Note: in server mode this is sent as a per-request parameter
+        and does NOT change the server's --max-tokens default.""")
+
+    temperature = param.Number(default=0.4, bounds=(0, None), constant=True, doc="""
+        The sampling temperature. Lower values produce more
+        deterministic outputs. In server mode this is sent
+        per-request and does NOT change the server's --temp flag.""")
+
+    _instructor_wrapper = None
+    _supports_vision = False
+
+    @property
+    def _use_endpoint(self) -> bool:
+        return self.endpoint is not None
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._mlx_models: dict[str, tuple] = {}  # model_id -> (model, tokenizer)
+        if self._use_endpoint:
+            # Override to use OpenAI-compatible wrapper
+            self._instructor_wrapper = "openai"
+
+    def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
+        if isinstance(model_spec, dict):
+            return model_spec
+        model_kwargs = self.model_kwargs.get(model_spec) or self.model_kwargs["default"]
+        return dict(model_kwargs)
+
+    def _load_mlx_model(self, model_id: str) -> tuple:
+        """Load and cache an MLX model. Duplicate loads are harmless but wasteful."""
+        if model_id not in self._mlx_models:
+            from mlx_lm import load
+            self._mlx_models[model_id] = load(model_id)
+        return self._mlx_models[model_id]
+
+    def _messages_to_prompt(self, tokenizer, messages: list[Message]) -> str:
+        """Convert chat messages to a prompt string using the tokenizer's chat template."""
+        chat_messages = []
+        for msg in messages:
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                content = "\n".join(
+                    item if isinstance(item, str) else item["text"]
+                    for item in content
+                    if isinstance(item, str) or (isinstance(item, dict) and item.get("type") == "text")
+                )
+            if not isinstance(content, str):
+                content = str(content)
+            chat_messages.append({"role": msg["role"], "content": content})
+        template_kwargs = {"enable_thinking": self.enable_thinking, **self.chat_template_kwargs}
+        return tokenizer.apply_chat_template(
+            chat_messages, tokenize=False, add_generation_prompt=True,
+            **template_kwargs,
+        )
+
+    def _make_sampler(self):
+        """Create an MLX sampler from the configured temperature."""
+        from mlx_lm.sample_utils import make_sampler
+        return make_sampler(temp=self.temperature)
+
+    def _create_chat_completion(self, messages: list[Message], **kwargs) -> Any:
+        """Synchronous chat completion compatible with instructor's patch(create=...)."""
+        from mlx_lm import generate as mlx_generate
+
+        model_spec = kwargs.pop("model", "default")
+        model_kwargs = self._get_model_kwargs(model_spec)
+        model_id = model_kwargs["model"]
+        model, tokenizer = self._load_mlx_model(model_id)
+
+        max_tokens = kwargs.pop("max_tokens", self.max_tokens)
+        prompt = self._messages_to_prompt(tokenizer, messages)
+        sampler = self._make_sampler()
+
+        text = mlx_generate(
+            model, tokenizer, prompt=prompt,
+            max_tokens=max_tokens, sampler=sampler, verbose=False,
+        )
+
+        msg = MessageModel(content=text, name=None, role="assistant")
+        return Response(choices=[Choice(message=msg, delta=None, finish_reason="stop")])
+
+    def _create_endpoint_client(self, async_client: bool = True):
+        """Create an AsyncOpenAI client pointed at the mlx_lm.server endpoint."""
+        cls = openai.AsyncOpenAI if async_client else openai.OpenAI
+        return cls(base_url=self.endpoint, api_key="mlx")
+
+    def _create_base_client(self, **kwargs) -> Any:
+        if self._use_endpoint:
+            return self._create_endpoint_client(async_client=True)
+        return self
+
+    def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
+        if self._use_endpoint:
+            return instructor.from_openai(base_client, mode=mode)
+        return patch(create=self._create_chat_completion, mode=mode)
+
+    def _get_completion_method(self) -> Callable:
+        if self._use_endpoint:
+            return self._base_client.chat.completions.create
+        return self._create_chat_completion
+
+    @property
+    def _client_kwargs(self) -> dict[str, Any]:
+        return {"temperature": self.temperature, "max_tokens": self.max_tokens}
+
+    @classmethod
+    def warmup(cls, model_kwargs: dict | None):
+        """Pre-download model weights from Hugging Face Hub."""
+        from mlx_lm import load
+        model_kwargs = model_kwargs or {}
+        if "default" not in model_kwargs:
+            model_kwargs["default"] = cls.model_kwargs["default"]
+        for spec in model_kwargs.values():
+            if isinstance(spec, dict) and "model" in spec:
+                load(spec["model"])
+
+    async def get_client(self, model_spec: str | dict, response_model: type[BaseModel] | None = None, **kwargs):
+        model_kwargs = self._get_model_kwargs(model_spec)
+        model_id = model_kwargs["model"]
+        mode = kwargs.pop("mode", self.mode)
+
+        if self._use_endpoint:
+            # Server mode: use the OpenAI-compatible client
+            if self._base_client is None:
+                self._base_client = self._create_base_client()
+        else:
+            # In-process mode: ensure model is loaded
+            await asyncio.to_thread(self._load_mlx_model, model_id)
+
+        if response_model:
+            if mode not in self._instructor_clients:
+                base = self._base_client if self._use_endpoint else self
+                self._instructor_clients[mode] = self._create_instructor_client(base, mode)
+            client = self._instructor_clients[mode]
+            if self._use_endpoint:
+                return partial(client.chat.completions.create, model=model_id, **self._get_create_kwargs(response_model))
+            return client
+
+        if self._use_endpoint:
+            return partial(self._base_client.chat.completions.create, model=model_id, **self._get_create_kwargs(response_model))
+        return self._create_chat_completion
+
+    async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
+        self._log_messages(messages)
+        response_model = kwargs.get("response_model")
+        kwargs.pop("max_retries", None)
+        client = await self.get_client(model_spec, **kwargs)
+
+        if self._use_endpoint:
+            # Server mode: async OpenAI client
+            result = await client(messages=messages, **kwargs)
+        # In-process mode: run synchronous mlx_lm in a thread
+        elif response_model:
+            result = await asyncio.to_thread(client, messages=messages, **kwargs)
+        else:
+            kwargs.pop("response_model", None)
+            kwargs.pop("stream", None)
+            result = await asyncio.to_thread(
+                self._create_chat_completion, messages, model=model_spec, **kwargs
+            )
+
+        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
+        return result
 
 
 class Groq(OpenAI):
