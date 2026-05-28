@@ -57,7 +57,7 @@ def test_add_variable_parameter():
 def test_add_variable_widget():
     vars = Variables()
 
-    w = TextInput(name='text', value='foo')
+    w = TextInput(label='text', value='foo')
     var = vars.add_variable(w)
 
     assert isinstance(var, Widget)
@@ -71,7 +71,7 @@ def test_add_variable_widget():
 def test_add_variable_widget_parameter():
     vars = Variables()
 
-    w = IntSlider(name='int', value=3)
+    w = IntSlider(label='int', value=3)
     var = vars.add_variable(w.param.value_throttled)
 
     assert isinstance(var, Widget)

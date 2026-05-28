@@ -29,6 +29,7 @@ dependencies = [
     "bokeh",
     "chardet",
     "duckdb >=1.2.0",
+    "lxml",
     "griffe",
     "holoviews >=1.17.0",
     "hvplot",

@@ -45,7 +45,7 @@ def test_panel_layout_roundtrip():
     }
 
 def test_panel_cross_reference_param():
-    a = Checkbox(name="A")
+    a = Checkbox(label="A")
     b = Markdown("B", visible=a)
     column = Column(a, b)
 
@@ -57,7 +57,7 @@ def test_panel_cross_reference_param():
             'objects': [
                 {
                     'type': 'panel.widgets.input.Checkbox',
-                    'name': f'{a.name}'
+                    'label': f'{a.name}'
                 },
                 {
                     'type': 'panel.pane.markup.Markdown',
@@ -75,7 +75,7 @@ def test_panel_cross_reference_param():
     }
 
 def test_panel_cross_reference_rx():
-    a = Checkbox(name="A")
+    a = Checkbox(label="A")
     b = Markdown("B", visible=a.rx().rx.not_())
     column = Column(a, b)
     spec = Panel(object=column).to_spec()
@@ -86,7 +86,7 @@ def test_panel_cross_reference_rx():
             'objects': [
                 {
                     'type': 'panel.widgets.input.Checkbox',
-                    'name': f'{a.name}'
+                    'label': f'{a.name}'
                 },
                 {
                     'type': 'panel.pane.markup.Markdown',

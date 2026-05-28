@@ -477,7 +477,7 @@ class AnalysisOutput(LumenEditor):
         else:
             self.analysis._run_button = run_button = Button(
                 icon='play_circle_outline', label='Run', on_click=self._rerun,
-                button_type='success', margin=(10, 0, 0, 10)
+                color='success', margin=(10, 0, 0, 10)
             )
         return FlexBox(*controls, run_button) if controls else run_button
 
