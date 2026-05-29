@@ -192,7 +192,7 @@ class LayoutGallery(WizardItem, Gallery):
     def __init__(self, **params):
         super().__init__(**params)
         self._editor = LayoutsEditor()
-        self._save_button = pn.widgets.Button(name='Save layout')
+        self._save_button = pn.widgets.Button(label='Save layout')
         self._save_button.on_click(self._save_layouts)
         self._modal_content = [self._editor, self._save_button]
 

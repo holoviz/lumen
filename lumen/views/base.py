@@ -28,6 +28,7 @@ from panel.pane.perspective import (
 from panel.param import Param
 from panel.util import classproperty
 from panel.viewable import Child, Viewable, Viewer
+from panel_material_ui import FileDownload
 from param.parameterized import bothmethod
 
 from ..base import MultiTypeComponent
@@ -898,7 +899,7 @@ class IndicatorView(View):
             params['indicator'] = _INDICATORS[params['indicator']]
         super().__init__(**params)
         name = params.get('label', params.get('field', ''))
-        self.kwargs['name'] = name
+        self.kwargs['label'] = name
 
     @property
     def _panel_type(self):
@@ -1203,7 +1204,7 @@ class DownloadView(View):
 
     view_type = 'download'
 
-    _panel_type = pn.widgets.FileDownload
+    _panel_type = FileDownload
 
     _required_keys = ["format"]
 
@@ -1229,7 +1230,7 @@ class DownloadView(View):
         io.seek(0)
         return io
 
-    def get_panel(self) -> pn.widgets.FileDownload:
+    def get_panel(self) -> FileDownload:
         return self._panel_type(**self._normalize_params(self._get_params()))
 
     def _get_params(self) -> dict[str, Any]:
