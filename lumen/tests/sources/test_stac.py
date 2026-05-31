@@ -8,6 +8,10 @@ XArraySQLSource (DataFusion).
 """
 from __future__ import annotations
 
+import builtins
+import importlib
+import sys
+
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -20,16 +24,14 @@ pytest.importorskip("xpystac")
 xr = pytest.importorskip("xarray")
 pytest.importorskip("xarray_sql")
 
+from lumen.sources import stac as stac_mod
 from lumen.sources.stac import STACSource
+from lumen.transforms.sql import SQLLimit
 
 
 def test_guard_message_when_xarray_missing():
     """A minimal env (no xarray) must still get the lumen[stac] message,
     not a bare 'No module named xarray'."""
-    import builtins
-    import importlib
-    import sys
-
     real_import = builtins.__import__
 
     def blocked(name, *args, **kwargs):
@@ -43,7 +45,7 @@ def test_guard_message_when_xarray_missing():
     }
     try:
         with patch("builtins.__import__", side_effect=blocked):
-            with pytest.raises(ImportError, match=r"pip install lumen\[stac\]"):
+            with pytest.raises(ImportError, match=r"pip install 'lumen\[stac\]'"):
                 importlib.import_module("lumen.sources.stac")
     finally:
         sys.modules.update(saved)
@@ -190,8 +192,6 @@ class TestResolution:
     def test_resolve_drops_scalar_grid_mapping_vars(self, mock_stac_client):
         """CF grid-mapping/CRS scalars (0-dim vars, e.g.
         lambert_conformal_conic) are not tables and break chunking."""
-        import numpy as np
-
         ds = xr.Dataset(
             {
                 "prcp": (("time",), np.arange(4.0)),
@@ -207,8 +207,6 @@ class TestResolution:
     def test_resolve_drops_cf_bounds_dims(self, mock_stac_client):
         """CF bounds vars (a size-2 'nv'/'bnds' dim, e.g. time_bnds) break
         XArraySQLSource chunking; _resolve must drop them."""
-        import numpy as np
-
         ds = xr.Dataset(
             {
                 "temp": (("time",), np.arange(4.0)),
@@ -226,7 +224,6 @@ class TestResolution:
         """Cloud Zarr (e.g. Planetary Computer daymet) can have inconsistent
         dask chunks; _resolve must unify them before XArraySQLSource."""
         pytest.importorskip("dask.array")
-        import numpy as np
 
         # Two vars whose 'time' chunking differs -> inconsistent chunks.
         ds = xr.Dataset(
@@ -329,6 +326,80 @@ class TestResolution:
             source.execute("SELECT 1")
 
 
+class TestExecuteAutoResolve:
+    """execute() should not require callers to invoke the private _resolve()
+    first. When the SQL references a variable name that the datacube
+    extension index points at, execute() auto-resolves the owning collection.
+    When it references a name that is neither a known collection nor a known
+    variable, the error must list what IS available so the caller can recover.
+    """
+
+    def test_execute_auto_resolves_owning_collection_from_variable(
+        self, mock_stac_client, synthetic_dataset,
+    ):
+        _, _, collections = mock_stac_client
+        collections["air-temperature"].cube_variables = {
+            "temperature": SimpleNamespace(
+                dimensions=["time", "lat", "lon"], unit="K",
+                var_type="data", description="air temperature",
+            ),
+        }
+        source = STACSource(url="https://example.com/stac")
+        with patch.object(stac_mod, "DatacubeExtension", _FakeDatacube), \
+             patch.object(STACSource, "_open_dataset", return_value=synthetic_dataset):
+            df = source.execute("SELECT * FROM temperature LIMIT 3")
+        assert len(df) == 3
+
+    def test_execute_unknown_table_error_lists_known(self, mock_stac_client):
+        source = STACSource(url="https://example.com/stac")
+        with pytest.raises(ValueError) as exc_info:
+            source.execute("SELECT * FROM nope LIMIT 1")
+        msg = str(exc_info.value)
+        assert "nope" in msg
+        assert "air-temperature" in msg
+
+
+class TestGetDefaultLimit:
+    """STACSource.get() should not materialize the full xarray grid for a
+    naive call. A class-level default_limit injects SQLLimit into the
+    delegate; default_limit=None or a caller-supplied sql_transforms list
+    disables the safety net.
+    """
+
+    def test_get_applies_default_limit(self, mock_stac_client, synthetic_dataset):
+        source = STACSource(
+            url="https://example.com/stac", default_limit=7,
+        )
+        with patch.object(STACSource, "_open_dataset", return_value=synthetic_dataset):
+            df = source.get("air-temperature:temperature")
+        assert len(df) == 7
+
+    def test_get_default_limit_none_is_unbounded(
+        self, mock_stac_client, synthetic_dataset,
+    ):
+        source = STACSource(
+            url="https://example.com/stac", default_limit=None,
+        )
+        with patch.object(STACSource, "_open_dataset", return_value=synthetic_dataset):
+            df = source.get("air-temperature:temperature")
+        assert len(df) == 10 * 5 * 4   # full synthetic grid
+
+    def test_get_respects_caller_provided_sql_transforms(
+        self, mock_stac_client, synthetic_dataset,
+    ):
+        # Caller's explicit transforms must pass through unchanged; the
+        # default-limit injection must not silently impose a tighter cap.
+        source = STACSource(
+            url="https://example.com/stac", default_limit=3,
+        )
+        with patch.object(STACSource, "_open_dataset", return_value=synthetic_dataset):
+            df = source.get(
+                "air-temperature:temperature",
+                sql_transforms=[SQLLimit(limit=7)],
+            )
+        assert len(df) == 7
+
+
 # ---- Openable-asset selection ----
 
 
@@ -422,7 +493,6 @@ class TestDiscoveryMetadata:
         assert "Air Temperature" in md["air-temperature"]["description"]
 
     def test_metadata_columns_from_datacube_extension(self, mock_stac_client):
-        from lumen.sources import stac as stac_mod
         cube = {
             "prcp": SimpleNamespace(
                 dimensions=["time", "y", "x"], unit="mm/day",
@@ -450,7 +520,6 @@ class TestDiscoveryMetadata:
         assert source.get_metadata("air-temperature")["columns"] == {}
 
     def test_metadata_enrichment_never_raises(self, mock_stac_client):
-        from lumen.sources import stac as stac_mod
 
         class _Broken:
             @staticmethod
@@ -470,13 +539,12 @@ class TestDiscoveryMetadata:
 
 class TestSigning:
     def test_patch_url_is_forwarded_to_open_dataset(self, mock_stac_client):
-        signer = lambda u: u  # noqa: E731
+        signer = lambda u: u
         source = STACSource(url="https://example.com/stac", patch_url=signer)
         captured = {}
 
         def fake_open(obj, engine=None, **kw):
             captured.update(kw)
-            import xarray as xr
             return xr.Dataset()
 
         with patch("xarray.open_dataset", side_effect=fake_open):
@@ -484,10 +552,9 @@ class TestSigning:
         assert captured.get("patch_url") is signer
 
     def test_planetary_computer_url_auto_signs_object(self):
-        from types import SimpleNamespace
-        sign = lambda o: o  # noqa: E731
+        sign = lambda o: o
         fake_pc = SimpleNamespace(sign=sign)
-        client = SimpleNamespace(get_collections=lambda: [])
+        client = SimpleNamespace(get_collections=list)
         with patch("pystac_client.Client.open", return_value=client), \
              patch("lumen.sources.stac.planetary_computer", fake_pc):
             source = STACSource(

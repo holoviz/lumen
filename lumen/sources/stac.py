@@ -9,7 +9,7 @@ it is resolved to an xarray dataset through xpystac and handed to an
 
 To use this source, install the optional STAC dependencies::
 
-    pip install lumen[stac]
+    pip install 'lumen[stac]'
 
 Notes
 -----
@@ -31,7 +31,9 @@ import warnings
 from typing import Any, ClassVar
 
 import param
+import sqlglot
 
+from ..transforms.sql import SQLLimit
 from .base import BaseSQLSource
 from .xarray_sql import XArraySQLSource
 
@@ -44,7 +46,7 @@ try:
 except ImportError as e:
     raise ImportError(
         "STACSource requires the 'pystac-client', 'xpystac' and 'xarray' "
-        "packages. Install them with: pip install lumen[stac]"
+        "packages. Install them with: pip install 'lumen[stac]'"
     ) from e
 
 # Optional: only used to auto-sign Planetary Computer assets. Suppress its
@@ -106,6 +108,13 @@ class STACSource(BaseSQLSource):
     sql_expr = param.String(default='SELECT * FROM {table}', doc="""
         The SQL expression template for table queries.""")
 
+    default_limit = param.Integer(default=100_000, allow_None=True, doc="""
+        Row cap injected as a SQLLimit transform on get() so a naive call
+        against a TB-scale STAC collection does not materialize the whole
+        xarray grid. Set to None to disable, or pass sql_transforms=[...]
+        explicitly to override (the caller's transforms pass through
+        unchanged).""")
+
     def __init__(self, **params):
         super().__init__(**params)
         if not self.url:
@@ -118,6 +127,11 @@ class STACSource(BaseSQLSource):
         # Maps a resolved delegate's variable table name to its collection ID,
         # so raw SQL in execute() can be routed to the right delegate.
         self._var_index: dict[str, str] = {}
+        # Best-effort variable name -> collection id index built from the
+        # datacube extension during get_tables(). Lets execute() auto-resolve
+        # the owning collection when a caller's SQL references a variable
+        # name without first calling _resolve().
+        self._var_pre_index: dict[str, str] = {}
 
     # ---- Catalog listing ----
 
@@ -128,6 +142,12 @@ class STACSource(BaseSQLSource):
             # one get_collections() request, not one request per collection.
             self._collection_cache[collection.id] = collection
             ids.append(collection.id)
+            # Pre-index this collection's declared variables so execute()
+            # can auto-resolve from a bare variable name. Best-effort: a
+            # collection without the datacube extension just contributes
+            # nothing here.
+            for var_name in self._extract_columns(collection):
+                self._var_pre_index.setdefault(var_name, collection.id)
         if self.collections:
             allowed = set(self.collections)
             ids = [cid for cid in ids if cid in allowed]
@@ -298,14 +318,27 @@ class STACSource(BaseSQLSource):
 
     def get(self, table: str, **query):
         delegate, variable = self._delegate_table(table)
+        if self.default_limit is not None and "sql_transforms" not in query:
+            query["sql_transforms"] = [SQLLimit(limit=self.default_limit)]
         return delegate.get(variable, **query)
 
     def execute(self, sql_query: str, params=None, *args, **kwargs):
-        if not self._delegates:
-            raise ValueError(
-                "No STAC collection has been resolved yet; query a collection "
-                "table first so it can be opened before running raw SQL."
-            )
+        # Parse the SQL and auto-resolve any referenced variable whose owning
+        # collection is known from the datacube pre-index. This frees callers
+        # from having to invoke _resolve() (private) before issuing raw SQL.
+        try:
+            parsed = sqlglot.parse_one(sql_query, dialect="duckdb")
+            referenced = {t.name for t in parsed.find_all(sqlglot.exp.Table)}
+        except sqlglot.errors.ParseError:
+            referenced = set()
+        if referenced and not self._var_pre_index:
+            # Lazy one-shot catalog enumeration to populate the pre-index.
+            self.get_tables()
+        for ref in referenced - set(self._var_index):
+            owner = self._var_pre_index.get(ref)
+            if owner is not None and owner not in self._delegates:
+                self._resolve(owner)
+
         matched = {
             self._var_index[name]
             for name in self._var_index
@@ -315,6 +348,19 @@ class STACSource(BaseSQLSource):
             collection_id = next(iter(matched))
         elif not matched and len(self._delegates) == 1:
             collection_id = next(iter(self._delegates))
+        elif not self._delegates:
+            known_collections = sorted(self._collection_cache)
+            known_variables = sorted(self._var_pre_index)
+            referenced_msg = sorted(referenced) if referenced else "(none parsed)"
+            raise ValueError(
+                f"Cannot run SQL: referenced tables {referenced_msg} are not "
+                "a known STAC collection or variable in this catalog. "
+                f"Known collections: {known_collections}. "
+                f"Known variables (from the datacube extension): "
+                f"{known_variables}. "
+                "Resolve a collection by calling source.get(collection_id) or "
+                "source.get_schema(collection_id) first."
+            )
         else:
             raise ValueError(
                 "Could not route SQL to a single STAC collection; query one "

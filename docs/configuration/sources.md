@@ -30,6 +30,7 @@ ui.servable()
 | Files | CSV, Parquet, JSON (local or URL) |
 | DuckDB | Local SQL queries on files |
 | xarray | N-dimensional scientific data (NetCDF, Zarr, HDF5) |
+| STAC | SpatioTemporal Asset Catalogs (e.g. Planetary Computer) |
 | Snowflake | Cloud data warehouse |
 | BigQuery | Google's data warehouse |
 | PostgreSQL | PostgreSQL via SQLAlchemy |
@@ -210,6 +211,65 @@ df = source.execute(
 source = XArraySQLSource(
     uri='climate_data.nc',
     variables=['temperature', 'pressure']
+)
+```
+
+### STAC catalogs
+
+Point Lumen at a [SpatioTemporal Asset Catalog](https://stacspec.org/) and
+pull each cataloged collection in as an xarray-backed SQL table:
+
+``` bash title="Install dependencies"
+pip install 'lumen[stac]'
+```
+
+For Planetary Computer collections (Azure-hosted), also install the signing
+extra so URLs work without manual credentials:
+
+``` bash
+pip install 'lumen[stac-planetary]'
+```
+
+``` py title="Open a STAC catalog"
+from lumen.sources.stac import STACSource
+import lumen.ai as lmai
+
+source = STACSource(
+    url='https://planetarycomputer.microsoft.com/api/stac/v1'
+)
+source.get_tables()  # list of collection IDs
+
+ui = lmai.ExplorerUI(data=source)
+ui.servable()
+```
+
+Each cataloged collection becomes a queryable table. Address a specific
+variable from a multi-variable collection with the `collection:variable`
+table syntax:
+
+``` py
+df = source.get('daymet-daily-hi:prcp')
+```
+
+`get()` is row-capped at `default_limit=100_000` so naive calls against a
+TB-scale collection do not materialize the full xarray grid. Pass
+`default_limit=None` on the source, or pass `sql_transforms=[...]`
+explicitly per call to override.
+
+Public (non-Planetary-Computer) STAC catalogs work the same way:
+
+``` py
+source = STACSource(url='https://earth-search.aws.element84.com/v1')
+```
+
+**Browse STAC from chat:** the `STACCatalogControls` class plugs a STAC API
+into `SourceAgent` so users can search across collections in natural language:
+
+``` py
+from lumen.ai.controls.ingest.stac import STACCatalogControls
+
+controls = STACCatalogControls(
+    url='https://planetarycomputer.microsoft.com/api/stac/v1'
 )
 ```
 
