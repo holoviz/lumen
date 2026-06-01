@@ -108,6 +108,12 @@ class STACSource(BaseSQLSource):
     sql_expr = param.String(default='SELECT * FROM {table}', doc="""
         The SQL expression template for table queries.""")
 
+    tables = param.ClassSelector(class_=(list, dict), default=None, allow_None=True, doc="""
+        Optional static table list. STACSource discovers tables dynamically
+        via get_tables() (one per STAC collection), so this defaults to None;
+        the parameter exists for compatibility with consumers (e.g.
+        SQLAgent._execute_query) that inspect source.tables directly.""")
+
     default_limit = param.Integer(default=100_000, allow_None=True, doc="""
         Row cap injected as a SQLLimit transform on get() so a naive call
         against a TB-scale STAC collection does not materialize the whole
@@ -326,6 +332,7 @@ class STACSource(BaseSQLSource):
         # Parse the SQL and auto-resolve any referenced variable whose owning
         # collection is known from the datacube pre-index. This frees callers
         # from having to invoke _resolve() (private) before issuing raw SQL.
+        parsed = None
         try:
             parsed = sqlglot.parse_one(sql_query, dialect="duckdb")
             referenced = {t.name for t in parsed.find_all(sqlglot.exp.Table)}
@@ -334,10 +341,29 @@ class STACSource(BaseSQLSource):
         if referenced and not self._var_pre_index:
             # Lazy one-shot catalog enumeration to populate the pre-index.
             self.get_tables()
+        # Map collection-id references in the SQL to the delegate's first
+        # variable so callers can write "SELECT * FROM <collection_id>"
+        # without knowing which xarray variable backs the collection.
+        rewrites: dict[str, str] = {}
         for ref in referenced - set(self._var_index):
             owner = self._var_pre_index.get(ref)
             if owner is not None and owner not in self._delegates:
                 self._resolve(owner)
+            elif ref in self._collection_cache:
+                delegate = (
+                    self._delegates[ref] if ref in self._delegates
+                    else self._resolve(ref)
+                )
+                first_var = delegate.get_tables()[0]
+                rewrites[ref] = first_var
+        if rewrites and parsed is not None:
+            for tbl in parsed.find_all(sqlglot.exp.Table):
+                if tbl.name in rewrites:
+                    tbl.set(
+                        "this",
+                        sqlglot.exp.to_identifier(rewrites[tbl.name], quoted=True),
+                    )
+            sql_query = parsed.sql(dialect="duckdb")
 
         matched = {
             self._var_index[name]
