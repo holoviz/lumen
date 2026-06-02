@@ -119,7 +119,7 @@ class TestConstruction:
 
     def test_dialect(self, synthetic_dataset):
         source = XArraySQLSource(_dataset=synthetic_dataset)
-        assert source.dialect == "any"
+        assert source.dialect is None
 
     def test_from_dataset_classmethod(self, synthetic_dataset):
         source = XArraySQLSource.from_dataset(synthetic_dataset)
