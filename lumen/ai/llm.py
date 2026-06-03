@@ -1334,7 +1334,7 @@ class OpenAI(Llm, OpenAIMixin):
 
         has_inbuilt = any(
             isinstance(t, dict) and t.get("type") not in (None, "function")
-            for t in kwargs.get("tools")
+            for t in kwargs.get("tools", [])
         )
 
         # When there are NO inbuilt tools and NO function-tool instances we
