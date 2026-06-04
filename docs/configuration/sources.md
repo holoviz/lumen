@@ -223,40 +223,45 @@ pull each cataloged collection in as an xarray-backed SQL table:
 pip install 'lumen[stac]'
 ```
 
-For Planetary Computer collections (Azure-hosted), also install the signing
-extra so URLs work without manual credentials:
+For Planetary Computer collections (which sit behind a per-asset URL signer),
+also install `lumen[stac-planetary]` to pull in `planetary-computer` and
+`adlfs`:
 
 ``` bash
 pip install 'lumen[stac-planetary]'
 ```
 
-``` py title="Open a STAC catalog"
+``` py title="Open a STAC catalog and list its collections"
 from lumen.sources.stac import STACSource
-import lumen.ai as lmai
 
-source = STACSource(
-    url='https://planetarycomputer.microsoft.com/api/stac/v1'
-)
-source.get_tables()  # list of collection IDs
-
-ui = lmai.ExplorerUI(data=source)
-ui.servable()
+source = STACSource(url='https://planetarycomputer.microsoft.com/api/stac/v1')
+print(source.get_tables())   # ['3dep-lidar-classification', 'daymet-daily-hi', ...]
 ```
 
-Each cataloged collection becomes a queryable table. Address a specific
-variable from a multi-variable collection with the `collection:variable`
-table syntax:
+Address a collection's data variables with the `collection:variable` table
+syntax. Use `get_schema` to discover what's queryable on a given collection:
 
 ``` py
+source.get_schema('daymet-daily-hi')   # {'prcp': {...}, 'tmax': {...}, 'tmin': {...}, ...}
 df = source.get('daymet-daily-hi:prcp')
 ```
 
 `get()` is row-capped at `default_limit=100_000` so naive calls against a
 TB-scale collection do not materialize the full xarray grid. Pass
-`default_limit=None` on the source, or pass `sql_transforms=[...]`
-explicitly per call to override.
+`default_limit=None` on the source, or pass `sql_transforms=[...]` explicitly
+per call to override.
 
-Public (non-Planetary-Computer) STAC catalogs work the same way:
+Drop the source into the AI explorer the same way as any other Lumen source:
+
+``` py
+import lumen.ai as lmai
+
+ui = lmai.ExplorerUI(data=source)
+ui.servable()
+```
+
+Public (non-Planetary-Computer) STAC catalogs work the same way, no signing
+extra required:
 
 ``` py
 source = STACSource(url='https://earth-search.aws.element84.com/v1')
@@ -268,9 +273,7 @@ into `SourceAgent` so users can search across collections in natural language:
 ``` py
 from lumen.ai.controls.ingest.stac import STACCatalogControls
 
-controls = STACCatalogControls(
-    url='https://planetarycomputer.microsoft.com/api/stac/v1'
-)
+controls = STACCatalogControls(url='https://planetarycomputer.microsoft.com/api/stac/v1')
 ```
 
 ### Multiple sources

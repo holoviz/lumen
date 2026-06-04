@@ -33,7 +33,9 @@ def test_error_message_contains_pip_install(module_path, class_name, guard_packa
     """Error messages should include the correct pip install command."""
     module_file = module_path.replace(".", "/") + ".py"
     source_text = Path(module_file).read_text()
-    expected = f"pip install lumen[{pip_extra}]"
+    # Just check for the 'lumen[<extra>]' substring; individual sources may
+    # quote it (e.g. 'lumen[stac]' for zsh) without breaking this contract.
+    expected = f"lumen[{pip_extra}]"
     assert expected in source_text, (
         f"{module_path} should contain '{expected}' in its error message"
     )
@@ -80,7 +82,7 @@ def test_import_raises_when_dependency_missing(module_path, class_name, guard_pa
 
     try:
         with patch("builtins.__import__", side_effect=mock_import):
-            with pytest.raises(ImportError, match=f"pip install lumen\\[{pip_extra}\\]"):
+            with pytest.raises(ImportError, match=f"lumen\\[{pip_extra}\\]"):
                 importlib.import_module(module_path)
     finally:
         # Restore original modules so other tests are not affected

@@ -139,7 +139,15 @@ def mock_stac_client():
     client.get_collection = lambda cid: collections[cid]
 
     def _search(*args, **kwargs):
-        first_item = SimpleNamespace(id="item-0")
+        # Carry one xarray-openable asset on the fake item so
+        # _openable_candidates accepts it as a fallback. Real pystac items
+        # always expose an `.assets` dict.
+        item_zarr = _fake_asset(
+            "s3://bucket/item.zarr",
+            media_type="application/vnd+zarr",
+            roles=["data"],
+        )
+        first_item = SimpleNamespace(id="item-0", assets={"zarr": item_zarr})
         return SimpleNamespace(items=lambda: iter([first_item]))
 
     client.search = _search
@@ -437,14 +445,38 @@ class TestAssetSelection:
         obj = source._openable_candidates(collection)[0]
         assert obj.id == "item-0"
 
-    def test_raises_when_nothing_openable(self, mock_stac_client):
+    @pytest.mark.parametrize(
+        "cid,item_assets",
+        [
+            # No items at all (collection has no assets and search returns
+            # nothing).
+            ("empty", None),
+            # First item only carries COG assets, like NAIP on Earth Search.
+            # _is_xarray_asset must reject these on media_type, not let xpystac
+            # crash inside xarray's backend.
+            (
+                "naip",
+                {"image": _fake_asset(
+                    "https://host/scene.tif",
+                    media_type="image/tiff; application=geotiff; profile=cloud-optimized",
+                    roles=["data"],
+                )},
+            ),
+        ],
+        ids=["no-items", "cog-only-item"],
+    )
+    def test_raises_when_no_xarray_openable(self, mock_stac_client, cid, item_assets):
         source = STACSource(url="https://example.com/stac")
-        collection = _fake_collection("empty")
+        collection = _fake_collection(cid)
+        if item_assets is None:
+            items_iter = iter([])
+        else:
+            items_iter = iter([SimpleNamespace(id="item-0", assets=item_assets)])
         with patch.object(
             source._client, "search",
-            return_value=SimpleNamespace(items=lambda: iter([])),
+            return_value=SimpleNamespace(items=lambda: items_iter),
         ):
-            with pytest.raises(ValueError, match="no xarray-openable"):
+            with pytest.raises(ValueError, match="no xarray-openable asset"):
                 source._openable_candidates(collection)
 
 

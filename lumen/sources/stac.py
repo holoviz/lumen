@@ -170,8 +170,12 @@ class STACSource(BaseSQLSource):
 
     def _is_xarray_asset(self, asset: Any) -> bool:
         media_type = (asset.media_type or "").lower()
-        if any(token in media_type for token in self._xarray_media_tokens):
-            return True
+        if media_type:
+            # When media_type is declared, trust it: roles like 'data' are
+            # generic enough that they alone would whitelist COG/JPEG/etc.
+            # assets (e.g. NAIP scenes) that xpystac cannot open.
+            return any(token in media_type for token in self._xarray_media_tokens)
+        # No media_type: fall back to STAC role hints.
         roles = {r.lower() for r in (asset.roles or [])}
         return bool(roles & self._xarray_roles)
 
@@ -203,14 +207,28 @@ class STACSource(BaseSQLSource):
             (a for a in collection.assets.values() if self._is_xarray_asset(a)),
             key=self._asset_accessibility,
         )
+        # Fast path: a well-formed collection (Daymet, ERA5, ...) carries
+        # xarray-openable assets at the collection level; skip the per-item
+        # search to avoid an extra STAC API round-trip on every resolve.
+        if candidates:
+            return candidates
         result = self._client.search(collections=[collection.id], max_items=1)
         first_item = next(result.items(), None)
-        if first_item is not None:
+        first_item_assets = (
+            list(first_item.assets.values()) if first_item is not None else []
+        )
+        item_has_xr_asset = any(self._is_xarray_asset(a) for a in first_item_assets)
+        if first_item is not None and item_has_xr_asset:
             candidates.append(first_item)
         if not candidates:
+            observed = sorted({
+                (a.media_type or "(unset)")
+                for a in (*collection.assets.values(), *first_item_assets)
+            })
             raise ValueError(
                 f"STAC collection {collection.id!r} has no xarray-openable "
-                "asset or items; cannot resolve it to a dataset."
+                f"asset (saw media_types: {observed}); for COG or other image "
+                "collections use stackstac or odc-stac instead."
             )
         return candidates
 

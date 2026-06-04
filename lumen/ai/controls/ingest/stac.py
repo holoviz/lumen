@@ -38,18 +38,16 @@ class STACCatalogControls(CatalogSourceControls):
     label = "STAC catalog"
 
     display_columns = {
-        "id":          {"title": "Collection",  "width": "25%"},
-        "title":       {"title": "Title",       "width": "30%"},
+        "id": {"title": "Collection", "width": "25%"},
+        "title": {"title": "Title", "width": "30%"},
         "description": {"title": "Description", "width": "35%"},
-        "license":     {"title": "License",     "width": "10%"},
+        "license": {"title": "License", "width": "10%"},
     }
 
     search_columns = ["id", "title", "description", "keywords"]
 
     filter_columns = {
-        "license": {
-            "type": "input", "func": "like", "placeholder": "License...",
-        },
+        "license": {"type": "input", "func": "like", "placeholder": "License..."},
     }
 
     detail_columns = ["description", "keywords"]
@@ -64,13 +62,13 @@ class STACCatalogControls(CatalogSourceControls):
         rows = []
         for collection in client.get_collections():
             rows.append({
-                "id":          collection.id,
-                "title":       collection.title or collection.id,
+                "id": collection.id,
+                "title": collection.title or collection.id,
                 # Trim long descriptions so the Tabulator row stays readable;
                 # the full description is available via the detail panel.
                 "description": (collection.description or "")[:300],
-                "license":     collection.license or "",
-                "keywords":    ", ".join(collection.keywords or []),
+                "license": collection.license or "",
+                "keywords": ", ".join(collection.keywords or []),
             })
         return pd.DataFrame(rows)
 
