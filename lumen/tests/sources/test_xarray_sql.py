@@ -14,6 +14,7 @@ Tests cover:
 import warnings
 
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -91,6 +92,24 @@ class TestConstruction:
     def test_from_dataset(self, synthetic_dataset):
         source = XArraySQLSource(_dataset=synthetic_dataset)
         assert source.get_tables() == ["pressure", "temperature"]
+
+    def test_heterogeneous_dimensionality_variables(self):
+        """Variables with different dimensions (e.g. a (time,) series and a
+        (time,lat,lon) grid) must each register with only their own dims;
+        the global chunk spec must be filtered per variable."""
+        times = pd.date_range("2020-01-01", periods=6, freq="D")
+        lats = np.array([1.0, 2.0, 3.0])
+        lons = np.array([10.0, 20.0])
+        ds = xr.Dataset(
+            {
+                "grid": (["time", "lat", "lon"], np.ones((6, 3, 2))),
+                "series": (["time"], np.arange(6.0)),
+            },
+            coords={"time": times, "lat": lats, "lon": lons},
+        ).chunk({"time": 2, "lat": 3, "lon": 2})
+        source = XArraySQLSource(_dataset=ds)
+        assert sorted(source.get_tables()) == ["grid", "series"]
+        assert len(source.execute("SELECT * FROM series")) == 6
 
     def test_from_netcdf(self, nc_file):
         source = XArraySQLSource(uri=nc_file)
@@ -234,6 +253,24 @@ class TestSQLExecution:
 # ---- Schema & Metadata ----
 
 class TestSchemaMetadata:
+
+    def test_get_schema_no_full_grid_count(self, synthetic_dataset):
+        """get_schema must derive __len__ from xarray metadata (O(1)) and a
+        bounded sample, never a COUNT(*)/DISTINCT/MIN/MAX over the full grid
+        (those scan the entire dataset and hang on cloud-scale data)."""
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        real_execute = source.execute
+
+        def guarded(sql, *a, **k):
+            upper = sql.upper()
+            if "COUNT(" in upper or "DISTINCT" in upper or " MIN(" in upper:
+                raise AssertionError(f"full-grid aggregate issued: {sql}")
+            return real_execute(sql, *a, **k)
+
+        with patch.object(source, "execute", side_effect=guarded):
+            schema = source.get_schema("temperature")
+        assert schema["__len__"] == 10 * 5 * 4  # time*lat*lon, from metadata
+        assert "temperature" in schema and "type" in schema["temperature"]
 
     def test_get_schema_single_table(self, synthetic_dataset):
         source = XArraySQLSource(_dataset=synthetic_dataset)

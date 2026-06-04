@@ -10,8 +10,8 @@ install = 'python -m pip install --no-deps --disable-pip-version-check -e .'
 PYTHONIOENCODING = "utf-8"
 
 [environments]
-test-312 = ["py312", "test-core", "test", "ai", "sql", "xarray"]
-test-313 = ["py313", "test-core", "test", "ai", "sql", "xarray"]
+test-312 = ["py312", "test-core", "test", "ai", "sql", "xarray", "stac"]
+test-313 = ["py313", "test-core", "test", "ai", "sql", "xarray", "stac"]
 test-core = ["py313", "test-core"]
 docs = ["py312", "doc", "ai", "sql"]
 build = ["py312", "build"]
@@ -76,6 +76,12 @@ zarr = "*"
 
 [feature.xarray.pypi-dependencies]
 xarray-sql = "*"
+
+[feature.stac.dependencies]
+pystac-client = "*"
+
+[feature.stac.pypi-dependencies]
+xpystac = "*"
 
 # =============================================
 # =================== TESTS ===================
