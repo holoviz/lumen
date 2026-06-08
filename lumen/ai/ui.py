@@ -2443,9 +2443,9 @@ class ExplorerUI(UI):
                 )
 
         def _pop_button_visible(objects):
-            # Popped out (view not in tabs): always show, to allow closing the split.
+            # Popped out (_tab_index is None): always show, to allow closing the split.
             # Otherwise only show when there's more than one tab.
-            if not any(tab is view for tab in objects):
+            if _tab_index() is None:
                 return True
             return len(objects) > 1
 
