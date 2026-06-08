@@ -778,9 +778,14 @@ def clean_sql(sql_expr: str, dialect: str | None = None, prettify: bool = False)
         cleaned_sql = cleaned_sql.replace('`', '"')
     clean_sql = cleaned_sql.strip().rstrip(";")
     if prettify:
+        # 'any' is a legacy BaseSQLSource dialect value that sqlglot no
+        # longer accepts (28.x raises 'Unknown dialect any'); normalise it
+        # to sqlglot's dialect-agnostic mode so SQLAgent's chat path keeps
+        # working for sources that have not declared a concrete dialect.
+        sql_dialect = None if dialect == "any" else dialect
         clean_sql = sqlglot.transpile(
             sql_expr,
-            read=dialect,
+            read=sql_dialect,
             pretty=True
         )[0]
     return clean_sql

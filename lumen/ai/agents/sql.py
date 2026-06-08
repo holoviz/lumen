@@ -238,8 +238,11 @@ def make_load_table_schemas_tool(metaset: Metaset) -> FunctionTool:
                 for k, v in live.items():
                     if k == "__len__":
                         continue
-                    col = col_info.get(k, {})
-                    if col.description:
+                    # col_info only carries cataloged columns; live keys not
+                    # in the catalog (e.g. xarray dim coordinates absent from
+                    # a STAC datacube extension) get the live schema as-is.
+                    col = col_info.get(k)
+                    if col is not None and col.description:
                         schema[k] = dict(col.description, **v)
                     else:
                         schema[k] = v

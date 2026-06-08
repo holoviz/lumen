@@ -141,7 +141,7 @@ class DownloadSourceControls(FileSourceControls):
 
         self._cancel_button = Button.from_param(
             self.param.cancel,
-            name="Cancel",
+            label="Cancel",
             icon="close",
             on_click=self._handle_cancel,
             visible=self.param._active_download_task.rx.is_not(None),

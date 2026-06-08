@@ -808,7 +808,6 @@ class UI(Viewer):
                 back_button = Button(
                     label="Back to Exploration",
                     icon="insights",
-                    button_type="primary",
                     on_click=lambda e: self._handle_sidebar_event(self._sidebar_menu.items[0]),
                 )
                 main_content = Column(no_explorations_msg, back_button, styles={"margin": "auto"})
@@ -1249,7 +1248,7 @@ class UI(Viewer):
         )
 
         self._next_help_button = Button(
-            name="Next",
+            label="Next",
             variant="outlined",
             sizing_mode="stretch_width",
             align="end",
@@ -1671,9 +1670,8 @@ class UI(Viewer):
 
         if append_demo and self.demo_inputs:
             suggestion_buttons.append(Button(
-                name="Show a demo",
+                label="Show a demo",
                 icon="play_arrow",
-                button_type="primary",
                 variant="outlined",
                 on_click=run_demo,
                 margin=5,
@@ -2125,7 +2123,6 @@ class ExplorerUI(UI):
                     ),
                     Button(
                         label="Disable exec",
-                        button_type="primary",
                         on_click=cancel_code_execution,
                     ),
                     align="end",

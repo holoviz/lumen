@@ -65,11 +65,53 @@ def synthetic_dataset():
 
 
 @pytest.fixture
+def bounds_dataset():
+    """
+    CF-compliant dataset where a bounds variable spans only a subset of dims.
+
+    Models the common NOAA/CF pattern (time_bnds, climatology_bounds, lat_bnds):
+    `climatology_bounds` has dims (time, nbnds) only, while the data variable
+    `air` carries the full (time, lat, lon) grid. Reproduces gh-1885.
+    """
+    times = pd.date_range("2020-01-01", periods=10, freq="D")
+    lats = np.array([10.0, 20.0, 30.0, 40.0, 50.0])
+    lons = np.array([100.0, 110.0, 120.0, 130.0])
+
+    rng = np.random.default_rng(42)
+    air = rng.uniform(250, 310, (10, 5, 4))
+    bounds = np.stack(
+        [np.arange(10, dtype="float64"), np.arange(1, 11, dtype="float64")], axis=1
+    )  # (time, nbnds=2)
+
+    return xr.Dataset(
+        {
+            "air": (["time", "lat", "lon"], air, {"units": "K"}),
+            "climatology_bounds": (["time", "nbnds"], bounds),
+        },
+        coords={
+            "time": times,
+            "lat": ("lat", lats, {"units": "degrees_north"}),
+            "lon": ("lon", lons, {"units": "degrees_east"}),
+        },
+        attrs={"title": "Synthetic CF Dataset with bounds"},
+    )
+
+
+@pytest.fixture
 def nc_file(synthetic_dataset, tmp_path):
     """Write synthetic dataset to a temporary NetCDF file."""
     pytest.importorskip("netCDF4")
     path = tmp_path / "test_data.nc"
     synthetic_dataset.to_netcdf(path)
+    return str(path)
+
+
+@pytest.fixture
+def bounds_nc_file(bounds_dataset, tmp_path):
+    """Write the CF bounds dataset to a temporary NetCDF file."""
+    pytest.importorskip("netCDF4")
+    path = tmp_path / "test_bounds.nc"
+    bounds_dataset.to_netcdf(path)
     return str(path)
 
 
@@ -91,6 +133,13 @@ class TestConstruction:
     def test_from_dataset(self, synthetic_dataset):
         source = XArraySQLSource(_dataset=synthetic_dataset)
         assert source.get_tables() == ["pressure", "temperature"]
+
+    def test_bounds_variable_loads(self, bounds_dataset):
+        # gh-1885: a bounds variable (time, nbnds) must not crash _initialize
+        # with "chunks keys (...) not found in data dimensions".
+        source = XArraySQLSource(_dataset=bounds_dataset)
+        assert "climatology_bounds" in source.get_tables()
+        assert "air" in source.get_tables()
 
     def test_from_netcdf(self, nc_file):
         source = XArraySQLSource(uri=nc_file)
@@ -119,7 +168,7 @@ class TestConstruction:
 
     def test_dialect(self, synthetic_dataset):
         source = XArraySQLSource(_dataset=synthetic_dataset)
-        assert source.dialect == "any"
+        assert source.dialect is None
 
     def test_from_dataset_classmethod(self, synthetic_dataset):
         source = XArraySQLSource.from_dataset(synthetic_dataset)
@@ -161,6 +210,55 @@ class TestConstruction:
         assert "z" in df.columns
         assert "latitude" in df.columns
         assert "longitude" in df.columns
+
+
+# ---- Bounds variables (CF subset-dim regression, gh-1885) ----
+
+class TestBoundsVariables:
+
+    def test_query_bounds_variable(self, bounds_dataset):
+        source = XArraySQLSource(_dataset=bounds_dataset)
+        df = source.execute("SELECT * FROM climatology_bounds")
+        # nbnds is a bare dimension (no coordinate), so 10 time x 2 nbnds rows.
+        assert len(df) == 20
+        assert "climatology_bounds" in df.columns
+        assert "time" in df.columns
+
+    def test_query_full_dim_variable_still_works(self, bounds_dataset):
+        # The primary data var keeps its full grid alongside the bounds var.
+        source = XArraySQLSource(_dataset=bounds_dataset)
+        df = source.execute("SELECT COUNT(*) as cnt FROM air")
+        assert df["cnt"].iloc[0] == 10 * 5 * 4
+
+    def test_schema_bounds_variable(self, bounds_dataset):
+        source = XArraySQLSource(_dataset=bounds_dataset)
+        schema = source.get_schema("climatology_bounds")
+        assert "climatology_bounds" in schema
+        assert "time" in schema
+        assert "__len__" in schema
+
+    def test_bounds_from_netcdf(self, bounds_nc_file):
+        # Exercises the real _load_dataset + engine path, closest to gh-1885.
+        source = XArraySQLSource(uri=bounds_nc_file)
+        assert "climatology_bounds" in source.get_tables()
+        assert "air" in source.get_tables()
+
+    def test_bounds_with_user_chunks(self, bounds_dataset):
+        # A user-supplied chunks dict naming a dim some var lacks must also be
+        # filtered per variable (covers the dict branch of _resolve_chunks).
+        source = XArraySQLSource(_dataset=bounds_dataset, chunks={"time": 5, "lat": 5})
+        assert "climatology_bounds" in source.get_tables()
+        df = source.execute("SELECT * FROM climatology_bounds LIMIT 3")
+        assert len(df) == 3
+
+    def test_bounds_dask_backed(self, bounds_dataset):
+        # Large CF files are opened lazily; the dask branch of _resolve_chunks
+        # builds the spec from dataset.chunks, which still spans every dim.
+        pytest.importorskip("dask")
+        source = XArraySQLSource(_dataset=bounds_dataset.chunk({"time": 5}))
+        assert "climatology_bounds" in source.get_tables()
+        assert "air" in source.get_tables()
+        assert source.execute("SELECT COUNT(*) as cnt FROM air")["cnt"].iloc[0] == 10 * 5 * 4
 
 
 # ---- SQL Execution ----

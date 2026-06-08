@@ -161,7 +161,7 @@ class Pipeline(Viewer, Component):
             raise TypeError('Pipeline.transforms must be regular Transform components, not SQLTransform.')
         self._update_widget = None
         super().__init__(source=source, table=table, filters=filters, schema=schema, **params)
-        self._update_widget = Param(self.param['update'], widgets={'update': {'button_type': 'success'}})[0]
+        self._update_widget = Param(self.param['update'], widgets={'update': {'color': 'success'}})[0]
         self._init_callbacks()
 
     def _update_stale(self, event):
@@ -170,7 +170,7 @@ class Pipeline(Viewer, Component):
 
     @param.depends('_stale', watch=True)
     def _handle_stale(self):
-        self._update_widget.button_type = 'warning' if self._stale else 'success'
+        self._update_widget.color = 'warning' if self._stale else 'success'
 
     def _init_callbacks(self):
         self.param.watch(self._update_data, ['filters', 'sql_transforms', 'transforms', 'table', 'update'])
