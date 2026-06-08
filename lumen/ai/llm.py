@@ -964,7 +964,10 @@ class Llm(param.Parameterized):
         log_debug(f"Input messages: \033[95m{len(messages)} messages\033[0m including system")
         previous_role = None
         for i, message in enumerate(messages):
-            role = message["role"]
+            if "role" in message:
+                role = message["role"]
+            else:
+                role = message["type"]
             if role == "system":
                 content = message.get("content", "")
                 log_debug(f"System prompt ({len(content)} chars):\n\033[90m{truncate_string(content, max_length=4000)}\033[0m")
@@ -974,7 +977,7 @@ class Llm(param.Parameterized):
                 content = truncate_string(json.dumps(message["tool_calls"], indent=2), max_length=1000)
             role_char = role[0]
             log_debug(f"Message \033[95m{i} ({role_char})\033[0m: {format_msg_content(content)}")
-            if previous_role == role:
+            if previous_role == role and not role.startswith("tool"):
                 log_debug(
                     "\033[91mWARNING: Two consecutive messages from the same role; "
                     "some providers disallow this.\033[0m"
@@ -1334,7 +1337,7 @@ class OpenAI(Llm, OpenAIMixin):
 
         has_inbuilt = any(
             isinstance(t, dict) and t.get("type") not in (None, "function")
-            for t in kwargs.get("tools")
+            for t in kwargs.get("tools", [])
         )
 
         # When there are NO inbuilt tools and NO function-tool instances we

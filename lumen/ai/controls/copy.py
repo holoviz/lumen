@@ -19,6 +19,12 @@ class CopyControls(Viewer):
 
     def __init__(self, **params):
         super().__init__(**params)
+        editor = getattr(self.view, "_editor", None)
+        if editor is None:
+            # Some editors (e.g. AnalysisOutput, DocumentEditor) don't render a
+            # CodeEditor, so there's nothing to copy and we show no icon.
+            self._row = Row(**self.layout_kwargs)
+            return
         # Dynamically set description based on the language of the view
         language = getattr(self.view, 'language', 'yaml').upper()
         copy_icon = IconButton(
@@ -32,7 +38,7 @@ class CopyControls(Viewer):
             icon_size="0.9em",
         )
         copy_icon.js_on_click(
-            args={"code_editor": self.view._editor},
+            args={"code_editor": editor},
             code="navigator.clipboard.writeText(code_editor.code);",
         )
         self._row = Row(copy_icon, **self.layout_kwargs)
