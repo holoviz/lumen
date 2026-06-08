@@ -2442,11 +2442,18 @@ class ExplorerUI(UI):
                     icon="vertical_split"
                 )
 
+        def _pop_button_visible(objects):
+            # Popped out (view not in tabs): always show, to allow closing the split.
+            # Otherwise only show when there's more than one tab.
+            if not any(tab is view for tab in objects):
+                return True
+            return len(objects) > 1
+
         pop_button = IconButton(
             description="Open this tab in a split view", icon="vertical_split", icon_size="1.1em", size="small",
             margin=(5, 0, 0, 0), on_click=pop_out, styles={"margin-left": "auto"},
-            visible=tabs.param['objects'].rx.len() > 1, color="primary"
-)
+            visible=tabs.param['objects'].rx.pipe(_pop_button_visible), color="primary"
+        )
         return pop_button
 
     def _render_view(self, exploration: Exploration, view: LumenEditor) -> VSplit:
