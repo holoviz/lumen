@@ -1,3 +1,4 @@
+from .arraylake import ArraylakeSourceControls
 from .base import BaseSourceControls
 from .catalog import CatalogSourceControls
 from .code import CodeSourceControls
@@ -20,6 +21,7 @@ __all__ = (
     "METADATA_EXTENSIONS",
     "METADATA_FILENAME_PATTERNS",
     "TABLE_EXTENSIONS",
+    "ArraylakeSourceControls",
     "BaseSourceControls",
     "CatalogSourceControls",
     "CodeSourceControls",
