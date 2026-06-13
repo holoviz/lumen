@@ -1,4 +1,7 @@
-from .arraylake import ArraylakeSourceControls
+try:
+    from .arraylake import ArraylakeSourceControls
+except ImportError:
+    ArraylakeSourceControls = None
 from .base import BaseSourceControls
 from .catalog import CatalogSourceControls
 from .code import CodeSourceControls

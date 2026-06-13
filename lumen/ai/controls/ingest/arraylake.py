@@ -6,6 +6,7 @@ from ....sources.xarray_sql import XArraySQLSource
 from ...translate import params_to_callable
 from .parametric import ParametricSourceControls
 from .result import SourceResult
+from .utils import open_arraylake_dataset
 
 
 class ArraylakeSourceControls(ParametricSourceControls):
@@ -88,31 +89,14 @@ class ArraylakeSourceControls(ParametricSourceControls):
         branch = (params.get("branch") or self.branch).strip() or "main"
         group = (params.get("group") or self.group).strip() or None
 
+        self.progress(f"Opening Arraylake repo {repo!r}")
         try:
-            import arraylake as al
-            import xarray as xr
+            ds = open_arraylake_dataset(repo, branch=branch, group=group)
         except ImportError:
             return SourceResult.empty(
                 "Arraylake support requires `pip install lumen[arraylake]` "
                 "(Python >=3.12)."
             )
-
-        # A larger Icechunk snapshot cache avoids repeatedly re-reading metadata
-        # nodes while opening large stores; on GOES this cut the open from ~200s
-        # to ~16s. Skip cleanly if icechunk is unavailable.
-        repo_config = None
-        try:
-            import icechunk
-            repo_config = icechunk.RepositoryConfig(
-                caching=icechunk.CachingConfig(num_snapshot_nodes=10_000)
-            )
-        except Exception:
-            pass
-
-        self.progress(f"Opening Arraylake repo {repo!r}")
-        try:
-            store = al.Client().get_repo(repo, config=repo_config).readonly_session(branch).store
-            ds = xr.open_zarr(store, group=group)
         except Exception as e:
             return SourceResult.empty(f"Could not open Arraylake repo {repo!r}: {e}")
 
