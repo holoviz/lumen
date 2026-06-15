@@ -2450,9 +2450,17 @@ class ExplorerUI(UI):
                     icon="vertical_split"
                 )
 
+        def _pop_button_visible(objects):
+            # Popped out (_tab_index is None): always show, to allow closing the split.
+            # Otherwise only show when there's more than one tab.
+            if _tab_index() is None:
+                return True
+            return len(objects) > 1
+
         pop_button = IconButton(
             description="Open this tab in a split view", icon="vertical_split", icon_size="1.1em", size="small",
-            margin=(5, 0, 0, 0), on_click=pop_out, styles={"margin-left": "auto"}
+            margin=(5, 0, 0, 0), on_click=pop_out, styles={"margin-left": "auto"},
+            visible=tabs.param['objects'].rx.pipe(_pop_button_visible), color="primary"
         )
         return pop_button
 
