@@ -297,6 +297,16 @@ def test_clean_sql_strips_whitespace_and_semicolons():
     assert cleaned_sql == "SELECT * FROM table"
 
 
+def test_clean_sql_prettify_with_legacy_any_dialect():
+    """BaseSQLSource.dialect defaults to 'any', a legacy value that sqlglot
+    no longer recognises (28.x raises 'Unknown dialect any'). clean_sql
+    must normalise it to the dialect-agnostic mode so calling code on a
+    fresh BaseSQLSource (e.g. STACSource) does not break the SQLAgent
+    chat path."""
+    cleaned = clean_sql("SELECT 1", dialect="any", prettify=True)
+    assert "SELECT" in cleaned and "1" in cleaned
+
+
 def test_report_error():
     step = ChatStep()
     report_error(Exception("Test error"), step)

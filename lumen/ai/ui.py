@@ -808,7 +808,6 @@ class UI(Viewer):
                 back_button = Button(
                     label="Back to Exploration",
                     icon="insights",
-                    button_type="primary",
                     on_click=lambda e: self._handle_sidebar_event(self._sidebar_menu.items[0]),
                 )
                 main_content = Column(no_explorations_msg, back_button, styles={"margin": "auto"})
@@ -1249,7 +1248,7 @@ class UI(Viewer):
         )
 
         self._next_help_button = Button(
-            name="Next",
+            label="Next",
             variant="outlined",
             sizing_mode="stretch_width",
             align="end",
@@ -1605,6 +1604,8 @@ class UI(Viewer):
                     if event.new > 1:  # prevent double clicks
                         return
                 self._update_main_view()
+                if hasattr(self, "_coordinator") and self.context.get("sources"):
+                    await self._sync_sources(global_context=self.context)
 
                 if not analysis:
                     with edit_readonly(self._chat_input):
@@ -1671,9 +1672,8 @@ class UI(Viewer):
 
         if append_demo and self.demo_inputs:
             suggestion_buttons.append(Button(
-                name="Show a demo",
+                label="Show a demo",
                 icon="play_arrow",
-                button_type="primary",
                 variant="outlined",
                 on_click=run_demo,
                 margin=5,
@@ -2125,7 +2125,6 @@ class ExplorerUI(UI):
                     ),
                     Button(
                         label="Disable exec",
-                        button_type="primary",
                         on_click=cancel_code_execution,
                     ),
                     align="end",
@@ -2451,9 +2450,17 @@ class ExplorerUI(UI):
                     icon="vertical_split"
                 )
 
+        def _pop_button_visible(objects):
+            # Popped out (_tab_index is None): always show, to allow closing the split.
+            # Otherwise only show when there's more than one tab.
+            if _tab_index() is None:
+                return True
+            return len(objects) > 1
+
         pop_button = IconButton(
             description="Open this tab in a split view", icon="vertical_split", icon_size="1.1em", size="small",
-            margin=(5, 0, 0, 0), on_click=pop_out, styles={"margin-left": "auto"}
+            margin=(5, 0, 0, 0), on_click=pop_out, styles={"margin-left": "auto"},
+            visible=tabs.param['objects'].rx.pipe(_pop_button_visible), color="primary"
         )
         return pop_button
 

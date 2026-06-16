@@ -29,6 +29,7 @@ dependencies = [
     "bokeh",
     "chardet",
     "duckdb >=1.2.0",
+    "lxml",
     "griffe",
     "holoviews >=1.17.0",
     "hvplot",
@@ -61,7 +62,11 @@ Source = "https://github.com/holoviz/lumen"
 HoloViz = "https://holoviz.org/"
 
 [project.optional-dependencies]
-tests = ['pytest', 'pytest-rerunfailures', 'pytest-asyncio']
+tests = ['pytest', 'pytest-rerunfailures', 'pytest-asyncio', 'pytest-xdist', 'lxml']
+dev = [
+    'lumen[tests,sql,ai-openai,xarray]',
+    'panel>=1.9.0rc0',
+]
 sql = ['sqlalchemy']
 ai-local = ['huggingface_hub', 'hf_xet']
 ai-openai = ['openai']
@@ -71,7 +76,7 @@ ai-bedrock = ['boto3>=1.42.23']
 ai-anthropic = ['anthropic']
 ai-transformers = ['lumen[ai-local]', 'sentence_transformers>=2.7.0', 'transformers>=4.51.0']  # for embeddings
 ai-llama = ['lumen[ai-local]', 'llama-cpp-python >=0.3.15']
-ai-google = ['google-genai>=1.56.0', 'jsonref']
+ai-google = ['google-genai>=1.56.0', 'jsonref', 'opentelemetry-instrumentation-google-genai']
 ai-litellm = ['litellm']
 ai-ollama = ['ollama']
 chromadb = ['chromadb']
@@ -111,6 +116,9 @@ addopts = [
     "--pyargs",
     "--doctest-modules",
     "--doctest-ignore-import-errors",
+]
+markers = [
+    "xdist_group: mark tests to run in the same xdist worker group",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

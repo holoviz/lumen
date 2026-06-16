@@ -59,7 +59,11 @@ class Analysis(param.ParameterizedFunction):
         return applies
 
     def controls(self, context: TContext) -> Param | None:
-        config_options = [p for p in self.param if p not in Analysis.param and self.param[p].precedence > 0]
+        config_options = [
+            p for p in self.param
+            if p not in Analysis.param
+            and (self.param[p].precedence is None or self.param[p].precedence >= 0)
+        ]
         if not config_options:
             return None
         return Param(self.param, parameters=config_options, margin=0, show_name=False)

@@ -87,15 +87,16 @@ class TableListAgent(BaseListAgent):
     @classmethod
     async def applies(cls, context: TContext) -> bool:
         visible_slugs = context.get("visible_slugs")
-        if visible_slugs:
+
+        if visible_slugs and len(visible_slugs) > 1:
             return True
 
         source = context.get("source")
         if source is not None:
-            return bool(source.get_tables())
+            return len(source.get_tables()) > 1
 
         sources = context.get("sources", [])
-        return any(source.get_tables() for source in sources)
+        return sum(len(source.get_tables()) for source in sources) > 1
 
     def _get_items(self, context: TContext) -> dict[str, list[str]]:
         if "closest_tables" in context:

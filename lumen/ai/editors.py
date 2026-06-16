@@ -216,7 +216,7 @@ class LumenEditor(Viewer):
                 def unlimit(e):
                     sql_limit.limit = None if e.new else 1_000_000
                 full_data = Checkbox(
-                    name='Full data', width=100, visible=limited
+                    label='Full data', width=100, visible=limited
                 )
                 full_data.param.watch(unlimit, 'value')
                 controls.insert(0, full_data)
@@ -477,7 +477,7 @@ class AnalysisOutput(LumenEditor):
         else:
             self.analysis._run_button = run_button = Button(
                 icon='play_circle_outline', label='Run', on_click=self._rerun,
-                button_type='success', margin=(10, 0, 0, 10)
+                color='success', margin=(10, 0, 0, 10)
             )
         return FlexBox(*controls, run_button) if controls else run_button
 
