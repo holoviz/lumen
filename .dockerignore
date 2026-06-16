@@ -1,0 +1,17 @@
+.git/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.pixi/
+pixi.lock
+docs/
+examples/
+*.egg-info/
+dist/
+build/
+.coverage
+htmlcov/
+.env
+.ipynb_checkpoints/

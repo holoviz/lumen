@@ -1,0 +1,709 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# REbot — Dicionário Compacto (system prompt)
+# 43 tabelas | SQL Server dw_raw_open_data.dbo
+# Fontes: ONS (source_id=1) · ANEEL (source_id=2) · CCEE (source_id=3)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# REGRAS GERAIS DE QUERY
+# - Banco: dw_raw_open_data | Schema: dbo
+# - Sempre usar TOP N para exploração inicial
+# - Tabelas ONS: colunas em snake_case (ceg, din_instante, val_geracao)
+# - Tabelas ANEEL: PascalCase (CodCEG, DatGeracaoConjuntoDados, MdaPotencia...)
+# - Tabelas CCEE: MAIÚSCULAS (MES_REFERENCIA, SUBMERCADO, PLD_HORA)
+# - Para usinas ATIVAS no SIGA: DscFaseUsina = 'Operacao' AND DatFimVigencia IS NULL
+# - Converter potência: kW → MW ÷ 1000 | kW → GW ÷ 1000000
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ALERTAS CRÍTICOS — ler antes de gerar qualquer SQL
+# ══════════════════════════════════════════════════════════════════════════════
+alerts:
+  - "ons_carga_energia.din_instante é DATE (diário) — demais tabelas ONS usam DATETIME2 (horário)"
+  - "ccee_pld_media_diaria.DIA é DATE — ccee_pld_horario.DIA é INT (1-31)"
+  - "ccee_geracao_horaria.MES_REFERENCIA e ccee_parcela_usina_montante_mensal.MES_REFERENCIA são VARCHAR(500), não INT"
+  - "aneel_ralie_*.IdeNucleoCEG é INT — demais tabelas ANEEL usam VARCHAR"
+  - "aneel_ralie_*.SigTipoGeracao é VARCHAR(5) — demais tabelas ANEEL usam CHAR(3)"
+  - "aneel_empreendimento_operacao.MesReferencia e AnoReferencia são CHAR — filtrar com aspas: AnoReferencia = '2024'"
+  - "aneel_liberacao_operacao_comercial_resumido.AnoReferencia é CHAR(4)"
+  - "ons_linha_transmissao usa nom_estado_de/nom_estado_para (não nom_estado)"
+  - "ons_relacionamento_usina_conjunto usa estad_id (não id_estado)"
+  - "aneel_siga_empreendimento.DscMuninicpios tem typo (dois 'ni')"
+  - "aneel_capacidade_instalada_uf: campo é MdaPotenciaInstaladakW (k minúsculo)"
+  - "aneel_leilao_geracao.CodCEG é VARCHAR(25) — maior que o padrão VARCHAR(21)"
+  - "ccee_parcela_usina_montante_mensal.CEG em MAIÚSCULAS"
+  - "ons_fator_capacidade.ceg pode ser NULL para conjuntos Tipo II-C — usar id_ons nesses casos"
+  - "aneel_ato_outorga.HashKey é coluna calculada PERSISTED — não inserir manualmente"
+  - "aneel_gd_empreendimento.NomTitularEmpreendimento é VARCHAR(5) — truncado, não usar para identificação"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TABELAS — catálogo, grain, colunas-chave
+# ══════════════════════════════════════════════════════════════════════════════
+
+tables:
+
+  # ── CATÁLOGO INTERNO ───────────────────────────────────────────────────────
+  - table: identifier_source
+    desc: 3 fontes de dados abertos ingeridas no DW
+    known_rows: [{id:1,code:ONS},{id:2,code:ANEEL},{id:3,code:CCEE}]
+    cols: [id INT PK, code VARCHAR(10), name VARCHAR(100), base_url VARCHAR(500)]
+
+  - table: metadata_dataset
+    desc: 32 datasets com URL oficial e timestamp da última carga
+    grain: id
+    fk: source_id→identifier_source.id
+    cols: [id INT PK, source_id INT FK, name VARCHAR(200), url VARCHAR(500), description VARCHAR(2000), frequency VARCHAR(50), last_load_at DATETIME2]
+
+  - table: mapping_dataset
+    desc: Mapeamento dataset→tabela física. Um dataset pode ter múltiplos recursos (ex. resultado-de-leiloes→2 tabelas; relacao-gd→5 tabelas)
+    grain: id
+    fk: dataset_id→metadata_dataset.id
+    cols: [id INT PK, dataset_id INT FK, name VARCHAR(200), resource_name VARCHAR(200), resource_id VARCHAR(100), table_name VARCHAR(100)]
+
+  # ── ONS — CADASTRAIS ───────────────────────────────────────────────────────
+  - table: ons_capacidade_geracao
+    source: ONS
+    url: dados.ons.org.br/dataset/capacidade-geracao
+    desc: Potência nominal das UGs despachadas pelo ONS (Tipo I, II-A, II-B, II-C)
+    grain: ceg + cod_equipamento + num_unidadegeradora
+    unique: [ceg, cod_equipamento, num_unidadegeradora]
+    index: idx_ons_cap_ceg_data ON (ceg ASC, dat_entradaoperacao DESC) WHERE ceg IS NOT NULL
+    key_cols:
+      - ceg VARCHAR(500) — CEG da usina (NULL possível)
+      - id_subsistema CHAR(2) — SE/S/NE/N
+      - nom_tipousina VARCHAR(500)
+      - nom_modalidadeoperacao VARCHAR(500) — Tipo I / Tipo II-A / II-B / II-C
+      - dat_entradaoperacao DATE
+      - dat_desativacao DATE — NULL=ativa
+      - val_potenciaefetiva DECIMAL(10,3) MW
+
+  - table: ons_modalidade_usina
+    source: ONS
+    url: dados.ons.org.br/dataset/modalidade-usina
+    desc: Modalidades ONS (Tipo I a III). Útil para obter id_ons de usinas
+    grain: ceg + id_ons + nom_usina + nom_pontoconexao + sts_aneel
+    key_cols:
+      - ceg VARCHAR(500)
+      - id_ons VARCHAR(500) — join com tabelas operacionais
+      - nom_modalidadeoperacao VARCHAR(500)
+      - val_potenciaautorizada DECIMAL(10,3) MW
+
+  - table: ons_relacionamento_usina_conjunto
+    source: ONS
+    url: dados.ons.org.br/dataset/usina_conjunto
+    desc: Composição histórica dos Conjuntos de Usina (Tipo II-C). Usar para de-agregar dados de conjuntos em usinas individuais
+    grain: ceg + id_ons_usina + id_ons_conjunto
+    note: campo de estado é estad_id (não id_estado)
+    indexes: [idx_ons_rel_ceg, idx_ons_rel_conjunto, idx_ons_rel_usina_data]
+    key_cols:
+      - ceg VARCHAR(500)
+      - id_ons_usina VARCHAR(500)
+      - id_ons_conjunto VARCHAR(500) — join com ons_fator_capacidade.id_ons quando ceg IS NULL
+      - estad_id CHAR(2) — campo atípico (não id_estado)
+      - dat_iniciorelacionamento DATE
+      - dat_fimrelacionamento DATE — NULL=ativo
+
+  - table: ons_subestacao
+    source: ONS
+    url: dados.ons.org.br/dataset/subestacao
+    desc: Subestações da Rede de Operação >=69kV com geolocalização
+    grain: id_estacao + id_subestacao
+    key_cols:
+      - id_subestacao VARCHAR(500)
+      - nom_subestacao VARCHAR(500)
+      - val_niveltensao DECIMAL(10,2) kV
+      - val_latitude DECIMAL(10,6)
+      - val_longitude DECIMAL(10,6)
+
+  - table: ons_linha_transmissao
+    source: ONS
+    url: dados.ons.org.br/dataset/linha-transmissao
+    desc: Linhas de transmissão >=230kV com parâmetros elétricos e capacidades
+    grain: cod_equipamento + nom_tipolinha + nom_agenteproprietario
+    note: campos de estado são nom_estado_de e nom_estado_para (não nom_estado)
+    key_cols:
+      - cod_equipamento VARCHAR(500)
+      - nom_linhadetransmissao VARCHAR(500)
+      - val_niveltensao_kv DECIMAL(10,2) kV
+      - val_comprimento DECIMAL(10,3) km
+      - nom_estado_de VARCHAR(500)
+      - nom_estado_para VARCHAR(500)
+      - dat_entradaoperacao DATE
+
+  # ── ONS — OPERACIONAIS ─────────────────────────────────────────────────────
+  - table: ons_carga_energia
+    source: ONS
+    url: dados.ons.org.br/dataset/carga-energia
+    desc: Carga diária por subsistema em MWmed
+    grain: id_subsistema + din_instante
+    note: "ATENÇÃO: din_instante é DATE (diário), não DATETIME2"
+    key_cols:
+      - id_subsistema CHAR(2)
+      - din_instante DATE — DIÁRIO
+      - val_cargaenergiamwmed DECIMAL(12,6) MWmed
+
+  - table: ons_curva_carga
+    source: ONS
+    url: dados.ons.org.br/dataset/curva-carga
+    desc: Perfil de carga horário por subsistema (ponta/fora-de-ponta)
+    grain: id_subsistema + din_instante
+    key_cols:
+      - id_subsistema CHAR(2)
+      - din_instante DATETIME2 — HORÁRIO
+      - val_cargaenergiahomwmed DECIMAL(12,6) MWmed
+
+  - table: ons_intercambio_nacional
+    source: ONS
+    url: dados.ons.org.br/dataset/intercambio-nacional
+    desc: Intercâmbio horário entre subsistemas em MWmed (positivo = fluxo origem→destino)
+    grain: id_subsistema_origem + id_subsistema_destino + din_instante
+    key_cols:
+      - id_subsistema_origem CHAR(2)
+      - id_subsistema_destino CHAR(2)
+      - din_instante DATETIME2
+      - val_intercambiomwmed DECIMAL(12,6) MWmed
+
+  - table: ons_fator_capacidade
+    source: ONS
+    url: dados.ons.org.br/dataset/fator-capacidade-2
+    desc: Fator de capacidade horário de usinas eólicas e solares. ceg=NULL para conjuntos Tipo II-C — usar id_ons para join com ons_relacionamento_usina_conjunto.id_ons_conjunto
+    grain: ceg + din_instante + id_ons
+    index: idx_ons_fator_id_instante ON (id_ons ASC, din_instante DESC)
+    key_cols:
+      - ceg VARCHAR(500) — NULL para conjuntos
+      - id_ons VARCHAR(500)
+      - din_instante DATETIME2
+      - val_fatorcapacidade DECIMAL(8,6) — 0 a 1
+      - val_geracaoverificada DECIMAL(12,6) MWmed
+      - val_capacidadeinstalada DECIMAL(12,6) MW
+
+  - table: ons_geracao_usina
+    source: ONS
+    url: dados.ons.org.br/dataset/geracao-usina-2
+    desc: Geração verificada horária de usinas, conjuntos e grupos. Principal tabela de geração ONS
+    grain: ceg + din_instante + id_ons
+    key_cols:
+      - ceg VARCHAR(30) — NULL para conjuntos/grupos
+      - id_ons VARCHAR(20)
+      - din_instante DATETIME2
+      - id_subsistema CHAR(2)
+      - nom_tipousina VARCHAR(50)
+      - val_geracao DECIMAL(12,6) MWmed
+
+  - table: ons_disponibilidade_usina
+    source: ONS
+    url: dados.ons.org.br/dataset/disponibilidade_usina
+    desc: Disponibilidade horária de usinas hidráulicas e térmicas Tipo I e II-A
+    grain: id_ons + din_instante
+    key_cols:
+      - id_ons VARCHAR(20)
+      - din_instante DATETIME2
+      - val_potenciainstalada DECIMAL(10,3) MW
+      - val_dispoperacional DECIMAL(10,6) — 0 a 1
+      - val_dispsincronizada DECIMAL(10,6) — 0 a 1
+
+  - table: ons_restricao_coff_eolica
+    source: ONS
+    url: dados.ons.org.br/dataset/restricao_coff_eolica_usi
+    desc: Constrained-off eólico. Energia cortada = val_geracaoreferenciafinal - val_geracao
+    grain: ceg + din_instante + id_ons
+    note: val_disponibilidade DECIMAL(20,6) — maior precisão que na fotovoltaica
+    key_cols:
+      - ceg VARCHAR(500) — NULL para conjuntos
+      - id_ons VARCHAR(500)
+      - din_instante DATETIME2
+      - val_geracao DECIMAL(12,6) MWmed
+      - val_geracaoreferenciafinal DECIMAL(12,6) MWmed — usar para calcular energia cortada
+      - val_disponibilidade DECIMAL(20,6) MWmed — wind potential
+      - cod_razaorestricao VARCHAR(500)
+
+  - table: ons_restricao_coff_eolica_detail
+    source: ONS
+    url: dados.ons.org.br/dataset/restricao_coff_eolica_detail
+    desc: Detalhe por usina individual do C-off eólico — vento verificado e geração estimada vs realizada
+    grain: ceg + din_instante + id_ons
+    note: ceg NOT NULL aqui (diferente da tabela principal)
+    key_cols:
+      - ceg VARCHAR(500) — NOT NULL
+      - id_ons VARCHAR(500)
+      - din_instante DATETIME2
+      - val_ventoverificado FLOAT m/s
+      - flg_dadoventoinvalido BIT
+      - val_geracaoestimada FLOAT MWmed
+      - val_geracaoverificada FLOAT MWmed
+
+  - table: ons_restricao_coff_fotovoltaica
+    source: ONS
+    url: dados.ons.org.br/dataset/restricao_coff_fotovoltaica
+    desc: Constrained-off fotovoltaico. varchar menores que na eólica (nom_usina=200, id_ons=20, ceg=30)
+    grain: ceg + din_instante + id_ons
+    note: val_disponibilidade DECIMAL(12,6) — menor que na eólica DECIMAL(20,6)
+    key_cols:
+      - ceg VARCHAR(30)
+      - id_ons VARCHAR(20)
+      - din_instante DATETIME2
+      - val_geracao DECIMAL(12,6) MWmed
+      - val_geracaoreferenciafinal DECIMAL(12,6) MWmed
+      - val_disponibilidade DECIMAL(12,6) MWmed — solar potential
+
+  - table: ons_restricao_coff_fotovoltaica_detail
+    source: ONS
+    url: dados.ons.org.br/dataset/restricao_coff_fotovoltaica_detail
+    desc: Detalhe por usina do C-off fotovoltaico — irradiância verificada vs geração
+    grain: ceg + din_instante + id_ons
+    note: ceg NOT NULL aqui
+    key_cols:
+      - ceg VARCHAR(30) — NOT NULL
+      - id_ons VARCHAR(20)
+      - din_instante DATETIME2
+      - val_irradianciaverificado DECIMAL(10,4) W/m2
+      - flg_dadoirradianciainvalido BIT
+      - val_geracaoestimada DECIMAL(12,6) MWmed
+      - val_geracaoverificada DECIMAL(12,6) MWmed
+
+  # ── CCEE ───────────────────────────────────────────────────────────────────
+  - table: ccee_pld_horario
+    source: CCEE
+    url: dadosabertos.ccee.org.br/dataset/pld_horario
+    desc: PLD horário por submercado. MES_REFERENCIA=INT, DIA=INT (1-31)
+    grain: MES_REFERENCIA + SUBMERCADO + DIA + HORA
+    key_cols:
+      - MES_REFERENCIA INT — formato YYYYMM
+      - SUBMERCADO VARCHAR(20) — SE/S/NE/N
+      - DIA INT — 1 a 31 (ATENÇÃO: INT aqui, DATE em pld_media_diaria)
+      - HORA INT — 1 a 24
+      - PLD_HORA DECIMAL(10,2) R$/MWh
+
+  - table: ccee_pld_horario_submercado
+    source: CCEE
+    url: dadosabertos.ccee.org.br/dataset/pld_horario_submercado
+    desc: PLD por submercado e período de comercialização (sem detalhe dia/hora)
+    grain: MES_REFERENCIA + SUBMERCADO + PERIODO_COMERCIALIZACAO
+    key_cols:
+      - MES_REFERENCIA INT
+      - SUBMERCADO VARCHAR(20)
+      - PERIODO_COMERCIALIZACAO INT
+      - PLD DECIMAL(10,2) R$/MWh
+
+  - table: ccee_pld_media_diaria
+    source: CCEE
+    url: dadosabertos.ccee.org.br/dataset/pld_media_diaria
+    desc: Média diária do PLD por submercado. DIA=DATE (não INT)
+    grain: MES_REFERENCIA + SUBMERCADO + DIA
+    key_cols:
+      - MES_REFERENCIA INT
+      - SUBMERCADO VARCHAR(20)
+      - DIA DATE — ATENÇÃO: DATE aqui, INT em pld_horario
+      - PLD_MEDIA_DIA DECIMAL(10,2) R$/MWh
+
+  - table: ccee_geracao_consolidada
+    source: CCEE
+    url: dadosabertos.ccee.org.br/dataset/geracao_consolidada
+    desc: Geração mensal do MCP por motivo de despacho. Uma linha por mês
+    grain: MES_REFERENCIA (INT)
+    key_cols:
+      - MES_REFERENCIA INT
+      - GERACAO_CVU_MENOR_IGUAL_PLD DECIMAL(28,6) MWmed
+      - GERACAO_CVU_MAIOR_PLD DECIMAL(28,6) MWmed
+      - GERACAO_INFLEXIVEL DECIMAL(28,6) MWmed
+      - GERACAO_SEGURANCA_ENERGETICA DECIMAL(28,6) MWmed
+      - GERACAO_CONSTRAINED_ON DECIMAL(28,6) MWmed
+      - GERACAO_RESERVA_POTENCIA DECIMAL(28,6) MWmed
+      - GERACAO_UNIT_COMMITMENT DECIMAL(28,6) MWmed
+
+  - table: ccee_geracao_horaria
+    source: CCEE
+    url: dadosabertos.ccee.org.br/dataset/geracao_horaria
+    desc: Dados horários do MCP. ATENÇÃO — MES_REFERENCIA é VARCHAR(500)
+    grain: MES_REFERENCIA + PERIODO_COMERCIALIZACAO
+    key_cols:
+      - MES_REFERENCIA VARCHAR(500) — ATENÇÃO: string, não INT
+      - PERIODO_COMERCIALIZACAO INT
+      - IMPORTACAO_LIQUIDA NUMERIC(38,12) MWmed
+      - DESLOCAMENTO_HIDRAULICO_ENERGETICO NUMERIC(38,12) MWmed
+      - INDISPONIBILIDADE_UTE_ORDEM_MERITO NUMERIC(38,12) MWmed
+      - FATOR_RATEIO_PERDA_GERACAO NUMERIC(38,12)
+
+  - table: ccee_lista_perfil_v1
+    source: CCEE
+    url: dadosabertos.ccee.org.br/dataset/lista_perfil_v1
+    desc: Cadastro de perfis de agentes da CCEE (categoria, classe, submercado, status)
+    grain: COD_AGENTE + COD_PERF_AGENTE + SIGLA_PERFIL_AGENTE + STATUS_PERFIL + NOME_EMPRESARIAL + SIGLA_AGENTE + SUBMERCADO + TIPO_ENERG_PERF
+    key_cols:
+      - COD_AGENTE NUMERIC(20,0)
+      - SIGLA_AGENTE VARCHAR(500)
+      - NOME_EMPRESARIAL VARCHAR(500)
+      - CNPJ VARCHAR(500)
+      - COD_PERF_AGENTE NUMERIC(20,0)
+      - STATUS_PERFIL VARCHAR(500) — Ativo/Inativo
+      - SUBMERCADO VARCHAR(500)
+      - TIPO_ENERG_PERF VARCHAR(500) — Convencional/Incentivada 50%/Incentivada 100%
+
+  - table: ccee_parcela_usina_montante_mensal
+    source: CCEE
+    url: dadosabertos.ccee.org.br/dataset/parcela_usina_montante_mensal
+    desc: Parcelas de usina e montantes mensais no MCP. ATENÇÃO — MES_REFERENCIA=VARCHAR, CEG=MAIÚSCULAS
+    grain: MES_REFERENCIA + COD_PARCELA_USINA + COD_ATIVO + COD_PERF_AGENTE
+    key_cols:
+      - MES_REFERENCIA VARCHAR(500) — ATENÇÃO: string
+      - CEG VARCHAR(500) — ATENÇÃO: MAIÚSCULAS (join com aneel_siga_empreendimento.CodCEG)
+      - COD_ATIVO NUMERIC(28,0)
+      - COD_PARCELA_USINA NUMERIC(28,0)
+      - FONTE_ENERGIA_PRIMARIA VARCHAR(500)
+      - SUBMERCADO VARCHAR(500)
+      - PARTICIPANTE_MRE VARCHAR(500)
+      - GARANTIA_FISICA NUMERIC(38,12) MWmed
+      - GERACAO_CENTRO_GRAVIDADE NUMERIC(38,12) MWmed
+      - GERACAO_CONSTRAINED_ON "ver GERACAO_REST_OPERACAO" MWmed
+
+  # ── ANEEL — CADASTRO ───────────────────────────────────────────────────────
+  - table: aneel_siga_empreendimento
+    source: ANEEL
+    url: dadosabertos.aneel.gov.br/dataset/siga-sistema-de-informacoes-de-geracao-da-aneel
+    desc: Cadastro completo do parque gerador nacional. Principal tabela de referência ANEEL
+    grain: CodCEG + IdeNucleoCEG
+    filter_ativas: "DscFaseUsina = 'Operacao' AND DatFimVigencia IS NULL"
+    key_cols:
+      - CodCEG VARCHAR(21) — chave de integração com ONS e CCEE
+      - IdeNucleoCEG VARCHAR(6)
+      - SigUFPrincipal CHAR(2)
+      - SigTipoGeracao CHAR(3) — EOL/UFV/UHE/PCH/CGH/UTE/CGU/UTN/MAR
+      - DscFaseUsina VARCHAR(50) — Operacao/Construcao/Outorgada/Revogada
+      - DscOrigemCombustivel VARCHAR(50) — Hidrica/Eolica/Solar/Gas Natural/Biomassa
+      - DatEntradaOperacao DATE
+      - MdaPotenciaOutorgadaKw DECIMAL(18,2) kW
+      - MdaPotenciaFiscalizadaKw DECIMAL(18,2) kW
+      - MdaGarantiaFisicaKw DECIMAL(20,1) kW
+      - DatFimVigencia DATE — NULL=vigente
+      - DscMuninicpios VARCHAR(255) — ATENÇÃO: typo (dois 'ni')
+      - NumCoordNEmpreendimento DECIMAL(20,8) — latitude WGS84
+      - NumCoordEEmpreendimento DECIMAL(20,8) — longitude WGS84
+
+  - table: aneel_capacidade_instalada_uf
+    source: ANEEL
+    url: dadosabertos.aneel.gov.br/dataset/capacidade-instalada-geracao-uf
+    desc: Capacidade instalada trimestral por UF em kW. AnoReferencia e MesReferencia são INT
+    grain: AnoReferencia + SigUF + MesReferencia
+    key_cols:
+      - AnoReferencia INT
+      - MesReferencia INT — 1-12
+      - SigUF CHAR(2)
+      - MdaPotenciaInstaladakW DECIMAL(18,2) kW — ATENÇÃO: k minúsculo
+
+  - table: aneel_agente_geracao
+    source: ANEEL
+    url: dadosabertos.aneel.gov.br/dataset/agentes-geracao-energia-eletrica
+    desc: "Agentes proprietários de usinas — CNPJ, participação e regime. Unique: CodCEG+NumCPFCNPJ"
+    grain: CodCEG + NumCPFCNPJ
+    key_cols:
+      - CodCEG VARCHAR(21)
+      - NumCPFCNPJ VARCHAR(14) — CPF ou CNPJ sem formatação
+      - NomAgente VARCHAR(400)
+      - PctParticipacao DECIMAL(8,5) — percentual 0-100
+      - DscRegimeExploracao VARCHAR(50)
+      - SigTipoGeracao CHAR(3)
+
+  - table: aneel_agente_setor_eletrico
+    source: ANEEL
+    url: dadosabertos.aneel.gov.br/dataset/agentes-setor-eletrico
+    desc: "Cadastro de agentes do setor elétrico com flags de atividades. ATENÇÃO: campo é NumCnpj (não NumCNPJ)"
+    grain: NumCnpj + DatGeracaoConjuntoDados
+    key_cols:
+      - NumCnpj VARCHAR(14) — ATENÇÃO: minúsculo (não NumCNPJ)
+      - NomRazaoSocial VARCHAR(400)
+      - IdcAtivo CHAR(1)
+      - IdcGeracao CHAR(1)
+      - IdcTransmissao CHAR(1)
+      - IdcDistribuicao CHAR(1)
+      - IdcComercializacao CHAR(1)
+
+  - table: aneel_ato_outorga
+    source: ANEEL
+    url: dadosabertos.aneel.gov.br/dataset/atos-outorgas-geracao
+    desc: Atos regulatórios ANEEL desde 2015. Chave=HashKey SHA2_256 PERSISTED (coluna calculada)
+    grain: HashKey (calculado — não inserir manualmente)
+    key_cols:
+      - DatPublicacao DATE
+      - CodCEG VARCHAR(500) — maior que padrão aqui
+      - SigTipoGeracao CHAR(3)
+      - DscAssunto VARCHAR(500) — Autorizacao/Concessao/Revogacao
+      - DscTipoAto VARCHAR(500)
+      - MdaPotenciaInstaladaMW DECIMAL(10,2) MW
+      - MdaAmpliacaoReducaoMW DECIMAL(10,2) MW — positivo=ampliação
+      - NomAgente VARCHAR(500)
+
+  # ── ANEEL — LEILÕES ────────────────────────────────────────────────────────
+  - table: aneel_leilao_geracao
+    source: ANEEL
+    url: dadosabertos.aneel.gov.br/dataset/resultado-de-leiloes
+    resource: resultado_leiloes_geracao
+    desc: Resultados dos leilões de geração ACR desde 2005. ATENÇÃO — CodCEG é VARCHAR(25) aqui
+    grain: CodCEG + NumLeilao + DatLeilao
+    key_cols:
+      - CodCEG VARCHAR(25) — ATENÇÃO: 4 chars maior que padrão VARCHAR(21)
+      - AnoLeilao INT
+      - DatLeilao DATE
+      - DscTipoLeilao VARCHAR(15) — A-1/A-3/A-5/Reserva/Estruturante
+      - SigTipoGeracao VARCHAR(15)
+      - MdaPotenciaInstaladaMW DECIMAL(20,2) MW
+      - VlrPrecoTeto DECIMAL(20,2) R$/MWh
+      - VlrPrecoLeilao DECIMAL(20,2) R$/MWh
+      - VlrDesagio DECIMAL(20,2) %
+      - MdaDuracaoContrato DECIMAL(20,2) anos
+      - DscEmpresaVencedora VARCHAR(255)
+
+  - table: aneel_leilao_transmissao
+    source: ANEEL
+    url: dadosabertos.aneel.gov.br/dataset/resultado-de-leiloes
+    resource: resultado_leiloes_transmissao
+    desc: Resultados dos leilões de transmissão ACR
+    grain: NomEmpreendimento + NumLeilao + NumLoteLeilao
+    key_cols:
+      - NomEmpreendimento VARCHAR(255)
+      - NumLeilao VARCHAR(15)
+      - NumLoteLeilao VARCHAR(3)
+      - MdaExtensaoLinhaTransmissaoKm DECIMAL(20,2) km
+      - VlrRAPEditalLeilao DECIMAL(20,2) R$/ano
+      - VlrRAPVencedorLeilao DECIMAL(20,2) R$/ano
+      - PctDesagio DECIMAL(5,2) %
+
+  # ── ANEEL — EMPREENDIMENTOS ────────────────────────────────────────────────
+  - table: aneel_empreendimento_operacao
+    source: ANEEL
+    url: dadosabertos.aneel.gov.br/dataset/empreendimentos-em-operacao
+    desc: Qtd de usinas e potência em operação por tipo/mês/ano. ATENÇÃO — MesReferencia e AnoReferencia são CHAR
+    grain: SigTipoGeracao + MesReferencia + AnoReferencia
+    note: "Filtrar com aspas: AnoReferencia = '2024', MesReferencia = '01'"
+    key_cols:
+      - SigTipoGeracao CHAR(3)
+      - MesReferencia CHAR(2) — '01' a '12'
+      - AnoReferencia CHAR(4) — '2024'
+      - QtdUsinasPeriodo INT
+      - MdaPotenciaInstaladaKW DECIMAL(18,2) kW
+
+  - table: aneel_liberacao_operacao_comercial_resumido
+    source: ANEEL
+    url: dadosabertos.aneel.gov.br/dataset/liberacao-para-operacao-comercial-de-empreendimentos-de-geracao
+    resource: liberacao_operacao_comercial_resumido
+    desc: Capacidade liberada para OC por ano/tipo. AnoReferencia é CHAR(4)
+    grain: SigTipoGeracao + DscOrigemCombustivel + AnoReferencia + DatGeracaoConjuntoDados
+    key_cols:
+      - AnoReferencia CHAR(4) — filtrar: AnoReferencia = '2024'
+      - SigTipoGeracao CHAR(3)
+      - DscOrigemCombustivel VARCHAR(50)
+      - MdaSomaPotenciaMW DECIMAL(12,4) MW
+
+  - table: aneel_liberacao_operacao_comercial_detalhado
+    source: ANEEL
+    url: dadosabertos.aneel.gov.br/dataset/liberacao-para-operacao-comercial-de-empreendimentos-de-geracao
+    resource: liberacao_operacao_comercial_detalhado
+    desc: Detalhe por UG da liberação para OC — datas outorgadas e realizadas
+    grain: CodCEG + NumUgUsina + DatGeracaoConjuntoDados
+    key_cols:
+      - CodCEG VARCHAR(21)
+      - NumUgUsina VARCHAR(100) — VARCHAR aqui (vs INT em ralie_unidade_geradora)
+      - MdaPotenciaLiberadaComercial DECIMAL(20,2) MW
+      - DatLiberOpComerRealizado DATE
+      - DatUGInicioOpComerOutorgado DATE
+
+  # ── ANEEL — GD (GERAÇÃO DISTRIBUÍDA) ──────────────────────────────────────
+  - table: aneel_gd_empreendimento
+    source: ANEEL
+    url: dadosabertos.aneel.gov.br/dataset/relacao-de-empreendimentos-de-geracao-distribuida
+    resource: empreendimento_geracao_distribuida
+    desc: Microgeração e minigeração distribuída (MMGD). Tabela principal — join com 4 tabelas técnicas via CodEmpreendimento
+    grain: CodEmpreendimento + AnmPeriodoReferencia
+    key_cols:
+      - CodEmpreendimento VARCHAR(21) — chave de join com tabelas técnicas
+      - AnmPeriodoReferencia VARCHAR(7) — formato YYYY-MM
+      - SigUF CHAR(2)
+      - SigTipoGeracao VARCHAR(10) — UFV/EOL/PCH/BIO
+      - DscPorte VARCHAR(12) — Microgeracao/Minigeracao
+      - MdaPotenciaInstaladaKW DECIMAL(10,2) kW
+      - DscClasseConsumo VARCHAR(20) — Residencial/Comercial/Industrial/Rural
+
+  - table: aneel_gd_tecnico_eolica
+    source: ANEEL
+    resource: empreendimento_gd_info_tecnicas_eolica
+    desc: Dados técnicos de GD eólica
+    grain: CodGeracaoDistribuida + DatGeracaoConjuntoDados
+    join: "JOIN aneel_gd_empreendimento ON CodEmpreendimento = CodGeracaoDistribuida"
+    key_cols: [CodGeracaoDistribuida VARCHAR(21), NomFabricanteAerogerador VARCHAR(100), MdaPotenciaInstalada DECIMAL(10,2) kW, MdaAlturaPa DECIMAL(7,2) m]
+
+  - table: aneel_gd_tecnico_fotovoltaica
+    source: ANEEL
+    resource: empreendimento_gd_info_tecnicas_fotovoltaica
+    desc: Dados técnicos de GD fotovoltaica
+    grain: CodGeracaoDistribuida + DatGeracaoConjuntoDados
+    join: "JOIN aneel_gd_empreendimento ON CodEmpreendimento = CodGeracaoDistribuida"
+    key_cols: [CodGeracaoDistribuida VARCHAR(21), NomFabricanteModulo VARCHAR(100), NomFabricanteInversor VARCHAR(100), MdaPotenciaInstalada DECIMAL(10,2) kW, QtdModulos INT]
+
+  - table: aneel_gd_tecnico_hidreletrica
+    source: ANEEL
+    resource: empreendimento_gd_info_tecnicas_hidreletrica
+    desc: Dados técnicos de GD hidrelétrica
+    grain: CodGeracaoDistribuida + DatGeracaoConjuntoDados
+    join: "JOIN aneel_gd_empreendimento ON CodEmpreendimento = CodGeracaoDistribuida"
+    key_cols: [CodGeracaoDistribuida VARCHAR(21), NomRio VARCHAR(50), MdaPotenciaInstalada DECIMAL(10,2) kW]
+
+  - table: aneel_gd_tecnico_termeletrica
+    source: ANEEL
+    resource: empreendimento_gd_info_tecnicas_termeletrica
+    desc: Dados técnicos de GD termelétrica
+    grain: CodGeracaoDistribuida + DatGeracaoConjuntoDados
+    join: "JOIN aneel_gd_empreendimento ON CodEmpreendimento = CodGeracaoDistribuida"
+    key_cols: [CodGeracaoDistribuida VARCHAR(21), DscCicloTermodinamico VARCHAR(30), DscMaquinaMotrizTermica VARCHAR(30)]
+
+  # ── ANEEL — RALIE ──────────────────────────────────────────────────────────
+  - table: aneel_ralie_usina
+    source: ANEEL
+    url: dadosabertos.aneel.gov.br/dataset/ralie
+    resource: ralie_usina
+    desc: RALIE — usinas em implantação. 70+ colunas de obra, licenças e contratos. ATENÇÃO — IdeNucleoCEG=INT, SigTipoGeracao=VARCHAR(5) aqui
+    grain: CodCEG + DatRalie
+    note: "IdeNucleoCEG é INT aqui (vs VARCHAR demais ANEEL). SigTipoGeracao é VARCHAR(5) (vs CHAR(3))"
+    key_cols:
+      - CodCEG VARCHAR(21)
+      - DatRalie DATE — trimestral
+      - IdeNucleoCEG INT — ATENÇÃO: INT aqui
+      - SigTipoGeracao VARCHAR(5) — ATENÇÃO: VARCHAR(5) aqui
+      - MdaPotenciaOutorgadaKw DECIMAL(20,2) kW
+      - DscSituacaoObra VARCHAR(20) — Em Obras/Paralisada/Concluida
+      - DscSituacaoCronograma VARCHAR(20) — No Prazo/Atrasada/Adiantada
+      - DatInicioObraOutorgado DATE
+      - DatInicioObraRealizado DATE
+      - DatEmissaoLO DATE — Licença de Operação
+      - DatAssinaturaCusd DATE — CUSD
+      - DatAssinaturaCust DATE — CUST
+      - IdcComplexo BIT
+      - NomComplexo VARCHAR(200)
+
+  - table: aneel_ralie_unidade_geradora
+    source: ANEEL
+    resource: ralie_unidade_geradora
+    desc: Detalhe por UG do RALIE — descida do rotor, operação de teste, operação comercial
+    grain: CodCEG + NumUgUsina + DatRalie
+    join: "JOIN aneel_ralie_usina ON CodCEG + DatRalie"
+    note: NumUgUsina é INT aqui (vs VARCHAR em liberacao_operacao_comercial_detalhado)
+    key_cols:
+      - CodCEG VARCHAR(21)
+      - NumUgUsina INT — INT aqui
+      - DatRalie DATE
+      - MdaPotenciaUnitaria DECIMAL(20,2) kW
+      - DatDescidaRotorRealizada DATE
+      - DatLiberOpTesteRealizado DATE
+      - DatUGInicioOpComerOutorgado DATE
+
+  - table: aneel_ralie_leilao
+    source: ANEEL
+    resource: ralie_leilao
+    desc: Dados de leilão do RALIE — código do leilão e data de entrega contratual
+    grain: DatRalie + CodCEG
+    join: "JOIN aneel_ralie_usina ON CodCEG + DatRalie"
+    key_cols:
+      - CodCEG VARCHAR(21)
+      - DatRalie DATE
+      - CodLeilao VARCHAR(20)
+      - DatInicioSuprimento DATE — data de entrega contratual
+
+# ══════════════════════════════════════════════════════════════════════════════
+# JOINS PRINCIPAIS
+# ══════════════════════════════════════════════════════════════════════════════
+key_joins:
+  - "ons_geracao_usina.ceg → aneel_siga_empreendimento.CodCEG (enriquece geração com cadastro)"
+  - "ons_fator_capacidade.id_ons → ons_relacionamento_usina_conjunto.id_ons_conjunto (quando ceg IS NULL)"
+  - "ccee_parcela_usina_montante_mensal.CEG → aneel_siga_empreendimento.CodCEG (CEG maiúsculo)"
+  - "aneel_agente_geracao.CodCEG → aneel_siga_empreendimento.CodCEG (proprietários)"
+  - "aneel_gd_tecnico_*.CodGeracaoDistribuida → aneel_gd_empreendimento.CodEmpreendimento"
+  - "aneel_ralie_unidade_geradora.CodCEG+DatRalie → aneel_ralie_usina.CodCEG+DatRalie"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEW-SHOTS
+# ══════════════════════════════════════════════════════════════════════════════
+few_shots:
+
+  - q: "Capacidade instalada total de eólicas em operação"
+    sql: |
+      SELECT SUM(MdaPotenciaOutorgadaKw)/1000.0 AS capacidade_MW
+      FROM aneel_siga_empreendimento
+      WHERE SigTipoGeracao='EOL' AND DscFaseUsina='Operacao' AND DatFimVigencia IS NULL
+
+  - q: "PLD médio do Sudeste no último mês disponível"
+    sql: |
+      SELECT AVG(PLD_MEDIA_DIA) AS pld_medio_RS_MWh
+      FROM ccee_pld_media_diaria
+      WHERE SUBMERCADO='SE'
+        AND MES_REFERENCIA=(SELECT MAX(MES_REFERENCIA) FROM ccee_pld_media_diaria)
+
+  - q: "Top 10 estados com mais capacidade solar fotovoltaica"
+    sql: |
+      SELECT TOP 10 SigUFPrincipal, SUM(MdaPotenciaOutorgadaKw)/1000.0 AS MW
+      FROM aneel_siga_empreendimento
+      WHERE SigTipoGeracao='UFV' AND DscFaseUsina='Operacao' AND DatFimVigencia IS NULL
+      GROUP BY SigUFPrincipal ORDER BY MW DESC
+
+  - q: "Usinas eólicas com mais constrained-off no último trimestre"
+    sql: |
+      SELECT TOP 10 nom_usina, ceg,
+             SUM(val_geracaoreferenciafinal-val_geracao) AS cortado_MWmed
+      FROM ons_restricao_coff_eolica
+      WHERE din_instante>=DATEADD(MONTH,-3,(SELECT MAX(din_instante) FROM ons_restricao_coff_eolica))
+        AND val_geracaoreferenciafinal>val_geracao
+      GROUP BY nom_usina,ceg ORDER BY cortado_MWmed DESC
+
+  - q: "Geração verificada por tipo de usina no NE no último mês"
+    sql: |
+      SELECT nom_tipousina, SUM(val_geracao) AS MWmed
+      FROM ons_geracao_usina
+      WHERE id_subsistema='NE'
+        AND din_instante>=DATEADD(MONTH,-1,(SELECT MAX(din_instante) FROM ons_geracao_usina))
+      GROUP BY nom_tipousina ORDER BY MWmed DESC
+
+  - q: "Resultados de leilões eólicos nos últimos 5 anos"
+    sql: |
+      SELECT AnoLeilao, COUNT(*) AS qtd,
+             SUM(MdaPotenciaInstaladaMW) AS potencia_MW,
+             AVG(VlrPrecoLeilao) AS preco_medio,
+             AVG(VlrDesagio) AS desagio_medio
+      FROM aneel_leilao_geracao
+      WHERE SigTipoGeracao='EOL' AND AnoLeilao>=YEAR(GETDATE())-5
+      GROUP BY AnoLeilao ORDER BY AnoLeilao DESC
+
+  - q: "Empreendimentos RALIE atrasados no último relatório"
+    sql: |
+      SELECT TOP 20 NomEmpreendimento, SigTipoGeracao, SigUFPrincipal,
+             MdaPotenciaOutorgadaKw/1000.0 AS MW,
+             DATEDIFF(DAY,DatInicioObraOutorgado,ISNULL(DatInicioObraRealizado,GETDATE())) AS atraso_dias
+      FROM aneel_ralie_usina
+      WHERE DatRalie=(SELECT MAX(DatRalie) FROM aneel_ralie_usina)
+        AND DscSituacaoCronograma='Atrasada'
+      ORDER BY atraso_dias DESC
+
+  - q: "De-agregar geração de conjuntos ONS em usinas individuais"
+    sql: |
+      SELECT r.nom_usina, r.ceg, f.din_instante, f.val_geracaoverificada
+      FROM ons_fator_capacidade f
+      JOIN ons_relacionamento_usina_conjunto r
+        ON r.id_ons_conjunto=f.id_ons AND r.dat_fimrelacionamento IS NULL
+      WHERE f.ceg IS NULL
+        AND f.din_instante>=DATEADD(DAY,-7,GETDATE())
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GLOSSÁRIO RÁPIDO
+# ══════════════════════════════════════════════════════════════════════════════
+glossary:
+  CEG: "Código de Empreendimento de Geração (21 chars, padrão). Chave entre ANEEL/ONS/CCEE."
+  PLD: "Preço de Liquidação das Diferenças — preço spot do MCP. Por submercado (SE/S/NE/N). R$/MWh."
+  MRE: "Mecanismo de Realocação de Energia — pool hídrico distribui risco hidrológico."
+  MCP: "Mercado de Curto Prazo — liquidação mensal CCEE com base no PLD."
+  SIN: "Sistema Interligado Nacional — 4 subsistemas: SE/S/NE/N."
+  ACR: "Ambiente de Contratação Regulada — mercado cativo + distribuidoras."
+  ACL: "Ambiente de Contratação Livre — consumidores livres e especiais."
+  Constrained_off: "Corte de geração renovável por restrição de rede. Energia cortada = geracaoreferenciafinal - geracao."
+  Garantia_Fisica: "Máxima energia contratável. Unidade: MWmed ou kW conforme a tabela."
+  MWmed: "Megawatt-médio. 1 MWmed/mês ≈ 720 MWh."
+  RAP: "Receita Anual Permitida — remuneração de transmissoras (leilões de transmissão)."
+  RALIE: "Rel. Acompanhamento Implantação Empreendimentos — monitoramento trimestral ANEEL."
+  SigTipoGeracao: "EOL=Eólica | UFV=Solar | UHE=Hidro grande | PCH=5-30MW | CGH=<5MW | UTE=Térmica"
+  Subsistemas: "SE=Sudeste/CO | S=Sul | NE=Nordeste | N=Norte"
+  Fases_SIGA: "Operacao | Construcao | Outorgada | Revogada | Cancelada"
+  Licencas: "LP=Licença Prévia | LI=Licença Instalação | LO=Licença Operação"
+  Contratos_conexao: "CUSD=distribuição | CUST=transmissão | CCD=conexão distribuição | CCT=conexão transmissão"

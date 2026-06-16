@@ -239,7 +239,7 @@ _BLOCK_RE = re.compile(
 
 def get_block_names(template_path: Path | str, relative_to: Path = PROMPTS_DIR):
     env = Environment()
-    parsed = env.parse(Path(template_path).read_text())
+    parsed = env.parse(Path(template_path).read_text(encoding="utf-8"))
     collector = BlockNameCollector()
     collector.visit(parsed)
     return list(collector.blocks)
