@@ -18,14 +18,14 @@ os.environ["OPENAI_API_KEY"] = os.environ["OPENROUTER_API_KEY"]
 driver = "ODBC Driver 17 for SQL Server"
 
 sqlserver_url = (
-"mssql+pyodbc://"
-f"{quote_plus(os.environ['SQLSERVER_USER'])}:"
-f"{quote_plus(os.environ['SQLSERVER_PASSWORD'])}@"
-f"{os.environ['SQLSERVER_HOST']}:"
-f"{os.getenv('SQLSERVER_PORT', '1433')}/"
-f"{os.environ['SQLSERVER_DATABASE']}"
-f"?driver={quote_plus(driver)}"
-"&TrustServerCertificate=yes"
+    "mssql+pyodbc://"
+    f"{quote_plus(os.environ['SQLSERVER_USER'])}:"
+    f"{quote_plus(os.environ['SQLSERVER_PASSWORD'])}@"
+    f"{os.environ['SQLSERVER_HOST']}:"
+    f"{os.getenv('SQLSERVER_PORT', '1433')}/"
+    f"{os.environ['SQLSERVER_DATABASE']}"
+    f"?driver={quote_plus(driver)}"
+    "&TrustServerCertificate=yes"
 )
 
 
