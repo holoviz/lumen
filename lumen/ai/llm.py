@@ -1599,8 +1599,8 @@ class Anthropic(Llm, AnthropicMixin):
 
     _supports_logfire = True
     _supports_model_stream = True
-    _instructor_wrapper = "anthropic"
     _supports_prompt_cache = True
+    _instructor_wrapper = "anthropic"
 
     def models(self) -> set[str]:
         """Return the set of available model identifiers from Anthropic."""
