@@ -37,7 +37,7 @@ PROVIDER_SPECS = [
     pytest.param(LlamaCpp, {}, set(), 0.4, id="llamacpp"),
     pytest.param(MLX, {}, {"max_tokens"}, 0.4, id="mlx"),
     pytest.param(LiteLLM, {}, set(), 0.7, id="litellm"),
-    pytest.param(Ollama, {}, set(), 0.25, id="ollama"),
+    pytest.param(Ollama, {"api_key": "ollama"}, set(), 0.25, id="ollama"),
 ]
 
 def _make_test_image() -> Image:
