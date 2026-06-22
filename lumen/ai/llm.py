@@ -229,6 +229,13 @@ class Llm(param.Parameterized):
             kwargs.pop("max_retries", None)
         return kwargs
 
+    @staticmethod
+    def _drop_none(kwargs: dict[str, Any]) -> dict[str, Any]:
+        # temperature is allow_None so callers can opt out of sending it; some
+        # models reject the param. Drop any None-valued sampling kwarg rather
+        # than forwarding it. Uses ``is not None`` so a valid 0.0 is kept.
+        return {k: v for k, v in kwargs.items() if v is not None}
+
     @property
     def _client_kwargs(self) -> dict[str, Any]:
         return {}
@@ -1052,9 +1059,7 @@ class LlamaCpp(Llm, LlamaCppMixin):
 
     @property
     def _client_kwargs(self) -> dict[str, Any]:
-        if self.temperature is None:
-            return {}
-        return {"temperature": self.temperature}
+        return self._drop_none({"temperature": self.temperature})
 
     def _create_base_client(self, **kwargs) -> Any:
         return self._instantiate_client(**kwargs)
@@ -1183,9 +1188,7 @@ class OpenAI(Llm, OpenAIMixin):
 
     @property
     def _client_kwargs(self):
-        if self.temperature is None:
-            return {}
-        return {"temperature": self.temperature}
+        return self._drop_none({"temperature": self.temperature})
 
     def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
         model_kwargs = super()._get_model_kwargs(model_spec)
@@ -1453,9 +1456,7 @@ class AzureOpenAI(Llm, AzureOpenAIMixin):
 
     @property
     def _client_kwargs(self):
-        if self.temperature is None:
-            return {}
-        return {"temperature": self.temperature}
+        return self._drop_none({"temperature": self.temperature})
 
     def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
         model_kwargs = super()._get_model_kwargs(model_spec)
@@ -1520,9 +1521,7 @@ class MistralAI(Llm, MistralAIMixin):
 
     @property
     def _client_kwargs(self):
-        if self.temperature is None:
-            return {}
-        return {"temperature": self.temperature}
+        return self._drop_none({"temperature": self.temperature})
 
     def _create_base_client(self, **kwargs) -> Any:
         return self._instantiate_client(**kwargs)
@@ -1614,9 +1613,7 @@ class Anthropic(Llm, AnthropicMixin):
 
     @property
     def _client_kwargs(self):
-        if self.temperature is None:
-            return {"max_tokens": 1024}
-        return {"temperature": self.temperature, "max_tokens": 1024}
+        return self._drop_none({"temperature": self.temperature, "max_tokens": 1024})
 
     def _create_base_client(self, **kwargs) -> Any:
         client = self._instantiate_client(**kwargs)
@@ -1914,9 +1911,7 @@ class Bedrock(Llm, BedrockMixin):
 
     @property
     def _client_kwargs(self):
-        if self.temperature is None:
-            return {"maxTokens": 4096}
-        return {"temperature": self.temperature, "maxTokens": 4096}
+        return self._drop_none({"temperature": self.temperature, "maxTokens": 4096})
 
     def _create_base_client(self, **kwargs) -> Any:
         """Create boto3 bedrock-runtime client for inference."""
@@ -2584,9 +2579,7 @@ class MLX(Llm):
 
     @property
     def _client_kwargs(self) -> dict[str, Any]:
-        if self.temperature is None:
-            return {"max_tokens": self.max_tokens}
-        return {"temperature": self.temperature, "max_tokens": self.max_tokens}
+        return self._drop_none({"temperature": self.temperature, "max_tokens": self.max_tokens})
 
     @classmethod
     def warmup(cls, model_kwargs: dict | None):
@@ -2890,7 +2883,7 @@ class LiteLLM(Llm):
     @property
     def _client_kwargs(self):
         """Base kwargs for all LiteLLM calls."""
-        kwargs = {} if self.temperature is None else {"temperature": self.temperature}
+        kwargs = self._drop_none({"temperature": self.temperature})
         kwargs.update(self.litellm_params)
         return kwargs
 
