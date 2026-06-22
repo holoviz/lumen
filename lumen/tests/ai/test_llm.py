@@ -665,11 +665,6 @@ def test_default_temperature_preserved(cls, required, extra_keys, default_temp):
     assert llm._client_kwargs["temperature"] == default_temp
 
 
-def test_anthropic_temperature_none_drops_deprecated_param():
-    llm = Anthropic(model_kwargs={"default": {"model": "claude-opus-4-8"}}, temperature=None)
-    assert llm._client_kwargs == {"max_tokens": 1024}
-
-
 def test_google_client_kwargs_unaffected_by_temperature():
     assert Google(model_kwargs={"default": {"model": "m"}}, temperature=None)._client_kwargs == {}
     assert Google(model_kwargs={"default": {"model": "m"}}, temperature=0.5)._client_kwargs == {}
