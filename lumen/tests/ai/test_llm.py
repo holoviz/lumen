@@ -51,6 +51,14 @@ def _make_test_image() -> Image:
     return Image.from_raw_base64(pixel)
 
 
+def _make(cls, required, temperature="__default__"):
+    # temperature is constant=True; the sentinel lets us build with the default too.
+    kw = dict(required)
+    kw["model_kwargs"] = {"default": {"model": "m"}}
+    if temperature != "__default__":
+        kw["temperature"] = temperature
+    return cls(**kw)
+
 # ---------------------------------------------------------------------------
 # AzureOpenAI model kwargs tests
 # ---------------------------------------------------------------------------
@@ -615,15 +623,6 @@ class TestPrepareVisionMessages:
         assert len(content) == 2
         assert content[0] == "Annotate this"
         assert isinstance(content[1], Image)
-
-
-def _make(cls, required, temperature="__default__"):
-    # temperature is constant=True; the sentinel lets us build with the default too.
-    kw = dict(required)
-    kw["model_kwargs"] = {"default": {"model": "m"}}
-    if temperature != "__default__":
-        kw["temperature"] = temperature
-    return cls(**kw)
 
 
 @pytest.mark.parametrize(
