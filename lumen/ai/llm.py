@@ -1575,6 +1575,11 @@ class Anthropic(Llm, AnthropicMixin):
     A LLM implementation that calls Anthropic models such as Claude.
     """
 
+    cache = param.Selector(default="5m", objects=[None, "5m", "1h"], doc="""
+        Prompt-caching TTL. None disables caching; "5m" refreshes free on each
+        cache hit; "1h" costs more on write. Caches the tools+system+messages
+        prefix. Ignored on providers that don't support automatic caching.""")
+
     display_name = param.String(default="Anthropic", constant=True)
 
     mode = param.Selector(default=Mode.ANTHROPIC_TOOLS, objects=[Mode.ANTHROPIC_JSON, Mode.ANTHROPIC_TOOLS])
@@ -1595,6 +1600,7 @@ class Anthropic(Llm, AnthropicMixin):
     _supports_logfire = True
     _supports_model_stream = True
     _instructor_wrapper = "anthropic"
+    _supports_prompt_cache = True
 
     def models(self) -> set[str]:
         """Return the set of available model identifiers from Anthropic."""
@@ -1758,6 +1764,14 @@ class Anthropic(Llm, AnthropicMixin):
                 }]
         return []
 
+    def _cache_control(self) -> dict[str, Any] | None:
+        if not (self._supports_prompt_cache and self.cache):
+            return None
+        cache_control = {"type": "ephemeral"}
+        if self.cache == "1h":
+            cache_control["ttl"] = "1h"
+        return cache_control
+
     async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
         """Override to handle Anthropic-specific message format."""
         log_debug(f"Input messages: \033[95m{len(messages)} messages\033[0m including system")
@@ -1797,6 +1811,10 @@ class Anthropic(Llm, AnthropicMixin):
                     "some providers disallow this.\033[0m"
                 )
             previous_role = role
+
+        cache_control = self._cache_control()
+        if cache_control is not None:
+            kwargs["cache_control"] = cache_control
 
         client = await self.get_client(model_spec, **kwargs)
         result = await client(messages=filtered_messages, **kwargs)
@@ -1842,6 +1860,8 @@ class Anthropic(Llm, AnthropicMixin):
 class AnthropicBedrock(BedrockMixin, Anthropic):  # Keep it before Anthropic so API key is correct
 
     display_name = param.String(default="Anthropic on AWS Bedrock", constant=True)
+
+    _supports_prompt_cache = False  # Bedrock does not support automatic prompt caching
 
     model_kwargs = param.Dict(default={
         "default": {"model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"},
