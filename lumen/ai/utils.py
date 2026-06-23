@@ -598,7 +598,12 @@ async def get_data(pipeline):
     return await asyncio.to_thread(get_data_sync)
 
 
-def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool = True) -> str:
+def describe_data_sync(
+    df: pd.DataFrame,
+    enum_limit: int = 3,
+    reduce_enums: bool = True,
+    row_limit: int | None = None,
+) -> str:
     """
     Synchronous version of describe_data that generates a YAML summary of a DataFrame.
 
@@ -610,6 +615,11 @@ def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool
         Maximum number of enum values to show per column
     reduce_enums : bool
         Whether to reduce enum values for readability
+    row_limit : int | None
+        The row cap applied to the result (e.g. by SQLLimit). When the
+        returned frame reaches this many rows the result was truncated, so
+        the summary flags it instead of presenting the capped count as the
+        table's true size.
 
     Returns
     -------
@@ -727,13 +737,20 @@ def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool
     head_sample = df.head(2).to_dict('records')
     tail_sample = df.tail(2).to_dict('records')
 
+    summary = {
+        "n_cells": size,
+        "data_shape": [n_rows, n_cols],
+        "sampled_cols": sampled_columns,
+        "is_sampled": is_sampled,
+    }
+    if row_limit is not None and n_rows >= row_limit:
+        summary["rows_capped_at_limit"] = row_limit
+        summary["note"] = (
+            f"Result capped at the {row_limit}-row display limit; "
+            "the full table may contain more rows."
+        )
     result = {
-        "summary": {
-            "n_cells": size,
-            "data_shape": [n_rows, n_cols],
-            "sampled_cols": sampled_columns,
-            "is_sampled": is_sampled,
-        },
+        "summary": summary,
         "stats": df_describe_dict,
     }
     if head_sample == tail_sample:
@@ -745,7 +762,12 @@ def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool
     return yaml.dump(result, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
 
-async def describe_data(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool = True) -> str:
+async def describe_data(
+    df: pd.DataFrame,
+    enum_limit: int = 3,
+    reduce_enums: bool = True,
+    row_limit: int | None = None,
+) -> str:
     """
     Async wrapper for describe_data_sync that generates a YAML summary of a DataFrame.
 
@@ -763,7 +785,9 @@ async def describe_data(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: boo
     str
         YAML-formatted summary of the DataFrame
     """
-    return await asyncio.to_thread(describe_data_sync, df, enum_limit, reduce_enums)
+    return await asyncio.to_thread(
+        describe_data_sync, df, enum_limit, reduce_enums, row_limit
+    )
 
 
 

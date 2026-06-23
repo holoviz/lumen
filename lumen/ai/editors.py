@@ -534,12 +534,17 @@ class SQLEditor(LumenEditor):
         )
 
     async def render_context(self):
+        row_limit = next(
+            (t.limit for t in self.component.sql_transforms
+             if isinstance(t, SQLLimit) and t.limit),
+            None
+        )
         return {
             "sql": self.spec,
             "pipeline": self.component,
             "table": self.component.table,
             "source": self.component.source,
-            "data": await describe_data(self.component.data)
+            "data": await describe_data(self.component.data, row_limit=row_limit)
         }
 
     @classmethod
