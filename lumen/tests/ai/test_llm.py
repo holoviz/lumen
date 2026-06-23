@@ -27,7 +27,7 @@ from pydantic import BaseModel
 # Helpers
 # ---------------------------------------------------------------------------
 
-# (cls, required_init_kwargs, non-temperature keys retained in _client_kwargs, default temperature)
+# (provider, required_init_kwargs, non-temperature keys retained in _client_kwargs, default temperature)
 PROVIDER_SPECS = [
     pytest.param(OpenAI, {}, set(), 0.25, id="openai"),
     pytest.param(AzureOpenAI, {"api_version": "av", "endpoint": "ep"}, set(), 1, id="azure"),
@@ -51,13 +51,13 @@ def _make_test_image() -> Image:
     return Image.from_raw_base64(pixel)
 
 
-def _make(cls, required, temperature="__default__"):
+def _make(provider, required, temperature="__default__"):
     # temperature is constant=True; the sentinel lets us build with the default too.
     kw = dict(required)
     kw["model_kwargs"] = {"default": {"model": "m"}}
     if temperature != "__default__":
         kw["temperature"] = temperature
-    return cls(**kw)
+    return provider(**kw)
 
 # ---------------------------------------------------------------------------
 # AzureOpenAI model kwargs tests
@@ -625,42 +625,51 @@ class TestPrepareVisionMessages:
         assert isinstance(content[1], Image)
 
 
-@pytest.mark.parametrize(
-    "cls",
-    [Llm, LlamaCpp, OpenAI, AzureOpenAI, MistralAI, Anthropic, Bedrock,
-     Google, Ollama, MLX, LiteLLM, WebLLM, Groq],
-)
-def test_temperature_param_allows_none(cls):
-    assert cls.param["temperature"].allow_None is True
+def _all_llm_classes():
+    """Recursively collect ``Llm`` and every subclass so new providers are
+    covered automatically (``__subclasses__`` is not transitive)."""
+    seen = {Llm}
+    stack = [Llm]
+    while stack:
+        for sub in stack.pop().__subclasses__():
+            if sub not in seen:
+                seen.add(sub)
+                stack.append(sub)
+    return sorted(seen, key=lambda c: c.__name__)
+
+
+@pytest.mark.parametrize("provider", _all_llm_classes(), ids=lambda c: c.__name__)
+def test_temperature_param_allows_none(provider):
+    assert provider.param["temperature"].allow_None is True
 
 
 @pytest.mark.parametrize(
-    "cls, required, extra_keys, default_temp",
+    ("provider", "required", "extra_keys", "default_temp"),
     PROVIDER_SPECS + [pytest.param(Google, {}, set(), 1, id="google")],
 )
-def test_construct_with_temperature_none(cls, required, extra_keys, default_temp):
-    llm = _make(cls, required, temperature=None)
+def test_construct_with_temperature_none(provider, required, extra_keys, default_temp):
+    llm = _make(provider, required, temperature=None)
     assert llm.temperature is None
 
 
-@pytest.mark.parametrize("cls, required, extra_keys, default_temp", PROVIDER_SPECS)
-def test_client_kwargs_omits_temperature_when_none(cls, required, extra_keys, default_temp):
-    kwargs = _make(cls, required, temperature=None)._client_kwargs
+@pytest.mark.parametrize(("provider", "required", "extra_keys", "default_temp"), PROVIDER_SPECS)
+def test_client_kwargs_omits_temperature_when_none(provider, required, extra_keys, default_temp):
+    kwargs = _make(provider, required, temperature=None)._client_kwargs
     assert "temperature" not in kwargs
     assert set(kwargs) == extra_keys
 
 
 @pytest.mark.parametrize("temperature", [0.5, 0.0], ids=["positive", "zero_boundary"])
-@pytest.mark.parametrize("cls, required, extra_keys, default_temp", PROVIDER_SPECS)
-def test_client_kwargs_includes_temperature_when_set(cls, required, extra_keys, default_temp, temperature):
-    kwargs = _make(cls, required, temperature=temperature)._client_kwargs
+@pytest.mark.parametrize(("provider", "required", "extra_keys", "default_temp"), PROVIDER_SPECS)
+def test_client_kwargs_includes_temperature_when_set(provider, required, extra_keys, default_temp, temperature):
+    kwargs = _make(provider, required, temperature=temperature)._client_kwargs
     assert kwargs["temperature"] == temperature
     assert extra_keys <= set(kwargs)
 
 
-@pytest.mark.parametrize("cls, required, extra_keys, default_temp", PROVIDER_SPECS)
-def test_default_temperature_preserved(cls, required, extra_keys, default_temp):
-    llm = _make(cls, required)
+@pytest.mark.parametrize(("provider", "required", "extra_keys", "default_temp"), PROVIDER_SPECS)
+def test_default_temperature_preserved(provider, required, extra_keys, default_temp):
+    llm = _make(provider, required)
     assert llm.temperature == default_temp
     assert llm._client_kwargs["temperature"] == default_temp
 
@@ -668,6 +677,13 @@ def test_default_temperature_preserved(cls, required, extra_keys, default_temp):
 def test_google_client_kwargs_unaffected_by_temperature():
     assert Google(model_kwargs={"default": {"model": "m"}}, temperature=None)._client_kwargs == {}
     assert Google(model_kwargs={"default": {"model": "m"}}, temperature=0.5)._client_kwargs == {}
+
+
+def test_webllm_client_kwargs_never_includes_temperature():
+    # WebLLM configures sampling on the panel_web_llm component, not via _client_kwargs.
+    pytest.importorskip("panel_web_llm")
+    assert WebLLM(model_kwargs={"default": {"model": "m"}}, temperature=None)._client_kwargs == {}
+    assert WebLLM(model_kwargs={"default": {"model": "m"}}, temperature=0.5)._client_kwargs == {}
 
 
 def test_mlx_make_sampler_handles_none():

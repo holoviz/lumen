@@ -229,16 +229,11 @@ class Llm(param.Parameterized):
             kwargs.pop("max_retries", None)
         return kwargs
 
-    @staticmethod
-    def _drop_none(kwargs: dict[str, Any]) -> dict[str, Any]:
-        # temperature is allow_None so callers can opt out of sending it; some
-        # models reject the param. Drop any None-valued sampling kwarg rather
-        # than forwarding it. Uses ``is not None`` so a valid 0.0 is kept.
-        return {k: v for k, v in kwargs.items() if v is not None}
-
     @property
     def _client_kwargs(self) -> dict[str, Any]:
-        return {}
+        if self.temperature is None:
+            return {}
+        return {"temperature": self.temperature}
 
     def _create_base_client(self, **kwargs) -> Any:
         """Create the underlying SDK client (e.g., AsyncOpenAI, AsyncAnthropic)."""
@@ -1057,10 +1052,6 @@ class LlamaCpp(Llm, LlamaCppMixin):
         except Exception:
             return dict(model_kwargs)
 
-    @property
-    def _client_kwargs(self) -> dict[str, Any]:
-        return self._drop_none({"temperature": self.temperature})
-
     def _create_base_client(self, **kwargs) -> Any:
         return self._instantiate_client(**kwargs)
 
@@ -1185,10 +1176,6 @@ class OpenAI(Llm, OpenAIMixin):
         """Return the set of available model identifiers from OpenAI."""
         client = OpenAIClient(api_key=self.api_key, timeout=5)
         return {m.id for m in client.models.list().data}
-
-    @property
-    def _client_kwargs(self):
-        return self._drop_none({"temperature": self.temperature})
 
     def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
         model_kwargs = super()._get_model_kwargs(model_spec)
@@ -1454,10 +1441,6 @@ class AzureOpenAI(Llm, AzureOpenAIMixin):
 
     temperature = param.Number(default=1, bounds=(0, None), allow_None=True, constant=True)
 
-    @property
-    def _client_kwargs(self):
-        return self._drop_none({"temperature": self.temperature})
-
     def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
         model_kwargs = super()._get_model_kwargs(model_spec)
         instance_kwargs = self._instantiate_client_kwargs()
@@ -1518,10 +1501,6 @@ class MistralAI(Llm, MistralAIMixin):
         """Return the set of available model identifiers from Mistral."""
         from mistralai import Mistral
         return {m.id for m in Mistral(api_key=self.api_key).models.list().data}
-
-    @property
-    def _client_kwargs(self):
-        return self._drop_none({"temperature": self.temperature})
 
     def _create_base_client(self, **kwargs) -> Any:
         return self._instantiate_client(**kwargs)
@@ -1613,7 +1592,7 @@ class Anthropic(Llm, AnthropicMixin):
 
     @property
     def _client_kwargs(self):
-        return self._drop_none({"temperature": self.temperature, "max_tokens": 1024})
+        return {**super()._client_kwargs, "max_tokens": 1024}
 
     def _create_base_client(self, **kwargs) -> Any:
         client = self._instantiate_client(**kwargs)
@@ -1911,7 +1890,7 @@ class Bedrock(Llm, BedrockMixin):
 
     @property
     def _client_kwargs(self):
-        return self._drop_none({"temperature": self.temperature, "maxTokens": 4096})
+        return {**super()._client_kwargs, "maxTokens": 4096}
 
     def _create_base_client(self, **kwargs) -> Any:
         """Create boto3 bedrock-runtime client for inference."""
@@ -2579,7 +2558,7 @@ class MLX(Llm):
 
     @property
     def _client_kwargs(self) -> dict[str, Any]:
-        return self._drop_none({"temperature": self.temperature, "max_tokens": self.max_tokens})
+        return {**super()._client_kwargs, "max_tokens": self.max_tokens}
 
     @classmethod
     def warmup(cls, model_kwargs: dict | None):
@@ -2718,6 +2697,12 @@ class WebLLM(Llm):
 
     # WebLLM doesn't use from_* wrapper - uses patch(create=...)
     _instructor_wrapper = None
+
+    @property
+    def _client_kwargs(self) -> dict[str, Any]:
+        # WebLLM has never forwarded temperature through this path; the sampler
+        # is configured on the panel_web_llm component itself.
+        return {}
 
     def __init__(self, **params):
         from panel_web_llm import WebLLM as pnWebLLM
@@ -2883,9 +2868,7 @@ class LiteLLM(Llm):
     @property
     def _client_kwargs(self):
         """Base kwargs for all LiteLLM calls."""
-        kwargs = self._drop_none({"temperature": self.temperature})
-        kwargs.update(self.litellm_params)
-        return kwargs
+        return {**super()._client_kwargs, **self.litellm_params}
 
     def _create_base_client(self, **kwargs) -> Any:
         return self._get_router()
