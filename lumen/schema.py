@@ -3,7 +3,7 @@ import panel as pn
 import param  # type: ignore
 
 from panel_material_ui import (
-    Checkbox, DatePicker, DateRangeSlider, DatetimeInput, DatetimePicker,
+    Checkbox, DatePicker, DateRangeSlider, DatetimePicker, DatetimeRangeSlider,
     FloatInput, FloatSlider, IntInput, IntRangeSlider, IntSlider, LiteralInput,
     MultiChoice, RangeSlider, Select, TextInput,
 )
@@ -50,17 +50,8 @@ class JSONSchema(pn.pane.PaneBase):
     _literal_widget = LiteralInput
     _unbounded_date_widget = DatePicker
     _date_range_widget = DateRangeSlider
-
-    try:
-        _datetime_range_widget = pn.widgets.DatetimeRangeInput
-    except Exception:
-        _datetime_range_widget = DateRangeSlider
-
-    try:
-        _unbounded_datetime_widget = DatetimePicker
-        _datetime_range_widget = pn.widgets.DatetimeRangePicker
-    except Exception:
-        _unbounded_datetime_widget = DatetimeInput
+    _unbounded_datetime_widget = DatetimePicker
+    _datetime_range_widget = DatetimeRangeSlider
 
     def _array_type(self, schema):
         if 'items' in schema and not schema.get('additionalItems', True):
@@ -160,7 +151,7 @@ class JSONSchema(pn.pane.PaneBase):
         values = {} if self.object is None else self.object
         widgets = []
         for p, schema in self.schema.items():
-            if p == '__len__' or self.properties and p not in self.properties:
+            if p == '__len__' or (self.properties and p not in self.properties):
                 continue
             for prop in self._precedence:
                 if prop in schema:

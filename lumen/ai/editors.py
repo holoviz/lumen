@@ -23,12 +23,13 @@ from panel.widgets import CodeEditor
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
     Alert, Button, Checkbox, CircularProgress, FileDownload, FlexBox,
-    FloatInput, MenuButton, Tabs,
+    FloatInput, MenuButton, MenuToggle, Tabs,
 )
 from PIL import Image
 
 from ..base import Component
 from ..config import dump_yaml, load_yaml
+from ..filters import WidgetFilter
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
 from ..views.base import Panel, Table, View
@@ -509,6 +510,78 @@ class SQLEditor(LumenEditor):
 
     export_formats = ("sql", "csv", "xlsx", "json", "markdown")
     _label = "Table"
+
+    # Icon shown in the "Add Filter" menu for each schema type.
+    _filter_icons = {
+        "number": "calculate",
+        "integer": "numbers",
+        "boolean": "toggle_on",
+    }
+
+    def _render_editor(self):
+        editor = super()._render_editor()
+        self._filters: dict[str, WidgetFilter] = {}
+        self._filter_area = FlexBox(width_policy="max")
+        editor.insert(0, self._filter_area)
+        return editor
+
+    def _filter_icon(self, col_schema: dict[str, Any]) -> str:
+        if col_schema.get("dimension"):
+            # Coordinate axis of an xarray source (time/lat/lon/level, ...).
+            if col_schema.get("format") == "datetime":
+                return "schedule"
+            return "straighten"
+        col_type = col_schema.get("type")
+        if col_type == "string":
+            if "enum" in col_schema:
+                return "format_list_bulleted"
+            elif col_schema.get("format") == "datetime":
+                return "calendar_month"
+            return "text_fields"
+        return self._filter_icons.get(col_type, "help")
+
+    def _filter_items(self) -> list[dict[str, str]]:
+        # Coordinate dimensions (if any) are listed first, then data variables /
+        # tabular columns. Tabular sources carry no "dimension" flag, so their
+        # ordering is unchanged.
+        dimensions, variables = [], []
+        for col, col_schema in self.component.schema.items():
+            if col == "__len__":
+                continue
+            item = {"label": col, "icon": self._filter_icon(col_schema)}
+            (dimensions if col_schema.get("dimension") else variables).append(item)
+        return dimensions + variables
+
+    def _add_filter(self, item):
+        field = item["label"]
+        if item["toggled"]:
+            if field not in self._filters:
+                self._filters[field] = WidgetFilter(
+                    field=field, schema=self.component.schema
+                )
+            filt = self._filters[field]
+            self._filter_area.append(filt.widget)
+            self.component.add_filter(filt)
+            return
+        removed = [filt for filt in self.component.filters if filt.field == field]
+        removed_widgets = [filt.widget for filt in removed]
+        self._filter_area[:] = [w for w in self._filter_area if w not in removed_widgets]
+        self.component.filters = [
+            filt for filt in self.component.filters if filt not in removed
+        ]
+
+    def render_controls(self, task: Task, interface: ChatFeed):
+        controls = super().render_controls(task, interface)
+        filter_controls = MenuToggle(
+            items=self._filter_items(),
+            label="Add Filter",
+            icon="filter_list",
+            margin=0,
+            variant="text",
+            on_click=self._add_filter,
+        )
+        controls.insert(1, filter_controls)
+        return controls
 
     def export(self, fmt: str) -> StringIO | BytesIO:
         super().export(fmt)

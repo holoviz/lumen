@@ -359,6 +359,38 @@ class TestSchemaMetadata:
         schema = source.get_schema("temperature")
         assert "inclusiveMinimum" in schema.get("lat", {}) or "inclusiveMinimum" in schema.get("temperature", {})
 
+    def test_get_schema_flags_coordinate_dimensions(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        schema = source.get_schema("temperature")
+        # Coordinate dimensions are flagged so filter UIs can surface them.
+        assert schema["time"].get("dimension") is True
+        assert schema["lat"].get("dimension") is True
+        assert schema["lon"].get("dimension") is True
+        # The data variable itself is not a dimension.
+        assert "dimension" not in schema["temperature"]
+        # The flag must not leak onto the bookkeeping key.
+        assert schema["__len__"] == int(synthetic_dataset["temperature"].size)
+
+    def test_get_schema_all_tables_flags_dimensions(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        schemas = source.get_schema()
+        for table in ("temperature", "pressure"):
+            assert schemas[table]["lat"].get("dimension") is True
+            assert "dimension" not in schemas[table][table]
+
+    def test_get_schema_flags_dimensions_on_derived_table(self, synthetic_dataset):
+        # Explorations query a derived slug table, not the raw data variable.
+        # Coordinate dimensions must still be flagged there.
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        derived = source.create_sql_expr_source(
+            {"derived_slug": "SELECT * FROM temperature"}
+        )
+        schema = derived.get_schema("derived_slug")
+        assert schema["lat"].get("dimension") is True
+        assert schema["lon"].get("dimension") is True
+        assert schema["time"].get("dimension") is True
+        assert "dimension" not in schema["temperature"]
+
     def test_get_schema_with_limit(self, synthetic_dataset):
         source = XArraySQLSource(_dataset=synthetic_dataset)
         schema = source.get_schema("temperature", limit=5)
