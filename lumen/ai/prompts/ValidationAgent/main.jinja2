@@ -30,7 +30,7 @@ Items labeled "(From previous plan)" are leftover context from an earlier plan. 
 {%- endblock -%}
 
 {%- block examples %}
-## Examples
+## Examples (illustrative — `data`, `sales`, `region` etc. are placeholders, not real tables/columns)
 {% if memory.get('sql') -%}
 User: "by region?"
 SQL: SELECT region, SUM(sales) FROM data GROUP BY region
