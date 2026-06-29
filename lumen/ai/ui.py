@@ -19,6 +19,7 @@ from panel.config import panel_extension
 from panel.io.document import hold
 from panel.io.state import state
 from panel.layout import Column, FlexBox
+from panel.param import ParamFunction
 from panel.pane import SVG, Image, Markdown
 from panel.util import edit_readonly
 from panel.viewable import (
@@ -2480,7 +2481,28 @@ class ExplorerUI(UI):
             styles={"overflow": "auto"},
             stylesheets=SPLITJS_STYLESHEETS
         )
-        view = Column(controls, vsplit)
+        # Only when filters are present, show them in a Paper above the
+        # editor/table split with a draggable divider just above the SQL editor
+        # (so the user can resize the filter area). With no filters there is no
+        # extra split above the editor.
+        filter_paper = getattr(view, "_filter_paper", None)
+        if filter_paper is None:
+            body = vsplit
+        else:
+            def _filter_split(visible):
+                if not visible:
+                    return vsplit
+                return VSplit(
+                    filter_paper, vsplit,
+                    expanded_sizes=(30, 70), sizes=(30, 70),
+                    sizing_mode="stretch_both", styles={"overflow": "auto"},
+                    stylesheets=SPLITJS_STYLESHEETS,
+                )
+            body = ParamFunction(
+                param.bind(_filter_split, filter_paper.param.visible),
+                sizing_mode="stretch_both",
+            )
+        view = Column(controls, body)
         controls.append(self._render_pop_out(exploration, view, title))
         return (title, view)
 

@@ -23,7 +23,7 @@ from panel.widgets import CodeEditor
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
     Alert, Button, Checkbox, CircularProgress, FileDownload, FlexBox,
-    FloatInput, MenuButton, MenuToggle, Tabs,
+    FloatInput, MenuButton, MenuToggle, Paper, Tabs,
 )
 from PIL import Image
 
@@ -521,8 +521,15 @@ class SQLEditor(LumenEditor):
     def _render_editor(self):
         editor = super()._render_editor()
         self._filters: dict[str, WidgetFilter] = {}
-        self._filter_area = FlexBox(width_policy="max")
-        editor.insert(0, self._filter_area)
+        self._filter_area = FlexBox(sizing_mode="stretch_width")
+        # The filter widgets live in a Paper that the exploration view places
+        # above the editor/table split (see ExplorerUI._render_view), so adding
+        # filters pushes both the SQL editor and the results table down. Only
+        # shown once at least one filter has been added.
+        self._filter_paper = Paper(
+            self._filter_area, elevation=2, margin=(5, 10),
+            sizing_mode="stretch_width", visible=False,
+        )
         return editor
 
     def _filter_icon(self, col_schema: dict[str, Any]) -> str:
@@ -555,13 +562,16 @@ class SQLEditor(LumenEditor):
     def _add_filter(self, item):
         field = item["label"]
         if item["toggled"]:
-            if field not in self._filters:
-                self._filters[field] = WidgetFilter(
-                    field=field, schema=self.component.schema
-                )
-            filt = self._filters[field]
+            filt = self._filters.get(field)
+            if filt is None:
+                filt = WidgetFilter(field=field, schema=self.component.schema)
+                # Stretch to fill the panel, with margin so the handle is not
+                # flush against the edge (per review feedback).
+                filt.widget.param.update(sizing_mode="stretch_width", margin=(10, 15))
+                self._filters[field] = filt
             self._filter_area.append(filt.widget)
             self.component.add_filter(filt)
+            self._filter_paper.visible = True
             return
         removed = [filt for filt in self.component.filters if filt.field == field]
         removed_widgets = [filt.widget for filt in removed]
@@ -569,6 +579,7 @@ class SQLEditor(LumenEditor):
         self.component.filters = [
             filt for filt in self.component.filters if filt not in removed
         ]
+        self._filter_paper.visible = bool(len(self._filter_area))
 
     def render_controls(self, task: Task, interface: ChatFeed):
         controls = super().render_controls(task, interface)
