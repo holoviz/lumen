@@ -521,7 +521,9 @@ class SQLEditor(LumenEditor):
     def _render_editor(self):
         editor = super()._render_editor()
         self._filters: dict[str, WidgetFilter] = {}
-        self._filter_area = FlexBox(sizing_mode="stretch_width")
+        self._filter_area = FlexBox(
+            sizing_mode="stretch_width", justify_content="space-evenly"
+        )
         # The filter widgets live in a Paper that the exploration view places
         # above the editor/table split (see ExplorerUI._render_view), so adding
         # filters pushes both the SQL editor and the results table down. Only
@@ -565,9 +567,10 @@ class SQLEditor(LumenEditor):
             filt = self._filters.get(field)
             if filt is None:
                 filt = WidgetFilter(field=field, schema=self.component.schema)
-                # Stretch to fill the panel, with margin so the handle is not
-                # flush against the edge (per review feedback).
-                filt.widget.param.update(sizing_mode="stretch_width", margin=(10, 15))
+                # Cap each filter's width (review: it was too long) so two fit
+                # per row; the FlexBox's space-evenly justification gives equal
+                # gaps before, between and after them. Vertical margin only.
+                filt.widget.param.update(width=180, margin=(10, 0))
                 self._filters[field] = filt
             self._filter_area.append(filt.widget)
             self.component.add_filter(filt)
