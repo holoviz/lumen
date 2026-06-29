@@ -133,6 +133,7 @@ filterwarnings = [
     "ignore:unclosed <socket.socket:ResourceWarning", # Windows Python 3.10 test-example
     "ignore:ArrowStringArray._data is a deprecated and will be removed in a future version, use ._pa_array instead:FutureWarning",
     "ignore::pytest.PytestUnraisableExceptionWarning", # Panel/asyncio event loop cleanup on fixture teardown
+    "ignore:The 'generic' unit for NumPy timedelta is deprecated:DeprecationWarning:fastparquet",
 ]
 
 [tool.ruff]
