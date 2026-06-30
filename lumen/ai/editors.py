@@ -549,6 +549,19 @@ class SQLEditor(LumenEditor):
             return "text_fields"
         return self._filter_icons.get(col_type, "help")
 
+    def _filter_tooltip(self, col_schema: dict[str, Any]) -> str:
+        # Hover hint showing the column's filterable range (min .. max) or, for
+        # categorical columns, its options. Empty when neither is available.
+        lo, hi = col_schema.get("inclusiveMinimum"), col_schema.get("inclusiveMaximum")
+        if lo is not None and hi is not None:
+            if col_schema.get("type") in ("number", "integer"):
+                return f"{lo:g} .. {hi:g}"
+            return f"{lo} .. {hi}"
+        enum = col_schema.get("enum")
+        if enum:
+            return ", ".join(map(str, enum[:6])) + (", ..." if len(enum) > 6 else "")
+        return ""
+
     def _filter_items(self) -> list[dict[str, Any]]:
         # Coordinate dimensions (if any) are listed first, then data variables /
         # tabular columns. Tabular sources carry no "dimension" flag, so their
@@ -566,6 +579,9 @@ class SQLEditor(LumenEditor):
                 "active_color": "primary",
                 "toggled": col in active,
             }
+            tooltip = self._filter_tooltip(col_schema)
+            if tooltip:
+                item["tooltip"] = tooltip
             (dimensions if col_schema.get("dimension") else variables).append(item)
         return dimensions + variables
 
@@ -578,7 +594,12 @@ class SQLEditor(LumenEditor):
                 # Cap each filter's width (review: it was too long) so two fit
                 # per row; the FlexBox's space-evenly justification gives equal
                 # gaps before, between and after them. Small vertical margin.
-                widget_opts = {"width": 180, "margin": (5, 0)}
+                # The range is surfaced as a hover tooltip (description) since the
+                # always-on value readout is hidden below.
+                widget_opts = {
+                    "width": 180, "margin": (5, 0),
+                    "description": self._filter_tooltip(self.component.schema[field]),
+                }
                 # Hide the slider value readout for a cleaner look (review);
                 # non-slider filter widgets (e.g. Select) lack this param.
                 if "show_value" in filt.widget.param:
