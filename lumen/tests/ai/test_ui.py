@@ -428,6 +428,18 @@ async def test_find_view_in_popped_out(explorer_ui):
     assert popped_idx >= 1  # Index 0 is tabs
 
 
+async def test_vsplit_has_view_finds_view_under_filter_split(explorer_ui):
+    """Pop-out helpers locate the table view whether or not a filter pane wraps
+    the editor/table split one level deeper."""
+    table = Column()
+    editor_table = VSplit(Column(), table)
+    with_filters = VSplit(Column(), editor_table)
+
+    assert explorer_ui._vsplit_has_view(editor_table, table)   # no filters
+    assert explorer_ui._vsplit_has_view(with_filters, table)   # filters active
+    assert not explorer_ui._vsplit_has_view(VSplit(Column(), Column()), table)
+
+
 async def test_exploration_context_isolation(explorer_ui):
     """Test that different explorations maintain separate contexts."""
     # Create first exploration
