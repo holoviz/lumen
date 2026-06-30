@@ -549,15 +549,23 @@ class SQLEditor(LumenEditor):
             return "text_fields"
         return self._filter_icons.get(col_type, "help")
 
-    def _filter_items(self) -> list[dict[str, str]]:
+    def _filter_items(self) -> list[dict[str, Any]]:
         # Coordinate dimensions (if any) are listed first, then data variables /
         # tabular columns. Tabular sources carry no "dimension" flag, so their
-        # ordering is unchanged.
+        # ordering is unchanged. Columns with an active filter show a filled
+        # check (review: make the active state visible in the menu).
+        active = {filt.field for filt in self.component.filters}
         dimensions, variables = [], []
         for col, col_schema in self.component.schema.items():
             if col == "__len__":
                 continue
-            item = {"label": col, "icon": self._filter_icon(col_schema)}
+            item = {
+                "label": col,
+                "icon": self._filter_icon(col_schema),
+                "active_icon": "check_circle",
+                "active_color": "primary",
+                "toggled": col in active,
+            }
             (dimensions if col_schema.get("dimension") else variables).append(item)
         return dimensions + variables
 
@@ -569,8 +577,13 @@ class SQLEditor(LumenEditor):
                 filt = WidgetFilter(field=field, schema=self.component.schema)
                 # Cap each filter's width (review: it was too long) so two fit
                 # per row; the FlexBox's space-evenly justification gives equal
-                # gaps before, between and after them. Vertical margin only.
-                filt.widget.param.update(width=180, margin=(10, 0))
+                # gaps before, between and after them. Small vertical margin.
+                widget_opts = {"width": 180, "margin": (5, 0)}
+                # Hide the slider value readout for a cleaner look (review);
+                # non-slider filter widgets (e.g. Select) lack this param.
+                if "show_value" in filt.widget.param:
+                    widget_opts["show_value"] = False
+                filt.widget.param.update(**widget_opts)
                 self._filters[field] = filt
             self._filter_area.append(filt.widget)
             self.component.add_filter(filt)

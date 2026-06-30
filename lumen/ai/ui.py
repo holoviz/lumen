@@ -2494,7 +2494,7 @@ class ExplorerUI(UI):
                     return vsplit
                 return VSplit(
                     filter_paper, vsplit,
-                    expanded_sizes=(30, 70), sizes=(30, 70),
+                    expanded_sizes=(15, 85), sizes=(15, 85),
                     sizing_mode="stretch_both", styles={"overflow": "auto"},
                     stylesheets=SPLITJS_STYLESHEETS,
                 )
