@@ -13,8 +13,8 @@ try:
 
     from lumen.ai.agents.vega_lite import VegaLiteAgent
     from lumen.ai.llm import (
-        Anthropic, AnthropicBedrock, AzureOpenAI, Bedrock, Google, Groq, LiteLLM,
-        Llm, LlamaCpp, MLX, Message, MistralAI, Ollama, OpenAI, WebLLM
+        MLX, Anthropic, AnthropicBedrock, AzureOpenAI, Bedrock, Google, Groq,
+        LiteLLM, LlamaCpp, Llm, Message, MistralAI, Ollama, OpenAI, WebLLM,
     )
 
 except ModuleNotFoundError:
