@@ -1,8 +1,6 @@
 import asyncio
 import json
-import traceback
-
-from typing import Any
+import typing as t
 
 import param
 
@@ -10,19 +8,21 @@ from pydantic import BaseModel, Field
 
 from ...sources.base import BaseSQLSource, Source
 from ...transforms.sql import SQLLimit
-from ..config import PROMPTS_DIR, RetriesExceededError
+from ..config import PROMPTS_DIR
 from ..context import TContext
-from ..editors import LumenEditor
+from ..editors import SQLEditor
 from ..llm import Message
 from ..models import RetrySpec
 from ..schemas import DbtslMetaset, get_metaset
 from ..services import DbtslMixin
 from ..utils import (
-    describe_data, get_data, get_pipeline, report_error, retry_llm_output,
-    stream_details,
+    get_pipeline, report_error, retry_llm_output, stream_details,
 )
 from .base_lumen import BaseLumenAgent
 from .sql import SQLOutputs
+
+if t.TYPE_CHECKING:
+    from ...pipeline import Pipeline
 
 
 class DbtslQueryParams(BaseModel):
@@ -115,7 +115,7 @@ class DbtslAgent(BaseLumenAgent, DbtslMixin):
 
     _extensions = ("codeeditor", "tabulator")
 
-    _editor_type = LumenEditor
+    _editor_type = SQLEditor
 
     output_schema = DbtslOutputs
 
@@ -125,11 +125,10 @@ class DbtslAgent(BaseLumenAgent, DbtslMixin):
     @retry_llm_output()
     async def _create_valid_query(
         self, messages: list[Message], title: str | None = None, errors: list | None = None
-    ) -> DbtslOutputs:
+    ) -> tuple[Pipeline, str]:
         """
         Create a valid dbt Semantic Layer query based on user messages.
         """
-        out_context = {}
         with self._add_step(title=title or "dbt Semantic Layer query", steps_layout=self._steps_layout) as step:
             response = self._stream_prompt(
                 "main",
@@ -162,8 +161,6 @@ class DbtslAgent(BaseLumenAgent, DbtslMixin):
 
                 formatted_params = json.dumps(query_params, indent=2)
                 step.stream(f"\n\n`{expr_slug}`\n```json\n{formatted_params}\n```")
-
-                out_context["dbtsl_query_params"] = query_params
             except asyncio.CancelledError as e:
                 step.failed_title = "Cancelled dbt Semantic Layer query generation"
                 raise e
@@ -189,7 +186,6 @@ class DbtslAgent(BaseLumenAgent, DbtslMixin):
                 step.stream(f"\nCompiled SQL:\n```sql\n{sql_query}\n```", replace=False)
 
             sql_expr_source = self.source.create_sql_expr_source({expr_slug: sql_query})
-            out_context["sql"] = sql_query
 
             # Apply transforms
             sql_transforms = [SQLLimit(limit=1_000_000, write=self.source.dialect, pretty=True, identify=False)]
@@ -201,39 +197,24 @@ class DbtslAgent(BaseLumenAgent, DbtslMixin):
 
             # Create pipeline and get data
             pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms)
-
-            df = await get_data(pipeline)
-            metaset = await get_metaset([sql_expr_source], [expr_slug])
-
-            # Update context
-            out_context["data"] = await describe_data(df)
-            out_context["source"] = sql_expr_source
-            out_context["pipeline"] = pipeline
-            out_context["table"] = pipeline.table
-            out_context["dbtsl_metaset"] = metaset
         except Exception as e:
             report_error(e, step)
             raise e
-        return out_context
+        return pipeline, sql_query
 
     async def respond(
         self,
         messages: list[Message],
         context: TContext,
         step_title: str | None = None,
-    ) -> tuple[list[Any], DbtslOutputs]:
+    ) -> tuple[list[t.Any], DbtslOutputs]:
         """
         Responds to user messages by generating and executing a dbt Semantic Layer query.
         """
-        try:
-            out_context = await self._create_valid_query(messages, step_title)
-        except RetriesExceededError as e:
-            traceback.print_exception(e)
-            context["__error__"] = str(e)
-            return None
-
-        pipeline = out_context["pipeline"]
-        view = self._editor_type(
-            component=pipeline, title=step_title, spec=out_context["sql"]
+        pipeline, sql_query = await self._create_valid_query(messages, step_title)
+        out = self._editor_type(
+            component=pipeline, title=step_title, spec=sql_query
         )
-        return [view], out_context
+        context = await out.render_context()
+        context["dbtsl_metaset"] = await get_metaset([pipeline.source], [pipeline.table])
+        return [out], t.cast(DbtslOutputs, context)
