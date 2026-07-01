@@ -377,6 +377,18 @@ class SQLAgent(BaseLumenAgent):
                 feedback = f"{type(e).__name__}: {e!s}"
                 if "KeyError" in feedback:
                     feedback += " The data does not exist; select from available data sources."
+                elif "not found" in str(e).lower():
+                    # A referenced table does not exist (e.g. the model used the
+                    # source name instead of one of its tables, common for
+                    # multi-table sources like XArraySQLSource). Surface the
+                    # actual table names so the retry stops guessing.
+                    available = source.get_tables()
+                    if available:
+                        names = ", ".join(repr(t) for t in available[:50])
+                        feedback += (
+                            f" Use one of these exact table names, not the "
+                            f"source name: {names}."
+                        )
 
                 retry_result = await self.revise(
                     feedback, messages, context, spec=sql_query, language=f"sql.{source.dialect}",
