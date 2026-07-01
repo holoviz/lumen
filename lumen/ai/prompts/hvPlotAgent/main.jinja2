@@ -5,4 +5,25 @@ Generate the plot the user requested. Note that `x`, `y`, `by` and `groupby` fie
 no repeated columns are allowed. Do not arbitrarily set `groupby` and `by` fields unless explicitly requested. If a
 histogram is requested, use `y` instead of `x`. If x is categorical or strings, prefer barh over bar, and use `y` for
 the values.
+{%- if gridded is defined and gridded %}
+
+For gridded xarray data:
+- Set x and y to coordinate names from: {{ gridded.dims | join(', ') }}.
+- Set z to one of the data variables: {{ gridded.data_vars | join(', ') }}.
+- Pick `kind` using this rule:
+  {%- if gridded.regular %}
+  - This dataset has regularly-spaced coordinates, so prefer kind='image'
+    (fastest, best for evenly-gridded data). Use 'quadmesh' if you need to
+    show coordinate cell boundaries explicitly, or 'contourf' for filled
+    contours.
+  {%- else %}
+  - This dataset has irregularly-spaced coordinates, so use kind='quadmesh'
+    (handles non-uniform cells correctly). Do NOT use 'image' here; it
+    assumes uniform spacing and will misrepresent the data.
+  {%- endif %}
+  - Use 'heatmap' only when axes are ordinal or categorical, not continuous.
+- The view pivots long-form pandas to xarray internally and maps z= to
+  hvPlot's C= for heatmap only.
+- Do not set `by` or `groupby`.
+{%- endif %}
 {% endblock %}

@@ -23,6 +23,7 @@ from textwrap import dedent
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import parse_qs
 
+import numpy as np
 import pandas as pd
 import param
 import sqlglot
@@ -40,8 +41,9 @@ from panel_material_ui import Details
 
 from ..pipeline import Pipeline
 from ..sources.base import Source
+from ..sources.xarray_sql import XArraySQLSource
 from ..transforms import SQLRemoveSourceSeparator
-from ..util import log
+from ..util import check_xarray_available, log
 from .config import (
     PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, UNRECOVERABLE_ERRORS,
     MissingContextError, RetriesExceededError,
@@ -1485,3 +1487,39 @@ def result_to_dataframe(result) -> pd.DataFrame | None:
             return None
 
     return None
+
+
+def gridded_metadata(pipeline: Pipeline) -> dict[str, Any] | None:
+    """Return gridded metadata for an xarray-backed pipeline, else None.
+
+    Returns a dict with keys ``source_type``, ``dims``, ``coords``,
+    ``data_vars``, and ``regular`` (True iff every coordinate dimension is
+    uniformly spaced). Coord arrays are 1-D and held in memory by xarray
+    even for large lazy datasets, so the regularity check is cheap; do not
+    call on a hot path.
+    """
+    if not isinstance(pipeline.source, XArraySQLSource) or not check_xarray_available():
+        return None
+
+    ds = pipeline.source.dataset
+
+    def _is_regular(values) -> bool:
+        arr = np.asarray(values)
+        if arr.ndim != 1 or arr.size < 2:
+            return False
+        # datetime64 coords need int64 conversion before allclose
+        if np.issubdtype(arr.dtype, np.datetime64):
+            arr = arr.astype('int64')
+        diffs = np.diff(arr)
+        return bool(np.allclose(diffs, diffs[0], rtol=1e-6))
+
+    regular = all(
+        _is_regular(ds.coords[d].values) for d in ds.dims if d in ds.coords
+    )
+    return {
+        'source_type': 'xarray',
+        'dims': list(ds.dims),
+        'coords': {k: list(ds.coords[k].shape) for k in ds.coords},
+        'data_vars': list(ds.data_vars),
+        'regular': regular,
+    }

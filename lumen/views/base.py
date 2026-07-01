@@ -15,6 +15,7 @@ from typing import (
 from weakref import WeakKeyDictionary
 
 import numpy as np
+import pandas as pd
 import panel as pn
 import param  # type: ignore
 
@@ -44,6 +45,12 @@ from ..util import (
     VARIABLE_RE, catch_and_notify, is_ref, resolve_module_reference,
 )
 from ..validation import ValidationError
+
+try:
+    import hvplot.xarray  # type: ignore  # noqa: F401
+    _HVPLOT_XARRAY_AVAILABLE = True
+except Exception:
+    _HVPLOT_XARRAY_AVAILABLE = False
 
 if TYPE_CHECKING:
     from bokeh.document import Document  # type: ignore
@@ -927,7 +934,8 @@ class hvPlotBaseView(View):
         objects=[
             'area', 'bar', 'barh', 'bivariate', 'box', 'contour', 'contourf',
             'errorbars', 'hist', 'image', 'kde', 'labels',
-            'line', 'scatter', 'heatmap', 'hexbin', 'ohlc', 'points', 'step', 'violin'
+            'line', 'scatter', 'heatmap', 'hexbin', 'ohlc', 'points', 'quadmesh',
+            'step', 'violin'
         ]
     )
 
@@ -939,11 +947,15 @@ class hvPlotBaseView(View):
 
     groupby = param.ListSelector(doc="The column(s) to group by.")
 
+    z = param.Selector(doc="""
+        Column of z-values for gridded plot kinds (image, quadmesh, heatmap, contourf).
+        Internally mapped to hvPlot's C= for kind='heatmap' and z= for other kinds.""")
+
     geo = param.Boolean(
         default=False, doc="Toggle True if the plot is on a geographic map."
     )
 
-    _field_params = ['x', 'y', 'by', 'groupby']
+    _field_params = ['x', 'y', 'by', 'groupby', 'z']
 
     __abstract = True
 
@@ -951,7 +963,7 @@ class hvPlotBaseView(View):
         import hvplot.pandas  # type: ignore
         if 'dask' in sys.modules:
             try:
-                import hvplot.dask  # type: ignore # noqa
+                import hvplot.dask  # type: ignore  # noqa: F401
             except Exception:
                 pass
         if 'by' in params and isinstance(params['by'], str):
@@ -1030,6 +1042,43 @@ class hvPlotView(hvPlotBaseView):
         self._linked_objs = []
         super().__init__(**params)
 
+    _GRIDDED_KINDS = ('quadmesh', 'image', 'contourf')
+
+    # Safety cap on pivoted grid size. 10M cells = ~80MB for float64.
+    # Anything larger is rejected with a clear error rather than risking OOM.
+    _GRIDDED_MAX_CELLS = 10_000_000
+
+    def _gridded_pivot_blocker(self, df) -> str | None:
+        """Return None if df can be pivoted to a 2D grid, else a human-readable reason."""
+        if not _HVPLOT_XARRAY_AVAILABLE:
+            return "hvplot.xarray is not installed"
+        if not (self.x and self.y and self.z):
+            return "x, y, and z must all be set for gridded plot kinds"
+        missing = {self.x, self.y, self.z} - set(df.columns)
+        if missing:
+            return f"missing required column(s): {sorted(missing)}"
+        if df.duplicated(subset=[self.y, self.x]).any():
+            return f"duplicate ({self.y!r}, {self.x!r}) rows prevent pivot to a 2D grid"
+        n_cells = df[self.y].nunique() * df[self.x].nunique()
+        if n_cells > self._GRIDDED_MAX_CELLS:
+            return (
+                f"pivoted grid would have {n_cells:,} cells, exceeding the "
+                f"{self._GRIDDED_MAX_CELLS:,} safety cap"
+            )
+        return None
+
+    def _to_gridded(self, df):
+        """Pivot a long-form DataFrame to a 2D xarray DataArray for hvPlot's
+        quadmesh/image/contourf kinds.
+
+        Returns the input unchanged if it is already an xarray object or if
+        the pivot is blocked (see ``_gridded_pivot_blocker``); callers that
+        require gridded data should check the blocker themselves and raise.
+        """
+        if not isinstance(df, pd.DataFrame) or self._gridded_pivot_blocker(df) is not None:
+            return df
+        return df.set_index([self.y, self.x])[self.z].to_xarray()
+
     def get_plot(self, df):
         processed = {}
         for k, v in self.kwargs.items():
@@ -1040,8 +1089,23 @@ class hvPlotView(hvPlotBaseView):
             processed[k] = v
         if self.streaming:
             processed['stream'] = self._data_stream
+        if self.z is not None:
+            processed['C' if self.kind == 'heatmap' else 'z'] = self.z
 
-        plot = df.hvplot(
+        plot_source = df
+        if self.kind in self._GRIDDED_KINDS:
+            if isinstance(df, pd.DataFrame):
+                blocker = self._gridded_pivot_blocker(df)
+                if blocker is not None:
+                    raise ValueError(
+                        f"Cannot render kind={self.kind!r} from this pipeline: "
+                        f"{blocker}. Either provide xarray-backed data, switch "
+                        f"to a tabular kind (e.g. 'heatmap' for ordinal axes), "
+                        f"or fix the spec."
+                    )
+            plot_source = self._to_gridded(df)
+
+        plot = plot_source.hvplot(
             kind=self.kind, x=self.x, y=self.y, by=self.by, groupby=self.groupby, **processed
         )
         if self.operations:
