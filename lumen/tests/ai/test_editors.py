@@ -146,5 +146,39 @@ def test_class_name_with_numbers():
     """Test handling of numbers in class names."""
     class Editor2D(LumenEditor):
         pass
-    
+
     assert Editor2D._class_name_to_download_filename("png") == "editor2_d.png"
+
+
+def test_vegalite_export_container_width_uses_viewport_default(vegalite_editor, mock_panel):
+    """Container-sized specs should export at 1600x800, not 800x400."""
+    result = vegalite_editor.export('png')
+    assert isinstance(result, BytesIO)
+    assert mock_panel.calls[-1] == ("png", {"scale": 2})
+
+
+def test_vegalite_export_preserves_explicit_dimensions(monkeypatch, mock_panel):
+    """Specs with explicit numeric width/height keep them unchanged."""
+    monkeypatch.setattr(editors_module, 'ParamMethod', lambda *a, **kw: None)
+    monkeypatch.setattr(VegaLiteEditor, '_update_component', lambda self, *a, **kw: None)
+
+    spec_with_dims = """\
+$schema: https://vega.github.io/schema/vega-lite/v5.json
+width: 500
+height: 300
+mark: bar
+encoding:
+  x:
+    field: A
+    type: quantitative
+  y:
+    field: B
+    type: quantitative
+data:
+  values:
+    - {A: 1, B: 2}
+"""
+    component = MockVegaComponent(_mock_panel=mock_panel)
+    editor = VegaLiteEditor(component=component, spec=spec_with_dims)
+    result = editor.export('png')
+    assert isinstance(result, BytesIO)
