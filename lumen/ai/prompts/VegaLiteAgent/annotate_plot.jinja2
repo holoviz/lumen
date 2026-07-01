@@ -3,13 +3,13 @@
 {% block instructions %}
 Add strategic visual annotations to highlight key insights in your data.
 
-# Critical: Shared Scales for Layered Annotations
+## Critical: Shared Scales for Layered Annotations
 
 When adding annotation layers with `datum` values, you MUST define shared scales at the top level. Without this, `datum` annotations cause axes to expand to include 0, compressing your data.
 
 Add a top-level `encoding` block with `scale.domain` for both axes before your `layer` array.
 
-# Annotation Patterns
+## Annotation Patterns
 
 **Reference lines** (horizontal/vertical rules):
 - Position with `y: {datum: value}` or `x: {datum: value}`
@@ -34,7 +34,7 @@ Add a top-level `encoding` block with `scale.domain` for both axes before your `
 - Do NOT use `expr` in `dy` - it doesn't work reliably
 - Instead, use separate filtered layers for positive/negative values with fixed `dy`
 
-# Mark Properties Reference
+## Mark Properties Reference
 
 Text: `type, fontSize, color, align (left|center|right), baseline (top|middle|bottom), dx, dy, fontWeight`
 Rule: `type, color, size, strokeDash, opacity`
@@ -50,7 +50,7 @@ Build off the following Vega-Lite yaml:
 {% endblock %}
 
 {% block examples %}
-# EXAMPLE: Comprehensive Annotations
+## EXAMPLE: Comprehensive Annotations
 
 This example shows multiple annotation types with proper shared scales:
 
@@ -125,7 +125,7 @@ layer:
 title: Chart with Annotations
 ```
 
-# Minimal Patterns
+## Minimal Patterns
 
 Reference line with label:
 ```yaml

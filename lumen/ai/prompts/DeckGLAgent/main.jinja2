@@ -10,12 +10,12 @@ Generate DeckGL JSON spec. Do NOT include `data` in layers (injected automatical
 
 Column names: spaces→underscores, non-alphanumeric removed (e.g., "Plant latitude"→"Plant_latitude")
 
-# REQUIRED STRUCTURE
+## REQUIRED STRUCTURE
 - `initialViewState`: latitude, longitude, zoom, pitch (45+ for 3D), bearing
 - `layers`: array with `@@type` for each layer
 - `views`: `[{"@@type": "MapView", "controller": true}]`
 
-# LAYER SELECTION (prefer 3D for visual impact)
+## LAYER SELECTION (prefer 3D for visual impact)
 
 **For data with numeric values:**
 1. **HexagonLayer** - Aggregates points into 3D hexagonal bins (PREFERRED)
@@ -29,7 +29,7 @@ Column names: spaces→underscores, non-alphanumeric removed (e.g., "Plant latit
 **For connections:**
 6. **ArcLayer** - Origin-destination arcs
 
-# KEY LAYER PROPERTIES
+## KEY LAYER PROPERTIES
 
 | Layer | Key Props |
 |-------|-----------|
@@ -38,7 +38,7 @@ Column names: spaces→underscores, non-alphanumeric removed (e.g., "Plant latit
 | ScatterplotLayer | `radiusMinPixels`, `radiusMaxPixels`, `getFillColor` |
 | ArcLayer | `getSourcePosition`, `getTargetPosition`, `getWidth` |
 
-# STYLING
+## STYLING
 - `pickable: true` for tooltips
 - `autoHighlight: true` for hover effect
 - **Colors:** Always use static RGBA arrays: `"getFillColor": [255, 140, 0, 200]` (NO @@= prefix, NO Math functions)
