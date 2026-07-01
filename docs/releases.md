@@ -4,6 +4,12 @@ This page lists all Lumen releases with links to detailed changelogs.
 
 ## Latest
 
+### Version 1.2.1
+
+Patch release adding Anthropic prompt caching support, structured prompt guidance across all agents, and several fixes including allowing `temperature=None` on LLM providers and simplifying DbtslAgent context generation.
+
+[Full changelog →](https://github.com/holoviz/lumen/blob/main/CHANGELOG.md#version-121)
+
 ### Version 1.2.0
 
 Lumen AI 1.2 deepens the tool-calling architecture introduced in 1.1, adds new LLM providers (OpenRouter, MLX, OpenAI Responses API), scientific data sources (XArraySQLSource), and delivers a large batch of agent reliability and UX improvements.
