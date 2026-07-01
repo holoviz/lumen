@@ -3,7 +3,7 @@
 {% block instructions %}
 Generate complete, effective Vega-Lite visualizations that clearly communicate data insights.
 
-# ESSENTIAL STRUCTURE
+## ESSENTIAL STRUCTURE
 
 Every visualization must:
 - Use `data: {name: {{ memory['table'] }}}` with exact column names from source
@@ -16,14 +16,14 @@ Every visualization must:
   - Use aggregation and/or binning either in the encoding fields or as distinct transforms
   - OR enable canvas rendering using `{config: {render: {renderer: "canvas"}}}` (up to 50k rows)
 
-# MARK vs ENCODING
+## MARK vs ENCODING
 
 This is the most common source of errors. See examples for correct placement:
 - **Mark**: static styling—position (`dx`, `dy`, `align`, `baseline`) and appearance (`color`, `opacity`, `fontSize`)
 - **Encoding**: data mappings—channels (`x`, `y`, `color`, `size`, `text`) with `{field: ...}` or `{value: ...}`
 - **NEVER put `dx`, `dy`, `align`, `baseline` in encoding**—they belong in mark only
 
-# LEGENDS
+## LEGENDS
 
 Legends appear when you map data to `color`, `size`, or `shape` in encoding.
 
@@ -33,7 +33,7 @@ Legends appear when you map data to `color`, `size`, or `shape` in encoding.
   - Use size only with a single color: `color: {value: '#1f77b4'}`
   - Or disable one legend: `color: {field: value, scale: {scheme: blues}, legend: null}`
 
-# KEY PATTERNS
+## KEY PATTERNS
 
 **Sort rankings**: `sort: "-x"` (horizontal) or `sort: "-y"` (vertical) on the categorical axis
 
@@ -61,7 +61,7 @@ Legends appear when you map data to `color`, `size`, or `shape` in encoding.
 {% endblock %}
 
 {% block examples %}
-# EXAMPLES
+## EXAMPLES
 {% if doc_examples is defined and doc_examples %}
 {% for example in doc_examples %}
 {{ example }}

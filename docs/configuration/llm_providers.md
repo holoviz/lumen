@@ -71,6 +71,16 @@ model_config = {
 
 Recommended ranges: 0.1 (SQL) to 0.4 (chat).
 
+### Disabling temperature
+
+Some newer models (e.g. reasoning models) reject a `temperature` argument. Set `temperature=None` to omit it from requests entirely, falling back to the provider's own default:
+
+``` py title="Omit temperature"
+llm = lmai.llm.Anthropic(temperature=None)
+```
+
+This works on every provider. Local backends (MLX, Llama.cpp) fall back to their built-in sampler default when `None`.
+
 ## Supported providers
 
 For installation and API key setup instructions, see the [Installation guide](../installation.md).
@@ -275,6 +285,21 @@ llm = lmai.llm.AzureOpenAI(
     }
 )
 ```
+
+### Prompt caching (Anthropic)
+
+`Anthropic` caches the static prefix of each request (`tools` → `system` → `messages`) so repeated context isn't reprocessed, lowering latency and input-token cost. It is controlled by the `cache` parameter:
+
+``` py title="Prompt caching"
+llm = lmai.llm.Anthropic(cache="5m")  # default; also "1h" or None to disable
+```
+
+- `"5m"` (default) — 5-minute cache; refreshes for free on each hit.
+- `"1h"` — 1-hour cache; costs more on write, useful for slower-cadence sessions.
+- `None` — disabled.
+
+!!! note
+    Caching only applies above a model-specific minimum prefix length (4,096 tokens for the default `claude-haiku-4-5`); shorter prefixes are silently not cached. `AnthropicBedrock` ignores this setting, since AWS Bedrock does not support automatic caching.
 
 ### Fallback models (LiteLLM)
 

@@ -388,7 +388,7 @@ class SQLAgent(BaseLumenAgent):
     async def _execute_query(
         self, source: BaseSQLSource, context: TContext, expr_slug: str, sql_query: str, tables: list[str],
         is_final: bool, should_materialize: bool, step: ChatStep
-    ) -> tuple[Pipeline, Source, str]:
+    ) -> Pipeline:
         """Execute SQL query and return pipeline and summary."""
         # Create SQL source
         source_tables = source.tables if source.tables is not None else {}
@@ -439,7 +439,7 @@ class SQLAgent(BaseLumenAgent):
             summary_formatted += f"\n\nMaterialized data: `{sql_expr_source.name}{SOURCE_TABLE_SEPARATOR}{expr_slug}`"
         stream_details(f"{summary_formatted}", step, title=expr_slug)
 
-        return pipeline, sql_expr_source, summary
+        return pipeline
 
     async def _finalize_execution(
         self,
@@ -461,7 +461,6 @@ class SQLAgent(BaseLumenAgent):
             component=pipeline, title=step_title, spec=sql
         )
         return view
-
 
     def _merge_sources(
         self, sources: dict[tuple[str, str], BaseSQLSource], tables: list[tuple[str, str]]
@@ -576,7 +575,7 @@ class SQLAgent(BaseLumenAgent):
             # Only materialize for DuckDB sources
             should_materialize = isinstance(source, DuckDBSource)
 
-            pipeline, sql_expr_source, summary = await self._execute_query(
+            pipeline = await self._execute_query(
                 source, context, expr_slug, validated_sql, tables=tables,
                 is_final=True, should_materialize=should_materialize, step=step
             )

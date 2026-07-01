@@ -141,8 +141,9 @@ class Llm(param.Parameterized):
 
     select_models = param.List(default=[], constant=True, doc="Available models for selection dropdowns")
 
-    temperature = param.Number(default=0.7, bounds=(0, None), constant=True, doc="""
-        The temperature to use for sampling.""")
+    temperature = param.Number(default=0.7, bounds=(0, None), allow_None=True, constant=True, doc="""
+        The temperature to use for sampling. Set to None to omit the
+        temperature from requests entirely, e.g. for models that reject it.""")
 
     timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
         The timeout in seconds for API calls.""")
@@ -230,7 +231,9 @@ class Llm(param.Parameterized):
 
     @property
     def _client_kwargs(self) -> dict[str, Any]:
-        return {}
+        if self.temperature is None:
+            return {}
+        return {"temperature": self.temperature}
 
     def _create_base_client(self, **kwargs) -> Any:
         """Create the underlying SDK client (e.g., AsyncOpenAI, AsyncAnthropic)."""
@@ -970,7 +973,7 @@ class Llm(param.Parameterized):
                 role = message["type"]
             if role == "system":
                 content = message.get("content", "")
-                log_debug(f"System prompt ({len(content)} chars):\n\033[90m{truncate_string(content, max_length=4000)}\033[0m")
+                log_debug(f"System prompt ({len(content)} chars):\n\033[90m{content}\033[0m")
                 continue
             content = message.get("content") if isinstance(message, dict) else None
             if not content and "tool_calls" in message:
@@ -1026,7 +1029,7 @@ class LlamaCpp(Llm, LlamaCppMixin):
         "nvidia/Nemotron-3-Nano-30B-GGUF"
     ], constant=True)
 
-    temperature = param.Number(default=0.4, bounds=(0, None), constant=True)
+    temperature = param.Number(default=0.4, bounds=(0, None), allow_None=True, constant=True)
 
     # LlamaCpp doesn't use from_* wrapper - uses patch(create=...)
     _instructor_wrapper = None
@@ -1048,10 +1051,6 @@ class LlamaCpp(Llm, LlamaCppMixin):
             return self._instantiate_client_kwargs(model_kwargs=model_kwargs)
         except Exception:
             return dict(model_kwargs)
-
-    @property
-    def _client_kwargs(self) -> dict[str, Any]:
-        return {"temperature": self.temperature}
 
     def _create_base_client(self, **kwargs) -> Any:
         return self._instantiate_client(**kwargs)
@@ -1126,7 +1125,7 @@ class OpenAI(Llm, OpenAIMixin):
         "gpt-5.4-nano"
     ], constant=True, doc="""Warning: Reasoning models (gpt-5, o4-mini) are much slower and not suitable for dialog interfaces.""")
 
-    temperature = param.Number(default=0.25, bounds=(0, None), constant=True)
+    temperature = param.Number(default=0.25, bounds=(0, None), allow_None=True, constant=True)
 
     _supports_logfire = True
 
@@ -1177,10 +1176,6 @@ class OpenAI(Llm, OpenAIMixin):
         """Return the set of available model identifiers from OpenAI."""
         client = OpenAIClient(api_key=self.api_key, timeout=5)
         return {m.id for m in client.models.list().data}
-
-    @property
-    def _client_kwargs(self):
-        return {"temperature": self.temperature}
 
     def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
         model_kwargs = super()._get_model_kwargs(model_spec)
@@ -1444,11 +1439,7 @@ class AzureOpenAI(Llm, AzureOpenAIMixin):
         "gpt-4o-mini"
     ], constant=True)
 
-    temperature = param.Number(default=1, bounds=(0, None), constant=True)
-
-    @property
-    def _client_kwargs(self):
-        return {"temperature": self.temperature}
+    temperature = param.Number(default=1, bounds=(0, None), allow_None=True, constant=True)
 
     def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
         model_kwargs = super()._get_model_kwargs(model_spec)
@@ -1501,7 +1492,7 @@ class MistralAI(Llm, MistralAIMixin):
         "devstral-small-latest"
     ], constant=True)
 
-    temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
+    temperature = param.Number(default=0.7, bounds=(0, 1), allow_None=True, constant=True)
 
     _supports_model_stream = False  # instructor doesn't work with Mistral's streaming
     _instructor_wrapper = "mistral"
@@ -1510,10 +1501,6 @@ class MistralAI(Llm, MistralAIMixin):
         """Return the set of available model identifiers from Mistral."""
         from mistralai import Mistral
         return {m.id for m in Mistral(api_key=self.api_key).models.list().data}
-
-    @property
-    def _client_kwargs(self):
-        return {"temperature": self.temperature}
 
     def _create_base_client(self, **kwargs) -> Any:
         return self._instantiate_client(**kwargs)
@@ -1575,6 +1562,11 @@ class Anthropic(Llm, AnthropicMixin):
     A LLM implementation that calls Anthropic models such as Claude.
     """
 
+    cache = param.Selector(default="5m", objects=[None, "5m", "1h"], doc="""
+        Prompt-caching TTL. None disables caching; "5m" refreshes free on each
+        cache hit; "1h" costs more on write. Caches the tools+system+messages
+        prefix. Ignored on providers that don't support automatic caching.""")
+
     display_name = param.String(default="Anthropic", constant=True)
 
     mode = param.Selector(default=Mode.ANTHROPIC_TOOLS, objects=[Mode.ANTHROPIC_JSON, Mode.ANTHROPIC_TOOLS])
@@ -1590,10 +1582,11 @@ class Anthropic(Llm, AnthropicMixin):
         "claude-opus-4-5"
     ], constant=True)
 
-    temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
+    temperature = param.Number(default=0.7, bounds=(0, 1), allow_None=True, constant=True)
 
     _supports_logfire = True
     _supports_model_stream = True
+    _supports_prompt_cache = True
     _instructor_wrapper = "anthropic"
 
     def models(self) -> set[str]:
@@ -1605,7 +1598,7 @@ class Anthropic(Llm, AnthropicMixin):
 
     @property
     def _client_kwargs(self):
-        return {"temperature": self.temperature, "max_tokens": 1024}
+        return {**super()._client_kwargs, "max_tokens": 1024}
 
     def _create_base_client(self, **kwargs) -> Any:
         client = self._instantiate_client(**kwargs)
@@ -1758,6 +1751,14 @@ class Anthropic(Llm, AnthropicMixin):
                 }]
         return []
 
+    def _cache_control(self) -> dict[str, Any] | None:
+        if not (self._supports_prompt_cache and self.cache):
+            return None
+        cache_control = {"type": "ephemeral"}
+        if self.cache == "1h":
+            cache_control["ttl"] = "1h"
+        return cache_control
+
     async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
         """Override to handle Anthropic-specific message format."""
         log_debug(f"Input messages: \033[95m{len(messages)} messages\033[0m including system")
@@ -1797,6 +1798,10 @@ class Anthropic(Llm, AnthropicMixin):
                     "some providers disallow this.\033[0m"
                 )
             previous_role = role
+
+        cache_control = self._cache_control()
+        if cache_control is not None:
+            kwargs["cache_control"] = cache_control
 
         client = await self.get_client(model_spec, **kwargs)
         result = await client(messages=filtered_messages, **kwargs)
@@ -1842,6 +1847,8 @@ class Anthropic(Llm, AnthropicMixin):
 class AnthropicBedrock(BedrockMixin, Anthropic):  # Keep it before Anthropic so API key is correct
 
     display_name = param.String(default="Anthropic on AWS Bedrock", constant=True)
+
+    _supports_prompt_cache = False  # Bedrock does not support automatic prompt caching
 
     model_kwargs = param.Dict(default={
         "default": {"model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"},
@@ -1895,7 +1902,7 @@ class Bedrock(Llm, BedrockMixin):
         "anthropic.claude-3-sonnet-20240229-v1:0",
     ], constant=True, doc="Available Claude models on Bedrock")
 
-    temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
+    temperature = param.Number(default=0.7, bounds=(0, 1), allow_None=True, constant=True)
 
     _instructor_wrapper = "bedrock"
     _supports_stream = True
@@ -1903,7 +1910,7 @@ class Bedrock(Llm, BedrockMixin):
 
     @property
     def _client_kwargs(self):
-        return {"temperature": self.temperature, "maxTokens": 4096}
+        return {**super()._client_kwargs, "maxTokens": 4096}
 
     def _create_base_client(self, **kwargs) -> Any:
         """Create boto3 bedrock-runtime client for inference."""
@@ -2052,7 +2059,7 @@ class Google(Llm, GenAIMixin):
         "gemini-1.5-pro"
     ], constant=True)
 
-    temperature = param.Number(default=1, bounds=(0, 1), constant=True)
+    temperature = param.Number(default=1, bounds=(0, 1), allow_None=True, constant=True)
 
     _supports_logfire = True
     _supports_model_stream = True
@@ -2298,13 +2305,15 @@ class Google(Llm, GenAIMixin):
         tools = self._translate_tool_specs(kwargs.pop("tools", []))
         client = await self.get_client(model_spec, **kwargs)
         contents, system_instruction, instructor_messages = self._messages_to_contents(messages)
-        config = GenerateContentConfig(
+        config_kwargs = dict(
             http_options=http_options,
-            temperature=self.temperature,
             thinking_config=thinking_config,
             system_instruction=system_instruction,
             tools=tools,
         )
+        if self.temperature is not None:
+            config_kwargs["temperature"] = self.temperature
+        config = GenerateContentConfig(**config_kwargs)
 
         if response_model:
             result = await client(messages=instructor_messages, config=config, **kwargs)
@@ -2391,7 +2400,7 @@ class Ollama(OpenAI):
         "mistral-small3.2:24b",
     ], constant=True)
 
-    temperature = param.Number(default=0.25, bounds=(0, None), constant=True)
+    temperature = param.Number(default=0.25, bounds=(0, None), allow_None=True, constant=True)
 
     def models(self, endpoint: str | None = None) -> set[str]:
         """Return the set of available model identifiers from Ollama."""
@@ -2466,10 +2475,11 @@ class MLX(Llm):
         Note: in server mode this is sent as a per-request parameter
         and does NOT change the server's --max-tokens default.""")
 
-    temperature = param.Number(default=0.4, bounds=(0, None), constant=True, doc="""
+    temperature = param.Number(default=0.4, bounds=(0, None), allow_None=True, constant=True, doc="""
         The sampling temperature. Lower values produce more
         deterministic outputs. In server mode this is sent
-        per-request and does NOT change the server's --temp flag.""")
+        per-request and does NOT change the server's --temp flag.
+        When None, the backend's own default sampler is used.""")
 
     _instructor_wrapper = None
     _supports_vision = False
@@ -2521,6 +2531,8 @@ class MLX(Llm):
     def _make_sampler(self):
         """Create an MLX sampler from the configured temperature."""
         from mlx_lm.sample_utils import make_sampler
+        if self.temperature is None:
+            return make_sampler()
         return make_sampler(temp=self.temperature)
 
     def _create_chat_completion(self, messages: list[Message], **kwargs) -> Any:
@@ -2566,7 +2578,7 @@ class MLX(Llm):
 
     @property
     def _client_kwargs(self) -> dict[str, Any]:
-        return {"temperature": self.temperature, "max_tokens": self.max_tokens}
+        return {**super()._client_kwargs, "max_tokens": self.max_tokens}
 
     @classmethod
     def warmup(cls, model_kwargs: dict | None):
@@ -2701,10 +2713,16 @@ class WebLLM(Llm):
         "Qwen2.5-7B-Instruct-q4f16_1-MLC"
     ], constant=True)
 
-    temperature = param.Number(default=0.4, bounds=(0, None))
+    temperature = param.Number(default=0.4, bounds=(0, None), allow_None=True)
 
     # WebLLM doesn't use from_* wrapper - uses patch(create=...)
     _instructor_wrapper = None
+
+    @property
+    def _client_kwargs(self) -> dict[str, Any]:
+        # WebLLM has never forwarded temperature through this path; the sampler
+        # is configured on the panel_web_llm component itself.
+        return {}
 
     def __init__(self, **params):
         from panel_web_llm import WebLLM as pnWebLLM
@@ -2834,7 +2852,7 @@ class LiteLLM(Llm):
         "mistral/codestral-latest"
     ], constant=True)
 
-    temperature = param.Number(default=0.7, bounds=(0, 2), constant=True)
+    temperature = param.Number(default=0.7, bounds=(0, 2), allow_None=True, constant=True)
 
     _supports_logfire = True
     _supports_stream = True
@@ -2870,9 +2888,7 @@ class LiteLLM(Llm):
     @property
     def _client_kwargs(self):
         """Base kwargs for all LiteLLM calls."""
-        kwargs = {"temperature": self.temperature}
-        kwargs.update(self.litellm_params)
-        return kwargs
+        return {**super()._client_kwargs, **self.litellm_params}
 
     def _create_base_client(self, **kwargs) -> Any:
         return self._get_router()
