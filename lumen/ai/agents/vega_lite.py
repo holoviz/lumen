@@ -242,6 +242,102 @@ class VegaLiteAgent(BaseCodeAgent):
 
         return result
 
+    _MAX_ARC_LABELS = 8
+
+    def _fix_arc_labels(self, spec: dict[str, Any]) -> dict[str, Any]:
+        """Fix pie/donut chart labels by ensuring proper outside placement.
+
+        When the LLM generates a pie chart with text labels, the labels
+        often overlap on small slices. This method replaces any existing
+        text layer with one that uses theta encoding (same polar coordinate
+        system as the arc) with a large radius to push labels outside.
+
+        For charts with more than ``_MAX_ARC_LABELS`` categories, text
+        labels are removed entirely and the chart relies on the color
+        legend and tooltips instead.
+        """
+        layers = spec.get("layer", [])
+        if not layers:
+            return spec
+
+        arc_layer = None
+        for layer in layers:
+            if self._get_layer_mark_type(layer) == "arc":
+                arc_layer = layer
+                break
+        if arc_layer is None:
+            return spec
+
+        # Find theta and color encodings from arc layer or top-level
+        theta_enc = (
+            arc_layer.get("encoding", {}).get("theta")
+            or spec.get("encoding", {}).get("theta")
+        )
+        color_enc = (
+            arc_layer.get("encoding", {}).get("color")
+            or spec.get("encoding", {}).get("color")
+        )
+        if not theta_enc or not color_enc:
+            return spec
+
+        theta_field = theta_enc.get("field", "")
+        color_field = color_enc.get("field", "")
+        if not theta_field or not color_field:
+            return spec
+
+        # Remove existing text layers
+        spec["layer"] = [l for l in layers if self._get_layer_mark_type(l) != "text"]
+
+        # Normalize arc mark and set outerRadius
+        arc_mark = arc_layer.get("mark", {})
+        if isinstance(arc_mark, str):
+            arc_layer["mark"] = {"type": "arc", "outerRadius": 80}
+        elif isinstance(arc_mark, dict):
+            arc_mark.setdefault("outerRadius", 80)
+
+        outer_r = arc_layer["mark"].get("outerRadius", 80) if isinstance(arc_layer["mark"], dict) else 80
+
+        # Count categories from inline data to decide whether labels fit
+        n_categories = self._count_arc_categories(spec, color_field)
+        if n_categories <= self._MAX_ARC_LABELS:
+            text_layer = {
+                "mark": {
+                    "type": "text",
+                    "radius": outer_r + 30,
+                    "fontSize": 11,
+                },
+                "encoding": {
+                    "theta": dict(theta_enc, stack=True),
+                    "text": {"field": color_field, "type": "nominal"},
+                    "color": {"value": "black"},
+                },
+            }
+            spec["layer"].append(text_layer)
+
+        # Ensure legend is enabled on color encoding
+        for layer in spec["layer"]:
+            enc = layer.get("encoding", {})
+            color = enc.get("color", {})
+            if isinstance(color, dict) and color.get("field"):
+                color.pop("legend", None)
+        top_color = spec.get("encoding", {}).get("color", {})
+        if isinstance(top_color, dict) and top_color.get("field"):
+            top_color.pop("legend", None)
+
+        return spec
+
+    def _count_arc_categories(self, spec: dict, color_field: str) -> int:
+        """Count unique category values from inline data.
+
+        Returns 0 when data is referenced by name (not inline) so that
+        the caller falls back to adding labels by default.
+        """
+        data = spec.get("data", {})
+        values = data.get("values", [])
+        if not values:
+            return 0
+        return len({row.get(color_field) for row in values if color_field in row})
+
     def _get_layer_mark_type(self, layer: dict) -> str | None:
         """Extract mark type from a layer, handling both dict and string formats."""
         if "mark" in layer:
@@ -565,6 +661,7 @@ class VegaLiteAgent(BaseCodeAgent):
                 vega_spec["height"] = "container"
 
         self._editor_type.validate_spec(vega_spec)
+        vega_spec = self._fix_arc_labels(vega_spec)
 
         # using string comparison because these keys could be in different nested levels
         vega_spec_str = dump_yaml(vega_spec)
