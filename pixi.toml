@@ -33,6 +33,7 @@ param = ">=2.2.1"
 pip = "*"
 sqlglot = "*"
 sqlglotrs = "*"
+watchfiles = ">=1.2.0,<2"
 
 [feature.py312.dependencies]
 python = "3.12.*"

@@ -87,6 +87,7 @@ class TableListAgent(BaseListAgent):
     @classmethod
     async def applies(cls, context: TContext) -> bool:
         visible_slugs = context.get("visible_slugs")
+
         if visible_slugs and len(visible_slugs) > 1:
             return True
 

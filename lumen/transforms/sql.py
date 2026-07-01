@@ -429,7 +429,7 @@ class SQLLimit(SQLTransform):
                 # do not modify the original query
                 return sql_in
 
-        subquery = self._to_subquery(parsed_expression)
+        subquery = self._to_subquery(parsed_expression, "subquery")
         expression = select("*").from_(subquery).limit(self.limit)
         return self.to_sql(expression)
 
@@ -444,7 +444,7 @@ class SQLDistinct(SQLTransform):
         if not self.columns:
             return sql_in
 
-        subquery = self._to_subquery(self.parse_sql(sql_in))
+        subquery = self._to_subquery(self.parse_sql(sql_in), "subquery")
         expression = select(*[Identifier(this=col, quoted=True) for col in self.columns]).from_(subquery).distinct()
         return self.to_sql(expression)
 
@@ -454,7 +454,7 @@ class SQLCount(SQLTransform):
     transform_type: ClassVar[str] = 'sql_count'
 
     def apply(self, sql_in: str) -> str:
-        subquery = self._to_subquery(self.parse_sql(sql_in))
+        subquery = self._to_subquery(self.parse_sql(sql_in), "subquery")
         expression = select("COUNT(*) as count").from_(subquery)
         return self.to_sql(expression)
 
@@ -469,7 +469,7 @@ class SQLMinMax(SQLTransform):
         if not self.columns:
             return sql_in
 
-        subquery = self._to_subquery(self.parse_sql(sql_in))
+        subquery = self._to_subquery(self.parse_sql(sql_in), "subquery")
         minmax = []
         for col in self.columns:
             quoted = self.identify or bool(re.search(r'\W', col))
