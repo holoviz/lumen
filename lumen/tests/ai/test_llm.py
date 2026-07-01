@@ -13,8 +13,8 @@ try:
 
     from lumen.ai.agents.vega_lite import VegaLiteAgent
     from lumen.ai.llm import (
-        MLX, Anthropic, AzureOpenAI, Bedrock, Google, Groq, LiteLLM, LlamaCpp,
-        Llm, Message, MistralAI, Ollama, OpenAI, WebLLM,
+        MLX, Anthropic, AnthropicBedrock, AzureOpenAI, Bedrock, Google, Groq,
+        LiteLLM, LlamaCpp, Llm, Message, MistralAI, Ollama, OpenAI, WebLLM,
     )
 
 except ModuleNotFoundError:
@@ -623,6 +623,21 @@ class TestPrepareVisionMessages:
         assert len(content) == 2
         assert content[0] == "Annotate this"
         assert isinstance(content[1], Image)
+
+
+@pytest.mark.parametrize(
+    "cls, cache, expected",
+    [
+        (Anthropic, "5m", {"type": "ephemeral"}),
+        (Anthropic, "1h", {"type": "ephemeral", "ttl": "1h"}),
+        (Anthropic, None, None),
+        (AnthropicBedrock, "1h", None),
+    ],
+    ids=["5m", "1h", "off", "bedrock"],
+)
+def test_anthropic_cache_control(cls, cache, expected):
+    llm = cls(model_kwargs={"default": {"model": "m"}}, cache=cache)
+    assert llm._cache_control() == expected
 
 
 def _all_llm_classes():
