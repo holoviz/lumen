@@ -13,8 +13,8 @@ try:
 
     from lumen.ai.agents.vega_lite import VegaLiteAgent
     from lumen.ai.llm import (
-        Anthropic, AnthropicBedrock, AzureOpenAI, Google, Groq, Llm, Message,
-        MistralAI, OpenAI,
+        Anthropic, AnthropicBedrock, AzureOpenAI, Bedrock, Google, Groq, LiteLLM,
+        Llm, LlamaCpp, MLX, Message, MistralAI, Ollama, OpenAI, WebLLM
     )
 
 except ModuleNotFoundError:
@@ -27,6 +27,19 @@ from pydantic import BaseModel
 # Helpers
 # ---------------------------------------------------------------------------
 
+# (provider, required_init_kwargs, non-temperature keys retained in _client_kwargs, default temperature)
+PROVIDER_SPECS = [
+    pytest.param(OpenAI, {}, set(), 0.25, id="openai"),
+    pytest.param(AzureOpenAI, {"api_version": "av", "endpoint": "ep"}, set(), 1, id="azure"),
+    pytest.param(MistralAI, {}, set(), 0.7, id="mistral"),
+    pytest.param(Anthropic, {}, {"max_tokens"}, 0.7, id="anthropic"),
+    pytest.param(Bedrock, {}, {"maxTokens"}, 0.7, id="bedrock"),
+    pytest.param(LlamaCpp, {}, set(), 0.4, id="llamacpp"),
+    pytest.param(MLX, {}, {"max_tokens"}, 0.4, id="mlx"),
+    pytest.param(LiteLLM, {}, set(), 0.7, id="litellm"),
+    pytest.param(Ollama, {"api_key": "ollama"}, set(), 0.25, id="ollama"),
+]
+
 def _make_test_image() -> Image:
     """Create a tiny 1x1 PNG encoded as an instructor Image."""
     pixel = base64.b64encode(
@@ -37,6 +50,14 @@ def _make_test_image() -> Image:
     ).decode('utf-8')
     return Image.from_raw_base64(pixel)
 
+
+def _make(provider, required, temperature="__default__"):
+    # temperature is constant=True; the sentinel lets us build with the default too.
+    kw = dict(required)
+    kw["model_kwargs"] = {"default": {"model": "m"}}
+    if temperature != "__default__":
+        kw["temperature"] = temperature
+    return provider(**kw)
 
 # ---------------------------------------------------------------------------
 # AzureOpenAI model kwargs tests
@@ -604,11 +625,6 @@ class TestPrepareVisionMessages:
         assert isinstance(content[1], Image)
 
 
-# ---------------------------------------------------------------------------
-# Anthropic prompt caching tests
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     "cls, cache, expected",
     [
@@ -622,3 +638,72 @@ class TestPrepareVisionMessages:
 def test_anthropic_cache_control(cls, cache, expected):
     llm = cls(model_kwargs={"default": {"model": "m"}}, cache=cache)
     assert llm._cache_control() == expected
+
+
+def _all_llm_classes():
+    """Recursively collect ``Llm`` and every subclass so new providers are
+    covered automatically (``__subclasses__`` is not transitive)."""
+    seen = {Llm}
+    stack = [Llm]
+    while stack:
+        for sub in stack.pop().__subclasses__():
+            if sub not in seen:
+                seen.add(sub)
+                stack.append(sub)
+    return sorted(seen, key=lambda c: c.__name__)
+
+
+@pytest.mark.parametrize("provider", _all_llm_classes(), ids=lambda c: c.__name__)
+def test_temperature_param_allows_none(provider):
+    assert provider.param["temperature"].allow_None is True
+
+
+@pytest.mark.parametrize(
+    ("provider", "required", "extra_keys", "default_temp"),
+    PROVIDER_SPECS + [pytest.param(Google, {}, set(), 1, id="google")],
+)
+def test_construct_with_temperature_none(provider, required, extra_keys, default_temp):
+    llm = _make(provider, required, temperature=None)
+    assert llm.temperature is None
+
+
+@pytest.mark.parametrize(("provider", "required", "extra_keys", "default_temp"), PROVIDER_SPECS)
+def test_client_kwargs_omits_temperature_when_none(provider, required, extra_keys, default_temp):
+    kwargs = _make(provider, required, temperature=None)._client_kwargs
+    assert "temperature" not in kwargs
+    assert set(kwargs) == extra_keys
+
+
+@pytest.mark.parametrize("temperature", [0.5, 0.0], ids=["positive", "zero_boundary"])
+@pytest.mark.parametrize(("provider", "required", "extra_keys", "default_temp"), PROVIDER_SPECS)
+def test_client_kwargs_includes_temperature_when_set(provider, required, extra_keys, default_temp, temperature):
+    kwargs = _make(provider, required, temperature=temperature)._client_kwargs
+    assert kwargs["temperature"] == temperature
+    assert extra_keys <= set(kwargs)
+
+
+@pytest.mark.parametrize(("provider", "required", "extra_keys", "default_temp"), PROVIDER_SPECS)
+def test_default_temperature_preserved(provider, required, extra_keys, default_temp):
+    llm = _make(provider, required)
+    assert llm.temperature == default_temp
+    assert llm._client_kwargs["temperature"] == default_temp
+
+
+def test_google_client_kwargs_unaffected_by_temperature():
+    assert Google(model_kwargs={"default": {"model": "m"}}, temperature=None)._client_kwargs == {}
+    assert Google(model_kwargs={"default": {"model": "m"}}, temperature=0.5)._client_kwargs == {}
+
+
+def test_webllm_client_kwargs_never_includes_temperature():
+    # WebLLM configures sampling on the panel_web_llm component, not via _client_kwargs.
+    pytest.importorskip("panel_web_llm")
+    assert WebLLM(model_kwargs={"default": {"model": "m"}}, temperature=None)._client_kwargs == {}
+    assert WebLLM(model_kwargs={"default": {"model": "m"}}, temperature=0.5)._client_kwargs == {}
+
+
+def test_mlx_make_sampler_handles_none():
+    pytest.importorskip("mlx_lm.sample_utils")
+    none_llm = MLX(model_kwargs={"default": {"model": "m"}}, temperature=None)
+    set_llm = MLX(model_kwargs={"default": {"model": "m"}}, temperature=0.5)
+    assert callable(none_llm._make_sampler())
+    assert callable(set_llm._make_sampler())

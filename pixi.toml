@@ -88,13 +88,11 @@ pytest-github-actions-annotate-failures = "*"
 pytest-rerunfailures = "*"
 pytest-xdist = "*"
 pytest-asyncio = "*"
-dask = "<=2024.10" # Temporary workaround for pyarrow string issue in tests
 
 [feature.test-core.tasks]
 test-unit = 'pytest lumen/tests -n logical --dist loadgroup'
 
 [feature.test.dependencies]
-dask = "<=2024.10" # Temporary workaround for pyarrow string issue in tests
 dask-core = "*"
 fastparquet = "*"
 matplotlib-base = ">=3.4" # Ubuntu + Python 3.9 installs old version matplotlib (3.3.2)

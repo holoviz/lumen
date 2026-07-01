@@ -71,6 +71,16 @@ model_config = {
 
 Recommended ranges: 0.1 (SQL) to 0.4 (chat).
 
+### Disabling temperature
+
+Some newer models (e.g. reasoning models) reject a `temperature` argument. Set `temperature=None` to omit it from requests entirely, falling back to the provider's own default:
+
+``` py title="Omit temperature"
+llm = lmai.llm.Anthropic(temperature=None)
+```
+
+This works on every provider. Local backends (MLX, Llama.cpp) fall back to their built-in sampler default when `None`.
+
 ## Supported providers
 
 For installation and API key setup instructions, see the [Installation guide](../installation.md).
