@@ -6,6 +6,7 @@ import param
 
 from pydantic import BaseModel, Field
 
+from ...pipeline import Pipeline
 from ...sources.base import BaseSQLSource, Source
 from ...transforms.sql import SQLLimit
 from ..config import PROMPTS_DIR
@@ -20,9 +21,6 @@ from ..utils import (
 )
 from .base_lumen import BaseLumenAgent
 from .sql import SQLOutputs
-
-if t.TYPE_CHECKING:
-    from ...pipeline import Pipeline
 
 
 class DbtslQueryParams(BaseModel):
