@@ -21,7 +21,8 @@ from ..config import PROMPTS_DIR, UserCancelledError
 from ..editors import DeckGLEditor
 from ..models import BaseModel, EscapeBaseModel, RetrySpec
 from ..utils import (
-    get_data, get_schema, retry_llm_output, sanitize_column_names,
+    detect_gridded, get_data, get_schema, retry_llm_output,
+    sanitize_column_names,
 )
 from .base_code import BaseCodeAgent
 
@@ -152,6 +153,7 @@ class DeckGLAgent(BaseCodeAgent):
     ) -> dict[str, Any]:
         """Generate DeckGL spec via YAML/JSON (declarative mode)."""
         errors_context = self._build_errors_context(pipeline, context, errors)
+        gridded = detect_gridded(pipeline)
 
         with self._add_step(title="Generating DeckGL specification", steps_layout=self._steps_layout) as step:
             response = self._stream_prompt(
@@ -160,6 +162,7 @@ class DeckGLAgent(BaseCodeAgent):
                 context,
                 table=pipeline.table,
                 doc=doc,
+                gridded=gridded,
                 **errors_context,
             )
             async for output in response:
@@ -182,6 +185,7 @@ class DeckGLAgent(BaseCodeAgent):
     ) -> dict[str, Any] | None:
         """Generate spec via PyDeck code execution."""
         errors_context = self._build_errors_context(pipeline, context, errors)
+        gridded = detect_gridded(pipeline)
 
         with self._add_step(title="Generating PyDeck code", steps_layout=self._steps_layout) as step:
             response = self._stream_prompt(
@@ -190,6 +194,7 @@ class DeckGLAgent(BaseCodeAgent):
                 context,
                 table=pipeline.table,
                 doc=doc,
+                gridded=gridded,
                 **errors_context,
             )
 
