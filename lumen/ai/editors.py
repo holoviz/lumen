@@ -23,12 +23,13 @@ from panel.widgets import CodeEditor
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
     Alert, Button, Checkbox, CircularProgress, FileDownload, FlexBox,
-    FloatInput, MenuButton, Tabs,
+    FloatInput, MenuButton, MenuToggle, Paper, Tabs,
 )
 from PIL import Image
 
 from ..base import Component
 from ..config import dump_yaml, load_yaml
+from ..filters import WidgetFilter
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
 from ..views.base import Panel, Table, View
@@ -509,6 +510,126 @@ class SQLEditor(LumenEditor):
 
     export_formats = ("sql", "csv", "xlsx", "json", "markdown")
     _label = "Table"
+
+    # Icon shown in the "Add Filter" menu for each schema type.
+    _filter_icons = {
+        "number": "calculate",
+        "integer": "numbers",
+        "boolean": "toggle_on",
+    }
+
+    def _render_editor(self):
+        editor = super()._render_editor()
+        self._filters: dict[str, WidgetFilter] = {}
+        self._filter_area = FlexBox(
+            sizing_mode="stretch_width", justify_content="space-evenly"
+        )
+        # The filter widgets live in a Paper that the exploration view places
+        # above the editor/table split (see ExplorerUI._render_view), so adding
+        # filters pushes both the SQL editor and the results table down. Only
+        # shown once at least one filter has been added.
+        self._filter_paper = Paper(
+            self._filter_area, elevation=2, margin=(5, 10),
+            sizing_mode="stretch_width", visible=False,
+        )
+        return editor
+
+    def _filter_icon(self, col_schema: dict[str, Any]) -> str:
+        if col_schema.get("dimension"):
+            # Coordinate axis of an xarray source (time/lat/lon/level, ...).
+            if col_schema.get("format") == "datetime":
+                return "schedule"
+            return "straighten"
+        col_type = col_schema.get("type")
+        if col_type == "string":
+            if "enum" in col_schema:
+                return "format_list_bulleted"
+            elif col_schema.get("format") == "datetime":
+                return "calendar_month"
+            return "text_fields"
+        return self._filter_icons.get(col_type, "help")
+
+    def _filter_tooltip(self, col_schema: dict[str, Any]) -> str:
+        # Hover hint showing the column's filterable range (min .. max) or, for
+        # categorical columns, its options. Empty when neither is available.
+        lo, hi = col_schema.get("inclusiveMinimum"), col_schema.get("inclusiveMaximum")
+        if lo is not None and hi is not None:
+            if col_schema.get("type") in ("number", "integer"):
+                return f"{lo:g} .. {hi:g}"
+            return f"{lo} .. {hi}"
+        enum = col_schema.get("enum")
+        if enum:
+            return ", ".join(map(str, enum[:6])) + (", ..." if len(enum) > 6 else "")
+        return ""
+
+    def _filter_items(self) -> list[dict[str, Any]]:
+        # Coordinate dimensions (if any) are listed first, then data variables /
+        # tabular columns. Tabular sources carry no "dimension" flag, so their
+        # ordering is unchanged. Columns with an active filter show a filled
+        # check (review: make the active state visible in the menu).
+        active = {filt.field for filt in self.component.filters}
+        dimensions, variables = [], []
+        for col, col_schema in self.component.schema.items():
+            if col == "__len__":
+                continue
+            item = {
+                "label": col,
+                "icon": self._filter_icon(col_schema),
+                "active_icon": "check_circle",
+                "active_color": "primary",
+                "toggled": col in active,
+            }
+            tooltip = self._filter_tooltip(col_schema)
+            if tooltip:
+                item["tooltip"] = tooltip
+            (dimensions if col_schema.get("dimension") else variables).append(item)
+        return dimensions + variables
+
+    def _add_filter(self, item):
+        field = item["label"]
+        if item["toggled"]:
+            filt = self._filters.get(field)
+            if filt is None:
+                filt = WidgetFilter(field=field, schema=self.component.schema)
+                # Cap each filter's width (review: it was too long) so two fit
+                # per row; the FlexBox's space-evenly justification gives equal
+                # gaps before, between and after them. Small vertical margin.
+                # The range is surfaced as a hover tooltip (description) since the
+                # always-on value readout is hidden below.
+                widget_opts = {
+                    "width": 180, "margin": (5, 0),
+                    "description": self._filter_tooltip(self.component.schema[field]),
+                }
+                # Hide the slider value readout for a cleaner look (review);
+                # non-slider filter widgets (e.g. Select) lack this param.
+                if "show_value" in filt.widget.param:
+                    widget_opts["show_value"] = False
+                filt.widget.param.update(**widget_opts)
+                self._filters[field] = filt
+            self._filter_area.append(filt.widget)
+            self.component.add_filter(filt)
+            self._filter_paper.visible = True
+            return
+        removed = [filt for filt in self.component.filters if filt.field == field]
+        removed_widgets = [filt.widget for filt in removed]
+        self._filter_area[:] = [w for w in self._filter_area if w not in removed_widgets]
+        self.component.filters = [
+            filt for filt in self.component.filters if filt not in removed
+        ]
+        self._filter_paper.visible = bool(len(self._filter_area))
+
+    def render_controls(self, task: Task, interface: ChatFeed):
+        controls = super().render_controls(task, interface)
+        filter_controls = MenuToggle(
+            items=self._filter_items(),
+            label="Add Filter",
+            icon="filter_list",
+            margin=0,
+            variant="text",
+            on_click=self._add_filter,
+        )
+        controls.insert(1, filter_controls)
+        return controls
 
     def export(self, fmt: str) -> StringIO | BytesIO:
         super().export(fmt)

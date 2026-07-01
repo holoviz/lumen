@@ -1,5 +1,6 @@
 import typing as t
 
+import pandas as pd
 import param
 import yaml
 
@@ -7,6 +8,7 @@ from panel.chat import ChatStep
 from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 
+from ...filters import ConstantFilter
 from ...pipeline import Pipeline
 from ...sources.base import BaseSQLSource, Source
 from ...sources.duckdb import DuckDBSource
@@ -273,6 +275,93 @@ def make_load_table_schemas_tool(metaset: Metaset) -> FunctionTool:
     )
 
 
+_RANGE_FIELD_TYPES = ("number", "integer")
+
+
+def _coerce_filter_value(field_schema: dict[str, t.Any], value: t.Any) -> t.Any:
+    """Coerce an LLM-supplied filter value to what the Source expects.
+
+    A two-element ``[lo, hi]`` list on a numeric or datetime field becomes a
+    ``(lo, hi)`` tuple (interpreted as an inclusive range / ``BETWEEN``); datetime
+    bounds are parsed to timestamps. Scalars (equality) and longer lists
+    (membership / ``IN``) are passed through unchanged.
+    """
+    is_datetime = field_schema.get("format") in ("date", "date-time", "datetime")
+    if isinstance(value, (list, tuple)) and len(value) == 2 and (
+        field_schema.get("type") in _RANGE_FIELD_TYPES or is_datetime
+    ):
+        lo, hi = value
+        if is_datetime:
+            lo, hi = pd.Timestamp(lo), pd.Timestamp(hi)
+        return (lo, hi)
+    return value
+
+
+def make_apply_filter_tool(pipeline: Pipeline) -> FunctionTool:
+    """Build a :class:`~lumen.ai.tools.FunctionTool` that filters ``pipeline``.
+
+    The tool lets the chat agent narrow the data already loaded in the current
+    exploration -- subsetting an xarray coordinate dimension (``time``/``lat``/
+    ``lon``/level) or a tabular column. It adds a
+    :class:`~lumen.filters.base.Filter` to the pipeline (the same machinery as
+    the manual "Add Filter" UI), which subsets the data without modifying the
+    SQL query.
+
+    Known limitation: this tool is registered on :class:`SQLAgent`, whose
+    response also emits a SQL query. A single "filter" request can therefore
+    both apply this in-place pipeline filter to the current exploration and open
+    a new exploration whose SQL carries an equivalent ``WHERE`` clause. Giving
+    the tool a dedicated, non-SQL-emitting home is tracked as follow-up work.
+    """
+    schema = pipeline.schema or {}
+    filterable = [c for c in schema if c != "__len__"]
+
+    async def apply_filter(field: str, value: t.Any) -> str:
+        if field not in filterable:
+            return (
+                f"Cannot filter on {field!r}: not a column of this table. "
+                f"Filterable fields: {', '.join(filterable) or '(none)'}."
+            )
+        try:
+            coerced = _coerce_filter_value(schema[field], value)
+            filt = ConstantFilter(field=field, value=coerced, schema=schema)
+            # Replace any existing filter on the same field so repeated calls
+            # refine rather than stack contradictory conditions.
+            pipeline.filters = [f for f in pipeline.filters if f.field != field]
+            pipeline.add_filter(filt)
+        except Exception as exc:
+            return f"Could not apply filter on {field!r} with value {value!r}: {exc}"
+        return f"Applied filter on {field!r} ({value!r}); {len(pipeline.data)} rows match."
+
+    fields = ", ".join(filterable) or "(none)"
+    apply_filter.__doc__ = (
+        "Filter the current exploration's data on a single field. "
+        f"Filterable fields: {fields}. "
+        "Pass a [min, max] list for a numeric or datetime range, a single value "
+        "for an exact match, or a list of values for membership."
+    )
+    return FunctionTool(
+        apply_filter,
+        purpose=(
+            "Subset the data already loaded in the current exploration (e.g. an "
+            "xarray coordinate such as time/lat/lon, or a tabular column). Prefer "
+            "this over rewriting SQL when the user wants to narrow the existing result."
+        ),
+    )
+
+
+def make_apply_filter_llm_tool(context: TContext):
+    """Expose :func:`make_apply_filter_tool` as a context-gated ``llm_tools`` entry.
+
+    Returns the tool only when a pipeline is present in working memory, so it is
+    offered to the LLM exactly when there is an existing exploration to filter.
+    """
+    pipeline = context.get("pipeline")
+    if pipeline is None:
+        return []
+    return make_apply_filter_tool(pipeline)
+
+
 class SQLInputs(ContextModel):
 
     data: t.NotRequired[t.Any]
@@ -313,6 +402,12 @@ class SQLAgent(BaseLumenAgent):
     )
 
     exclusions = param.List(default=["dbtsl_metaset"])
+
+    # When an exploration pipeline is already in context, let the LLM narrow it
+    # with apply_filter. NOTE: SQLAgent also emits a SQL query, so a filter
+    # request may both apply this in-place filter and open a new SQL exploration
+    # (see make_apply_filter_tool for the known limitation / follow-up).
+    llm_tools = param.List(default=[make_apply_filter_llm_tool])
 
     not_with = param.List(default=["DbtslAgent", "MetadataLookup", "TableListAgent"])
 
