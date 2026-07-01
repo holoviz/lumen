@@ -6,7 +6,7 @@
 - Do NOT modify the data field
 - For overlays: data at top level, encoding in layer
 
-# Publication-Ready Requests
+## Publication-Ready Requests
 
 If user asks to "make it look better", "professional", "publication-ready", or similar, apply these changes:
 
@@ -23,7 +23,7 @@ If user asks to "make it look better", "professional", "publication-ready", or s
 {% endblock %}
 
 {%- block examples -%}
-# EXAMPLES
+## EXAMPLES
 {% if doc_examples is defined and doc_examples %}
 {% for example in doc_examples %}
 {{ example }}
@@ -34,16 +34,16 @@ If user asks to "make it look better", "professional", "publication-ready", or s
 ```yaml
 config:
   axis:
-    labelFontSize: 21
-    titleFontSize: 24
+    labelFontSize: 16
+    titleFontSize: 20
     titlePadding: 15
   axisX:
     grid: false
   axisY:
     gridColor: '#cccccc'
   title:
-    fontSize: 30
-    subtitleFontSize: 21
+    fontSize: 26
+    subtitleFontSize: 18
     subtitlePadding: 10
   view:
     stroke: null

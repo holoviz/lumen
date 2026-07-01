@@ -28,7 +28,7 @@ Ground Rules:
 {% endblock -%}
 
 {%- block context %}
-# Available Actors with Dependency Analysis
+## Available Actors with Dependency Analysis
 {%- if tools %}
 ## Tools
 {% for tool in tools %}
@@ -185,7 +185,7 @@ The previous plan that was executed:
 
 {# Break the terrible loop of it not planning properly #}
 {% if previous_plans and not (previous_plans | length) % 2 == 0 and unmet_dependencies %}
-# ❌ Previous Planning Failure
+## ❌ Previous Planning Failure
 
 What went wrong: In your previous attempt, you planned:
 """
@@ -206,7 +206,7 @@ Available solutions:
 {%- endfor %}
 {% endif %}
 
-## Recovery Strategy:
+## Recovery Strategy
 1. Identify which actor(s) failed due to missing dependencies
 2. Add the appropriate provider(s) from the available solutions above
 3. Reorder your plan so providers come before consumers

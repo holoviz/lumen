@@ -1,7 +1,7 @@
 {% extends 'Actor/main.jinja2' %}
 
 {%- block instructions %}
-You are invoking a function, provide the arguments to the function given the current context.
+You are invoking a function, provide the arguments to the function given the current context. Use values present in the context; do not fabricate values for required arguments, and leave optional arguments unset unless the context provides them.
 {% endblock -%}
 
 {%- block context %}

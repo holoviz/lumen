@@ -3,7 +3,7 @@
 {% block instructions %}
 Generate PyDeck code. Data is `df`, assign to `deck`. NO I/O methods (.to_html(), .show(), etc.).
 
-# Layer Type Selection (in order of preference for 3D impact)
+## Layer Type Selection (in order of preference for 3D impact)
 
 **For data with numeric values to visualize:**
 1. **ColumnLayer** - Best for discrete points with values; creates striking 3D bar charts on the map
@@ -20,13 +20,13 @@ Generate PyDeck code. Data is `df`, assign to `deck`. NO I/O methods (.to_html()
 **For paths/routes:**
 7. **PathLayer** - Connected line segments
 
-# Key Parameters for 3D Visualization
+## Key Parameters for 3D Visualization
 - `pitch`: 45-60 for good 3D perspective
 - `bearing`: 0 or slight angle (-15 to 15) for visual interest
 - `elevation_scale`: Controls the height of 3D elements
 - `extruded`: Set to True for 3D extrusion
 
-# Map Styles (no API key needed)
+## Map Styles (no API key needed)
 - `"https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"` (dark - best for 3D)
 - `"https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"` (light)
 - `"https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json"` (detailed)
@@ -144,6 +144,6 @@ Previous specification (modify as requested):
 {{ memory["view"]["spec"] | json_to_yaml }}
 {%- endif %}
 {% if memory['pipeline'].source.dialect == "snowflake" %}
-**Note:** Use UPPER CASE field names for Snowflake.
+Use UPPER CASE field names.
 {% endif %}
 {%- endblock %}
