@@ -927,7 +927,8 @@ class hvPlotBaseView(View):
         objects=[
             'area', 'bar', 'barh', 'bivariate', 'box', 'contour', 'contourf',
             'errorbars', 'hist', 'image', 'kde', 'labels',
-            'line', 'scatter', 'heatmap', 'hexbin', 'ohlc', 'points', 'step', 'violin'
+            'line', 'scatter', 'heatmap', 'hexbin', 'ohlc', 'points', 'quadmesh',
+            'step', 'violin'
         ]
     )
 
@@ -939,19 +940,31 @@ class hvPlotBaseView(View):
 
     groupby = param.ListSelector(doc="The column(s) to group by.")
 
+    z = param.Selector(doc="""
+        Column of z-values for gridded plot kinds (image, quadmesh, heatmap, contourf).
+        Internally mapped to hvPlot's C= for kind='heatmap' and z= for other kinds.""")
+
     geo = param.Boolean(
         default=False, doc="Toggle True if the plot is on a geographic map."
     )
 
-    _field_params = ['x', 'y', 'by', 'groupby']
+    _field_params = ['x', 'y', 'by', 'groupby', 'z']
 
     __abstract = True
 
+    _hvplot_xarray_available = False
+
     def __init__(self, **params):
         import hvplot.pandas  # type: ignore
+        try:
+            import hvplot.xarray  # type: ignore
+        except Exception:
+            type(self)._hvplot_xarray_available = False
+        else:
+            type(self)._hvplot_xarray_available = True
         if 'dask' in sys.modules:
             try:
-                import hvplot.dask  # type: ignore # noqa
+                import hvplot.dask  # type: ignore  # noqa: F401
             except Exception:
                 pass
         if 'by' in params and isinstance(params['by'], str):
@@ -1030,6 +1043,46 @@ class hvPlotView(hvPlotBaseView):
         self._linked_objs = []
         super().__init__(**params)
 
+    _GRIDDED_KINDS = ('quadmesh', 'image', 'contourf')
+
+    # Safety cap on pivoted grid size. 10M cells = ~80MB for float64.
+    # Anything larger is rejected with a clear error rather than risking OOM.
+    _GRIDDED_MAX_CELLS = 10_000_000
+
+    def _to_gridded(self, df):
+        """Pivot a long-form DataFrame (y, x, z columns) to a 2D xarray
+        DataArray that hvPlot's quadmesh/image/contourf kinds can consume.
+
+        Returns the original df unchanged if x, y, or z are not set, if
+        required columns are missing, if duplicate (y, x) combinations are
+        present, or if the input is already an xarray object (falls back
+        to hvPlot's own path so it raises the informative error).
+
+        Raises ValueError if the pivoted grid would exceed
+        _GRIDDED_MAX_CELLS to prevent OOM.
+        """
+        import pandas as pd
+        if not isinstance(df, pd.DataFrame):
+            return df
+        if not self._hvplot_xarray_available:
+            return df
+        if not (self.x and self.y and self.z):
+            return df
+        required_cols = {self.x, self.y, self.z}
+        if not required_cols.issubset(df.columns):
+            return df
+        if df.duplicated(subset=[self.y, self.x]).any():
+            return df
+        n_cells = df[self.y].nunique() * df[self.x].nunique()
+        if n_cells > self._GRIDDED_MAX_CELLS:
+            raise ValueError(
+                f"Pivoted grid would have {n_cells:,} cells, exceeding the "
+                f"{self._GRIDDED_MAX_CELLS:,} safety cap. Reduce the data "
+                f"(filter, resample, or aggregate) before using kind={self.kind!r}."
+            )
+        indexed = df.set_index([self.y, self.x])[self.z]
+        return indexed.to_xarray()
+
     def get_plot(self, df):
         processed = {}
         for k, v in self.kwargs.items():
@@ -1040,8 +1093,14 @@ class hvPlotView(hvPlotBaseView):
             processed[k] = v
         if self.streaming:
             processed['stream'] = self._data_stream
+        if self.z is not None:
+            processed['C' if self.kind == 'heatmap' else 'z'] = self.z
 
-        plot = df.hvplot(
+        plot_source = df
+        if self.kind in self._GRIDDED_KINDS:
+            plot_source = self._to_gridded(df)
+
+        plot = plot_source.hvplot(
             kind=self.kind, x=self.x, y=self.y, by=self.by, groupby=self.groupby, **processed
         )
         if self.operations:
