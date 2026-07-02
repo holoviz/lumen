@@ -522,7 +522,8 @@ class SQLEditor(LumenEditor):
         editor = super()._render_editor()
         self._filters: dict[str, WidgetFilter] = {}
         self._filter_area = FlexBox(
-            sizing_mode="stretch_width", justify_content="space-evenly"
+            sizing_mode="stretch_width", justify_content="space-evenly",
+            max_height=300, styles={"overflow-y": "auto"},
         )
         # The filter widgets live in a Paper that the exploration view places
         # above the editor/table split (see ExplorerUI._render_view), so adding
@@ -591,18 +592,19 @@ class SQLEditor(LumenEditor):
             filt = self._filters.get(field)
             if filt is None:
                 filt = WidgetFilter(field=field, schema=self.component.schema)
-                # Cap each filter's width (review: it was too long) so two fit
-                # per row; the FlexBox's space-evenly justification gives equal
-                # gaps before, between and after them. Small vertical margin.
-                # The range is surfaced as a hover tooltip (description) since the
-                # always-on value readout is hidden below.
+                # Cap each filter's width so two fit per row; the FlexBox's
+                # space-evenly justification gives equal gaps. Use the compact
+                # size, hide the always-on value, and surface the range as a
+                # hover tooltip (description). size/show_value are slider-only,
+                # so guard for non-slider filters (e.g. Select).
                 widget_opts = {
-                    "width": 180, "margin": (5, 0),
+                    "width": 180, "margin": (8, 5),
                     "description": self._filter_tooltip(self.component.schema[field]),
                 }
-                # Hide the slider value readout for a cleaner look (review);
-                # non-slider filter widgets (e.g. Select) lack this param.
-                if "show_value" in filt.widget.param:
+                params = filt.widget.param
+                if "size" in params:
+                    widget_opts["size"] = "small"
+                if "show_value" in params:
                     widget_opts["show_value"] = False
                 filt.widget.param.update(**widget_opts)
                 self._filters[field] = filt
