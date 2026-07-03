@@ -66,6 +66,14 @@ Step {{ step_number }}: {{ current_step }}
 
 Use materialized tables above instead of rebuilding CTEs
 {%- endif %}
+
+{%- if active_filters %}
+## Active exploration filters
+The user has interactively subset the current data with these filters. Add the equivalent WHERE conditions so the results stay consistent with what they are looking at:
+{% for condition in active_filters %}
+- {{ condition }}
+{%- endfor %}
+{%- endif %}
 {% endblock %}
 
 {%- block errors %}

@@ -574,6 +574,27 @@ class SQLAgent(BaseLumenAgent):
             mirrors[renamed_table] = (sources[(m.source, m.table)], m.table)
         return DuckDBSource(uri=":memory:", mirrors=mirrors), list(mirrors)
 
+    @staticmethod
+    def _active_filters(pipeline: Pipeline | None) -> list[str] | None:
+        """Describe the interactive filters currently applied to ``pipeline`` as
+        WHERE-style conditions so a follow-up query can preserve the subset.
+        Returns None when there is no pipeline or no active filter."""
+        if pipeline is None:
+            return None
+        conditions = []
+        for filt in pipeline.filters:
+            query = filt.query
+            if query is None:
+                continue
+            if isinstance(query, tuple) and len(query) == 2:
+                condition = f"between {query[0]} and {query[1]}"
+            elif isinstance(query, (list, set)):
+                condition = f"in ({', '.join(repr(v) for v in query)})"
+            else:
+                condition = f"= {query!r}"
+            conditions.append(f"{filt.field} {condition}")
+        return conditions or None
+
     @retry_llm_output()
     async def _render_execute_query(
         self,
@@ -644,6 +665,7 @@ class SQLAgent(BaseLumenAgent):
                 sql_plan_context=None,
                 errors=errors,
                 discovery_context=discovery_context,
+                active_filters=self._active_filters(context.get("pipeline")),
                 source_names=sorted({s for s, _ in sources}),
                 tools=tool_list,
             )
