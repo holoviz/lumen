@@ -166,6 +166,18 @@ def test_add_filter_creates_labeled_widget(sql_pipeline_editor):
     assert filt.widget in list(editor._filter_area)
 
 
+def test_add_filter_creates_string_widget(sql_pipeline_editor):
+    # A string/categorical column yields a MultiChoice whose `size` param is an
+    # integer, not the slider's small/medium/large selector; adding it must not
+    # crash on the compact-size styling (regression: it raised ValueError, so the
+    # string filter never rendered).
+    editor = sql_pipeline_editor
+    editor._add_filter({"label": "category", "toggled": True})
+    filt = editor._filters["category"]
+    assert filt in editor.component.filters
+    assert filt.widget in list(editor._filter_area)
+
+
 def test_filter_subsets_and_restores_data(sql_pipeline_editor):
     editor = sql_pipeline_editor
     pipeline = editor.component

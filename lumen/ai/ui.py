@@ -2493,7 +2493,7 @@ class ExplorerUI(UI):
                 if event.new:
                     view[1] = VSplit(
                         filter_paper, vsplit,
-                        expanded_sizes=(15, 85), sizes=(15, 85),
+                        expanded_sizes=(25, 75), sizes=(25, 75),
                         sizing_mode="stretch_both", styles={"overflow": "auto"},
                         stylesheets=SPLITJS_STYLESHEETS,
                     )

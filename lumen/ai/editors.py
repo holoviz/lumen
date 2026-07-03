@@ -523,15 +523,18 @@ class SQLEditor(LumenEditor):
         self._filters: dict[str, WidgetFilter] = {}
         self._filter_area = FlexBox(
             sizing_mode="stretch_width", justify_content="space-evenly",
-            max_height=300, styles={"overflow-y": "auto"},
+            styles={"gap": "8px", "align-content": "flex-start"},
         )
         # The filter widgets live in a Paper that the exploration view places
         # above the editor/table split (see ExplorerUI._render_view), so adding
         # filters pushes both the SQL editor and the results table down. Only
-        # shown once at least one filter has been added.
+        # shown once at least one filter has been added. The Paper fills its
+        # split pane and scrolls internally (padding for margins) so tall
+        # multi-select filters stay contained instead of overlapping the editor.
         self._filter_paper = Paper(
-            self._filter_area, elevation=2, margin=(5, 10),
-            sizing_mode="stretch_width", visible=False,
+            self._filter_area, elevation=2, margin=(8, 10),
+            sizing_mode="stretch_both", styles={"overflow-y": "auto", "padding": "10px"},
+            visible=False,
         )
         return editor
 
@@ -595,14 +598,16 @@ class SQLEditor(LumenEditor):
                 # Cap each filter's width so two fit per row; the FlexBox's
                 # space-evenly justification gives equal gaps. Use the compact
                 # size, hide the always-on value, and surface the range as a
-                # hover tooltip (description). size/show_value are slider-only,
-                # so guard for non-slider filters (e.g. Select).
+                # hover tooltip (description).
                 widget_opts = {
                     "width": 180, "margin": (8, 5),
                     "description": self._filter_tooltip(self.component.schema[field]),
                 }
                 params = filt.widget.param
-                if "size" in params:
+                # `size` is a small/medium/large Selector on sliders but a
+                # visible-rows Integer on MultiChoice/TextInput, so only set it
+                # where "small" is a valid choice. show_value is slider-only.
+                if "size" in params and "small" in (getattr(params["size"], "objects", None) or []):
                     widget_opts["size"] = "small"
                 if "show_value" in params:
                     widget_opts["show_value"] = False
