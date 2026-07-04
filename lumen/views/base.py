@@ -1409,8 +1409,21 @@ class DeckGLView(View):
 
     _panel_type = pn.pane.DeckGL
 
+    # deck.gl serialises every row into the browser as JSON. Beyond a few
+    # hundred thousand records this reliably OOMs the tab, so reject it with a
+    # clear error rather than hanging the browser. Gridded xarray sources make
+    # this easy to hit, since a modest grid expands to lon*lat rows.
+    _MAX_ROWS = 250_000
+
     def _get_params(self) -> dict[str, Any]:
         df = self.get_data()
+        if len(df) > self._MAX_ROWS:
+            raise ValueError(
+                f"DeckGLView cannot render {len(df):,} rows; deck.gl serialises "
+                f"every row into the browser and would exhaust its memory. "
+                f"Reduce the pipeline to at most {self._MAX_ROWS:,} rows (e.g. via "
+                f"a SQL LIMIT, aggregation, or coarser grid) before rendering."
+            )
         # Deep copy to avoid modifying self.spec when injecting data
         spec = copy.deepcopy(self.spec)
 
