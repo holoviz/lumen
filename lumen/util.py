@@ -501,3 +501,12 @@ def check_xarray_available():
         return True
     except ImportError:
         return False
+
+
+def check_geopandas_available():
+    """Check if geopandas is installed."""
+    try:
+        import geopandas  # noqa
+        return True
+    except ImportError:
+        return False
