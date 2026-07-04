@@ -274,3 +274,12 @@ class TestTemplateOverrides:
         messages = [{"role": "user", "content": "test"}]
         prompt = await agent._render_prompt("main", messages, {})
         assert "Footer appended." in prompt
+
+
+def test_map_agents_route_geometry_columns():
+    """hvPlot and DeckGL agents advertise a geometry-column condition so the
+    coordinator routes GeoDataFrame data to a map-capable view."""
+    from lumen.ai.agents.deck_gl import DeckGLAgent
+    from lumen.ai.agents.hvplot import hvPlotAgent
+    assert any("geometry" in c.lower() for c in hvPlotAgent.conditions)
+    assert any("geometry" in c.lower() for c in DeckGLAgent.conditions)
