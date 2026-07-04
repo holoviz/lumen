@@ -19,7 +19,9 @@ from ..transforms import Filter
 from ..transforms.sql import (
     SQLCount, SQLFilter, SQLLimit, SQLSelectFrom,
 )
-from ..util import detect_file_encoding, normalize_table_name
+from ..util import (
+    check_geopandas_available, detect_file_encoding, normalize_table_name,
+)
 from .base import BaseSQLSource, Source, cached
 
 if TYPE_CHECKING:
@@ -542,16 +544,28 @@ class DuckDBSource(BaseSQLSource):
                 rel = cursor.execute(sql_expr, self.table_params[table])
             else:
                 rel = cursor.execute(sql_expr)
-            has_geom = any(d[0] == 'geometry' and d[1] == 'BINARY' for d in rel.description)
-            df = rel.fetch_df(date_as_object=True)
-            if has_geom:
-                import geopandas as gpd
-                geom_rel = cursor.execute(
-                    f'SELECT ST_AsWKB(geometry::GEOMETRY) as geometry FROM ({sql_expr})'
+            geom_cols = [d[0] for d in rel.description if str(d[1]) == 'GEOMETRY']
+            if geom_cols:
+                # DuckDB cannot convert native GEOMETRY columns to NumPy, so
+                # re-select them as WKB bytes before fetching to avoid a crash.
+                selected = ', '.join(
+                    f'ST_AsWKB("{d[0]}"::GEOMETRY) AS "{d[0]}"'
+                    if d[0] in geom_cols else f'"{d[0]}"'
+                    for d in rel.description
                 )
-                geom_df = geom_rel.fetch_df()
-                df['geometry'] = gpd.GeoSeries.from_wkb(geom_df.geometry.apply(bytes))
-                df = gpd.GeoDataFrame(df)
+                wrapped = f'SELECT {selected} FROM ({sql_expr})'
+                if table in self.table_params:
+                    rel = cursor.execute(wrapped, self.table_params[table])
+                else:
+                    rel = cursor.execute(wrapped)
+                df = rel.fetch_df(date_as_object=True)
+                if check_geopandas_available():
+                    import geopandas as gpd
+                    for col in geom_cols:
+                        df[col] = gpd.GeoSeries.from_wkb(df[col].apply(bytes))
+                    df = gpd.GeoDataFrame(df, geometry=geom_cols[0])
+            else:
+                df = rel.fetch_df(date_as_object=True)
         if not self.filter_in_sql:
             df = Filter.apply_to(df, conditions=conditions)
         return df
