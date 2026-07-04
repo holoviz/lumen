@@ -502,11 +502,38 @@ class DuckDBSource(BaseSQLSource):
         source._file_based_tables = {**self._file_based_tables, **source._file_based_tables}
         return source
 
+    def _fetch_df(
+        self, cursor, sql_expr: str, params: list | dict | None = None,
+        date_as_object: bool = False
+    ):
+        """Fetch a query result, safely handling native GEOMETRY columns.
+
+        DuckDB cannot convert a native GEOMETRY column to NumPy, so re-select
+        any geometry columns as WKB via ST_AsWKB before fetching, then rebuild
+        a GeoDataFrame when geopandas is available (WKB bytes otherwise).
+        """
+        rel = cursor.execute(sql_expr, params) if params else cursor.execute(sql_expr)
+        geom_cols = [d[0] for d in rel.description if str(d[1]) == 'GEOMETRY']
+        if not geom_cols:
+            return rel.fetch_df(date_as_object=date_as_object)
+        selected = ', '.join(
+            f'ST_AsWKB("{d[0]}"::GEOMETRY) AS "{d[0]}"'
+            if d[0] in geom_cols else f'"{d[0]}"'
+            for d in rel.description
+        )
+        wrapped = f'SELECT {selected} FROM ({sql_expr})'
+        rel = cursor.execute(wrapped, params) if params else cursor.execute(wrapped)
+        df = rel.fetch_df(date_as_object=date_as_object)
+        if check_geopandas_available():
+            import geopandas as gpd
+            for col in geom_cols:
+                df[col] = gpd.GeoSeries.from_wkb(df[col].apply(bytes))
+            df = gpd.GeoDataFrame(df, geometry=geom_cols[0])
+        return df
+
     def execute(self, sql_query: str, params: list | dict | None = None, *args, **kwargs):
         with self._connection.cursor() as cursor:
-            if params:
-                return cursor.execute(sql_query, params, *args, **kwargs).fetch_df()
-            return cursor.execute(sql_query, *args, **kwargs).fetch_df()
+            return self._fetch_df(cursor, sql_query, params)
 
     def get_tables(self):
         if isinstance(self.tables, dict | list):
@@ -540,32 +567,9 @@ class DuckDBSource(BaseSQLSource):
 
         # Apply stored SQL parameters if available for this table
         with self._connection.cursor() as cursor:
-            if table in self.table_params:
-                rel = cursor.execute(sql_expr, self.table_params[table])
-            else:
-                rel = cursor.execute(sql_expr)
-            geom_cols = [d[0] for d in rel.description if str(d[1]) == 'GEOMETRY']
-            if geom_cols:
-                # DuckDB cannot convert native GEOMETRY columns to NumPy, so
-                # re-select them as WKB bytes before fetching to avoid a crash.
-                selected = ', '.join(
-                    f'ST_AsWKB("{d[0]}"::GEOMETRY) AS "{d[0]}"'
-                    if d[0] in geom_cols else f'"{d[0]}"'
-                    for d in rel.description
-                )
-                wrapped = f'SELECT {selected} FROM ({sql_expr})'
-                if table in self.table_params:
-                    rel = cursor.execute(wrapped, self.table_params[table])
-                else:
-                    rel = cursor.execute(wrapped)
-                df = rel.fetch_df(date_as_object=True)
-                if check_geopandas_available():
-                    import geopandas as gpd
-                    for col in geom_cols:
-                        df[col] = gpd.GeoSeries.from_wkb(df[col].apply(bytes))
-                    df = gpd.GeoDataFrame(df, geometry=geom_cols[0])
-            else:
-                df = rel.fetch_df(date_as_object=True)
+            df = self._fetch_df(
+                cursor, sql_expr, self.table_params.get(table), date_as_object=True
+            )
         if not self.filter_in_sql:
             df = Filter.apply_to(df, conditions=conditions)
         return df
