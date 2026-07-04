@@ -96,6 +96,7 @@ class DeckGLAgent(BaseCodeAgent):
             "Use for 3D geographic visualizations, map-based data, or when user requests DeckGL/deck.gl",
             "Use for large-scale geospatial data with latitude/longitude coordinates",
             "Use for hexbin aggregations, heatmaps, or 3D extruded visualizations on maps",
+            "Use when a column has format 'geometry' (GeoDataFrame polygons/lines/points) and a 3D or large-scale map is wanted",
         ]
     )
 

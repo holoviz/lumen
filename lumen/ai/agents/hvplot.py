@@ -19,6 +19,7 @@ class hvPlotAgent(BaseViewAgent):
         default=[
             "Use for exploratory data analysis, interactive plots, and dynamic filtering",
             "Use for quick, iterative data visualization during analysis",
+            "Use when a column has format 'geometry' (GeoDataFrame polygons/lines/points) to draw it on a map",
         ]
     )
 
