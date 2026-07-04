@@ -85,11 +85,26 @@ def get_dataframe_schema(df, columns=None):
     if columns is None:
         columns = list(df.columns)
 
+    if check_geopandas_available():
+        import geopandas as gpd
+        geometry_dtype = gpd.array.GeometryDtype
+    else:
+        geometry_dtype = None
+
     properties = schema['items']['properties']
     for name in columns:
         dtype = df.dtypes[name]
         column = df[name]
-        if dtype.kind in 'uifM':
+        if geometry_dtype is not None and isinstance(dtype, geometry_dtype):
+            geom_type = 'unknown'
+            if not (df.empty or is_dask):
+                non_null = column.dropna()
+                if len(non_null):
+                    geom_type = non_null.iloc[0].geom_type
+            properties[name] = {
+                'type': 'string', 'format': 'geometry', 'geometry_type': geom_type
+            }
+        elif dtype.kind in 'uifM':
             kind = None
             if df.empty:
                 if dtype.kind == 'M':
