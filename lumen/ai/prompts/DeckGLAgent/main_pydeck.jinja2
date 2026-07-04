@@ -27,7 +27,7 @@ Generate PyDeck code. Data is `df`, assign to `deck`. NO I/O methods (.to_html()
 - `extruded`: Set to True for 3D extrusion
 {%- if gridded is defined and gridded %}
 
-# Gridded xarray data
+## Gridded xarray data
 `df` is a long-form grid from an xarray dataset (dimensions: {{ gridded.dims | join(', ') }}; variables: {{ gridded.data_vars | join(', ') }}).
 Use `ColumnLayer` with `get_position=["{{ gridded.dims[1] if gridded.dims | length > 1 else gridded.dims[0] }}", "{{ gridded.dims[0] }}"]` and `get_elevation="{{ gridded.data_vars[0] }}"`. This reads well only when the coordinate dimensions are geographic.
 {%- endif %}
