@@ -364,3 +364,44 @@ def test_vega_datasets(set_root):
     final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
     assert final_spec["data"]["url"] == "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"
     pd.testing.assert_frame_equal(final_spec["datasets"]["test"], pipeline.data)
+
+
+def test_view_hvplot_geometry_auto_kind():
+    """A GeoDataFrame view renders its geometry with an auto-selected kind."""
+    gpd = pytest.importorskip("geopandas")
+    pytest.importorskip("geoviews")
+    pytest.importorskip("duckdb")
+    from shapely.geometry import Polygon
+
+    from lumen.sources.duckdb import DuckDBSource
+    try:
+        source = DuckDBSource(
+            uri=':memory:',
+            initializers=["INSTALL spatial;", "LOAD spatial;"],
+            tables={'geo': 'SELECT * FROM geo_tbl'},
+        )
+    except Exception as e:  # pragma: no cover - environment dependent
+        pytest.skip(f"duckdb spatial extension unavailable: {e}")
+    gdf = gpd.GeoDataFrame(
+        {
+            'pop': [1, 2],
+            'geometry': [
+                Polygon([(0, 0), (1, 0), (1, 1)]),
+                Polygon([(2, 0), (3, 0), (3, 1)]),
+            ],
+        },
+        crs='EPSG:4326',
+    )
+    tmp = pd.DataFrame({'pop': gdf['pop'], 'geometry': gdf['geometry'].to_wkb()})
+    source._connection.register('geo_temp', tmp)
+    source._connection.execute(
+        'CREATE TABLE geo_tbl AS '
+        'SELECT pop, ST_GeomFromWKB(geometry) AS geometry FROM geo_temp'
+    )
+    pipeline = Pipeline(source=source, table='geo')
+    view = hvPlotView(pipeline=pipeline)  # no kind, no geo passed
+    df = view.get_data()
+    assert isinstance(df, gpd.GeoDataFrame)
+    plot = view.get_plot(df)
+    # Polygon geometry -> a Polygons element rather than an empty/failed plot
+    assert type(plot).__name__ == 'Polygons'
