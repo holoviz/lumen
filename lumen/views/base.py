@@ -41,7 +41,8 @@ from ..state import state
 from ..transforms.base import Transform
 from ..transforms.sql import SQLTransform
 from ..util import (
-    VARIABLE_RE, catch_and_notify, is_ref, resolve_module_reference,
+    VARIABLE_RE, catch_and_notify, check_geopandas_available, is_ref,
+    resolve_module_reference,
 )
 from ..validation import ValidationError
 
@@ -962,6 +963,25 @@ class hvPlotBaseView(View):
             params["kind"] = "points"
         super().__init__(**params)
 
+    @staticmethod
+    def _is_geodata(df) -> bool:
+        """Return True if df is a GeoDataFrame with an active geometry column."""
+        if not check_geopandas_available():
+            return False
+        import geopandas as gpd
+        return isinstance(df, gpd.GeoDataFrame) and df.geometry.name in df.columns
+
+    @staticmethod
+    def _geometry_kind(df) -> str:
+        """Pick an hvplot kind from the geometry type of a GeoDataFrame."""
+        geom_types = df.geometry.geom_type.dropna().unique()
+        geom_type = geom_types[0] if len(geom_types) else ''
+        if 'Polygon' in geom_type:
+            return 'polygons'
+        if 'Line' in geom_type:
+            return 'paths'
+        return 'points'
+
     @classproperty
     def _valid_keys_(cls):
         return None
@@ -1041,8 +1061,16 @@ class hvPlotView(hvPlotBaseView):
         if self.streaming:
             processed['stream'] = self._data_stream
 
+        kind = self.kind
+        if self._is_geodata(df):
+            # A geometry column needs a geometry-aware kind to render at all;
+            # correct the default (or a lat/lon-oriented 'points'/'scatter').
+            if kind in (None, 'scatter', 'points'):
+                kind = self._geometry_kind(df)
+            processed['geo'] = self.geo
+
         plot = df.hvplot(
-            kind=self.kind, x=self.x, y=self.y, by=self.by, groupby=self.groupby, **processed
+            kind=kind, x=self.x, y=self.y, by=self.by, groupby=self.groupby, **processed
         )
         if self.operations:
             for operation in self.operations:
