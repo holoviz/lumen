@@ -1,0 +1,11 @@
+{% extends 'Actor/main.jinja2' %}
+
+{%- block instructions %}
+Does the user's query need clarification before a planning agent can act on it?
+
+Most queries have an obvious default interpretation — prefer answering yes=false.
+Only answer yes=true when ALL of these hold:
+- Multiple interpretations would lead to fundamentally different actions (not just different parameter values)
+- No single interpretation is clearly what most users would mean
+- The ambiguity cannot be resolved by the downstream system from the data itself
+{%- endblock -%}

@@ -9,6 +9,7 @@ from ..config import PROMPTS_DIR
 from ..context import ContextModel, TContext
 from ..llm import Message
 from ..models import BaseModel
+from ..utils import content_to_text
 from .base import Agent
 
 
@@ -34,6 +35,8 @@ class ValidationInputs(ContextModel):
     chat: NotRequired[str]
 
     data: NotRequired[Any]
+
+    listing: NotRequired[str]
 
     sql: NotRequired[str]
 
@@ -73,9 +76,31 @@ class ValidationAgent(Agent):
         }
     )
 
+    user = param.String(default="Validation")
+
     input_schema = ValidationInputs
 
     output_schema = ValidationOutputs
+
+    async def _gather_prompt_context(self, prompt_name, messages, context, **kwargs):
+        """
+        The coordinator's context persists across plans, so keys like
+        'chat' from a *previous* plan can leak into this plan's
+        validation.  Rather than removing stale keys (which could lose
+        useful context), we label them so the prompt can distinguish
+        current-plan outputs from previous-plan leftovers.
+        """
+        ctx = await super()._gather_prompt_context(prompt_name, messages, context, **kwargs)
+
+        plan = context.get("plan")
+        previous_keys = set()
+        if plan is not None:
+            produced = {k for task in plan for k in task.out_context}
+            for key in ("chat", "sql", "data", "view", "listing"):
+                if key in context and key not in produced:
+                    previous_keys.add(key)
+        ctx["previous_keys"] = previous_keys
+        return ctx
 
     async def respond(
         self,
@@ -85,11 +110,12 @@ class ValidationAgent(Agent):
     ) -> tuple[list[Any], ValidationOutputs]:
         interface = self.interface
         def on_click(event):
-            if messages:
-                user_messages = [msg for msg in reversed(messages) if msg.get("role") == "user"]
-                original_query = user_messages[0].get("content", "").split("-- For context...")[0]
+            user_messages = [msg for msg in reversed(messages) if msg.get("role") == "user"]
+            if not user_messages:
+                return
+            text_content = content_to_text(user_messages[0].get("content", ""))
             suggestions_list = '\n- '.join(result.suggestions)
-            interface.send(f"Follow these suggestions to fulfill the original intent {original_query}\n\n{suggestions_list}")
+            interface.send(f"Follow these suggestions to fulfill the original intent:\n\n> {text_content}\n\n{suggestions_list}")
 
         result = await self._invoke_prompt("main", messages, context)
         if result.correct:
@@ -103,7 +129,7 @@ class ValidationAgent(Agent):
             for i, suggestion in enumerate(result.suggestions, 1):
                 response_parts.append(f"{i}. {suggestion}")
 
-        button = Button(name="Rerun", on_click=on_click)
+        button = Button(icon="autorenew", label="Rerun", on_click=on_click)
         footer_objects = [button]
         formatted_response = "\n\n".join(response_parts)
         if interface is not None:

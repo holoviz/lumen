@@ -5,7 +5,7 @@ from typing import Any, Literal, NotRequired
 
 import param
 
-from panel.pane import panel as as_panel
+from panel.pane import Markdown, panel as as_panel
 from panel.viewable import Viewable
 from pydantic import create_model
 from pydantic.fields import FieldInfo
@@ -121,11 +121,14 @@ class AnalysisAgent(BaseLumenAgent):
                 analysis_callable.param[field].objects = list(data.columns)
 
             if analysis.autorun:
-                if asyncio.iscoroutinefunction(analysis_callable.__call__):
-                    view = await analysis_callable(pipeline, context)
-                else:
-                    view = await asyncio.to_thread(analysis_callable, pipeline, context)
-                view = as_panel(view)
+                try:
+                    if asyncio.iscoroutinefunction(analysis_callable.__call__):
+                        view = await analysis_callable(pipeline, context)
+                    else:
+                        view = await asyncio.to_thread(analysis_callable, pipeline, context)
+                    view = as_panel(view)
+                except Exception as e:
+                    view = Markdown(f"**❌ Analysis failed with following error:**\n\n{e}")
                 if isinstance(view, Viewable):
                     view = Panel(object=view, pipeline=context.get("pipeline"))
                 step.stream(f"Generated view of type {type(view).__name__}")

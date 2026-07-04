@@ -18,6 +18,9 @@ import param  # type: ignore
 from panel.io.resources import CSS_URLS
 from panel.template.base import BasicTemplate
 from panel.viewable import Viewable, Viewer
+from panel_material_ui import (
+    Accordion, Button, MenuButton, Tabs,
+)
 
 from .auth import Auth
 from .base import Component, MultiTypeComponent
@@ -632,7 +635,7 @@ class Dashboard(Component, Viewer):
                     alert_type="danger", sizing_mode='stretch_width',
                 )
             self._main[:] = [alert]
-        if isinstance(self._layout, pn.Tabs) and self.config.sync_with_url:
+        if isinstance(self._layout, Tabs) and self.config.sync_with_url:
             pn.state.location.sync(self._layout, {'active': 'layout'})
 
     def _load_specification(self, from_file: bool = False):
@@ -657,7 +660,7 @@ class Dashboard(Component, Viewer):
         self._rerender_watchers[layout] = layout.param.watch(
             self._render_layouts, 'rerender'
         )
-        if isinstance(self._layout, pn.Tabs):
+        if isinstance(self._layout, Tabs):
             layout.show_title = False
         layout.start()
         return layout
@@ -687,14 +690,14 @@ class Dashboard(Component, Viewer):
         layouts = []
         layout_specs = state.spec.get('layouts', [])
         nlayouts = len(layout_specs)
-        if isinstance(self._layout, pn.Tabs) and self.config.background_load:
+        if isinstance(self._layout, Tabs) and self.config.background_load:
             self._thread_pool = ThreadPoolExecutor(max_workers=nlayouts-1)
         for i, layout_spec in enumerate(layout_specs):
             if state.loading_msg:
                 state.loading_msg.object = (
                     f"Loading layout {layout_spec['title']!r} ({i + 1}/{nlayouts})..."
             )
-            if isinstance(self._layout, pn.Tabs) and i != self._layout.active:
+            if isinstance(self._layout, Tabs) and i != self._layout.active:
                 if self.config.background_load:
                     item = self._thread_pool.submit(self._background_load, i, layout_spec)
                 else:
@@ -732,8 +735,8 @@ class Dashboard(Component, Viewer):
             self._apps[title] = endpoint
         if len(config.yamls) > 1:
             self._reload_button.margin = (7, 0, 0, 0)
-            self._menu_button = pn.widgets.MenuButton(
-                name='Select dashboard', items=menu_items, width=200,
+            self._menu_button = MenuButton(
+                label='Select dashboard', items=menu_items, width=200,
                 align='center', margin=(0, 25, 0, 0)
             )
             self._menu_button.on_click(self._navigate)
@@ -773,7 +776,7 @@ class Dashboard(Component, Viewer):
         self._main = pn.Column(
             self._loading, loading=True, sizing_mode='stretch_width',
         )
-        if isinstance(self._layout, pn.Tabs):
+        if isinstance(self._layout, Tabs):
             self._layout.param.watch(self._activate_filters, 'active')
 
     def _create_modal(self):
@@ -785,8 +788,8 @@ class Dashboard(Component, Viewer):
             sizing_mode='stretch_both', min_height=600,
             theme='monokai'
         )
-        self._edit_button = pn.widgets.Button(
-            name='✎', width=50, css_classes=['reload'], margin=0,
+        self._edit_button = Button(
+            label='✎', width=50, css_classes=['reload'], margin=0,
             align='center'
         )
         self._editor.param.watch(self._edit, 'value')
@@ -800,8 +803,8 @@ class Dashboard(Component, Viewer):
         )
 
     def _create_sidebar(self):
-        self._sidebar = pn.Accordion(margin=0, sizing_mode='stretch_width')
-        self._update_button = pn.widgets.Button(name='Apply Update')
+        self._sidebar = Accordion(margin=0, sizing_mode='stretch_width')
+        self._update_button = Button(label='Apply Update')
         self._update_button.on_click(self._update_pipelines)
 
     def _populate_template(self):
@@ -860,7 +863,7 @@ class Dashboard(Component, Viewer):
                 items[index] = self._loading
             else:
                 items = [self._loading]
-        elif isinstance(self._layout, pn.Tabs):
+        elif isinstance(self._layout, Tabs):
             items = list(zip(self._layout._names, list(self._layout.objects), strict=False)) # type: ignore
             tab_name = items[self._layout.active][0]
             if name and tab_name != name:
@@ -913,7 +916,7 @@ class Dashboard(Component, Viewer):
         if self._variable_panel is not None:
             filters.append(self._variable_panel)
         for i, layout in enumerate(self.layouts):
-            if isinstance(self._layout, pn.Tabs) and i != self._layout.active:
+            if isinstance(self._layout, Tabs) and i != self._layout.active:
                 continue
             elif layout is None or isinstance(layout, Future):
                 spec = state.spec['layouts'][i]
@@ -958,14 +961,14 @@ class Dashboard(Component, Viewer):
             OAuth user data.
             """
         alert = pn.pane.Alert(error, alert_type='danger')
-        if isinstance(self._layout, pn.Tabs):
+        if isinstance(self._layout, Tabs):
             alert = ('Authorization Denied', alert)
         self._layout[:] = [alert]
 
     def _render(self):
         if self.auth.authorized:
             self._render_filters()
-            if isinstance(self._layout, pn.Tabs):
+            if isinstance(self._layout, Tabs):
                 count = 1 + bool(self._global_filters) + bool(self._variable_panel)
                 active = list(range(count))
             else:

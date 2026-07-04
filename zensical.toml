@@ -84,6 +84,7 @@ nav = [
       {"Views" = "reference/api/views.md"}
     ]},
   ]},
+  {"Releases" = "releases.md"},
   {"Contributing" = "contributing.md"}
 ]
 

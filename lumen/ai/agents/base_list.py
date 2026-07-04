@@ -76,7 +76,7 @@ class BaseListAgent(Agent):
 
             item_list = pn.widgets.Tabulator(
                 df,
-                buttons={"show": '<i class="fa fa-eye"></i>'},
+                buttons={"show": '<i class="fa fa-search"></i>'},
                 show_index=False,
                 min_height=150,
                 min_width=350,
@@ -94,10 +94,23 @@ class BaseListAgent(Agent):
 
         self._tabs = Tabs(*tabs, sizing_mode="stretch_width")
 
-        self.interface.stream(
-            pn.Column(
-                f"The available {self._column_name.lower()}s are listed below. Click on the eye icon to show the {self._column_name.lower()} contents.",
-                self._tabs
-            ), user=self.__class__.__name__
+        all_items = [item for source_items in items.values() for item in source_items]
+        total = len(all_items)
+        max_shown = 10
+        if total > max_shown:
+            shown = ", ".join(all_items[:max_shown])
+            item_list_str = f"{shown}, ... and {total - max_shown} more"
+        else:
+            item_list_str = ", ".join(all_items)
+        listing = (
+            f"Displayed {total} {self._column_name.lower()}(s) to the user: {item_list_str}"
         )
-        return [self._tabs], {}
+
+        if self.interface is not None:
+            self.interface.stream(
+                pn.Column(
+                    listing,
+                    self._tabs
+                ), user=self.__class__.__name__
+            )
+        return [self._tabs], {"listing": listing}

@@ -53,6 +53,8 @@ class ParametricSourceControls(BaseSourceControls):
     load_button_label = "Fetch Data"
     load_button_icon = "download"
 
+    _supports_tools = True
+
     __abstract = True
 
     def __init__(self, **params):
@@ -63,7 +65,7 @@ class ParametricSourceControls(BaseSourceControls):
         self._cached_tools: list[tuple[str, Callable]] | None = None
         self._action_models: dict[str, param.Parameterized] = {}
         self._action_selector = Select(
-            name="Action", options=[], sizing_mode="stretch_width",
+            label="Action", options=[], sizing_mode="stretch_width",
             visible=False,
         )
         self._action_selector.param.watch(self._on_action_change, "value")
@@ -270,7 +272,7 @@ class ParametricSourceControls(BaseSourceControls):
     # Agent integration
     # ──────────────────────────────────────────────────────────────────────────
 
-    async def _embed_actions(self):
+    async def _embed(self):
         """Embed action names + docstrings into vector store."""
         if self.vector_store is None:
             return

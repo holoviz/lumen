@@ -234,7 +234,7 @@ class ViewGallery(WizardItem, Gallery):
         super().__init__(**params)
         self._items = self.items
         self._editor = ViewsEditor(spec=self.spec, margin=10)
-        self._save_button = pn.widgets.Button(name='Save view')
+        self._save_button = pn.widgets.Button(label='Save view')
         self._save_button.on_click(self._save_view)
         self._watchers = {}
         state.pipelines.param.watch(self._update_items, 'items')

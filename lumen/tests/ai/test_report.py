@@ -19,6 +19,11 @@ from lumen.ai.report import (
     Action, Report, Section, TaskGroup, Typography,
 )
 
+try:
+    from panel_material_ui import ChatMessage
+except ImportError:
+    ChatMessage = None
+
 
 class HelloAction(Action):
 
@@ -487,3 +492,154 @@ async def test_report_completed_sections_preserved_on_cancel():
     assert report[0].status == "success"
     assert report[1].status == "cancelled"
     assert report.status == "cancelled"
+
+
+# ---------------------------------------------------------------------------
+# to_notebook: header buffering, str/ChatMessage handling, Viewable skipping
+# ---------------------------------------------------------------------------
+
+class StrAction(Action):
+    """Action that returns a plain string output."""
+    async def _execute(self, context, **kwargs):
+        return ["Plain text summary"], {}
+
+
+class ChatMessageAction(Action):
+    """Action that returns a ChatMessage with string content."""
+    async def _execute(self, context, **kwargs):
+        msg = ChatMessage(object="Chat response text", user="Agent")
+        return [msg], {}
+
+
+class ChatMessageMarkdownAction(Action):
+    """Action that returns a ChatMessage wrapping a Markdown pane."""
+    async def _execute(self, context, **kwargs):
+        md = Markdown("Markdown inside ChatMessage")
+        msg = ChatMessage(object=md, user="Agent")
+        return [msg], {}
+
+
+class ViewableAction(Action):
+    """Action that returns a non-LumenEditor Viewable (should be skipped)."""
+    async def _execute(self, context, **kwargs):
+        from panel.widgets import TextInput
+        return [TextInput(value="skip me")], {}
+
+
+class EmptyAction(Action):
+    """Action that returns no outputs (header-only after rendering)."""
+    async def _execute(self, context, **kwargs):
+        return [], {}
+
+
+async def test_to_notebook_string_output():
+    """Plain string views are exported as markdown cells."""
+    report = Report(
+        Section(StrAction(title="Summary"), title="S1"),
+        title="String Report",
+    )
+    await report.execute()
+    nb = json.loads(report.to_notebook())
+
+    md_cells = [c for c in nb["cells"] if c["cell_type"] == "markdown"]
+    md_sources = ["".join(c["source"]) for c in md_cells]
+    assert any("Plain text summary" in s for s in md_sources)
+
+
+@pytest.mark.skipif(ChatMessage is None, reason="panel_material_ui.ChatMessage not available")
+async def test_to_notebook_chatmessage_string():
+    """ChatMessage with string content is exported as markdown."""
+    report = Report(
+        Section(ChatMessageAction(title="Chat"), title="S1"),
+        title="ChatMsg Report",
+    )
+    await report.execute()
+    nb = json.loads(report.to_notebook())
+
+    md_cells = [c for c in nb["cells"] if c["cell_type"] == "markdown"]
+    md_sources = ["".join(c["source"]) for c in md_cells]
+    assert any("Chat response text" in s for s in md_sources)
+
+
+@pytest.mark.skipif(ChatMessage is None, reason="panel_material_ui.ChatMessage not available")
+async def test_to_notebook_chatmessage_markdown():
+    """ChatMessage wrapping a Markdown pane is exported as markdown."""
+    report = Report(
+        Section(ChatMessageMarkdownAction(title="Chat"), title="S1"),
+        title="ChatMdMsg Report",
+    )
+    await report.execute()
+    nb = json.loads(report.to_notebook())
+
+    md_cells = [c for c in nb["cells"] if c["cell_type"] == "markdown"]
+    md_sources = ["".join(c["source"]) for c in md_cells]
+    assert any("Markdown inside ChatMessage" in s for s in md_sources)
+
+
+async def test_to_notebook_viewable_skipped():
+    """Non-LumenEditor Viewables produce no cells (not even error stubs)."""
+    report = Report(
+        Section(ViewableAction(title="Widget"), title="S1"),
+        title="Viewable Report",
+    )
+    await report.execute()
+    nb = json.loads(report.to_notebook())
+
+    # Only preamble + report title; no code cells beyond preamble
+    code_cells = [c for c in nb["cells"] if c["cell_type"] == "code"]
+    assert len(code_cells) == 1  # just preamble
+    # No "Cannot export" comments
+    for c in nb["cells"]:
+        source = "".join(c["source"])
+        assert "Cannot export" not in source
+
+
+async def test_to_notebook_orphaned_header_dropped():
+    """A Typography header followed by no content is not emitted."""
+    report = Report(
+        Section(EmptyAction(title="Orphan"), title="S1"),
+        title="Orphan Report",
+    )
+    await report.execute()
+    nb = json.loads(report.to_notebook())
+
+    md_cells = [c for c in nb["cells"] if c["cell_type"] == "markdown"]
+    md_sources = ["".join(c["source"]) for c in md_cells]
+    # The task-level header "Orphan" should NOT appear
+    assert not any("Orphan" in s for s in md_sources)
+
+
+async def test_to_notebook_header_emitted_before_content():
+    """A Typography header IS emitted when followed by real content."""
+    report = Report(
+        Section(HelloAction(title="KeepMe"), title="S1"),
+        title="Header Report",
+    )
+    await report.execute()
+    nb = json.loads(report.to_notebook())
+
+    md_cells = [c for c in nb["cells"] if c["cell_type"] == "markdown"]
+    md_sources = ["".join(c["source"]) for c in md_cells]
+    # The section title appears (report title = "# Header Report")
+    assert any("Header Report" in s for s in md_sources)
+    # The Markdown content is present
+    assert any("**Hello**" in s for s in md_sources)
+
+
+async def test_to_notebook_consecutive_orphaned_headers():
+    """Multiple consecutive orphaned headers produce zero cells."""
+    report = Report(
+        Section(
+            EmptyAction(title="First"),
+            EmptyAction(title="Second"),
+            title="S1",
+        ),
+        title="Multi Orphan",
+    )
+    await report.execute()
+    nb = json.loads(report.to_notebook())
+
+    md_cells = [c for c in nb["cells"] if c["cell_type"] == "markdown"]
+    md_sources = ["".join(c["source"]) for c in md_cells]
+    assert not any("First" in s for s in md_sources)
+    assert not any("Second" in s for s in md_sources)

@@ -29,9 +29,27 @@ Common use cases include:
 | Control | Use for |
 |---------|---------|
 | `UploadControls` | Uploading local files (CSV, Excel, etc.) |
-| `DownloadControls` | Fetching data from URLs |
+| `DownloadControls` | Fetching data from URLs (including Kaggle datasets) |
 
 `UploadControls` stages selected files before processing. After selecting files, click `Confirm file(s)` to process them, or `Clear selected` to reset the staged selection.
+
+#### Kaggle datasets
+
+`DownloadControls` can fetch datasets directly from Kaggle. Paste a Kaggle dataset URL into the URL input field:
+
+```
+https://www.kaggle.com/datasets/sharmajicoder/gen-z-social-media-usage-dataset
+```
+
+Each file in the dataset becomes a separate table in the same data source. This also works through the agent — users can ask the AI to load a Kaggle dataset by providing the URL.
+
+Requires the `kagglehub` package:
+
+```bash
+pip install kagglehub
+```
+
+If `kagglehub` is not installed, Kaggle URL support is silently disabled.
 
 ### Creating custom controls
 

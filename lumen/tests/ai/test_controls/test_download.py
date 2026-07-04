@@ -12,62 +12,71 @@ class TestDownloadControlsFilenameExtraction:
     def test_extract_filename_simple_url(self):
         """Test extracting filename from a simple URL with valid extension."""
         url = "https://example.com/data/population.csv"
-        filename = extract_filename_from_url(url)
+        filename, guessed = extract_filename_from_url(url)
         assert filename == "population.csv"
+        assert guessed is False
 
     def test_extract_filename_url_with_query_params(self):
         """Test extracting filename from URL with query parameters."""
         url = "https://example.com/data.csv?version=1&auth=abc"
-        filename = extract_filename_from_url(url)
+        filename, guessed = extract_filename_from_url(url)
         assert filename == "data.csv"
+        assert guessed is False
 
     def test_extract_filename_from_format_query_param(self):
         """Test extracting filename using format= query parameter when extension is invalid."""
         # This is the actual URL pattern from the bug report
         url = "https://mesonet.agron.iastate.edu/cgi-bin/request/daily.py?stations=OAK&sts=2025-12-08&ets=2025-12-10&network=CA_ASOS&format=csv"
-        filename = extract_filename_from_url(url)
+        filename, guessed = extract_filename_from_url(url)
         assert filename == "daily.csv"
+        assert guessed is False
 
     def test_extract_filename_format_param_parquet(self):
         """Test format= query param with parquet format."""
         url = "https://api.example.com/export.php?format=parquet&table=users"
-        filename = extract_filename_from_url(url)
+        filename, guessed = extract_filename_from_url(url)
         assert filename == "export.parquet"
+        assert guessed is False
 
     def test_extract_filename_format_param_json(self):
         """Test format= query param with json format."""
         url = "https://api.example.com/data.aspx?id=123&format=json"
-        filename = extract_filename_from_url(url)
+        filename, guessed = extract_filename_from_url(url)
         assert filename == "data.json"
+        assert guessed is False
 
     def test_extract_filename_format_param_xlsx(self):
         """Test format= query param with xlsx format."""
         url = "https://api.example.com/report?format=xlsx"
-        filename = extract_filename_from_url(url)
+        filename, guessed = extract_filename_from_url(url)
         assert filename == "report.xlsx"
+        assert guessed is False
 
     def test_extract_filename_valid_extension_ignores_format_param(self):
         """Test that format= param is ignored when URL already has valid extension."""
         url = "https://example.com/data.csv?format=json"
-        filename = extract_filename_from_url(url)
+        filename, guessed = extract_filename_from_url(url)
         # Should keep .csv since it's a valid extension, ignore format=json
         assert filename == "data.csv"
+        assert guessed is False
 
     def test_extract_filename_invalid_format_param(self):
         """Test that invalid format= values are ignored, keeping original filename."""
         url = "https://api.example.com/data.php?format=invalid_format"
-        filename = extract_filename_from_url(url)
+        filename, guessed = extract_filename_from_url(url)
         # Should keep original filename since .php is invalid and format is also invalid
         # The file will later be skipped during processing with a warning
         assert filename == "data.php"
+        assert guessed is False
 
     def test_extract_filename_no_extension_no_format(self):
         """Test fallback when no extension and no format param."""
         url = "https://api.example.com/getData"
-        filename = extract_filename_from_url(url)
-        # Should use hash-based default with .json extension
+        filename, guessed = extract_filename_from_url(url)
+        # Should use hash-based default without extension (extension comes from headers)
         assert filename.startswith("data_")
-        assert filename.endswith(".json")
+        assert "." not in filename
+        assert guessed is True
 
     def test_extract_filename_from_headers_content_disposition(self):
         """Test extracting filename from Content-Disposition header."""

@@ -87,6 +87,8 @@ class FunctionTool(Tool):
     keys listed in the provides parameter will be copied into working memory.
     """
 
+    conditions = param.List(default=[])
+
     formatter = param.Parameter(default="{function}({arguments}) returned: {output}", doc="""
         Formats the return value for inclusion in the global context.
         Accepts the 'function', 'arguments' and 'output' as formatting variables.""")

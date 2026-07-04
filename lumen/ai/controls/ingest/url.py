@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import json
 import pathlib
 
 import pandas as pd
@@ -12,7 +11,7 @@ from ...translate import params_to_callable
 from .file_row import UploadedFileRow
 from .parametric import ParametricSourceControls
 from .result import SourceResult
-from .utils import download_file
+from .utils import download_file, read_file_to_dataframes, read_html_tables
 
 # ─────────────────────────────────────────────────────────────────────────────
 # URL SOURCE CONTROLS
@@ -137,54 +136,48 @@ class URLSourceControls(ParametricSourceControls):
 
         try:
             file_obj.seek(0)
-            df = self._read_content(file_obj, suffix, card)
+            dfs = self._read_content(file_obj, suffix, card)
         except Exception as e:
             return SourceResult.empty(f"Could not parse {filename!r}: {e}")
 
-        if df is None:
+        if not dfs:
             return SourceResult.empty(f"Could not parse {filename!r}.")
-        if df.empty:
+
+        # dfs is a dict of {table_name: DataFrame}
+        total_rows = 0
+        tables_loaded = []
+        for table_name, df in dfs.items():
+            if df.empty:
+                continue
+            source._connection.from_df(df).to_view(table_name)
+            source.tables[table_name] = f"SELECT * FROM {table_name}"
+            source.metadata[table_name] = {"filename": filename}
+            total_rows += len(df)
+            tables_loaded.append(f"'{table_name}' ({len(df):,} rows)")
+
+        if not tables_loaded:
             return SourceResult.empty(
                 "The API returned no data rows. The request may have "
                 "returned headers only (e.g. today's data not yet available)."
             )
 
-        table = card.alias
-        source._connection.from_df(df).to_view(table)
-        source.tables[table] = f"SELECT * FROM {table}"
-        source.metadata[table] = {"filename": filename}
+        first_table = next(iter(source.tables))
+        if len(tables_loaded) == 1:
+            message = f"Loaded {total_rows:,} rows from '{filename}' into '{first_table}'"
+        else:
+            message = f"Loaded {len(tables_loaded)} tables from '{filename}': {', '.join(tables_loaded)}"
 
+        # All tables are in source.tables; first_table is for default selection
         return SourceResult.from_source(
             source,
-            table=table,
-            message=f"Loaded {len(df):,} rows from '{filename}' into '{table}'",
+            table=first_table,
+            message=message,
         )
 
-    def _read_content(self, file_obj, suffix: str, card) -> pd.DataFrame:
-        """Parse file bytes into a DataFrame based on file extension."""
-        if suffix == "csv":
-            return pd.read_csv(file_obj, parse_dates=True, sep=None, engine="python")
-        if suffix in ("parq", "parquet"):
-            return pd.read_parquet(file_obj)
-        if suffix == "json":
-            return self._read_json_content(file_obj)
-        if suffix == "xlsx":
-            return pd.read_excel(file_obj, sheet_name=card.sheet)
-        raise ValueError(f"Unsupported file extension: {suffix!r}")
-
-    @staticmethod
-    def _read_json_content(file_obj) -> pd.DataFrame:
-        """Parse JSON bytes into a DataFrame."""
-        content = file_obj.read()
-        if isinstance(content, bytes):
-            content = content.decode("utf-8")
-        data = json.loads(content)
-
-        if isinstance(data, list):
-            return pd.json_normalize(data)
-        if isinstance(data, dict):
-            for key in ("data", "records", "rows", "items", "results"):
-                if key in data and isinstance(data[key], list):
-                    return pd.json_normalize(data[key])
-            return pd.DataFrame([data])
-        raise ValueError(f"Unsupported JSON root type: {type(data).__name__}")
+    def _read_content(self, file_obj, suffix: str, card) -> dict[str, pd.DataFrame]:
+        """Parse file bytes into a dict of {table_name: DataFrame}."""
+        alias = card.alias
+        result = read_file_to_dataframes(file_obj, suffix, alias=alias, sheet_name=card.sheet)
+        if result is not None:
+            return result.tables
+        return read_html_tables(file_obj.read(), alias)

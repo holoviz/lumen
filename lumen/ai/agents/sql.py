@@ -155,15 +155,18 @@ def make_run_exploration_sql_tool(sources: dict[tuple[str, str], BaseSQLSource])
         return await execute_exploration_sql(source, sql_query, sources=sources)
 
     names = ", ".join(sorted({s for s, _ in sources})) or "(none)"
+    tables = ", ".join(sorted({t for _, t in sources})) or "(none)"
     run_exploration_sql.__doc__ = (
         f"Execute read-only SQL on the named source to inspect data (use LIMIT on raw selects). "
-        f"Sources: {names}."
+        f"Sources: {names}. "
+        f"Tables: {tables}. "
+        f"Reference tables by name directly (e.g. SELECT * FROM my_table), not with read_csv() or read_parquet()."
     )
     return FunctionTool(
         run_exploration_sql,
         purpose=(
             "Run exploratory read-only SQL (SELECT/WITH) on a datasource by name; "
-            "returns a small text preview of the result or an error message."
+            "returns a small text preview of the result or an error message. "
             "Do not use this tool to generate the result, it is meant as an exploratory "
             "tool to gather the information needed to generate the final SQL query."
         ),
@@ -235,8 +238,11 @@ def make_load_table_schemas_tool(metaset: Metaset) -> FunctionTool:
                 for k, v in live.items():
                     if k == "__len__":
                         continue
-                    col = col_info.get(k, {})
-                    if col.description:
+                    # col_info only carries cataloged columns; live keys not
+                    # in the catalog (e.g. xarray dim coordinates absent from
+                    # a STAC datacube extension) get the live schema as-is.
+                    col = col_info.get(k)
+                    if col is not None and col.description:
                         schema[k] = dict(col.description, **v)
                     else:
                         schema[k] = v
@@ -382,7 +388,7 @@ class SQLAgent(BaseLumenAgent):
     async def _execute_query(
         self, source: BaseSQLSource, context: TContext, expr_slug: str, sql_query: str, tables: list[str],
         is_final: bool, should_materialize: bool, step: ChatStep
-    ) -> tuple[Pipeline, Source, str]:
+    ) -> Pipeline:
         """Execute SQL query and return pipeline and summary."""
         # Create SQL source
         source_tables = source.tables if source.tables is not None else {}
@@ -433,7 +439,7 @@ class SQLAgent(BaseLumenAgent):
             summary_formatted += f"\n\nMaterialized data: `{sql_expr_source.name}{SOURCE_TABLE_SEPARATOR}{expr_slug}`"
         stream_details(f"{summary_formatted}", step, title=expr_slug)
 
-        return pipeline, sql_expr_source, summary
+        return pipeline
 
     async def _finalize_execution(
         self,
@@ -446,7 +452,10 @@ class SQLAgent(BaseLumenAgent):
 
         df = await get_data(pipeline)
         if df.empty and raise_if_empty:
-            raise ValueError(f"\nQuery `{sql}` returned empty results; ensure all the WHERE filter values exist in the dataset.")
+            raise ValueError(
+                f"\nQuery `{sql}` returned empty results."
+                "\nUse `run_exploration_sql` to check what values actually exist before filtering."
+            )
 
         view = self._editor_type(
             component=pipeline, title=step_title, spec=sql
@@ -566,7 +575,7 @@ class SQLAgent(BaseLumenAgent):
             # Only materialize for DuckDB sources
             should_materialize = isinstance(source, DuckDBSource)
 
-            pipeline, sql_expr_source, summary = await self._execute_query(
+            pipeline = await self._execute_query(
                 source, context, expr_slug, validated_sql, tables=tables,
                 is_final=True, should_materialize=should_materialize, step=step
             )

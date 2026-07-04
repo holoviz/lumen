@@ -3,16 +3,16 @@
 {% block instructions %}
 Generate Altair code. Data is `df`, assign to `chart`, end with `.interactive()`. Use `width='container'` for single charts only. NO I/O methods.
 
-# Encodings: `:Q` quantitative | `:N` nominal | `:O` ordinal | `:T` temporal
+## Encodings: `:Q` quantitative | `:N` nominal | `:O` ordinal | `:T` temporal
 
-# Reference
+## Reference
 - **Sort**: `sort='-y'` | **Title**: `.properties(title='...')` | **Tooltip**: `tooltip=['f1', 'f2']`
 - **Color**: `alt.value('#1f77b4')` | `alt.condition(test, if_true, if_false)` | `'field:N'`
 - **Transforms**: `.transform_filter()` | `.transform_window(rank='rank()')` | `.transform_aggregate()`
 - **Layouts**: `alt.hconcat()` | `alt.vconcat()` | `.facet()` | `.repeat()` (omit width on sub-charts)
 - **Geo**: `longitude='lon:Q', latitude='lat:Q'` with `.project(type='mercator')`
 
-# Rules
+## Rules
 - When the n_rows > 5000:
   - You **MUST** include `alt.data_transformers.disable_max_rows()` and `alt.renderers.set_embed_options(renderer="canvas")`
   - Prefer aggregated and binned plots

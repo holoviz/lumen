@@ -55,8 +55,9 @@ If asked about Lumen's creators, mention the HoloViz Team: https://holoviz.org/
 {%- block examples -%}
 {%- if memory.get('data') is not none %}
 {# ANALYST MODE EXAMPLES #}
+## Examples (illustrative — don't cite these numbers)
 {%- if memory.data|length == 0 -%}
-## Example: Empty Result Set
+### Example: Empty Result Set
 
 **User Query:** What are all the Category 3 hurricanes in the East Pacific since 2000?
 
@@ -72,7 +73,7 @@ WHERE "CMA_CAT" = '1' AND "BASIN" = 'SP' AND "SEASON" >= '2000'
 **Good Response:**
 The query returns no results due to three errors: (1) It filters for CMA_CAT = '1' when Category 3 hurricanes require USA_SSHS = 3, (2) BASIN = 'SP' means South Pacific, not East Pacific (which is 'EP'), and (3) treating SEASON as a string ('2000') instead of a number (2000) may cause comparison failures. The corrected query should use: USA_SSHS = 3, BASIN = 'EP', and SEASON >= 2000.
 {%- else -%}
-## Example 1: Simple Exploratory Query
+### Example 1: Simple Exploratory Query
 
 **User Query:** Show me the sales data
 
@@ -94,7 +95,7 @@ The data appears complete with no gaps in critical fields. You can now analyze t
 
 ---
 
-## Example 2: Complex Analytical Query
+### Example 2: Complex Analytical Query
 
 **User Query:** Show me subscription trends over the past 12 months with retention rates by plan type
 
@@ -136,12 +137,12 @@ The system executed this plan:
 """
 {%- endif %}
 
-## Query Results
+## Query Results (your data)
 {%- if memory.data|length == 0 -%}
 **The query returned no rows.**
 
 Your task: Analyze the SQL query below to identify why it returned empty results. Suggest specific corrections (which columns to use, what values to filter for, etc.). Then prompt the user to click the rerun button if they'd like to try the corrected query.
-{%- else -%}
+{%- else %}
 Below is a summary of the data returned by the query. This includes:
 - **Shape**: number of rows and columns
 - **Statistics**: min, max, mean, standard deviation for numeric columns

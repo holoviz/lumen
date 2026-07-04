@@ -1,7 +1,7 @@
 {% extends 'Agent/main.jinja2' %}
 
 {%- block instructions %}
-# Instructions
+## Instructions
 Write a SQL query for the user's data transformation request, focusing on intent over literal interpretation.
 
 ## PRIMARY RULES
@@ -9,7 +9,7 @@ Write a SQL query for the user's data transformation request, focusing on intent
 2. Column quotes - Use double quotes: `"column_name"`
 3. String quotes - Single quotes: `'string_value'`
 4. No CREATE statements - System handles materialization
-5. No random LIMIT clauses unless requested- Pagination is automatically handled
+5. No random LIMIT clauses unless requested — pagination is automatically handled
 6. Progressive approach - Each step builds on previous
 7. Do not rename columns unless explicitly instructed
 
@@ -28,7 +28,7 @@ Write a SQL query for the user's data transformation request, focusing on intent
 
 {%- block context -%}
 {%- if memory.get('metaset') %}
-### Data summary
+## Data summary
 {{ memory["metaset"].compact_context(n=12, n_others=25, include_lineage=True) }}
 {%- endif %}
 
@@ -39,6 +39,9 @@ Previous: `{{ memory['sql'] }}`
 {%- if memory.get('data') is not none %}
 Data Summary:
 {{ memory["data"] }}
+{%- if 'rows_capped_at_limit' in memory["data"] %}
+(`rows_capped_at_limit` indicates the preview was truncated for display; it is not the table's true row count. Do not add a LIMIT to match it — pagination is handled automatically.)
+{%- endif %}
 {%- endif %}
 
 Use `{{ dialect }}` SQL dialect.
@@ -61,7 +64,7 @@ Step {{ step_number }}: {{ current_step }}
 {% endif %}
 
 {%- if sql_plan_context %}
-## Current Knowledge:
+## Current Knowledge
 {{ sql_plan_context }}
 
 Use materialized tables above instead of rebuilding CTEs

@@ -23,7 +23,8 @@ from ...sources.duckdb import DuckDBSource
 from ...util import normalize_table_name
 from ..config import PROMPTS_DIR
 from ..context import ContextModel, TContext
-from ..controls import ParametricSourceControls
+from ..controls.ingest.base import BaseSourceControls
+from ..controls.ingest.parametric import ParametricSourceControls
 from ..controls.ingest.result import SourceResult
 from ..llm import Message
 from ..schemas import Metaset, get_metaset
@@ -44,7 +45,7 @@ class SourceInputs(ContextModel):
     source_actions: t.NotRequired[dict[str, t.Any]]
 
 
-class SourceOutputs(ContextModel):
+class SourceOutputs(ContextModel, total=False):
     source: DuckDBSource
     data: t.Any
     table: str
@@ -67,7 +68,7 @@ def _build_catalog_summary(context: TContext) -> str:
 
     lines = []
     for ctrl in controls:
-        if not isinstance(ctrl, ParametricSourceControls):
+        if not ctrl._supports_tools:
             continue
         ctrl_label = getattr(ctrl, "label", ctrl.__class__.__name__)
         lines.append(f"### {ctrl_label}")
@@ -190,10 +191,12 @@ class SourceAgent(Agent):
         default=[
             "Use when no existing data source can answer the query and external source controls are configured",
             "Use when the user asks for data from an external API or service",
+            "Use when the user provides a URL to read, fetch, discuss, or extract content from — the content must be fetched before any other agent can address it",
             "Use when the loaded data does not cover the requested scope (e.g. user asks for 'whole month' but data summary only shows a week)",
             "Prefer over metadata discovery when no data sources are loaded but source controls exist",
-            "This agent only fetches and registers data — it never presents results to the user; always follow with a presentation or query step",
-            "Output is queryable tabular data — enables filtering, aggregation, joins, and transformation by downstream agents",
+            "This agent fetches and registers data or indexes page content as documents — always follow with a presentation, query, or chat step",
+            "For HTML pages, this agent extracts both tabular data and page text (indexed as a searchable document for ChatAgent)",
+            "Output is queryable tabular data and/or indexed documents — enables filtering, aggregation, joins, transformation, and conversation by downstream agents",
             "NOT for listing configured external source actions or answering 'what data is available' before a concrete dataset request",
             "NOT when the loaded data already covers the requested scope and user just wants to query/visualize it",
         ]
@@ -204,7 +207,8 @@ class SourceAgent(Agent):
         Fetches data from configured external sources (APIs, Python callables,
         URL templates).  Discovers relevant endpoints, fills parameters via
         LLM, executes the call, and registers the resulting DataFrame for
-        downstream querying and visualization."""
+        downstream querying and visualization.  For HTML pages, also indexes
+        page text as a searchable document for conversational agents."""
     )
 
     prompts = param.Dict(
@@ -220,12 +224,10 @@ class SourceAgent(Agent):
     input_schema = SourceInputs
     output_schema = SourceOutputs
 
-
-
     @classmethod
     async def applies(cls, context: TContext) -> bool:
         controls = context.get("source_controls", [])
-        return any(isinstance(c, ParametricSourceControls) for c in controls)
+        return any(c._supports_tools for c in controls)
 
     # ------------------------------------------------------------------
     # Tool building
@@ -245,9 +247,9 @@ class SourceAgent(Agent):
         in all controls.
         """
         controls = context.get("source_controls", [])
-        ctrl_map: dict[str, ParametricSourceControls] = {}
+        ctrl_map: dict[str, BaseSourceControls] = {}
         for c in controls:
-            if isinstance(c, ParametricSourceControls):
+            if c._supports_tools:
                 from ..tools.source_lookup import _control_hash
                 ctrl_map[_control_hash(c)] = c
 
@@ -337,6 +339,12 @@ class SourceAgent(Agent):
                 )
             )
 
+            # Document-only result (no tables, just indexed text)
+            if df is None:
+                if isinstance(step, ChatStep):
+                    step.param.update(status="success", success_title="Indexed document")
+                return [], {}
+
             step.stream(f"\n\n\u2705 Loaded **{len(df):,}** rows into `{table_name}`")
             if isinstance(step, ChatStep):
                 step.param.update(
@@ -392,6 +400,10 @@ class SourceAgent(Agent):
         # --- SourceResult path (URLSourceControls, CatalogSourceControls) ---
         if isinstance(payloads[0], SourceResult):
             payload = payloads[0]
+            # Document-only result (no tables, just indexed text)
+            if payload.document_only:
+                step.stream(f"\n\n\u2713 {payload.message}")
+                return None, None, None, None, None, None
             if not payload.sources:
                 msg = payload.message or "The source action returned no data."
                 step.stream(f"\n\n\u26a0\ufe0f {msg}")

@@ -427,7 +427,7 @@ class PipelineGallery(WizardItem, Gallery):
         super().__init__(**params)
         self._items = self.items
         self._editor = PipelinesEditor(spec={}, margin=10)
-        self._save_button = pn.widgets.Button(name='Save pipelines')
+        self._save_button = pn.widgets.Button(label='Save pipelines')
         self._save_button.on_click(self._save_pipelines)
         self._modal_content = [self._editor, self._save_button]
         self._watchers = {}

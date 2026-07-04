@@ -87,7 +87,7 @@ class DashboardGallery(WizardItem, Gallery):
             name='Provide a description', sizing_mode='stretch_both',
             max_length=100
         )
-        self.save = pn.widgets.Button(name='Save', sizing_mode='stretch_width')
+        self.save = pn.widgets.Button(label='Save', sizing_mode='stretch_width')
         self.save.on_click(self._save)
         self._modal_content = [
             '# Upload dashboard\nUpload a yaml file',

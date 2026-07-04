@@ -156,7 +156,7 @@ class CodeSourceControls(ParametricSourceControls):
         )
 
         if self.vector_store is not None:
-            pn.state.execute(self._embed_actions)
+            pn.state.execute(self._embed)
 
     async def _fetch_data(self, action_name: str, **params) -> SourceResult:
         func = self._actions[action_name]

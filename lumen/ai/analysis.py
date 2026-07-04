@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import panel as pn
 import param
 
 from panel.chat import ChatFeed
+from panel.param import Param
 from panel.viewable import Viewable
 
 from ..base import Component
@@ -58,10 +58,15 @@ class Analysis(param.ParameterizedFunction):
                 applies &= col in data.columns
         return applies
 
-    def controls(self, context: TContext):
-        config_options = [p for p in self.param if p not in Analysis.param]
-        if config_options:
-            return pn.Param(self.param, parameters=config_options, margin=0, show_name=False)
+    def controls(self, context: TContext) -> Param | None:
+        config_options = [
+            p for p in self.param
+            if p not in Analysis.param
+            and (self.param[p].precedence is None or self.param[p].precedence >= 0)
+        ]
+        if not config_options:
+            return None
+        return Param(self.param, parameters=config_options, margin=0, show_name=False)
 
     def __call__(self, pipeline: Pipeline, context: TContext) -> Component | Viewable:
         return pipeline

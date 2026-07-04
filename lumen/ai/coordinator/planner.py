@@ -20,10 +20,13 @@ from ..context import (
     LWW, ContextError, TContext, merge_contexts,
 )
 from ..llm import Message
-from ..models import FollowUpClassification
+from ..models import FollowUpClassification, ThinkingYesNo
 from ..report import ActorTask
 from ..tools import MetadataLookup, SourceLookup, Tool
-from ..utils import content_to_text, log_debug, wrap_logfire
+from ..tools.clarification_llm_tool import make_clarification_llm_tool
+from ..utils import (
+    content_to_text, log_debug, mutate_user_message, wrap_logfire,
+)
 from .base import Coordinator, Plan
 
 if TYPE_CHECKING:
@@ -40,6 +43,7 @@ class RawStep(BaseModel):
         Reflect exactly what the user asked for, nothing more and nothing less,
         i.e. if details/numbers are provided by the user, include them;
         if not, do not randomly add arbitrary numbers or details.
+        Do include any clarifications.
 
         - ❌ Too low: implementation details (SQL syntax, chart specs)
         - ❌ Too high: vague ("handle this", "process data")
@@ -55,6 +59,7 @@ class RawStep(BaseModel):
 
 
 class RawPlan(BaseModel):
+    chain_of_thought: str = Field(description="Summarize the user's goal and categorize the question type in 1-2 sentences.")
     title: str = Field(description="A title that describes this plan, up to three words.")
     steps: list[RawStep] = Field(
         description="""
@@ -65,24 +70,6 @@ class RawPlan(BaseModel):
         - Each step's instruction should be limited to that actor's task.
         - Do not include downstream objectives in upstream instructions.
         """
-    )
-
-
-class Reasoning(BaseModel):
-    chain_of_thought: str = Field(
-        description="""
-        Briefly summarize the user's goal and categorize the question type:
-        high-level, data-focused, or other. Identify the most relevant and compatible actors,
-        explaining their requirements, and what you already have satisfied. If there were previous failures, discuss them.
-        IMPORTANT: Ensure no consecutive steps use the same actor in your planned sequence.
-        For multi-metric queries (multiple charts or metrics), plan a single SQL step with JOINs.
-        Keep response to 1-2 sentences.
-        """,
-        examples=[
-            "Find which country hosted the most Winter Olympics—a data-focused query requiring aggregation. SQLAgent can handle this (requires source/metaset, both available) by filtering to Winter and counting by location, with no consecutive actor conflicts.",
-            "A horizontal bar chart of existing data. VegaLiteAgent is ready (requires pipeline/data/table, all satisfied from previous SQLAgent step) and will create the chart without consecutive actor issues.",
-            "SQLAgent should JOIN both tables on country/year in one query, then VegaLiteAgent creates the compound chart. Single SQL step avoids redundant queries."
-        ]
     )
 
 
@@ -122,6 +109,10 @@ class Planner(Coordinator):
             "follow_up": {
                 "template": PROMPTS_DIR / "Planner" / "follow_up.jinja2",
                 "response_model": FollowUpClassification,
+            },
+            "clarification_check": {
+                "template": PROMPTS_DIR / "Planner" / "clarification_check.jinja2",
+                "response_model": ThinkingYesNo,
             },
         }
     )
@@ -225,6 +216,23 @@ class Planner(Coordinator):
 
         return follow_up_type
 
+    async def _check_clarification_needed(self, messages: list[Message], context: TContext) -> bool:
+        """
+        Lightweight pre-check: does the user's query need clarification?
+
+        Returns True only if the query is genuinely ambiguous.
+        """
+        try:
+            result = await self._invoke_prompt("clarification_check", messages, context)
+            log_debug(
+                f"Clarification check: needs_clarification={result.yes} "
+                f"({result.chain_of_thought})",
+                prefix="[clarification]",
+            )
+            return result.yes
+        except Exception:
+            return False  # On failure, default to not clarifying
+
     async def _execute_planner_tools(self, messages: list[Message], context: TContext):
         """Execute planner tools to gather context before planning."""
         if not self.planner_tools:
@@ -282,6 +290,7 @@ class Planner(Coordinator):
         tools: dict[str, Tool],
     ) -> tuple[dict[str, Agent], dict[str, Tool], dict[str, Any]]:
         follow_up_type = await self._check_follow_up_question(messages, context)
+        self._clarification_enabled = await self._check_clarification_needed(messages, context)
         await self._execute_planner_tools(messages, context)
         agents, tools, pre_plan_output = await super()._pre_plan(messages, context, agents, tools)
         pre_plan_output["follow_up_type"] = follow_up_type
@@ -333,50 +342,39 @@ class Planner(Coordinator):
         # also filter out agents where excluded keys exist in context
         agents = [agent for agent in agents if len(set(agent.input_schema.__required_keys__) - all_provides) == 0 and type(agent).__name__ != "ValidationAgent"]
         tools = [tool for tool in tools if len(set(tool.input_schema.__required_keys__) - all_provides) == 0]
-        llm_tools = _merge_prompt_tools(self.llm_tools, None, context)
-        reasoning = None
-        while reasoning is None:
-            # candidates = agents and tools that can provide
-            # the unmet dependencies
-            agent_candidates = [agent for agent in agents if not unmet_dependencies or set(agent.output_schema.__annotations__) & unmet_dependencies]
-            tool_candidates = [tool for tool in tools if not unmet_dependencies or set(tool.output_schema.__annotations__) & unmet_dependencies]
-            model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
-            system = await self._render_prompt(
-                "main",
-                messages,
-                context,
-                model_spec=model_spec,
-                response_model=Reasoning,
-                agents=agents,
-                tools=tools,
-                unmet_dependencies=unmet_dependencies,
-                candidates=agent_candidates + tool_candidates,
-                previous_actors=previous_actors,
-                previous_plans=previous_plans,
-                follow_up_type=follow_up_type,
-            )
-            async for reasoning in self.llm.stream(
-                messages=messages,
-                system=system,
-                model_spec=model_spec,
-                response_model=Reasoning,
-                max_retries=3,
-                tools=llm_tools,
-            ):
-                if reasoning.chain_of_thought:  # do not replace with empty string
-                    context["reasoning"] = reasoning.chain_of_thought
-                    step.stream(reasoning.chain_of_thought, replace=True)
-                    previous_plans.append(reasoning.chain_of_thought)
+        llm_tools = list(_merge_prompt_tools(self.llm_tools, None, context) or [])
+        if self._clarification_enabled:
+            llm_tools.append(make_clarification_llm_tool(self.interface, context))
 
-        raw_plan = None
+        # candidates = agents and tools that can provide
+        # the unmet dependencies
+        agent_candidates = [agent for agent in agents if not unmet_dependencies or set(agent.output_schema.__annotations__) & unmet_dependencies]
+        tool_candidates = [tool for tool in tools if not unmet_dependencies or set(tool.output_schema.__annotations__) & unmet_dependencies]
+        model_spec = self.prompts["main"].get("llm_spec", self.llm_spec_key)
+        system = await self._render_prompt(
+            "main",
+            messages,
+            context,
+            model_spec=model_spec,
+            response_model=plan_model,
+            agents=agents,
+            tools=tools,
+            unmet_dependencies=unmet_dependencies,
+            candidates=agent_candidates + tool_candidates,
+            previous_actors=previous_actors,
+            previous_plans=previous_plans,
+            follow_up_type=follow_up_type,
+        )
         async for raw_plan in self.llm.stream(
             messages=messages,
-            system=reasoning.chain_of_thought,
+            system=system,
             model_spec=model_spec,
             response_model=plan_model,
             max_retries=3,
             tools=llm_tools,
         ):
+            if raw_plan.chain_of_thought:
+                step.stream(raw_plan.chain_of_thought, replace=True)
             partial_todos = self._render_partial_todos(raw_plan)
             if partial_todos and self.steps_layout is not None:
                 self._todos_title.object = "📋 Building checklist..."
@@ -561,6 +559,15 @@ class Planner(Coordinator):
                     self._todos_title.object = "Planner could not settle on a plan of action to perform the requested query. Please restate your request."
                     traceback.print_exception(e)
                     raise e
+                # Inject clarifications into messages so downstream agents see the clarified intent
+                clarifications = context.get("clarifications")
+                if clarifications:
+                    last_user = next((m for m in reversed(messages) if m.get("role") == "user"), None)
+                    if last_user and "[For Clarity]" not in content_to_text(last_user.get("content", "")):
+                        suffix = "\n" + "\n".join(
+                            f"[For Clarity]: {c}" for c in clarifications
+                        )
+                        mutate_user_message(suffix, messages, wrap=False)
                 plan, previous_actors = await self._resolve_plan(
                     raw_plan, agents, tools, messages, context, previous_actors, is_followup=is_followup
                 )

@@ -17,8 +17,8 @@ class MockView:
     def __init__(self, spec="type: bar", language="yaml"):
         self.spec = spec
         self.language = language
-        self.editor = MagicMock()
-        self.editor.code = spec
+        self._editor = MagicMock()
+        self._editor.code = spec
 
 
 class MockTask:
@@ -193,7 +193,7 @@ class TestCopyControls:
 
             # Verify the editor reference matches the view's editor
             assert len(captured_args) > 0
-            assert captured_args[0]['code_editor'] is view.editor
+            assert captured_args[0]['code_editor'] is view._editor
 
     def test_multiple_instances_independent(self):
         """Test that multiple CopyControls instances are independent."""
@@ -239,7 +239,7 @@ class TestCopyControls:
         assert row.width == 200
 
     def test_view_without_editor(self):
-        """Test CopyControls handles view without editor gracefully."""
+        """A view without an editor renders no copy icon instead of erroring."""
         interface = MockInterface()
         view = Mock(spec=["spec", "language"])
         view.spec = "type: bar"
@@ -247,13 +247,15 @@ class TestCopyControls:
         # Intentionally no editor attribute
         task = MockTask()
 
-        # Should raise AttributeError when trying to access editor
-        with pytest.raises(AttributeError):
-            controls = CopyControls(
-                interface=interface,
-                view=view,
-                task=task
-            )
+        # Should not raise; there is nothing to copy, so no icon is shown.
+        controls = CopyControls(
+            interface=interface,
+            view=view,
+            task=task
+        )
+
+        assert len(controls._row.objects) == 0
+        assert controls.__panel__() is controls._row
 
     def test_different_view_specs(self):
         """Test CopyControls with different spec content."""

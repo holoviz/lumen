@@ -4,7 +4,6 @@ import asyncio
 import io
 import json
 import pathlib
-import zipfile
 
 import pandas as pd
 import param
@@ -17,6 +16,7 @@ from ...utils import log_debug
 from .base import BaseSourceControls
 from .constants import TABLE_EXTENSIONS
 from .file_row import UploadedFileRow
+from .utils import FileReadResult, read_file_to_dataframes
 
 
 class FileSourceControls(BaseSourceControls):
@@ -71,7 +71,7 @@ class FileSourceControls(BaseSourceControls):
         files_to_process = self._upload_cards.param["objects"].rx.len() > 0
         self._add_button = Button.from_param(
             self.param.add,
-            name=self.param.add_button_label,
+            label=self.param.add_button_label,
             icon=self.param.add_button_icon,
             visible=files_to_process,
             description="",
@@ -138,57 +138,70 @@ class FileSourceControls(BaseSourceControls):
     ) -> int:
         conn = duckdb_source._connection
         extension = card.extension
-        table = card.alias
-        sql_expr = f"SELECT * FROM {table}"
-        params = {}
-        conversion = None
+        alias = card.alias
         filename = f"{card.filename}.{extension}"
 
         try:
-            file.seek(0)
-            if extension.endswith("csv"):
-                df = pd.read_csv(file, parse_dates=True, sep=None, engine="python")
-            elif extension.endswith(("parq", "parquet")):
-                df = pd.read_parquet(file)
-            elif extension.endswith("json"):
+            if extension.endswith("json"):
+                # Use the more robust JSON parser on this class
                 df = self._read_json_file(file, filename)
-            elif extension.endswith("xlsx"):
-                df = pd.read_excel(file, sheet_name=card.sheet)
-            elif extension.endswith(("geojson", "wkt", "zip")):
-                df, conversion, params = self._read_geo_file(file, extension, table, conn)
+                result = FileReadResult(tables={alias: df})
             else:
-                self._error_placeholder.object += f"\n⚠️ Could not convert {filename!r}: unsupported format."
-                self._error_placeholder.visible = True
-                return 0
+                result = read_file_to_dataframes(
+                    file, extension, alias=alias, sheet_name=card.sheet,
+                )
+                if result is None:
+                    self._error_placeholder.object += (
+                        f"\n⚠️ Could not convert {filename!r}: unsupported format."
+                    )
+                    self._error_placeholder.visible = True
+                    return 0
         except Exception as e:
             self._error_placeholder.object += f"\n⚠️ Error processing {filename!r}: {e}"
             self._error_placeholder.visible = True
             return 0
 
-        if df is None or df.empty:
+        # Apply source-level params (e.g. spatial initializers)
+        if result.source_params:
+            duckdb_source.param.update(result.source_params)
+            for init in result.source_params.get("initializers", []):
+                conn.execute(init)
+
+        added = 0
+        first_table = None
+        for tbl_name, df in result.tables.items():
+            if df is None or df.empty:
+                continue
+
+            # Convert pandas StringDtype columns to object for DuckDB compatibility
+            for col in df.columns:
+                if isinstance(df[col].dtype, pd.StringDtype):
+                    df[col] = df[col].astype(object)
+
+            df_rel = conn.from_df(df)
+            if tbl_name in result.conversions:
+                conn.register(f"{tbl_name}_temp", df_rel)
+                conn.execute(result.conversions[tbl_name])
+                conn.unregister(f"{tbl_name}_temp")
+            else:
+                df_rel.to_view(tbl_name)
+
+            duckdb_source.tables[tbl_name] = f"SELECT * FROM {tbl_name}"
+            if first_table is None:
+                first_table = tbl_name
+            added += 1
+
+        if added > 0:
+            self._register_source_output(duckdb_source)
+            self.outputs["table"] = first_table
+            self.param.trigger("outputs")
+            self._last_table = first_table
+
+        if added == 0:
             self._error_placeholder.object += f"\n⚠️ {filename!r} contains no data."
             self._error_placeholder.visible = True
-            return 0
 
-        # Convert pandas StringDtype columns to object for DuckDB compatibility
-        for col in df.columns:
-            if isinstance(df[col].dtype, pd.StringDtype):
-                df[col] = df[col].astype(object)
-
-        duckdb_source.param.update(params)
-        df_rel = conn.from_df(df)
-        if conversion:
-            conn.register(f"{table}_temp", df_rel)
-            conn.execute(conversion)
-            conn.unregister(f"{table}_temp")
-        else:
-            df_rel.to_view(table)
-        duckdb_source.tables[table] = sql_expr
-        self._register_source_output(duckdb_source)
-        self.outputs["table"] = table
-        self.param.trigger("outputs")
-        self._last_table = table
-        return 1
+        return added
 
     def _read_json_file(self, file: io.BytesIO | io.StringIO, filename: str) -> pd.DataFrame:
         file.seek(0)
@@ -230,30 +243,6 @@ class FileSourceControls(BaseSourceControls):
                 raise ValueError("JSON structure is not tabular.") from e
 
         raise ValueError(f"JSON root must be an object or array, got {type(data).__name__}")
-
-    def _read_geo_file(self, file: io.BytesIO, extension: str, table: str, conn) -> tuple[pd.DataFrame, str | None, dict]:
-        if extension.endswith("zip"):
-            zf = zipfile.ZipFile(file)
-            if not any(f.filename.endswith("shp") for f in zf.filelist):
-                raise ValueError("ZIP file does not contain a shapefile (.shp)")
-            file.seek(0)
-
-        import geopandas as gpd
-        geo_df = gpd.read_file(file)
-
-        if geo_df.empty:
-            raise ValueError("Geospatial file contains no features")
-
-        df = pd.DataFrame(geo_df)
-        df["geometry"] = geo_df["geometry"].to_wkb()
-
-        params = {"initializers": ["INSTALL spatial;\nLOAD spatial;"]}
-        conn.execute(params["initializers"][0])
-
-        cols = ", ".join(f'"{c}"' for c in df.columns if c != "geometry")
-        conversion = f"CREATE TEMP TABLE {table} AS SELECT {cols}, ST_GeomFromWKB(geometry) as geometry FROM {table}_temp"
-
-        return df, conversion, params
 
     # ──────────────────────────────────────────────────────────────────────────
     # Metadata handling

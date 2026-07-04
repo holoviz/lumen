@@ -133,7 +133,8 @@ class XArraySQLSource(BaseSQLSource):
 
         for var_name in self._dataset.data_vars:
             var_ds = self._dataset[[var_name]]
-            self._ctx.from_dataset(var_name, var_ds, chunks=chunk_spec)
+            var_chunks = {k: v for k, v in chunk_spec.items() if k in var_ds.dims}
+            self._ctx.from_dataset(var_name, var_ds, chunks=var_chunks)
             self._registered_tables.add(var_name)
 
         if self.tables is None:

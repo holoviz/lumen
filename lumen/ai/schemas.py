@@ -174,7 +174,7 @@ class Metaset:
         if include_schema and self.has_schemas:
             schema = self.schemas.get(table_slug)
             if schema and schema.get("__len__"):
-                data['n_rows'] = len(schema)
+                data['n_rows'] = schema["__len__"]
 
         if include_lineage and catalog_entry.derived_from:
             data['derived_from'] = [

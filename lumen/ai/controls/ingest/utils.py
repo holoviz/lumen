@@ -3,13 +3,17 @@ from __future__ import annotations
 import asyncio
 import datetime
 import io
+import json
 import re
+import zipfile
 
+from dataclasses import dataclass, field
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pandas as pd
 
+from ....util import normalize_table_name
 from .constants import (
     CONTENT_TYPE_TO_EXTENSION, METADATA_EXTENSIONS, TABLE_EXTENSIONS,
     DownloadConfig,
@@ -38,8 +42,16 @@ def format_bytes(bytes_size: int) -> str:
 # Filename extraction
 # ─────────────────────────────────────────────────────────────────────────────
 
-def extract_filename_from_url(url: str) -> str:
-    """Extract a filename from a URL, falling back to a hash-based name."""
+def extract_filename_from_url(url: str) -> tuple[str, bool]:
+    """
+    Extract a filename from a URL, falling back to a hash-based name.
+
+    Returns
+    -------
+    tuple[str, bool]
+        ``(filename, extension_was_guessed)`` — second value is True if we
+        defaulted to an extension rather than finding one in the URL.
+    """
     parsed = urlparse(url)
     filename = parsed.path.split("/")[-1] if parsed.path else "downloaded_file"
 
@@ -54,14 +66,18 @@ def extract_filename_from_url(url: str) -> str:
         if format_param and format_param.lower() in _VALID_EXTENSIONS:
             base_name = filename.rsplit(".", 1)[0] if "." in filename else filename
             filename = f"{base_name}.{format_param.lower()}"
+            return filename, False
 
     if not filename or "." not in filename:
-        filename = f"data_{abs(hash(url)) % DownloadConfig.DEFAULT_HASH_MODULO}.json"
+        filename = f"data_{abs(hash(url)) % DownloadConfig.DEFAULT_HASH_MODULO}"
+        return filename, True
 
-    return filename
+    return filename, False
 
 
-def extract_filename_from_headers(response_headers: dict, default_filename: str) -> str:
+def extract_filename_from_headers(
+    response_headers: dict, default_filename: str, extension_was_guessed: bool = False
+) -> str:
     """Refine a filename using Content-Disposition or Content-Type headers."""
     if "content-disposition" in response_headers:
         cd = response_headers["content-disposition"]
@@ -71,7 +87,8 @@ def extract_filename_from_headers(response_headers: dict, default_filename: str)
 
     current_ext = default_filename.rsplit(".", 1)[-1].lower() if "." in default_filename else ""
 
-    if current_ext in _VALID_EXTENSIONS:
+    # Only trust URL extension if it wasn't guessed
+    if current_ext in _VALID_EXTENSIONS and not extension_was_guessed:
         return default_filename
 
     content_type_raw = response_headers.get("content-type", "")
@@ -113,6 +130,203 @@ def serialize_param_value(val):
     if isinstance(val, datetime.date):
         return val.isoformat()
     return val
+
+
+def read_html_tables(content: str | bytes, base_alias: str) -> dict[str, pd.DataFrame]:
+    """
+    Parse HTML content and return all tables as a dict of {table_name: DataFrame}.
+
+    Parameters
+    ----------
+    content : str | bytes
+        HTML content to parse.
+    base_alias : str
+        Base name for tables. Single table uses this directly; multiple tables
+        get suffixed as ``{base_alias}_table0``, ``{base_alias}_table1``, etc.
+
+    Returns
+    -------
+    dict[str, pd.DataFrame]
+        Mapping of table names to DataFrames.
+
+    Raises
+    ------
+    ValueError
+        If no HTML tables are found.
+    """
+    if isinstance(content, bytes):
+        content = content.decode("utf-8")
+    tables = pd.read_html(io.StringIO(content))
+    if not tables:
+        raise ValueError("No HTML tables found")
+    if len(tables) == 1:
+        return {base_alias: tables[0]}
+    return {f"{base_alias}_table{i}": df for i, df in enumerate(tables)}
+
+
+def read_json_to_dataframe(content: str | bytes) -> pd.DataFrame:
+    """
+    Parse JSON content into a DataFrame, handling common API response patterns.
+
+    Supports:
+    - JSON arrays of objects
+    - JSON objects with nested data keys (data, records, rows, items, results)
+    - Single JSON objects (converted to single-row DataFrame)
+
+    Parameters
+    ----------
+    content : str | bytes
+        JSON content to parse.
+
+    Returns
+    -------
+    pd.DataFrame
+        Parsed DataFrame.
+
+    Raises
+    ------
+    ValueError
+        If JSON structure is unsupported.
+    """
+    if isinstance(content, bytes):
+        content = content.decode("utf-8")
+    data = json.loads(content)
+
+    if isinstance(data, list):
+        return pd.json_normalize(data)
+    if isinstance(data, dict):
+        for key in ("data", "records", "rows", "items", "results"):
+            if key in data and isinstance(data[key], list):
+                return pd.json_normalize(data[key])
+        return pd.DataFrame([data])
+    raise ValueError(f"Unsupported JSON root type: {type(data).__name__}")
+
+
+@dataclass
+class FileReadResult:
+    """Result of parsing a file into DataFrames."""
+
+    tables: dict[str, pd.DataFrame]
+    """Mapping of table names to DataFrames."""
+
+    source_params: dict = field(default_factory=dict)
+    """Extra params for ``DuckDBSource`` (e.g. spatial initializers)."""
+
+    conversions: dict[str, str] = field(default_factory=dict)
+    """Per-table SQL to execute after registering the DataFrame as
+    ``{table}_temp``.  When present the caller should:
+
+    1. ``conn.register(f"{table}_temp", df_rel)``
+    2. ``conn.execute(conversion)``
+    3. ``conn.unregister(f"{table}_temp")``
+    """
+
+
+def read_file_to_dataframes(
+    file_obj: io.BytesIO | io.StringIO,
+    extension: str,
+    *,
+    alias: str = "data",
+    **read_kwargs,
+) -> FileReadResult | None:
+    """
+    Parse a file object into one or more DataFrames.
+
+    Handles CSV, Parquet, JSON, Excel (single or all sheets), HTML
+    (all tables), and geospatial formats (GeoJSON, WKT, zipped
+    shapefiles).  Returns ``None`` for unrecognised extensions.
+
+    Parameters
+    ----------
+    file_obj : io.BytesIO | io.StringIO
+        Seekable file-like object.
+    extension : str
+        Lowercase extension without dot (e.g. ``"csv"``).
+    alias : str
+        Base table name.  Single-result formats use this directly;
+        multi-result formats append a suffix.
+    **read_kwargs
+        Passed through to the underlying reader.  Common examples:
+        ``sheet_name`` for Excel files, ``sep`` for CSV.
+
+    Returns
+    -------
+    FileReadResult | None
+    """
+    file_obj.seek(0)
+    sheet = read_kwargs.pop("sheet_name", None)
+
+    # ── single-DataFrame formats ──────────────────────────────────────────
+    if extension == "csv":
+        csv_kwargs = {"parse_dates": True, "sep": None, "engine": "python"}
+        csv_kwargs.update(read_kwargs)
+        df = pd.read_csv(file_obj, **csv_kwargs)
+        return FileReadResult(tables={alias: df})
+
+    if extension in ("parq", "parquet"):
+        return FileReadResult(tables={alias: pd.read_parquet(file_obj, **read_kwargs)})
+
+    if extension == "json":
+        content = file_obj.read()
+        return FileReadResult(tables={alias: read_json_to_dataframe(content)})
+
+    # ── Excel (single sheet or all sheets) ────────────────────────────────
+    if extension == "xlsx":
+        if sheet is not None:
+            df = pd.read_excel(file_obj, sheet_name=sheet, **read_kwargs)
+            return FileReadResult(tables={alias: df})
+        # Read all sheets
+        sheets = pd.read_excel(file_obj, sheet_name=None, **read_kwargs)
+        if len(sheets) == 1:
+            return FileReadResult(tables={alias: next(iter(sheets.values()))})
+        tables = {
+            f"{alias}_{normalize_table_name(name)}": df
+            for name, df in sheets.items()
+        }
+        return FileReadResult(tables=tables)
+
+    # ── HTML tables ───────────────────────────────────────────────────────
+    if extension in ("html", "htm"):
+        content = file_obj.read()
+        return FileReadResult(tables=read_html_tables(content, alias))
+
+    # ── Geospatial (GeoJSON / WKT / zipped shapefile) ─────────────────────
+    if extension in ("geojson", "wkt", "zip"):
+        return read_geo_file(file_obj, extension, alias)
+
+    return None
+
+
+def read_geo_file(
+    file_obj: io.BytesIO, extension: str, alias: str,
+) -> FileReadResult:
+    """Parse a geospatial file, returning WKB geometry + conversion SQL."""
+    if extension == "zip":
+        zf = zipfile.ZipFile(file_obj)
+        if not any(f.filename.endswith("shp") for f in zf.filelist):
+            raise ValueError("ZIP file does not contain a shapefile (.shp)")
+        file_obj.seek(0)
+
+    import geopandas as gpd
+
+    geo_df = gpd.read_file(file_obj)
+    if geo_df.empty:
+        raise ValueError("Geospatial file contains no features")
+
+    df = pd.DataFrame(geo_df)
+    df["geometry"] = geo_df["geometry"].to_wkb()
+
+    cols = ", ".join(f'"{c}"' for c in df.columns if c != "geometry")
+    conversion = (
+        f"CREATE TEMP TABLE {alias} AS SELECT {cols}, "
+        f"ST_GeomFromWKB(geometry) as geometry FROM {alias}_temp"
+    )
+
+    return FileReadResult(
+        tables={alias: df},
+        source_params={"initializers": ["INSTALL spatial;\nLOAD spatial;"]},
+        conversions={alias: conversion},
+    )
 
 
 def normalize_json_response(data) -> pd.DataFrame:
@@ -215,14 +429,14 @@ async def download_file(
         On failure: ``(None, None, error_string)``
     """
     try:
-        filename = extract_filename_from_url(url)
+        filename, extension_was_guessed = extract_filename_from_url(url)
 
         async with httpx.AsyncClient(timeout=DownloadConfig.TIMEOUT_SECONDS) as client:
             async with client.stream("GET", url) as response:
                 response.raise_for_status()
 
                 filename = extract_filename_from_headers(
-                    dict(response.headers), filename,
+                    dict(response.headers), filename, extension_was_guessed,
                 )
                 content_length = response.headers.get("content-length")
 

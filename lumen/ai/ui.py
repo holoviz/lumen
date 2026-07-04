@@ -40,8 +40,8 @@ from ..sources.xarray_sql import XArraySQLSource
 from ..util import check_xarray_available, log
 from .agents import (
     AnalysisAgent, BaseCodeAgent, ChatAgent, DocumentListAgent,
-    DocumentSummarizerAgent, SQLAgent, TableListAgent, ValidationAgent,
-    VegaLiteAgent,
+    DocumentSummarizerAgent, SourceAgent, SQLAgent, TableListAgent,
+    ValidationAgent, VegaLiteAgent,
 )
 from .config import (
     DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROVIDED_SOURCE_NAME,
@@ -408,7 +408,7 @@ class UI(Viewer):
 
     default_agents = param.List(default=[
         TableListAgent, ChatAgent, DocumentListAgent, DocumentSummarizerAgent,
-        SQLAgent, VegaLiteAgent, ValidationAgent, DeckGLAgent
+        SQLAgent, SourceAgent, VegaLiteAgent, ValidationAgent, DeckGLAgent
     ], doc="""List of default agents which will always be added.""")
 
     demo_inputs = param.List(default=DEMO_MESSAGES, doc="""
@@ -808,7 +808,6 @@ class UI(Viewer):
                 back_button = Button(
                     label="Back to Exploration",
                     icon="insights",
-                    button_type="primary",
                     on_click=lambda e: self._handle_sidebar_event(self._sidebar_menu.items[0]),
                 )
                 main_content = Column(no_explorations_msg, back_button, styles={"margin": "auto"})
@@ -1249,7 +1248,7 @@ class UI(Viewer):
         )
 
         self._next_help_button = Button(
-            name="Next",
+            label="Next",
             variant="outlined",
             sizing_mode="stretch_width",
             align="end",
@@ -1446,6 +1445,9 @@ class UI(Viewer):
         else:
             self._current_help_text = HELP_GETTING_STARTED
 
+    def _propagate_sources_to_exploration(self, global_context: TContext):
+        """No-op; overridden by ExplorerUI."""
+
     @param.depends('context', on_init=True, watch=True)
     async def _sync_sources(self, event=None, global_context=None):
         global_context = self.context if global_context is None else global_context
@@ -1497,6 +1499,8 @@ class UI(Viewer):
             global_context["source"] = source
         if "table" in context:
             global_context["table"] = context["table"]
+
+        self._propagate_sources_to_exploration(global_context)
 
         # Guard against early calls during init when components don't exist yet
         if hasattr(self, '_explorer'):
@@ -1600,6 +1604,8 @@ class UI(Viewer):
                     if event.new > 1:  # prevent double clicks
                         return
                 self._update_main_view()
+                if hasattr(self, "_coordinator") and self.context.get("sources"):
+                    await self._sync_sources(global_context=self.context)
 
                 if not analysis:
                     # Set the input value and trigger submit
@@ -1660,9 +1666,8 @@ class UI(Viewer):
 
         if append_demo and self.demo_inputs:
             suggestion_buttons.append(Button(
-                name="Show a demo",
+                label="Show a demo",
                 icon="play_arrow",
-                button_type="primary",
                 variant="outlined",
                 on_click=run_demo,
                 margin=5,
@@ -2114,7 +2119,6 @@ class ExplorerUI(UI):
                     ),
                     Button(
                         label="Disable exec",
-                        button_type="primary",
                         on_click=cancel_code_execution,
                     ),
                     align="end",
@@ -2152,6 +2156,25 @@ class ExplorerUI(UI):
             exploration = await self._add_exploration(plan, self._home)
             self._add_views(exploration, items=plan.views)
             await self._postprocess_exploration(plan, exploration, prev, is_new=True)
+
+    def _propagate_sources_to_exploration(self, global_context: TContext):
+        """Propagate source keys into the active exploration's context."""
+        exploration = self._exploration.get('view')
+        if exploration is None or exploration is self._home:
+            return
+        exp_ctx = exploration.context
+        for key in ("source", "sources", "visible_slugs"):
+            if key not in global_context:
+                continue
+            if key == "sources":
+                # Merge: keep exploration's own sources, add new global ones.
+                existing = exp_ctx.get("sources", [])
+                for src in global_context["sources"]:
+                    if src not in existing:
+                        existing = [*existing, src]
+                exp_ctx["sources"] = existing
+            else:
+                exp_ctx[key] = global_context[key]
 
     def _configure_session(self):
         self._home = self._last_synced = Exploration(
@@ -2421,9 +2444,17 @@ class ExplorerUI(UI):
                     icon="vertical_split"
                 )
 
+        def _pop_button_visible(objects):
+            # Popped out (_tab_index is None): always show, to allow closing the split.
+            # Otherwise only show when there's more than one tab.
+            if _tab_index() is None:
+                return True
+            return len(objects) > 1
+
         pop_button = IconButton(
             description="Open this tab in a split view", icon="vertical_split", icon_size="1.1em", size="small",
-            margin=(5, 0, 0, 0), on_click=pop_out, styles={"margin-left": "auto"}
+            margin=(5, 0, 0, 0), on_click=pop_out, styles={"margin-left": "auto"},
+            visible=tabs.param['objects'].rx.pipe(_pop_button_visible), color="primary"
         )
         return pop_button
 
@@ -2609,7 +2640,9 @@ class ExplorerUI(UI):
     ):
         self._exploration['view'].conversation = self.interface.objects
         if "__error__" not in plan.out_context and plan.status != "error":
-            await self._sync_sources(SimpleNamespace(new=plan.out_context), global_context=plan.out_context)
+            # Propagate sources produced by the plan (out_context) into
+            # the global UI context so the source catalog and CTA update.
+            await self._sync_sources(SimpleNamespace(new=plan.out_context), global_context=self.context)
             if "pipeline" in plan.out_context:
                 await self._add_analysis_suggestions(plan)
 
@@ -2618,18 +2651,27 @@ class ExplorerUI(UI):
             return
 
         # On error we have to sync the conversation, unwatch the plan,
-        # and remove the exploration if it was newly created
-        replan_button = Button(
-            label="Replan", icon="alt_route", on_click=lambda _: state.execute(partial(self._replan, plan, prev, partial_plan)),
-            description="Replan and generate a new execution strategy"
-        )
-        rerun_button = Button(
-            label="Rerun", icon="autorenew", on_click=lambda _: state.execute(partial(self._execute_plan, plan, rerun=True)),
-            description="Rerun with the same plan and context"
-        )
+        # and remove the exploration if it was newly create
         last_message = self.interface.objects[-1]
         footer_objects = last_message.footer_objects or []
-        last_message.footer_objects = footer_objects + [rerun_button, replan_button]
+        buttons = []
+        if is_new:
+            replan_button = Button(
+                label="Replan", icon="alt_route", on_click=lambda _: state.execute(partial(self._replan, plan, prev, partial_plan)),
+                description="Replan and generate a new execution strategy"
+            )
+            rerun_button = Button(
+                label="Rerun", icon="autorenew", on_click=lambda _: state.execute(partial(self._execute_plan, plan, rerun=True)),
+                description="Rerun with the same plan and context"
+            )
+            buttons = [rerun_button, replan_button]
+        elif not any(isinstance(fo, Button) and fo.label == "Retry" for fo in footer_objects):
+            retry_button = Button(
+                label="Retry", icon="replay", on_click=lambda _: state.execute(partial(self._execute_plan, plan, rerun=True)),
+                description="Try re-running failed steps"
+            )
+            buttons = [retry_button]
+        last_message.footer_objects = footer_objects + buttons
         if exploration.parent:
             exploration.parent.conversation = exploration.conversation
 

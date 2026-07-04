@@ -80,6 +80,8 @@ def format_float(num):
     Process a float value, returning numeric types instead of strings.
     For very large/small numbers, returns a float that will display in scientific notation.
     """
+    if not isinstance(num, (int, float)):
+        return num
     if pd.isna(num) or math.isinf(num):
         return num
 
@@ -333,7 +335,14 @@ def retry_llm_output(retries=3, sleep=1):
                             raise e
                         if i == retries - 1:
                             raise RetriesExceededError("Maximum number of retries exceeded.") from e
-                        errors.append(str(e))
+                        error_str = str(e)
+                        if error_str not in errors:
+                            errors.append(error_str)
+                        else:
+                            errors.append(
+                                f"{error_str}\n"
+                                "(Same error repeated — try a fundamentally different approach)."
+                            )
                         traceback.print_exc()
                         if sleep:
                             await asyncio.sleep(sleep)
@@ -362,7 +371,14 @@ def retry_llm_output(retries=3, sleep=1):
                             raise e
                         if i == retries - 1:
                             raise RetriesExceededError("Maximum number of retries exceeded.") from e
-                        errors.append(str(e))
+                        error_str = str(e)
+                        if error_str not in errors:
+                            errors.append(error_str)
+                        else:
+                            errors.append(
+                                f"{error_str}\n"
+                                "(Same error repeated — try a fundamentally different approach)."
+                            )
                         traceback.print_exc()
                         if sleep:
                             time.sleep(sleep)
@@ -584,7 +600,12 @@ async def get_data(pipeline):
     return await asyncio.to_thread(get_data_sync)
 
 
-def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool = True) -> str:
+def describe_data_sync(
+    df: pd.DataFrame,
+    enum_limit: int = 3,
+    reduce_enums: bool = True,
+    row_limit: int | None = None,
+) -> str:
     """
     Synchronous version of describe_data that generates a YAML summary of a DataFrame.
 
@@ -596,6 +617,11 @@ def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool
         Maximum number of enum values to show per column
     reduce_enums : bool
         Whether to reduce enum values for readability
+    row_limit : int | None
+        The row cap applied to the result (e.g. by SQLLimit). When the
+        returned frame reaches this many rows the result was truncated, so
+        the summary flags it instead of presenting the capped count as the
+        table's true size.
 
     Returns
     -------
@@ -604,11 +630,14 @@ def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool
     """
     size = df.size
     shape = df.shape
+    shape_header = {"data_shape": [int(shape[0]), int(shape[1])], "is_sampled": False}
     if shape[0] == 1 or size < 10 or (shape[1] > 8 and size < 100):
-        # df -> dict -> YAML
-        return yaml.dump(df.to_dict(orient='records'), default_flow_style=False, allow_unicode=True, sort_keys=False)
+        records = df.to_dict(orient='records')
+        result = {**shape_header, "records": records}
+        return yaml.dump(result, default_flow_style=False, allow_unicode=True, sort_keys=False)
     if size < 100:
-        return df.to_markdown(index=False)
+        header = yaml.dump(shape_header, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        return header + df.to_markdown(index=False)
 
     is_sampled = False
     if shape[0] > 5000:
@@ -659,6 +688,25 @@ def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool
         except AttributeError:
             pass
 
+    # Low-cardinality integer columns (e.g. status codes, ratings)
+    for col in df.select_dtypes(include=["int64"]).columns:
+        nunique = df[col].nunique()
+        if nunique <= 10:
+            if col not in df_describe_dict:
+                df_describe_dict[col] = {}
+            unique_values = sorted(df[col].dropna().unique().tolist())
+            temp_spec = {"enum": unique_values}
+            updated_spec, _ = process_enums(
+                temp_spec,
+                num_cols=len(df.columns),
+                limit=enum_limit,
+                include_enum=True,
+                reduce_enums=reduce_enums,
+            )
+            if "enum" in updated_spec:
+                df_describe_dict[col]["enum"] = updated_spec["enum"]
+            df_describe_dict[col]["nunique"] = int(nunique)
+
     for col in df.columns:
         if col not in df_describe_dict:
             df_describe_dict[col] = {}
@@ -675,32 +723,53 @@ def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool
     # select all numeric columns and round
     for col in df.select_dtypes(include=["int64", "float64"]).columns:
         for key in df_describe_dict[col]:
-            df_describe_dict[col][key] = format_float(df_describe_dict[col][key])
+            values = df_describe_dict[col][key]
+            if isinstance(values, list):
+                values = [format_float(v) for v in values]
+            else:
+                values = format_float(values)
+            df_describe_dict[col][key] = values
 
     for col in df.select_dtypes(include=["float64"]).columns:
         df[col] = df[col].apply(format_float)
 
-    # Add head and tail samples (2 row each)
+    n_rows, n_cols = shape
+
+    # Add head and tail samples (2 rows each); deduplicate if identical
     head_sample = df.head(2).to_dict('records')
     tail_sample = df.tail(2).to_dict('records')
 
-    result = {
-        "summary": {
-            "n_cells": size,
-            "n_rows": shape[0],
-            "n_cols": shape[1],
-            "sampled_cols": sampled_columns,
-            "is_sampled": is_sampled,
-        },
-        "stats": df_describe_dict,
-        "head": head_sample[0] if head_sample else {},
-        "tail": tail_sample[0] if tail_sample else {},
+    summary = {
+        "n_cells": size,
+        "data_shape": [n_rows, n_cols],
+        "sampled_cols": sampled_columns,
+        "is_sampled": is_sampled,
     }
+    if row_limit is not None and n_rows >= row_limit:
+        summary["rows_capped_at_limit"] = row_limit
+        summary["note"] = (
+            f"Result capped at the {row_limit}-row display limit; "
+            "the full table may contain more rows."
+        )
+    result = {
+        "summary": summary,
+        "stats": df_describe_dict,
+    }
+    if head_sample == tail_sample:
+        result["sample"] = head_sample[0] if head_sample else {}
+    else:
+        result["head"] = head_sample[0] if head_sample else {}
+        result["tail"] = tail_sample[0] if tail_sample else {}
 
     return yaml.dump(result, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
 
-async def describe_data(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool = True) -> str:
+async def describe_data(
+    df: pd.DataFrame,
+    enum_limit: int = 3,
+    reduce_enums: bool = True,
+    row_limit: int | None = None,
+) -> str:
     """
     Async wrapper for describe_data_sync that generates a YAML summary of a DataFrame.
 
@@ -718,7 +787,9 @@ async def describe_data(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: boo
     str
         YAML-formatted summary of the DataFrame
     """
-    return await asyncio.to_thread(describe_data_sync, df, enum_limit, reduce_enums)
+    return await asyncio.to_thread(
+        describe_data_sync, df, enum_limit, reduce_enums, row_limit
+    )
 
 
 
@@ -733,9 +804,14 @@ def clean_sql(sql_expr: str, dialect: str | None = None, prettify: bool = False)
         cleaned_sql = cleaned_sql.replace('`', '"')
     clean_sql = cleaned_sql.strip().rstrip(";")
     if prettify:
+        # 'any' is a legacy BaseSQLSource dialect value that sqlglot no
+        # longer accepts (28.x raises 'Unknown dialect any'); normalise it
+        # to sqlglot's dialect-agnostic mode so SQLAgent's chat path keeps
+        # working for sources that have not declared a concrete dialect.
+        sql_dialect = None if dialect == "any" else dialect
         clean_sql = sqlglot.transpile(
             sql_expr,
-            read=dialect,
+            read=sql_dialect,
             pretty=True
         )[0]
     return clean_sql

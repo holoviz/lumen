@@ -23,7 +23,9 @@ To use a specific provider, pass the `--provider` flag:
 ``` bash
 lumen-ai serve penguins.csv --provider anthropic
 lumen-ai serve penguins.csv --provider google --model 'gemini-2.5-flash'
+lumen-ai serve penguins.csv --provider openrouter --model 'openai/gpt-4o-mini'
 lumen-ai serve penguins.csv --provider ollama --model 'qwen3:32b'
+lumen-ai serve penguins.csv --provider mlx
 ```
 
 For more CLI options, see the [CLI guide](../configuration/cli.md#configure-llm).
@@ -69,6 +71,16 @@ model_config = {
 
 Recommended ranges: 0.1 (SQL) to 0.4 (chat).
 
+### Disabling temperature
+
+Some newer models (e.g. reasoning models) reject a `temperature` argument. Set `temperature=None` to omit it from requests entirely, falling back to the provider's own default:
+
+``` py title="Omit temperature"
+llm = lmai.llm.Anthropic(temperature=None)
+```
+
+This works on every provider. Local backends (MLX, Llama.cpp) fall back to their built-in sampler default when `None`.
+
 ## Supported providers
 
 For installation and API key setup instructions, see the [Installation guide](../installation.md).
@@ -93,6 +105,7 @@ For installation and API key setup instructions, see the [Installation guide](..
 |----------|---------------|-------------|
 | **Ollama** | `qwen3:32b` | External service; requires `ollama pull` to manage and run models. |
 | **Llama.cpp** | `unsloth/Qwen3-32B-GGUF` | Embedded runner; automatically downloads GGUF models from HuggingFace. |
+| **MLX** | `mlx-community/Qwen3.5-9B-MLX-4bit` | Apple Silicon native; runs models in-process via Metal GPU or connects to `mlx_lm.server`. |
 | **AI Navigator** | `server-model` | Desktop GUI; provides a local OpenAI-compatible API once the API server is started. |
 
 **Recommended local models:**
@@ -111,6 +124,7 @@ For installation and API key setup instructions, see the [Installation guide](..
 
 | Provider | Default Model | Description |
 |----------|---------------|-------------|
+| **OpenRouter** | `openai/gpt-4o-mini` | OpenAI-compatible gateway providing access to models from OpenAI, Anthropic, Google, Meta, Mistral, and more through a single API key. |
 | **AWS Bedrock** | `us.anthropic.claude-sonnet-4-6-20250929-v1:0` | Enterprise gateway providing access to models from Anthropic, Meta, Mistral, and more. |
 | **LiteLLM** | `gpt-5.4-mini` | Unified router to access 100+ models across all supported LLM providers. |
 | **AI Catalyst** | `ai_catalyst` | Enterprise model server; provides access to validated, governed open-source models. |
@@ -119,6 +133,24 @@ For installation and API key setup instructions, see the [Installation guide](..
 
 - **AnthropicBedrock** - Optimized for Claude models using Anthropic's SDK
 - **Bedrock** - Universal access to all Bedrock models (Claude, Llama, Mistral, Titan, etc.)
+
+### OpenRouter
+
+OpenRouter provides an OpenAI-compatible API for routing requests to models from multiple providers.
+
+``` py title="OpenRouter configuration"
+import lumen.ai as lmai
+
+llm = lmai.llm.OpenRouter(
+    model_kwargs={
+        "default": {"model": "openai/gpt-4o-mini"},
+        "sql": {"model": "anthropic/claude-3.5-sonnet"},
+        "vega_lite": {"model": "google/gemini-2.5-flash"},
+    }
+)
+
+ui = lmai.ExplorerUI(data='penguins.csv', llm=llm)
+ui.servable()
 
 ## Advanced configuration
 
@@ -174,13 +206,14 @@ The default values for each provider are:
 | Provider | Default `api_key_env_var` |
 |----------|---------------------------|
 | `OpenAI` | `OPENAI_API_KEY` |
+| `OpenRouter` | `OPENROUTER_API_KEY` |
 | `Anthropic` | `ANTHROPIC_API_KEY` |
 | `Google` | `GEMINI_API_KEY` |
 | `MistralAI` | `MISTRAL_API_KEY` |
 | `AzureOpenAI` / `AzureMistralAI` | `AZUREAI_ENDPOINT_KEY` |
 | `Bedrock` / `AnthropicBedrock` | `AWS_ACCESS_KEY_ID` |
 | `AICatalyst` | `AI_CATALYST_API_KEY` |
-| `Ollama`, `LlamaCpp`, `AINavigator` | *(none required)* |
+| `Ollama`, `LlamaCpp`, `MLX`, `AINavigator` | *(none required)* |
 
 ### Checking available models
 
@@ -193,6 +226,9 @@ print(lmai.llm.OpenAI.models())
 
 print(lmai.llm.Anthropic.models())
 # {'claude-haiku-4-5', 'claude-sonnet-4-6', 'claude-opus-4-5', ...}
+
+print(lmai.llm.OpenRouter.models())
+# {'openai/gpt-4o-mini', 'anthropic/claude-3.5-sonnet', ...}
 ```
 
 Providers that don't support listing models (e.g. `AzureOpenAI`, `LiteLLM`) return
@@ -250,6 +286,21 @@ llm = lmai.llm.AzureOpenAI(
 )
 ```
 
+### Prompt caching (Anthropic)
+
+`Anthropic` caches the static prefix of each request (`tools` → `system` → `messages`) so repeated context isn't reprocessed, lowering latency and input-token cost. It is controlled by the `cache` parameter:
+
+``` py title="Prompt caching"
+llm = lmai.llm.Anthropic(cache="5m")  # default; also "1h" or None to disable
+```
+
+- `"5m"` (default) — 5-minute cache; refreshes for free on each hit.
+- `"1h"` — 1-hour cache; costs more on write, useful for slower-cadence sessions.
+- `None` — disabled.
+
+!!! note
+    Caching only applies above a model-specific minimum prefix length (4,096 tokens for the default `claude-haiku-4-5`); shorter prefixes are silently not cached. `AnthropicBedrock` ignores this setting, since AWS Bedrock does not support automatic caching.
+
 ### Fallback models (LiteLLM)
 
 Automatically retry with backup models if primary fails:
@@ -287,6 +338,65 @@ llm = lmai.llm.AINavigator()
 ```
 
 By default, it uses `http://localhost:8080/v1`.
+
+### MLX (Apple Silicon)
+
+Run models natively on Apple Silicon Macs using the [MLX](https://github.com/ml-explore/mlx-lm) framework. Requires `pip install mlx-lm`.
+
+**Two modes of operation:**
+
+=== "Server mode (default)"
+
+    Connect to a running `mlx_lm.server`:
+
+    ``` bash title="Start the server"
+    mlx_lm.server \
+      --model mlx-community/Qwen3.5-9B-MLX-4bit \
+      --port 8080 \
+      --max-tokens 8192 \
+      --chat-template-args '{"enable_thinking":false}'
+    ```
+
+    ``` py title="Connect from Lumen"
+    llm = lmai.llm.MLX(
+        endpoint="http://localhost:8080/v1",
+        model_kwargs={"default": {"model": "mlx-community/Qwen3.5-9B-MLX-4bit"}},
+    )
+    ```
+
+=== "In-process mode"
+
+    Load the model directly — no server needed:
+
+    ``` py title="In-process inference"
+    llm = lmai.llm.MLX(
+        endpoint=None,  # disables server mode
+        model_kwargs={"default": {"model": "mlx-community/Qwen3.5-9B-MLX-4bit"}},
+    )
+    ```
+
+    The model is downloaded from HuggingFace on first use and cached.
+
+**Key parameters:**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `endpoint` | `http://localhost:8080/v1` | Set to `None` for in-process mode |
+| `enable_thinking` | `False` | Enable model reasoning/thinking mode |
+| `max_tokens` | `8192` | Max tokens per response (per-request, does not change server defaults) |
+| `temperature` | `0.4` | Sampling temperature (per-request, does not change server defaults) |
+| `chat_template_kwargs` | `{}` | Extra args for `apply_chat_template` (in-process mode only) |
+
+**Recommended models for Apple Silicon:**
+
+| Memory | Model | Size |
+|--------|-------|------|
+| 16 GB | `mlx-community/Qwen3.5-9B-MLX-4bit` | ~5 GB |
+| 32 GB | `mlx-community/Qwen3.5-27B-4bit` | ~15 GB |
+| 64 GB+ | `mlx-community/Qwen3.6-35B-A3B-4bit` | ~20 GB |
+
+!!! tip "Server mode vs in-process"
+    Server mode keeps the model loaded between requests and supports multiple clients. In-process mode is simpler (no separate terminal) but loads the model into your Python process.
 
 ### AI Catalyst (Enterprise)
 
@@ -332,13 +442,14 @@ Different providers use different model string formats:
 
 - **OpenAI**: `"gpt-5.4"`, `"gpt-5.4-mini"`, `"gpt-5.4-nano"`, `"gpt-5.4"`
 - **Anthropic**: `"claude-sonnet-4-6"`, `"claude-haiku-4-5"`, `"claude-opus-4-5"`
+- **OpenRouter**: `"openai/gpt-4o-mini"`, `"anthropic/claude-3.5-sonnet"`, `"google/gemini-2.5-flash"`
 - **Google**: `"gemini-3-flash-preview"`, `"gemini-2.5-flash"`
 - **Mistral**: `"mistral-large-latest"`, `"mistral-small-latest"`
 - **Azure**: `"your-deployment-name"` (use your Azure deployment name)
 - **Bedrock**: `"us.anthropic.claude-sonnet-4-6-20250929-v1:0"`, `"meta.llama3-70b-instruct-v1:0"`
 - **LiteLLM**: `"gpt-5.4-mini"` (OpenAI), `"anthropic/claude-sonnet-4-6"` (Anthropic), `"gemini/gemini-2.5-flash"` (Google)
 
-For LiteLLM, use the `provider/model` format for non-OpenAI models.
+For OpenRouter and LiteLLM, use the `provider/model` format for routed models.
 
 ## Troubleshooting
 
