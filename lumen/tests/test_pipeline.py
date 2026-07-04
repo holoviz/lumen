@@ -391,3 +391,44 @@ def test_pipeline_update_data_resets_loading_on_error(make_filesource):
 
     # The loading flag must be False so future updates aren't blocked
     assert not pipeline._update_widget.loading
+
+
+def test_pipeline_preserves_geodataframe():
+    """A GeoDataFrame survives source -> filter -> Pipeline.data without downcast."""
+    gpd = pytest.importorskip("geopandas")
+    if duckdb is None:
+        pytest.skip("duckdb is not installed")
+    from shapely.geometry import Polygon
+    try:
+        source = DuckDBSource(
+            uri=':memory:',
+            initializers=["INSTALL spatial;", "LOAD spatial;"],
+            tables={'geo': 'SELECT * FROM geo_tbl'},
+        )
+    except Exception as e:  # pragma: no cover - environment dependent
+        pytest.skip(f"duckdb spatial extension unavailable: {e}")
+    gdf = gpd.GeoDataFrame(
+        {
+            'pop': [1, 2, 3],
+            'geometry': [
+                Polygon([(0, 0), (1, 0), (1, 1)]),
+                Polygon([(2, 0), (3, 0), (3, 1)]),
+                Polygon([(4, 0), (5, 0), (5, 1)]),
+            ],
+        },
+        crs='EPSG:4326',
+    )
+    tmp = pd.DataFrame({'pop': gdf['pop'], 'geometry': gdf['geometry'].to_wkb()})
+    source._connection.register('geo_temp', tmp)
+    source._connection.execute(
+        'CREATE TABLE geo_tbl AS '
+        'SELECT pop, ST_GeomFromWKB(geometry) AS geometry FROM geo_temp'
+    )
+
+    cfilter = ConstantFilter(field='pop', value=(2, 3))
+    pipeline = Pipeline(source=source, filters=[cfilter], table='geo')
+    data = pipeline.data
+    assert isinstance(data, gpd.GeoDataFrame)
+    assert 'geometry' in data.columns
+    assert len(data) == 2
+    assert data.geometry.notna().all()
