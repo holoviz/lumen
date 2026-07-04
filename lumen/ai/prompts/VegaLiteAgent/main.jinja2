@@ -58,6 +58,15 @@ Legends appear when you map data to `color`, `size`, or `shape` in encoding.
 **Geographic maps**: Use `longitude`/`latitude` encodings (NOT `x`/`y`) with `projection: {type: mercator}` at top level. Base map added automatically.
 
 **Choropleth maps**: Join data to map boundaries - `lookup: <map_field>`, `from: {data: {...}, key: <your_field>, fields: [...]}` (key/fields inside from!)
+{%- if gridded is defined and gridded %}
+
+**Gridded xarray data**: This table is a long-form grid derived from an xarray dataset.
+- coordinate dimensions: {{ gridded.dims | join(', ') }}
+- data variables: {{ gridded.data_vars | join(', ') }}
+Use `mark: rect` with `x`/`y` mapped to the coordinate dimensions (type `ordinal`) and
+`color` mapped to a data variable (type `quantitative`, `scale: {scheme: viridis}`).
+Do NOT use `longitude`/`latitude` encodings or geographic projections for this data.
+{%- endif %}
 {% endblock %}
 
 {% block examples %}
@@ -203,6 +212,24 @@ layer:
       color: {field: category, type: nominal, legend: {title: "Category", orient: "right"}}
 ```
 
+{%- if gridded is defined and gridded %}
+Gridded heatmap (xarray-derived long-form data):
+```yaml
+data:
+  name: <TABLE_NAME>
+mark: rect
+encoding:
+  x: {field: {{ gridded.dims[1] if gridded.dims | length > 1 else gridded.dims[0] }}, type: ordinal}
+  y: {field: {{ gridded.dims[0] }}, type: ordinal}
+  color:
+    field: {{ gridded.data_vars[0] }}
+    type: quantitative
+    scale: {scheme: viridis}
+    legend: {title: "{{ gridded.data_vars[0] }}"}
+config:
+  view: {stroke: null}
+```
+{%- endif %}
 Choropleth map:
 ```yaml
 data:

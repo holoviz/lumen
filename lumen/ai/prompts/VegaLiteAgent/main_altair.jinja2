@@ -16,6 +16,12 @@ Generate Altair code. Data is `df`, assign to `chart`, end with `.interactive()`
 - When the n_rows > 5000:
   - You **MUST** include `alt.data_transformers.disable_max_rows()` and `alt.renderers.set_embed_options(renderer="canvas")`
   - Prefer aggregated and binned plots
+{%- if gridded is defined and gridded %}
+
+# Gridded xarray data
+`df` is a long-form grid from an xarray dataset (dimensions: {{ gridded.dims | join(', ') }}; variables: {{ gridded.data_vars | join(', ') }}).
+Use `mark_rect()` for a heatmap: encode `x`/`y` as ordinal coordinate dimensions and `color` as the quantitative value with `alt.Scale(scheme='viridis')`. Do not use geographic projections.
+{%- endif %}
 {% endblock %}
 
 {% block examples %}

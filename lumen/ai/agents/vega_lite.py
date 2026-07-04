@@ -24,7 +24,8 @@ from ..editors import LumenEditor, VegaLiteEditor
 from ..llm import Message, OpenAI
 from ..models import EscapeBaseModel, RetrySpec
 from ..utils import (
-    get_data, get_schema, load_json, log_debug, retry_llm_output,
+    get_data, get_schema, gridded_metadata, load_json, log_debug,
+    retry_llm_output,
 )
 from ..vector_store import DuckDBVectorStore
 from .base_code import BaseCodeAgent
@@ -465,6 +466,7 @@ class VegaLiteAgent(BaseCodeAgent):
     ) -> dict[str, Any]:
         """Generate VegaLite spec via YAML (declarative mode)."""
         errors_context = self._build_errors_context(pipeline, context, errors)
+        gridded = gridded_metadata(pipeline)
         with self._add_step(title="Creating basic plot structure", steps_layout=self._steps_layout) as step:
             response = self._stream_prompt(
                 "main",
@@ -473,6 +475,7 @@ class VegaLiteAgent(BaseCodeAgent):
                 table=pipeline.table,
                 doc=doc,
                 doc_examples=doc_examples,
+                gridded=gridded,
                 **errors_context,
             )
             async for output in response:
@@ -494,6 +497,7 @@ class VegaLiteAgent(BaseCodeAgent):
     ) -> dict[str, Any] | None:
         """Generate spec via Altair code execution."""
         errors_context = self._build_errors_context(pipeline, context, errors)
+        gridded = gridded_metadata(pipeline)
 
         with self._add_step(title="Generating Altair code", steps_layout=self._steps_layout) as step:
             response = self._stream_prompt(
@@ -503,6 +507,7 @@ class VegaLiteAgent(BaseCodeAgent):
                 table=pipeline.table,
                 doc=doc,
                 doc_examples=doc_examples,
+                gridded=gridded,
                 **errors_context,
             )
             async for output in response:
