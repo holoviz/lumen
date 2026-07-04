@@ -1345,3 +1345,53 @@ def test_read_only_create_sql_expr_source_expands_tables(duckdb_file_source):
 
     # Ensure new tables did NOT modify the original source
     assert source.execute("SHOW TABLES").shape[0] == 1  # Only 'test' table in original source
+
+
+def _spatial_source():
+    """Build an in-memory DuckDBSource holding a native GEOMETRY table.
+
+    Mirrors the ingest flow: WKB bytes -> ST_GeomFromWKB -> GEOMETRY column.
+    Skips if the duckdb spatial extension cannot be loaded (needs network on
+    first install).
+    """
+    gpd = pytest.importorskip("geopandas")
+    from shapely.geometry import Polygon
+    try:
+        source = DuckDBSource(
+            uri=':memory:',
+            initializers=["INSTALL spatial;", "LOAD spatial;"],
+            tables={'geo': 'SELECT * FROM geo_tbl'},
+        )
+    except Exception as e:  # pragma: no cover - environment dependent
+        pytest.skip(f"duckdb spatial extension unavailable: {e}")
+    gdf = gpd.GeoDataFrame(
+        {
+            'name': ['a', 'b'],
+            'pop': [1, 2],
+            'geometry': [
+                Polygon([(0, 0), (1, 0), (1, 1)]),
+                Polygon([(2, 0), (3, 0), (3, 1)]),
+            ],
+        },
+        crs='EPSG:4326',
+    )
+    tmp = pd.DataFrame(
+        {'name': gdf['name'], 'pop': gdf['pop'], 'geometry': gdf['geometry'].to_wkb()}
+    )
+    source._connection.register('geo_temp', tmp)
+    source._connection.execute(
+        'CREATE TABLE geo_tbl AS '
+        'SELECT name, pop, ST_GeomFromWKB(geometry) AS geometry FROM geo_temp'
+    )
+    return source, gpd
+
+
+def test_duckdb_geometry_returns_geodataframe():
+    """A native GEOMETRY column round-trips to a GeoDataFrame without crashing."""
+    source, gpd = _spatial_source()
+    result = source.get('geo')
+    assert isinstance(result, gpd.GeoDataFrame)
+    assert 'geometry' in result.columns
+    assert len(result) == 2
+    assert result.geometry.notna().all()
+    assert str(result.geometry.dtype) == 'geometry'
