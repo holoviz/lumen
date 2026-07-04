@@ -1,8 +1,13 @@
+import json
+
+import pandas as pd
 import panel as pn
+import pytest
 
 from panel_material_ui import Checkbox, FloatSlider, Select
 
 from lumen.schema import JSONSchema
+from lumen.util import get_dataframe_schema
 
 
 def test_boolean_schema():
@@ -25,3 +30,46 @@ def test_enum_schema():
     widget = json_schema._widgets['enum']
     assert isinstance(widget, Select)
     assert widget.options == ['A', 'B', 'C']
+
+
+def test_get_dataframe_schema_geometry():
+    """A geometry column is emitted as a compact, JSON-serializable marker."""
+    gpd = pytest.importorskip("geopandas")
+    from shapely.geometry import Polygon
+    gdf = gpd.GeoDataFrame(
+        {
+            "name": ["a", "b"],
+            "pop": [100, 200],
+            "geometry": [
+                Polygon([(0, 0), (1, 0), (1, 1)]),
+                Polygon([(2, 0), (3, 0), (3, 1)]),
+            ],
+        },
+        crs="EPSG:4326",
+    )
+    schema = get_dataframe_schema(gdf)
+    props = schema["items"]["properties"]
+    assert props["geometry"] == {
+        "type": "string", "format": "geometry", "geometry_type": "Polygon"
+    }
+    # numeric/string columns are unaffected
+    assert props["pop"]["type"] == "integer"
+    assert props["name"]["enum"] == ["a", "b"]
+    # the whole schema must be JSON-serializable (it is sent to the LLM)
+    json.dumps(schema)
+
+
+def test_get_dataframe_schema_geometry_empty():
+    """An empty GeoDataFrame yields geometry_type 'unknown' without raising."""
+    gpd = pytest.importorskip("geopandas")
+    gdf = gpd.GeoDataFrame({"name": [], "geometry": []})
+    schema = get_dataframe_schema(gdf)
+    assert schema["items"]["properties"]["geometry"]["format"] == "geometry"
+
+
+def test_get_dataframe_schema_object_column_unaffected():
+    """Plain object columns still become string enums (no geometry regression)."""
+    df = pd.DataFrame({"cat": ["x", "y", "x"], "n": [1, 2, 3]})
+    props = get_dataframe_schema(df)["items"]["properties"]
+    assert props["cat"] == {"type": "string", "enum": ["x", "y"]}
+    assert props["n"]["type"] == "integer"

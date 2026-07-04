@@ -1395,3 +1395,16 @@ def test_duckdb_geometry_returns_geodataframe():
     assert len(result) == 2
     assert result.geometry.notna().all()
     assert str(result.geometry.dtype) == 'geometry'
+
+
+def test_duckdb_get_schema_geometry_no_distinct():
+    """get_schema on a geometry table returns a geospatial marker and does not
+    run DISTINCT/min-max on the geometry column."""
+    source, gpd = _spatial_source()
+    schema = source.get_schema('geo')
+    assert schema['geometry']['format'] == 'geometry'
+    assert 'enum' not in schema['geometry']
+    assert 'inclusiveMinimum' not in schema['geometry']
+    # non-geometry columns still summarised as usual
+    assert schema['pop']['inclusiveMinimum'] == 1
+    assert schema['pop']['inclusiveMaximum'] == 2
