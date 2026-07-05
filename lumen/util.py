@@ -93,12 +93,18 @@ def get_dataframe_schema(df, columns=None):
         column = df[name]
         if name in geom_cols:
             geom_type = 'unknown'
+            crs = None
             if not (df.empty or is_dask):
                 non_null = column.dropna()
                 if len(non_null):
                     geom_type = non_null.iloc[0].geom_type
+                # crs lets a consumer decide whether a basemap adds context: a
+                # geographic (lat/lon) crs suits a map, a projected/absent one a plain plot
+                crs = column.array.crs
             properties[name] = {
-                'type': 'string', 'format': 'geometry', 'geometry_type': geom_type
+                'type': 'string', 'format': 'geometry', 'geometry_type': geom_type,
+                'crs': str(crs) if crs is not None else None,
+                'geographic': bool(crs is not None and crs.is_geographic),
             }
         elif dtype.kind in 'uifM':
             kind = None

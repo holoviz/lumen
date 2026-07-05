@@ -49,9 +49,11 @@ def test_get_dataframe_schema_geometry():
     )
     schema = get_dataframe_schema(gdf)
     props = schema["items"]["properties"]
-    assert props["geometry"] == {
-        "type": "string", "format": "geometry", "geometry_type": "Polygon"
-    }
+    assert props["geometry"]["format"] == "geometry"
+    assert props["geometry"]["geometry_type"] == "Polygon"
+    # a geographic (lat/lon) CRS is reported so consumers can route/style
+    assert props["geometry"]["geographic"] is True
+    assert props["geometry"]["crs"] == "EPSG:4326"
     # numeric/string columns are unaffected
     assert props["pop"]["type"] == "integer"
     assert props["name"]["enum"] == ["a", "b"]
