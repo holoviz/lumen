@@ -441,3 +441,41 @@ def test_table_view_geometry_rendered_as_wkt():
     assert all(isinstance(v, str) and v.startswith('POLYGON') for v in value['geometry'])
     # panel builds without raising
     view.get_panel()
+
+
+def test_deckgl_view_geometry_as_geojson():
+    """DeckGLView emits a GeoDataFrame as a GeoJSON FeatureCollection for layers."""
+    gpd = pytest.importorskip("geopandas")
+    pytest.importorskip("duckdb")
+    from shapely.geometry import Polygon
+
+    from lumen.sources.duckdb import DuckDBSource
+    from lumen.views.base import DeckGLView
+    try:
+        source = DuckDBSource(
+            uri=':memory:',
+            initializers=["INSTALL spatial;", "LOAD spatial;"],
+            tables={'geo': 'SELECT * FROM geo_tbl'},
+        )
+    except Exception as e:  # pragma: no cover - environment dependent
+        pytest.skip(f"duckdb spatial extension unavailable: {e}")
+    gdf = gpd.GeoDataFrame(
+        {'pop': [1, 2], 'geometry': [
+            Polygon([(0, 0), (1, 0), (1, 1)]), Polygon([(2, 0), (3, 0), (3, 1)])]},
+        crs='EPSG:4326',
+    )
+    tmp = pd.DataFrame({'pop': gdf['pop'], 'geometry': gdf['geometry'].to_wkb()})
+    source._connection.register('geo_temp', tmp)
+    source._connection.execute(
+        'CREATE TABLE geo_tbl AS SELECT pop, ST_GeomFromWKB(geometry) AS geometry FROM geo_temp'
+    )
+    pipeline = Pipeline(source=source, table='geo')
+    spec = {'initialViewState': {'latitude': 0, 'longitude': 0, 'zoom': 6},
+            'layers': [{'@@type': 'GeoJsonLayer'}]}
+    view = DeckGLView(pipeline=pipeline, spec=spec)
+    data = view._get_params()['object']['layers'][0]['data']
+    assert data['type'] == 'FeatureCollection'
+    assert len(data['features']) == 2
+    assert data['features'][0]['geometry']['type'] == 'Polygon'
+    import json
+    json.dumps(data)  # must be serializable
