@@ -525,3 +525,23 @@ def check_geopandas_available():
         return True
     except ImportError:
         return False
+
+
+def geometry_to_wkt(df):
+    """Return a copy of df with geometry columns converted to WKT strings.
+
+    A GeoDataFrame geometry column holds shapely objects that cannot be
+    serialized to the browser (e.g. by Bokeh in a Tabulator), so convert them
+    to WKT text for tabular display. Returns df unchanged if geopandas is
+    unavailable or there are no geometry columns.
+    """
+    if not check_geopandas_available():
+        return df
+    import geopandas as gpd
+    geom_cols = [c for c in df.columns if isinstance(df[c].dtype, gpd.array.GeometryDtype)]
+    if not geom_cols:
+        return df
+    df = pd.DataFrame(df).copy()
+    for col in geom_cols:
+        df[col] = gpd.GeoSeries(df[col]).to_wkt()
+    return df

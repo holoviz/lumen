@@ -41,8 +41,8 @@ from ..state import state
 from ..transforms.base import Transform
 from ..transforms.sql import SQLTransform
 from ..util import (
-    VARIABLE_RE, catch_and_notify, check_geopandas_available, is_ref,
-    resolve_module_reference,
+    VARIABLE_RE, catch_and_notify, check_geopandas_available, geometry_to_wkt,
+    is_ref, resolve_module_reference,
 )
 from ..validation import ValidationError
 
@@ -1202,7 +1202,9 @@ class Table(View):
     def _get_params(self):
         kwargs = {k: v for k, v in self.kwargs.items() if k != 'configuration'}
         params = dict(
-            value=self.get_data(),
+            # geometry columns hold shapely objects Bokeh cannot serialize, so
+            # render them as WKT text in the table (see holoviz/panel#8663)
+            value=geometry_to_wkt(self.get_data()),
             disabled=True,
             page_size=self.page_size,
             sizing_mode='stretch_width',
