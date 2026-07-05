@@ -324,7 +324,12 @@ def read_geo_file(
 
     return FileReadResult(
         tables={alias: df},
-        source_params={"initializers": ["INSTALL spatial;\nLOAD spatial;"]},
+        source_params={
+            "initializers": ["INSTALL spatial;\nLOAD spatial;"],
+            # DuckDB stores geometry without a CRS, so carry the source CRS
+            # through for DuckDBSource to reapply after the WKB roundtrip.
+            "geometry_crs": str(geo_df.crs) if geo_df.crs is not None else None,
+        },
         conversions={alias: conversion},
     )
 
