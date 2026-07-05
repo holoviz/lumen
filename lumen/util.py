@@ -85,17 +85,13 @@ def get_dataframe_schema(df, columns=None):
     if columns is None:
         columns = list(df.columns)
 
-    if check_geopandas_available():
-        import geopandas as gpd
-        geometry_dtype = gpd.array.GeometryDtype
-    else:
-        geometry_dtype = None
+    geom_cols = set(geometry_columns(df))
 
     properties = schema['items']['properties']
     for name in columns:
         dtype = df.dtypes[name]
         column = df[name]
-        if geometry_dtype is not None and isinstance(dtype, geometry_dtype):
+        if name in geom_cols:
             geom_type = 'unknown'
             if not (df.empty or is_dask):
                 non_null = column.dropna()
@@ -527,20 +523,37 @@ def check_geopandas_available():
         return False
 
 
+def is_geodataframe(df):
+    """Return True if df is a geopandas GeoDataFrame."""
+    if not check_geopandas_available():
+        return False
+    import geopandas as gpd
+    return isinstance(df, gpd.GeoDataFrame)
+
+
+def geometry_columns(df):
+    """Return the names of geometry-typed columns in df.
+
+    Empty when geopandas is unavailable or df has no geometry columns.
+    """
+    if not check_geopandas_available():
+        return []
+    import geopandas as gpd
+    return [c for c in df.columns if isinstance(df[c].dtype, gpd.array.GeometryDtype)]
+
+
 def geometry_to_wkt(df):
     """Return a copy of df with geometry columns converted to WKT strings.
 
     A GeoDataFrame geometry column holds shapely objects that cannot be
     serialized to the browser (e.g. by Bokeh in a Tabulator), so convert them
-    to WKT text for tabular display. Returns df unchanged if geopandas is
-    unavailable or there are no geometry columns.
+    to WKT text for tabular display. Returns df unchanged if it has no
+    geometry columns.
     """
-    if not check_geopandas_available():
-        return df
-    import geopandas as gpd
-    geom_cols = [c for c in df.columns if isinstance(df[c].dtype, gpd.array.GeometryDtype)]
+    geom_cols = geometry_columns(df)
     if not geom_cols:
         return df
+    import geopandas as gpd
     df = pd.DataFrame(df).copy()
     for col in geom_cols:
         df[col] = gpd.GeoSeries(df[col]).to_wkt()

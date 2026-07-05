@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import copy
 import html
+import json
 import sys
 
 from io import BytesIO, StringIO
@@ -41,8 +42,8 @@ from ..state import state
 from ..transforms.base import Transform
 from ..transforms.sql import SQLTransform
 from ..util import (
-    VARIABLE_RE, catch_and_notify, check_geopandas_available, geometry_to_wkt,
-    is_ref, resolve_module_reference,
+    VARIABLE_RE, catch_and_notify, geometry_to_wkt, is_geodataframe, is_ref,
+    resolve_module_reference,
 )
 from ..validation import ValidationError
 
@@ -966,10 +967,7 @@ class hvPlotBaseView(View):
     @staticmethod
     def _is_geodata(df) -> bool:
         """Return True if df is a GeoDataFrame with an active geometry column."""
-        if not check_geopandas_available():
-            return False
-        import geopandas as gpd
-        return isinstance(df, gpd.GeoDataFrame) and df.geometry.name in df.columns
+        return is_geodataframe(df) and df.geometry.name in df.columns
 
     @staticmethod
     def _geometry_kind(df) -> str:
@@ -1389,11 +1387,8 @@ class DeckGLView(View):
         geometry objects cannot be sent to the browser. Plain frames use the
         usual list-of-records form.
         """
-        if check_geopandas_available():
-            import geopandas as gpd
-            if isinstance(df, gpd.GeoDataFrame):
-                import json
-                return json.loads(df.to_json())
+        if is_geodataframe(df):
+            return json.loads(df.to_json())
         return df.to_dict(orient='records')
 
     def _get_params(self) -> dict[str, Any]:
