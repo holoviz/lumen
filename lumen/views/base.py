@@ -1376,6 +1376,22 @@ class DeckGLView(View):
 
     _panel_type = pn.pane.DeckGL
 
+    @staticmethod
+    def _layer_data(df):
+        """Serialize data for a deck.gl layer.
+
+        A GeoDataFrame is emitted as a GeoJSON FeatureCollection (which a
+        GeoJsonLayer consumes and Bokeh can serialize), since raw shapely
+        geometry objects cannot be sent to the browser. Plain frames use the
+        usual list-of-records form.
+        """
+        if check_geopandas_available():
+            import geopandas as gpd
+            if isinstance(df, gpd.GeoDataFrame):
+                import json
+                return json.loads(df.to_json())
+        return df.to_dict(orient='records')
+
     def _get_params(self) -> dict[str, Any]:
         df = self.get_data()
         # Deep copy to avoid modifying self.spec when injecting data
@@ -1383,9 +1399,10 @@ class DeckGLView(View):
 
         # Inject data into layers
         if 'layers' in spec:
+            data = self._layer_data(df)
             for layer in spec['layers']:
                 if 'data' not in layer:
-                    layer['data'] = df.to_dict(orient='records')
+                    layer['data'] = data
 
         return dict(object=spec, tooltips=self.tooltips, **self.kwargs)
 
