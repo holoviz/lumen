@@ -638,6 +638,13 @@ class UI(Viewer):
                     sources.append(source)
                     continue
 
+                # Handle local geospatial files (GeoJSON, WKT, zipped shapefile)
+                # via the same read_geo_file -> DuckDB spatial path as file upload
+                geo_ext = Path(src).suffix.lstrip('.').lower()
+                if geo_ext in ('geojson', 'wkt', 'zip') and '://' not in src:
+                    sources.append(cls._resolve_geo_source(src, geo_ext))
+                    continue
+
                 if src.startswith('http'):
                     remote = True
                 if src.endswith(('.parq', '.parquet', '.csv', '.json', '.tsv', '.jsonl', '.ndjson')):
@@ -660,6 +667,45 @@ class UI(Viewer):
             sources.append(source)
 
         return sources
+
+    @classmethod
+    def _resolve_geo_source(cls, src: str, extension: str) -> Source:
+        """Load a geospatial file into an in-memory DuckDBSource.
+
+        Routes GeoJSON/WKT/zipped-shapefile through the same read_geo_file ->
+        DuckDB spatial (ST_GeomFromWKB) path the interactive upload uses, so
+        startup and uploaded geospatial data behave identically (gh-1900).
+        """
+        from ..util import normalize_table_name
+        from .controls.ingest.utils import read_geo_file
+
+        path = Path(src).absolute()
+        if not path.exists():
+            raise FileNotFoundError(f"Data file not found: {src}")
+
+        alias = normalize_table_name(path.stem)
+        with open(path, 'rb') as f:
+            result = read_geo_file(f, extension, alias)
+
+        source = DuckDBSource(
+            initializers=result.source_params.get('initializers', []),
+            tables={},
+            uri=':memory:',
+        )
+        conn = source._connection
+        for tbl_name, df in result.tables.items():
+            df_rel = conn.from_df(df)
+            if tbl_name in result.conversions:
+                conn.register(f"{tbl_name}_temp", df_rel)
+                # read_geo_file emits a CREATE TEMP TABLE, but DuckDBSource runs
+                # its queries on cursors that cannot see another connection's temp
+                # tables, so materialize a persistent (in-memory) table instead.
+                conn.execute(result.conversions[tbl_name].replace("TEMP TABLE", "TABLE", 1))
+                conn.unregister(f"{tbl_name}_temp")
+            else:
+                df_rel.to_view(tbl_name)
+            source.tables[tbl_name] = f"SELECT * FROM {tbl_name}"
+        return source
 
     @wrap_logfire(span_name="Chat Invoke")
     async def _chat_invoke(

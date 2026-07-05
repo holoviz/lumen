@@ -1719,3 +1719,30 @@ async def test_edit_on_child_exploration_switches_to_parent(explorer_ui):
     # Parent and Home still intact
     assert len(ui._explorations.items) == 2
     assert parent_exploration.plan is not None
+
+
+def test_resolve_data_geojson_startup(tmp_path):
+    """A .geojson path at startup loads via read_geo_file instead of raising (gh-1900)."""
+    gpd = pytest.importorskip("geopandas")
+    from shapely.geometry import Polygon
+
+    gdf = gpd.GeoDataFrame(
+        {"county": ["A", "B"], "population": [10, 20]},
+        geometry=[
+            Polygon([(0, 0), (1, 0), (1, 1)]),
+            Polygon([(1, 1), (2, 1), (2, 2)]),
+        ],
+        crs="EPSG:4326",
+    )
+    path = tmp_path / "counties.geojson"
+    gdf.to_file(path, driver="GeoJSON")
+
+    sources = UI._resolve_data([str(path)])
+
+    assert len(sources) == 1
+    source = sources[0]
+    assert "counties" in source.get_tables()
+    # geometry is registered as a real GEOMETRY column; ST_AsText returns text so
+    # this verifies loading without needing the GEOMETRY fetch fix from #1903
+    wkt = source.execute("SELECT ST_AsText(geometry) AS wkt FROM counties LIMIT 1")
+    assert wkt["wkt"].iloc[0].startswith("POLYGON")
