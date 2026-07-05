@@ -1001,7 +1001,11 @@ class hvPlotUIView(hvPlotBaseView):
             if (k in hvPlotExplorer.param or k in Geographic.param)
             and v is not None and k != 'name'
         }
-        return (self.get_data(),), dict(params, **self.kwargs)
+        data = self.get_data()
+        # a geometry column needs a geometry-aware kind to render at all
+        if self.kind is None and self._is_geodata(data):
+            params['kind'] = self._geometry_kind(data)
+        return (data,), dict(params, **self.kwargs)
 
     def __panel__(self):
         panel = self.get_panel()
