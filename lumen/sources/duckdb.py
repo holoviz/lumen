@@ -68,6 +68,11 @@ class DuckDBSource(BaseSQLSource):
         Whether the data is ephemeral, i.e. manually inserted into the
         DuckDB table or derived from real data.""")
 
+    geometry_crs = param.String(default=None, allow_None=True, doc="""
+        CRS to reapply to geometry columns after the WKB roundtrip through
+        DuckDB, which stores geometry without a CRS. Populated from the source
+        data at ingest; may also be set explicitly for a known dataset.""")
+
     read_only = param.Boolean(default=None, doc="""
         Whether to open the DuckDB database in read-only mode.""")
 
@@ -527,7 +532,9 @@ class DuckDBSource(BaseSQLSource):
         if check_geopandas_available():
             import geopandas as gpd
             for col in geom_cols:
-                df[col] = gpd.GeoSeries.from_wkb(df[col].apply(bytes))
+                df[col] = gpd.GeoSeries.from_wkb(
+                    df[col].apply(bytes), crs=self.geometry_crs
+                )
             df = gpd.GeoDataFrame(df, geometry=geom_cols[0])
         return df
 
