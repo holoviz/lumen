@@ -1397,6 +1397,32 @@ def test_duckdb_geometry_returns_geodataframe():
     assert str(result.geometry.dtype) == 'geometry'
 
 
+def test_duckdb_geometry_crs_none_by_default():
+    """Without geometry_crs set the CRS stays None (WKB carries none); no regression."""
+    source, gpd = _spatial_source()
+    assert source.get('geo').crs is None
+
+
+def test_duckdb_geometry_crs_preserved():
+    """geometry_crs is reapplied when rebuilding the GeoDataFrame (gh-1904)."""
+    source, gpd = _spatial_source()
+    source.geometry_crs = 'EPSG:4326'
+    result = source.get('geo')
+    assert result.crs is not None
+    assert result.crs.to_epsg() == 4326
+
+
+def test_duckdb_geometry_crs_propagates_to_derived_source():
+    """A source created via create_sql_expr_source keeps geometry_crs (gh-1904)."""
+    source, gpd = _spatial_source()
+    source.geometry_crs = 'EPSG:4326'
+    derived = source.create_sql_expr_source(
+        {'geo2': 'SELECT * FROM geo'}, materialize=False
+    )
+    assert derived.geometry_crs == 'EPSG:4326'
+    assert derived.get('geo').crs.to_epsg() == 4326
+
+
 def test_duckdb_get_schema_geometry_no_distinct():
     """get_schema on a geometry table returns a geospatial marker and does not
     run DISTINCT/min-max on the geometry column."""
