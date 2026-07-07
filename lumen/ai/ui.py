@@ -37,7 +37,7 @@ from ..pipeline import Pipeline
 from ..sources import Source
 from ..sources.duckdb import DuckDBSource
 from ..sources.xarray_sql import XArraySQLSource
-from ..util import check_xarray_available, log
+from ..util import check_xarray_available, log, normalize_table_name
 from .agents import (
     AnalysisAgent, BaseCodeAgent, ChatAgent, DocumentListAgent,
     DocumentSummarizerAgent, SourceAgent, SQLAgent, TableListAgent,
@@ -53,6 +53,7 @@ from .controls import (
     SourceCatalog, TableExplorer, UploadSourceControls,
 )
 from .controls.ingest.constants import XARRAY_EXTENSIONS
+from .controls.ingest.utils import read_geo_file
 from .coordinator import Coordinator, Plan, Planner
 from .editors import AnalysisOutput, LumenEditor, SQLEditor
 from .export import export_notebook
@@ -676,9 +677,6 @@ class UI(Viewer):
         DuckDB spatial (ST_GeomFromWKB) path the interactive upload uses, so
         startup and uploaded geospatial data behave identically (gh-1900).
         """
-        from ..util import normalize_table_name
-        from .controls.ingest.utils import read_geo_file
-
         path = Path(src).absolute()
         if not path.exists():
             raise FileNotFoundError(f"Data file not found: {src}")
