@@ -965,11 +965,6 @@ class hvPlotBaseView(View):
         super().__init__(**params)
 
     @staticmethod
-    def _is_geodata(df) -> bool:
-        """Return True if df is a GeoDataFrame with an active geometry column."""
-        return is_geodataframe(df) and df.geometry.name in df.columns
-
-    @staticmethod
     def _geometry_kind(df) -> str:
         """Pick an hvplot kind from the geometry type of a GeoDataFrame."""
         geom_types = df.geometry.geom_type.dropna().unique()
@@ -1000,8 +995,9 @@ class hvPlotUIView(hvPlotBaseView):
             and v is not None and k != 'name'
         }
         data = self.get_data()
-        # a geometry column needs a geometry-aware kind to render at all
-        if self.kind is None and self._is_geodata(data):
+        # the explorer defaults to scatter and does not infer geometry, so pick
+        # a geometry-aware kind ourselves
+        if self.kind is None and is_geodataframe(data):
             params['kind'] = self._geometry_kind(data)
         return (data,), dict(params, **self.kwargs)
 
@@ -1064,11 +1060,11 @@ class hvPlotView(hvPlotBaseView):
             processed['stream'] = self._data_stream
 
         kind = self.kind
-        if self._is_geodata(df):
-            # A geometry column needs a geometry-aware kind to render at all;
-            # correct the default (or a lat/lon-oriented 'points'/'scatter').
+        if is_geodataframe(df):
+            # hvplot infers the geometry kind (polygons/paths/points); just
+            # clear a non-geometry default so it isn't forced to scatter/points
             if kind in (None, 'scatter', 'points'):
-                kind = self._geometry_kind(df)
+                kind = None
             processed['geo'] = self.geo
 
         plot = df.hvplot(
