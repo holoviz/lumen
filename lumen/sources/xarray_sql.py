@@ -14,7 +14,7 @@ from typing import Any, ClassVar
 import param
 
 from ..transforms.sql import SQLFilter
-from ..util import check_xarray_available
+from ..util import check_xarray_available, try_import_xarray
 from .base import BaseSQLSource, cached
 
 
@@ -161,7 +161,7 @@ class XArraySQLSource(BaseSQLSource):
                 kw["engine"] = resolved_engine
             if chunks is not None:
                 kw["chunks"] = chunks
-            import xarray as xr
+            xr = try_import_xarray()
             ds = xr.open_dataset(uri, **kw)
         else:
             raise ValueError("Either 'uri' or '_dataset' must be provided.")
