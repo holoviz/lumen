@@ -20,7 +20,7 @@ from ..transforms.sql import (
     SQLCount, SQLFilter, SQLLimit, SQLSelectFrom,
 )
 from ..util import (
-    check_geopandas_available, detect_file_encoding, normalize_table_name,
+    detect_file_encoding, normalize_table_name, try_import_geopandas,
 )
 from .base import BaseSQLSource, Source, cached
 
@@ -521,6 +521,7 @@ class DuckDBSource(BaseSQLSource):
         geom_cols = [d[0] for d in rel.description if str(d[1]) == 'GEOMETRY']
         if not geom_cols:
             return rel.fetch_df(date_as_object=date_as_object)
+
         selected = ', '.join(
             f'ST_AsWKB("{d[0]}"::GEOMETRY) AS "{d[0]}"'
             if d[0] in geom_cols else f'"{d[0]}"'
@@ -529,8 +530,7 @@ class DuckDBSource(BaseSQLSource):
         wrapped = f'SELECT {selected} FROM ({sql_expr})'
         rel = cursor.execute(wrapped, params) if params else cursor.execute(wrapped)
         df = rel.fetch_df(date_as_object=date_as_object)
-        if check_geopandas_available():
-            import geopandas as gpd
+        if gpd := try_import_geopandas():
             for col in geom_cols:
                 df[col] = gpd.GeoSeries.from_wkb(
                     df[col].apply(bytes), crs=self.geometry_crs

@@ -520,21 +520,24 @@ def check_xarray_available():
         return False
 
 
+def try_import_geopandas():
+    """Import and return geopandas, or None if it is not installed."""
+    try:
+        import geopandas
+        return geopandas
+    except ImportError:
+        return None
+
+
 def check_geopandas_available():
     """Check if geopandas is installed."""
-    try:
-        import geopandas  # noqa
-        return True
-    except ImportError:
-        return False
+    return try_import_geopandas() is not None
 
 
 def is_geodataframe(df):
     """Return True if df is a geopandas GeoDataFrame."""
-    if not check_geopandas_available():
-        return False
-    import geopandas as gpd
-    return isinstance(df, gpd.GeoDataFrame)
+    gpd = try_import_geopandas()
+    return gpd is not None and isinstance(df, gpd.GeoDataFrame)
 
 
 def geometry_columns(df):
@@ -542,9 +545,9 @@ def geometry_columns(df):
 
     Empty when geopandas is unavailable or df has no geometry columns.
     """
-    if not check_geopandas_available():
+    gpd = try_import_geopandas()
+    if gpd is None:
         return []
-    import geopandas as gpd
     return [c for c in df.columns if isinstance(df[c].dtype, gpd.array.GeometryDtype)]
 
 
@@ -559,7 +562,7 @@ def geometry_to_wkt(df):
     geom_cols = geometry_columns(df)
     if not geom_cols:
         return df
-    import geopandas as gpd
+    gpd = try_import_geopandas()
     df = pd.DataFrame(df).copy()
     for col in geom_cols:
         df[col] = gpd.GeoSeries(df[col]).to_wkt()
