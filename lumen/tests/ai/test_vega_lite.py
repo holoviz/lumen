@@ -8,8 +8,8 @@ except ModuleNotFoundError:
         allow_module_level=True,
     )
 
-from lumen.ai.agents.vega_lite import normalize_vegalite_spec
 from lumen.ai.editors import VegaLiteEditor
+from lumen.ai.utils import normalize_vegalite_spec
 
 
 def test_normalize_vegalite_spec_adds_schema_and_container_sizing():
@@ -56,3 +56,20 @@ def test_normalize_vegalite_spec_strips_sizing_for_compound_charts():
     assert "width" not in spec
     assert "height" not in spec
     assert spec["$schema"] == "https://vega.github.io/schema/vega-lite/v5.json"
+
+
+def test_normalize_vegalite_spec_adds_geographic_interactivity():
+    """Specs with lat/long encodings gain a projection, zoom params and map layer."""
+    raw = {
+        "mark": "circle",
+        "encoding": {
+            "latitude": {"field": "lat", "type": "quantitative"},
+            "longitude": {"field": "lon", "type": "quantitative"},
+        },
+    }
+
+    spec = normalize_vegalite_spec(raw)["spec"]
+
+    assert spec["projection"]["type"] == "mercator"
+    assert "scale" in {p.get("name") for p in spec["params"]}
+    assert "layer" in spec
