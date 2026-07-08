@@ -964,17 +964,6 @@ class hvPlotBaseView(View):
             params["kind"] = "points"
         super().__init__(**params)
 
-    @staticmethod
-    def _geometry_kind(df) -> str:
-        """Pick an hvplot kind from the geometry type of a GeoDataFrame."""
-        geom_types = df.geometry.geom_type.dropna().unique()
-        geom_type = geom_types[0] if len(geom_types) else ''
-        if 'Polygon' in geom_type:
-            return 'polygons'
-        if 'Line' in geom_type:
-            return 'paths'
-        return 'points'
-
     @classproperty
     def _valid_keys_(cls):
         return None
@@ -995,10 +984,6 @@ class hvPlotUIView(hvPlotBaseView):
             and v is not None and k != 'name'
         }
         data = self.get_data()
-        # the explorer defaults to scatter and does not infer geometry, so pick
-        # a geometry-aware kind ourselves
-        if self.kind is None and is_geodataframe(data):
-            params['kind'] = self._geometry_kind(data)
         return (data,), dict(params, **self.kwargs)
 
     def __panel__(self):

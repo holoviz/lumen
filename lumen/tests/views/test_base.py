@@ -479,36 +479,3 @@ def test_deckgl_view_geometry_as_geojson():
     assert data['features'][0]['geometry']['type'] == 'Polygon'
     import json
     json.dumps(data)  # must be serializable
-
-
-def test_hvplot_ui_view_geometry_auto_kind():
-    """hvPlotUIView derives a geometry kind from the data when kind is unset."""
-    gpd = pytest.importorskip("geopandas")
-    pytest.importorskip("duckdb")
-    from shapely.geometry import Polygon
-
-    from lumen.sources.duckdb import DuckDBSource
-    from lumen.views.base import hvPlotUIView
-    try:
-        source = DuckDBSource(
-            uri=':memory:',
-            initializers=["INSTALL spatial;", "LOAD spatial;"],
-            tables={'geo': 'SELECT * FROM geo_tbl'},
-        )
-    except Exception as e:  # pragma: no cover - environment dependent
-        pytest.skip(f"duckdb spatial extension unavailable: {e}")
-    gdf = gpd.GeoDataFrame(
-        {'pop': [1, 2], 'geometry': [
-            Polygon([(0, 0), (1, 0), (1, 1)]), Polygon([(2, 0), (3, 0), (3, 1)])]},
-        crs='EPSG:4326',
-    )
-    tmp = pd.DataFrame({'pop': gdf['pop'], 'geometry': gdf['geometry'].to_wkb()})
-    source._connection.register('geo_temp', tmp)
-    source._connection.execute(
-        'CREATE TABLE geo_tbl AS SELECT pop, ST_GeomFromWKB(geometry) AS geometry FROM geo_temp'
-    )
-    pipeline = Pipeline(source=source, table='geo')
-    view = hvPlotUIView(pipeline=pipeline)  # no kind set
-    _, kwargs = view._get_args()
-    assert kwargs['kind'] == 'polygons'
-    view.get_panel()  # explorer builds without error
