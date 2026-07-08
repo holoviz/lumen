@@ -535,17 +535,23 @@ def check_geopandas_available():
 
 
 def is_geodataframe(df):
-    """Return True if df is a geopandas GeoDataFrame."""
-    gpd = try_import_geopandas()
+    """Return True if df is a geopandas GeoDataFrame.
+
+    Uses an already-imported geopandas rather than importing it: a df cannot be
+    a GeoDataFrame unless geopandas is loaded, so this stays cheap on the hot
+    path and never speculatively imports geopandas.
+    """
+    gpd = sys.modules.get("geopandas")
     return gpd is not None and isinstance(df, gpd.GeoDataFrame)
 
 
 def geometry_columns(df):
     """Return the names of geometry-typed columns in df.
 
-    Empty when geopandas is unavailable or df has no geometry columns.
+    Empty when geopandas is not imported (no geometry column can exist without
+    it) or df has no geometry columns; never speculatively imports geopandas.
     """
-    gpd = try_import_geopandas()
+    gpd = sys.modules.get("geopandas")
     if gpd is None:
         return []
     return [c for c in df.columns if isinstance(df[c].dtype, gpd.array.GeometryDtype)]
@@ -562,7 +568,7 @@ def geometry_to_wkt(df):
     geom_cols = geometry_columns(df)
     if not geom_cols:
         return df
-    gpd = try_import_geopandas()
+    gpd = sys.modules["geopandas"]
     df = pd.DataFrame(df).copy()
     for col in geom_cols:
         df[col] = gpd.GeoSeries(df[col]).to_wkt()
