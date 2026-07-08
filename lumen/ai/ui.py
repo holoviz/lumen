@@ -37,7 +37,7 @@ from ..pipeline import Pipeline
 from ..sources import Source
 from ..sources.duckdb import DuckDBSource
 from ..sources.xarray_sql import XArraySQLSource
-from ..util import check_xarray_available, log, normalize_table_name
+from ..util import log, normalize_table_name, try_import_xarray
 from .agents import (
     AnalysisAgent, BaseCodeAgent, ChatAgent, DocumentListAgent,
     DocumentSummarizerAgent, SourceAgent, SQLAgent, TableListAgent,
@@ -537,7 +537,7 @@ class UI(Viewer):
             _temp_files.append(tmp.name)
             return XArraySQLSource(uri=tmp.name, name=alias)
 
-        if not check_xarray_available():
+        if try_import_xarray() is None:
             return {}
 
         _temp_files: list[str] = []

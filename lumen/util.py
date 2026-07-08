@@ -501,8 +501,3 @@ def try_import_xarray():
         return xarray
     except ImportError:
         return None
-
-
-def check_xarray_available():
-    """Check if xarray and xarray-sql are installed."""
-    return try_import_xarray() is not None
