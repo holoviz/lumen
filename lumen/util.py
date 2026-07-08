@@ -510,14 +510,19 @@ def normalize_table_name(name: str) -> str:
     return re.sub(r'\W+', '_', name).strip('_').lower()
 
 
+def try_import_xarray():
+    """Import and return xarray, or None if xarray or xarray-sql is unavailable."""
+    try:
+        import xarray
+        import xarray_sql  # noqa
+        return xarray
+    except ImportError:
+        return None
+
+
 def check_xarray_available():
     """Check if xarray and xarray-sql are installed."""
-    try:
-        import xarray  # noqa
-        import xarray_sql  # noqa
-        return True
-    except ImportError:
-        return False
+    return try_import_xarray() is not None
 
 
 def try_import_geopandas():

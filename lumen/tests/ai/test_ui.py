@@ -428,6 +428,18 @@ async def test_find_view_in_popped_out(explorer_ui):
     assert popped_idx >= 1  # Index 0 is tabs
 
 
+async def test_vsplit_has_view_finds_view_under_filter_split(explorer_ui):
+    """Pop-out helpers locate the table view whether or not a filter pane wraps
+    the editor/table split one level deeper."""
+    table = Column()
+    editor_table = VSplit(Column(), table)
+    with_filters = VSplit(Column(), editor_table)
+
+    assert explorer_ui._vsplit_has_view(editor_table, table)   # no filters
+    assert explorer_ui._vsplit_has_view(with_filters, table)   # filters active
+    assert not explorer_ui._vsplit_has_view(VSplit(Column(), Column()), table)
+
+
 async def test_exploration_context_isolation(explorer_ui):
     """Test that different explorations maintain separate contexts."""
     # Create first exploration
@@ -1153,7 +1165,7 @@ class TestResolveData:
 
     def test_resolve_data_xarray_import_error(self):
         """Test graceful error when xarray-sql not installed."""
-        with patch('lumen.sources.xarray_sql.check_xarray_available', return_value=False):
+        with patch('lumen.sources.xarray_sql.try_import_xarray', return_value=None):
             with pytest.raises(ImportError, match="xarray"):
                 UI._resolve_data('data.nc')
 
@@ -1232,7 +1244,7 @@ class TestXarrayUploadHandler:
 
     def test_upload_handler_returns_empty_without_xarray(self):
         """Upload handlers should be empty if xarray-sql not installed."""
-        with patch('lumen.ai.ui.check_xarray_available', return_value=False):
+        with patch('lumen.ai.ui.try_import_xarray', return_value=None):
             handlers = UI._get_xarray_upload_handlers()
             assert handlers == {}
 
@@ -1719,3 +1731,30 @@ async def test_edit_on_child_exploration_switches_to_parent(explorer_ui):
     # Parent and Home still intact
     assert len(ui._explorations.items) == 2
     assert parent_exploration.plan is not None
+
+
+def test_resolve_data_geojson_startup(tmp_path):
+    """A .geojson path at startup loads via read_geo_file instead of raising (gh-1900)."""
+    gpd = pytest.importorskip("geopandas")
+    from shapely.geometry import Polygon
+
+    gdf = gpd.GeoDataFrame(
+        {"county": ["A", "B"], "population": [10, 20]},
+        geometry=[
+            Polygon([(0, 0), (1, 0), (1, 1)]),
+            Polygon([(1, 1), (2, 1), (2, 2)]),
+        ],
+        crs="EPSG:4326",
+    )
+    path = tmp_path / "counties.geojson"
+    gdf.to_file(path, driver="GeoJSON")
+
+    sources = UI._resolve_data([str(path)])
+
+    assert len(sources) == 1
+    source = sources[0]
+    assert "counties" in source.get_tables()
+    # geometry is registered as a real GEOMETRY column; ST_AsText returns text so
+    # this verifies loading without needing the GEOMETRY fetch fix from #1903
+    wkt = source.execute("SELECT ST_AsText(geometry) AS wkt FROM counties LIMIT 1")
+    assert wkt["wkt"].iloc[0].startswith("POLYGON")

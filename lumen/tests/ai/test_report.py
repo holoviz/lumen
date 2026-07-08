@@ -399,6 +399,33 @@ async def test_report_to_html():
     assert "Hello" in html_string
 
 
+def test_report_from_views_assembles_exportable_report():
+    views = [Markdown("# My Title"), Markdown("Some body text")]
+
+    report = Report.from_views(views, title="Prebuilt Report")
+
+    # No tasks were run, but the report is in an exportable state.
+    assert len(report) == 0
+    assert report.status == "success"
+    assert report.views == views
+
+    nb = json.loads(report.to_notebook())
+    sources = ["".join(cell["source"]) for cell in nb["cells"]]
+    assert any("# My Title" in source for source in sources)
+    assert any("Some body text" in source for source in sources)
+
+    html_string = report.to_html()
+    assert "<html" in html_string.lower()
+    assert "Some body text" in html_string
+
+
+def test_report_from_views_without_title():
+    report = Report.from_views([Markdown("Body")])
+
+    assert report.status == "success"
+    assert "<html" in report.to_html().lower()
+
+
 class BlockingAction(Action):
     """Action that waits on a signal before returning, so tests can deterministically cancel mid-execution."""
 

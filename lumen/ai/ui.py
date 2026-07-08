@@ -37,7 +37,7 @@ from ..pipeline import Pipeline
 from ..sources import Source
 from ..sources.duckdb import DuckDBSource
 from ..sources.xarray_sql import XArraySQLSource
-from ..util import check_xarray_available, log
+from ..util import log, normalize_table_name, try_import_xarray
 from .agents import (
     AnalysisAgent, BaseCodeAgent, ChatAgent, DocumentListAgent,
     DocumentSummarizerAgent, SourceAgent, SQLAgent, TableListAgent,
@@ -53,6 +53,7 @@ from .controls import (
     SourceCatalog, TableExplorer, UploadSourceControls,
 )
 from .controls.ingest.constants import XARRAY_EXTENSIONS
+from .controls.ingest.utils import read_geo_file
 from .coordinator import Coordinator, Plan, Planner
 from .editors import AnalysisOutput, LumenEditor, SQLEditor
 from .export import export_notebook
@@ -536,7 +537,7 @@ class UI(Viewer):
             _temp_files.append(tmp.name)
             return XArraySQLSource(uri=tmp.name, name=alias)
 
-        if not check_xarray_available():
+        if try_import_xarray() is None:
             return {}
 
         _temp_files: list[str] = []
@@ -638,6 +639,13 @@ class UI(Viewer):
                     sources.append(source)
                     continue
 
+                # Handle local geospatial files (GeoJSON, WKT, zipped shapefile)
+                # via the same read_geo_file -> DuckDB spatial path as file upload
+                geo_ext = Path(src).suffix.lstrip('.').lower()
+                if geo_ext in ('geojson', 'wkt', 'zip') and '://' not in src:
+                    sources.append(cls._resolve_geo_source(src, geo_ext))
+                    continue
+
                 if src.startswith('http'):
                     remote = True
                 if src.endswith(('.parq', '.parquet', '.csv', '.json', '.tsv', '.jsonl', '.ndjson')):
@@ -660,6 +668,42 @@ class UI(Viewer):
             sources.append(source)
 
         return sources
+
+    @classmethod
+    def _resolve_geo_source(cls, src: str, extension: str) -> Source:
+        """Load a geospatial file into an in-memory DuckDBSource.
+
+        Routes GeoJSON/WKT/zipped-shapefile through the same read_geo_file ->
+        DuckDB spatial (ST_GeomFromWKB) path the interactive upload uses, so
+        startup and uploaded geospatial data behave identically (gh-1900).
+        """
+        path = Path(src).absolute()
+        if not path.exists():
+            raise FileNotFoundError(f"Data file not found: {src}")
+
+        alias = normalize_table_name(path.stem)
+        with open(path, 'rb') as f:
+            result = read_geo_file(f, extension, alias)
+
+        source = DuckDBSource(
+            initializers=result.source_params.get('initializers', []),
+            tables={},
+            uri=':memory:',
+        )
+        conn = source._connection
+        for tbl_name, df in result.tables.items():
+            df_rel = conn.from_df(df)
+            if tbl_name in result.conversions:
+                conn.register(f"{tbl_name}_temp", df_rel)
+                # read_geo_file emits a CREATE TEMP TABLE, but DuckDBSource runs
+                # its queries on cursors that cannot see another connection's temp
+                # tables, so materialize a persistent (in-memory) table instead.
+                conn.execute(result.conversions[tbl_name].replace("TEMP TABLE", "TABLE", 1))
+                conn.unregister(f"{tbl_name}_temp")
+            else:
+                df_rel.to_view(tbl_name)
+            source.tables[tbl_name] = f"SELECT * FROM {tbl_name}"
+        return source
 
     @wrap_logfire(span_name="Chat Invoke")
     async def _chat_invoke(
@@ -2480,23 +2524,51 @@ class ExplorerUI(UI):
             styles={"overflow": "auto"},
             stylesheets=SPLITJS_STYLESHEETS
         )
+        # When filters are present, show them in a Paper above the editor/table
+        # split with a draggable divider just above the SQL editor (so the user
+        # can resize the filter area); with no filters the body stays the bare
+        # editor/table split, so no extra divider appears. The split is kept as
+        # the Column's body (a watcher swaps it in and out) rather than wrapped
+        # in a reactive pane, so the pop-out helpers still find it as a VSplit.
+        filter_paper = getattr(view, "_filter_paper", None)
         view = Column(controls, vsplit)
+        if filter_paper is not None:
+            def _toggle_filter_pane(event):
+                if event.new:
+                    view[1] = VSplit(
+                        filter_paper, vsplit,
+                        expanded_sizes=(25, 75), sizes=(25, 75),
+                        sizing_mode="stretch_both", styles={"overflow": "auto"},
+                        stylesheets=SPLITJS_STYLESHEETS,
+                    )
+                else:
+                    view[1] = vsplit
+            filter_paper.param.watch(_toggle_filter_pane, "visible")
         controls.append(self._render_pop_out(exploration, view, title))
         return (title, view)
+
+    def _vsplit_has_view(self, content, view) -> bool:
+        # The body is the editor/table VSplit, or - when filters are active - a
+        # filter VSplit wrapping it one level deeper. Search both so pop-out can
+        # locate the table view regardless of whether the filter pane is shown.
+        if not isinstance(content, VSplit):
+            return False
+        if view in content:
+            return True
+        return any(self._vsplit_has_view(child, view) for child in content)
 
     def _find_view_in_tabs(self, exploration: Exploration, out: LumenEditor):
         tabs = exploration.view[0]
         for i, tab in enumerate(tabs[1:], start=1):
             content = tab[1][1] if isinstance(tab, tuple) and len(tab) > 1 else tab[1]
-            if isinstance(content, VSplit) and out.view in content:
+            if self._vsplit_has_view(content, out.view):
                 return i
         return None
 
     def _find_view_in_popped_out(self, exploration: Exploration, out: LumenEditor):
         for i, standalone in enumerate(exploration.view[1:], start=1):
             if isinstance(standalone, Column) and len(standalone) > 1:
-                vsplit = standalone[1][1]
-                if isinstance(vsplit, VSplit) and out.view in vsplit:
+                if self._vsplit_has_view(standalone[1][1], out.view):
                     return i
         return None
 

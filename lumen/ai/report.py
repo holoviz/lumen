@@ -888,6 +888,31 @@ class Report(TaskGroup):
         if self.auto_execute:
             pn.state.execute(self.execute)
 
+    @classmethod
+    def from_views(cls, views: list, title: str | None = None) -> Report:
+        """Assemble an exportable Report from prebuilt views without executing tasks.
+
+        Builds a task-less report whose export state is populated directly from
+        already-rendered views, so `to_html` and `to_notebook` can produce a
+        downloadable report without running an agent. The execute path is
+        untouched; only `views`, the `_view` accordion and `status` are set, and
+        the empty task list keeps the export guards satisfied.
+
+        Parameters
+        ----------
+        views : list
+            The prebuilt viewable outputs to include, in order.
+        title : str, optional
+            The report title, used for the exported document.
+        """
+        report = cls(title=title or "")
+        report._view[:] = [
+            (view.title if "title" in view.param else "", view) for view in views
+        ]
+        report.views = list(views)
+        report.status = "success"
+        return report
+
     def _init_view(self):
         self._header_title = Typography(
             self.param.title, variant="h1", margin=(0, 0, 0, 10)
