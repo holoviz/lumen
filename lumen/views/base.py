@@ -983,8 +983,7 @@ class hvPlotUIView(hvPlotBaseView):
             if (k in hvPlotExplorer.param or k in Geographic.param)
             and v is not None and k != 'name'
         }
-        data = self.get_data()
-        return (data,), dict(params, **self.kwargs)
+        return (self.get_data(),), dict(params, **self.kwargs)
 
     def __panel__(self):
         panel = self.get_panel()
