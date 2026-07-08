@@ -14,6 +14,8 @@ from unittest.mock import patch
 
 import pytest
 
+from lumen.util import try_import_xarray
+
 # Each entry: (module_path, class_name, guard_package, pip_extra)
 OPTIONAL_SOURCES = [
     ("lumen.sources.sqlalchemy", "SQLAlchemySource", "sqlalchemy", "sql"),
@@ -90,14 +92,11 @@ def test_try_import_xarray_returns_module_when_installed():
     """try_import_xarray returns the xarray module when xarray and xarray-sql are installed."""
     xr = pytest.importorskip("xarray")
     pytest.importorskip("xarray_sql")
-    from lumen.util import try_import_xarray
     assert try_import_xarray() is xr
 
 
 def test_try_import_xarray_none_when_missing():
     """try_import_xarray returns None (not raises) when xarray-sql is absent."""
-    from lumen.util import try_import_xarray
-
     real_import = builtins.__import__
 
     def mock_import(name, *args, **kwargs):
