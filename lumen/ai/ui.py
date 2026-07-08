@@ -812,10 +812,6 @@ class UI(Viewer):
         """Check if there are any explorations beyond home."""
         return len(self._explorations.items) > 1
 
-    def _should_show_navigation(self) -> bool:
-        """Determine if navigation pane should be visible."""
-        return self._has_explorations()
-
     def _get_current_exploration(self) -> Exploration:
         """Get the currently active exploration."""
         return self._explorations.value['view']
@@ -879,13 +875,8 @@ class UI(Viewer):
             self._current_mode = "Exploration"
             self._navigation_caption.object = EXPLORATION_CAPTION
 
-        show_nav = self._should_show_navigation()
-        if not self._sidebar_menu.items[6]["active"] and show_nav:
-            self._toggle_navigation(True)
-        if not show_nav:
-            self._toggle_navigation(False)
         self._chat_input.margin = (10, 0) if main_content is self._splash else 10
-        self._main[:] = [self._navigation, main_content]
+        self._compose_main(main_content)
 
     def _configure_interface(self, interface):
         def on_undo(instance, _):
@@ -1893,12 +1884,16 @@ class ExplorerUI(UI):
             self._settings_popup.open = True
         elif item["id"] == "help":
             self._open_info_dialog()
-        elif item["id"] == "nav":
-            self._toggle_navigation(not item["active"])
 
-    def _toggle_navigation(self, active: bool):
-        self._navigation.visible = active
-        self._sidebar_menu.update_item(self._sidebar_menu.items[6], active=active, icon="layers" if active else "layers_outlined")
+    def _compose_main(self, main_content: Viewable):
+        """
+        Show ``main_content`` in the right pane of the always-mounted navigation
+        split. The navigation panel is collapsed/expanded by the user via the
+        split's divider chevron (or by dragging it), so there is no separate
+        sidebar toggle.
+        """
+        self._nav_split[1] = main_content
+        self._main[:] = [self._nav_split]
 
     def _exploration_has_outputs(self, exploration: Exploration) -> bool:
         """
@@ -2008,8 +2003,6 @@ class ExplorerUI(UI):
                 {"label": "Sources", "icon": "create_new_folder_outlined", "id": "data"},
                 {"label": "Settings", "icon": "tune_outlined", "id": "preferences"},
                 None,
-                {"label": "Navigate", "icon": "layers_outlined", "id": "nav", "active": False},
-                None,
                 {"label": "Help", "icon": "help_outline", "id": "help"}
             ],
             active=0,
@@ -2094,6 +2087,7 @@ class ExplorerUI(UI):
             self._output,
             collapsed=None,
             expanded_sizes=(40, 60),
+            collapse_threshold=15,
             show_buttons=True,
             sizing_mode='stretch_both',
             stylesheets=SPLITJS_STYLESHEETS
@@ -2108,25 +2102,41 @@ class ExplorerUI(UI):
             margin=(10, 10, 5, 10),
             sizing_mode="stretch_width"
         )
-        self._navigation_footer = Typography(
-            'Toggle <span class="material-icons" style="vertical-align: middle;">layers</span>**Navigate** to close',
-            variant="body2",
-            color="text.secondary",
-            margin=20,
-            styles={"margin": "auto auto 20px auto"}
-        )
         self._navigation = Paper(
             self._navigation_title,
             self._navigation_caption,
             self._explorations,
-            self._navigation_footer,
+            # Fill the split pane vertically (mirrors the _output Paper) so the
+            # panel spans the full height of its split pane.
             height_policy="max",
-            sx={"borderRadius": 0},
+            width_policy="max",
+            sizing_mode="stretch_both",
+            # Square corners plus a right-hand outline so the panel reads as a
+            # sidebar, matching the divider on the left icon rail.
+            sx={"borderRadius": 0, "borderRight": "1px solid var(--mui-palette-divider)"},
             theme_config={"light": {"palette": {"background": {"paper": "var(--mui-palette-grey-100)"}}}, "dark": {}},
-            visible=False,
-            width=250
         )
-        self._main[:] = [self._navigation, self._splash]
+        # Navigation lives in the left pane of an always-mounted HSplit. The
+        # user resizes it by dragging the divider and shows/hides it with the
+        # divider's collapse chevron (show_buttons) — there is no separate
+        # sidebar toggle. It starts collapsed (collapsed=0) so the first-run
+        # splash stays clean; expanding restores expanded_sizes. The nav pane's
+        # min size is 0 so it can close fully while the content pane keeps a min
+        # width, and dragging narrower than snap_size snaps it shut rather than
+        # leaving it cramped.
+        self._nav_split = HSplit(
+            self._navigation,
+            self._splash,
+            collapsed=0,
+            expanded_sizes=(18, 82),
+            sizes=(0, 100),
+            min_size=(0, 200),
+            snap_size=120,
+            show_buttons=True,
+            sizing_mode="stretch_both",
+            stylesheets=SPLITJS_STYLESHEETS,
+        )
+        self._compose_main(self._splash)
 
         # Create code execution warning dialog if code execution is not hidden
         if self.code_execution != "hidden":
