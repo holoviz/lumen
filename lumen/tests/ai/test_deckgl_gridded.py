@@ -7,7 +7,7 @@ from lumen.ai.config import PROMPTS_DIR
 from lumen.ai.utils import render_template
 from lumen.pipeline import Pipeline
 from lumen.sources.base import InMemorySource
-from lumen.views.base import DeckGLView
+from lumen.views.base import DECKGL_MAX_ROWS, DeckGLView
 
 
 def _base_context(gridded=None):
@@ -86,7 +86,7 @@ def _deckgl_view(df):
 
 
 def test_deckglview_row_limit_raises():
-    n = DeckGLView._MAX_ROWS + 1
+    n = DECKGL_MAX_ROWS + 1
     df = pd.DataFrame({"lon": range(n), "lat": range(n), "value": range(n)})
     view = _deckgl_view(df)
     with pytest.raises(ValueError, match="250,000"):

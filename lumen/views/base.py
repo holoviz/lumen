@@ -43,20 +43,23 @@ from ..transforms.base import Transform
 from ..transforms.sql import SQLTransform
 from ..util import (
     VARIABLE_RE, catch_and_notify, is_ref, resolve_module_reference,
+    try_import_xarray,
 )
 from ..validation import ValidationError
-
-try:
-    import hvplot.xarray  # type: ignore  # noqa: F401
-    _HVPLOT_XARRAY_AVAILABLE = True
-except Exception:
-    _HVPLOT_XARRAY_AVAILABLE = False
 
 if TYPE_CHECKING:
     from bokeh.document import Document  # type: ignore
     from holoviews.selection import link_selections  # type: ignore
 
 DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
+
+# Safety cap on a pivoted hvPlot grid. 10M cells is ~80MB for float64;
+# anything larger is rejected rather than risking OOM.
+GRIDDED_MAX_CELLS = 10_000_000
+
+# deck.gl serialises every row into the browser as JSON; beyond a few hundred
+# thousand it reliably OOMs the tab, so DeckGLView rejects larger frames.
+DECKGL_MAX_ROWS = 250_000
 
 
 class View(MultiTypeComponent, Viewer):
@@ -1042,16 +1045,24 @@ class hvPlotView(hvPlotBaseView):
         self._linked_objs = []
         super().__init__(**params)
 
-    _GRIDDED_KINDS = ('quadmesh', 'image', 'contourf')
+    @staticmethod
+    def _gridded_kinds() -> tuple[str, ...]:
+        """hvPlot kinds we pivot long-form data into a 2D xarray grid for.
 
-    # Safety cap on pivoted grid size. 10M cells = ~80MB for float64.
-    # Anything larger is rejected with a clear error rather than risking OOM.
-    _GRIDDED_MAX_CELLS = 10_000_000
+        Taken from hvPlot's own gridded-type list so it tracks upstream,
+        limited to the 2D scalar-field kinds that map cleanly from x/y/z
+        columns (points/dataset/rgb are gridded to hvPlot but need no pivot).
+        """
+        from hvplot.converter import HoloViewsConverter
+        return tuple(
+            kind for kind in HoloViewsConverter._gridded_types
+            if kind in ("contour", "contourf", "image", "quadmesh")
+        )
 
     def _gridded_pivot_blocker(self, df) -> str | None:
         """Return None if df can be pivoted to a 2D grid, else a human-readable reason."""
-        if not _HVPLOT_XARRAY_AVAILABLE:
-            return "hvplot.xarray is not installed"
+        if try_import_xarray() is None:
+            return "xarray is not installed"
         if not (self.x and self.y and self.z):
             return "x, y, and z must all be set for gridded plot kinds"
         missing = {self.x, self.y, self.z} - set(df.columns)
@@ -1060,10 +1071,10 @@ class hvPlotView(hvPlotBaseView):
         if df.duplicated(subset=[self.y, self.x]).any():
             return f"duplicate ({self.y!r}, {self.x!r}) rows prevent pivot to a 2D grid"
         n_cells = df[self.y].nunique() * df[self.x].nunique()
-        if n_cells > self._GRIDDED_MAX_CELLS:
+        if n_cells > GRIDDED_MAX_CELLS:
             return (
                 f"pivoted grid would have {n_cells:,} cells, exceeding the "
-                f"{self._GRIDDED_MAX_CELLS:,} safety cap"
+                f"{GRIDDED_MAX_CELLS:,} safety cap"
             )
         return None
 
@@ -1077,6 +1088,7 @@ class hvPlotView(hvPlotBaseView):
         """
         if not isinstance(df, pd.DataFrame) or self._gridded_pivot_blocker(df) is not None:
             return df
+        import hvplot.xarray  # type: ignore  # noqa: F401  (registers the .hvplot accessor)
         return df.set_index([self.y, self.x])[self.z].to_xarray()
 
     def get_plot(self, df):
@@ -1093,7 +1105,7 @@ class hvPlotView(hvPlotBaseView):
             processed['C' if self.kind == 'heatmap' else 'z'] = self.z
 
         plot_source = df
-        if self.kind in self._GRIDDED_KINDS:
+        if self.kind in self._gridded_kinds():
             if isinstance(df, pd.DataFrame):
                 blocker = self._gridded_pivot_blocker(df)
                 if blocker is not None:
@@ -1410,19 +1422,13 @@ class DeckGLView(View):
 
     _panel_type = pn.pane.DeckGL
 
-    # deck.gl serialises every row into the browser as JSON. Beyond a few
-    # hundred thousand records this reliably OOMs the tab, so reject it with a
-    # clear error rather than hanging the browser. Gridded xarray sources make
-    # this easy to hit, since a modest grid expands to lon*lat rows.
-    _MAX_ROWS = 250_000
-
     def _get_params(self) -> dict[str, Any]:
         df = self.get_data()
-        if len(df) > self._MAX_ROWS:
+        if len(df) > DECKGL_MAX_ROWS:
             raise ValueError(
                 f"DeckGLView cannot render {len(df):,} rows; deck.gl serialises "
                 f"every row into the browser and would exhaust its memory. "
-                f"Reduce the pipeline to at most {self._MAX_ROWS:,} rows (e.g. via "
+                f"Reduce the pipeline to at most {DECKGL_MAX_ROWS:,} rows (e.g. via "
                 f"a SQL LIMIT, aggregation, or coarser grid) before rendering."
             )
         # Deep copy to avoid modifying self.spec when injecting data

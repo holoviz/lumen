@@ -165,8 +165,8 @@ def test_hvplot_quadmesh_raises_when_z_missing(gridded_pipeline):
         view.get_plot(view.get_data())
 
 
-def test_hvplot_gridded_size_guard_raises(gridded_pipeline):
-    """Pivoting a grid larger than _GRIDDED_MAX_CELLS raises ValueError."""
+def test_hvplot_gridded_size_guard_raises(gridded_pipeline, monkeypatch):
+    """Pivoting a grid larger than GRIDDED_MAX_CELLS raises ValueError."""
     pytest.importorskip("xarray")
     view = hvPlotView(
         pipeline=gridded_pipeline,
@@ -175,16 +175,16 @@ def test_hvplot_gridded_size_guard_raises(gridded_pipeline):
         y="lat",
         z="air",
     )
-    view._GRIDDED_MAX_CELLS = 4  # the fixture has 3 lats x 4 lons = 12 cells
+    monkeypatch.setattr(views_base, "GRIDDED_MAX_CELLS", 4)  # fixture is 3 lats x 4 lons = 12 cells
     with pytest.raises(ValueError, match="exceeding the 4 safety cap"):
         view.get_plot(view.get_data())
 
 
 def test_hvplot_gridded_skips_pivot_if_xarray_unavailable(gridded_pipeline, monkeypatch):
-    """If hvplot.xarray failed to import, _to_gridded returns the df unchanged.
+    """If xarray is unavailable, _to_gridded returns the df unchanged.
 
     Build a view with a non-gridded kind so construction doesn't trigger the
-    quadmesh render path, then flip the module-level flag and call
+    quadmesh render path, then make xarray look unavailable and call
     _to_gridded directly.
     """
     view = hvPlotView(
@@ -194,7 +194,7 @@ def test_hvplot_gridded_skips_pivot_if_xarray_unavailable(gridded_pipeline, monk
         y="lat",
         z="air",
     )
-    monkeypatch.setattr(views_base, "_HVPLOT_XARRAY_AVAILABLE", False)
+    monkeypatch.setattr(views_base, "try_import_xarray", lambda: None)
     result = view._to_gridded(view.get_data())
     assert isinstance(result, pd.DataFrame), "expected df fallback when xarray unavailable"
 
