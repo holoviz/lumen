@@ -12,10 +12,10 @@ from lumen.ai.utils import gridded_metadata, render_template
 from lumen.pipeline import Pipeline
 from lumen.sources.base import InMemorySource
 from lumen.sources.xarray_sql import XArraySQLSource
-from lumen.util import check_xarray_available
+from lumen.util import try_import_xarray
 
 pytestmark = pytest.mark.skipif(
-    not check_xarray_available(), reason="xarray not installed"
+    try_import_xarray() is None, reason="xarray not installed"
 )
 
 

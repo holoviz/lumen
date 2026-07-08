@@ -17,7 +17,7 @@ from ..code_executor import AltairExecutor, CodeSafetyCheck
 from ..config import (
     LUMEN_CACHE_DIR, PROMPTS_DIR, VECTOR_STORE_ASSETS_URL,
     VEGA_LITE_EXAMPLES_NUMPY_DB_FILE, VEGA_LITE_EXAMPLES_OPENAI_DB_FILE,
-    VEGA_MAP_LAYER, VEGA_ZOOMABLE_MAP_ITEMS, UserCancelledError,
+    UserCancelledError,
 )
 from ..context import TContext
 from ..editors import LumenEditor, VegaLiteEditor
@@ -25,7 +25,7 @@ from ..llm import Message, OpenAI
 from ..models import EscapeBaseModel, RetrySpec
 from ..utils import (
     get_data, get_schema, gridded_metadata, load_json, log_debug,
-    retry_llm_output,
+    normalize_vegalite_spec, retry_llm_output,
 )
 from ..vector_store import DuckDBVectorStore
 from .base_code import BaseCodeAgent
@@ -372,57 +372,6 @@ class VegaLiteAgent(BaseCodeAgent):
             update_dict = load_yaml(result.yaml_update)
         return step_name, update_dict
 
-    def _add_zoom_params(self, vega_spec: dict) -> None:
-        """Add zoom parameters to vega spec."""
-        if "params" not in vega_spec:
-            vega_spec["params"] = []
-
-        existing_param_names = {
-            p.get("name") for p in vega_spec["params"]
-            if isinstance(p, dict) and "name" in p
-        }
-
-        for p in VEGA_ZOOMABLE_MAP_ITEMS["params"]:
-            if p.get("name") not in existing_param_names:
-                vega_spec["params"].append(p)
-
-    def _setup_projection(self, vega_spec: dict) -> None:
-        """Setup map projection settings."""
-        if "projection" not in vega_spec:
-            vega_spec["projection"] = {"type": "mercator"}
-        vega_spec["projection"].update(VEGA_ZOOMABLE_MAP_ITEMS["projection"])
-
-    def _handle_map_compatibility(self, vega_spec: dict, vega_spec_str: str) -> None:
-        """Handle map projection compatibility and add geographic outlines."""
-        has_world_map = "world-110m.json" in vega_spec_str
-        uses_albers_usa = vega_spec["projection"]["type"] == "albersUsa"
-
-        if has_world_map and uses_albers_usa:
-            # albersUsa incompatible with world map
-            vega_spec["projection"] = "mercator"
-        elif not has_world_map and not uses_albers_usa:
-            # Add world map outlines if needed
-            if "layer" not in vega_spec:
-                vega_spec["layer"] = [{
-                    "mark": vega_spec.pop("mark", {})
-                }]
-            vega_spec["layer"].insert(0, VEGA_MAP_LAYER["world"])
-
-    def _add_geographic_items(self, vega_spec: dict, vega_spec_str: str) -> dict:
-        """Add geographic visualization items to vega spec."""
-        self._add_zoom_params(vega_spec)
-        self._setup_projection(vega_spec)
-
-        # Remove projection from individual layers to prevent conflicts
-        # All layers must inherit the top-level projection for zoom/pan to work correctly
-        if "layer" in vega_spec:
-            for layer in vega_spec["layer"]:
-                if isinstance(layer, dict) and "projection" in layer:
-                    del layer["projection"]
-
-        self._handle_map_compatibility(vega_spec, vega_spec_str)
-        return vega_spec
-
     @classmethod
     def _extract_as_keys(cls, transforms: list[dict]) -> list[str]:
         """
@@ -547,40 +496,7 @@ class VegaLiteAgent(BaseCodeAgent):
             vega_spec = load_yaml(yaml_spec)
         elif json_spec := spec.get("json_spec"):
             vega_spec = load_json(json_spec)
-
-        # Remove wrapper properties that aren't part of Vega-Lite spec
-        for key in ['sizing_mode', 'min_height', 'type']:
-            vega_spec.pop(key, None)
-
-        if "$schema" not in vega_spec:
-            vega_spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
-
-        # Check if this is a compound chart (hconcat, vconcat, concat, facet, repeat)
-        is_compound = any(key in vega_spec for key in ['hconcat', 'vconcat', 'concat', 'facet', 'repeat'])
-
-        if is_compound:
-            # Remove invalid top-level width/height for compound charts
-            # Altair's config.view.continuousWidth/Height handles sub-chart sizing
-            vega_spec.pop('width', None)
-            vega_spec.pop('height', None)
-        else:
-            if "width" not in vega_spec:
-                vega_spec["width"] = "container"
-            if "height" not in vega_spec:
-                vega_spec["height"] = "container"
-
-        self._editor_type.validate_spec(vega_spec)
-
-        # using string comparison because these keys could be in different nested levels
-        vega_spec_str = dump_yaml(vega_spec)
-        # Handle different types of interactive controls based on chart type
-        if "latitude:" in vega_spec_str or "longitude:" in vega_spec_str:
-            vega_spec = self._add_geographic_items(vega_spec, vega_spec_str)
-        # elif ("point: true" not in vega_spec_str or "params" not in vega_spec) and vega_spec_str.count("encoding:") == 1:
-        #     # add pan/zoom controls to all plots except geographic ones and points overlaid on line plots
-        #     # because those result in an blank plot without error
-        #     vega_spec["params"] = [{"bind": "scales", "name": "grid", "select": "interval"}]
-        return {"spec": vega_spec, "sizing_mode": "stretch_both", "min_height": 200}
+        return normalize_vegalite_spec(vega_spec, editor_type=self._editor_type)
 
     async def _get_doc_examples(self, user_query: str) -> list[str]:
         # Query vector store for relevant examples

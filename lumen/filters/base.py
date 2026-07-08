@@ -334,7 +334,7 @@ class WidgetFilter(BaseWidgetFilter):
             self.widget.options = options
         self.widget.param.update(
             disabled=self.disabled,
-            label=self.label,
+            label=self.label or self.field,
             visible=self.visible
         )
         val = self.value

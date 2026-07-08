@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 import pandas as pd
 
-from ....util import normalize_table_name
+from ....util import detect_file_encoding, normalize_table_name
 from .constants import (
     CONTENT_TYPE_TO_EXTENSION, METADATA_EXTENSIONS, TABLE_EXTENSIONS,
     DownloadConfig,
@@ -155,7 +155,7 @@ def read_html_tables(content: str | bytes, base_alias: str) -> dict[str, pd.Data
         If no HTML tables are found.
     """
     if isinstance(content, bytes):
-        content = content.decode("utf-8")
+        content = content.decode(detect_file_encoding(content))
     tables = pd.read_html(io.StringIO(content))
     if not tables:
         raise ValueError("No HTML tables found")
@@ -189,7 +189,7 @@ def read_json_to_dataframe(content: str | bytes) -> pd.DataFrame:
         If JSON structure is unsupported.
     """
     if isinstance(content, bytes):
-        content = content.decode("utf-8")
+        content = content.decode(detect_file_encoding(content))
     data = json.loads(content)
 
     if isinstance(data, list):
@@ -260,6 +260,8 @@ def read_file_to_dataframes(
     if extension == "csv":
         csv_kwargs = {"parse_dates": True, "sep": None, "engine": "python"}
         csv_kwargs.update(read_kwargs)
+        # detect the encoding so non-UTF-8 files (e.g. latin-1) parse
+        csv_kwargs.setdefault("encoding", detect_file_encoding(file_obj))
         df = pd.read_csv(file_obj, **csv_kwargs)
         return FileReadResult(tables={alias: df})
 
