@@ -520,11 +520,6 @@ def try_import_xarray():
         return None
 
 
-def check_xarray_available():
-    """Check if xarray and xarray-sql are installed."""
-    return try_import_xarray() is not None
-
-
 def try_import_geopandas():
     """Import and return geopandas, or None if it is not installed."""
     try:
