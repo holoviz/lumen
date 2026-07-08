@@ -113,32 +113,3 @@ def test_try_import_geopandas_none_when_missing():
             assert try_import_geopandas() is None
     finally:
         sys.modules.update(saved)
-
-
-def test_check_geopandas_available_true_when_installed():
-    """check_geopandas_available returns True when geopandas is importable."""
-    pytest.importorskip("geopandas")
-    from lumen.util import check_geopandas_available
-    assert check_geopandas_available() is True
-
-
-def test_check_geopandas_available_false_when_missing():
-    """check_geopandas_available returns False (not raises) when geopandas is absent."""
-    from lumen.util import check_geopandas_available
-
-    real_import = builtins.__import__
-
-    def mock_import(name, *args, **kwargs):
-        if name == "geopandas" or name.startswith("geopandas."):
-            raise ImportError("No module named 'geopandas'")
-        return real_import(name, *args, **kwargs)
-
-    saved = {
-        key: sys.modules.pop(key)
-        for key in [k for k in sys.modules if k == "geopandas" or k.startswith("geopandas.")]
-    }
-    try:
-        with patch("builtins.__import__", side_effect=mock_import):
-            assert check_geopandas_available() is False
-    finally:
-        sys.modules.update(saved)

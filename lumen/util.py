@@ -529,11 +529,6 @@ def try_import_geopandas():
         return None
 
 
-def check_geopandas_available():
-    """Check if geopandas is installed."""
-    return try_import_geopandas() is not None
-
-
 def is_geodataframe(df):
     """Return True if df is a geopandas GeoDataFrame.
 
