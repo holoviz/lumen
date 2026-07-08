@@ -656,7 +656,6 @@ async def test_delete_exploration_switches_to_home(explorer_ui):
     assert explorer_ui._main[0] is explorer_ui._nav_split
     assert explorer_ui._nav_split[0] is explorer_ui._navigation
     assert explorer_ui._nav_split[1] is explorer_ui._splash
-    assert explorer_ui._nav_split.collapsed == 0
 
 
 async def test_delete_exploration_switches_to_parent(explorer_ui):
@@ -782,27 +781,24 @@ async def test_switch_back_from_report_to_exploration(explorer_ui):
 
 
 async def test_navigation_pane_always_mounted(explorer_ui):
-    """Navigation lives in the always-mounted split and starts collapsed; it is
-    no longer auto shown/hidden based on the number of explorations."""
+    """Navigation lives in the always-mounted split. It starts collapsed and is
+    auto-expanded once, when the first exploration is created."""
     # Always mounted as the left pane of the split, collapsed by default
     assert len(explorer_ui._main) == 1
     assert explorer_ui._main[0] is explorer_ui._nav_split
     assert explorer_ui._nav_split[0] is explorer_ui._navigation
     assert explorer_ui._nav_split.collapsed == 0
 
-    # Create an exploration
+    # Create the first exploration
     explorer_ui._explorer.param.update(table_slug="test_table")
     await explorer_ui._add_exploration_from_explorer()
     await async_wait_until(lambda: len(explorer_ui._explorations.items) > 1)
 
-    # Structure is unchanged and the pane stays collapsed (no auto-show)
+    # Creating the first exploration reveals (expands) the navigation pane
+    await async_wait_until(lambda: explorer_ui._nav_split.collapsed is None)
     explorer_ui._update_main_view()
     assert len(explorer_ui._main) == 1
     assert explorer_ui._main[0] is explorer_ui._nav_split
-    assert explorer_ui._nav_split.collapsed == 0
-
-    # The user can expand it; navigation remains the split's left pane
-    explorer_ui._nav_split.collapsed = None
     assert explorer_ui._nav_split[0] is explorer_ui._navigation
 
     # Delete exploration — structure still intact

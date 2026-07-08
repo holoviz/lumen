@@ -45,7 +45,7 @@ from .agents import (
 )
 from .config import (
     DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROVIDED_SOURCE_NAME,
-    SOURCE_TABLE_SEPARATOR, SPLITJS_STYLESHEETS,
+    SOURCE_TABLE_SEPARATOR,
 )
 from .context import TContext
 from .controls import (
@@ -2090,7 +2090,6 @@ class ExplorerUI(UI):
             collapse_threshold=15,
             show_buttons=True,
             sizing_mode='stretch_both',
-            stylesheets=SPLITJS_STYLESHEETS
         )
         self._navigation_title = Typography(
             "Navigation", variant="h6", margin=(10, 10, 0, 10)
@@ -2134,7 +2133,6 @@ class ExplorerUI(UI):
             snap_size=120,
             show_buttons=True,
             sizing_mode="stretch_both",
-            stylesheets=SPLITJS_STYLESHEETS,
         )
         self._compose_main(self._splash)
 
@@ -2354,6 +2352,10 @@ class ExplorerUI(UI):
     async def _cleanup_explorations(self, event):
         if len(event.new) <= len(event.old):
             return
+        # Reveal the navigation pane the first time an exploration is created so
+        # the newly populated tree is visible; afterwards leave it to the user.
+        if len(event.old) <= 1 < len(event.new) and self._nav_split.collapsed is not None:
+            self._nav_split.collapsed = None
         for i, (old, new) in enumerate(zip(event.old, event.new, strict=False)):
             if old is new:
                 continue
@@ -2532,7 +2534,6 @@ class ExplorerUI(UI):
             sizes=(20, 80),
             sizing_mode="stretch_both",
             styles={"overflow": "auto"},
-            stylesheets=SPLITJS_STYLESHEETS
         )
         # When filters are present, show them in a Paper above the editor/table
         # split with a draggable divider just above the SQL editor (so the user
@@ -2549,7 +2550,6 @@ class ExplorerUI(UI):
                         filter_paper, vsplit,
                         expanded_sizes=(25, 75), sizes=(25, 75),
                         sizing_mode="stretch_both", styles={"overflow": "auto"},
-                        stylesheets=SPLITJS_STYLESHEETS,
                     )
                 else:
                     view[1] = vsplit
