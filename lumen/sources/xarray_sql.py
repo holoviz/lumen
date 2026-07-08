@@ -205,7 +205,30 @@ class XArraySQLSource(BaseSQLSource):
     def get_schema(self, table=None, limit=None, shuffle=False):
         # DataFusion supports neither TABLESAMPLE nor ORDER BY RAND(),
         # so force shuffle=False to make the parent use SQLLimit instead.
-        return super().get_schema(table, limit, shuffle=False)
+        schema = super().get_schema(table, limit, shuffle=False)
+        if table is None:
+            for tname, tschema in schema.items():
+                self._annotate_dimensions(tname, tschema)
+        else:
+            self._annotate_dimensions(table, schema)
+        return schema
+
+    def _annotate_dimensions(self, table: str, tschema: dict[str, Any]) -> None:
+        """Flag coordinate-dimension columns so filter UIs can surface them.
+
+        A column is marked ``"dimension": True`` when it is a dimension
+        coordinate of the dataset (a label-based axis such as ``time``/``lat``/
+        ``lon``). This holds for any table exposing those columns -- the raw
+        data variable as well as the derived/exploration tables produced by SQL
+        queries -- not just the data-variable table itself. The flag is
+        additive: consumers that do not understand it (tabular filter widgets,
+        ``auto_filters``) ignore it.
+        """
+        ds = self._dataset
+        dim_coords = {dim for dim in ds.dims if dim in ds.coords}
+        for col, col_schema in tschema.items():
+            if col in dim_coords and isinstance(col_schema, dict):
+                col_schema["dimension"] = True
 
     # ---- BaseSQLSource required overrides ----
 

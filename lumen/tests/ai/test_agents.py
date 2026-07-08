@@ -1,6 +1,7 @@
 import json
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -274,3 +275,47 @@ class TestTemplateOverrides:
         messages = [{"role": "user", "content": "test"}]
         prompt = await agent._render_prompt("main", messages, {})
         assert "Footer appended." in prompt
+
+
+def test_sqlagent_active_filters_describes_conditions():
+    """SQLAgent._active_filters turns the interactive slider filters into
+    WHERE-style conditions (skipping inactive/full-range ones) so a follow-up
+    query can preserve the subset."""
+    class _Filter:
+        def __init__(self, field, query):
+            self.field, self._query = field, query
+
+        @property
+        def query(self):
+            return self._query
+
+    pipeline = SimpleNamespace(filters=[
+        _Filter("game_year", (2000, 2016)),
+        _Filter("game_season", ["Summer", "Winter"]),
+        _Filter("game_location", "Japan"),
+        _Filter("game_slug", None),  # full range / nothing selected -> skipped
+    ])
+    assert SQLAgent._active_filters(pipeline) == [
+        "game_year between 2000 and 2016",
+        "game_season in ('Summer', 'Winter')",
+        "game_location = 'Japan'",
+    ]
+    assert SQLAgent._active_filters(None) is None
+    assert SQLAgent._active_filters(SimpleNamespace(filters=[])) is None
+
+
+async def test_sqlagent_prompt_surfaces_active_filters(llm):
+    """Active exploration filters are surfaced in the SQL agent's prompt so a
+    follow-up query keeps the subset."""
+    agent = SQLAgent(llm=llm)
+    messages = [{"role": "user", "content": "top 5 rows"}]
+    prompt = await agent._render_prompt(
+        "main", messages, {},
+        dialect="duckdb", is_final_step=True, step_number=1, current_step="",
+        sql_query_history={}, current_iteration=1, sql_plan_context=None,
+        errors=None, discovery_context=None, source_names=["src"],
+        active_filters=["game_year between 2000 and 2016", "game_season in ('Summer')"],
+    )
+    assert "Active exploration filters" in prompt
+    assert "game_year between 2000 and 2016" in prompt
+    assert "game_season in ('Summer')" in prompt

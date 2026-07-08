@@ -2524,23 +2524,51 @@ class ExplorerUI(UI):
             styles={"overflow": "auto"},
             stylesheets=SPLITJS_STYLESHEETS
         )
+        # When filters are present, show them in a Paper above the editor/table
+        # split with a draggable divider just above the SQL editor (so the user
+        # can resize the filter area); with no filters the body stays the bare
+        # editor/table split, so no extra divider appears. The split is kept as
+        # the Column's body (a watcher swaps it in and out) rather than wrapped
+        # in a reactive pane, so the pop-out helpers still find it as a VSplit.
+        filter_paper = getattr(view, "_filter_paper", None)
         view = Column(controls, vsplit)
+        if filter_paper is not None:
+            def _toggle_filter_pane(event):
+                if event.new:
+                    view[1] = VSplit(
+                        filter_paper, vsplit,
+                        expanded_sizes=(25, 75), sizes=(25, 75),
+                        sizing_mode="stretch_both", styles={"overflow": "auto"},
+                        stylesheets=SPLITJS_STYLESHEETS,
+                    )
+                else:
+                    view[1] = vsplit
+            filter_paper.param.watch(_toggle_filter_pane, "visible")
         controls.append(self._render_pop_out(exploration, view, title))
         return (title, view)
+
+    def _vsplit_has_view(self, content, view) -> bool:
+        # The body is the editor/table VSplit, or - when filters are active - a
+        # filter VSplit wrapping it one level deeper. Search both so pop-out can
+        # locate the table view regardless of whether the filter pane is shown.
+        if not isinstance(content, VSplit):
+            return False
+        if view in content:
+            return True
+        return any(self._vsplit_has_view(child, view) for child in content)
 
     def _find_view_in_tabs(self, exploration: Exploration, out: LumenEditor):
         tabs = exploration.view[0]
         for i, tab in enumerate(tabs[1:], start=1):
             content = tab[1][1] if isinstance(tab, tuple) and len(tab) > 1 else tab[1]
-            if isinstance(content, VSplit) and out.view in content:
+            if self._vsplit_has_view(content, out.view):
                 return i
         return None
 
     def _find_view_in_popped_out(self, exploration: Exploration, out: LumenEditor):
         for i, standalone in enumerate(exploration.view[1:], start=1):
             if isinstance(standalone, Column) and len(standalone) > 1:
-                vsplit = standalone[1][1]
-                if isinstance(vsplit, VSplit) and out.view in vsplit:
+                if self._vsplit_has_view(standalone[1][1], out.view):
                     return i
         return None
 
