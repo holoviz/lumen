@@ -1086,9 +1086,12 @@ class hvPlotView(hvPlotBaseView):
         the pivot is blocked (see ``_gridded_pivot_blocker``); callers that
         require gridded data should check the blocker themselves and raise.
         """
+        # Register hvPlot's xarray accessor so .hvplot works both on the
+        # DataArray we build below and on an xarray object passed straight
+        # through. Only reached for gridded kinds, where xarray is present.
+        import hvplot.xarray  # type: ignore  # noqa: F401
         if not isinstance(df, pd.DataFrame) or self._gridded_pivot_blocker(df) is not None:
             return df
-        import hvplot.xarray  # type: ignore  # noqa: F401  (registers the .hvplot accessor)
         return df.set_index([self.y, self.x])[self.z].to_xarray()
 
     def get_plot(self, df):
