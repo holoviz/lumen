@@ -75,3 +75,17 @@ def test_get_dataframe_schema_object_column_unaffected():
     props = get_dataframe_schema(df)["items"]["properties"]
     assert props["cat"] == {"type": "string", "enum": ["x", "y"]}
     assert props["n"]["type"] == "integer"
+
+
+def test_get_dataframe_schema_does_not_import_geopandas():
+    """Schema detection must not speculatively import geopandas (gh-1903 review)."""
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, pandas as pd;"
+        "from lumen.util import get_dataframe_schema;"
+        "get_dataframe_schema(pd.DataFrame({'a': [1, 2], 'b': ['x', 'y']}));"
+        "assert 'geopandas' not in sys.modules"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)
