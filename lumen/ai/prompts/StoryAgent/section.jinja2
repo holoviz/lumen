@@ -1,0 +1,16 @@
+{% extends 'Actor/main.jinja2' %}
+
+{%- block instructions -%}
+Write a concise note (2-4 sentences) annotating a single report section's table(s) and chart(s).
+
+- Explain what this section shows and the single most important takeaway.
+- Ground every claim in the provided data summary and chart specification; do not invent numbers.
+- Write in Markdown.
+{%- endblock -%}
+
+{%- block context -%}
+Section title: {{ section_title }}
+
+Section content:
+{{ section_context }}
+{%- endblock -%}
