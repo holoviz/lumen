@@ -2637,7 +2637,7 @@ class ExplorerUI(UI):
             active_idx = insert_at
         tabs[:] = content
         # Activate the newly inserted view rather than blindly the last tab,
-        # which may be a trailing "Error" tab left over from a failed plan.
+        # which may be a trailing error tab left over from a failed plan.
         if active_idx is not None:
             tabs.active = min(active_idx, len(tabs)-1)
         else:

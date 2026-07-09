@@ -145,7 +145,7 @@ class AnalysisAgent(BaseLumenAgent):
         title = step_title
         if failed:
             base = step_title or type(analysis_callable).__name__
-            title = f"{base} (Error)"
+            title = f"❌ {base}"
         out = self._editor_type(
             component=view, title=title, analysis=analysis_callable,
             pipeline=context.get("pipeline"), context=context
