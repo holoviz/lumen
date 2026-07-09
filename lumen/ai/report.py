@@ -625,6 +625,21 @@ class TaskGroup(Task):
                     task.reset()
             self._populate_view()
 
+    @property
+    def _export_views(self):
+        """
+        The flat list of views to include when exporting. Overridden by
+        subclasses that support selecting which parts to export.
+        """
+        return self.views
+
+    def _export_view(self):
+        """
+        The renderable view to save when exporting to HTML. Overridden by
+        subclasses that support selecting which parts to export.
+        """
+        return self._view
+
     def to_notebook(self):
         """
         Returns the notebook representation of the tasks.
@@ -635,7 +650,7 @@ class TaskGroup(Task):
             )
         cells, extensions = [], ['tabulator']
         pending_headers = []
-        for out in self.views:
+        for out in self._export_views:
             cell = ext = None
             if isinstance(out, Typography):
                 # Buffer headers; only emit them if followed by exportable content
@@ -677,7 +692,7 @@ class TaskGroup(Task):
                 "Report has not been executed, run report before exporting to html."
             )
         buf = io.StringIO()
-        self._view.save(buf, title=self.title or "Report")
+        self._export_view().save(buf, title=self.title or "Report")
         return buf.getvalue()
 
     def validate(
@@ -730,6 +745,9 @@ class Section(TaskGroup):
     """
     A `Section` is a `TaskGroup` representing a sequence of related tasks.
     """
+
+    include_in_export = param.Boolean(default=True, doc="""
+        Whether this section is included when the report is exported.""")
 
     level = 2
 
@@ -1093,6 +1111,33 @@ class Report(TaskGroup):
         """Cancel the in-flight report execution, if any."""
         if self._active_task is not None and not self._active_task.done():
             self._active_task.cancel()
+
+    @property
+    def _export_views(self):
+        # Task-less reports (e.g. Report.from_views) populate ``views`` directly.
+        if not len(self):
+            return self.views
+        views = list(self._header)
+        for section in self:
+            if section.include_in_export:
+                views += list(section.views)
+        return views
+
+    def _export_view(self):
+        # Task-less reports (e.g. Report.from_views) populate ``_view`` directly.
+        if not len(self):
+            return self._view
+        cards = [
+            (section.title, section) for section in self if section.include_in_export
+        ]
+        return Accordion(
+            *cards,
+            active=list(range(len(cards))),
+            sizing_mode="stretch_width",
+            min_height=0,
+            margin=(0, 5, 15, 5),
+            sx=self._view.sx,
+        )
 
     async def _export_report(self, item=None):
         if len(self) and self.status not in ("success", "cancelled", "error"):
