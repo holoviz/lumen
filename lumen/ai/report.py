@@ -950,8 +950,12 @@ class Report(TaskGroup):
             mode="tree", sizing_mode="stretch_width", height=400,
         )
         self._outline_editor.param.watch(self._on_outline_change, "value")
+        self._outline_apply = Button(
+            label="Apply", variant="contained", on_click=self._apply_outline,
+        )
         self._outline_dialog = Dialog(
             self._outline_editor,
+            Row(self._outline_apply, align="end", margin=(10, 0, 0, 0), sizing_mode="stretch_width"),
             show_close_button=True,
             title="Arrange Report",
             width_option="md",
@@ -1089,14 +1093,11 @@ class Report(TaskGroup):
             views.append(Typography(self._overall_story_title, variant="h2"))
             views.append(self._overall_story)
         if self._story_outline:
-            # Follow the user-arranged outline: headings and sections in order.
-            for block in self._story_outline:
-                if "heading" in block:
-                    views.append(Typography(block["heading"], variant=f"h{block.get('level', 2)}"))
-                elif "section" in block:
-                    section = self._section_by_title(block["section"])
-                    if section is not None:
-                        self._append_section_views(views, section)
+            for kind, value, level in self._iter_arrangement():
+                if kind == "heading":
+                    views.append(Typography(value, variant=f"h{level}"))
+                else:
+                    self._append_section_views(views, value)
         else:
             for section in self:
                 self._append_section_views(views, section)
@@ -1129,9 +1130,17 @@ class Report(TaskGroup):
         cards = []
         if self._overall_story is not None:
             cards.append((self._overall_story_title, self._overall_story))
-        cards += [
-            (section.title, section) for section in self if section.include_in_export
-        ]
+        if self._story_outline:
+            # Follow the arranged outline so HTML matches the notebook order.
+            for kind, value, _ in self._iter_arrangement():
+                if kind == "heading":
+                    cards.append((value, Markdown(f"### {value}")))
+                else:
+                    cards.append((value.title, value))
+        else:
+            cards += [
+                (section.title, section) for section in self if section.include_in_export
+            ]
         return Accordion(
             *cards,
             active=list(range(len(cards))),
@@ -1225,6 +1234,14 @@ class Report(TaskGroup):
 
     def _on_outline_change(self, event):
         self._story_outline = event.new or []
+        self._populate_view()
+
+    def _apply_outline(self, event=None):
+        # Read the editor's current value explicitly and apply the arrangement
+        # to both the live report and the exports.
+        self._story_outline = list(self._outline_editor.value or [])
+        self._populate_view()
+        self._outline_dialog.open = False
 
     async def _annotate_report(self, event=None):
         """Write an AI story over the selected sections and insert it into the report."""
@@ -1301,10 +1318,40 @@ class Report(TaskGroup):
         title = Typography(section.param.title, variant="h3", margin=0)
         return Row(checkbox, title, align="center", sizing_mode="stretch_width")
 
+    def _iter_arrangement(self, selected_only=True):
+        """
+        Yield the arranged outline as ('heading', text, level) or
+        ('section', section, None) items, resolving section titles and
+        dropping duplicates (and, by default, discarded sections).
+        """
+        seen = set()
+        for block in self._story_outline:
+            if "heading" in block:
+                yield "heading", block["heading"], block.get("level", 2)
+            elif "section" in block:
+                section = self._section_by_title(block["section"])
+                if section is None or id(section) in seen:
+                    continue
+                if selected_only and not section.include_in_export:
+                    continue
+                seen.add(id(section))
+                yield "section", section, None
+
+    def _ordered_sections(self):
+        """Sections in the arranged outline order (unreferenced ones kept at the end)."""
+        if not self._story_outline:
+            return list(self)
+        ordered = [s for kind, s, _ in self._iter_arrangement(selected_only=False) if kind == "section"]
+        seen = {id(section) for section in ordered}
+        for section in self:
+            if id(section) not in seen:
+                ordered.append(section)
+        return ordered
+
     def _populate_view(self):
         headers = {}
         objects = []
-        for section in self:
+        for section in self._ordered_sections():
             header = self._section_headers.get(section) or self._section_header(section)
             headers[section] = header
             objects.append((header, section))

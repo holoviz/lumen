@@ -221,6 +221,25 @@ async def test_report_outline_inserts_headings():
     assert nb.index("Introduction") < nb.index("A done")
 
 
+async def test_report_outline_reorders_html_export():
+    report = Report(
+        Section(A(order=[]), title='Section A'),
+        Section(B(order=[]), title='Section B'),
+        title='R',
+    )
+    await report.execute()
+
+    report._story_outline = [
+        {"heading": "Key Findings", "level": 1},
+        {"section": "Section B"},
+        {"section": "Section A"},
+    ]
+
+    html = report.to_html()
+    assert "Key Findings" in html
+    assert html.index("B done") < html.index("A done")
+
+
 async def test_report_arrange_editor_seeds_and_binds_outline():
     report = Report(
         Section(A(order=[]), title='Section A'),
