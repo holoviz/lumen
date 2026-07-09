@@ -519,10 +519,12 @@ class SQLFilterBase(SQLTransform):
         filters = []
 
         for col, val in conditions:
-            # Wrap the column name in a quoted Identifier so names containing
-            # spaces or other special characters (e.g. "Smoking Status") are
-            # emitted as valid, quoted identifiers rather than bare tokens.
-            column_expr = Column(this=Identifier(this=col, quoted=True))
+            # Wrap the column name in an Identifier. Only force quoting when
+            # the name actually needs it (e.g. contains spaces or other
+            # special characters); otherwise leave it unquoted so generated
+            # SQL matches plain column references like `A` or `obs_id`.
+            needs_quoting = not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', col)
+            column_expr = Column(this=Identifier(this=col, quoted=needs_quoting))
 
             # Skip boolean values - they are not supported
             if isinstance(val, bool):
