@@ -78,6 +78,15 @@ Current context contains the following keys: {{ ", ".join(memory) }}
 {{ memory["view"] | json_to_yaml }}
 ```
 {%- endif -%}
+{#- Render the ChatAgent's typed output (memory['chat']) rather than the
+    interface chat history: the executed response reaches this agent through
+    context, not as a message, so it must be surfaced explicitly here. -#}
+{%- if memory.get('chat') %}
+{% if 'chat' in previous_keys %}(From previous plan) {% endif %}Assistant Response:
+"""
+{{ memory['chat'] }}
+"""
+{%- endif -%}
 {%- if memory.get('listing') and 'listing' not in previous_keys %}
 Listing displayed:
 {{ memory['listing'] }}

@@ -696,23 +696,6 @@ class TestFuseMessagesMultimodal:
         # History includes second image text
         assert "second image" in result[0]["content"]
 
-    def test_trailing_assistant_message_kept_in_history(self):
-        """An assistant response generated after the last user turn (e.g. an
-        answer awaiting validation) must remain in the history."""
-        msgs = [
-            {"role": "user", "content": "tell me about this dataset"},
-            {"role": "assistant", "content": "here is a summary"},
-            {"role": "user", "content": "what could be interesting to analyze?"},
-            {"role": "assistant", "content": "you could cluster the cells"},
-        ]
-        result = fuse_messages(msgs, max_user_messages=2)
-        assert len(result) == 2
-        assert result[0]["role"] == "system"
-        # The freshly generated assistant answer is present in the history
-        assert "you could cluster the cells" in result[0]["content"]
-        # The last user message is still surfaced as the live query
-        assert result[1] == msgs[2]
-
 
 # -------------------------------------------------------------------
 # mutate_user_message — multimodal content
