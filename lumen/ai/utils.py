@@ -642,8 +642,11 @@ def _score_column_relevance(series: pd.Series, n_rows: int) -> float:
     ratio = nunique / n_rows if n_rows else 0.0
 
     # Low-cardinality categorical/enum (incl. bool and small int codes):
-    # cheap to summarise and usually the most query-relevant.
-    if nunique <= LOW_CARDINALITY_MAX and ratio < 0.5:
+    # cheap to summarise and usually the most query-relevant. nunique is
+    # already capped, so no additional ratio gate is needed here — on small
+    # frames a low-card column can have a high ratio (e.g. 8/12) and should
+    # still be surfaced.
+    if nunique <= LOW_CARDINALITY_MAX:
         return 3.0
 
     # Continuous numerics: informative ranges/distributions.
