@@ -2537,7 +2537,7 @@ class ExplorerUI(UI):
                 if event.new:
                     view[1] = VSplit(
                         filter_paper, vsplit,
-                        expanded_sizes=(25, 75), sizes=(25, 75),
+                        expanded_sizes=(15, 85), sizes=(15, 85),
                         sizing_mode="stretch_both", styles={"overflow": "auto"},
                         stylesheets=SPLITJS_STYLESHEETS,
                     )
@@ -2617,6 +2617,7 @@ class ExplorerUI(UI):
         for popped_idx in sorted(popped_out_to_remove, reverse=True):
             exploration.view.pop(popped_idx)
 
+        active_idx = None
         for view in current:
             if view in old:
                 tab_idx = self._find_view_in_tabs(exploration, view)
@@ -2624,9 +2625,17 @@ class ExplorerUI(UI):
                     idx = tab_idx
                 continue
             title, vsplit = self._render_view(exploration, view)
-            content.insert((idx or 0)+1, (title, vsplit))
+            insert_at = (idx or 0)+1
+            content.insert(insert_at, (title, vsplit))
+            idx = insert_at
+            active_idx = insert_at
         tabs[:] = content
-        tabs.active = max(len(tabs)-1, 0)
+        # Activate the newly inserted view rather than blindly the last tab,
+        # which may be a trailing "Error" tab left over from a failed plan.
+        if active_idx is not None:
+            tabs.active = min(active_idx, len(tabs)-1)
+        else:
+            tabs.active = max(len(tabs)-1, 0)
         if self._exploration['view'] is exploration:
             self._update_main_view()
         if self._split.collapsed:
