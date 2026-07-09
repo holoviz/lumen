@@ -519,7 +519,10 @@ class SQLFilterBase(SQLTransform):
         filters = []
 
         for col, val in conditions:
-            column_expr = Column(this=col)
+            # Wrap the column name in a quoted Identifier so names containing
+            # spaces or other special characters (e.g. "Smoking Status") are
+            # emitted as valid, quoted identifiers rather than bare tokens.
+            column_expr = Column(this=Identifier(this=col, quoted=True))
 
             # Skip boolean values - they are not supported
             if isinstance(val, bool):
