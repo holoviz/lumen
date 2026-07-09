@@ -23,8 +23,8 @@ from panel.pane import Markdown
 from panel.viewable import Viewable, Viewer
 from panel_material_ui import (
     Accordion, BreakpointSwitcher, Button, Card, ChatFeed, ChatMessage,
-    Container, Dialog, Divider, FileDownload, IconButton, MenuButton, Progress,
-    Select, SpeedDial, TextAreaInput, TextInput, Typography,
+    Checkbox, Container, Dialog, Divider, FileDownload, IconButton, MenuButton,
+    Progress, Select, SpeedDial, TextAreaInput, TextInput, Typography,
 )
 
 from ..views.base import Panel, View
@@ -932,6 +932,7 @@ class Report(TaskGroup):
         return report
 
     def _init_view(self):
+        self._section_headers = {}
         self._header_title = Typography(
             self.param.title, variant="h1", margin=(0, 0, 0, 10)
         )
@@ -1161,8 +1162,33 @@ class Report(TaskGroup):
     def _open_settings(self, event=None):
         self._dialog.open = True
 
+    def _section_header(self, section):
+        """Card header with a checkbox to keep/discard the section on export."""
+        checkbox = Checkbox.from_param(
+            section.param.include_in_export,
+            label="",
+            align="center",
+            margin=(0, 4, 0, 0),
+            description="Include this section when exporting the report",
+            visible=param.bind(
+                lambda status, views: (
+                    status in ("success", "error", "cancelled") or bool(views)
+                ),
+                self.param.status, self.param.views,
+            ),
+        )
+        title = Typography(section.param.title, variant="h3", margin=0)
+        return Row(checkbox, title, align="center", sizing_mode="stretch_width")
+
     def _populate_view(self):
-        self._view[:] = objects = [(task.title, task) for task in self]
+        headers = {}
+        objects = []
+        for section in self:
+            header = self._section_headers.get(section) or self._section_header(section)
+            headers[section] = header
+            objects.append((header, section))
+        self._section_headers = headers
+        self._view[:] = objects
         has_outputs = self.status in ("success", "error", "cancelled") or bool(self.views)
         if has_outputs:
             self._view.active = list(range(len(objects)))

@@ -10,7 +10,7 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
-from panel.layout import Column
+from panel.layout import Column, Row
 from panel.pane import Markdown
 from typing_extensions import NotRequired
 
@@ -20,9 +20,10 @@ from lumen.ai.report import (
 )
 
 try:
-    from panel_material_ui import ChatMessage
+    from panel_material_ui import ChatMessage, Checkbox
 except ImportError:
     ChatMessage = None
+    Checkbox = None
 
 
 class HelloAction(Action):
@@ -445,6 +446,29 @@ async def test_report_to_html_excludes_deselected_section():
     assert "B done" not in html
     # Exporting a subset must not disturb the live report view.
     assert len(report._view) == 2
+
+
+async def test_report_section_header_has_bound_export_checkbox():
+    report = Report(
+        Section(A(order=[]), title='Section A'),
+        Section(B(order=[]), title='Section B'),
+        title='Multi Report',
+    )
+    await report.execute()
+
+    headers = report._view._headers
+    assert len(headers) == len(report) == 2
+    for section, header in zip(report, headers):
+        assert isinstance(header, Row)
+        checkboxes = [obj for obj in header.objects if isinstance(obj, Checkbox)]
+        assert len(checkboxes) == 1
+        checkbox = checkboxes[0]
+        # Checked by default and bound to include_in_export in both directions.
+        assert checkbox.value is True
+        section.include_in_export = False
+        assert checkbox.value is False
+        checkbox.value = True
+        assert section.include_in_export is True
 
 
 async def test_report_export_empty_selection():
