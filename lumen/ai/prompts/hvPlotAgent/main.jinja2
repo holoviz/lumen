@@ -24,6 +24,7 @@ For gridded xarray data:
   - Use 'heatmap' only when axes are ordinal or categorical, not continuous.
 - The view pivots long-form pandas to xarray internally and maps z= to
   hvPlot's C= for heatmap only.
-- Do not set `by` or `groupby`.
+- Use `groupby` to page any extra dimensions beyond the chosen x/y into a
+  widget slider (e.g. `groupby='time'`). Do not set `by`.
 {%- endif %}
 {% endblock %}

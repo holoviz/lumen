@@ -57,6 +57,10 @@ DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
 # anything larger is rejected rather than risking OOM.
 GRIDDED_MAX_CELLS = 10_000_000
 
+# hvPlot kinds we pivot long-form data into a 2D xarray grid for: the 2D
+# scalar-field kinds that map cleanly from x/y/z columns.
+GRIDDED_KINDS = ("contour", "contourf", "image", "quadmesh")
+
 # deck.gl serialises every row into the browser as JSON; beyond a few hundred
 # thousand it reliably OOMs the tab, so DeckGLView rejects larger frames.
 DECKGL_MAX_ROWS = 250_000
@@ -1045,20 +1049,6 @@ class hvPlotView(hvPlotBaseView):
         self._linked_objs = []
         super().__init__(**params)
 
-    @staticmethod
-    def _gridded_kinds() -> tuple[str, ...]:
-        """hvPlot kinds we pivot long-form data into a 2D xarray grid for.
-
-        Taken from hvPlot's own gridded-type list so it tracks upstream,
-        limited to the 2D scalar-field kinds that map cleanly from x/y/z
-        columns (points/dataset/rgb are gridded to hvPlot but need no pivot).
-        """
-        from hvplot.converter import HoloViewsConverter
-        return tuple(
-            kind for kind in HoloViewsConverter._gridded_types
-            if kind in ("contour", "contourf", "image", "quadmesh")
-        )
-
     def _gridded_pivot_blocker(self, df) -> str | None:
         """Return None if df can be pivoted to a 2D grid, else a human-readable reason."""
         if try_import_xarray() is None:
@@ -1110,7 +1100,7 @@ class hvPlotView(hvPlotBaseView):
             processed['C' if self.kind == 'heatmap' else 'z'] = self.z
 
         plot_source = df
-        if self.kind in self._gridded_kinds():
+        if self.kind in GRIDDED_KINDS:
             if isinstance(df, pd.DataFrame):
                 blocker = self._gridded_pivot_blocker(df)
                 if blocker is not None:
