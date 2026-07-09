@@ -1118,11 +1118,13 @@ class Report(TaskGroup):
         # Task-less reports (e.g. Report.from_views) populate ``views`` directly.
         if not len(self):
             return self.views
-        views = list(self._header)
-        for section in self:
-            if section.include_in_export:
-                views += list(section.views)
-        return views
+        selected = [
+            view
+            for section in self
+            if section.include_in_export
+            for view in section.views
+        ]
+        return list(self._header) + selected
 
     def _export_view(self):
         # Task-less reports (e.g. Report.from_views) populate ``_view`` directly.
