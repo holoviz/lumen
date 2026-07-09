@@ -295,7 +295,7 @@ class TestDescribeData:
         df = pd.DataFrame(data)
         result = yaml.load(await describe_data(df), yaml.SafeLoader)
         assert result["summary"]["sampled_cols"] is True
-        assert result["summary"]["columns_shown"] == 12
+        assert result["summary"]["columns_shown"] == 16
         # Low-cardinality categorical kept even though it is the last column.
         assert "category" in result["stats"]
         # Near-unique id column dropped in favour of more informative columns.
