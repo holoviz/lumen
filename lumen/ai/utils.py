@@ -125,10 +125,15 @@ def fuse_messages(messages: list[dict], max_user_messages: int = 2) -> list[dict
         first_user_index = user_indices[0] if len(user_indices) <= max_user_messages else user_indices[-max_user_messages]
         last_user_index = user_indices[-1]
         last_user_message = messages[last_user_index]
+        # Everything except the last user message forms the history. This
+        # deliberately includes assistant/tool messages generated *after* the
+        # last user turn (e.g. an agent response awaiting validation);
+        # otherwise the most recent response would be dropped entirely.
+        history_messages = messages[first_user_index:last_user_index] + messages[last_user_index + 1:]
     else:
         first_user_index = 0
         last_user_index = -1
-    history_messages = messages[first_user_index:last_user_index]
+        history_messages = messages[first_user_index:last_user_index]
     if not history_messages:
         return [last_user_message] if user_indices else []
     formatted_history = "\n\n".join(
