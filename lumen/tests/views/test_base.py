@@ -1,3 +1,5 @@
+import json
+
 from pathlib import Path
 
 import pandas as pd
@@ -10,7 +12,22 @@ from lumen.sources.base import FileSource
 from lumen.state import state
 from lumen.variables.base import Variables
 from lumen.views.base import (
-    Panel, Table, VegaLiteView, View, hvOverlayView, hvPlotView,
+    DeckGLView, Panel, Table, VegaLiteView, View, hvOverlayView, hvPlotView,
+)
+
+try:
+    import geopandas as gpd
+    import geoviews  # noqa: F401
+
+    from shapely.geometry import Polygon
+
+    from lumen.sources.duckdb import DuckDBSource
+    _GEO_DEPS = True
+except ImportError:
+    _GEO_DEPS = False
+
+requires_geo = pytest.mark.skipif(
+    not _GEO_DEPS, reason="geopandas, geoviews, shapely or duckdb not installed"
 )
 
 
@@ -366,14 +383,9 @@ def test_vega_datasets(set_root):
     pd.testing.assert_frame_equal(final_spec["datasets"]["test"], pipeline.data)
 
 
+@requires_geo
 def test_view_hvplot_geometry_auto_kind():
     """A GeoDataFrame view renders its geometry with an auto-selected kind."""
-    gpd = pytest.importorskip("geopandas")
-    pytest.importorskip("geoviews")
-    pytest.importorskip("duckdb")
-    from shapely.geometry import Polygon
-
-    from lumen.sources.duckdb import DuckDBSource
     try:
         source = DuckDBSource(
             uri=':memory:',
@@ -407,14 +419,9 @@ def test_view_hvplot_geometry_auto_kind():
     assert type(plot).__name__ == 'Polygons'
 
 
+@requires_geo
 def test_table_view_geometry_rendered_as_wkt():
     """Table view converts geometry columns to WKT so Bokeh can serialize them."""
-    gpd = pytest.importorskip("geopandas")
-    pytest.importorskip("duckdb")
-    from shapely.geometry import Polygon
-
-    from lumen.sources.duckdb import DuckDBSource
-    from lumen.views.base import Table
     try:
         source = DuckDBSource(
             uri=':memory:',
@@ -443,14 +450,9 @@ def test_table_view_geometry_rendered_as_wkt():
     view.get_panel()
 
 
+@requires_geo
 def test_deckgl_view_geometry_as_geojson():
     """DeckGLView emits a GeoDataFrame as a GeoJSON FeatureCollection for layers."""
-    gpd = pytest.importorskip("geopandas")
-    pytest.importorskip("duckdb")
-    from shapely.geometry import Polygon
-
-    from lumen.sources.duckdb import DuckDBSource
-    from lumen.views.base import DeckGLView
     try:
         source = DuckDBSource(
             uri=':memory:',
@@ -477,5 +479,4 @@ def test_deckgl_view_geometry_as_geojson():
     assert data['type'] == 'FeatureCollection'
     assert len(data['features']) == 2
     assert data['features'][0]['geometry']['type'] == 'Polygon'
-    import json
     json.dumps(data)  # must be serializable
