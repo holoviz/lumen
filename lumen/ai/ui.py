@@ -858,7 +858,8 @@ class UI(Viewer):
             else:
                 main_content = Report(
                     *(Section(item["view"].plan, *(it["view"].plan for it in item["items"]), title=item["view"].plan.title)
-                      for item in self._explorations.items[1:])
+                      for item in self._explorations.items[1:]),
+                    llm=self.llm,
                 )
             self._current_mode = "Report"
             self._navigation_caption.object = REPORT_CAPTION
