@@ -888,9 +888,7 @@ def describe_data_sync(
         summary["columns_shown"] = len(selected_columns)
         notes.append(
             f"Showing {len(selected_columns)} of {n_cols} columns, chosen by "
-            "relevance (query/filter columns and low-cardinality fields first); "
-            "use the schema tools for the rest."
-        )
+            "relevance (query/filter columns and low-cardinality fields first).")
     if notes:
         summary["note"] = " ".join(notes)
     result = {
