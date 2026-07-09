@@ -907,6 +907,11 @@ class Report(TaskGroup):
             color="default", margin=0, visible=False,
             description="Annotate the report with an AI-written story",
         )
+        self._arrange = IconButton(
+            icon="reorder", on_click=self._open_arrange_dialog, size="large",
+            color="default", margin=0, visible=False,
+            description="Arrange the report (reorder sections and add headings)",
+        )
         self._export = MenuButton(
             label="", icon="get_app", variant="text", color="default",
             margin=0, size="large", visible=False,
@@ -941,6 +946,16 @@ class Report(TaskGroup):
             close_on_click=True,
             title=f"Report Settings: {self.title}",
         )
+        self._outline_editor = pn.widgets.JSONEditor(
+            mode="tree", sizing_mode="stretch_width", height=400,
+        )
+        self._outline_editor.param.watch(self._on_outline_change, "value")
+        self._outline_dialog = Dialog(
+            self._outline_editor,
+            show_close_button=True,
+            title="Arrange Report",
+            width_option="md",
+        )
         self._menu = Row(
             self._header_title,
             self._run,
@@ -948,6 +963,7 @@ class Report(TaskGroup):
             self._clear,
             self._collapse,
             self._annotate,
+            self._arrange,
             self._export,
             self._settings,
             sizing_mode="stretch_width"
@@ -958,6 +974,7 @@ class Report(TaskGroup):
                 {"label": "Stop Report", "icon": "stop"},
                 {"label": "Clear Report", "icon": "clear"},
                 {"label": "Annotate Report", "icon": "auto_stories"},
+                {"label": "Arrange Report", "icon": "reorder"},
                 {"label": "Export as Notebook", "icon": "description", "format": "ipynb"},
                 {"label": "Export as HTML", "icon": "language", "format": "html"},
                 {"label": "Configure Report", "icon": "settings"}
@@ -984,6 +1001,7 @@ class Report(TaskGroup):
         self._container = Column(
             self._view,
             self._dialog,
+            self._outline_dialog,
             margin=(0, 0, 0, 5),
             sizing_mode="stretch_both",
             height_policy='fit',
@@ -1004,6 +1022,8 @@ class Report(TaskGroup):
             self.reset()
         elif icon == "auto_stories":
             await self._annotate_report()
+        elif icon == "reorder":
+            self._open_arrange_dialog()
         elif icon in ("description", "language"):
             fmt = item.get("format", "ipynb")
             self._export.value = {"format": fmt}
@@ -1024,6 +1044,7 @@ class Report(TaskGroup):
         self._collapse.visible = has_outputs
         self._annotate.visible = has_outputs
         self._annotate.disabled = self.llm is None
+        self._arrange.visible = has_outputs
         self._export.visible = has_outputs
         self._settings.visible = has_outputs
         # Only animate play button when no outputs
@@ -1196,6 +1217,14 @@ class Report(TaskGroup):
 
     def _open_settings(self, event=None):
         self._dialog.open = True
+
+    def _open_arrange_dialog(self, event=None):
+        # Seed from the current arrangement, or the default section order.
+        self._outline_editor.value = self._story_outline or self._build_default_outline()
+        self._outline_dialog.open = True
+
+    def _on_outline_change(self, event):
+        self._story_outline = event.new or []
 
     async def _annotate_report(self, event=None):
         """Write an AI story over the selected sections and insert it into the report."""

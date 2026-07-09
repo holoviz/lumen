@@ -219,3 +219,23 @@ async def test_report_outline_inserts_headings():
     nb = _nb_text(report)
     assert "Introduction" in nb
     assert nb.index("Introduction") < nb.index("A done")
+
+
+async def test_report_arrange_editor_seeds_and_binds_outline():
+    report = Report(
+        Section(A(order=[]), title='Section A'),
+        Section(B(order=[]), title='Section B'),
+        title='R',
+    )
+    await report.execute()
+
+    # Opening the arrange dialog seeds the editor from the current sections.
+    report._open_arrange_dialog()
+    assert report._outline_editor.value == [{"section": "Section A"}, {"section": "Section B"}]
+    assert report._outline_dialog.open is True
+
+    # Editing the JSONEditor updates the outline, which reorders the export.
+    report._outline_editor.value = [{"section": "Section B"}, {"section": "Section A"}]
+    assert report._story_outline == [{"section": "Section B"}, {"section": "Section A"}]
+    nb = _nb_text(report)
+    assert nb.index("B done") < nb.index("A done")
