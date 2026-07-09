@@ -239,7 +239,10 @@ def test_duckdb_transforms_cache(duckdb_source, source_tables):
     assert cache_key in duckdb_source._cache
 
     expected = df_test_sql.groupby('B')['A'].sum().reset_index()
-    pd.testing.assert_frame_equal(duckdb_source._cache[cache_key], expected)
+    # DuckDB GROUP BY returns rows in a nondeterministic order; sort by the
+    # group key before comparing against pandas' sorted groupby output.
+    actual = duckdb_source._cache[cache_key].sort_values('B').reset_index(drop=True)
+    pd.testing.assert_frame_equal(actual, expected)
 
     cache_key = duckdb_source._get_key('test_sql', sql_transforms=transforms)
     assert cache_key in duckdb_source._cache
