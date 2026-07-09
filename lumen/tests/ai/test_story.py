@@ -177,3 +177,45 @@ async def test_report_annotate_no_llm_is_noop():
 
     nb = _nb_text(report)
     assert "A done" in nb
+
+
+async def test_report_outline_defaults_empty():
+    report = Report(Section(A(order=[]), title='Section A'), title='R')
+    assert report._story_outline == []
+
+
+async def test_report_default_outline_from_sections():
+    report = Report(
+        Section(A(order=[]), title='Section A'),
+        Section(B(order=[]), title='Section B'),
+        title='R',
+    )
+    await report.execute()
+    assert report._build_default_outline() == [
+        {"section": "Section A"}, {"section": "Section B"}
+    ]
+
+
+async def test_report_outline_reorders_export():
+    report = Report(
+        Section(A(order=[]), title='Section A'),
+        Section(B(order=[]), title='Section B'),
+        title='R',
+    )
+    await report.execute()
+
+    report._story_outline = [{"section": "Section B"}, {"section": "Section A"}]
+
+    nb = _nb_text(report)
+    assert nb.index("B done") < nb.index("A done")
+
+
+async def test_report_outline_inserts_headings():
+    report = Report(Section(A(order=[]), title='Section A'), title='R')
+    await report.execute()
+
+    report._story_outline = [{"heading": "Introduction", "level": 1}, {"section": "Section A"}]
+
+    nb = _nb_text(report)
+    assert "Introduction" in nb
+    assert nb.index("Introduction") < nb.index("A done")

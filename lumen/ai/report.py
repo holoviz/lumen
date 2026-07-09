@@ -866,6 +866,7 @@ class Report(TaskGroup):
         self._overall_story = None
         self._overall_story_title = ""
         self._section_notes = {}
+        self._story_outline = []
         self._header_title = Typography(
             self.param.title, variant="h1", margin=(0, 0, 0, 10)
         )
@@ -1066,14 +1067,37 @@ class Report(TaskGroup):
         if self._overall_story is not None:
             views.append(Typography(self._overall_story_title, variant="h2"))
             views.append(self._overall_story)
-        for section in self:
-            if not section.include_in_export:
-                continue
-            views += list(section.views)
-            note = self._section_notes.get(section)
-            if note is not None:
-                views.append(note)
+        if self._story_outline:
+            # Follow the user-arranged outline: headings and sections in order.
+            for block in self._story_outline:
+                if "heading" in block:
+                    views.append(Typography(block["heading"], variant=f"h{block.get('level', 2)}"))
+                elif "section" in block:
+                    section = self._section_by_title(block["section"])
+                    if section is not None:
+                        self._append_section_views(views, section)
+        else:
+            for section in self:
+                self._append_section_views(views, section)
         return views
+
+    def _append_section_views(self, views, section):
+        if not section.include_in_export:
+            return
+        views += list(section.views)
+        note = self._section_notes.get(section)
+        if note is not None:
+            views.append(note)
+
+    def _section_by_title(self, title):
+        for section in self:
+            if section.title == title:
+                return section
+        return None
+
+    def _build_default_outline(self):
+        """Seed the arrangement outline from the currently selected sections."""
+        return [{"section": section.title} for section in self if section.include_in_export]
 
     def _export_view(self):
         # Task-less reports (e.g. Report.from_views) populate ``_view`` directly.
