@@ -112,6 +112,7 @@ class AnalysisAgent(BaseLumenAgent):
         analysis = analyses[analysis_name]
 
         view = None
+        failed = False
         with self._add_step(title=step_title or "Creating view...", steps_layout=self._steps_layout) as step:
             await asyncio.sleep(0.1)  # necessary to give it time to render before calling sync function...
             analysis_callable = analysis.instance(agents=self.agents, interface=self.interface)
@@ -129,6 +130,7 @@ class AnalysisAgent(BaseLumenAgent):
                     view = as_panel(view)
                 except Exception as e:
                     view = Markdown(f"**❌ Analysis failed with following error:**\n\n{e}")
+                    failed = True
                 if isinstance(view, Viewable):
                     view = Panel(object=view, pipeline=context.get("pipeline"))
                 step.stream(f"Generated view of type {type(view).__name__}")
@@ -140,8 +142,12 @@ class AnalysisAgent(BaseLumenAgent):
             self.interface.stream("Failed to find an analysis that applies to this data.")
             return [], {}
 
+        title = step_title
+        if failed:
+            base = step_title or type(analysis_callable).__name__
+            title = f"{base} (Error)"
         out = self._editor_type(
-            component=view, title=step_title, analysis=analysis_callable,
+            component=view, title=title, analysis=analysis_callable,
             pipeline=context.get("pipeline"), context=context
         )
         out_context = await out.render_context()
