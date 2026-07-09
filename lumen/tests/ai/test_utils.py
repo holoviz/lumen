@@ -319,8 +319,8 @@ class TestDescribeData:
         assert "columns_shown" not in result["summary"]
 
     async def test_describe_categorical_dtype_emits_enum(self):
-        # AnnData and similar sources return low-cardinality columns as
-        # pandas `category`; their enum values must still surface.
+        # Sources that return low-cardinality columns as
+        # pandas `category` must still surface their enum values.
         n = 300
         df = pd.DataFrame({
             "smoking": pd.Categorical((["Former", "Current", "Never"] * n)[:n]),

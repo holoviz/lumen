@@ -68,10 +68,10 @@ IMAGE_MIME_TYPES = {
 }
 
 # Column-selection tuning for describe_data_sync.
-DEFAULT_MAX_SUMMARY_COLS = 12
+DEFAULT_MAX_SUMMARY_COLS = 16
 # Columns with at most this many distinct values are treated as
 # human-meaningful "enum"/categorical columns and prioritised.
-LOW_CARDINALITY_MAX = 30
+LOW_CARDINALITY_MAX = 10
 
 
 def deterministic_hash(text: str) -> int:
@@ -783,10 +783,6 @@ def describe_data_sync(
     columns_to_drop = [col for col in columns_to_drop if col in describe_df.columns]
     df_describe_dict = describe_df.drop(columns=columns_to_drop).to_dict()
 
-    # Include category/boolean dtypes here: AnnData (and other) sources
-    # return low-cardinality metadata columns as pandas `category`, and
-    # without this they render as empty `{}` — hiding the very enum values
-    # a model needs to write valid filters.
     for col in df.select_dtypes(include=["object", "string", "category", "boolean", "bool"]).columns:
         if col not in df_describe_dict:
             df_describe_dict[col] = {}
