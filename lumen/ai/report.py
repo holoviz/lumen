@@ -625,76 +625,6 @@ class TaskGroup(Task):
                     task.reset()
             self._populate_view()
 
-    @property
-    def _export_views(self):
-        """
-        The flat list of views to include when exporting. Overridden by
-        subclasses that support selecting which parts to export.
-        """
-        return self.views
-
-    def _export_view(self):
-        """
-        The renderable view to save when exporting to HTML. Overridden by
-        subclasses that support selecting which parts to export.
-        """
-        return self._view
-
-    def to_notebook(self):
-        """
-        Returns the notebook representation of the tasks.
-        """
-        if len(self) and not self.status == "success":
-            raise RuntimeError(
-                "Report has not been executed, run report before exporting to_notebook."
-            )
-        cells, extensions = [], ['tabulator']
-        pending_headers = []
-        for out in self._export_views:
-            cell = ext = None
-            if isinstance(out, Typography):
-                # Buffer headers; only emit them if followed by exportable content
-                level = int(out.variant[1:]) if out.variant and out.variant.startswith('h') else 0
-                prefix = f"{'#'*level} " if level else ''
-                pending_headers.append(make_md_cell(f"{prefix}{out.object}"))
-                continue
-            elif isinstance(out, Markdown):
-                cell = make_md_cell(out.object)
-            elif isinstance(out, LumenEditor):
-                cell, ext = format_output(out)
-            elif isinstance(out, str):
-                cell = make_md_cell(out)
-            elif isinstance(out, ChatMessage):
-                obj = out.object
-                if isinstance(obj, str):
-                    cell = make_md_cell(obj)
-                elif isinstance(obj, Markdown):
-                    cell = make_md_cell(obj.object)
-            # Skip non-LumenEditor Viewables (not meaningfully exportable)
-
-            if cell is None:
-                continue
-            # Flush buffered headers before the content cell
-            cells.extend(pending_headers)
-            pending_headers.clear()
-            cells.append(cell)
-            if ext and ext not in extensions:
-                extensions.append(ext)
-        cells = make_preamble("", extensions=extensions) + cells
-        return write_notebook(cells)
-
-    def to_html(self):
-        """
-        Returns the HTML representation of the report.
-        """
-        if len(self) and self.status != "success":
-            raise RuntimeError(
-                "Report has not been executed, run report before exporting to html."
-            )
-        buf = io.StringIO()
-        self._export_view().save(buf, title=self.title or "Report")
-        return buf.getvalue()
-
     def validate(
         self,
         context: TContext | None = None,
@@ -1141,6 +1071,61 @@ class Report(TaskGroup):
             margin=(0, 5, 15, 5),
             sx=self._view.sx,
         )
+
+    def to_notebook(self):
+        """
+        Returns the notebook representation of the report.
+        """
+        if len(self) and not self.status == "success":
+            raise RuntimeError(
+                "Report has not been executed, run report before exporting to_notebook."
+            )
+        cells, extensions = [], ['tabulator']
+        pending_headers = []
+        for out in self._export_views:
+            cell = ext = None
+            if isinstance(out, Typography):
+                # Buffer headers; only emit them if followed by exportable content
+                level = int(out.variant[1:]) if out.variant and out.variant.startswith('h') else 0
+                prefix = f"{'#'*level} " if level else ''
+                pending_headers.append(make_md_cell(f"{prefix}{out.object}"))
+                continue
+            elif isinstance(out, Markdown):
+                cell = make_md_cell(out.object)
+            elif isinstance(out, LumenEditor):
+                cell, ext = format_output(out)
+            elif isinstance(out, str):
+                cell = make_md_cell(out)
+            elif isinstance(out, ChatMessage):
+                obj = out.object
+                if isinstance(obj, str):
+                    cell = make_md_cell(obj)
+                elif isinstance(obj, Markdown):
+                    cell = make_md_cell(obj.object)
+            # Skip non-LumenEditor Viewables (not meaningfully exportable)
+
+            if cell is None:
+                continue
+            # Flush buffered headers before the content cell
+            cells.extend(pending_headers)
+            pending_headers.clear()
+            cells.append(cell)
+            if ext and ext not in extensions:
+                extensions.append(ext)
+        cells = make_preamble("", extensions=extensions) + cells
+        return write_notebook(cells)
+
+    def to_html(self):
+        """
+        Returns the HTML representation of the report.
+        """
+        if len(self) and self.status != "success":
+            raise RuntimeError(
+                "Report has not been executed, run report before exporting to html."
+            )
+        buf = io.StringIO()
+        self._export_view().save(buf, title=self.title or "Report")
+        return buf.getvalue()
 
     async def _export_report(self, item=None):
         if len(self) and self.status not in ("success", "cancelled", "error"):
