@@ -1049,18 +1049,26 @@ class hvPlotView(hvPlotBaseView):
         self._linked_objs = []
         super().__init__(**params)
 
+    def _gridded_index(self) -> list[str]:
+        """Columns that index the pivoted grid: any groupby axes (e.g. time)
+        that hvPlot pages through a widget, then the y/x grid axes."""
+        return [*(self.groupby or []), self.y, self.x]
+
     def _gridded_pivot_blocker(self, df) -> str | None:
-        """Return None if df can be pivoted to a 2D grid, else a human-readable reason."""
+        """Return None if df can be pivoted to a grid, else a human-readable reason."""
         if try_import_xarray() is None:
             return "xarray is not installed"
         if not (self.x and self.y and self.z):
             return "x, y, and z must all be set for gridded plot kinds"
-        missing = {self.x, self.y, self.z} - set(df.columns)
+        index = self._gridded_index()
+        missing = {*index, self.z} - set(df.columns)
         if missing:
             return f"missing required column(s): {sorted(missing)}"
-        if df.duplicated(subset=[self.y, self.x]).any():
-            return f"duplicate ({self.y!r}, {self.x!r}) rows prevent pivot to a 2D grid"
-        n_cells = df[self.y].nunique() * df[self.x].nunique()
+        if df.duplicated(subset=index).any():
+            return f"duplicate {tuple(index)} rows prevent pivot to a grid"
+        n_cells = 1
+        for col in index:
+            n_cells *= df[col].nunique()
         if n_cells > GRIDDED_MAX_CELLS:
             return (
                 f"pivoted grid would have {n_cells:,} cells, exceeding the "
@@ -1069,12 +1077,14 @@ class hvPlotView(hvPlotBaseView):
         return None
 
     def _to_gridded(self, df):
-        """Pivot a long-form DataFrame to a 2D xarray DataArray for hvPlot's
+        """Pivot a long-form DataFrame to an xarray DataArray for hvPlot's
         quadmesh/image/contourf kinds.
 
-        Returns the input unchanged if it is already an xarray object or if
-        the pivot is blocked (see ``_gridded_pivot_blocker``); callers that
-        require gridded data should check the blocker themselves and raise.
+        The y/x columns form the 2D grid; any ``groupby`` columns become extra
+        axes hvPlot pages through with a widget. Returns the input unchanged if
+        it is already an xarray object or if the pivot is blocked (see
+        ``_gridded_pivot_blocker``); callers that require gridded data should
+        check the blocker themselves and raise.
         """
         if isinstance(df, pd.DataFrame) and self._gridded_pivot_blocker(df) is not None:
             return df
@@ -1084,7 +1094,7 @@ class hvPlotView(hvPlotBaseView):
         import hvplot.xarray  # type: ignore  # noqa: F401
         if not isinstance(df, pd.DataFrame):
             return df
-        return df.set_index([self.y, self.x])[self.z].to_xarray()
+        return df.set_index(self._gridded_index())[self.z].to_xarray()
 
     def get_plot(self, df):
         processed = {}

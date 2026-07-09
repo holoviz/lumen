@@ -28,6 +28,16 @@ def gridded_pipeline(gridded_df):
 
 
 @pytest.fixture
+def gridded_3d_df():
+    """Long-form 3D grid: time x lat x lon (an extra dim to page via groupby)."""
+    times = pd.to_datetime(["2013-01-01", "2013-01-02"])
+    lats = [0.0, 1.0, 2.0]
+    lons = [10.0, 20.0, 30.0, 40.0]
+    idx = pd.MultiIndex.from_product([times, lats, lons], names=["time", "lat", "lon"])
+    return pd.DataFrame({"air": np.arange(len(idx), dtype=float)}, index=idx).reset_index()
+
+
+@pytest.fixture
 def tabular_df():
     return pd.DataFrame({"x": [1.0, 2.0, 3.0], "y": [4.0, 5.0, 6.0]})
 
@@ -143,6 +153,25 @@ def test_hvplot_image_from_longform_df(gridded_pipeline):
     )
     plot = view.get_plot(view.get_data())
     assert isinstance(plot, hv.Image)
+
+
+def test_hvplot_image_groupby_pages_extra_dim(gridded_3d_df):
+    """A groupby dimension (e.g. time) is folded into the pivot so a 3D grid
+    renders with a widget slider instead of being rejected as duplicate rows.
+
+    air_temperature (the #1823 review dataset) is time x lat x lon, so the view
+    must page the extra time axis rather than block on repeated (lat, lon) pairs.
+    """
+    pytest.importorskip("xarray")
+    source = InMemorySource(tables={"grid": gridded_3d_df})
+    pipeline = Pipeline(source=source, table="grid")
+    view = hvPlotView(
+        pipeline=pipeline, kind="image", x="lon", y="lat", z="air", groupby="time",
+    )
+    plot = view.get_plot(view.get_data())
+    # paged over time -> a DynamicMap/HoloMap keyed on time, not a bare Image
+    assert isinstance(plot, (hv.DynamicMap, hv.HoloMap))
+    assert "time" in [d.name for d in plot.kdims]
 
 
 def test_hvplot_quadmesh_raises_on_duplicate_rows(gridded_df):
