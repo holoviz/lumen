@@ -1,3 +1,4 @@
+import importlib.util
 import json
 
 from pathlib import Path
@@ -17,7 +18,6 @@ from lumen.views.base import (
 
 try:
     import geopandas as gpd
-    import geoviews  # noqa: F401
 
     from shapely.geometry import Polygon
 
@@ -27,7 +27,14 @@ except ImportError:
     _GEO_DEPS = False
 
 requires_geo = pytest.mark.skipif(
-    not _GEO_DEPS, reason="geopandas, geoviews, shapely or duckdb not installed"
+    not _GEO_DEPS, reason="geopandas, shapely or duckdb not installed"
+)
+
+# geoviews is checked without importing it: importing geoviews (-> matplotlib)
+# at collection under xdist can deadlock the font cache on macOS. hvplot imports
+# it lazily when the geometry plot is actually rendered.
+requires_geoviews = pytest.mark.skipif(
+    importlib.util.find_spec("geoviews") is None, reason="geoviews not installed"
 )
 
 
@@ -384,6 +391,7 @@ def test_vega_datasets(set_root):
 
 
 @requires_geo
+@requires_geoviews
 def test_view_hvplot_geometry_auto_kind():
     """A GeoDataFrame view renders its geometry with an auto-selected kind."""
     try:
