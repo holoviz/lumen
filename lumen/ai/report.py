@@ -863,6 +863,9 @@ class Report(TaskGroup):
 
     def _init_view(self):
         self._section_headers = {}
+        self._overall_story = None
+        self._overall_story_title = ""
+        self._section_notes = {}
         self._header_title = Typography(
             self.param.title, variant="h1", margin=(0, 0, 0, 10)
         )
@@ -897,6 +900,11 @@ class Report(TaskGroup):
         self._settings = IconButton(
             icon="settings", on_click=self._open_settings, size="large", color="default",
             margin=0, description="Configure Report", visible=False
+        )
+        self._annotate = IconButton(
+            icon="auto_stories", on_click=self._annotate_report, size="large",
+            color="default", margin=0, visible=False,
+            description="Annotate the report with an AI-written story",
         )
         self._export = MenuButton(
             label="", icon="get_app", variant="text", color="default",
@@ -938,6 +946,7 @@ class Report(TaskGroup):
             self._stop,
             self._clear,
             self._collapse,
+            self._annotate,
             self._export,
             self._settings,
             sizing_mode="stretch_width"
@@ -947,6 +956,7 @@ class Report(TaskGroup):
                 {"label": "Execute Report", "icon": "play_arrow"},
                 {"label": "Stop Report", "icon": "stop"},
                 {"label": "Clear Report", "icon": "clear"},
+                {"label": "Annotate Report", "icon": "auto_stories"},
                 {"label": "Export as Notebook", "icon": "description", "format": "ipynb"},
                 {"label": "Export as HTML", "icon": "language", "format": "html"},
                 {"label": "Configure Report", "icon": "settings"}
@@ -991,6 +1001,8 @@ class Report(TaskGroup):
             self._handle_cancel()
         elif icon == "clear":
             self.reset()
+        elif icon == "auto_stories":
+            await self._annotate_report()
         elif icon in ("description", "language"):
             fmt = item.get("format", "ipynb")
             self._export.value = {"format": fmt}
@@ -1009,6 +1021,8 @@ class Report(TaskGroup):
         has_outputs = self.status in ("success", "error", "cancelled") or bool(self.views)
         self._clear.visible = has_outputs
         self._collapse.visible = has_outputs
+        self._annotate.visible = has_outputs
+        self._annotate.disabled = self.llm is None
         self._export.visible = has_outputs
         self._settings.visible = has_outputs
         # Only animate play button when no outputs
@@ -1048,19 +1062,29 @@ class Report(TaskGroup):
         # Task-less reports (e.g. Report.from_views) populate ``views`` directly.
         if not len(self):
             return self.views
-        selected = [
-            view
-            for section in self
-            if section.include_in_export
-            for view in section.views
-        ]
-        return list(self._header) + selected
+        views = list(self._header)
+        if self._overall_story is not None:
+            views.append(Typography(self._overall_story_title, variant="h2"))
+            views.append(self._overall_story)
+        for section in self:
+            if not section.include_in_export:
+                continue
+            views += list(section.views)
+            note = self._section_notes.get(section)
+            if note is not None:
+                views.append(note)
+        return views
 
     def _export_view(self):
         # Task-less reports (e.g. Report.from_views) populate ``_view`` directly.
         if not len(self):
             return self._view
-        cards = [
+        # Prepend the overall story card (if any) so it survives HTML export the
+        # same way it does the notebook, then the kept section cards.
+        cards = []
+        if self._overall_story is not None:
+            cards.append((self._overall_story_title, self._overall_story))
+        cards += [
             (section.title, section) for section in self if section.include_in_export
         ]
         return Accordion(
@@ -1148,6 +1172,63 @@ class Report(TaskGroup):
 
     def _open_settings(self, event=None):
         self._dialog.open = True
+
+    async def _annotate_report(self, event=None):
+        """Write an AI story over the selected sections and insert it into the report."""
+        if self.llm is None or not len(self):
+            return
+        from .agents.story import (
+            StoryAgent, build_report_context, build_section_context,
+        )
+        sections = [section for section in self if section.include_in_export]
+        if not sections:
+            return
+        self._annotate.loading = True
+        try:
+            self._clear_annotations()
+            agent = StoryAgent(llm=self.llm)
+            try:
+                story = await agent.write_story(await build_report_context(sections), title=self.title or "")
+                self._insert_story(story)
+            except Exception:
+                # A failed overall story should not prevent the per-section notes.
+                tb.print_exc()
+            for section in sections:
+                try:
+                    note = await agent.write_note(await build_section_context(section), title=section.title or "")
+                    self._insert_note(section, note)
+                except Exception:
+                    tb.print_exc()
+                    continue
+        finally:
+            self._annotate.loading = False
+
+    def _insert_story(self, story):
+        # Title lives in the card header (and a heading cell on export); the body
+        # is the story markdown, so it is not duplicated.
+        self._overall_story_title = story.title
+        self._overall_story = Markdown(story.markdown, sizing_mode="stretch_width")
+        self._view.insert(0, (story.title, self._overall_story))
+        self._view.active = list(range(len(self._view)))
+
+    def _insert_note(self, section, note):
+        md = Markdown(note.markdown, sizing_mode="stretch_width", margin=(5, 10))
+        self._section_notes[section] = md
+        section._view.append(md)
+
+    def _clear_annotations(self):
+        """Remove any previously inserted story/notes so re-running replaces them."""
+        if self._overall_story is not None:
+            for i, obj in enumerate(list(self._view.objects)):
+                if obj is self._overall_story:
+                    self._view.pop(i)
+                    break
+            self._overall_story = None
+            self._overall_story_title = ""
+        for section, note in self._section_notes.items():
+            if note in section._view:
+                section._view.remove(note)
+        self._section_notes = {}
 
     def _section_header(self, section):
         """Card header with a checkbox to keep/discard the section on export."""

@@ -1,3 +1,5 @@
+import json
+
 import param
 import pytest
 
@@ -88,3 +90,90 @@ async def test_build_section_context_summarizes_table_pipeline(tiny_source):
     # The table's columns should surface in the summary sent to the LLM.
     assert "category" in ctx
     assert "value" in ctx
+
+
+def _nb_text(report):
+    return "".join(
+        "".join(cell["source"]) for cell in json.loads(report.to_notebook())["cells"]
+    )
+
+
+async def test_report_annotate_inserts_story_and_notes(llm):
+    from lumen.ai.agents.story import SectionNote, Story
+
+    report = Report(
+        Section(A(order=[]), title='Section A'),
+        Section(B(order=[]), title='Section B'),
+        title='My Report',
+        llm=llm,
+    )
+    await report.execute()
+    llm.set_responses([
+        Story(chain_of_thought="c", title="The Big Picture", markdown="Overall narrative."),
+        SectionNote(chain_of_thought="c", markdown="Note for A."),
+        SectionNote(chain_of_thought="c", markdown="Note for B."),
+    ])
+
+    await report._annotate_report()
+
+    nb = _nb_text(report)
+    assert "The Big Picture" in nb
+    assert "Overall narrative." in nb
+    assert "Note for A." in nb
+    assert "Note for B." in nb
+
+    # The overall story and the notes must both survive HTML export too.
+    html = report.to_html()
+    assert "The Big Picture" in html
+    assert "Overall narrative." in html
+    assert "Note for A." in html
+    assert "Note for B." in html
+
+
+async def test_report_annotate_only_selected_sections(llm):
+    from lumen.ai.agents.story import SectionNote, Story
+
+    report = Report(
+        Section(A(order=[]), title='Section A'),
+        Section(B(order=[]), title='Section B'),
+        title='My Report',
+        llm=llm,
+    )
+    await report.execute()
+    report[1].include_in_export = False
+    llm.set_responses([
+        Story(chain_of_thought="c", title="S", markdown="overall"),
+        SectionNote(chain_of_thought="c", markdown="Note for A."),
+    ])
+
+    await report._annotate_report()
+
+    nb = _nb_text(report)
+    assert "Note for A." in nb
+    assert "Note for B." not in nb
+
+
+async def test_report_annotate_is_idempotent(llm):
+    from lumen.ai.agents.story import SectionNote, Story
+
+    report = Report(Section(A(order=[]), title='Section A'), title='My Report', llm=llm)
+    await report.execute()
+
+    llm.set_responses([Story(chain_of_thought="c", title="S1", markdown="v1"), SectionNote(chain_of_thought="c", markdown="n1")])
+    await report._annotate_report()
+    llm.set_responses([Story(chain_of_thought="c", title="S2", markdown="v2"), SectionNote(chain_of_thought="c", markdown="n2")])
+    await report._annotate_report()
+
+    nb = _nb_text(report)
+    assert "v2" in nb and "n2" in nb
+    assert "v1" not in nb and "n1" not in nb
+
+
+async def test_report_annotate_no_llm_is_noop():
+    report = Report(Section(A(order=[]), title='Section A'), title='My Report')
+    await report.execute()
+
+    await report._annotate_report()  # must not raise
+
+    nb = _nb_text(report)
+    assert "A done" in nb
