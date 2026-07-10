@@ -312,6 +312,7 @@ def test_hvplotuiview_uses_grid_explorer_for_gridded(simple_dataset_3d_pipeline)
     grid explorer over the compact Dataset -- the long-form dataframe explorer
     would raise 'image requires gridded data'."""
     import panel as pn
+
     from hvplot.ui import hvGridExplorer
 
     from lumen.views.base import hvPlotUIView

@@ -1055,7 +1055,10 @@ class hvPlotUIView(hvPlotBaseView):
         return pn.bind(ui, self.param.rerender)
 
     def get_panel(self):
-        from hvplot.ui import hvDataFrameExplorer, hvGridExplorer  # type: ignore
+        from hvplot.ui import (  # type: ignore
+            hvDataFrameExplorer, hvGridExplorer,
+        )
+
         # An xarray-backed pipeline explores the compact gridded Dataset (via
         # to_dataset) with hvPlot's grid explorer, so gridded kinds like image
         # and quadmesh work; tabular data uses the dataframe explorer.
