@@ -1019,6 +1019,11 @@ class hvPlotBaseView(View):
             f"aggregation), use a gridded/aggregating kind, or set rasterize=True."
         )
 
+    def _source_dataset(self):
+        """The compact gridded ``xarray.Dataset`` from the pipeline's source
+        (xarray-sql ``to_dataset``), or None when the source can't produce one."""
+        return self.pipeline.get_dataset() if self.pipeline is not None else None
+
 
 class hvPlotUIView(hvPlotBaseView):
     """
@@ -1027,25 +1032,38 @@ class hvPlotUIView(hvPlotBaseView):
 
     view_type = 'hvplot_ui'
 
-    def _get_args(self):
+    def _get_args(self, explorer_cls=None, data=None):
         from hvplot.ui import Geographic, hvPlotExplorer  # type: ignore
+        if explorer_cls is None:
+            explorer_cls = hvPlotExplorer
+        if data is None:
+            data = self.get_data()
         params = {
             k: v for k, v in self.param.values().items()
-            if (k in hvPlotExplorer.param or k in Geographic.param)
+            if (k in explorer_cls.param or k in Geographic.param)
             and v is not None and k != 'name'
         }
-        return (self.get_data(),), dict(params, **self.kwargs)
+        return (data,), dict(params, **self.kwargs)
 
     def __panel__(self):
         panel = self.get_panel()
         def ui(*events):
-            panel._data = self.get_data()
+            gridded = self._source_dataset()
+            panel._data = gridded if gridded is not None else self.get_data()
             panel._plot()
             return panel
         return pn.bind(ui, self.param.rerender)
 
     def get_panel(self):
-        from hvplot.ui import hvDataFrameExplorer
+        from hvplot.ui import hvDataFrameExplorer, hvGridExplorer  # type: ignore
+        # An xarray-backed pipeline explores the compact gridded Dataset (via
+        # to_dataset) with hvPlot's grid explorer, so gridded kinds like image
+        # and quadmesh work; tabular data uses the dataframe explorer.
+        gridded = self._source_dataset()
+        if gridded is not None:
+            import hvplot.xarray  # type: ignore  # noqa: F401
+            args, kwargs = self._get_args(hvGridExplorer, gridded)
+            return hvGridExplorer(*args, **kwargs)
         args, kwargs = self._get_args()
         self._check_render_size(args[0])
         return hvDataFrameExplorer(*args, **kwargs)
@@ -1131,6 +1149,25 @@ class hvPlotView(hvPlotBaseView):
             return df
         return df.set_index(self._gridded_index())[self.z].to_xarray()
 
+    def _gridded_plot_source(self, df):
+        """Object to hand hvPlot for a gridded kind: a compact xarray Dataset
+        straight from the source (xarray-sql ``to_dataset``) when available,
+        else the long-form frame pivoted to xarray."""
+        gridded = self._source_dataset()
+        if gridded is not None:
+            import hvplot.xarray  # type: ignore  # noqa: F401
+            return gridded
+        if isinstance(df, pd.DataFrame):
+            blocker = self._gridded_pivot_blocker(df)
+            if blocker is not None:
+                raise ValueError(
+                    f"Cannot render kind={self.kind!r} from this pipeline: "
+                    f"{blocker}. Either provide xarray-backed data, switch "
+                    f"to a tabular kind (e.g. 'heatmap' for ordinal axes), "
+                    f"or fix the spec."
+                )
+        return self._to_gridded(df)
+
     def get_plot(self, df):
         self._check_render_size(df)
         processed = {}
@@ -1147,16 +1184,7 @@ class hvPlotView(hvPlotBaseView):
 
         plot_source = df
         if self.kind in GRIDDED_KINDS:
-            if isinstance(df, pd.DataFrame):
-                blocker = self._gridded_pivot_blocker(df)
-                if blocker is not None:
-                    raise ValueError(
-                        f"Cannot render kind={self.kind!r} from this pipeline: "
-                        f"{blocker}. Either provide xarray-backed data, switch "
-                        f"to a tabular kind (e.g. 'heatmap' for ordinal axes), "
-                        f"or fix the spec."
-                    )
-            plot_source = self._to_gridded(df)
+            plot_source = self._gridded_plot_source(df)
 
         plot = plot_source.hvplot(
             kind=self.kind, x=self.x, y=self.y, by=self.by, groupby=self.groupby, **processed

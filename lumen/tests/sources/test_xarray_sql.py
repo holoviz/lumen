@@ -657,3 +657,47 @@ class TestAsync:
         source = XArraySQLSource(_dataset=synthetic_dataset)
         df = await source.get_async("temperature")
         assert len(df) > 0
+
+
+# ---- to_dataset (gridded output via xarray-sql) ----
+
+class TestToDataset:
+
+    def test_to_dataset_returns_gridded(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        ds = source.to_dataset("temperature")
+        assert isinstance(ds, xr.Dataset)
+        assert set(ds.dims) >= {"time", "lat", "lon"}
+        assert "temperature" in ds.data_vars
+
+    def test_to_dataset_applies_sql_filter(self, synthetic_dataset):
+        """A filter is applied in SQL before to_dataset, subsetting the grid."""
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        ds = source.to_dataset("temperature", lat=30.0)
+        assert ds.sizes["lat"] == 1
+
+    def test_get_still_returns_long_form(self, synthetic_dataset):
+        """get() is unchanged: it returns the long-form pandas frame."""
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        assert isinstance(source.get("temperature"), pd.DataFrame)
+
+    def test_to_dataset_fallback_when_native_absent(self, synthetic_dataset, monkeypatch):
+        """When the query result lacks a native to_dataset (xarray-sql < 0.3),
+        to_dataset falls back to pivoting the long-form result on the dims."""
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        real_sql = source._ctx.sql
+
+        class _NoNativeToDataset:
+            def __init__(self, result):
+                self._result = result
+
+            def to_pandas(self):
+                return self._result.to_pandas()
+
+        monkeypatch.setattr(
+            source._ctx, "sql", lambda q: _NoNativeToDataset(real_sql(q))
+        )
+        ds = source.to_dataset("temperature")
+        assert isinstance(ds, xr.Dataset)
+        assert set(ds.dims) >= {"time", "lat", "lon"}
+        assert "temperature" in ds.data_vars
