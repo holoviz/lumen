@@ -33,6 +33,8 @@ def test_vegalite_prompt_includes_gridded_block():
     gridded = {
         "source_type": "xarray",
         "dims": ["lat", "lon"],
+        "spatial_dims": ["lon", "lat"],
+        "extra_dims": [],
         "coords": {"lat": [3], "lon": [4]},
         "data_vars": ["air"],
         "regular": True,
@@ -60,6 +62,8 @@ def test_vegalite_altair_prompt_includes_gridded_block():
     gridded = {
         "source_type": "xarray",
         "dims": ["lat", "lon"],
+        "spatial_dims": ["lon", "lat"],
+        "extra_dims": [],
         "coords": {"lat": [3], "lon": [4]},
         "data_vars": ["air"],
         "regular": True,
@@ -70,3 +74,26 @@ def test_vegalite_altair_prompt_includes_gridded_block():
     )
     assert "mark_rect()" in rendered
     assert "viridis" in rendered
+    # no extra dims -> no subset-to-one-timestep instruction
+    assert "cannot page a dimension with a slider" not in rendered
+
+
+def test_vegalite_altair_prompt_subsets_extra_dims():
+    """With an extra dim (time), the prompt must instruct a transform_filter to a
+    single value, since Vega-Lite cannot page a dimension with a slider."""
+    gridded = {
+        "source_type": "xarray",
+        "dims": ["time", "lat", "lon"],
+        "spatial_dims": ["lon", "lat"],
+        "extra_dims": ["time"],
+        "coords": {"time": [2], "lat": [3], "lon": [4]},
+        "data_vars": ["air"],
+        "regular": True,
+    }
+    rendered = render_template(
+        PROMPTS_DIR / "VegaLiteAgent" / "main_altair.jinja2",
+        **_base_context(gridded=gridded),
+    )
+    assert "cannot page a dimension with a slider" in rendered
+    assert "transform_filter" in rendered
+    assert "time" in rendered

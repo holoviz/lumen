@@ -22,7 +22,7 @@ from ..editors import DeckGLEditor
 from ..models import BaseModel, EscapeBaseModel, RetrySpec
 from ..utils import (
     get_data, get_schema, gridded_metadata, retry_llm_output,
-    sanitize_column_names,
+    sanitize_column_names, subset_gridded_to_2d,
 )
 from .base_code import BaseCodeAgent
 
@@ -284,6 +284,10 @@ class DeckGLAgent(BaseCodeAgent):
         pipeline = context.get("pipeline")
         if not pipeline:
             raise ValueError("Context did not contain a pipeline.")
+
+        # DeckGL cannot page a dimension, so reduce a gridded source to a
+        # single 2D slice before rendering (else it hits the row cap).
+        pipeline = subset_gridded_to_2d(pipeline)
 
         schema = await get_schema(pipeline)
         if not schema:

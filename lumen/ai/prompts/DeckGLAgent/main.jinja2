@@ -48,10 +48,13 @@ Column names: spaces→underscores, non-alphanumeric removed (e.g., "Plant latit
 {%- if gridded is defined and gridded %}
 
 **Gridded xarray data**: This table is a long-form grid derived from an xarray dataset.
-- coordinate dimensions: {{ gridded.dims | join(', ') }}
+- spatial axes (x, y): {{ gridded.spatial_dims | join(', ') }}
 - data variables: {{ gridded.data_vars | join(', ') }}
-This only reads well on a map when the coordinate dimensions are geographic (longitude/latitude).
-Use `ColumnLayer` with `getPosition: "@@=[{{ gridded.dims[1] if gridded.dims | length > 1 else gridded.dims[0] }}, {{ gridded.dims[0] }}]"` and `getElevation: "@@={{ gridded.data_vars[0] }}"` for per-cell elevation, or `HexagonLayer` for spatial aggregation.
+{%- if gridded.extra_dims %}
+- extra dimensions: {{ gridded.extra_dims | join(', ') }}. DeckGL renders one static layer and cannot page a dimension, so filter each extra dimension to a single value (e.g. the first {{ gridded.extra_dims[0] }}) unless the user explicitly asked to facet or color by it. Keep the layer 2D over the spatial axes.
+{%- endif %}
+This only reads well on a map when the spatial axes are geographic (longitude/latitude).
+Use `ColumnLayer` with `getPosition: "@@=[{{ gridded.spatial_dims[0] }}, {{ gridded.spatial_dims[1] }}]"` and `getElevation: "@@={{ gridded.data_vars[0] }}"` for per-cell elevation, or `HexagonLayer` for spatial aggregation.
 {%- endif %}
 {% endblock %}
 
@@ -142,7 +145,7 @@ Gridded data, ColumnLayer (per-cell elevation from a value field):
   "layers": [{
     "@@type": "ColumnLayer",
     "id": "grid-values",
-    "getPosition": "@@=[{{ gridded.dims[1] if gridded.dims | length > 1 else gridded.dims[0] }}, {{ gridded.dims[0] }}]",
+    "getPosition": "@@=[{{ gridded.spatial_dims[0] }}, {{ gridded.spatial_dims[1] }}]",
     "getElevation": "@@={{ gridded.data_vars[0] }}",
     "getFillColor": [65, 182, 196, 220],
     "diskResolution": 6,

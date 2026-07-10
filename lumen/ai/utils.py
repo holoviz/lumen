@@ -40,6 +40,7 @@ from markupsafe import escape
 from panel_material_ui import Details
 
 from ..config import dump_yaml
+from ..filters.base import ConstantFilter
 from ..pipeline import Pipeline
 from ..sources.base import Source
 from ..sources.xarray_sql import XArraySQLSource
@@ -1494,11 +1495,12 @@ def result_to_dataframe(result) -> pd.DataFrame | None:
 def gridded_metadata(pipeline: Pipeline) -> dict[str, Any] | None:
     """Return gridded metadata for an xarray-backed pipeline, else None.
 
-    Returns a dict with keys ``source_type``, ``dims``, ``coords``,
-    ``data_vars``, and ``regular`` (True iff every coordinate dimension is
-    uniformly spaced). Coord arrays are 1-D and held in memory by xarray
-    even for large lazy datasets, so the regularity check is cheap; do not
-    call on a hot path.
+    Returns a dict with keys ``source_type``, ``dims``, ``spatial_dims``
+    (the two x/y map axes), ``extra_dims`` (dims to page or subset, e.g.
+    ``time``), ``coords``, ``data_vars``, and ``regular`` (True iff every
+    coordinate dimension is uniformly spaced). Coord arrays are 1-D and held
+    in memory by xarray even for large lazy datasets, so the regularity check
+    is cheap; do not call on a hot path.
     """
     if not isinstance(pipeline.source, XArraySQLSource) or try_import_xarray() is None:
         return None
@@ -1518,13 +1520,48 @@ def gridded_metadata(pipeline: Pipeline) -> dict[str, Any] | None:
     regular = all(
         _is_regular(ds.coords[d].values) for d in ds.dims if d in ds.coords
     )
+
+    # Split dims into the two spatial axes (x/y of a map) and any extra dims
+    # (e.g. time). hvPlot pages extra dims via a groupby slider; VegaLite and
+    # DeckGL cannot page a dimension, so they must subset each extra dim to a
+    # single value. Detect lon/lat by name, else fall back to xarray's
+    # convention that the last two dims are the grid's spatial axes.
+    dims = list(ds.dims)
+    lon = next((d for d in dims if d.lower() in ('lon', 'longitude', 'x')), None)
+    lat = next((d for d in dims if d.lower() in ('lat', 'latitude', 'y')), None)
+    spatial_dims = [lon, lat] if lon and lat else dims[-2:]
+    extra_dims = [d for d in dims if d not in spatial_dims]
+
     return {
         'source_type': 'xarray',
-        'dims': list(ds.dims),
+        'dims': dims,
+        'spatial_dims': spatial_dims,
+        'extra_dims': extra_dims,
         'coords': {k: list(ds.coords[k].shape) for k in ds.coords},
         'data_vars': list(ds.data_vars),
         'regular': regular,
     }
+
+
+def subset_gridded_to_2d(pipeline: Pipeline) -> Pipeline:
+    """Pin each extra (non-spatial) dimension of a gridded xarray-backed
+    pipeline to its first value, so views that cannot page a dimension
+    (VegaLite, DeckGL) render a single 2D slice instead of the full grid.
+
+    Returns the pipeline unchanged when it is not gridded, has no extra dims,
+    or xarray is unavailable. Prompt guidance alone cannot do this -- the view
+    agents emit a spec over the pipeline and do not control its rows -- so the
+    reduction has to happen here, deterministically.
+    """
+    md = gridded_metadata(pipeline)
+    if not md or not md['extra_dims']:
+        return pipeline
+    ds = pipeline.source.dataset
+    filters = [
+        ConstantFilter(field=dim, value=ds[dim].values[0])
+        for dim in md['extra_dims']
+    ]
+    return pipeline.chain(filters=filters)
 
 
 def normalize_vegalite_spec(

@@ -20,7 +20,10 @@ Generate Altair code. Data is `df`, assign to `chart`, end with `.interactive()`
 
 ## Gridded xarray data
 `df` is a long-form grid from an xarray dataset (dimensions: {{ gridded.dims | join(', ') }}; variables: {{ gridded.data_vars | join(', ') }}).
-Use `mark_rect()` for a heatmap: encode `x`/`y` as ordinal coordinate dimensions and `color` as the quantitative value with `alt.Scale(scheme='viridis')`. Keep the axes ordinal rather than adding a `project()`ion; Vega-Lite cannot project `mark_rect`, so a true geographic map needs the hvPlot or DeckGL views instead.
+Encode the spatial axes {{ gridded.spatial_dims | join(', ') }} as `x`/`y` and use `mark_rect()` for a heatmap with `color` as the quantitative value (`alt.Scale(scheme='viridis')`). Keep the axes ordinal rather than adding a `project()`ion; Vega-Lite cannot project `mark_rect`, so a true geographic map needs the hvPlot or DeckGL views instead.
+{%- if gridded.extra_dims %}
+Vega-Lite cannot page a dimension with a slider, so add a `transform_filter` pinning each extra dimension ({{ gridded.extra_dims | join(', ') }}) to a single value unless the user explicitly asked to facet, animate, or color by it.
+{%- endif %}
 {%- endif %}
 {% endblock %}
 

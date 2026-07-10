@@ -25,7 +25,7 @@ from ..llm import Message, OpenAI
 from ..models import EscapeBaseModel, RetrySpec
 from ..utils import (
     get_data, get_schema, gridded_metadata, load_json, log_debug,
-    normalize_vegalite_spec, retry_llm_output,
+    normalize_vegalite_spec, retry_llm_output, subset_gridded_to_2d,
 )
 from ..vector_store import DuckDBVectorStore
 from .base_code import BaseCodeAgent
@@ -606,6 +606,10 @@ class VegaLiteAgent(BaseCodeAgent):
         pipeline = context.get("pipeline")
         if not pipeline:
             raise ValueError("Context did not contain a pipeline.")
+
+        # Vega-Lite cannot page a dimension, so reduce a gridded source to a
+        # single 2D slice before rendering.
+        pipeline = subset_gridded_to_2d(pipeline)
 
         schema = await get_schema(pipeline)
         if not schema:
