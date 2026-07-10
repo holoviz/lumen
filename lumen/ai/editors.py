@@ -58,6 +58,11 @@ class LumenEditor(Viewer):
 
     title = param.String(allow_None=True)
 
+    _context_updated = param.Event(doc="""
+        Triggered when the output's context changes after render (e.g. an
+        interactive selection) so watchers can refresh the out-context without
+        going through the spec/deserialize path.""")
+
     export_formats = ("yaml",)
 
     language = "yaml"
@@ -182,6 +187,10 @@ class LumenEditor(Viewer):
 
     @param.depends("spec", watch=True)
     def _update_component(self):
+        # spec is None for outputs that couldn't be serialized (e.g. an
+        # interactive analysis view); there is nothing to deserialize.
+        if self.spec is None:
+            return
         if self.spec in self._last_output and self.component is None:
             return
         pipeline = getattr(self.component, 'pipeline', None)
@@ -466,6 +475,14 @@ class AnalysisOutput(LumenEditor):
         if 'title' not in params or params['title'] is None:
             params['title'] = type(params['analysis']).__name__
         super().__init__(**params)
+        if self.analysis is not None:
+            self.analysis.param.watch(self._on_dynamic_provides, '_dynamic_provides')
+
+    def _on_dynamic_provides(self, event):
+        # The analysis published context after rendering (e.g. an interactive
+        # selection). Signal watchers to re-run render_context and merge it into
+        # out_context, without touching spec (which would try to re-deserialize).
+        self.param.trigger('_context_updated')
 
     def _render_editor(self):
         controls = self.analysis.controls(self.context)
@@ -485,6 +502,8 @@ class AnalysisOutput(LumenEditor):
     async def render_context(self):
         out_context = await super().render_context()
         out_context["analysis"] = self.analysis
+        if self.analysis is not None and self.analysis._dynamic_provides:
+            out_context.update(self.analysis._dynamic_provides)
         return out_context
 
     async def _rerun(self, event):
