@@ -27,6 +27,8 @@ from panel_material_ui import (
     Progress, Select, SpeedDial, TextAreaInput, TextInput, Typography,
 )
 
+from ..config import config
+from ..pipeline import Pipeline
 from ..views.base import Panel, View
 from .actor import (
     Actor, ContextProvider, NullStep, TContext,
@@ -826,6 +828,12 @@ class Report(TaskGroup):
 
     level = 1
 
+    _STORY_PRESETS = [
+        ("Executive summary", "Write a concise executive summary for decision-makers, leading with the key takeaways."),
+        ("Technical deep-dive", "Write a detailed technical analysis that explains the methods and the data behind each chart."),
+        ("Highlights only", "Keep it brief: just the headline finding for each chart and table."),
+    ]
+
     def __init__(self, *tasks, **params):
         if not tasks:
             tasks = params.pop('tasks', [])
@@ -863,9 +871,9 @@ class Report(TaskGroup):
 
     def _init_view(self):
         self._section_headers = {}
-        self._overall_story = None
-        self._overall_story_title = ""
-        self._section_notes = {}
+        self._story_title = ""
+        self._story_blocks = []
+        self._show_story = False
         self._story_outline = []
         self._header_title = Typography(
             self.param.title, variant="h1", margin=(0, 0, 0, 10)
@@ -878,6 +886,13 @@ class Report(TaskGroup):
                     "overflowX": "auto"
                 }
             }
+        )
+        # The story view is a separate flow so the section accordion (and its
+        # checkboxes) is never disturbed; the toggle swaps which one is visible.
+        # A headerless Card gives it the same white pane as the section cards.
+        self._story_column = Card(
+            sizing_mode="stretch_width", margin=(0, 5, 15, 5), visible=False,
+            collapsible=False, hide_header=True,
         )
         self._run = IconButton(
             icon="play_arrow", on_click=self._execute_event, margin=0, size="large",
@@ -903,7 +918,7 @@ class Report(TaskGroup):
             margin=0, description="Configure Report", visible=False
         )
         self._annotate = IconButton(
-            icon="auto_stories", on_click=self._annotate_report, size="large",
+            icon="auto_stories", on_click=self._open_story_dialog, size="large",
             color="default", margin=0, visible=False,
             description="Annotate the report with an AI-written story",
         )
@@ -911,6 +926,11 @@ class Report(TaskGroup):
             icon="reorder", on_click=self._open_arrange_dialog, size="large",
             color="default", margin=0, visible=False,
             description="Arrange the report (reorder sections and add headings)",
+        )
+        self._view_toggle = IconButton(
+            icon="swap_horiz", on_click=self._toggle_view, size="large",
+            color="default", margin=0, visible=False,
+            description="Switch between the report (with section checkboxes) and the story view",
         )
         self._export = MenuButton(
             label="", icon="get_app", variant="text", color="default",
@@ -960,6 +980,33 @@ class Report(TaskGroup):
             title="Arrange Report",
             width_option="md",
         )
+        self._story_guidance = TextAreaInput(
+            placeholder="Guide the story, e.g. focus on seasonal trends (optional)",
+            sizing_mode="stretch_width", rows=3, margin=(10, 0, 0, 0),
+        )
+        self._story_presets = Row(
+            *[
+                Button(
+                    label=label, variant="outlined", size="small", color="default",
+                    on_click=partial(self._apply_story_preset, text=text),
+                )
+                for label, text in self._STORY_PRESETS
+            ],
+            sizing_mode="stretch_width",
+        )
+        self._story_generate = Button(
+            label="Generate", variant="contained", icon="auto_stories",
+            on_click=self._generate_story,
+        )
+        self._story_dialog = Dialog(
+            Typography("Pick a tone or write your own guidance, then generate the story.", variant="body2"),
+            self._story_presets,
+            self._story_guidance,
+            Row(self._story_generate, align="end", margin=(10, 0, 0, 0), sizing_mode="stretch_width"),
+            show_close_button=True,
+            title="Annotate Report",
+            width_option="sm",
+        )
         self._menu = Row(
             self._header_title,
             self._run,
@@ -968,6 +1015,7 @@ class Report(TaskGroup):
             self._collapse,
             self._annotate,
             self._arrange,
+            self._view_toggle,
             self._export,
             self._settings,
             sizing_mode="stretch_width"
@@ -979,6 +1027,7 @@ class Report(TaskGroup):
                 {"label": "Clear Report", "icon": "clear"},
                 {"label": "Annotate Report", "icon": "auto_stories"},
                 {"label": "Arrange Report", "icon": "reorder"},
+                {"label": "Switch Report/Story View", "icon": "swap_horiz"},
                 {"label": "Export as Notebook", "icon": "description", "format": "ipynb"},
                 {"label": "Export as HTML", "icon": "language", "format": "html"},
                 {"label": "Configure Report", "icon": "settings"}
@@ -1004,8 +1053,10 @@ class Report(TaskGroup):
         )
         self._container = Column(
             self._view,
+            self._story_column,
             self._dialog,
             self._outline_dialog,
+            self._story_dialog,
             margin=(0, 0, 0, 5),
             sizing_mode="stretch_both",
             height_policy='fit',
@@ -1025,9 +1076,11 @@ class Report(TaskGroup):
         elif icon == "clear":
             self.reset()
         elif icon == "auto_stories":
-            await self._annotate_report()
+            self._open_story_dialog()
         elif icon == "reorder":
             self._open_arrange_dialog()
+        elif icon == "swap_horiz":
+            self._toggle_view()
         elif icon in ("description", "language"):
             fmt = item.get("format", "ipynb")
             self._export.value = {"format": fmt}
@@ -1049,6 +1102,7 @@ class Report(TaskGroup):
         self._annotate.visible = has_outputs
         self._annotate.disabled = self.llm is None
         self._arrange.visible = has_outputs
+        self._view_toggle.visible = bool(self._story_blocks)
         self._export.visible = has_outputs
         self._settings.visible = has_outputs
         # Only animate play button when no outputs
@@ -1067,6 +1121,8 @@ class Report(TaskGroup):
         if self._active_task is not None and not self._active_task.done():
             # Already running; the stop button handles cancellation
             return
+        # A fresh run invalidates any previously generated story.
+        self._discard_story()
         await asyncio.sleep(0.01)  # yield the event loop to allow button loading state to update
         task = asyncio.create_task(self.execute())
         self._active_task = task
@@ -1089,9 +1145,12 @@ class Report(TaskGroup):
         if not len(self):
             return self.views
         views = list(self._header)
-        if self._overall_story is not None:
-            views.append(Typography(self._overall_story_title, variant="h2"))
-            views.append(self._overall_story)
+        # When the story view is shown, export the blog-post flow: the story
+        # title, then prose interleaved with the charts and tables it discusses.
+        if self._show_story and self._story_blocks:
+            views.append(Typography(self._story_title, variant="h2"))
+            views += [obj for _, obj in self._story_blocks]
+            return views
         if self._story_outline:
             for kind, value, level in self._iter_arrangement():
                 if kind == "heading":
@@ -1107,9 +1166,6 @@ class Report(TaskGroup):
         if not section.include_in_export:
             return
         views += list(section.views)
-        note = self._section_notes.get(section)
-        if note is not None:
-            views.append(note)
 
     def _section_by_title(self, title):
         for section in self:
@@ -1125,11 +1181,11 @@ class Report(TaskGroup):
         # Task-less reports (e.g. Report.from_views) populate ``_view`` directly.
         if not len(self):
             return self._view
-        # Prepend the overall story card (if any) so it survives HTML export the
-        # same way it does the notebook, then the kept section cards.
+        # When the story view is shown, save the same blog-post flow shown live:
+        # prose interleaved with the charts and tables, matching the notebook.
+        if self._show_story and self._story_blocks:
+            return Column(*self._story_flow(), sizing_mode="stretch_width", margin=(0, 5, 15, 5))
         cards = []
-        if self._overall_story is not None:
-            cards.append((self._overall_story_title, self._overall_story))
         if self._story_outline:
             # Follow the arranged outline so HTML matches the notebook order.
             for kind, value, _ in self._iter_arrangement():
@@ -1243,62 +1299,117 @@ class Report(TaskGroup):
         self._populate_view()
         self._outline_dialog.open = False
 
-    async def _annotate_report(self, event=None):
-        """Write an AI story over the selected sections and insert it into the report."""
+    def _open_story_dialog(self, event=None):
+        self._story_dialog.open = True
+
+    def _apply_story_preset(self, event=None, text=""):
+        self._story_guidance.value = text
+
+    async def _generate_story(self, event=None):
+        guidance = (self._story_guidance.value or "").strip()
+        self._story_dialog.open = False
+        await self._annotate_report(guidance=guidance)
+
+    def _collect_story_views(self):
+        """Charts and tables from the selected sections, in reading order."""
+        return [
+            view
+            for section in self if section.include_in_export
+            for view in section.views if isinstance(view, LumenEditor)
+        ]
+
+    async def _annotate_report(self, event=None, guidance=""):
+        """Write an AI blog-post story over the selected charts/tables and render it."""
         if self.llm is None or not len(self):
             return
-        from .agents.story import (
-            StoryAgent, build_report_context, build_section_context,
-        )
-        sections = [section for section in self if section.include_in_export]
-        if not sections:
+        from .agents.story import StoryAgent, build_catalog
+        catalog = self._collect_story_views()
+        if not catalog:
             return
         self._annotate.loading = True
+        self._story_generate.loading = True
         try:
-            self._clear_annotations()
             agent = StoryAgent(llm=self.llm)
-            try:
-                story = await agent.write_story(await build_report_context(sections), title=self.title or "")
-                self._insert_story(story)
-            except Exception:
-                # A failed overall story should not prevent the per-section notes.
-                tb.print_exc()
-            for section in sections:
-                try:
-                    note = await agent.write_note(await build_section_context(section), title=section.title or "")
-                    self._insert_note(section, note)
-                except Exception:
-                    tb.print_exc()
-                    continue
+            story = await agent.write_story(
+                await build_catalog(catalog), guidance=guidance, title=self.title or "",
+            )
+            self._set_story(story, catalog)
+        except Exception:
+            tb.print_exc()
         finally:
             self._annotate.loading = False
+            self._story_generate.loading = False
 
-    def _insert_story(self, story):
-        # Title lives in the card header (and a heading cell on export); the body
-        # is the story markdown, so it is not duplicated.
-        self._overall_story_title = story.title
-        self._overall_story = Markdown(story.markdown, sizing_mode="stretch_width")
-        self._view.insert(0, (story.title, self._overall_story))
-        self._view.active = list(range(len(self._view)))
+    def _set_story(self, story, catalog):
+        """Resolve the LLM story into interleaved prose/view blocks and render it."""
+        self._story_title = story.title or "Story"
+        blocks, used = [], set()
+        for block in story.blocks:
+            if block.prose and block.prose.strip():
+                blocks.append(("prose", Markdown(block.prose, sizing_mode="stretch_width", margin=(5, 10))))
+            index = block.view
+            if index is not None and 1 <= index <= len(catalog) and index not in used:
+                used.add(index)
+                blocks.append(("view", catalog[index - 1]))
+        # Never drop a selected chart/table: append any the model did not place.
+        for index, view in enumerate(catalog, start=1):
+            if index not in used:
+                blocks.append(("view", view))
+        self._story_blocks = blocks
+        self._view_toggle.visible = True
+        self._render_story()
 
-    def _insert_note(self, section, note):
-        md = Markdown(note.markdown, sizing_mode="stretch_width", margin=(5, 10))
-        self._section_notes[section] = md
-        section._view.append(md)
+    def _rebuild_view(self, editor):
+        """An independent copy of a chart/table so the story preview never detaches
+        it from its section; data is embedded so the copy stands alone."""
+        component = editor.component
+        with config.param.update(serializer='csv'):
+            spec = component.to_spec()
+        return Pipeline.from_spec(spec) if isinstance(component, Pipeline) else View.from_spec(spec)
 
-    def _clear_annotations(self):
-        """Remove any previously inserted story/notes so re-running replaces them."""
-        if self._overall_story is not None:
-            for i, obj in enumerate(list(self._view.objects)):
-                if obj is self._overall_story:
-                    self._view.pop(i)
-                    break
-            self._overall_story = None
-            self._overall_story_title = ""
-        for section, note in self._section_notes.items():
-            if note in section._view:
-                section._view.remove(note)
-        self._section_notes = {}
+    def _story_flow(self):
+        """The blog-post flow as renderables: the title, then prose interleaved
+        with freshly rebuilt charts and tables. Rebuilding gives each caller its
+        own copies so the live view and the exports never share objects."""
+        items = []
+        if self._story_title:
+            items.append(Typography(self._story_title, variant="h4", margin=(10, 10, 0, 10)))
+        for kind, obj in self._story_blocks:
+            items.append(
+                Markdown(obj.object, sizing_mode="stretch_width", margin=(5, 10))
+                if kind == "prose" else self._rebuild_view(obj)
+            )
+        return items
+
+    def _render_story(self):
+        """Build the blog-post flow into its own column, then show it."""
+        self._story_column[:] = self._story_flow()
+        self._show_story = True
+        self._view.visible = False
+        self._story_column.visible = True
+
+    def _toggle_view(self, event=None):
+        """Flip between the editable section view and the generated story view."""
+        if not self._story_blocks:
+            return
+        self._show_story = not self._show_story
+        self._view.visible = not self._show_story
+        self._story_column.visible = self._show_story
+
+    def _discard_story(self):
+        """Forget any generated story and return to the section view."""
+        self._story_blocks = []
+        self._story_title = ""
+        self._show_story = False
+        self._view_toggle.visible = False
+        self._story_column[:] = []
+        self._story_column.visible = False
+        self._view.visible = True
+
+    def reset(self, start: int = 0):
+        # Clearing the report also drops the generated story.
+        self._discard_story()
+        super().reset(start)
 
     def _section_header(self, section):
         """Card header with a checkbox to keep/discard the section on export."""
