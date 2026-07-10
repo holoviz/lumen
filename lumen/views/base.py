@@ -65,6 +65,17 @@ GRIDDED_KINDS = ("contour", "contourf", "image", "quadmesh")
 # thousand it reliably OOMs the tab, so DeckGLView rejects larger frames.
 DECKGL_MAX_ROWS = 250_000
 
+# hvPlot draws one glyph per row for non-reducing kinds; past this many rows a
+# browser tab can exhaust its memory (a gridded xarray source expands to millions
+# of long-form rows), so hvPlotView/hvPlotUIView refuse to render such a frame.
+MAX_RENDER_ROWS = 250_000
+
+# Kinds whose rendered output size is bounded regardless of row count -- they
+# pivot to a grid or aggregate -- so they are exempt from MAX_RENDER_ROWS.
+REDUCING_KINDS = GRIDDED_KINDS + (
+    "heatmap", "hexbin", "hist", "kde", "box", "violin", "bivariate",
+)
+
 
 class View(MultiTypeComponent, Viewer):
     """
@@ -985,6 +996,29 @@ class hvPlotBaseView(View):
     def _valid_keys_(cls):
         return None
 
+    def _check_render_size(self, df) -> None:
+        """Refuse to render more per-row glyphs than a browser tab can hold.
+
+        Kinds that pivot to a grid or aggregate (``REDUCING_KINDS``) bound their
+        output regardless of row count, as does server-side ``rasterize``/
+        ``datashade``; every other kind draws one glyph per row and can exhaust
+        browser memory on a large frame (e.g. a gridded xarray source expanded
+        to millions of long-form rows).
+        """
+        if not isinstance(df, pd.DataFrame):
+            return
+        n = len(df)
+        if n <= MAX_RENDER_ROWS or self.kind in REDUCING_KINDS:
+            return
+        if self.kwargs.get('rasterize') or self.kwargs.get('datashade'):
+            return
+        raise ValueError(
+            f"Cannot render {n:,} rows as kind={self.kind!r}: each row becomes a "
+            f"glyph in the browser and would exhaust its memory. Reduce the "
+            f"pipeline to at most {MAX_RENDER_ROWS:,} rows (e.g. a SQL LIMIT or "
+            f"aggregation), use a gridded/aggregating kind, or set rasterize=True."
+        )
+
 
 class hvPlotUIView(hvPlotBaseView):
     """
@@ -1013,6 +1047,7 @@ class hvPlotUIView(hvPlotBaseView):
     def get_panel(self):
         from hvplot.ui import hvDataFrameExplorer
         args, kwargs = self._get_args()
+        self._check_render_size(args[0])
         return hvDataFrameExplorer(*args, **kwargs)
 
 
@@ -1097,6 +1132,7 @@ class hvPlotView(hvPlotBaseView):
         return df.set_index(self._gridded_index())[self.z].to_xarray()
 
     def get_plot(self, df):
+        self._check_render_size(df)
         processed = {}
         for k, v in self.kwargs.items():
             if k in self._ignore_kwargs:

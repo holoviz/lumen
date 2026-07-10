@@ -8,7 +8,7 @@ import pytest
 from lumen.pipeline import Pipeline
 from lumen.sources.base import InMemorySource
 from lumen.views import base as views_base
-from lumen.views.base import hvPlotView
+from lumen.views.base import hvPlotUIView, hvPlotView
 
 # ---- Fixtures ----
 
@@ -266,3 +266,51 @@ def test_hvplot_gridded_xarray_dataset_renders(gridded_pipeline, gridded_df):
     )
     plot = view.get_plot(ds)
     assert isinstance(plot, hv.QuadMesh)
+
+
+# ---- Render-size cap (guards against shipping millions of glyphs to the browser) ----
+
+def test_hvplot_render_cap_raises_for_per_row_kind(gridded_pipeline, monkeypatch):
+    """A per-row kind (scatter) over MAX_RENDER_ROWS raises a clear error instead
+    of shipping every row to the browser, which can exhaust its memory. A large
+    gridded xarray source expands to millions of long-form rows, so this is easy
+    to hit."""
+    monkeypatch.setattr(views_base, "MAX_RENDER_ROWS", 5)  # gridded_df has 12 rows
+    view = hvPlotView(pipeline=gridded_pipeline, kind="scatter", x="lon", y="air")
+    with pytest.raises(ValueError, match="12 rows"):
+        view.get_plot(view.get_data())
+
+
+def test_hvplot_render_cap_exempts_gridded_kind(gridded_pipeline, monkeypatch):
+    """Gridded kinds pivot to a compact grid, so their render size is bounded
+    regardless of row count and they skip the cap."""
+    monkeypatch.setattr(views_base, "MAX_RENDER_ROWS", 5)
+    view = hvPlotView(pipeline=gridded_pipeline, kind="image", x="lon", y="lat", z="air")
+    over_cap = pd.DataFrame({"lon": range(20), "lat": range(20), "air": range(20)})
+    view._check_render_size(over_cap)  # gridded kind -> exempt -> must not raise
+
+
+def test_hvplot_render_cap_exempts_rasterize(gridded_pipeline, monkeypatch):
+    """rasterize/datashade aggregate server-side, so large frames are allowed."""
+    monkeypatch.setattr(views_base, "MAX_RENDER_ROWS", 5)
+    view = hvPlotView(
+        pipeline=gridded_pipeline, kind="scatter", x="lon", y="air", rasterize=True
+    )
+    over_cap = pd.DataFrame({"lon": range(20), "air": range(20)})
+    view._check_render_size(over_cap)  # rasterize -> exempt -> must not raise
+
+
+def test_hvplot_render_cap_allows_small_frame(gridded_pipeline, monkeypatch):
+    """Frames at or under the cap render normally."""
+    monkeypatch.setattr(views_base, "MAX_RENDER_ROWS", 100)  # 12 rows is under
+    view = hvPlotView(pipeline=gridded_pipeline, kind="scatter", x="lon", y="air")
+    assert view.get_plot(view.get_data()) is not None
+
+
+def test_hvplot_ui_render_cap_raises(gridded_pipeline, monkeypatch):
+    """The AI explorer view (hvPlotUIView) enforces the same cap, since it is the
+    view the hvPlot agent emits and it does not pivot or aggregate raw rows."""
+    monkeypatch.setattr(views_base, "MAX_RENDER_ROWS", 5)
+    view = hvPlotUIView(pipeline=gridded_pipeline, kind="scatter", x="lon", y="air")
+    with pytest.raises(ValueError, match="12 rows"):
+        view.get_panel()
