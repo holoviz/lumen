@@ -505,13 +505,3 @@ def try_import(module: str):
         return importlib.import_module(module)
     except ImportError:
         return None
-
-
-def try_import_xarray():
-    """Import and return xarray, or None if xarray or xarray-sql is unavailable."""
-    try:
-        import xarray
-        import xarray_sql  # noqa
-        return xarray
-    except ImportError:
-        return None

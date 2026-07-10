@@ -1165,7 +1165,7 @@ class TestResolveData:
 
     def test_resolve_data_xarray_import_error(self):
         """Test graceful error when xarray-sql not installed."""
-        with patch('lumen.sources.xarray_sql.try_import_xarray', return_value=None):
+        with patch('lumen.sources.xarray_sql.try_import', return_value=None):
             with pytest.raises(ImportError, match="xarray"):
                 UI._resolve_data('data.nc')
 
@@ -1244,7 +1244,7 @@ class TestXarrayUploadHandler:
 
     def test_upload_handler_returns_empty_without_xarray(self):
         """Upload handlers should be empty if xarray-sql not installed."""
-        with patch('lumen.ai.ui.try_import_xarray', return_value=None):
+        with patch('lumen.ai.ui.try_import', return_value=None):
             handlers = UI._get_xarray_upload_handlers()
             assert handlers == {}
 
