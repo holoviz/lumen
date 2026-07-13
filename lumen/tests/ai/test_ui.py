@@ -550,8 +550,8 @@ async def test_chat_upload_flow_processes_files_directly(explorer_ui, monkeypatc
     assert "uploaded" in new_sources[0].get_tables()
 
     # The query should be sent to the interface
-    assert ui._nav_split[1] is ui.interface
-    assert ui._nav_split[1][0].object == "Show me the uploaded data"
+    assert ui._nav_content[0] is ui.interface
+    assert ui._nav_content[0][0].object == "Show me the uploaded data"
 
 
 # Tests for view transition states
@@ -561,10 +561,11 @@ async def test_initial_state_shows_splash(explorer_ui):
     # _main holds the always-mounted navigation split; the splash is its content pane
     assert len(explorer_ui._main) == 1
     assert explorer_ui._main[0] is explorer_ui._nav_split
-    assert explorer_ui._nav_split[0] is explorer_ui._navigation
-    assert explorer_ui._nav_split[1] is explorer_ui._splash
-    # Navigation starts collapsed
-    assert explorer_ui._nav_split.collapsed == 0
+    assert explorer_ui._nav_split[0] is explorer_ui._nav_drawer
+    assert explorer_ui._nav_drawer[0] is explorer_ui._navigation
+    assert explorer_ui._nav_content[0] is explorer_ui._splash
+    # Navigation drawer starts closed
+    assert explorer_ui._nav_drawer.open is False
 
     # Should be on home
     assert explorer_ui._explorations.value['view'] is explorer_ui._home
@@ -574,7 +575,7 @@ async def test_initial_state_shows_splash(explorer_ui):
 async def test_exploration_launch_transitions_to_split(explorer_ui):
     """Test 2: When an exploration is launched we switch from splash to split view."""
     # Initially showing splash
-    assert explorer_ui._nav_split[1] is explorer_ui._splash
+    assert explorer_ui._nav_content[0] is explorer_ui._splash
 
     # Create an exploration
     explorer_ui._explorer.param.update(table_slug="test_table")
@@ -584,16 +585,17 @@ async def test_exploration_launch_transitions_to_split(explorer_ui):
     await async_wait_until(lambda: len(explorer_ui._explorations.items) > 1)
 
     # After exploration is created, the content pane should transition to the split
-    await async_wait_until(lambda: explorer_ui._nav_split[1] is explorer_ui._split)
+    await async_wait_until(lambda: explorer_ui._nav_content[0] is explorer_ui._split)
 
     # Content pane now shows the interface/output split
     assert len(explorer_ui._main) == 1
     assert explorer_ui._main[0] is explorer_ui._nav_split
-    assert explorer_ui._nav_split[0] is explorer_ui._navigation
-    assert explorer_ui._nav_split[1] is explorer_ui._split
+    assert explorer_ui._nav_split[0] is explorer_ui._nav_drawer
+    assert explorer_ui._nav_drawer[0] is explorer_ui._navigation
+    assert explorer_ui._nav_content[0] is explorer_ui._split
 
     # Should not be showing splash anymore
-    assert explorer_ui._splash not in explorer_ui._nav_split
+    assert explorer_ui._splash not in explorer_ui._nav_content
 
 
 async def test_new_exploration_without_outputs_keeps_chat_view(explorer_ui):
@@ -610,8 +612,8 @@ async def test_new_exploration_without_outputs_keeps_chat_view(explorer_ui):
     await explorer_ui._execute_plan(plan)
 
     assert len(explorer_ui._explorations.items) > 1
-    assert explorer_ui._nav_split[1] is explorer_ui.interface
-    assert explorer_ui._split not in explorer_ui._nav_split
+    assert explorer_ui._nav_content[0] is explorer_ui.interface
+    assert explorer_ui._split not in explorer_ui._nav_content
 
 
 async def test_exploration_with_pipeline_data_shows_split(explorer_ui):
@@ -629,8 +631,9 @@ async def test_exploration_with_pipeline_data_shows_split(explorer_ui):
     # Should show split view; navigation is the split's left pane
     assert len(explorer_ui._main) == 1
     assert explorer_ui._main[0] is explorer_ui._nav_split
-    assert explorer_ui._nav_split[0] is explorer_ui._navigation
-    assert explorer_ui._nav_split[1] is explorer_ui._split
+    assert explorer_ui._nav_split[0] is explorer_ui._nav_drawer
+    assert explorer_ui._nav_drawer[0] is explorer_ui._navigation
+    assert explorer_ui._nav_content[0] is explorer_ui._split
 
     # Output should contain the exploration
     assert len(explorer_ui._output) > 1
@@ -654,8 +657,9 @@ async def test_delete_exploration_switches_to_home(explorer_ui):
     assert len(explorer_ui._explorations.items) == 1
     assert explorer_ui._explorations.value['view'] is explorer_ui._home
     assert explorer_ui._main[0] is explorer_ui._nav_split
-    assert explorer_ui._nav_split[0] is explorer_ui._navigation
-    assert explorer_ui._nav_split[1] is explorer_ui._splash
+    assert explorer_ui._nav_split[0] is explorer_ui._nav_drawer
+    assert explorer_ui._nav_drawer[0] is explorer_ui._navigation
+    assert explorer_ui._nav_content[0] is explorer_ui._splash
 
 
 async def test_delete_exploration_switches_to_parent(explorer_ui):
@@ -712,7 +716,7 @@ async def test_switch_to_report_mode_with_no_explorations(explorer_ui):
 
     # Should show placeholder message
     assert len(explorer_ui._main) == 1
-    main_content = explorer_ui._nav_split[1]
+    main_content = explorer_ui._nav_content[0]
     assert isinstance(main_content, Column)
     # Should contain the "No Explorations Yet" message
     assert len(main_content) >= 1
@@ -738,11 +742,12 @@ async def test_switch_to_report_mode_with_explorations(explorer_ui):
     # Should show Report component; navigation is the split's left pane
     assert len(explorer_ui._main) == 1
     assert explorer_ui._main[0] is explorer_ui._nav_split
-    assert explorer_ui._nav_split[0] is explorer_ui._navigation
+    assert explorer_ui._nav_split[0] is explorer_ui._nav_drawer
+    assert explorer_ui._nav_drawer[0] is explorer_ui._navigation
 
     # Main content should be a Report instance
-    assert isinstance(explorer_ui._nav_split[1], Container)
-    assert len(explorer_ui._nav_split[1]) == 2
+    assert isinstance(explorer_ui._nav_content[0], Container)
+    assert len(explorer_ui._nav_content[0]) == 2
 
     # Navigation should show "Report"
     assert explorer_ui._current_mode == "Report"
@@ -763,7 +768,7 @@ async def test_switch_back_from_report_to_exploration(explorer_ui):
 
     # Switch to report mode
     explorer_ui._handle_sidebar_event(explorer_ui._sidebar_menu.items[1])
-    assert isinstance(explorer_ui._nav_split[1], Container)
+    assert isinstance(explorer_ui._nav_content[0], Container)
 
     # Switch back to exploration mode
     explorer_ui._handle_sidebar_event(explorer_ui._sidebar_menu.items[0])
@@ -771,7 +776,7 @@ async def test_switch_back_from_report_to_exploration(explorer_ui):
     # Should show split view with the selected exploration
     assert len(explorer_ui._main) == 1
     assert explorer_ui._main[0] is explorer_ui._nav_split
-    assert explorer_ui._nav_split[1] is explorer_ui._split
+    assert explorer_ui._nav_content[0] is explorer_ui._split
 
     # Output should contain the exploration
     assert explorer_ui._output[1] is exploration.view
@@ -781,25 +786,27 @@ async def test_switch_back_from_report_to_exploration(explorer_ui):
 
 
 async def test_navigation_pane_always_mounted(explorer_ui):
-    """Navigation lives in the always-mounted split. It starts collapsed and is
-    auto-expanded once, when the first exploration is created."""
-    # Always mounted as the left pane of the split, collapsed by default
+    """Navigation lives in the always-mounted drawer. It starts closed and is
+    auto-opened once, when the first exploration is created."""
+    # Always mounted as the left item of the row, drawer closed by default
     assert len(explorer_ui._main) == 1
     assert explorer_ui._main[0] is explorer_ui._nav_split
-    assert explorer_ui._nav_split[0] is explorer_ui._navigation
-    assert explorer_ui._nav_split.collapsed == 0
+    assert explorer_ui._nav_split[0] is explorer_ui._nav_drawer
+    assert explorer_ui._nav_drawer[0] is explorer_ui._navigation
+    assert explorer_ui._nav_drawer.open is False
 
     # Create the first exploration
     explorer_ui._explorer.param.update(table_slug="test_table")
     await explorer_ui._add_exploration_from_explorer()
     await async_wait_until(lambda: len(explorer_ui._explorations.items) > 1)
 
-    # Creating the first exploration reveals (expands) the navigation pane
-    await async_wait_until(lambda: explorer_ui._nav_split.collapsed is None)
+    # Creating the first exploration reveals (opens) the navigation drawer
+    await async_wait_until(lambda: explorer_ui._nav_drawer.open is True)
     explorer_ui._update_main_view()
     assert len(explorer_ui._main) == 1
     assert explorer_ui._main[0] is explorer_ui._nav_split
-    assert explorer_ui._nav_split[0] is explorer_ui._navigation
+    assert explorer_ui._nav_split[0] is explorer_ui._nav_drawer
+    assert explorer_ui._nav_drawer[0] is explorer_ui._navigation
 
     # Delete exploration — structure still intact
     exploration_item = explorer_ui._explorations.items[1]

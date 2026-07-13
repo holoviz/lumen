@@ -26,8 +26,8 @@ from panel.viewable import (
 )
 from panel_material_ui import (
     Alert, Breadcrumbs, Button, ChatFeed, ChatInterface, ChatMessage,
-    Column as MuiColumn, Dialog, Divider, FileDownload, IconButton, MenuList,
-    Page, Paper, Popup, Row, Select, Switch, Tabs, Typography,
+    Column as MuiColumn, Dialog, Divider, Drawer, FileDownload, IconButton,
+    MenuList, Page, Paper, Popup, Row, Select, Switch, Tabs, Typography,
 )
 from panel_splitjs import HSplit, MultiSplit, VSplit
 
@@ -1060,6 +1060,14 @@ class UI(Viewer):
             **existing_actions,
         }
         self._configure_logs(interface)
+        # Strip the ChatInterface's outer card border/shadow so it blends into
+        # the page (only the root/direct-child frame, not the message bubbles).
+        interface.sx = {
+            "border": "none",
+            "boxShadow": "none",
+            "backgroundColor": "transparent",
+            "& > .MuiPaper-root": {"border": "none", "boxShadow": "none"},
+        }
         self.interface = interface
 
     def _handle_upload_successful(self, event):
@@ -1887,12 +1895,12 @@ class ExplorerUI(UI):
 
     def _compose_main(self, main_content: Viewable):
         """
-        Show ``main_content`` in the right pane of the always-mounted navigation
-        split. The navigation panel is collapsed/expanded by the user via the
-        split's divider chevron (or by dragging it), so there is no separate
-        sidebar toggle.
+        Show ``main_content`` in the content pane beside the always-mounted
+        navigation drawer. The navigation drawer is opened/closed by the user
+        via the docked drawer's edge toggle tab, so there is no separate sidebar
+        toggle.
         """
-        self._nav_split[1] = main_content
+        self._nav_content[:] = [main_content]
         self._main[:] = [self._nav_split]
 
     def _exploration_has_outputs(self, exploration: Exploration) -> bool:
@@ -2110,28 +2118,41 @@ class ExplorerUI(UI):
             height_policy="max",
             width_policy="max",
             sizing_mode="stretch_both",
-            # Square corners plus a right-hand outline so the panel reads as a
-            # sidebar, matching the divider on the left icon rail.
-            sx={"borderRadius": 0, "borderRight": "1px solid var(--mui-palette-divider)"},
+            # Square corners and no border/shadow — the docked Drawer supplies
+            # the sidebar edge, so a borderRight here would double it into a
+            # thick gray line.
+            elevation=0,
+            sx={"borderRadius": 0, "border": "none", "boxShadow": "none"},
             theme_config={"light": {"palette": {"background": {"paper": "var(--mui-palette-grey-100)"}}}, "dark": {}},
         )
-        # Navigation lives in the left pane of an always-mounted HSplit. The
-        # user resizes it by dragging the divider and shows/hides it with the
-        # divider's collapse chevron (show_buttons) — there is no separate
-        # sidebar toggle. It starts collapsed (collapsed=0) so the first-run
-        # splash stays clean; expanding restores expanded_sizes. The nav pane's
-        # min size is 0 so it can close fully while the content pane keeps a min
-        # width, and dragging narrower than snap_size snaps it shut rather than
-        # leaving it cramped.
-        self._nav_split = HSplit(
+        # Navigation lives in an always-mounted inline docked Drawer. A docked
+        # drawer renders a small toggle tab on its anchored edge, so the user
+        # opens/closes it without a separate sidebar toggle button — the same
+        # "no extra toggle" feel the collapse chevron used to give. inline=True
+        # keeps the drawer in normal flow inside the Row so it pushes/shrinks the
+        # content pane rather than overlaying it. It starts closed (open=False)
+        # so the first-run splash stays clean; it is revealed the first time an
+        # exploration is created (see _cleanup_explorations).
+        self._nav_drawer = Drawer(
             self._navigation,
-            self._splash,
-            collapsed=0,
-            expanded_sizes=(18, 82),
-            sizes=(0, 100),
-            min_size=(0, 200),
-            snap_size=120,
-            show_buttons=True,
+            size=280,
+            variant="docked",
+            anchor="left",
+            dock_position="middle",
+            inline=True,
+            open=False,
+            sizing_mode="stretch_height",
+            # Hug the drawer's own width (tab when closed, ``size`` when open)
+            # instead of flex-growing to eat half the Row.
+            styles={"flex": "0 0 auto"},
+        )
+        # Content lives in a growing wrapper beside the drawer so it fills the
+        # remaining width (the drawer no longer forces the pane sizes the way the
+        # old HSplit did). _compose_main swaps the wrapper's child.
+        self._nav_content = Row(self._splash, sizing_mode="stretch_both")
+        self._nav_split = Row(
+            self._nav_drawer,
+            self._nav_content,
             sizing_mode="stretch_both",
         )
         self._compose_main(self._splash)
@@ -2352,10 +2373,10 @@ class ExplorerUI(UI):
     async def _cleanup_explorations(self, event):
         if len(event.new) <= len(event.old):
             return
-        # Reveal the navigation pane the first time an exploration is created so
-        # the newly populated tree is visible; afterwards leave it to the user.
-        if len(event.old) <= 1 < len(event.new) and self._nav_split.collapsed is not None:
-            self._nav_split.collapsed = None
+        # Reveal the navigation drawer the first time an exploration is created
+        # so the newly populated tree is visible; afterwards leave it to the user.
+        if len(event.old) <= 1 < len(event.new) and not self._nav_drawer.open:
+            self._nav_drawer.open = True
         for i, (old, new) in enumerate(zip(event.old, event.new, strict=False)):
             if old is new:
                 continue
