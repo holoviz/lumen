@@ -10,8 +10,8 @@ install = 'python -m pip install --no-deps --disable-pip-version-check -e .'
 PYTHONIOENCODING = "utf-8"
 
 [environments]
-test-312 = ["py312", "test-core", "test", "ai", "sql", "xarray"]
-test-313 = ["py313", "test-core", "test", "ai", "sql", "xarray"]
+test-312 = ["py312", "test-core", "test", "ai", "sql", "xarray", "docx"]
+test-313 = ["py313", "test-core", "test", "ai", "sql", "xarray", "docx"]
 test-core = ["py313", "test-core"]
 docs = ["py312", "doc", "ai", "sql"]
 build = ["py312", "build"]
@@ -68,6 +68,9 @@ panel-graphic-walker = ">=0.6.4"
 duckdb = "*"
 intake-sql = "*"
 sqlalchemy = "*"
+
+[feature.docx.dependencies]
+python-docx = "*"
 
 [feature.xarray.dependencies]
 xarray = "*"

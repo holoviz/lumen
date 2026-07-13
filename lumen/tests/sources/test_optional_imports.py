@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 import pytest
 
-from lumen.util import try_import_xarray
+from lumen.util import try_import
 
 # Each entry: (module_path, class_name, guard_package, pip_extra)
 OPTIONAL_SOURCES = [
@@ -88,28 +88,13 @@ def test_import_raises_when_dependency_missing(module_path, class_name, guard_pa
         sys.modules.update(saved)
 
 
-def test_try_import_xarray_returns_module_when_installed():
-    """try_import_xarray returns the xarray module when xarray and xarray-sql are installed."""
-    xr = pytest.importorskip("xarray")
-    pytest.importorskip("xarray_sql")
-    assert try_import_xarray() is xr
+def test_try_import_returns_module_when_installed():
+    """try_import returns the imported module when it is available."""
+    import json
+
+    assert try_import("json") is json
 
 
-def test_try_import_xarray_none_when_missing():
-    """try_import_xarray returns None (not raises) when xarray-sql is absent."""
-    real_import = builtins.__import__
-
-    def mock_import(name, *args, **kwargs):
-        if name == "xarray_sql" or name.startswith("xarray_sql."):
-            raise ImportError("No module named 'xarray_sql'")
-        return real_import(name, *args, **kwargs)
-
-    saved = {
-        key: sys.modules.pop(key)
-        for key in [k for k in sys.modules if k == "xarray_sql" or k.startswith("xarray_sql.")]
-    }
-    try:
-        with patch("builtins.__import__", side_effect=mock_import):
-            assert try_import_xarray() is None
-    finally:
-        sys.modules.update(saved)
+def test_try_import_none_when_missing():
+    """try_import returns None (not raises) when the module is absent."""
+    assert try_import("a_module_that_definitely_does_not_exist_xyz") is None

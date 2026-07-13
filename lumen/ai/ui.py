@@ -37,7 +37,7 @@ from ..pipeline import Pipeline
 from ..sources import Source
 from ..sources.duckdb import DuckDBSource
 from ..sources.xarray_sql import XArraySQLSource
-from ..util import log, normalize_table_name, try_import_xarray
+from ..util import log, normalize_table_name, try_import
 from .agents import (
     AnalysisAgent, BaseCodeAgent, ChatAgent, DocumentListAgent,
     DocumentSummarizerAgent, SourceAgent, SQLAgent, TableListAgent,
@@ -537,7 +537,7 @@ class UI(Viewer):
             _temp_files.append(tmp.name)
             return XArraySQLSource(uri=tmp.name, name=alias)
 
-        if try_import_xarray() is None:
+        if try_import("xarray") is None or try_import("xarray_sql") is None:
             return {}
 
         _temp_files: list[str] = []
@@ -858,7 +858,8 @@ class UI(Viewer):
             else:
                 main_content = Report(
                     *(Section(item["view"].plan, *(it["view"].plan for it in item["items"]), title=item["view"].plan.title)
-                      for item in self._explorations.items[1:])
+                      for item in self._explorations.items[1:]),
+                    llm=self.llm,
                 )
             self._current_mode = "Report"
             self._navigation_caption.object = REPORT_CAPTION
@@ -1765,7 +1766,7 @@ class UI(Viewer):
     def _create_view(self, server: bool = False):
         if server:
             panel_extension(
-                *{ext for agent in self._coordinator.agents for ext in agent._extensions} | {"filedropper"},
+                *{ext for agent in self._coordinator.agents for ext in agent._extensions} | {"filedropper", "jsoneditor"},
                 css_files=["https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css"]
             )
             return self._page

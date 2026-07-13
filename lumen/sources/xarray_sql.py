@@ -14,7 +14,7 @@ from typing import Any, ClassVar
 import param
 
 from ..transforms.sql import SQLFilter
-from ..util import try_import_xarray
+from ..util import try_import
 from .base import BaseSQLSource, cached
 
 
@@ -93,7 +93,7 @@ class XArraySQLSource(BaseSQLSource):
         The SQL expression template for table queries.""")
 
     def __init__(self, _dataset=None, _ctx=None, **params):
-        if try_import_xarray() is None:
+        if try_import("xarray") is None or try_import("xarray_sql") is None:
             raise ImportError(
                 "xarray and xarray-sql are required for XArraySQLSource. "
                 "Install them with: pip install lumen[xarray]"
@@ -161,7 +161,7 @@ class XArraySQLSource(BaseSQLSource):
                 kw["engine"] = resolved_engine
             if chunks is not None:
                 kw["chunks"] = chunks
-            xr = try_import_xarray()
+            xr = try_import("xarray")
             ds = xr.open_dataset(uri, **kw)
         else:
             raise ValueError("Either 'uri' or '_dataset' must be provided.")
