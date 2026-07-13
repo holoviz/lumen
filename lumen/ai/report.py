@@ -1277,8 +1277,11 @@ class ActorTask(ExecutableTask):
     def output_schema(self):
         return self.actor.output_schema
 
-    async def _update_spec(self, event: param.parameterized.Event):
-        self.out_context = dict(self.out_context, **(await event.obj.render_context()))
+    async def _update_spec(self, *events: param.parameterized.Event):
+        # Watches both `spec` and `_context_updated`; a batched update can
+        # deliver several events, all from the same editor.
+        editor = events[0].obj
+        self.out_context = dict(self.out_context, **(await editor.render_context()))
 
     def _add_outputs(self, views: list, context: TContext):
         # Handle Tool specific behaviors
@@ -1304,7 +1307,7 @@ class ActorTask(ExecutableTask):
         for view in views:
             if not isinstance(view, LumenEditor):
                 continue
-            view.param.watch(self._update_spec, "spec")
+            view.param.watch(self._update_spec, ["spec", "_context_updated"])
 
         self.views = self._header + views
         rendered = []
