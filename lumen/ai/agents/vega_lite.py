@@ -607,10 +607,6 @@ class VegaLiteAgent(BaseCodeAgent):
         if not pipeline:
             raise ValueError("Context did not contain a pipeline.")
 
-        # Vega-Lite cannot page a dimension, so reduce a gridded source to a
-        # single 2D slice before rendering.
-        pipeline = subset_gridded_to_2d(pipeline)
-
         schema = await get_schema(pipeline)
         if not schema:
             raise ValueError("Failed to retrieve schema for the current pipeline.")
@@ -630,6 +626,11 @@ class VegaLiteAgent(BaseCodeAgent):
         if full_dict is None:
             # User rejected code execution
             return [], {}
+
+        # Vega-Lite cannot page a dimension, so once the spec has picked its
+        # axes, collapse every gridded dim it does not reference to a single
+        # slice (keeps e.g. a lon/time Hovmoller, drops an unused time on a map).
+        pipeline = subset_gridded_to_2d(pipeline, full_dict.get("spec", {}))
 
         # Step 2: Show complete plot immediately
         view = self.view_type(pipeline=pipeline, **full_dict)

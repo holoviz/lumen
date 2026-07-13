@@ -38,8 +38,6 @@ def _base_context(gridded=None):
 _GRIDDED = {
     "source_type": "xarray",
     "dims": ["lat", "lon"],
-    "spatial_dims": ["lon", "lat"],
-    "extra_dims": [],
     "coords": {"lat": [3], "lon": [4]},
     "data_vars": ["air"],
     "regular": True,
@@ -48,8 +46,6 @@ _GRIDDED = {
 _GRIDDED_3D = {
     "source_type": "xarray",
     "dims": ["time", "lat", "lon"],
-    "spatial_dims": ["lon", "lat"],
-    "extra_dims": ["time"],
     "coords": {"time": [2], "lat": [3], "lon": [4]},
     "data_vars": ["air"],
     "regular": True,
@@ -84,28 +80,18 @@ def test_deckgl_pydeck_prompt_includes_gridded_block():
     assert "air" in rendered
 
 
-def test_deckgl_prompt_uses_spatial_axes_not_time():
-    """getPosition must use the spatial axes (lon, lat), never an extra dim like
-    time -- DeckGL can't page a dimension, so time is never a positional axis."""
+def test_deckgl_prompt_gridded_guidance_is_general():
+    """The gridded block lists the raw dims/vars and nudges a 2D map without
+    hard-coding lon/lat as the axes; the spec-driven subset collapses the rest."""
     rendered = render_template(
         PROMPTS_DIR / "DeckGLAgent" / "main.jinja2",
         **_base_context(gridded=_GRIDDED_3D),
     )
-    assert "@@=[lon, lat]" in rendered
-    getposition = rendered.split("getPosition")[1].split("]")[0]
-    assert "time" not in getposition
-    # keep-2D instruction for the extra time dim
-    assert "cannot page a dimension" in rendered
-    assert "filter each extra dimension" in rendered
-
-
-def test_deckgl_prompt_no_subset_instruction_for_2d():
-    """A purely 2D grid (no extra dims) gets no subset instruction."""
-    rendered = render_template(
-        PROMPTS_DIR / "DeckGLAgent" / "main.jinja2",
-        **_base_context(gridded=_GRIDDED),
-    )
-    assert "filter each extra dimension" not in rendered
+    assert "time, lat, lon" in rendered
+    assert "getPosition" in rendered
+    assert "reduced to a single slice" in rendered
+    # no brittle spatial-axis prescription any more
+    assert "spatial axes" not in rendered
 
 
 def _deckgl_view(df):

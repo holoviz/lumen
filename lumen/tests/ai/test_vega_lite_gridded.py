@@ -33,8 +33,6 @@ def test_vegalite_prompt_includes_gridded_block():
     gridded = {
         "source_type": "xarray",
         "dims": ["lat", "lon"],
-        "spatial_dims": ["lon", "lat"],
-        "extra_dims": [],
         "coords": {"lat": [3], "lon": [4]},
         "data_vars": ["air"],
         "regular": True,
@@ -62,8 +60,6 @@ def test_vegalite_altair_prompt_includes_gridded_block():
     gridded = {
         "source_type": "xarray",
         "dims": ["lat", "lon"],
-        "spatial_dims": ["lon", "lat"],
-        "extra_dims": [],
         "coords": {"lat": [3], "lon": [4]},
         "data_vars": ["air"],
         "regular": True,
@@ -78,14 +74,12 @@ def test_vegalite_altair_prompt_includes_gridded_block():
     assert "cannot page a dimension with a slider" not in rendered
 
 
-def test_vegalite_altair_prompt_subsets_extra_dims():
-    """With an extra dim (time), the prompt must instruct a transform_filter to a
-    single value, since Vega-Lite cannot page a dimension with a slider."""
+def test_vegalite_altair_prompt_gridded_is_general():
+    """The altair gridded block names the dims/vars and mentions auto-reduction,
+    without prescribing lon/lat or a per-dim transform_filter."""
     gridded = {
         "source_type": "xarray",
         "dims": ["time", "lat", "lon"],
-        "spatial_dims": ["lon", "lat"],
-        "extra_dims": ["time"],
         "coords": {"time": [2], "lat": [3], "lon": [4]},
         "data_vars": ["air"],
         "regular": True,
@@ -94,6 +88,7 @@ def test_vegalite_altair_prompt_subsets_extra_dims():
         PROMPTS_DIR / "VegaLiteAgent" / "main_altair.jinja2",
         **_base_context(gridded=gridded),
     )
-    assert "cannot page a dimension with a slider" in rendered
-    assert "transform_filter" in rendered
-    assert "time" in rendered
+    assert "mark_rect()" in rendered
+    assert "reduced to a single slice" in rendered
+    # the old per-dim subset instruction is gone (code handles it now)
+    assert "cannot page a dimension with a slider" not in rendered

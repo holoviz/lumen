@@ -29,10 +29,7 @@ Generate PyDeck code. Data is `df`, assign to `deck`. NO I/O methods (.to_html()
 
 ## Gridded xarray data
 `df` is a long-form grid from an xarray dataset (dimensions: {{ gridded.dims | join(', ') }}; variables: {{ gridded.data_vars | join(', ') }}).
-Use `ColumnLayer` with `get_position=["{{ gridded.spatial_dims[0] }}", "{{ gridded.spatial_dims[1] }}"]` and `get_elevation="{{ gridded.data_vars[0] }}"`. This reads well only when the spatial axes are geographic.
-{%- if gridded.extra_dims %}
-DeckGL cannot page a dimension, so filter each extra dimension ({{ gridded.extra_dims | join(', ') }}) to a single value unless the user explicitly asked to facet or color by it.
-{%- endif %}
+Make a geographic map with `ColumnLayer`: `get_position` on the longitude/latitude columns and `get_elevation="{{ gridded.data_vars[0] }}"`. Plot only the two map axes; any dimension you leave unused is reduced to a single slice automatically.
 {%- endif %}
 
 ## Map Styles (no API key needed)

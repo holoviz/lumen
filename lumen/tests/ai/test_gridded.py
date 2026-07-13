@@ -9,7 +9,8 @@ pytest.importorskip("xarray_sql")
 
 from lumen.ai.config import PROMPTS_DIR
 from lumen.ai.utils import (
-    gridded_metadata, render_template, subset_gridded_to_2d,
+    _spec_field_references, gridded_metadata, render_template,
+    subset_gridded_to_2d,
 )
 from lumen.pipeline import Pipeline
 from lumen.sources.base import InMemorySource
@@ -148,8 +149,6 @@ def test_baseview_prompt_includes_gridded_block():
     gridded = {
         "source_type": "xarray",
         "dims": ["lat", "lon"],
-        "spatial_dims": ["lon", "lat"],
-        "extra_dims": [],
         "coords": {"lat": [3], "lon": [4]},
         "data_vars": ["air"],
     }
@@ -180,8 +179,6 @@ def test_hvplot_prompt_recommends_image_for_regular_grid():
     gridded = {
         "source_type": "xarray",
         "dims": ["lat", "lon"],
-        "spatial_dims": ["lon", "lat"],
-        "extra_dims": [],
         "coords": {"lat": [3], "lon": [4]},
         "data_vars": ["air"],
         "regular": True,
@@ -199,8 +196,6 @@ def test_hvplot_prompt_recommends_quadmesh_for_irregular_grid():
     gridded = {
         "source_type": "xarray",
         "dims": ["lat", "lon"],
-        "spatial_dims": ["lon", "lat"],
-        "extra_dims": [],
         "coords": {"lat": [3], "lon": [4]},
         "data_vars": ["air"],
         "regular": False,
@@ -214,14 +209,12 @@ def test_hvplot_prompt_recommends_quadmesh_for_irregular_grid():
     assert "Do NOT use 'image'" in rendered
 
 
-def test_hvplot_prompt_pages_extra_dims_with_groupby():
-    """With an extra dim (time), the hvPlot prompt tells the LLM to page it with
-    groupby and to use the spatial axes for x/y (never time as an axis)."""
+def test_hvplot_prompt_pages_remaining_dims_with_groupby():
+    """The hvPlot prompt lists the raw dims (no lon/lat prescription) and tells
+    the LLM to page any remaining dimension with groupby."""
     gridded = {
         "source_type": "xarray",
         "dims": ["time", "lat", "lon"],
-        "spatial_dims": ["lon", "lat"],
-        "extra_dims": ["time"],
         "coords": {"time": [2], "lat": [3], "lon": [4]},
         "data_vars": ["air"],
         "regular": True,
@@ -230,34 +223,58 @@ def test_hvplot_prompt_pages_extra_dims_with_groupby():
         PROMPTS_DIR / "hvPlotAgent" / "main.jinja2",
         **_base_context(gridded=gridded),
     )
-    assert "spatial axes: lon, lat" in rendered
+    assert "time, lat, lon" in rendered
     assert "groupby='time'" in rendered
+    # no hard-coded spatial-axis prescription any more
+    assert "spatial axes" not in rendered
 
 
-def test_gridded_metadata_splits_spatial_and_extra_dims(simple_dataset_3d_pipeline):
-    """gridded_metadata separates lon/lat (spatial x/y) from extra dims like time."""
+def test_gridded_metadata_stays_agnostic_about_spatial_dims(simple_dataset_3d_pipeline):
+    """gridded_metadata reports the raw dims and does not label which are
+    spatial, so the view spec decides the axes (a lon/time Hovmoller is valid)."""
     md = gridded_metadata(simple_dataset_3d_pipeline)
-    assert md["spatial_dims"] == ["lon", "lat"]
-    assert md["extra_dims"] == ["time"]
+    assert md["dims"] == ["time", "lat", "lon"]
+    assert "spatial_dims" not in md
+    assert "extra_dims" not in md
 
 
-def test_subset_gridded_to_2d_pins_extra_dims(simple_dataset_3d_pipeline):
-    """A gridded pipeline with a time dim is reduced to a single 2D slice, so
-    VegaLite/DeckGL never receive the full grid (deterministic, model-agnostic)."""
+def test_spec_field_references_vegalite_and_deckgl():
+    """Field references are pulled from Vega-Lite encoding fields and deck.gl
+    ``@@=`` accessors alike."""
+    vega = {"encoding": {"x": {"field": "lon"}, "y": {"field": "time"},
+                         "color": {"field": "air"}}}
+    assert _spec_field_references(vega) == {"lon", "time", "air"}
+    deck = {"layers": [{"getPosition": "@@=[lon, lat]", "getElevation": "@@=air"}]}
+    assert {"lon", "lat", "air"} <= _spec_field_references(deck)
+
+
+def test_subset_collapses_dims_absent_from_spec(simple_dataset_3d_pipeline):
+    """Dims the spec does not reference (here time on a lon/lat map) collapse to
+    a single slice; the spec drives the subset, not a name guess."""
+    spec = {"encoding": {"x": {"field": "lon"}, "y": {"field": "lat"}}}
     n_full = len(simple_dataset_3d_pipeline.data)
-    sub = subset_gridded_to_2d(simple_dataset_3d_pipeline)
+    sub = subset_gridded_to_2d(simple_dataset_3d_pipeline, spec)
     assert len(sub.data) < n_full
     assert sub.data["time"].nunique() == 1
 
 
-def test_subset_gridded_to_2d_noop_for_2d(xarray_pipeline):
-    """A 2D gridded pipeline (no extra dims) is returned unchanged."""
-    assert subset_gridded_to_2d(xarray_pipeline) is xarray_pipeline
+def test_subset_keeps_dims_the_spec_uses(simple_dataset_3d_pipeline):
+    """A lon/time spec (Hovmoller) keeps time as an axis; lat collapses instead."""
+    spec = {"encoding": {"x": {"field": "lon"}, "y": {"field": "time"}}}
+    sub = subset_gridded_to_2d(simple_dataset_3d_pipeline, spec)
+    assert sub.data["time"].nunique() > 1
+    assert sub.data["lat"].nunique() == 1
 
 
-def test_subset_gridded_to_2d_noop_for_tabular(tabular_pipeline):
+def test_subset_noop_when_spec_uses_all_dims(xarray_pipeline):
+    """When the spec references every dim, the pipeline is returned unchanged."""
+    spec = {"encoding": {"x": {"field": "lon"}, "y": {"field": "lat"}}}
+    assert subset_gridded_to_2d(xarray_pipeline, spec) is xarray_pipeline
+
+
+def test_subset_noop_for_tabular(tabular_pipeline):
     """A non-xarray pipeline is returned unchanged."""
-    assert subset_gridded_to_2d(tabular_pipeline) is tabular_pipeline
+    assert subset_gridded_to_2d(tabular_pipeline, {}) is tabular_pipeline
 
 
 def test_hvplot_prompt_no_gridded_rules_for_tabular():

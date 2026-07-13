@@ -285,10 +285,6 @@ class DeckGLAgent(BaseCodeAgent):
         if not pipeline:
             raise ValueError("Context did not contain a pipeline.")
 
-        # DeckGL cannot page a dimension, so reduce a gridded source to a
-        # single 2D slice before rendering (else it hits the row cap).
-        pipeline = subset_gridded_to_2d(pipeline)
-
         schema = await get_schema(pipeline)
         if not schema:
             raise ValueError("Failed to retrieve schema for the current pipeline.")
@@ -300,6 +296,11 @@ class DeckGLAgent(BaseCodeAgent):
         if full_dict is None:
             # User rejected code execution
             return [], {}
+
+        # DeckGL renders a static layer and cannot page a dimension, so once
+        # the spec has picked its axes, collapse every gridded dim it does not
+        # reference to a single slice (else a gridded source blows the row cap).
+        pipeline = subset_gridded_to_2d(pipeline, full_dict.get("spec", {}))
 
         # Create view and output
         view = self.view_type(pipeline=pipeline, **full_dict)
