@@ -558,7 +558,7 @@ async def test_chat_upload_flow_processes_files_directly(explorer_ui, monkeypatc
 
 async def test_initial_state_shows_splash(explorer_ui):
     """Test 1: On start the user sees just the self._splash in main."""
-    # _main holds the always-mounted navigation split; the splash is its content pane
+    # _main holds the always-mounted navigation drawer; the splash is its content pane
     assert len(explorer_ui._main) == 1
     assert explorer_ui._main[0] is explorer_ui._nav_split
     assert explorer_ui._nav_split[0] is explorer_ui._nav_drawer

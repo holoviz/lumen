@@ -2113,22 +2113,19 @@ class ExplorerUI(UI):
             self._navigation_title,
             self._navigation_caption,
             self._explorations,
-            # Fill the split pane vertically (mirrors the _output Paper) so the
-            # panel spans the full height of its split pane.
+            # Fill the drawer vertically so the panel spans its full height.
             height_policy="max",
             width_policy="max",
             sizing_mode="stretch_both",
-            # Square corners and no border/shadow — the docked Drawer supplies
-            # the sidebar edge, so a borderRight here would double it into a
-            # thick gray line.
+            # Square corners and no border/shadow: the docked Drawer already
+            # supplies the sidebar edge, so any border here would double it.
             elevation=0,
             sx={"borderRadius": 0, "border": "none", "boxShadow": "none"},
             theme_config={"light": {"palette": {"background": {"paper": "var(--mui-palette-grey-100)"}}}, "dark": {}},
         )
-        # Navigation lives in an always-mounted inline docked Drawer. A docked
-        # drawer renders a small toggle tab on its anchored edge, so the user
-        # opens/closes it without a separate sidebar toggle button — the same
-        # "no extra toggle" feel the collapse chevron used to give. inline=True
+        # Navigation lives in an always-mounted inline docked Drawer. The docked
+        # variant renders a small toggle tab on the anchored edge, so the user
+        # opens/closes it without a separate sidebar toggle button. inline=True
         # keeps the drawer in normal flow inside the Row so it pushes/shrinks the
         # content pane rather than overlaying it. It starts closed (open=False)
         # so the first-run splash stays clean; it is revealed the first time an
@@ -2147,8 +2144,7 @@ class ExplorerUI(UI):
             styles={"flex": "0 0 auto"},
         )
         # Content lives in a growing wrapper beside the drawer so it fills the
-        # remaining width (the drawer no longer forces the pane sizes the way the
-        # old HSplit did). _compose_main swaps the wrapper's child.
+        # width the drawer leaves free. _compose_main swaps the wrapper's child.
         self._nav_content = Row(self._splash, sizing_mode="stretch_both")
         self._nav_split = Row(
             self._nav_drawer,
