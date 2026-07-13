@@ -300,7 +300,7 @@ class DeckGLAgent(BaseCodeAgent):
         # DeckGL renders a static layer and cannot page a dimension, so once
         # the spec has picked its axes, collapse every gridded dim it does not
         # reference to a single slice (else a gridded source blows the row cap).
-        pipeline = subset_gridded_to_2d(pipeline, full_dict.get("spec", {}))
+        pipeline = subset_gridded_to_2d(pipeline, full_dict.get("spec", {}), "deckgl")
 
         # Create view and output
         view = self.view_type(pipeline=pipeline, **full_dict)

@@ -240,12 +240,12 @@ def test_gridded_metadata_stays_agnostic_about_spatial_dims(simple_dataset_3d_pi
 
 def test_spec_field_references_vegalite_and_deckgl():
     """Field references are pulled from Vega-Lite encoding fields and deck.gl
-    ``@@=`` accessors alike."""
+    ``@@=`` accessors, each under its own explicit ``kind``."""
     vega = {"encoding": {"x": {"field": "lon"}, "y": {"field": "time"},
                          "color": {"field": "air"}}}
-    assert _spec_field_references(vega) == {"lon", "time", "air"}
+    assert _spec_field_references(vega, "vega-lite") == {"lon", "time", "air"}
     deck = {"layers": [{"getPosition": "@@=[lon, lat]", "getElevation": "@@=air"}]}
-    assert {"lon", "lat", "air"} <= _spec_field_references(deck)
+    assert {"lon", "lat", "air"} <= _spec_field_references(deck, "deckgl")
 
 
 def test_subset_collapses_dims_absent_from_spec(simple_dataset_3d_pipeline):
@@ -253,7 +253,7 @@ def test_subset_collapses_dims_absent_from_spec(simple_dataset_3d_pipeline):
     a single slice; the spec drives the subset, not a name guess."""
     spec = {"encoding": {"x": {"field": "lon"}, "y": {"field": "lat"}}}
     n_full = len(simple_dataset_3d_pipeline.data)
-    sub = subset_gridded_to_2d(simple_dataset_3d_pipeline, spec)
+    sub = subset_gridded_to_2d(simple_dataset_3d_pipeline, spec, "vega-lite")
     assert len(sub.data) < n_full
     assert sub.data["time"].nunique() == 1
 
@@ -261,7 +261,7 @@ def test_subset_collapses_dims_absent_from_spec(simple_dataset_3d_pipeline):
 def test_subset_keeps_dims_the_spec_uses(simple_dataset_3d_pipeline):
     """A lon/time spec (Hovmoller) keeps time as an axis; lat collapses instead."""
     spec = {"encoding": {"x": {"field": "lon"}, "y": {"field": "time"}}}
-    sub = subset_gridded_to_2d(simple_dataset_3d_pipeline, spec)
+    sub = subset_gridded_to_2d(simple_dataset_3d_pipeline, spec, "vega-lite")
     assert sub.data["time"].nunique() > 1
     assert sub.data["lat"].nunique() == 1
 
@@ -269,12 +269,12 @@ def test_subset_keeps_dims_the_spec_uses(simple_dataset_3d_pipeline):
 def test_subset_noop_when_spec_uses_all_dims(xarray_pipeline):
     """When the spec references every dim, the pipeline is returned unchanged."""
     spec = {"encoding": {"x": {"field": "lon"}, "y": {"field": "lat"}}}
-    assert subset_gridded_to_2d(xarray_pipeline, spec) is xarray_pipeline
+    assert subset_gridded_to_2d(xarray_pipeline, spec, "vega-lite") is xarray_pipeline
 
 
 def test_subset_noop_for_tabular(tabular_pipeline):
     """A non-xarray pipeline is returned unchanged."""
-    assert subset_gridded_to_2d(tabular_pipeline, {}) is tabular_pipeline
+    assert subset_gridded_to_2d(tabular_pipeline, {}, "deckgl") is tabular_pipeline
 
 
 def test_hvplot_prompt_no_gridded_rules_for_tabular():

@@ -1532,20 +1532,23 @@ def gridded_metadata(pipeline: Pipeline) -> dict[str, Any] | None:
     }
 
 
-def _spec_field_references(spec: Any) -> set[str]:
-    """Column names a generated view spec references: Vega-Lite encoding
-    ``field`` values and deck.gl ``@@=`` accessor identifiers. Lets the
-    gridded subset keep the dims a spec actually plots (an axis, color, ...)
-    and collapse the rest, without hard-coding which dims are spatial.
+def _spec_field_references(
+    spec: Any, kind: Literal['vega-lite', 'deckgl']
+) -> set[str]:
+    """Column names a generated view ``spec`` references, so the gridded subset
+    can keep the dims a spec actually plots (an axis, color, ...) and collapse
+    the rest. The two grammars reference columns differently, so the caller
+    states which it is: a Vega-Lite spec names columns in encoding ``field``
+    values, a deck.gl spec in ``@@=`` accessor expressions.
     """
     refs: set[str] = set()
 
     def walk(node):
         if isinstance(node, dict):
             for key, val in node.items():
-                if key == 'field' and isinstance(val, str):
+                if kind == 'vega-lite' and key == 'field' and isinstance(val, str):
                     refs.add(val)
-                elif isinstance(val, str) and val.startswith('@@='):
+                elif kind == 'deckgl' and isinstance(val, str) and val.startswith('@@='):
                     refs.update(re.findall(r'[A-Za-z_]\w*', val))
                 else:
                     walk(val)
@@ -1557,10 +1560,13 @@ def _spec_field_references(spec: Any) -> set[str]:
     return refs
 
 
-def subset_gridded_to_2d(pipeline: Pipeline, spec: Any) -> Pipeline:
+def subset_gridded_to_2d(
+    pipeline: Pipeline, spec: Any, kind: Literal['vega-lite', 'deckgl']
+) -> Pipeline:
     """Pin every gridded dimension the view ``spec`` does not reference to its
     first value, so a view that cannot page a dimension (VegaLite, DeckGL)
-    renders a single 2D slice instead of the full grid.
+    renders a single 2D slice instead of the full grid. ``kind`` selects the
+    spec grammar (see :func:`_spec_field_references`).
 
     Runs after the spec is generated, so the dims the model chose for x/y/color
     are kept -- a lon/time Hovmoller works -- and only the leftover dims (e.g.
@@ -1571,7 +1577,7 @@ def subset_gridded_to_2d(pipeline: Pipeline, spec: Any) -> Pipeline:
     if not md:
         return pipeline
     ds = pipeline.source.dataset
-    referenced = _spec_field_references(spec)
+    referenced = _spec_field_references(spec, kind)
     collapse = [dim for dim in ds.dims if dim not in referenced]
     if not collapse:
         return pipeline
