@@ -26,6 +26,7 @@ except ImportError as e:
 from ..ai import agents as lumen_agents, llm as lumen_llms  # Aliased here
 from ..ai.llm import LLM_PROVIDERS, get_available_llm
 from ..ai.utils import parse_huggingface_url, render_template
+from ..command.ascii_logo import lumen_ascii_logo
 
 CMD_DIR = THIS_DIR / ".." / "command"
 
@@ -343,6 +344,8 @@ def main(args=None):
 
     if len(sys.argv) == 1:
         sys.argv.extend(["serve", "no_data"])
+
+    print("\n" + lumen_ascii_logo(use_color=sys.stderr.isatty()) + "\n", file=sys.stderr)  # noqa: T201
 
     sys.argv = transform_cmds(sys.argv)
     args = parser.parse_args(sys.argv[1:])
