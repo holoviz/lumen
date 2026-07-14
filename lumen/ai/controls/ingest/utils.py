@@ -202,6 +202,40 @@ def read_json_to_dataframe(content: str | bytes) -> pd.DataFrame:
     raise ValueError(f"Unsupported JSON root type: {type(data).__name__}")
 
 
+def open_arraylake_dataset(
+    repo: str,
+    branch: str = "main",
+    group: str | None = None,
+    snapshot_cache_nodes: int = 10_000,
+):
+    """Open an Arraylake repository as an xarray Dataset.
+
+    Requires the optional ``arraylake`` and ``icechunk`` dependencies
+    (``pip install lumen[arraylake]``, Python >=3.12). A larger Icechunk
+    snapshot cache avoids repeatedly re-reading metadata while opening large
+    stores (on GOES this cut the open from ~200s to ~16s).
+
+    Raises
+    ------
+    ImportError
+        If ``arraylake``/``xarray`` are not installed.
+    """
+    import arraylake as al
+    import xarray as xr
+
+    repo_config = None
+    try:
+        import icechunk
+        repo_config = icechunk.RepositoryConfig(
+            caching=icechunk.CachingConfig(num_snapshot_nodes=snapshot_cache_nodes)
+        )
+    except Exception:
+        pass
+
+    store = al.Client().get_repo(repo, config=repo_config).readonly_session(branch).store
+    return xr.open_zarr(store, group=group)
+
+
 @dataclass
 class FileReadResult:
     """Result of parsing a file into DataFrames."""

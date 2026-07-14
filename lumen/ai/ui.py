@@ -49,8 +49,8 @@ from .config import (
 )
 from .context import TContext
 from .controls import (
-    BaseSourceControls, DownloadSourceControls, FileSourceControls,
-    SourceCatalog, TableExplorer, UploadSourceControls,
+    ArraylakeSourceControls, BaseSourceControls, DownloadSourceControls,
+    FileSourceControls, SourceCatalog, TableExplorer, UploadSourceControls,
 )
 from .controls.ingest.constants import XARRAY_EXTENSIONS
 from .controls.ingest.utils import read_geo_file
@@ -452,7 +452,7 @@ class UI(Viewer):
     page_config = param.Dict(default={}, doc="""
         Configuration for the panel-material-ui Page component the UI is rendered into.""")
 
-    source_controls = param.List(default=[UploadSourceControls, DownloadSourceControls], doc="""
+    source_controls = param.List(default=[UploadSourceControls, DownloadSourceControls, ArraylakeSourceControls], doc="""
         List of SourceControls types to manage datasets.""")
 
     filedropper_kwargs = param.Dict(default={}, doc="""Keyword arguments to pass to FileDropper in UploadControls.
@@ -1364,6 +1364,10 @@ class UI(Viewer):
         self._source_controls = []
         control_tabs = []
         for control in self.source_controls:
+            if control is None:
+                # Optional controls (e.g. Arraylake) are None when their
+                # dependencies are unavailable; skip them.
+                continue
             if isinstance(control, BaseSourceControls):
                 # Already instantiated — adopt it, just wire up context/catalog
                 control_inst = control
