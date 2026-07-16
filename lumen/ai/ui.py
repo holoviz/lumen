@@ -2565,7 +2565,7 @@ class ExplorerUI(UI):
                 if event.new:
                     view[1] = VSplit(
                         filter_paper, vsplit,
-                        expanded_sizes=(25, 75), sizes=(25, 75),
+                        expanded_sizes=(15, 85), sizes=(15, 85),
                         sizing_mode="stretch_both", styles={"overflow": "auto"},
                     )
                 else:
@@ -2644,16 +2644,31 @@ class ExplorerUI(UI):
         for popped_idx in sorted(popped_out_to_remove, reverse=True):
             exploration.view.pop(popped_idx)
 
+        active_idx = None
         for view in current:
             if view in old:
-                tab_idx = self._find_view_in_tabs(exploration, view)
-                if tab_idx is not None:
-                    idx = tab_idx
                 continue
             title, vsplit = self._render_view(exploration, view)
-            content.insert((idx or 0)+1, (title, vsplit))
+            if idx is not None:
+                # Replacing a removed view (e.g. a rerun): drop the new tab
+                # into the slot the old one vacated.
+                insert_at = idx
+                idx += 1
+            else:
+                # A genuinely new view: append it after all existing tabs so
+                # tabs stay in chronological order. Anchoring off a prior view
+                # would mis-place it, e.g. ahead of a failed-analysis tab that
+                # _find_view_in_tabs can't locate.
+                insert_at = len(content)
+            content.insert(insert_at, (title, vsplit))
+            active_idx = insert_at
         tabs[:] = content
-        tabs.active = max(len(tabs)-1, 0)
+        # Activate the newly inserted view rather than blindly the last tab,
+        # which may be a trailing error tab left over from a failed plan.
+        if active_idx is not None:
+            tabs.active = min(active_idx, len(tabs)-1)
+        else:
+            tabs.active = max(len(tabs)-1, 0)
         if self._exploration['view'] is exploration:
             self._update_main_view()
         if self._split.collapsed:
