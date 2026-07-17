@@ -23,8 +23,8 @@ from panel.pane import Markdown
 from panel.viewable import Viewable, Viewer
 from panel_material_ui import (
     Accordion, BreakpointSwitcher, Button, Card, ChatFeed, ChatMessage,
-    Container, Dialog, Divider, FileDownload, IconButton, MenuButton, Progress,
-    Select, SpeedDial, TextAreaInput, TextInput, Typography,
+    Checkbox, Container, Dialog, Divider, FileDownload, IconButton, MenuButton,
+    Progress, Select, SpeedDial, TextAreaInput, TextInput, Typography,
 )
 
 from ..views.base import Panel, View
@@ -49,6 +49,38 @@ from .utils import (
 )
 
 
+def _export_checkbox(task, status_source, align="center"):
+    """
+    Checkbox controlling whether a task's outputs are kept when the report is
+    exported. ``status_source`` supplies the status it tracks, so it only
+    appears once that has something to export.
+    """
+    return Checkbox.from_param(
+        task.param.include_in_export,
+        label="",
+        align=align,
+        margin=(0, 4, 0, 0),
+        # No description: it would render an info icon; the report explains the
+        # checkboxes at the top instead.
+        description="",
+        visible=param.bind(
+            lambda status, views: (
+                status in ("success", "error", "cancelled") or bool(views)
+            ),
+            status_source.param.status, status_source.param.views,
+        ),
+    )
+
+
+def _export_header(section, status_source, variant="h3"):
+    """Heading for a section, with the checkbox that keeps or discards it."""
+    title = Typography(section.param.title, variant=variant, margin=0)
+    return Row(
+        _export_checkbox(section, status_source), title,
+        align="center", sizing_mode="stretch_width",
+    )
+
+
 class Task(Viewer):
     """
     A `Task` defines a single unit of work that can be executed and rendered.
@@ -62,6 +94,9 @@ class Task(Viewer):
 
     history = param.List(doc="""
         Conversation history to include as context for the task.""")
+
+    include_in_export = param.Boolean(default=True, doc="""
+        Whether this task's outputs are included when the report is exported.""")
 
     instruction = param.String(default="", doc="""
         The instruction to give to the task.""")
@@ -625,61 +660,6 @@ class TaskGroup(Task):
                     task.reset()
             self._populate_view()
 
-    def to_notebook(self):
-        """
-        Returns the notebook representation of the tasks.
-        """
-        if len(self) and not self.status == "success":
-            raise RuntimeError(
-                "Report has not been executed, run report before exporting to_notebook."
-            )
-        cells, extensions = [], ['tabulator']
-        pending_headers = []
-        for out in self.views:
-            cell = ext = None
-            if isinstance(out, Typography):
-                # Buffer headers; only emit them if followed by exportable content
-                level = int(out.variant[1:]) if out.variant and out.variant.startswith('h') else 0
-                prefix = f"{'#'*level} " if level else ''
-                pending_headers.append(make_md_cell(f"{prefix}{out.object}"))
-                continue
-            elif isinstance(out, Markdown):
-                cell = make_md_cell(out.object)
-            elif isinstance(out, LumenEditor):
-                cell, ext = format_output(out)
-            elif isinstance(out, str):
-                cell = make_md_cell(out)
-            elif isinstance(out, ChatMessage):
-                obj = out.object
-                if isinstance(obj, str):
-                    cell = make_md_cell(obj)
-                elif isinstance(obj, Markdown):
-                    cell = make_md_cell(obj.object)
-            # Skip non-LumenEditor Viewables (not meaningfully exportable)
-
-            if cell is None:
-                continue
-            # Flush buffered headers before the content cell
-            cells.extend(pending_headers)
-            pending_headers.clear()
-            cells.append(cell)
-            if ext and ext not in extensions:
-                extensions.append(ext)
-        cells = make_preamble("", extensions=extensions) + cells
-        return write_notebook(cells)
-
-    def to_html(self):
-        """
-        Returns the HTML representation of the report.
-        """
-        if len(self) and self.status != "success":
-            raise RuntimeError(
-                "Report has not been executed, run report before exporting to html."
-            )
-        buf = io.StringIO()
-        self._view.save(buf, title=self.title or "Report")
-        return buf.getvalue()
-
     def validate(
         self,
         context: TContext | None = None,
@@ -823,7 +803,36 @@ class Section(TaskGroup):
         placeholders = [self._placeholder]
         if self._task_previews is not None:
             placeholders.append(self._task_previews)
-        self._view[:] = self._header + placeholders + list(self._tasks)
+        self._view[:] = self._header + placeholders + [self._task_view(task) for task in self._tasks]
+
+    def _task_view(self, task):
+        """
+        Give every task its own export checkbox, so a single chart can be
+        dropped without discarding the whole section it came from. The report
+        only draws headers for its top level sections, so without this nothing
+        inside one could be selected.
+
+        A nested section gets a heading too, unless it takes its parent's title
+        (a section wrapping a single plan does), which would repeat the heading
+        the report already shows.
+        """
+        if isinstance(task, Section):
+            if task.title == self.title:
+                return task
+            return Column(
+                _export_header(task, task, variant="h4"),
+                task,
+                sizing_mode="stretch_width",
+                styles={'min-height': 'unset'},
+                height_policy='fit',
+            )
+        return Row(
+            _export_checkbox(task, task, align="start"),
+            task,
+            sizing_mode="stretch_width",
+            styles={'min-height': 'unset'},
+            height_policy='fit',
+        )
 
     async def _run_task(self, i: int, task: Task | Actor, context: TContext | None, **kwargs) -> list[Any]:
         if context is not None:
@@ -914,6 +923,7 @@ class Report(TaskGroup):
         return report
 
     def _init_view(self):
+        self._section_headers = {}
         self._header_title = Typography(
             self.param.title, variant="h1", margin=(0, 0, 0, 10)
         )
@@ -1021,7 +1031,14 @@ class Report(TaskGroup):
             large=self._menu,
             sizing_mode="stretch_width"
         )
+        self._export_hint = Typography(
+            "Untick a chart, table or note to leave it out of the exported report.",
+            variant="body2", margin=(0, 10, 10, 10),
+            sx={"color": "text.secondary"},
+            visible=self.param.status.rx().rx.in_(("success", "error", "cancelled")),
+        )
         self._container = Column(
+            self._export_hint,
             self._view,
             self._dialog,
             margin=(0, 0, 0, 5),
@@ -1094,6 +1111,104 @@ class Report(TaskGroup):
         if self._active_task is not None and not self._active_task.done():
             self._active_task.cancel()
 
+    @property
+    def _export_views(self):
+        # Task-less reports (e.g. Report.from_views) populate ``views`` directly.
+        if not len(self):
+            return self.views
+        return self._selected_views(self)
+
+    def _selected_views(self, group, include_header=True):
+        """
+        The views of a task group, skipping sections discarded from the export.
+        Walks the tasks rather than reading ``group.views`` so that a nested
+        section's selection is honoured, not just a top level one's.
+        """
+        views = list(group._header) if include_header else []
+        for task in group:
+            if not task.include_in_export:
+                continue
+            views += self._selected_views(task) if isinstance(task, TaskGroup) else list(task.views)
+        return views
+
+    def _export_view(self):
+        # Task-less reports (e.g. Report.from_views) populate ``_view`` directly.
+        if not len(self):
+            return self._view
+        # Build each card from the section's selected views rather than the
+        # section itself, so a discarded nested section is left out of the HTML
+        # too. The card header already shows the title, hence no heading.
+        cards = [
+            (
+                section.title,
+                Column(*self._selected_views(section, include_header=False), sizing_mode="stretch_width"),
+            )
+            for section in self if section.include_in_export
+        ]
+        return Accordion(
+            *cards,
+            active=list(range(len(cards))),
+            sizing_mode="stretch_width",
+            min_height=0,
+            margin=(0, 5, 15, 5),
+            sx=self._view.sx,
+        )
+
+    def to_notebook(self):
+        """
+        Returns the notebook representation of the report.
+        """
+        if len(self) and not self.status == "success":
+            raise RuntimeError(
+                "Report has not been executed, run report before exporting to_notebook."
+            )
+        cells, extensions = [], ['tabulator']
+        pending_headers = []
+        for out in self._export_views:
+            cell = ext = None
+            if isinstance(out, Typography):
+                # Buffer headers; only emit them if followed by exportable content
+                level = int(out.variant[1:]) if out.variant and out.variant.startswith('h') else 0
+                prefix = f"{'#'*level} " if level else ''
+                pending_headers.append(make_md_cell(f"{prefix}{out.object}"))
+                continue
+            elif isinstance(out, Markdown):
+                cell = make_md_cell(out.object)
+            elif isinstance(out, LumenEditor):
+                cell, ext = format_output(out)
+            elif isinstance(out, str):
+                cell = make_md_cell(out)
+            elif isinstance(out, ChatMessage):
+                obj = out.object
+                if isinstance(obj, str):
+                    cell = make_md_cell(obj)
+                elif isinstance(obj, Markdown):
+                    cell = make_md_cell(obj.object)
+            # Skip non-LumenEditor Viewables (not meaningfully exportable)
+
+            if cell is None:
+                continue
+            # Flush buffered headers before the content cell
+            cells.extend(pending_headers)
+            pending_headers.clear()
+            cells.append(cell)
+            if ext and ext not in extensions:
+                extensions.append(ext)
+        cells = make_preamble("", extensions=extensions) + cells
+        return write_notebook(cells)
+
+    def to_html(self):
+        """
+        Returns the HTML representation of the report.
+        """
+        if len(self) and self.status != "success":
+            raise RuntimeError(
+                "Report has not been executed, run report before exporting to html."
+            )
+        buf = io.StringIO()
+        self._export_view().save(buf, title=self.title or "Report")
+        return buf.getvalue()
+
     async def _export_report(self, item=None):
         if len(self) and self.status not in ("success", "cancelled", "error"):
             await self.execute()
@@ -1116,8 +1231,19 @@ class Report(TaskGroup):
     def _open_settings(self, event=None):
         self._dialog.open = True
 
+    def _section_header(self, section):
+        """Card header with a checkbox to keep/discard the section on export."""
+        return _export_header(section, self)
+
     def _populate_view(self):
-        self._view[:] = objects = [(task.title, task) for task in self]
+        headers = {}
+        objects = []
+        for section in self:
+            header = self._section_headers.get(section) or self._section_header(section)
+            headers[section] = header
+            objects.append((header, section))
+        self._section_headers = headers
+        self._view[:] = objects
         has_outputs = self.status in ("success", "error", "cancelled") or bool(self.views)
         if has_outputs:
             self._view.active = list(range(len(objects)))

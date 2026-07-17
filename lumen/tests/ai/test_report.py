@@ -10,7 +10,7 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
-from panel.layout import Column
+from panel.layout import Column, Row
 from panel.pane import Markdown
 from typing_extensions import NotRequired
 
@@ -20,9 +20,10 @@ from lumen.ai.report import (
 )
 
 try:
-    from panel_material_ui import ChatMessage
+    from panel_material_ui import ChatMessage, Checkbox
 except ImportError:
     ChatMessage = None
+    Checkbox = None
 
 
 class HelloAction(Action):
@@ -397,6 +398,181 @@ async def test_report_to_html():
     assert "<html" in html_string.lower()
     assert "Hello Report" in html_string
     assert "Hello" in html_string
+
+
+async def test_section_include_in_export_default():
+    section = Section(HelloAction())
+    assert section.include_in_export is True
+
+
+async def test_report_to_notebook_excludes_deselected_section():
+    report = Report(
+        Section(A(order=[]), title='Section A'),
+        Section(B(order=[]), title='Section B'),
+        title='Multi Report',
+    )
+    await report.execute()
+
+    # By default every section is included in the export.
+    all_sources = "".join(
+        "".join(cell["source"]) for cell in json.loads(report.to_notebook())["cells"]
+    )
+    assert "A done" in all_sources
+    assert "B done" in all_sources
+
+    # Deselecting a section drops it (and its header) from the notebook.
+    report[1].include_in_export = False
+    sources = "".join(
+        "".join(cell["source"]) for cell in json.loads(report.to_notebook())["cells"]
+    )
+    assert "A done" in sources
+    assert "B done" not in sources
+    assert "Section B" not in sources
+    assert "Multi Report" in sources
+
+
+async def test_report_export_excludes_a_single_deselected_chart():
+    # Two charts made in one session: each is selectable on its own.
+    bar, pie = A(order=[], title='Bar'), B(order=[], title='Pie')
+    report = Report(Section(bar, pie, title='Genre Streams'), title='Multi Report')
+    await report.execute()
+
+    sources = "".join(
+        "".join(cell["source"]) for cell in json.loads(report.to_notebook())["cells"]
+    )
+    assert "A done" in sources and "B done" in sources
+
+    # Dropping one chart keeps the other, and keeps the section it came from.
+    pie.include_in_export = False
+    sources = "".join(
+        "".join(cell["source"]) for cell in json.loads(report.to_notebook())["cells"]
+    )
+    assert "A done" in sources
+    assert "B done" not in sources
+    assert "Genre Streams" in sources
+
+
+async def test_report_export_excludes_deselected_nested_section():
+    nested = Section(B(order=[]), title='Nested Section')
+    report = Report(
+        Section(A(order=[]), nested, title='Outer Section'),
+        title='Multi Report',
+    )
+    await report.execute()
+
+    # A nested section is included by default, like a top level one.
+    sources = "".join(
+        "".join(cell["source"]) for cell in json.loads(report.to_notebook())["cells"]
+    )
+    assert "A done" in sources
+    assert "B done" in sources
+
+    # Deselecting the nested section drops it (and its heading) but keeps the
+    # rest of the section it lives in.
+    nested.include_in_export = False
+    sources = "".join(
+        "".join(cell["source"]) for cell in json.loads(report.to_notebook())["cells"]
+    )
+    assert "A done" in sources
+    assert "Outer Section" in sources
+    assert "B done" not in sources
+    assert "Nested Section" not in sources
+
+    # The HTML export honours the nested selection too.
+    html = report.to_html()
+    assert "A done" in html
+    assert "B done" not in html
+
+
+def _find_checkboxes(obj, found=None):
+    """Every Checkbox rendered anywhere in a component tree."""
+    found = [] if found is None else found
+    if isinstance(obj, Checkbox):
+        found.append(obj)
+        return found
+    for child in (getattr(obj, 'objects', None) or []):
+        _find_checkboxes(child[1] if isinstance(child, tuple) else child, found)
+    return found
+
+
+async def test_section_renders_a_checkbox_per_task():
+    nested = Section(B(order=[]), title='Nested Section')
+    outer = Section(A(order=[]), nested, title='Outer Section')
+    report = Report(outer, title='Multi Report')
+    await report.execute()
+
+    # Everything inside a section is selectable, so a single chart can be
+    # dropped on its own: the action, the nested section, and the action within
+    # it each get a checkbox.
+    assert len(_find_checkboxes(outer._view)) == 3
+
+    # Each checkbox is bound to the include_in_export of its own task.
+    nested.include_in_export = False
+    assert False in [checkbox.value for checkbox in _find_checkboxes(outer._view)]
+
+
+async def test_report_to_html_excludes_deselected_section():
+    report = Report(
+        Section(A(order=[]), title='Section A'),
+        Section(B(order=[]), title='Section B'),
+        title='Multi Report',
+    )
+    await report.execute()
+
+    report[1].include_in_export = False
+    html = report.to_html()
+
+    assert "A done" in html
+    assert "B done" not in html
+    # Exporting a subset must not disturb the live report view.
+    assert len(report._view) == 2
+
+
+async def test_report_section_header_has_bound_export_checkbox():
+    report = Report(
+        Section(A(order=[]), title='Section A'),
+        Section(B(order=[]), title='Section B'),
+        title='Multi Report',
+    )
+    await report.execute()
+
+    headers = report._view._headers
+    assert len(headers) == len(report) == 2
+    for section, header in zip(report, headers):
+        assert isinstance(header, Row)
+        checkboxes = [obj for obj in header.objects if isinstance(obj, Checkbox)]
+        assert len(checkboxes) == 1
+        checkbox = checkboxes[0]
+        # Checked by default and bound to include_in_export in both directions.
+        assert checkbox.value is True
+        section.include_in_export = False
+        assert checkbox.value is False
+        checkbox.value = True
+        assert section.include_in_export is True
+
+
+async def test_report_export_empty_selection():
+    report = Report(
+        Section(A(order=[]), title='Section A'),
+        Section(B(order=[]), title='Section B'),
+        title='Multi Report',
+    )
+    await report.execute()
+
+    report[0].include_in_export = False
+    report[1].include_in_export = False
+
+    cells = json.loads(report.to_notebook())["cells"]
+    sources = "".join("".join(cell["source"]) for cell in cells)
+    assert "A done" not in sources
+    assert "B done" not in sources
+    # Only the import preamble survives when nothing is selected.
+    assert len(cells) == 1
+
+    # HTML export of an empty selection should not raise.
+    html = report.to_html()
+    assert "A done" not in html
+    assert "B done" not in html
 
 
 def test_report_from_views_assembles_exportable_report():
