@@ -15,6 +15,13 @@ try:
 except Exception:
     duckdb = None
 
+try:
+    import geopandas as gpd
+
+    from shapely.geometry import Polygon
+except Exception:
+    gpd = None
+
 from panel.widgets import Select
 
 from lumen.filters.base import ConstantFilter
@@ -395,10 +402,8 @@ def test_pipeline_update_data_resets_loading_on_error(make_filesource):
 
 def test_pipeline_preserves_geodataframe():
     """A GeoDataFrame survives source -> filter -> Pipeline.data without downcast."""
-    gpd = pytest.importorskip("geopandas")
-    if duckdb is None:
-        pytest.skip("duckdb is not installed")
-    from shapely.geometry import Polygon
+    if gpd is None or duckdb is None:
+        pytest.skip("geopandas or duckdb is not installed")
     try:
         source = DuckDBSource(
             uri=':memory:',

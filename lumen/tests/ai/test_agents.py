@@ -20,6 +20,8 @@ from lumen.ai.agents import (
     AnalysisAgent, ChatAgent, SQLAgent, VegaLiteAgent,
 )
 from lumen.ai.agents.analysis import make_analysis_model
+from lumen.ai.agents.deck_gl import DeckGLAgent
+from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.agents.vega_lite import VegaLiteSpec, VegaLiteSpecUpdate
 from lumen.ai.analysis import Analysis
@@ -280,8 +282,6 @@ class TestTemplateOverrides:
 def test_map_agents_route_geometry_columns():
     """hvPlot and DeckGL agents advertise a geometry-column condition so the
     coordinator routes GeoDataFrame data to a map-capable view."""
-    from lumen.ai.agents.deck_gl import DeckGLAgent
-    from lumen.ai.agents.hvplot import hvPlotAgent
     assert any("geometry" in c.lower() for c in hvPlotAgent.conditions)
     assert any("geometry" in c.lower() for c in DeckGLAgent.conditions)
 

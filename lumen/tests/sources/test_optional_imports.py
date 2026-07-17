@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 import pytest
 
-from lumen.util import try_import_xarray
+from lumen.util import try_import_geopandas, try_import_xarray
 
 # Each entry: (module_path, class_name, guard_package, pip_extra)
 OPTIONAL_SOURCES = [
@@ -91,14 +91,11 @@ def test_import_raises_when_dependency_missing(module_path, class_name, guard_pa
 def test_try_import_geopandas_returns_module_when_installed():
     """try_import_geopandas returns the geopandas module when importable."""
     gpd = pytest.importorskip("geopandas")
-    from lumen.util import try_import_geopandas
     assert try_import_geopandas() is gpd
 
 
 def test_try_import_geopandas_none_when_missing():
     """try_import_geopandas returns None (not raises) when geopandas is absent."""
-    from lumen.util import try_import_geopandas
-
     real_import = builtins.__import__
 
     def mock_import(name, *args, **kwargs):

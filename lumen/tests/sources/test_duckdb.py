@@ -18,6 +18,13 @@ try:
 except ImportError:
     pytestmark = pytest.mark.skip(reason="Duckdb is not installed")
 
+try:
+    import geopandas as gpd
+
+    from shapely.geometry import Polygon
+except ImportError:
+    gpd = None
+
 
 @pytest.fixture
 def duckdb_file_source():
@@ -1357,8 +1364,8 @@ def _spatial_source():
     Skips if the duckdb spatial extension cannot be loaded (needs network on
     first install).
     """
-    gpd = pytest.importorskip("geopandas")
-    from shapely.geometry import Polygon
+    if gpd is None:
+        pytest.skip("geopandas is not installed")
     try:
         source = DuckDBSource(
             uri=':memory:',
