@@ -26,8 +26,8 @@ from panel.viewable import (
 )
 from panel_material_ui import (
     Alert, Breadcrumbs, Button, ChatFeed, ChatInterface, ChatMessage,
-    Column as MuiColumn, Dialog, Divider, FileDownload, IconButton, MenuList,
-    Page, Paper, Popup, Row, Select, Switch, Tabs, Typography,
+    Column as MuiColumn, Dialog, Divider, Drawer, FileDownload, IconButton,
+    MenuList, Page, Paper, Popup, Row, Select, Switch, Tabs, Typography,
 )
 from panel_splitjs import HSplit, MultiSplit, VSplit
 
@@ -45,7 +45,7 @@ from .agents import (
 )
 from .config import (
     DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROVIDED_SOURCE_NAME,
-    SOURCE_TABLE_SEPARATOR, SPLITJS_STYLESHEETS,
+    SOURCE_TABLE_SEPARATOR,
 )
 from .context import TContext
 from .controls import (
@@ -812,10 +812,6 @@ class UI(Viewer):
         """Check if there are any explorations beyond home."""
         return len(self._explorations.items) > 1
 
-    def _should_show_navigation(self) -> bool:
-        """Determine if navigation pane should be visible."""
-        return self._has_explorations()
-
     def _get_current_exploration(self) -> Exploration:
         """Get the currently active exploration."""
         return self._explorations.value['view']
@@ -879,13 +875,8 @@ class UI(Viewer):
             self._current_mode = "Exploration"
             self._navigation_caption.object = EXPLORATION_CAPTION
 
-        show_nav = self._should_show_navigation()
-        if not self._sidebar_menu.items[6]["active"] and show_nav:
-            self._toggle_navigation(True)
-        if not show_nav:
-            self._toggle_navigation(False)
         self._chat_input.margin = (10, 0) if main_content is self._splash else 10
-        self._main[:] = [self._navigation, main_content]
+        self._compose_main(main_content)
 
     def _configure_interface(self, interface):
         def on_undo(instance, _):
@@ -1069,6 +1060,14 @@ class UI(Viewer):
             **existing_actions,
         }
         self._configure_logs(interface)
+        # Strip the ChatInterface's outer card border/shadow so it blends into
+        # the page (only the root/direct-child frame, not the message bubbles).
+        interface.sx = {
+            "border": "none",
+            "boxShadow": "none",
+            "backgroundColor": "transparent",
+            "& > .MuiPaper-root": {"border": "none", "boxShadow": "none"},
+        }
         self.interface = interface
 
     def _handle_upload_successful(self, event):
@@ -1893,12 +1892,16 @@ class ExplorerUI(UI):
             self._settings_popup.open = True
         elif item["id"] == "help":
             self._open_info_dialog()
-        elif item["id"] == "nav":
-            self._toggle_navigation(not item["active"])
 
-    def _toggle_navigation(self, active: bool):
-        self._navigation.visible = active
-        self._sidebar_menu.update_item(self._sidebar_menu.items[6], active=active, icon="layers" if active else "layers_outlined")
+    def _compose_main(self, main_content: Viewable):
+        """
+        Show ``main_content`` in the content pane beside the always-mounted
+        navigation drawer. The navigation drawer is opened/closed by the user
+        via the docked drawer's edge toggle tab, so there is no separate sidebar
+        toggle.
+        """
+        self._nav_content[:] = [main_content]
+        self._main[:] = [self._nav_split]
 
     def _exploration_has_outputs(self, exploration: Exploration) -> bool:
         """
@@ -2008,8 +2011,6 @@ class ExplorerUI(UI):
                 {"label": "Sources", "icon": "create_new_folder_outlined", "id": "data"},
                 {"label": "Settings", "icon": "tune_outlined", "id": "preferences"},
                 None,
-                {"label": "Navigate", "icon": "layers_outlined", "id": "nav", "active": False},
-                None,
                 {"label": "Help", "icon": "help_outline", "id": "help"}
             ],
             active=0,
@@ -2094,9 +2095,9 @@ class ExplorerUI(UI):
             self._output,
             collapsed=None,
             expanded_sizes=(40, 60),
+            collapse_threshold=15,
             show_buttons=True,
             sizing_mode='stretch_both',
-            stylesheets=SPLITJS_STYLESHEETS
         )
         self._navigation_title = Typography(
             "Navigation", variant="h6", margin=(10, 10, 0, 10)
@@ -2108,25 +2109,49 @@ class ExplorerUI(UI):
             margin=(10, 10, 5, 10),
             sizing_mode="stretch_width"
         )
-        self._navigation_footer = Typography(
-            'Toggle <span class="material-icons" style="vertical-align: middle;">layers</span>**Navigate** to close',
-            variant="body2",
-            color="text.secondary",
-            margin=20,
-            styles={"margin": "auto auto 20px auto"}
-        )
         self._navigation = Paper(
             self._navigation_title,
             self._navigation_caption,
             self._explorations,
-            self._navigation_footer,
+            # Fill the drawer vertically so the panel spans its full height.
             height_policy="max",
-            sx={"borderRadius": 0},
+            width_policy="max",
+            sizing_mode="stretch_both",
+            # Square corners and no border/shadow: the docked Drawer already
+            # supplies the sidebar edge, so any border here would double it.
+            elevation=0,
+            sx={"borderRadius": 0, "border": "none", "boxShadow": "none"},
             theme_config={"light": {"palette": {"background": {"paper": "var(--mui-palette-grey-100)"}}}, "dark": {}},
-            visible=False,
-            width=250
         )
-        self._main[:] = [self._navigation, self._splash]
+        # Navigation lives in an always-mounted inline docked Drawer. The docked
+        # variant renders a small toggle tab on the anchored edge, so the user
+        # opens/closes it without a separate sidebar toggle button. inline=True
+        # keeps the drawer in normal flow inside the Row so it pushes/shrinks the
+        # content pane rather than overlaying it. It starts closed (open=False)
+        # so the first-run splash stays clean; it is revealed the first time an
+        # exploration is created (see _cleanup_explorations).
+        self._nav_drawer = Drawer(
+            self._navigation,
+            size=280,
+            variant="docked",
+            anchor="left",
+            dock_position="middle",
+            inline=True,
+            open=False,
+            sizing_mode="stretch_height",
+            # Hug the drawer's own width (tab when closed, ``size`` when open)
+            # instead of flex-growing to eat half the Row.
+            styles={"flex": "0 0 auto"},
+        )
+        # Content lives in a growing wrapper beside the drawer so it fills the
+        # width the drawer leaves free. _compose_main swaps the wrapper's child.
+        self._nav_content = Row(self._splash, sizing_mode="stretch_both")
+        self._nav_split = Row(
+            self._nav_drawer,
+            self._nav_content,
+            sizing_mode="stretch_both",
+        )
+        self._compose_main(self._splash)
 
         # Create code execution warning dialog if code execution is not hidden
         if self.code_execution != "hidden":
@@ -2344,6 +2369,10 @@ class ExplorerUI(UI):
     async def _cleanup_explorations(self, event):
         if len(event.new) <= len(event.old):
             return
+        # Reveal the navigation drawer the first time an exploration is created
+        # so the newly populated tree is visible; afterwards leave it to the user.
+        if len(event.old) <= 1 < len(event.new) and not self._nav_drawer.open:
+            self._nav_drawer.open = True
         for i, (old, new) in enumerate(zip(event.old, event.new, strict=False)):
             if old is new:
                 continue
@@ -2522,7 +2551,6 @@ class ExplorerUI(UI):
             sizes=(20, 80),
             sizing_mode="stretch_both",
             styles={"overflow": "auto"},
-            stylesheets=SPLITJS_STYLESHEETS
         )
         # When filters are present, show them in a Paper above the editor/table
         # split with a draggable divider just above the SQL editor (so the user
@@ -2539,7 +2567,6 @@ class ExplorerUI(UI):
                         filter_paper, vsplit,
                         expanded_sizes=(15, 85), sizes=(15, 85),
                         sizing_mode="stretch_both", styles={"overflow": "auto"},
-                        stylesheets=SPLITJS_STYLESHEETS,
                     )
                 else:
                     view[1] = vsplit
