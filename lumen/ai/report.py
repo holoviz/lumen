@@ -49,18 +49,20 @@ from .utils import (
 )
 
 
-def _export_header(section, status_source, variant="h3"):
+def _export_checkbox(task, status_source, align="center"):
     """
-    Heading for a section with a checkbox controlling whether it is kept when
-    the report is exported. ``status_source`` supplies the status the checkbox
-    tracks, so it only appears once there is something to export.
+    Checkbox controlling whether a task's outputs are kept when the report is
+    exported. ``status_source`` supplies the status it tracks, so it only
+    appears once that has something to export.
     """
-    checkbox = Checkbox.from_param(
-        section.param.include_in_export,
+    return Checkbox.from_param(
+        task.param.include_in_export,
         label="",
-        align="center",
+        align=align,
         margin=(0, 4, 0, 0),
-        description="Include this section when exporting the report",
+        # No description: it would render an info icon; the report explains the
+        # checkboxes at the top instead.
+        description="",
         visible=param.bind(
             lambda status, views: (
                 status in ("success", "error", "cancelled") or bool(views)
@@ -68,8 +70,15 @@ def _export_header(section, status_source, variant="h3"):
             status_source.param.status, status_source.param.views,
         ),
     )
+
+
+def _export_header(section, status_source, variant="h3"):
+    """Heading for a section, with the checkbox that keeps or discards it."""
     title = Typography(section.param.title, variant=variant, margin=0)
-    return Row(checkbox, title, align="center", sizing_mode="stretch_width")
+    return Row(
+        _export_checkbox(section, status_source), title,
+        align="center", sizing_mode="stretch_width",
+    )
 
 
 class Task(Viewer):
@@ -85,6 +94,9 @@ class Task(Viewer):
 
     history = param.List(doc="""
         Conversation history to include as context for the task.""")
+
+    include_in_export = param.Boolean(default=True, doc="""
+        Whether this task's outputs are included when the report is exported.""")
 
     instruction = param.String(default="", doc="""
         The instruction to give to the task.""")
@@ -699,9 +711,6 @@ class Section(TaskGroup):
     A `Section` is a `TaskGroup` representing a sequence of related tasks.
     """
 
-    include_in_export = param.Boolean(default=True, doc="""
-        Whether this section is included when the report is exported.""")
-
     level = 2
 
     def __init__(self, *tasks, **params):
@@ -798,14 +807,27 @@ class Section(TaskGroup):
 
     def _task_view(self, task):
         """
-        Nested sections render their own heading and export checkbox; the report
-        only draws headers for its top level sections, so without this a nested
-        section could not be selected.
+        Give every task its own export checkbox, so a single chart can be
+        dropped without discarding the whole section it came from. The report
+        only draws headers for its top level sections, so without this nothing
+        inside one could be selected.
+
+        A nested section gets a heading too, unless it takes its parent's title
+        (a section wrapping a single plan does), which would repeat the heading
+        the report already shows.
         """
-        if not isinstance(task, Section):
-            return task
-        return Column(
-            _export_header(task, task, variant="h4"),
+        if isinstance(task, Section):
+            if task.title == self.title:
+                return task
+            return Column(
+                _export_header(task, task, variant="h4"),
+                task,
+                sizing_mode="stretch_width",
+                styles={'min-height': 'unset'},
+                height_policy='fit',
+            )
+        return Row(
+            _export_checkbox(task, task, align="start"),
             task,
             sizing_mode="stretch_width",
             styles={'min-height': 'unset'},
@@ -1009,7 +1031,14 @@ class Report(TaskGroup):
             large=self._menu,
             sizing_mode="stretch_width"
         )
+        self._export_hint = Typography(
+            "Untick a chart, table or note to leave it out of the exported report.",
+            variant="body2", margin=(0, 10, 10, 10),
+            sx={"color": "text.secondary"},
+            visible=self.param.status.rx().rx.in_(("success", "error", "cancelled")),
+        )
         self._container = Column(
+            self._export_hint,
             self._view,
             self._dialog,
             margin=(0, 0, 0, 5),
@@ -1097,7 +1126,7 @@ class Report(TaskGroup):
         """
         views = list(group._header) if include_header else []
         for task in group:
-            if isinstance(task, Section) and not task.include_in_export:
+            if not task.include_in_export:
                 continue
             views += self._selected_views(task) if isinstance(task, TaskGroup) else list(task.views)
         return views

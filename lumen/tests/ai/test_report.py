@@ -431,6 +431,27 @@ async def test_report_to_notebook_excludes_deselected_section():
     assert "Multi Report" in sources
 
 
+async def test_report_export_excludes_a_single_deselected_chart():
+    # Two charts made in one session: each is selectable on its own.
+    bar, pie = A(order=[], title='Bar'), B(order=[], title='Pie')
+    report = Report(Section(bar, pie, title='Genre Streams'), title='Multi Report')
+    await report.execute()
+
+    sources = "".join(
+        "".join(cell["source"]) for cell in json.loads(report.to_notebook())["cells"]
+    )
+    assert "A done" in sources and "B done" in sources
+
+    # Dropping one chart keeps the other, and keeps the section it came from.
+    pie.include_in_export = False
+    sources = "".join(
+        "".join(cell["source"]) for cell in json.loads(report.to_notebook())["cells"]
+    )
+    assert "A done" in sources
+    assert "B done" not in sources
+    assert "Genre Streams" in sources
+
+
 async def test_report_export_excludes_deselected_nested_section():
     nested = Section(B(order=[]), title='Nested Section')
     report = Report(
@@ -463,29 +484,31 @@ async def test_report_export_excludes_deselected_nested_section():
     assert "B done" not in html
 
 
-def _find_checkbox(obj):
-    """The first Checkbox rendered anywhere in a component tree."""
+def _find_checkboxes(obj, found=None):
+    """Every Checkbox rendered anywhere in a component tree."""
+    found = [] if found is None else found
     if isinstance(obj, Checkbox):
-        return obj
+        found.append(obj)
+        return found
     for child in (getattr(obj, 'objects', None) or []):
-        found = _find_checkbox(child[1] if isinstance(child, tuple) else child)
-        if found is not None:
-            return found
-    return None
+        _find_checkboxes(child[1] if isinstance(child, tuple) else child, found)
+    return found
 
 
-async def test_nested_section_renders_export_checkbox():
+async def test_section_renders_a_checkbox_per_task():
     nested = Section(B(order=[]), title='Nested Section')
     outer = Section(A(order=[]), nested, title='Outer Section')
     report = Report(outer, title='Multi Report')
     await report.execute()
 
-    checkbox = _find_checkbox(outer._view)
-    assert checkbox is not None, "a nested section should render a checkbox so it can be selected"
+    # Everything inside a section is selectable, so a single chart can be
+    # dropped on its own: the action, the nested section, and the action within
+    # it each get a checkbox.
+    assert len(_find_checkboxes(outer._view)) == 3
 
-    # The checkbox is bound to the nested section's include_in_export.
-    checkbox.value = False
-    assert nested.include_in_export is False
+    # Each checkbox is bound to the include_in_export of its own task.
+    nested.include_in_export = False
+    assert False in [checkbox.value for checkbox in _find_checkboxes(outer._view)]
 
 
 async def test_report_to_html_excludes_deselected_section():
