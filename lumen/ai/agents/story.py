@@ -52,6 +52,17 @@ class Story(BaseModel):
     )
 
 
+class ProseEdit(BaseModel):
+
+    chain_of_thought: str = Field(
+        description="In one sentence, how the paragraph should change to satisfy the instruction."
+    )
+
+    prose: str = Field(
+        description="The rewritten paragraph in Markdown, keeping any facts that are still accurate."
+    )
+
+
 class StoryAgent(LLMUser):
     """
     Writes a "story" that reads like a blog post: short prose paragraphs
@@ -64,8 +75,23 @@ class StoryAgent(LLMUser):
                 "template": PROMPTS_DIR / "StoryAgent" / "main.jinja2",
                 "response_model": Story,
             },
+            "edit": {
+                "template": PROMPTS_DIR / "StoryAgent" / "edit.jinja2",
+                "response_model": ProseEdit,
+            },
         }
     )
+
+    async def rewrite_prose(self, prose: str, instruction: str, catalog: str = "") -> ProseEdit:
+        """Rewrite a single paragraph of the story following the user's instruction."""
+        return await self._invoke_prompt(
+            "edit",
+            messages=[{"role": "user", "content": "Rewrite the paragraph."}],
+            context={},
+            prose=prose,
+            instruction=instruction,
+            catalog=catalog,
+        )
 
     async def write_story(self, catalog: str, guidance: str = "", title: str = "") -> Story:
         """Write the blog-post story that weaves prose around the catalogued views."""

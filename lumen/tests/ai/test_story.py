@@ -54,6 +54,23 @@ def _kinds(report):
     return [kind for kind, _ in report._story_blocks]
 
 
+def _prose_editors(report):
+    """Every editable prose block rendered in the story, at any nesting."""
+    from lumen.ai.report import EditableProse
+
+    found = []
+
+    def walk(obj):
+        if isinstance(obj, EditableProse):
+            found.append(obj)
+            return
+        for child in (getattr(obj, 'objects', None) or []):
+            walk(child[1] if isinstance(child, tuple) else child)
+
+    walk(report._story_column)
+    return found
+
+
 async def test_story_agent_write_story(llm):
     from lumen.ai.agents.story import Story, StoryAgent, StoryBlock
 
@@ -275,7 +292,7 @@ async def test_story_prose_is_editable_and_edits_reach_the_exports(llm, tiny_sou
 
     # Prose is kept as text and rendered as an editable block on screen.
     assert report._story_blocks[0] == ("prose", "Original prose.")
-    editors = [obj for obj in report._story_column.objects if isinstance(obj, EditableProse)]
+    editors = _prose_editors(report)
     assert len(editors) == 1
 
     # Editing writes back to the story, which every export reads from.
@@ -288,8 +305,33 @@ async def test_story_prose_is_editable_and_edits_reach_the_exports(llm, tiny_sou
 
     # The edit survives re-rendering the story (e.g. switching tabs).
     report._render_story()
-    editors = [obj for obj in report._story_column.objects if isinstance(obj, EditableProse)]
-    assert editors[0].value == "Edited by hand."
+    assert _prose_editors(report)[0].value == "Edited by hand."
+
+
+async def test_story_prose_rewritten_by_ai(llm, tiny_source):
+    from lumen.ai.agents.story import ProseEdit, Story, StoryBlock
+
+    report = Report(
+        Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
+        title='R', llm=llm,
+    )
+    await report.execute()
+    llm.set_responses([Story(chain_of_thought="c", title="T", blocks=[
+        StoryBlock(prose="Original prose."), StoryBlock(view=1),
+    ])])
+    await report._annotate_report()
+
+    # Asking the AI to rewrite one paragraph only touches that block.
+    report._open_edit_dialog(0)
+    assert report._edit_dialog.open is True
+    report._edit_instruction.value = "make it punchier"
+    llm.set_responses([ProseEdit(chain_of_thought="c", prose="Punchier prose.")])
+    await report._rewrite_prose()
+
+    assert report._edit_dialog.open is False
+    assert report._story_blocks[0] == ("prose", "Punchier prose.")
+    assert _kinds(report) == ["prose", "view"]  # the chart block is untouched
+    assert "Punchier prose." in _nb_text(report)
 
 
 async def test_report_reset_discards_story(llm, tiny_source):

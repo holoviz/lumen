@@ -1112,6 +1112,23 @@ class Report(TaskGroup):
             title="Annotate Report",
             width_option="sm",
         )
+        # Rewriting a single paragraph with the LLM.
+        self._edit_index = None
+        self._edit_instruction = TextAreaInput(
+            placeholder="How should this paragraph change? e.g. make it shorter and lead with the number",
+            sizing_mode="stretch_width", rows=3, margin=(10, 0, 0, 0),
+        )
+        self._edit_apply = Button(
+            label="Rewrite", variant="contained", icon="auto_fix_high",
+            on_click=self._rewrite_prose,
+        )
+        self._edit_dialog = Dialog(
+            self._edit_instruction,
+            Row(self._edit_apply, align="end", margin=(10, 0, 0, 0), sizing_mode="stretch_width"),
+            show_close_button=True,
+            title="Edit paragraph with AI",
+            width_option="sm",
+        )
         self._menu = Row(
             self._header_title,
             self._run,
@@ -1166,6 +1183,7 @@ class Report(TaskGroup):
             self._dialog,
             self._outline_dialog,
             self._story_dialog,
+            self._edit_dialog,
             margin=(0, 0, 0, 5),
             sizing_mode="stretch_both",
             height_policy='fit',
@@ -1507,7 +1525,18 @@ class Report(TaskGroup):
         """
         items = []
         if self._story_title:
-            items.append(Typography(self._story_title, variant="h4", margin=(10, 10, 0, 10)))
+            heading = Typography(self._story_title, variant="h4", margin=(10, 10, 0, 10))
+            if editable and self.llm is not None:
+                # Regenerating reopens the guidance popup, so a fresh story can be
+                # written with a different angle.
+                regenerate = Button(
+                    label="Regenerate", variant="outlined", size="small", color="default",
+                    icon="refresh", align="center", margin=(10, 10, 0, 0),
+                    description="Write the whole story again",
+                    on_click=self._open_story_dialog,
+                )
+                heading = Row(heading, regenerate, align="center", sizing_mode="stretch_width")
+            items.append(heading)
         for index, (kind, obj) in enumerate(self._story_blocks):
             if kind != "prose":
                 items.append(self._rebuild_view(obj))
@@ -1518,15 +1547,48 @@ class Report(TaskGroup):
         return items
 
     def _editable_prose(self, index, text):
-        """Prose the user can edit in place; edits are written back to the story."""
+        """Prose the user can edit in place, by hand or by asking the LLM."""
         prose = EditableProse(value=text, sizing_mode="stretch_width", margin=(5, 10))
         prose.param.watch(partial(self._update_prose, index), "value")
-        return prose
+        edit = IconButton(
+            icon="auto_fix_high", size="small", color="default", align="start",
+            margin=(5, 0, 0, 0), visible=self.llm is not None,
+            description="Rewrite this paragraph with AI",
+            on_click=partial(self._open_edit_dialog, index),
+        )
+        return Row(prose, edit, sizing_mode="stretch_width")
 
     def _update_prose(self, index, event):
         # Keep the story blocks as the single source of truth so manual edits
         # survive tab switches and flow into every export.
         self._story_blocks[index] = ("prose", event.new)
+
+    def _open_edit_dialog(self, index, event=None):
+        self._edit_index = index
+        self._edit_instruction.value = ""
+        self._edit_dialog.open = True
+
+    async def _rewrite_prose(self, event=None):
+        """Ask the LLM to rewrite the paragraph the edit dialog was opened on."""
+        instruction = (self._edit_instruction.value or "").strip()
+        if self.llm is None or self._edit_index is None or not instruction:
+            return
+        from .agents.story import StoryAgent, build_catalog
+        self._edit_dialog.open = False
+        self._edit_apply.loading = True
+        try:
+            agent = StoryAgent(llm=self.llm)
+            edit = await agent.rewrite_prose(
+                self._story_blocks[self._edit_index][1],
+                instruction,
+                await build_catalog(self._collect_story_views()),
+            )
+            self._story_blocks[self._edit_index] = ("prose", edit.prose)
+            self._render_story()
+        except Exception:
+            tb.print_exc()
+        finally:
+            self._edit_apply.loading = False
 
     @property
     def _show_story(self):
