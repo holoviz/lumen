@@ -221,7 +221,7 @@ async def test_report_story_dialog_presets_and_generate(llm, tiny_source):
     assert "prose" in _kinds(report)
 
 
-async def test_report_view_toggle_switches_story_and_sections(llm, tiny_source):
+async def test_report_story_tab_added_and_export_follows_active_tab(llm, tiny_source):
     from lumen.ai.agents.story import Story, StoryBlock
 
     report = Report(
@@ -229,26 +229,32 @@ async def test_report_view_toggle_switches_story_and_sections(llm, tiny_source):
         title='R', llm=llm,
     )
     await report.execute()
+
+    # Before annotating there is only the Report tab.
+    assert len(report._tabs) == 1
+    assert report._show_story is False
+
     llm.set_responses([Story(chain_of_thought="c", title="Headline", blocks=[
         StoryBlock(prose="Story prose."), StoryBlock(view=1),
     ])])
     await report._annotate_report()
 
-    # After annotate the story is shown and exported, and the toggle is visible.
+    # Annotating adds a Story tab and switches to it, and the export follows.
+    assert len(report._tabs) == 2
+    assert report._tabs.active == 1
     assert report._show_story is True
-    assert report._view_toggle.visible is True
     assert "Story prose." in _nb_text(report)
 
-    # Toggle to the section view: the story is kept, export follows the sections.
-    report._toggle_view()
+    # Selecting the Report tab keeps the story but exports the sections.
+    report._tabs.active = 0
     assert report._show_story is False
     assert report._story_blocks  # still remembered
     nb_sections = _nb_text(report)
     assert "Story prose." not in nb_sections
     assert "lm.Pipeline.from_spec" in nb_sections
 
-    # Toggle again: the story returns without regenerating.
-    report._toggle_view()
+    # Back to the Story tab: the story returns without regenerating.
+    report._tabs.active = 1
     assert report._show_story is True
     assert "Story prose." in _nb_text(report)
 
@@ -271,7 +277,9 @@ async def test_report_reset_discards_story(llm, tiny_source):
 
     assert report._story_blocks == []
     assert report._show_story is False
-    assert report._view_toggle.visible is False
+    # The Story tab is removed along with the story.
+    assert len(report._tabs) == 1
+    assert report._tabs.active == 0
 
 
 async def test_report_outline_defaults_empty():

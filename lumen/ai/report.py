@@ -24,7 +24,7 @@ from panel.viewable import Viewable, Viewer
 from panel_material_ui import (
     Accordion, BreakpointSwitcher, Button, Card, ChatFeed, ChatMessage,
     Checkbox, Container, Dialog, Divider, FileDownload, IconButton, MenuButton,
-    Progress, Select, SpeedDial, TextAreaInput, TextInput, Typography,
+    Progress, Select, SpeedDial, Tabs, TextAreaInput, TextInput, Typography,
 )
 
 from ..config import config
@@ -889,6 +889,9 @@ class Report(TaskGroup):
 
     level = 1
 
+    # The Story tab is appended after the Report tab once a story exists.
+    _STORY_TAB = 1
+
     _STORY_PRESETS = [
         ("Executive summary", "Write a concise executive summary for decision-makers, leading with the key takeaways."),
         ("Technical deep-dive", "Write a detailed technical analysis that explains the methods and the data behind each chart."),
@@ -934,7 +937,6 @@ class Report(TaskGroup):
         self._section_headers = {}
         self._story_title = ""
         self._story_blocks = []
-        self._show_story = False
         self._story_outline = []
         self._header_title = Typography(
             self.param.title, variant="h1", margin=(0, 0, 0, 10)
@@ -948,13 +950,16 @@ class Report(TaskGroup):
                 }
             }
         )
-        # The story view is a separate flow so the section accordion (and its
-        # checkboxes) is never disturbed; the toggle swaps which one is visible.
-        # A headerless Card gives it the same white pane as the section cards.
+        # The story lives in its own tab so the section accordion (and its
+        # checkboxes) is never disturbed, and the two are told apart at a glance
+        # rather than by swapping one view for the other. A headerless Card gives
+        # it the same white pane as the section cards.
         self._story_column = Card(
-            sizing_mode="stretch_width", margin=(0, 5, 15, 5), visible=False,
+            sizing_mode="stretch_width", margin=(0, 5, 15, 5),
             collapsible=False, hide_header=True,
         )
+        # The Story tab is added only once a story exists.
+        self._tabs = Tabs(("Report", self._view), sizing_mode="stretch_width")
         self._run = IconButton(
             icon="play_arrow", on_click=self._execute_event, margin=0, size="large",
             description="Execute Report", loading=self.param.running,
@@ -987,11 +992,6 @@ class Report(TaskGroup):
             icon="reorder", on_click=self._open_arrange_dialog, size="large",
             color="default", margin=0, visible=False,
             description="Arrange the report (reorder sections and add headings)",
-        )
-        self._view_toggle = IconButton(
-            icon="swap_horiz", on_click=self._toggle_view, size="large",
-            color="default", margin=0, visible=False,
-            description="Switch between the report (with section checkboxes) and the story view",
         )
         self._export = MenuButton(
             label="", icon="get_app", variant="text", color="default",
@@ -1076,7 +1076,6 @@ class Report(TaskGroup):
             self._collapse,
             self._annotate,
             self._arrange,
-            self._view_toggle,
             self._export,
             self._settings,
             sizing_mode="stretch_width"
@@ -1088,7 +1087,6 @@ class Report(TaskGroup):
                 {"label": "Clear Report", "icon": "clear"},
                 {"label": "Annotate Report", "icon": "auto_stories"},
                 {"label": "Arrange Report", "icon": "reorder"},
-                {"label": "Switch Report/Story View", "icon": "swap_horiz"},
                 {"label": "Export as Notebook", "icon": "description", "format": "ipynb"},
                 {"label": "Export as HTML", "icon": "language", "format": "html"},
                 {"label": "Configure Report", "icon": "settings"}
@@ -1120,8 +1118,7 @@ class Report(TaskGroup):
         )
         self._container = Column(
             self._export_hint,
-            self._view,
-            self._story_column,
+            self._tabs,
             self._dialog,
             self._outline_dialog,
             self._story_dialog,
@@ -1147,8 +1144,6 @@ class Report(TaskGroup):
             self._open_story_dialog()
         elif icon == "reorder":
             self._open_arrange_dialog()
-        elif icon == "swap_horiz":
-            self._toggle_view()
         elif icon in ("description", "language"):
             fmt = item.get("format", "ipynb")
             self._export.value = {"format": fmt}
@@ -1170,7 +1165,6 @@ class Report(TaskGroup):
         self._annotate.visible = has_outputs
         self._annotate.disabled = self.llm is None
         self._arrange.visible = has_outputs
-        self._view_toggle.visible = bool(self._story_blocks)
         self._export.visible = has_outputs
         self._settings.visible = has_outputs
         # Only animate play button when no outputs
@@ -1447,7 +1441,6 @@ class Report(TaskGroup):
             if index not in used:
                 blocks.append(("view", view))
         self._story_blocks = blocks
-        self._view_toggle.visible = True
         self._render_story()
 
     def _rebuild_view(self, editor):
@@ -1472,30 +1465,27 @@ class Report(TaskGroup):
             )
         return items
 
-    def _render_story(self):
-        """Build the blog-post flow into its own column, then show it."""
-        self._story_column[:] = self._story_flow()
-        self._show_story = True
-        self._view.visible = False
-        self._story_column.visible = True
+    @property
+    def _show_story(self):
+        """Whether the story, rather than the report, is the view on screen."""
+        return len(self._tabs) > self._STORY_TAB and self._tabs.active == self._STORY_TAB
 
-    def _toggle_view(self, event=None):
-        """Flip between the editable section view and the generated story view."""
-        if not self._story_blocks:
-            return
-        self._show_story = not self._show_story
-        self._view.visible = not self._show_story
-        self._story_column.visible = self._show_story
+    def _render_story(self):
+        """Build the blog-post flow into the Story tab, then switch to it."""
+        self._story_column[:] = self._story_flow()
+        if len(self._tabs) <= self._STORY_TAB:
+            self._tabs.append(("Story", self._story_column))
+        self._tabs.active = self._STORY_TAB
 
     def _discard_story(self):
-        """Forget any generated story and return to the section view."""
+        """Forget any generated story and drop back to the report tab."""
         self._story_blocks = []
         self._story_title = ""
-        self._show_story = False
-        self._view_toggle.visible = False
         self._story_column[:] = []
-        self._story_column.visible = False
-        self._view.visible = True
+        if len(self._tabs) > self._STORY_TAB:
+            self._tabs.pop(self._STORY_TAB)
+        # Popping leaves ``active`` pointing at the removed tab.
+        self._tabs.active = 0
 
     def reset(self, start: int = 0):
         # Clearing the report also drops the generated story.
