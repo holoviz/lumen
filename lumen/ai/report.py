@@ -14,6 +14,7 @@ from typing import Any, Self, final
 import panel as pn
 import param
 
+from panel.custom import JSComponent
 from panel.io import hold
 from panel.io.cache import is_equal
 from panel.layout.base import (
@@ -81,6 +82,49 @@ def _export_header(section, status_source, variant="h3"):
         _export_checkbox(section, status_source), title,
         align="center", sizing_mode="stretch_width",
     )
+
+
+class EditableProse(JSComponent):
+    """
+    A paragraph the user can edit in place, like a document editor.
+
+    Typing syncs the text back to ``value``. ``value`` is only written back into
+    the element when it differs from what is already there, because assigning to
+    a contenteditable node resets the caret to the start, which would make it
+    impossible to type.
+    """
+
+    value = param.String(default="", doc="""
+        The edited text.""")
+
+    _esm = """
+    export function render({ model }) {
+      const div = document.createElement('div')
+      div.contentEditable = 'true'
+      div.className = 'editable-prose'
+      div.textContent = model.value
+      div.addEventListener('input', () => { model.value = div.textContent })
+      model.on('value', () => {
+        if (div.textContent !== model.value) {
+          div.textContent = model.value
+        }
+      })
+      return div
+    }
+    """
+
+    _stylesheets = [
+        """
+        .editable-prose {
+          outline: none;
+          padding: 4px 6px;
+          border-radius: 4px;
+          white-space: pre-wrap;
+        }
+        .editable-prose:hover { background: rgba(127, 127, 127, 0.08); }
+        .editable-prose:focus { background: rgba(127, 127, 127, 0.12); }
+        """
+    ]
 
 
 class Task(Viewer):
@@ -1211,7 +1255,10 @@ class Report(TaskGroup):
         # title, then prose interleaved with the charts and tables it discusses.
         if self._show_story and self._story_blocks:
             views.append(Typography(self._story_title, variant="h2"))
-            views += [obj for _, obj in self._story_blocks]
+            views += [
+                Markdown(obj) if kind == "prose" else obj
+                for kind, obj in self._story_blocks
+            ]
             return views
         if self._story_outline:
             for kind, value, level in self._iter_arrangement():
@@ -1431,7 +1478,7 @@ class Report(TaskGroup):
         blocks, used = [], set()
         for block in story.blocks:
             if block.prose and block.prose.strip():
-                blocks.append(("prose", Markdown(block.prose, sizing_mode="stretch_width", margin=(5, 10))))
+                blocks.append(("prose", block.prose))
             index = block.view
             if index is not None and 1 <= index <= len(catalog) and index not in used:
                 used.add(index)
@@ -1451,19 +1498,35 @@ class Report(TaskGroup):
             spec = component.to_spec()
         return Pipeline.from_spec(spec) if isinstance(component, Pipeline) else View.from_spec(spec)
 
-    def _story_flow(self):
-        """The blog-post flow as renderables: the title, then prose interleaved
-        with freshly rebuilt charts and tables. Rebuilding gives each caller its
-        own copies so the live view and the exports never share objects."""
+    def _story_flow(self, editable=False):
+        """
+        The blog-post flow as renderables: the title, then prose interleaved with
+        freshly rebuilt charts and tables. Rebuilding gives each caller its own
+        copies so the live view and the exports never share objects. Prose is
+        editable on screen and plain Markdown when exported.
+        """
         items = []
         if self._story_title:
             items.append(Typography(self._story_title, variant="h4", margin=(10, 10, 0, 10)))
-        for kind, obj in self._story_blocks:
-            items.append(
-                Markdown(obj.object, sizing_mode="stretch_width", margin=(5, 10))
-                if kind == "prose" else self._rebuild_view(obj)
-            )
+        for index, (kind, obj) in enumerate(self._story_blocks):
+            if kind != "prose":
+                items.append(self._rebuild_view(obj))
+            elif editable:
+                items.append(self._editable_prose(index, obj))
+            else:
+                items.append(Markdown(obj, sizing_mode="stretch_width", margin=(5, 10)))
         return items
+
+    def _editable_prose(self, index, text):
+        """Prose the user can edit in place; edits are written back to the story."""
+        prose = EditableProse(value=text, sizing_mode="stretch_width", margin=(5, 10))
+        prose.param.watch(partial(self._update_prose, index), "value")
+        return prose
+
+    def _update_prose(self, index, event):
+        # Keep the story blocks as the single source of truth so manual edits
+        # survive tab switches and flow into every export.
+        self._story_blocks[index] = ("prose", event.new)
 
     @property
     def _show_story(self):
@@ -1472,7 +1535,7 @@ class Report(TaskGroup):
 
     def _render_story(self):
         """Build the blog-post flow into the Story tab, then switch to it."""
-        self._story_column[:] = self._story_flow()
+        self._story_column[:] = self._story_flow(editable=True)
         if len(self._tabs) <= self._STORY_TAB:
             self._tabs.append(("Story", self._story_column))
         self._tabs.active = self._STORY_TAB

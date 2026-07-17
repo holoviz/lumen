@@ -259,6 +259,39 @@ async def test_report_story_tab_added_and_export_follows_active_tab(llm, tiny_so
     assert "Story prose." in _nb_text(report)
 
 
+async def test_story_prose_is_editable_and_edits_reach_the_exports(llm, tiny_source):
+    from lumen.ai.agents.story import Story, StoryBlock
+    from lumen.ai.report import EditableProse
+
+    report = Report(
+        Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
+        title='R', llm=llm,
+    )
+    await report.execute()
+    llm.set_responses([Story(chain_of_thought="c", title="T", blocks=[
+        StoryBlock(prose="Original prose."), StoryBlock(view=1),
+    ])])
+    await report._annotate_report()
+
+    # Prose is kept as text and rendered as an editable block on screen.
+    assert report._story_blocks[0] == ("prose", "Original prose.")
+    editors = [obj for obj in report._story_column.objects if isinstance(obj, EditableProse)]
+    assert len(editors) == 1
+
+    # Editing writes back to the story, which every export reads from.
+    editors[0].value = "Edited by hand."
+    assert report._story_blocks[0] == ("prose", "Edited by hand.")
+    nb = _nb_text(report)
+    assert "Edited by hand." in nb
+    assert "Original prose." not in nb
+    assert "Edited by hand." in report.to_html()
+
+    # The edit survives re-rendering the story (e.g. switching tabs).
+    report._render_story()
+    editors = [obj for obj in report._story_column.objects if isinstance(obj, EditableProse)]
+    assert editors[0].value == "Edited by hand."
+
+
 async def test_report_reset_discards_story(llm, tiny_source):
     from lumen.ai.agents.story import Story, StoryBlock
 
