@@ -64,7 +64,7 @@ HoloViz = "https://holoviz.org/"
 [project.optional-dependencies]
 tests = ['pytest', 'pytest-rerunfailures', 'pytest-asyncio', 'pytest-xdist', 'lxml']
 dev = [
-    'lumen[tests,sql,ai-openai,xarray]',
+    'lumen[tests,sql,ai-openai,xarray,geo]',
     'panel>=1.9.0rc0',
 ]
 sql = ['sqlalchemy']
@@ -83,6 +83,7 @@ chromadb = ['chromadb']
 bigquery = ['google-cloud-bigquery', 'sqlalchemy-bigquery']
 xarray = ['xarray', 'xarray-sql', 'netCDF4', 'zarr']
 xarray-grib = ['lumen[xarray]', 'cfgrib', 'eccodes']
+geo = ['geopandas', 'geoviews']
 snowflake = ['snowflake-connector-python', 'cryptography']
 ae5 = ['ae5-tools']
 mcp = ['fastmcp']
