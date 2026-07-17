@@ -334,6 +334,41 @@ async def test_story_prose_rewritten_by_ai(llm, tiny_source):
     assert "Punchier prose." in _nb_text(report)
 
 
+async def test_regenerating_keeps_the_previous_version_and_its_edits(llm, tiny_source):
+    from lumen.ai.agents.story import Story, StoryBlock
+
+    report = Report(
+        Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
+        title='R', llm=llm,
+    )
+    await report.execute()
+
+    llm.set_responses([Story(chain_of_thought="c", title="V1", blocks=[
+        StoryBlock(prose="v1 prose"), StoryBlock(view=1),
+    ])])
+    await report._annotate_report()
+    assert len(report._story_versions) == 1
+
+    # The user edits the first version by hand.
+    _prose_editors(report)[0].value = "my edit in v1"
+
+    # Regenerating adds a second version rather than overwriting the first.
+    llm.set_responses([Story(chain_of_thought="c", title="V2", blocks=[
+        StoryBlock(prose="v2 prose"), StoryBlock(view=1),
+    ])])
+    await report._annotate_report()
+    assert len(report._story_versions) == 2
+    assert report._story_version == 1
+    assert "v2 prose" in _nb_text(report)
+
+    # Going back to the first version restores it with the edit intact.
+    report._select_version(0)
+    assert report._story_title == "V1"
+    nb = _nb_text(report)
+    assert "my edit in v1" in nb
+    assert "v2 prose" not in nb
+
+
 async def test_report_reset_discards_story(llm, tiny_source):
     from lumen.ai.agents.story import Story, StoryBlock
 

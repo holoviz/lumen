@@ -981,6 +981,8 @@ class Report(TaskGroup):
         self._section_headers = {}
         self._story_title = ""
         self._story_blocks = []
+        self._story_versions = []
+        self._story_version = 0
         self._story_outline = []
         self._header_title = Typography(
             self.param.title, variant="h1", margin=(0, 0, 0, 10)
@@ -1491,8 +1493,7 @@ class Report(TaskGroup):
             self._story_generate.loading = False
 
     def _set_story(self, story, catalog):
-        """Resolve the LLM story into interleaved prose/view blocks and render it."""
-        self._story_title = story.title or "Story"
+        """Resolve the LLM story into interleaved prose/view blocks as a new version."""
         blocks, used = [], set()
         for block in story.blocks:
             if block.prose and block.prose.strip():
@@ -1505,8 +1506,22 @@ class Report(TaskGroup):
         for index, view in enumerate(catalog, start=1):
             if index not in used:
                 blocks.append(("view", view))
-        self._story_blocks = blocks
+        # Each story is kept as its own version, so regenerating offers a fresh
+        # take without throwing away one the user may have edited by hand.
+        self._story_versions.append({"title": story.title or "Story", "blocks": blocks})
+        self._select_version(len(self._story_versions) - 1)
+
+    def _select_version(self, index):
+        """Show one of the generated versions of the story."""
+        self._story_version = index
+        version = self._story_versions[index]
+        self._story_title = version["title"]
+        # The version's own list is used live, so edits stay with that version.
+        self._story_blocks = version["blocks"]
         self._render_story()
+
+    def _switch_version(self, event):
+        self._select_version(event.new)
 
     def _rebuild_view(self, editor):
         """An independent copy of a chart/table so the story preview never detaches
@@ -1527,15 +1542,25 @@ class Report(TaskGroup):
         if self._story_title:
             heading = Typography(self._story_title, variant="h4", margin=(10, 10, 0, 10))
             if editable and self.llm is not None:
+                controls = [heading]
+                if len(self._story_versions) > 1:
+                    version = Select(
+                        options={f"Version {i+1}": i for i in range(len(self._story_versions))},
+                        value=self._story_version, width=140, align="center",
+                        margin=(10, 10, 0, 0), label="",
+                        description="Switch between the generated versions of the story",
+                    )
+                    version.param.watch(self._switch_version, "value")
+                    controls.append(version)
                 # Regenerating reopens the guidance popup, so a fresh story can be
-                # written with a different angle.
-                regenerate = Button(
+                # written with a different angle as a new version.
+                controls.append(Button(
                     label="Regenerate", variant="outlined", size="small", color="default",
                     icon="refresh", align="center", margin=(10, 10, 0, 0),
-                    description="Write the whole story again",
+                    description="Write the story again as a new version",
                     on_click=self._open_story_dialog,
-                )
-                heading = Row(heading, regenerate, align="center", sizing_mode="stretch_width")
+                ))
+                heading = Row(*controls, align="center", sizing_mode="stretch_width")
             items.append(heading)
         for index, (kind, obj) in enumerate(self._story_blocks):
             if kind != "prose":
@@ -1603,9 +1628,11 @@ class Report(TaskGroup):
         self._tabs.active = self._STORY_TAB
 
     def _discard_story(self):
-        """Forget any generated story and drop back to the report tab."""
+        """Forget every generated version and drop back to the report tab."""
         self._story_blocks = []
         self._story_title = ""
+        self._story_versions = []
+        self._story_version = 0
         self._story_column[:] = []
         if len(self._tabs) > self._STORY_TAB:
             self._tabs.pop(self._STORY_TAB)
