@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import builtins
 import importlib
+import json
 import sys
 
 from pathlib import Path
@@ -14,7 +15,7 @@ from unittest.mock import patch
 
 import pytest
 
-from lumen.util import try_import_geopandas, try_import_xarray
+from lumen.util import try_import, try_import_xarray
 
 # Each entry: (module_path, class_name, guard_package, pip_extra)
 OPTIONAL_SOURCES = [
@@ -88,14 +89,35 @@ def test_import_raises_when_dependency_missing(module_path, class_name, guard_pa
         sys.modules.update(saved)
 
 
+def test_try_import_returns_module_when_installed():
+    """try_import returns the module object for an importable module."""
+    assert try_import("json") is json
+
+
+def test_try_import_returns_none_when_missing():
+    """try_import returns None (not raises) for a module that cannot be imported."""
+    assert try_import("a_module_that_does_not_exist_xyz") is None
+
+
+def test_try_import_load_false_returns_already_imported_module():
+    """try_import(load=False) returns a module that is already imported."""
+    assert try_import("json", load=False) is json
+
+
+def test_try_import_load_false_never_imports():
+    """try_import(load=False) must not trigger an import, only consult sys.modules."""
+    with patch("lumen.util.importlib.import_module", side_effect=AssertionError("imported")):
+        assert try_import("a_module_that_does_not_exist_xyz", load=False) is None
+
+
 def test_try_import_geopandas_returns_module_when_installed():
-    """try_import_geopandas returns the geopandas module when importable."""
+    """try_import returns the geopandas module when it is importable."""
     gpd = pytest.importorskip("geopandas")
-    assert try_import_geopandas() is gpd
+    assert try_import("geopandas") is gpd
 
 
 def test_try_import_geopandas_none_when_missing():
-    """try_import_geopandas returns None (not raises) when geopandas is absent."""
+    """try_import returns None (not raises) when geopandas is absent."""
     real_import = builtins.__import__
 
     def mock_import(name, *args, **kwargs):
@@ -109,7 +131,7 @@ def test_try_import_geopandas_none_when_missing():
     }
     try:
         with patch("builtins.__import__", side_effect=mock_import):
-            assert try_import_geopandas() is None
+            assert try_import("geopandas") is None
     finally:
         sys.modules.update(saved)
 
