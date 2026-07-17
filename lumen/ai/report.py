@@ -49,6 +49,29 @@ from .utils import (
 )
 
 
+def _export_header(section, status_source, variant="h3"):
+    """
+    Heading for a section with a checkbox controlling whether it is kept when
+    the report is exported. ``status_source`` supplies the status the checkbox
+    tracks, so it only appears once there is something to export.
+    """
+    checkbox = Checkbox.from_param(
+        section.param.include_in_export,
+        label="",
+        align="center",
+        margin=(0, 4, 0, 0),
+        description="Include this section when exporting the report",
+        visible=param.bind(
+            lambda status, views: (
+                status in ("success", "error", "cancelled") or bool(views)
+            ),
+            status_source.param.status, status_source.param.views,
+        ),
+    )
+    title = Typography(section.param.title, variant=variant, margin=0)
+    return Row(checkbox, title, align="center", sizing_mode="stretch_width")
+
+
 class Task(Viewer):
     """
     A `Task` defines a single unit of work that can be executed and rendered.
@@ -771,7 +794,23 @@ class Section(TaskGroup):
         placeholders = [self._placeholder]
         if self._task_previews is not None:
             placeholders.append(self._task_previews)
-        self._view[:] = self._header + placeholders + list(self._tasks)
+        self._view[:] = self._header + placeholders + [self._task_view(task) for task in self._tasks]
+
+    def _task_view(self, task):
+        """
+        Nested sections render their own heading and export checkbox; the report
+        only draws headers for its top level sections, so without this a nested
+        section could not be selected.
+        """
+        if not isinstance(task, Section):
+            return task
+        return Column(
+            _export_header(task, task, variant="h4"),
+            task,
+            sizing_mode="stretch_width",
+            styles={'min-height': 'unset'},
+            height_policy='fit',
+        )
 
     async def _run_task(self, i: int, task: Task | Actor, context: TContext | None, **kwargs) -> list[Any]:
         if context is not None:
@@ -1048,20 +1087,34 @@ class Report(TaskGroup):
         # Task-less reports (e.g. Report.from_views) populate ``views`` directly.
         if not len(self):
             return self.views
-        selected = [
-            view
-            for section in self
-            if section.include_in_export
-            for view in section.views
-        ]
-        return list(self._header) + selected
+        return self._selected_views(self)
+
+    def _selected_views(self, group, include_header=True):
+        """
+        The views of a task group, skipping sections discarded from the export.
+        Walks the tasks rather than reading ``group.views`` so that a nested
+        section's selection is honoured, not just a top level one's.
+        """
+        views = list(group._header) if include_header else []
+        for task in group:
+            if isinstance(task, Section) and not task.include_in_export:
+                continue
+            views += self._selected_views(task) if isinstance(task, TaskGroup) else list(task.views)
+        return views
 
     def _export_view(self):
         # Task-less reports (e.g. Report.from_views) populate ``_view`` directly.
         if not len(self):
             return self._view
+        # Build each card from the section's selected views rather than the
+        # section itself, so a discarded nested section is left out of the HTML
+        # too. The card header already shows the title, hence no heading.
         cards = [
-            (section.title, section) for section in self if section.include_in_export
+            (
+                section.title,
+                Column(*self._selected_views(section, include_header=False), sizing_mode="stretch_width"),
+            )
+            for section in self if section.include_in_export
         ]
         return Accordion(
             *cards,
@@ -1151,21 +1204,7 @@ class Report(TaskGroup):
 
     def _section_header(self, section):
         """Card header with a checkbox to keep/discard the section on export."""
-        checkbox = Checkbox.from_param(
-            section.param.include_in_export,
-            label="",
-            align="center",
-            margin=(0, 4, 0, 0),
-            description="Include this section when exporting the report",
-            visible=param.bind(
-                lambda status, views: (
-                    status in ("success", "error", "cancelled") or bool(views)
-                ),
-                self.param.status, self.param.views,
-            ),
-        )
-        title = Typography(section.param.title, variant="h3", margin=0)
-        return Row(checkbox, title, align="center", sizing_mode="stretch_width")
+        return _export_header(section, self)
 
     def _populate_view(self):
         headers = {}

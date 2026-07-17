@@ -431,6 +431,63 @@ async def test_report_to_notebook_excludes_deselected_section():
     assert "Multi Report" in sources
 
 
+async def test_report_export_excludes_deselected_nested_section():
+    nested = Section(B(order=[]), title='Nested Section')
+    report = Report(
+        Section(A(order=[]), nested, title='Outer Section'),
+        title='Multi Report',
+    )
+    await report.execute()
+
+    # A nested section is included by default, like a top level one.
+    sources = "".join(
+        "".join(cell["source"]) for cell in json.loads(report.to_notebook())["cells"]
+    )
+    assert "A done" in sources
+    assert "B done" in sources
+
+    # Deselecting the nested section drops it (and its heading) but keeps the
+    # rest of the section it lives in.
+    nested.include_in_export = False
+    sources = "".join(
+        "".join(cell["source"]) for cell in json.loads(report.to_notebook())["cells"]
+    )
+    assert "A done" in sources
+    assert "Outer Section" in sources
+    assert "B done" not in sources
+    assert "Nested Section" not in sources
+
+    # The HTML export honours the nested selection too.
+    html = report.to_html()
+    assert "A done" in html
+    assert "B done" not in html
+
+
+def _find_checkbox(obj):
+    """The first Checkbox rendered anywhere in a component tree."""
+    if isinstance(obj, Checkbox):
+        return obj
+    for child in (getattr(obj, 'objects', None) or []):
+        found = _find_checkbox(child[1] if isinstance(child, tuple) else child)
+        if found is not None:
+            return found
+    return None
+
+
+async def test_nested_section_renders_export_checkbox():
+    nested = Section(B(order=[]), title='Nested Section')
+    outer = Section(A(order=[]), nested, title='Outer Section')
+    report = Report(outer, title='Multi Report')
+    await report.execute()
+
+    checkbox = _find_checkbox(outer._view)
+    assert checkbox is not None, "a nested section should render a checkbox so it can be selected"
+
+    # The checkbox is bound to the nested section's include_in_export.
+    checkbox.value = False
+    assert nested.include_in_export is False
+
+
 async def test_report_to_html_excludes_deselected_section():
     report = Report(
         Section(A(order=[]), title='Section A'),
