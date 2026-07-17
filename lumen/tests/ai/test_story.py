@@ -308,6 +308,22 @@ async def test_story_prose_is_editable_and_edits_reach_the_exports(llm, tiny_sou
     assert _prose_editors(report)[0].value == "Edited by hand."
 
 
+def test_editable_prose_renders_markdown():
+    from lumen.ai.report import EditableProse
+
+    prose = EditableProse(value="**Pop** leads with *1,252*")
+
+    # The story shows rendered prose, not Markdown source.
+    assert "<strong>Pop</strong>" in prose._rendered
+    assert "<em>1,252</em>" in prose._rendered
+
+    # Editing the text re-renders it.
+    prose.value = "## Heading"
+    assert "<h2>" in prose._rendered
+    # The source is kept as written, so it exports as Markdown.
+    assert prose.value == "## Heading"
+
+
 async def test_story_prose_rewritten_by_ai(llm, tiny_source):
     from lumen.ai.agents.story import ProseEdit, Story, StoryBlock
 

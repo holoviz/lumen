@@ -75,8 +75,10 @@ class StoryAgent(LLMUser):
                 "template": PROMPTS_DIR / "StoryAgent" / "main.jinja2",
                 "response_model": Story,
             },
-            "edit": {
-                "template": PROMPTS_DIR / "StoryAgent" / "edit.jinja2",
+            # Named "rewrite" rather than "edit": model_kwargs maps an "edit"
+            # spec to a pricier model on some providers, and this is a small job.
+            "rewrite": {
+                "template": PROMPTS_DIR / "StoryAgent" / "rewrite.jinja2",
                 "response_model": ProseEdit,
             },
         }
@@ -85,7 +87,7 @@ class StoryAgent(LLMUser):
     async def rewrite_prose(self, prose: str, instruction: str, catalog: str = "") -> ProseEdit:
         """Rewrite a single paragraph of the story following the user's instruction."""
         return await self._invoke_prompt(
-            "edit",
+            "rewrite",
             messages=[{"role": "user", "content": "Rewrite the paragraph."}],
             context={},
             prose=prose,

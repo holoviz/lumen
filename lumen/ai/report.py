@@ -86,29 +86,52 @@ def _export_header(section, status_source, variant="h3"):
 
 class EditableProse(JSComponent):
     """
-    A paragraph the user can edit in place, like a document editor.
+    A paragraph of Markdown the user can edit in place, like a document editor.
 
-    Typing syncs the text back to ``value``. ``value`` is only written back into
-    the element when it differs from what is already there, because assigning to
-    a contenteditable node resets the caret to the start, which would make it
+    It shows the rendered Markdown until it is clicked, then swaps to the raw
+    text to edit and renders again on blur, so the story reads as prose rather
+    than as Markdown source. ``value`` is only written back into the element
+    when it differs from what is already there, because assigning to a
+    contenteditable node resets the caret to the start, which would make it
     impossible to type.
     """
 
     value = param.String(default="", doc="""
-        The edited text.""")
+        The Markdown source of the paragraph.""")
+
+    _rendered = param.String(default="", doc="""
+        ``value`` rendered to HTML, shown while the paragraph is not edited.""")
 
     _esm = """
     export function render({ model }) {
       const div = document.createElement('div')
-      div.contentEditable = 'true'
       div.className = 'editable-prose'
-      div.textContent = model.value
+      div.title = 'Click to edit'
+
+      const show = () => { div.innerHTML = model._rendered }
+      const edit = () => {
+        div.textContent = model.value
+        div.contentEditable = 'true'
+        div.classList.add('editing')
+        div.focus()
+      }
+
+      div.addEventListener('click', () => { if (div.contentEditable !== 'true') edit() })
       div.addEventListener('input', () => { model.value = div.textContent })
+      div.addEventListener('blur', () => {
+        div.contentEditable = 'false'
+        div.classList.remove('editing')
+        show()
+      })
+      model.on('_rendered', () => { if (div.contentEditable !== 'true') show() })
       model.on('value', () => {
-        if (div.textContent !== model.value) {
+        // Only while editing, and only if it really changed, or the caret jumps.
+        if (div.contentEditable === 'true' && div.textContent !== model.value) {
           div.textContent = model.value
         }
       })
+
+      show()
       return div
     }
     """
@@ -119,12 +142,29 @@ class EditableProse(JSComponent):
           outline: none;
           padding: 4px 6px;
           border-radius: 4px;
+          cursor: text;
+        }
+        .editable-prose > :first-child { margin-top: 0; }
+        .editable-prose > :last-child { margin-bottom: 0; }
+        .editable-prose:hover { background: rgba(127, 127, 127, 0.08); }
+        .editable-prose.editing {
+          background: rgba(127, 127, 127, 0.12);
           white-space: pre-wrap;
         }
-        .editable-prose:hover { background: rgba(127, 127, 127, 0.08); }
-        .editable-prose:focus { background: rgba(127, 127, 127, 0.12); }
         """
     ]
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._render_markdown()
+
+    @param.depends("value", watch=True)
+    def _render_markdown(self):
+        # Rendered with the same engine as Panel's Markdown pane, so the story
+        # reads identically on screen and in the exports.
+        from markdown_it import MarkdownIt
+
+        self._rendered = MarkdownIt("gfm-like").render(self.value)
 
 
 class Task(Viewer):
