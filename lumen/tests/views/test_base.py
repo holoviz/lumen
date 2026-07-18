@@ -10,13 +10,19 @@ import pytest
 from lumen.panel import DownloadButton
 from lumen.pipeline import Pipeline
 from lumen.sources.base import FileSource
-from lumen.sources.duckdb import DuckDBSource
 from lumen.state import state
 from lumen.tests.utils import Polygon, gpd, requires_geopandas
 from lumen.variables.base import Variables
 from lumen.views.base import (
     DeckGLView, Panel, Table, VegaLiteView, View, hvOverlayView, hvPlotView,
 )
+
+# duckdb is a core dependency but the minimal test-core env omits it, and the
+# geometry tests skip on their own via the DuckDBSource(...) guard below.
+try:
+    from lumen.sources.duckdb import DuckDBSource
+except ImportError:
+    DuckDBSource = None
 
 # geoviews is checked without importing it: importing geoviews (-> matplotlib)
 # at collection under xdist can deadlock the font cache on macOS. hvplot imports
