@@ -145,19 +145,12 @@ def test_try_import_xarray_returns_module_when_installed():
 
 def test_try_import_xarray_none_when_missing():
     """try_import_xarray returns None (not raises) when xarray-sql is absent."""
-    real_import = builtins.__import__
+    real_import = importlib.import_module
 
     def mock_import(name, *args, **kwargs):
-        if name == "xarray_sql" or name.startswith("xarray_sql."):
+        if name == "xarray_sql":
             raise ImportError("No module named 'xarray_sql'")
         return real_import(name, *args, **kwargs)
 
-    saved = {
-        key: sys.modules.pop(key)
-        for key in [k for k in sys.modules if k == "xarray_sql" or k.startswith("xarray_sql.")]
-    }
-    try:
-        with patch("builtins.__import__", side_effect=mock_import):
-            assert try_import_xarray() is None
-    finally:
-        sys.modules.update(saved)
+    with patch("lumen.util.importlib.import_module", side_effect=mock_import):
+        assert try_import_xarray() is None

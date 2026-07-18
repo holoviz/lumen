@@ -526,14 +526,11 @@ def try_import(module_name, load=True):
         return None
 
 
-def try_import_xarray():
+def try_import_xarray(load=True):
     """Import and return xarray, or None if xarray or xarray-sql is unavailable."""
-    try:
-        import xarray
-        import xarray_sql  # noqa
-        return xarray
-    except ImportError:
+    if try_import("xarray_sql", load=load) is None:
         return None
+    return try_import("xarray", load=load)
 
 
 def is_geodataframe(df):
