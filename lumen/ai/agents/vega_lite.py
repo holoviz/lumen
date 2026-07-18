@@ -24,7 +24,7 @@ from ..editors import LumenEditor, VegaLiteEditor
 from ..llm import Message, OpenAI
 from ..models import EscapeBaseModel, RetrySpec
 from ..utils import (
-    get_data, get_schema, gridded_metadata, load_json, log_debug,
+    get_data, get_gridded_metadata, get_schema, load_json, log_debug,
     normalize_vegalite_spec, retry_llm_output, subset_gridded_to_2d,
 )
 from ..vector_store import DuckDBVectorStore
@@ -415,7 +415,7 @@ class VegaLiteAgent(BaseCodeAgent):
     ) -> dict[str, Any]:
         """Generate VegaLite spec via YAML (declarative mode)."""
         errors_context = self._build_errors_context(pipeline, context, errors)
-        gridded = gridded_metadata(pipeline)
+        gridded = get_gridded_metadata(pipeline)
         with self._add_step(title="Creating basic plot structure", steps_layout=self._steps_layout) as step:
             response = self._stream_prompt(
                 "main",
@@ -446,7 +446,7 @@ class VegaLiteAgent(BaseCodeAgent):
     ) -> dict[str, Any] | None:
         """Generate spec via Altair code execution."""
         errors_context = self._build_errors_context(pipeline, context, errors)
-        gridded = gridded_metadata(pipeline)
+        gridded = get_gridded_metadata(pipeline)
 
         with self._add_step(title="Generating Altair code", steps_layout=self._steps_layout) as step:
             response = self._stream_prompt(

@@ -9,13 +9,14 @@ pytest.importorskip("xarray_sql")
 
 from lumen.ai.config import PROMPTS_DIR
 from lumen.ai.utils import (
-    _spec_field_references, gridded_metadata, render_template,
+    _spec_field_references, get_gridded_metadata, render_template,
     subset_gridded_to_2d,
 )
 from lumen.pipeline import Pipeline
 from lumen.sources.base import InMemorySource
 from lumen.sources.xarray_sql import XArraySQLSource
 from lumen.util import try_import_xarray
+from lumen.views.base import hvPlotView
 
 pytestmark = pytest.mark.skipif(
     try_import_xarray() is None, reason="xarray not installed"
@@ -69,10 +70,10 @@ def tabular_pipeline():
     return Pipeline(source=source, table="data")
 
 
-# ---- gridded_metadata tests ----
+# ---- get_gridded_metadata tests ----
 
 def test_gridded_metadata_xarray_source(xarray_pipeline):
-    result = gridded_metadata(xarray_pipeline)
+    result = get_gridded_metadata(xarray_pipeline)
     assert result is not None
     assert result["source_type"] == "xarray"
     assert "lat" in result["dims"]
@@ -83,7 +84,7 @@ def test_gridded_metadata_xarray_source(xarray_pipeline):
 
 
 def test_gridded_metadata_pandas_source(tabular_pipeline):
-    result = gridded_metadata(tabular_pipeline)
+    result = get_gridded_metadata(tabular_pipeline)
     assert result is None
 
 
@@ -97,7 +98,7 @@ def test_gridded_metadata_regular_flag_false_for_irregular():
         coords={"lat": irregular_lats, "lon": lons},
     )
     pipeline = Pipeline(source=XArraySQLSource(_dataset=ds), table="air")
-    result = gridded_metadata(pipeline)
+    result = get_gridded_metadata(pipeline)
     assert result is not None
     assert result["regular"] is False
 
@@ -112,7 +113,7 @@ def test_gridded_metadata_handles_datetime_coord():
         coords={"time": times, "lon": lons},
     )
     pipeline = Pipeline(source=XArraySQLSource(_dataset=ds), table="temp")
-    result = gridded_metadata(pipeline)
+    result = get_gridded_metadata(pipeline)
     assert result is not None
     # daily-spaced datetimes are regular
     assert result["regular"] is True
@@ -229,10 +230,43 @@ def test_hvplot_prompt_pages_remaining_dims_with_groupby():
     assert "spatial axes" not in rendered
 
 
+def test_hvplot_prompt_offers_line_option():
+    """The gridded hvPlot prompt supports a 1D line/time-series, not only 2D maps."""
+    gridded = {
+        "source_type": "xarray",
+        "dims": ["time", "lat", "lon"],
+        "coords": {"time": [2], "lat": [3], "lon": [4]},
+        "data_vars": ["air"],
+        "regular": True,
+    }
+    rendered = render_template(
+        PROMPTS_DIR / "hvPlotAgent" / "main.jinja2",
+        **_base_context(gridded=gridded),
+    )
+    assert "kind='line'" in rendered
+    assert "time-series" in rendered
+
+
+def test_hvplot_line_from_gridded_not_pivoted(simple_dataset_3d_pipeline):
+    """A line kind renders from the long-form frame; the gridded pivot is only for
+    the 2D field kinds, so line/time-series plots work off an xarray grid."""
+    view = hvPlotView(
+        pipeline=simple_dataset_3d_pipeline,
+        kind="line", x="time", y="air", groupby=["lat", "lon"],
+    )
+    df = view.get_data()
+    # long-form frame, not pivoted to an xarray object
+    assert isinstance(df, pd.DataFrame)
+    assert {"time", "lat", "lon", "air"} <= set(df.columns)
+    # renders without raising or forcing a gridded pivot
+    plot = view.get_plot(df)
+    assert type(plot).__name__ in ("DynamicMap", "Curve", "NdOverlay")
+
+
 def test_gridded_metadata_stays_agnostic_about_spatial_dims(simple_dataset_3d_pipeline):
-    """gridded_metadata reports the raw dims and does not label which are
+    """get_gridded_metadata reports the raw dims and does not label which are
     spatial, so the view spec decides the axes (a lon/time Hovmoller is valid)."""
-    md = gridded_metadata(simple_dataset_3d_pipeline)
+    md = get_gridded_metadata(simple_dataset_3d_pipeline)
     assert md["dims"] == ["time", "lat", "lon"]
     assert "spatial_dims" not in md
     assert "extra_dims" not in md

@@ -1492,7 +1492,7 @@ def result_to_dataframe(result) -> pd.DataFrame | None:
     return None
 
 
-def gridded_metadata(pipeline: Pipeline) -> dict[str, Any] | None:
+def get_gridded_metadata(pipeline: Pipeline) -> dict[str, Any] | None:
     """Return gridded metadata for an xarray-backed pipeline, else None.
 
     Returns a dict with keys ``source_type``, ``dims``, ``coords``,
@@ -1573,7 +1573,7 @@ def subset_gridded_to_2d(
     time on a lon/lat map) collapse. Returns the pipeline unchanged when it is
     not gridded or the spec already references every dimension.
     """
-    md = gridded_metadata(pipeline)
+    md = get_gridded_metadata(pipeline)
     if not md:
         return pipeline
     ds = pipeline.source.dataset
