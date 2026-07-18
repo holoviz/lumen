@@ -58,6 +58,11 @@ class LumenEditor(Viewer):
 
     title = param.String(allow_None=True)
 
+    _context_updated = param.Event(doc="""
+        Triggered when the output's context changes after render (e.g. an
+        interactive selection) so watchers can refresh the out-context without
+        going through the spec/deserialize path.""")
+
     export_formats = ("yaml",)
 
     language = "yaml"
@@ -182,6 +187,10 @@ class LumenEditor(Viewer):
 
     @param.depends("spec", watch=True)
     def _update_component(self):
+        # spec is None for outputs that couldn't be serialized (e.g. an
+        # interactive analysis view); there is nothing to deserialize.
+        if self.spec is None:
+            return
         if self.spec in self._last_output and self.component is None:
             return
         pipeline = getattr(self.component, 'pipeline', None)
@@ -466,6 +475,14 @@ class AnalysisOutput(LumenEditor):
         if 'title' not in params or params['title'] is None:
             params['title'] = type(params['analysis']).__name__
         super().__init__(**params)
+        if self.analysis is not None:
+            self.analysis.param.watch(self._on_dynamic_provides, '_dynamic_provides')
+
+    def _on_dynamic_provides(self, event):
+        # The analysis published context after rendering (e.g. an interactive
+        # selection). Signal watchers to re-run render_context and merge it into
+        # out_context, without touching spec (which would try to re-deserialize).
+        self.param.trigger('_context_updated')
 
     def _render_editor(self):
         controls = self.analysis.controls(self.context)
@@ -485,6 +502,8 @@ class AnalysisOutput(LumenEditor):
     async def render_context(self):
         out_context = await super().render_context()
         out_context["analysis"] = self.analysis
+        if self.analysis is not None and self.analysis._dynamic_provides:
+            out_context.update(self.analysis._dynamic_provides)
         return out_context
 
     async def _rerun(self, event):
@@ -520,10 +539,13 @@ class SQLEditor(LumenEditor):
 
     def _render_editor(self):
         editor = super()._render_editor()
+        # Add top/bottom margin so the SQL code editor isn't clipped by the
+        # surrounding split pane / filter Paper (base sets margin=(0, 10)).
+        self._editor.margin = (15, 10, 0, 10)
         self._filters: dict[str, WidgetFilter] = {}
         self._filter_area = FlexBox(
-            sizing_mode="stretch_width", justify_content="space-evenly",
-            styles={"gap": "8px", "align-content": "flex-start"},
+            sizing_mode="stretch_both", min_height=60, justify_content="space-evenly",
+            styles={"gap": "6px", "align-content": "flex-start"},
         )
         # The filter widgets live in a Paper that the exploration view places
         # above the editor/table split (see ExplorerUI._render_view), so adding
@@ -532,8 +554,9 @@ class SQLEditor(LumenEditor):
         # split pane and scrolls internally (padding for margins) so tall
         # multi-select filters stay contained instead of overlapping the editor.
         self._filter_paper = Paper(
-            self._filter_area, elevation=2, margin=(8, 10),
-            sizing_mode="stretch_both", styles={"overflow-y": "auto", "padding": "10px"},
+            self._filter_area, elevation=0, margin=(8, 10),
+            sizing_mode="stretch_both", min_height=75,
+            styles={"overflow-y": "auto"},
             visible=False,
         )
         return editor
@@ -594,14 +617,18 @@ class SQLEditor(LumenEditor):
         if item["toggled"]:
             filt = self._filters.get(field)
             if filt is None:
-                filt = WidgetFilter(field=field, schema=self.component.schema)
+                filter_kwargs: dict[str, Any] = {"field": field, "schema": self.component.schema}
+                enum = self.component.schema[field].get("enum")
+                if enum is not None and len(enum) > WidgetFilter.param.max_options.default:
+                    filter_kwargs["max_options"] = len(enum)
+                filt = WidgetFilter(**filter_kwargs)
                 # Cap each filter's width so two fit per row; the FlexBox's
                 # space-evenly justification gives equal gaps. Use the compact
                 # size, hide the always-on value, and surface the range as a
                 # hover tooltip (description).
                 widget_opts = {
-                    "width": 180, "margin": (8, 5),
-                    "description": self._filter_tooltip(self.component.schema[field]),
+                    "min_width": 180, "max_width": 240, "height": 45, "margin": (8, 5),
+                    "sizing_mode": "stretch_width", "description": self._filter_tooltip(self.component.schema[field]),
                 }
                 params = filt.widget.param
                 # `size` is a small/medium/large Selector on sliders but a
@@ -609,6 +636,9 @@ class SQLEditor(LumenEditor):
                 # where "small" is a valid choice. show_value is slider-only.
                 if "size" in params and "small" in (getattr(params["size"], "objects", None) or []):
                     widget_opts["size"] = "small"
+                if "searchable" in params:
+                    widget_opts["searchable"] = True
+                    widget_opts["dropdown_height"] = 75
                 if "show_value" in params:
                     widget_opts["show_value"] = False
                 filt.widget.param.update(**widget_opts)
@@ -635,7 +665,7 @@ class SQLEditor(LumenEditor):
             variant="text",
             on_click=self._add_filter,
         )
-        controls.insert(1, filter_controls)
+        controls.insert(-1, filter_controls)
         return controls
 
     def export(self, fmt: str) -> StringIO | BytesIO:

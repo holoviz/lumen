@@ -70,6 +70,12 @@ IMAGE_MIME_TYPES = {
     '.bmp': 'image/bmp',
 }
 
+# Column-selection tuning for describe_data_sync.
+DEFAULT_MAX_SUMMARY_COLS = 16
+# Columns with at most this many distinct values are treated as
+# human-meaningful "enum"/categorical columns and prioritised.
+LOW_CARDINALITY_MAX = 10
+
 
 def deterministic_hash(text: str) -> int:
     """Stable hash using MD5, consistent across Python sessions."""
@@ -603,11 +609,119 @@ async def get_data(pipeline):
     return await asyncio.to_thread(get_data_sync)
 
 
+def _score_column_relevance(series: pd.Series, n_rows: int) -> float:
+    """
+    Cheap, dataset-agnostic relevance score used to pick which columns
+    to include in a summary. Higher is more informative.
+
+    The ordering favours low-cardinality categoricals (the columns a
+    model most often filters/groups on) and numerics with actual spread,
+    while penalising constant columns and near-unique id/free-text
+    columns. It deliberately relies only on dtype and cardinality so it
+    generalises across datasets rather than matching specific names.
+
+    Parameters
+    ----------
+    series : pd.Series
+        The (already row-sampled) column to score.
+    n_rows : int
+        Number of rows in the sample, used for the cardinality ratio.
+
+    Returns
+    -------
+    float
+        Relevance score; larger values are kept first.
+    """
+    try:
+        nunique = int(series.nunique(dropna=True))
+    except TypeError:
+        # Unhashable values (e.g. lists/dicts) — treat as uninformative.
+        return 0.5
+
+    if nunique <= 1:
+        # Constant (or all-null) column carries no signal.
+        return 0.0
+
+    ratio = nunique / n_rows if n_rows else 0.0
+
+    # Low-cardinality categorical/enum (incl. bool and small int codes):
+    # cheap to summarise and usually the most query-relevant. nunique is
+    # already capped, so no additional ratio gate is needed here — on small
+    # frames a low-card column can have a high ratio (e.g. 8/12) and should
+    # still be surfaced.
+    if nunique <= LOW_CARDINALITY_MAX:
+        return 3.0
+
+    # Continuous numerics: informative ranges/distributions.
+    if pd.api.types.is_numeric_dtype(series):
+        return 2.0
+
+    # Near-unique non-numeric column: likely an id or free text.
+    if ratio > 0.9:
+        return 0.5
+
+    # Moderate-cardinality text.
+    return 1.5
+
+
+def _select_relevant_columns(
+    df: pd.DataFrame,
+    max_cols: int,
+    priority_columns: list[str] | None = None,
+) -> tuple[list[str], bool]:
+    """
+    Choose up to *max_cols* columns to summarise, ordered by relevance.
+
+    Any caller-supplied *priority_columns* (e.g. columns referenced in
+    the query or in active exploration filters) are always kept and
+    placed first; the remaining budget is filled by intrinsic relevance
+    score. Columns are returned relevance-first so that if the rendered
+    summary is later truncated to a character/token budget, the most
+    useful columns survive.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The (already row-sampled) frame to select columns from.
+    max_cols : int
+        Soft cap on the number of columns to keep. Priority columns are
+        always kept even if they exceed this.
+    priority_columns : list[str] | None
+        Columns to force-include, in order of importance.
+
+    Returns
+    -------
+    tuple[list[str], bool]
+        The selected column names and whether any columns were dropped.
+    """
+    columns = list(df.columns)
+    if len(columns) <= max_cols and not priority_columns:
+        return columns, False
+
+    priority = [c for c in (priority_columns or []) if c in df.columns]
+    priority_set = set(priority)
+
+    n_rows = len(df)
+    scored = [
+        (_score_column_relevance(df[col], n_rows), idx, col)
+        for idx, col in enumerate(columns)
+        if col not in priority_set
+    ]
+    # Highest score first; ties fall back to original column order.
+    scored.sort(key=lambda t: (-t[0], t[1]))
+
+    remaining = max(0, max_cols - len(priority))
+    selected = priority + [col for _, _, col in scored[:remaining]]
+    return selected, len(selected) < len(columns)
+
+
 def describe_data_sync(
     df: pd.DataFrame,
     enum_limit: int = 3,
     reduce_enums: bool = True,
     row_limit: int | None = None,
+    max_cols: int = DEFAULT_MAX_SUMMARY_COLS,
+    priority_columns: list[str] | None = None,
 ) -> str:
     """
     Synchronous version of describe_data that generates a YAML summary of a DataFrame.
@@ -625,6 +739,14 @@ def describe_data_sync(
         returned frame reaches this many rows the result was truncated, so
         the summary flags it instead of presenting the capped count as the
         table's true size.
+    max_cols : int
+        Soft cap on how many columns to include. When the frame is wider,
+        columns are selected by relevance (see _select_relevant_columns)
+        rather than by position, so informative fields aren't dropped just
+        for appearing late in the table.
+    priority_columns : list[str] | None
+        Columns to always include (e.g. columns referenced in the query
+        or active filters), placed first.
 
     Returns
     -------
@@ -649,21 +771,25 @@ def describe_data_sync(
 
     df = df.sort_index()
 
+    # Select the most informative columns before the (more expensive)
+    # per-column stats below, so wide tables don't crowd out or truncate
+    # the columns a model actually needs.
+    selected_columns, sampled_columns = _select_relevant_columns(
+        df, max_cols=max_cols, priority_columns=priority_columns
+    )
+    if sampled_columns:
+        df = df[selected_columns]
+
     for col in df.columns:
         if isinstance(df[col].iloc[0], pd.Timestamp):
             df[col] = pd.to_datetime(df[col])
-
-    sampled_columns = False
-    if len(df.columns) > 10:
-        df = df[df.columns[:10]]
-        sampled_columns = True
 
     describe_df = df.describe(percentiles=[])
     columns_to_drop = ["min", "max", "count", "top", "freq"] # present if any numeric or object
     columns_to_drop = [col for col in columns_to_drop if col in describe_df.columns]
     df_describe_dict = describe_df.drop(columns=columns_to_drop).to_dict()
 
-    for col in df.select_dtypes(include=["object", "string"]).columns:
+    for col in df.select_dtypes(include=["object", "string", "category", "boolean", "bool"]).columns:
         if col not in df_describe_dict:
             df_describe_dict[col] = {}
         try:
@@ -736,6 +862,15 @@ def describe_data_sync(
     for col in df.select_dtypes(include=["float64"]).columns:
         df[col] = df[col].apply(format_float)
 
+    # Emit stats in the (relevance-first) column order so that if the
+    # rendered summary is later truncated to a character/token budget by
+    # a caller, the most informative columns are the ones that survive.
+    ordered_describe = {c: df_describe_dict[c] for c in df.columns if c in df_describe_dict}
+    for key, value in df_describe_dict.items():
+        if key not in ordered_describe:
+            ordered_describe[key] = value
+    df_describe_dict = ordered_describe
+
     n_rows, n_cols = shape
 
     # Add head and tail samples (2 rows each); deduplicate if identical
@@ -748,12 +883,20 @@ def describe_data_sync(
         "sampled_cols": sampled_columns,
         "is_sampled": is_sampled,
     }
+    notes = []
     if row_limit is not None and n_rows >= row_limit:
         summary["rows_capped_at_limit"] = row_limit
-        summary["note"] = (
+        notes.append(
             f"Result capped at the {row_limit}-row display limit; "
             "the full table may contain more rows."
         )
+    if sampled_columns:
+        summary["columns_shown"] = len(selected_columns)
+        notes.append(
+            f"Showing {len(selected_columns)} of {n_cols} columns, chosen by "
+            "relevance (query/filter columns and low-cardinality fields first).")
+    if notes:
+        summary["note"] = " ".join(notes)
     result = {
         "summary": summary,
         "stats": df_describe_dict,
@@ -772,6 +915,8 @@ async def describe_data(
     enum_limit: int = 3,
     reduce_enums: bool = True,
     row_limit: int | None = None,
+    max_cols: int = DEFAULT_MAX_SUMMARY_COLS,
+    priority_columns: list[str] | None = None,
 ) -> str:
     """
     Async wrapper for describe_data_sync that generates a YAML summary of a DataFrame.
@@ -784,6 +929,15 @@ async def describe_data(
         Maximum number of enum values to show per column
     reduce_enums : bool
         Whether to reduce enum values for readability
+    row_limit : int | None
+        The row cap applied to the result; used to flag truncation.
+    max_cols : int
+        Soft cap on how many columns to include in the summary. When the
+        frame is wider, columns are chosen by relevance rather than
+        position.
+    priority_columns : list[str] | None
+        Columns to always include (e.g. columns referenced in the query
+        or active filters), placed first.
 
     Returns
     -------
@@ -791,7 +945,8 @@ async def describe_data(
         YAML-formatted summary of the DataFrame
     """
     return await asyncio.to_thread(
-        describe_data_sync, df, enum_limit, reduce_enums, row_limit
+        describe_data_sync, df, enum_limit, reduce_enums, row_limit,
+        max_cols, priority_columns,
     )
 
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import copy
 import html
+import json
 import sys
 
 from io import BytesIO, StringIO
@@ -42,8 +43,8 @@ from ..state import state
 from ..transforms.base import Transform
 from ..transforms.sql import SQLTransform
 from ..util import (
-    VARIABLE_RE, catch_and_notify, is_ref, resolve_module_reference,
-    try_import_xarray,
+    VARIABLE_RE, catch_and_notify, geometry_to_wkt, is_geodataframe, is_ref,
+    resolve_module_reference, try_import_xarray,
 )
 from ..validation import ValidationError
 
@@ -1185,12 +1186,19 @@ class hvPlotView(hvPlotBaseView):
         if self.z is not None:
             processed['C' if self.kind == 'heatmap' else 'z'] = self.z
 
+        kind = self.kind
         plot_source = df
-        if self.kind in GRIDDED_KINDS:
+        if is_geodataframe(df):
+            # hvplot infers the geometry kind (polygons/paths/points); just
+            # clear a non-geometry default so it isn't forced to scatter/points
+            if kind in (None, 'scatter', 'points'):
+                kind = None
+            processed['geo'] = self.geo
+        elif kind in GRIDDED_KINDS:
             plot_source = self._gridded_plot_source(df)
 
         plot = plot_source.hvplot(
-            kind=self.kind, x=self.x, y=self.y, by=self.by, groupby=self.groupby, **processed
+            kind=kind, x=self.x, y=self.y, by=self.by, groupby=self.groupby, **processed
         )
         if self.operations:
             for operation in self.operations:
@@ -1322,7 +1330,9 @@ class Table(View):
     def _get_params(self):
         kwargs = {k: v for k, v in self.kwargs.items() if k != 'configuration'}
         params = dict(
-            value=self.get_data(),
+            # geometry columns hold shapely objects Bokeh cannot serialize, so
+            # render them as WKT text in the table (see holoviz/panel#8663)
+            value=geometry_to_wkt(self.get_data()),
             disabled=True,
             page_size=self.page_size,
             sizing_mode='stretch_width',
@@ -1494,6 +1504,19 @@ class DeckGLView(View):
 
     _panel_type = pn.pane.DeckGL
 
+    @staticmethod
+    def _layer_data(df):
+        """Serialize data for a deck.gl layer.
+
+        A GeoDataFrame is emitted as a GeoJSON FeatureCollection (which a
+        GeoJsonLayer consumes and Bokeh can serialize), since raw shapely
+        geometry objects cannot be sent to the browser. Plain frames use the
+        usual list-of-records form.
+        """
+        if is_geodataframe(df):
+            return json.loads(df.to_json())
+        return df.to_dict(orient='records')
+
     def _get_params(self) -> dict[str, Any]:
         df = self.get_data()
         if len(df) > DECKGL_MAX_ROWS:
@@ -1508,9 +1531,10 @@ class DeckGLView(View):
 
         # Inject data into layers
         if 'layers' in spec:
+            data = self._layer_data(df)
             for layer in spec['layers']:
                 if 'data' not in layer:
-                    layer['data'] = df.to_dict(orient='records')
+                    layer['data'] = data
 
         return dict(object=spec, tooltips=self.tooltips, **self.kwargs)
 

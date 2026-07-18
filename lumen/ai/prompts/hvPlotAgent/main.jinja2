@@ -4,7 +4,8 @@
 Generate the plot the user requested. Note that `x`, `y`, `by` and `groupby` fields MUST ALL be unique columns;
 no repeated columns are allowed. Do not arbitrarily set `groupby` and `by` fields unless explicitly requested. If a
 histogram is requested, use `y` instead of `x`. If x is categorical or strings, prefer barh over bar, and use `y` for
-the values.
+the values. If a column has `format: geometry`, set `kind` from its `geometry_type`: `polygons` for Polygon or
+MultiPolygon, `paths` for LineString or MultiLineString, otherwise `points`.
 {%- if gridded is defined and gridded %}
 
 For gridded xarray data (dimensions {{ gridded.dims | join(', ') }}, variables {{ gridded.data_vars | join(', ') }}), pick the framing the request calls for:

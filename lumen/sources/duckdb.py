@@ -19,7 +19,9 @@ from ..transforms import Filter
 from ..transforms.sql import (
     SQLCount, SQLFilter, SQLLimit, SQLSelectFrom,
 )
-from ..util import detect_file_encoding, normalize_table_name
+from ..util import (
+    detect_file_encoding, normalize_table_name, try_import_geopandas,
+)
 from .base import BaseSQLSource, Source, cached
 
 if TYPE_CHECKING:
@@ -65,6 +67,11 @@ class DuckDBSource(BaseSQLSource):
     ephemeral = param.Boolean(default=False, doc="""
         Whether the data is ephemeral, i.e. manually inserted into the
         DuckDB table or derived from real data.""")
+
+    geometry_crs = param.String(default=None, allow_None=True, doc="""
+        CRS to reapply to geometry columns after the WKB roundtrip through
+        DuckDB, which stores geometry without a CRS. Populated from the source
+        data at ingest; may also be set explicitly for a known dataset.""")
 
     read_only = param.Boolean(default=None, doc="""
         Whether to open the DuckDB database in read-only mode.""")
@@ -500,11 +507,40 @@ class DuckDBSource(BaseSQLSource):
         source._file_based_tables = {**self._file_based_tables, **source._file_based_tables}
         return source
 
+    def _fetch_df(
+        self, cursor, sql_expr: str, params: list | dict | None = None,
+        date_as_object: bool = False
+    ):
+        """Fetch a query result, safely handling native GEOMETRY columns.
+
+        DuckDB cannot convert a native GEOMETRY column to NumPy, so re-select
+        any geometry columns as WKB via ST_AsWKB before fetching, then rebuild
+        a GeoDataFrame when geopandas is available (WKB bytes otherwise).
+        """
+        rel = cursor.execute(sql_expr, params) if params else cursor.execute(sql_expr)
+        geom_cols = [d[0] for d in rel.description if str(d[1]) == 'GEOMETRY']
+        if not geom_cols:
+            return rel.fetch_df(date_as_object=date_as_object)
+
+        selected = ', '.join(
+            f'ST_AsWKB("{d[0]}"::GEOMETRY) AS "{d[0]}"'
+            if d[0] in geom_cols else f'"{d[0]}"'
+            for d in rel.description
+        )
+        wrapped = f'SELECT {selected} FROM ({sql_expr})'
+        rel = cursor.execute(wrapped, params) if params else cursor.execute(wrapped)
+        df = rel.fetch_df(date_as_object=date_as_object)
+        if gpd := try_import_geopandas():
+            for col in geom_cols:
+                df[col] = gpd.GeoSeries.from_wkb(
+                    df[col].apply(bytes), crs=self.geometry_crs
+                )
+            df = gpd.GeoDataFrame(df, geometry=geom_cols[0])
+        return df
+
     def execute(self, sql_query: str, params: list | dict | None = None, *args, **kwargs):
         with self._connection.cursor() as cursor:
-            if params:
-                return cursor.execute(sql_query, params, *args, **kwargs).fetch_df()
-            return cursor.execute(sql_query, *args, **kwargs).fetch_df()
+            return self._fetch_df(cursor, sql_query, params)
 
     def get_tables(self):
         if isinstance(self.tables, dict | list):
@@ -538,20 +574,9 @@ class DuckDBSource(BaseSQLSource):
 
         # Apply stored SQL parameters if available for this table
         with self._connection.cursor() as cursor:
-            if table in self.table_params:
-                rel = cursor.execute(sql_expr, self.table_params[table])
-            else:
-                rel = cursor.execute(sql_expr)
-            has_geom = any(d[0] == 'geometry' and d[1] == 'BINARY' for d in rel.description)
-            df = rel.fetch_df(date_as_object=True)
-            if has_geom:
-                import geopandas as gpd
-                geom_rel = cursor.execute(
-                    f'SELECT ST_AsWKB(geometry::GEOMETRY) as geometry FROM ({sql_expr})'
-                )
-                geom_df = geom_rel.fetch_df()
-                df['geometry'] = gpd.GeoSeries.from_wkb(geom_df.geometry.apply(bytes))
-                df = gpd.GeoDataFrame(df)
+            df = self._fetch_df(
+                cursor, sql_expr, self.table_params.get(table), date_as_object=True
+            )
         if not self.filter_in_sql:
             df = Filter.apply_to(df, conditions=conditions)
         return df
