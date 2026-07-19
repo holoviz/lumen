@@ -1045,7 +1045,13 @@ class Report(TaskGroup):
             collapsible=False, hide_header=True,
         )
         # The Story tab is added only once a story exists.
-        self._tabs = Tabs(("Report", self._view), sizing_mode="stretch_width")
+        # Let the tab panel grow with its content (the report/story scrolls at
+        # the container level, below) instead of the tab clipping a tall body.
+        self._tabs = Tabs(
+            ("Report", self._view),
+            sizing_mode="stretch_width",
+            stylesheets=[".MuiTabsPanel > .MuiBox-root { overflow: visible; }"],
+        )
         self._run = IconButton(
             icon="play_arrow", on_click=self._execute_event, margin=0, size="large",
             description="Execute Report", loading=self.param.running,
@@ -1217,7 +1223,13 @@ class Report(TaskGroup):
             "Untick a chart, table or note to leave it out of the exported report.",
             variant="body2", margin=(0, 10, 10, 10),
             sx={"color": "text.secondary"},
-            visible=self.param.status.rx().rx.in_(("success", "error", "cancelled")),
+            # Only on the report tab: the story tab has nothing to untick.
+            visible=param.bind(
+                lambda status, active: (
+                    status in ("success", "error", "cancelled") and active == 0
+                ),
+                self.param.status, self._tabs.param.active,
+            ),
         )
         self._container = Column(
             self._export_hint,
@@ -1604,12 +1616,22 @@ class Report(TaskGroup):
             items.append(heading)
         for index, (kind, obj) in enumerate(self._story_blocks):
             if kind != "prose":
-                items.append(self._rebuild_view(obj))
+                items.append(self._story_figure(obj))
             elif editable:
                 items.append(self._editable_prose(index, obj))
             else:
                 items.append(Markdown(obj, sizing_mode="stretch_width", margin=(5, 10)))
         return items
+
+    def _story_figure(self, editor):
+        """A chart or table as a fixed-height figure, so it flows in the story
+        like a blog-post image instead of stretching to fill and swallowing the
+        scroll of the tab it lives in."""
+        return Column(
+            self._rebuild_view(editor),
+            height=400, sizing_mode="stretch_width", margin=(5, 10),
+            styles={"min-height": "unset"},
+        )
 
     def _editable_prose(self, index, text):
         """Prose the user can edit in place, by hand or by asking the LLM."""
@@ -1739,16 +1761,18 @@ class Report(TaskGroup):
         return outputs
 
     def __panel__(self):
+        # Fill the available height and scroll the content within it: the inner
+        # div is bounded to the full height and scrolls, so a tall report or
+        # story slides inside the pane and a short one leaves no gap. (The
+        # surrounding layout must stretch this rather than centre it.)
         return Container(
             self._switcher,
             self._container,
-            align="center",
             sizing_mode="stretch_both",
-            stylesheets=[":host > div { overflow-y: auto; }"],
+            stylesheets=[":host > div { height: 100%; overflow-y: auto; }"],
             sx={
                 "minWidth": "320px",
                 "width": "100%",
-                "height": "auto",
                 ".mui-light &": { "background-color": "var(--mui-palette-grey-100)"},
                 ".mui-dark &": { "background-color": "var(--mui-palette-grey-900)"}
             }

@@ -886,6 +886,11 @@ class UI(Viewer):
         if not show_nav:
             self._toggle_navigation(False)
         self._chat_input.margin = (10, 0) if main_content is self._splash else 10
+        # The report fills the area and scrolls its own content; other modes stay
+        # vertically centred.
+        self._main.styles = {
+            "align-items": "stretch" if isinstance(main_content, Report) else "center"
+        }
         self._main[:] = [self._navigation, main_content]
 
     def _configure_interface(self, interface):
@@ -1261,7 +1266,9 @@ class UI(Viewer):
             height_policy='max'
         )
 
-        self._main = Row(self._splash, sizing_mode='stretch_both', align="center")
+        # align-items is toggled per mode in `_display`: the report stretches to
+        # fill and scroll, other modes stay vertically centred.
+        self._main = Row(self._splash, sizing_mode='stretch_both', styles={"align-items": "center"})
 
         if self.suggestions:
             self._add_suggestions_to_footer(
