@@ -470,6 +470,10 @@ class VegaLiteAgent(BaseCodeAgent):
             if not specs:
                 # Nothing parsed; let retry_llm_output regenerate with the errors.
                 raise ValueError("None of the generated chart specifications could be parsed.")
+            skipped = len(output.charts) - len(specs)
+            if skipped:
+                # Surface the drop to the user instead of only logging it.
+                step.stream(f"\n\nSkipped {skipped} chart(s) whose specification could not be parsed.")
             step.success_title = "Complete visualization with titles and colors created"
         return {"specs": specs, "titles": titles}
 
