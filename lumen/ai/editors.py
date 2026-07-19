@@ -726,6 +726,22 @@ class SQLEditor(LumenEditor):
         return f"{self.__class__.__name__}:\n```sql\n{self.spec}\n```"
 
 
+class MultiChartEditor(LumenEditor):
+    """
+    Display-only editor for a composite of several charts (e.g. an "All" tab
+    that stacks every plot as an overview).
+
+    The composite is not a single editable spec, so no code editor is shown
+    (mirrors DocumentEditor); the charts still render through the base
+    LumenEditor view path.
+    """
+
+    _label = "Charts"
+
+    def _render_editor(self):
+        return None
+
+
 class DocumentEditor(LumenEditor):
     """
     Displays relevant documents in tabs with type-aware rendering.
