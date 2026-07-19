@@ -128,9 +128,14 @@ async def _describe_editor(view: LumenEditor) -> str:
 
 
 async def build_catalog(views) -> str:
-    """Number each chart/table so the story can reference them by their catalog number."""
-    blocks = []
-    for i, view in enumerate(views, start=1):
-        label = view.title or f"View {i}"
-        blocks.append(f"### View {i}: {label}\n{await _describe_editor(view)}")
+    """Number each chart/table so the story can reference them by their catalog number.
+
+    Deliberately omits the view's title: it is the pipeline step name (e.g.
+    "Prepare data", "Create pie chart"), which would leak into the story. The
+    data summary describes what each figure actually shows instead.
+    """
+    blocks = [
+        f"### View {i}\n{await _describe_editor(view)}"
+        for i, view in enumerate(views, start=1)
+    ]
     return "\n\n".join(blocks)
