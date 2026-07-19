@@ -7,7 +7,15 @@ from unittest.mock import patch
 import pytest
 
 from lumen.ai.controls import SourceResult, UploadedFileRow
+from lumen.ai.controls.ingest.utils import read_geo_file
 from lumen.sources.duckdb import DuckDBSource
+
+try:
+    import geopandas as gpd
+
+    from shapely.geometry import Polygon
+except ImportError:
+    gpd = None
 
 
 @pytest.mark.asyncio
@@ -363,3 +371,16 @@ class TestUploadControlsUX:
     def test_upload_button_label_is_explicit(self, upload_controls):
         """Upload controls should use explicit upload action text."""
         assert upload_controls._add_button.name == "Upload file(s)"
+
+
+def test_read_geo_file_captures_crs():
+    """read_geo_file surfaces the source CRS in source_params so DuckDBSource
+    can reapply it after the WKB roundtrip (gh-1904)."""
+    if gpd is None:
+        pytest.skip("geopandas is not installed")
+    gdf = gpd.GeoDataFrame(
+        {"name": ["a"]}, geometry=[Polygon([(0, 0), (1, 0), (1, 1)])], crs="EPSG:4326"
+    )
+    buf = io.BytesIO(gdf.to_json().encode())
+    result = read_geo_file(buf, "geojson", "geo")
+    assert result.source_params["geometry_crs"] == "EPSG:4326"

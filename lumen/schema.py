@@ -67,24 +67,33 @@ class JSONSchema(pn.pane.PaneBase):
             return self._literal_widget, {'type': (list, tuple)}
 
     def _number_type(self, schema):
-        if 'inclusiveMaximum' in schema and 'inclusiveMinimum' in schema:
+        lo, hi = schema.get('inclusiveMinimum'), schema.get('inclusiveMaximum')
+        # Bounds may be missing or pandas NA/NaN (e.g. an all-null column), in
+        # which case there is no valid range to build a bounded slider from.
+        if lo is not None and hi is not None and not pd.isna(lo) and not pd.isna(hi):
             if self.multi:
                 wtype = self._bounded_number_range_widget
             else:
                 wtype = self._bounded_number_widget
-            return wtype, {'start': float(schema['inclusiveMinimum']),
-                           'end': float(schema['inclusiveMaximum'])}
+            start, end = float(lo), float(hi)
+            opts = {'start': start, 'end': end}
+            # Derive a step from the range so sliders can move across fractional
+            # ranges; the widget default of step=1 leaves ranges < 1 (e.g.
+            # 0 .. 0.05) with only a single, unmovable position.
+            if end > start:
+                opts['step'] = (end - start) / 100
+            return wtype, opts
         else:
             return self._unbounded_number_widget, {}
 
     def _integer_type(self, schema):
-        if 'inclusiveMaximum' in schema and 'inclusiveMinimum' in schema:
+        lo, hi = schema.get('inclusiveMinimum'), schema.get('inclusiveMaximum')
+        if lo is not None and hi is not None and not pd.isna(lo) and not pd.isna(hi):
             if self.multi:
                 wtype = self._bounded_int_range_widget
             else:
                 wtype = self._bounded_int_widget
-            return wtype, {'start': int(schema['inclusiveMinimum']),
-                           'end': int(schema['inclusiveMaximum'])}
+            return wtype, {'start': int(lo), 'end': int(hi)}
         else:
             return self._unbounded_int_widget, {'step': 1}
 

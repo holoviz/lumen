@@ -284,6 +284,56 @@ class TestDescribeData:
         assert "col1: 1" in result
         assert "col2: 3" in result
 
+    async def test_describe_selects_relevant_columns(self):
+        # Wide frame: many numerics, one low-cardinality categorical placed
+        # last, and one near-unique id column. Relevance selection should
+        # keep the categorical (despite its position) and drop the id.
+        n = 200
+        data = {f"num_{i}": np.arange(n) + i for i in range(15)}
+        data["uid"] = [f"id_{i}" for i in range(n)]
+        data["category"] = (["a", "b", "c"] * n)[:n]
+        df = pd.DataFrame(data)
+        result = yaml.load(await describe_data(df), yaml.SafeLoader)
+        assert result["summary"]["sampled_cols"] is True
+        assert result["summary"]["columns_shown"] == 16
+        # Low-cardinality categorical kept even though it is the last column.
+        assert "category" in result["stats"]
+        # Near-unique id column dropped in favour of more informative columns.
+        assert "uid" not in result["stats"]
+
+    async def test_describe_priority_columns_forced_in(self):
+        n = 200
+        data = {f"num_{i}": np.arange(n) + i for i in range(15)}
+        data["uid"] = [f"id_{i}" for i in range(n)]
+        df = pd.DataFrame(data)
+        result = yaml.load(
+            await describe_data(df, priority_columns=["uid"]), yaml.SafeLoader
+        )
+        # Explicitly requested column is included despite low relevance.
+        assert "uid" in result["stats"]
+
+    async def test_describe_narrow_data_not_sampled(self):
+        df = pd.DataFrame({f"col_{i}": np.arange(0, 200) for i in range(5)})
+        result = yaml.load(await describe_data(df), yaml.SafeLoader)
+        assert result["summary"]["sampled_cols"] is False
+        assert "columns_shown" not in result["summary"]
+
+    async def test_describe_categorical_dtype_emits_enum(self):
+        # Sources that return low-cardinality columns as
+        # pandas `category` must still surface their enum values.
+        n = 300
+        df = pd.DataFrame({
+            "smoking": pd.Categorical((["Former", "Current", "Never"] * n)[:n]),
+            "flag": pd.array(([True, False] * n)[:n], dtype="boolean"),
+            "value": np.random.rand(n),
+        })
+        result = yaml.load(await describe_data(df), yaml.SafeLoader)
+        assert set(result["stats"]["smoking"]["enum"]) <= {
+            "Former", "Current", "Never", "...",
+        }
+        assert result["stats"]["smoking"]["nunique"] == 3
+        assert "enum" in result["stats"]["flag"]
+
 
 def test_clean_sql_removes_backticks():
     sql_expr = "```sql SELECT * FROM `table`; ```"

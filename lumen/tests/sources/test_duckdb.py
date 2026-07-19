@@ -18,6 +18,13 @@ try:
 except ImportError:
     pytestmark = pytest.mark.skip(reason="Duckdb is not installed")
 
+try:
+    import geopandas as gpd
+
+    from shapely.geometry import Polygon
+except ImportError:
+    gpd = None
+
 
 @pytest.fixture
 def duckdb_file_source():
@@ -239,7 +246,10 @@ def test_duckdb_transforms_cache(duckdb_source, source_tables):
     assert cache_key in duckdb_source._cache
 
     expected = df_test_sql.groupby('B')['A'].sum().reset_index()
-    pd.testing.assert_frame_equal(duckdb_source._cache[cache_key], expected)
+    # DuckDB GROUP BY returns rows in a nondeterministic order; sort by the
+    # group key before comparing against pandas' sorted groupby output.
+    actual = duckdb_source._cache[cache_key].sort_values('B').reset_index(drop=True)
+    pd.testing.assert_frame_equal(actual, expected)
 
     cache_key = duckdb_source._get_key('test_sql', sql_transforms=transforms)
     assert cache_key in duckdb_source._cache
@@ -1345,3 +1355,92 @@ def test_read_only_create_sql_expr_source_expands_tables(duckdb_file_source):
 
     # Ensure new tables did NOT modify the original source
     assert source.execute("SHOW TABLES").shape[0] == 1  # Only 'test' table in original source
+
+
+def _spatial_source():
+    """Build an in-memory DuckDBSource holding a native GEOMETRY table.
+
+    Mirrors the ingest flow: WKB bytes -> ST_GeomFromWKB -> GEOMETRY column.
+    Skips if the duckdb spatial extension cannot be loaded (needs network on
+    first install).
+    """
+    if gpd is None:
+        pytest.skip("geopandas is not installed")
+    try:
+        source = DuckDBSource(
+            uri=':memory:',
+            initializers=["INSTALL spatial;", "LOAD spatial;"],
+            tables={'geo': 'SELECT * FROM geo_tbl'},
+        )
+    except Exception as e:  # pragma: no cover - environment dependent
+        pytest.skip(f"duckdb spatial extension unavailable: {e}")
+    gdf = gpd.GeoDataFrame(
+        {
+            'name': ['a', 'b'],
+            'pop': [1, 2],
+            'geometry': [
+                Polygon([(0, 0), (1, 0), (1, 1)]),
+                Polygon([(2, 0), (3, 0), (3, 1)]),
+            ],
+        },
+        crs='EPSG:4326',
+    )
+    tmp = pd.DataFrame(
+        {'name': gdf['name'], 'pop': gdf['pop'], 'geometry': gdf['geometry'].to_wkb()}
+    )
+    source._connection.register('geo_temp', tmp)
+    source._connection.execute(
+        'CREATE TABLE geo_tbl AS '
+        'SELECT name, pop, ST_GeomFromWKB(geometry) AS geometry FROM geo_temp'
+    )
+    return source, gpd
+
+
+def test_duckdb_geometry_returns_geodataframe():
+    """A native GEOMETRY column round-trips to a GeoDataFrame without crashing."""
+    source, gpd = _spatial_source()
+    result = source.get('geo')
+    assert isinstance(result, gpd.GeoDataFrame)
+    assert 'geometry' in result.columns
+    assert len(result) == 2
+    assert result.geometry.notna().all()
+    assert str(result.geometry.dtype) == 'geometry'
+
+
+def test_duckdb_geometry_crs_none_by_default():
+    """Without geometry_crs set the CRS stays None (WKB carries none); no regression."""
+    source, gpd = _spatial_source()
+    assert source.get('geo').crs is None
+
+
+def test_duckdb_geometry_crs_preserved():
+    """geometry_crs is reapplied when rebuilding the GeoDataFrame (gh-1904)."""
+    source, gpd = _spatial_source()
+    source.geometry_crs = 'EPSG:4326'
+    result = source.get('geo')
+    assert result.crs is not None
+    assert result.crs.to_epsg() == 4326
+
+
+def test_duckdb_geometry_crs_propagates_to_derived_source():
+    """A source created via create_sql_expr_source keeps geometry_crs (gh-1904)."""
+    source, gpd = _spatial_source()
+    source.geometry_crs = 'EPSG:4326'
+    derived = source.create_sql_expr_source(
+        {'geo2': 'SELECT * FROM geo'}, materialize=False
+    )
+    assert derived.geometry_crs == 'EPSG:4326'
+    assert derived.get('geo').crs.to_epsg() == 4326
+
+
+def test_duckdb_get_schema_geometry_no_distinct():
+    """get_schema on a geometry table returns a geospatial marker and does not
+    run DISTINCT/min-max on the geometry column."""
+    source, gpd = _spatial_source()
+    schema = source.get_schema('geo')
+    assert schema['geometry']['format'] == 'geometry'
+    assert 'enum' not in schema['geometry']
+    assert 'inclusiveMinimum' not in schema['geometry']
+    # non-geometry columns still summarised as usual
+    assert schema['pop']['inclusiveMinimum'] == 1
+    assert schema['pop']['inclusiveMaximum'] == 2

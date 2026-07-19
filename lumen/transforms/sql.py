@@ -519,7 +519,7 @@ class SQLFilterBase(SQLTransform):
         filters = []
 
         for col, val in conditions:
-            column_expr = Column(this=col)
+            column_expr = Column(this=Identifier(this=col, quoted=True))
 
             # Skip boolean values - they are not supported
             if isinstance(val, bool):
