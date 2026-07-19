@@ -33,14 +33,17 @@ from panel_splitjs import VSplit
 
 from lumen.ai.agents.chat import ChatAgent
 from lumen.ai.agents.sql import SQLAgent, make_sql_model
+from lumen.ai.agents.vega_lite import (
+    ChartSpec, VegaLiteAgent, VegaLiteSpec, VegaLiteSpecUpdate,
+)
 from lumen.ai.config import PROVIDED_SOURCE_NAME
 from lumen.ai.coordinator import Plan
-from lumen.ai.editors import SQLEditor
+from lumen.ai.editors import MultiChartEditor, SQLEditor
 from lumen.ai.models import ErrorDescription
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
 from lumen.ai.ui import UI, Exploration, ExplorerUI
-from lumen.config import SOURCE_TABLE_SEPARATOR
+from lumen.config import SOURCE_TABLE_SEPARATOR, dump_yaml
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
 from lumen.sources.sqlalchemy import SQLAlchemySource
@@ -390,6 +393,69 @@ async def test_find_view_in_tabs(explorer_ui):
     if view in tabs:
         assert tab_idx is not None
         assert tab_idx >= 0
+
+
+async def test_multichart_all_tab_last_and_view_only(explorer_ui):
+    """A multi-chart response renders one editable tab per chart plus a view-only
+    'All' overview that is placed last and opened by default."""
+    ui = explorer_ui
+    test_source = ui.context["source"]
+    SQLQueryWithTables = make_sql_model([(test_source.name, "test_table")])
+
+    spec_bar = {
+        "mark": "bar",
+        "encoding": {
+            "x": {"field": "category", "type": "nominal"},
+            "y": {"field": "value", "type": "quantitative"},
+        },
+    }
+    spec_line = {
+        "mark": "line",
+        "encoding": {
+            "x": {"field": "value", "type": "quantitative"},
+            "y": {"field": "value", "type": "quantitative"},
+        },
+    }
+    ui.llm.set_responses([
+        SQLQueryWithTables(
+            query="SELECT category, value FROM test_table",
+            table_slug="cat_vals",
+            tables=["test_table"],
+        ),
+        VegaLiteSpec(
+            chain_of_thought="two charts",
+            charts=[
+                ChartSpec(title="By category", yaml_spec=dump_yaml(spec_bar)),
+                ChartSpec(title="Value line", yaml_spec=dump_yaml(spec_line)),
+            ],
+            insufficient_context=False,
+            insufficient_context_reason="none",
+        ),
+        VegaLiteSpecUpdate(chain_of_thought="ok", yaml_update=""),
+        VegaLiteSpecUpdate(chain_of_thought="ok", yaml_update=""),
+    ])
+
+    plan = Plan(
+        ActorTask(SQLAgent(llm=ui.llm)),
+        ActorTask(VegaLiteAgent(llm=ui.llm, code_execution="disabled")),
+        history=[{"content": "two charts of value", "role": "user"}],
+        title="Two charts",
+        context=ui.context,
+    )
+    await ui._execute_plan(plan)
+
+    exploration = ui._exploration["view"]
+    # The multi-chart output includes the view-only "All" overview.
+    assert any(isinstance(v, MultiChartEditor) for v in exploration.plan.views)
+
+    tabs = exploration.view[0]
+    # "All" is the last tab and is opened by default.
+    assert tabs._names[-1] == "All"
+    assert tabs.active == len(tabs) - 1
+
+    # The "All" tab is view-only (no code-editor VSplit); a chart tab has one.
+    assert not any(isinstance(child, VSplit) for child in tabs[-1])
+    assert any(isinstance(child, VSplit) for child in tabs[-2])
 
 
 async def test_find_view_in_popped_out(explorer_ui):
