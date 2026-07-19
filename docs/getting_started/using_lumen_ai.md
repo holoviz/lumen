@@ -18,6 +18,9 @@ Here are some ideas to spark your exploration:
 - "Show me a scatter plot of 'flipper_length_mm' vs 'body_mass_g'."
 - "Create a histogram of 'bill_length_mm'."
 - "Show me a bar chart of average values by species."
+- "Create separate charts of average body mass by species and average flipper length by species."
+
+When a request calls for more than one chart, each chart opens in its own tab that you can edit, alongside an "All" tab that shows every chart together.
 
 **Complex queries:**
 
