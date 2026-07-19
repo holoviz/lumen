@@ -313,9 +313,9 @@ class VegaLiteEditor(LumenEditor):
 
         spec = load_yaml(self.spec)
         if spec.get("width") == "container" or "width" not in spec:
-            spec["width"] = 800
+            spec["width"] = 1600
         if spec.get("height") == "container" or "height" not in spec:
-            spec["height"] = 400
+            spec["height"] = 800
         with self.param.update(spec=dump_yaml(spec)):
             out = self.component.get_panel().export(render_fmt, **kwargs)
 
