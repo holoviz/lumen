@@ -7,8 +7,10 @@ import param
 import requests
 
 from instructor import Image
+from panel import bind
 from panel.io import state
 from panel.layout import Column
+from panel.param import ParamFunction
 from pydantic import BaseModel, Field
 
 from ...config import dump_yaml, load_yaml
@@ -636,6 +638,19 @@ class VegaLiteAgent(BaseCodeAgent):
                 out.spec = dump_yaml(merged_spec)
             log_debug(f"📊 Applied {step_name} updates and refreshed visualization")
 
+    @staticmethod
+    def _overview_item(editor: VegaLiteEditor) -> ParamFunction:
+        """A plot for the "All" overview that tracks an editor's component.
+
+        Binding to the editor's ``component`` means the overview re-renders when
+        the chart is edited or polished, instead of showing a stale snapshot.
+        """
+        render = bind(
+            lambda component: component.get_panel() if component is not None else None,
+            editor.param.component,
+        )
+        return ParamFunction(render, sizing_mode="stretch_width")
+
     async def respond(
         self,
         messages: list[Message],
@@ -684,11 +699,13 @@ class VegaLiteAgent(BaseCodeAgent):
 
         # Step 3: For multiple charts, append a view-only "All" tab that stacks
         # every plot together as an overview (no code editor of its own). It is
-        # added last so the UI opens it by default as the final tab.
+        # added last so the UI opens it by default as the final tab. Each plot
+        # re-renders from its editor's component, so edits (or the polish pass)
+        # to a chart tab stay in sync with the overview.
         outs = editors
         if len(views) > 1:
             overview = Column(
-                *(view.get_panel() for view in views),
+                *(self._overview_item(editor) for editor in editors),
                 sizing_mode="stretch_width",
                 scroll=True,
             )
