@@ -370,3 +370,44 @@ async def test_view_retry_keeps_context_and_passes_spec_by_keyword(llm):
     # the spec must not have bound to the `view` parameter
     assert captured["view"] is None
     assert isinstance(captured["spec"], str)
+
+
+async def test_view_retry_recovers_using_revised_spec(llm):
+    """The retry must not assume a `yaml_spec` field (hvPlot emits a flat param
+    dict) and must feed the revision into the next attempt, otherwise it re-runs
+    _extract_spec on the identical spec and can never recover."""
+    agent = hvPlotAgent(llm=llm)
+    seen_specs = []
+
+    class _Out(dict):
+        chain_of_thought = ""
+
+    async def fake_stream_prompt(*args, **kwargs):
+        async def gen():
+            # realistic hvPlot output shape: view params, no yaml_spec
+            yield _Out(kind="line", x="a", y="b")
+        return gen()
+
+    async def fake_extract_spec(context, spec):
+        seen_specs.append(dict(spec))
+        if len(seen_specs) == 1:
+            raise ValueError("bad spec")
+        return dict(spec)
+
+    async def fake_revise(instruction, messages, context, view=None, spec=None, **kwargs):
+        return "kind: bar\nx: a\ny: b"
+
+    ctx = {"pipeline": SimpleNamespace(table="t")}
+    with patch.object(agent, "_stream_prompt", side_effect=fake_stream_prompt), \
+         patch.object(agent, "_extract_spec", side_effect=fake_extract_spec), \
+         patch.object(agent, "revise", side_effect=fake_revise):
+        result = await agent._generate_yaml_spec(
+            [{"role": "user", "content": "x"}], ctx,
+            SimpleNamespace(table="t"), {},
+        )
+
+    # revise was reached (no KeyError on the missing yaml_spec) and retried once
+    assert len(seen_specs) == 2
+    assert seen_specs[0]["kind"] == "line"   # first attempt used the original
+    assert seen_specs[1]["kind"] == "bar"    # retry used the REVISED spec
+    assert result["kind"] == "bar"
