@@ -581,13 +581,13 @@ class VegaLiteAgent(BaseCodeAgent):
                     step_name, step_desc, out.spec, step_name, messages, context, doc=doc, out=out
                 )
                 try:
-                    # Validate merged spec
+                    # Validate merged spec, and keep what normalization added to it
                     merged_spec = self._deep_merge_dicts(out._spec_dict["spec"], update_dict)
-                    await self._extract_spec(context, {"yaml_spec": dump_yaml(merged_spec)})
+                    normalized = await self._extract_spec(context, {"yaml_spec": dump_yaml(merged_spec)})
                 except Exception as e:
                     log_debug(f"Skipping invalid {step_name} update due to error: {e}")
                     continue
-                out.spec = dump_yaml(merged_spec)
+                out.spec = dump_yaml(normalized["spec"])
             log_debug(f"📊 Applied {step_name} updates and refreshed visualization")
 
     async def respond(
