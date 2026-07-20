@@ -3,6 +3,7 @@ import base64
 from functools import partial
 from typing import Any
 
+import colorcet as cc
 import param
 import requests
 
@@ -104,8 +105,6 @@ def category_palette(ncolors: int = 20) -> list[str]:
     colorcet.glasbey_category10 gives float RGB tuples that cannot be
     serialized into a spec.
     """
-    import colorcet as cc
-
     return cc.b_glasbey_category10[:ncolors]
 
 
