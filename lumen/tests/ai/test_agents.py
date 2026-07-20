@@ -328,3 +328,45 @@ async def test_sqlagent_prompt_surfaces_active_filters(llm):
     assert "Active exploration filters" in prompt
     assert "game_year between 2000 and 2016" in prompt
     assert "game_season in ('Summer')" in prompt
+
+
+async def test_view_retry_keeps_context_and_passes_spec_by_keyword(llm):
+    """The yaml auto-retry must keep the TContext dict (the next _extract_spec and
+    revise both need it) and pass the spec by keyword, otherwise it binds to the
+    `view` parameter and revise() raises AttributeError on `view.spec`."""
+    agent = hvPlotAgent(llm=llm)
+    captured = {}
+
+    class _Out(dict):
+        chain_of_thought = ""
+
+    async def fake_stream_prompt(*args, **kwargs):
+        async def gen():
+            yield _Out(yaml_spec="kind: line")
+        return gen()
+
+    async def fake_extract_spec(context, spec):
+        raise ValueError("bad spec")
+
+    async def fake_revise(instruction, messages, context, view=None, spec=None, **kwargs):
+        captured["context"] = context
+        captured["view"] = view
+        captured["spec"] = spec
+        return "kind: line"
+
+    ctx = {"pipeline": SimpleNamespace(table="t")}
+    with patch.object(agent, "_stream_prompt", side_effect=fake_stream_prompt), \
+         patch.object(agent, "_extract_spec", side_effect=fake_extract_spec), \
+         patch.object(agent, "revise", side_effect=fake_revise):
+        # _extract_spec always fails, so the retry loop exhausts and raises
+        with pytest.raises(Exception):
+            await agent._generate_yaml_spec(
+                [{"role": "user", "content": "x"}], ctx,
+                SimpleNamespace(table="t"), {},
+            )
+
+    # context must still be the TContext dict, not a formatted yaml string
+    assert captured["context"] is ctx
+    # the spec must not have bound to the `view` parameter
+    assert captured["view"] is None
+    assert isinstance(captured["spec"], str)

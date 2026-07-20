@@ -121,13 +121,15 @@ class BaseViewAgent(BaseLumenAgent):
 
                     error = str(e)
                     traceback.print_exception(e)
-                    context = f"```\n{dump_yaml(load_yaml(self._last_output['yaml_spec']))}\n```"
-                    report_error(e, step, language="json", context=context, status="failed")
+                    # Keep `context` intact: the next _extract_spec and revise both
+                    # need the TContext, only the error report wants the yaml text.
+                    error_context = f"```\n{dump_yaml(load_yaml(self._last_output['yaml_spec']))}\n```"
+                    report_error(e, step, language="json", context=error_context, status="failed")
                     with self._add_step(
                         title="Re-attempted view generation",
                         steps_layout=self._steps_layout,
                     ) as retry_step:
-                        view = await self.revise(e, messages, context, dump_yaml(spec), language="yaml")
+                        view = await self.revise(e, messages, context, spec=dump_yaml(spec), language="yaml")
                         if "yaml_spec: " in view:
                             view = view.split("yaml_spec: ")[-1].rstrip('"').rstrip("'")
                         retry_step.stream(f"\n\n```yaml\n{view}\n```")
