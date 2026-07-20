@@ -51,7 +51,7 @@ def _nb_text(report):
 
 
 def _kinds(report):
-    return [kind for kind, _ in report._story_blocks]
+    return [kind for kind, _ in report._story.blocks]
 
 
 def _prose_editors(report):
@@ -265,7 +265,7 @@ async def test_report_story_tab_added_and_export_follows_active_tab(llm, tiny_so
     # Selecting the Report tab keeps the story but exports the sections.
     report._tabs.active = 0
     assert report._show_story is False
-    assert report._story_blocks  # still remembered
+    assert report._story.blocks  # still remembered
     nb_sections = _nb_text(report)
     assert "Story prose." not in nb_sections
     assert "lm.Pipeline.from_spec" in nb_sections
@@ -291,13 +291,13 @@ async def test_story_prose_is_editable_and_edits_reach_the_exports(llm, tiny_sou
     await report._annotate_report()
 
     # Prose is kept as text and rendered as an editable block on screen.
-    assert report._story_blocks[0] == ("prose", "Original prose.")
+    assert report._story.blocks[0] == ("prose", "Original prose.")
     editors = _prose_editors(report)
     assert len(editors) == 1
 
     # Editing writes back to the story, which every export reads from.
     editors[0].value = "Edited by hand."
-    assert report._story_blocks[0] == ("prose", "Edited by hand.")
+    assert report._story.blocks[0] == ("prose", "Edited by hand.")
     nb = _nb_text(report)
     assert "Edited by hand." in nb
     assert "Original prose." not in nb
@@ -345,7 +345,7 @@ async def test_story_prose_rewritten_by_ai(llm, tiny_source):
     await report._rewrite_prose()
 
     assert report._edit_dialog.open is False
-    assert report._story_blocks[0] == ("prose", "Punchier prose.")
+    assert report._story.blocks[0] == ("prose", "Punchier prose.")
     assert _kinds(report) == ["prose", "view"]  # the chart block is untouched
     assert "Punchier prose." in _nb_text(report)
 
@@ -363,7 +363,7 @@ async def test_regenerating_keeps_the_previous_version_and_its_edits(llm, tiny_s
         StoryBlock(prose="v1 prose"), StoryBlock(view=1),
     ])])
     await report._annotate_report()
-    assert len(report._story_versions) == 1
+    assert len(report._story.versions) == 1
 
     # The user edits the first version by hand.
     _prose_editors(report)[0].value = "my edit in v1"
@@ -373,13 +373,13 @@ async def test_regenerating_keeps_the_previous_version_and_its_edits(llm, tiny_s
         StoryBlock(prose="v2 prose"), StoryBlock(view=1),
     ])])
     await report._annotate_report()
-    assert len(report._story_versions) == 2
-    assert report._story_version == 1
+    assert len(report._story.versions) == 2
+    assert report._story.version == 1
     assert "v2 prose" in _nb_text(report)
 
     # Going back to the first version restores it with the edit intact.
     report._select_version(0)
-    assert report._story_title == "V1"
+    assert report._story.title == "V1"
     nb = _nb_text(report)
     assert "my edit in v1" in nb
     assert "v2 prose" not in nb
@@ -397,11 +397,11 @@ async def test_report_reset_discards_story(llm, tiny_source):
         StoryBlock(prose="p"), StoryBlock(view=1),
     ])])
     await report._annotate_report()
-    assert report._story_blocks
+    assert report._story.blocks
 
     report.reset()
 
-    assert report._story_blocks == []
+    assert report._story.blocks == []
     assert report._show_story is False
     # The Story tab is removed along with the story.
     assert len(report._tabs) == 1
@@ -410,7 +410,7 @@ async def test_report_reset_discards_story(llm, tiny_source):
 
 async def test_report_outline_defaults_empty():
     report = Report(Section(A(order=[]), title='Section A'), title='R')
-    assert report._story_outline == []
+    assert report._story.outline == []
 
 
 async def test_report_default_outline_from_sections():
@@ -433,7 +433,7 @@ async def test_report_outline_reorders_export():
     )
     await report.execute()
 
-    report._story_outline = [{"section": "Section B"}, {"section": "Section A"}]
+    report._story.outline = [{"section": "Section B"}, {"section": "Section A"}]
 
     nb = _nb_text(report)
     assert nb.index("B done") < nb.index("A done")
@@ -443,7 +443,7 @@ async def test_report_outline_inserts_headings():
     report = Report(Section(A(order=[]), title='Section A'), title='R')
     await report.execute()
 
-    report._story_outline = [{"heading": "Introduction", "level": 1}, {"section": "Section A"}]
+    report._story.outline = [{"heading": "Introduction", "level": 1}, {"section": "Section A"}]
 
     nb = _nb_text(report)
     assert "Introduction" in nb
@@ -458,7 +458,7 @@ async def test_report_outline_reorders_html_export():
     )
     await report.execute()
 
-    report._story_outline = [
+    report._story.outline = [
         {"heading": "Key Findings", "level": 1},
         {"section": "Section B"},
         {"section": "Section A"},
@@ -484,6 +484,6 @@ async def test_report_arrange_editor_seeds_and_binds_outline():
 
     # Editing the JSONEditor updates the outline, which reorders the export.
     report._outline_editor.value = [{"section": "Section B"}, {"section": "Section A"}]
-    assert report._story_outline == [{"section": "Section B"}, {"section": "Section A"}]
+    assert report._story.outline == [{"section": "Section B"}, {"section": "Section A"}]
     nb = _nb_text(report)
     assert nb.index("B done") < nb.index("A done")

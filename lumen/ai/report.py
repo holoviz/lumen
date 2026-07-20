@@ -14,7 +14,6 @@ from typing import Any, Self, final
 import panel as pn
 import param
 
-from panel.custom import JSComponent
 from panel.io import hold
 from panel.io.cache import is_equal
 from panel.layout.base import (
@@ -34,13 +33,14 @@ from ..views.base import Panel, View
 from .actor import (
     Actor, ContextProvider, NullStep, TContext,
 )
+from .agents.story import StoryAgent, build_catalog
 from .config import MissingContextError
 from .context import (
     LWW, ContextError, ValidationIssue, collect_task_outputs,
     input_dependency_keys, merge_contexts, validate_task_inputs,
     validate_taskgroup_exclusions,
 )
-from .editors import LumenEditor
+from .editors import EditableProse, LumenEditor
 from .export import (
     format_output, make_md_cell, make_preamble, write_notebook,
 )
@@ -84,87 +84,23 @@ def _export_header(section, status_source, variant="h3"):
     )
 
 
-class EditableProse(JSComponent):
-    """
-    A paragraph of Markdown the user can edit in place, like a document editor.
+class StoryState(param.Parameterized):
+    """The report's generated story: its versions and which one is shown."""
 
-    It shows the rendered Markdown until it is clicked, then swaps to the raw
-    text to edit and renders again on blur, so the story reads as prose rather
-    than as Markdown source. ``value`` is only written back into the element
-    when it differs from what is already there, because assigning to a
-    contenteditable node resets the caret to the start, which would make it
-    impossible to type.
-    """
+    blocks = param.List(default=[], doc="""
+        The (kind, value) blocks of the story currently shown.""")
 
-    value = param.String(default="", doc="""
-        The Markdown source of the paragraph.""")
+    outline = param.List(default=[], doc="""
+        The arranged section and heading order applied to the export.""")
 
-    _rendered = param.String(default="", doc="""
-        ``value`` rendered to HTML, shown while the paragraph is not edited.""")
+    title = param.String(default="", doc="""
+        The title of the story currently shown.""")
 
-    _esm = """
-    export function render({ model }) {
-      const div = document.createElement('div')
-      div.className = 'editable-prose'
-      div.title = 'Click to edit'
+    version = param.Integer(default=0, doc="""
+        Index of the version currently shown.""")
 
-      const show = () => { div.innerHTML = model._rendered }
-      const edit = () => {
-        div.textContent = model.value
-        div.contentEditable = 'true'
-        div.classList.add('editing')
-        div.focus()
-      }
-
-      div.addEventListener('click', () => { if (div.contentEditable !== 'true') edit() })
-      div.addEventListener('input', () => { model.value = div.textContent })
-      div.addEventListener('blur', () => {
-        div.contentEditable = 'false'
-        div.classList.remove('editing')
-        show()
-      })
-      model.on('_rendered', () => { if (div.contentEditable !== 'true') show() })
-      model.on('value', () => {
-        // Only while editing, and only if it really changed, or the caret jumps.
-        if (div.contentEditable === 'true' && div.textContent !== model.value) {
-          div.textContent = model.value
-        }
-      })
-
-      show()
-      return div
-    }
-    """
-
-    _stylesheets = [
-        """
-        .editable-prose {
-          outline: none;
-          padding: 4px 6px;
-          border-radius: 4px;
-          cursor: text;
-        }
-        .editable-prose > :first-child { margin-top: 0; }
-        .editable-prose > :last-child { margin-bottom: 0; }
-        .editable-prose:hover { background: rgba(127, 127, 127, 0.08); }
-        .editable-prose.editing {
-          background: rgba(127, 127, 127, 0.12);
-          white-space: pre-wrap;
-        }
-        """
-    ]
-
-    def __init__(self, **params):
-        super().__init__(**params)
-        self._render_markdown()
-
-    @param.depends("value", watch=True)
-    def _render_markdown(self):
-        # Rendered with the same engine as Panel's Markdown pane, so the story
-        # reads identically on screen and in the exports.
-        from markdown_it import MarkdownIt
-
-        self._rendered = MarkdownIt("gfm-like").render(self.value)
+    versions = param.List(default=[], doc="""
+        Every generated story, kept so regenerating never discards manual edits.""")
 
 
 class Task(Viewer):
@@ -1019,11 +955,7 @@ class Report(TaskGroup):
 
     def _init_view(self):
         self._section_headers = {}
-        self._story_title = ""
-        self._story_blocks = []
-        self._story_versions = []
-        self._story_version = 0
-        self._story_outline = []
+        self._story = StoryState()
         self._header_title = Typography(
             self.param.title, variant="h1", margin=(0, 0, 0, 10)
         )
@@ -1325,14 +1257,14 @@ class Report(TaskGroup):
         views = list(self._header)
         # When the story view is shown, export the blog-post flow: the story
         # title, then prose interleaved with the charts and tables it discusses.
-        if self._show_story and self._story_blocks:
-            views.append(Typography(self._story_title, variant="h2"))
+        if self._show_story and self._story.blocks:
+            views.append(Typography(self._story.title, variant="h2"))
             views += [
                 Markdown(obj) if kind == "prose" else obj
-                for kind, obj in self._story_blocks
+                for kind, obj in self._story.blocks
             ]
             return views
-        if self._story_outline:
+        if self._story.outline:
             for kind, value, level in self._iter_arrangement():
                 if kind == "heading":
                     views.append(Typography(value, variant=f"h{level}"))
@@ -1377,13 +1309,13 @@ class Report(TaskGroup):
             return self._view
         # When the story view is shown, save the same blog-post flow shown live:
         # prose interleaved with the charts and tables, matching the notebook.
-        if self._show_story and self._story_blocks:
+        if self._show_story and self._story.blocks:
             return Column(*self._story_flow(), sizing_mode="stretch_width", margin=(0, 5, 15, 5))
         # Build each card from the section's selected views rather than the
         # section itself, so a discarded nested section is left out of the HTML
         # too. The card header already shows the title, hence no heading.
         cards = []
-        if self._story_outline:
+        if self._story.outline:
             # Follow the arranged outline so HTML matches the notebook order.
             for kind, value, _ in self._iter_arrangement():
                 if kind == "heading":
@@ -1489,17 +1421,17 @@ class Report(TaskGroup):
 
     def _open_arrange_dialog(self, event=None):
         # Seed from the current arrangement, or the default section order.
-        self._outline_editor.value = self._story_outline or self._build_default_outline()
+        self._outline_editor.value = self._story.outline or self._build_default_outline()
         self._outline_dialog.open = True
 
     def _on_outline_change(self, event):
-        self._story_outline = event.new or []
+        self._story.outline = event.new or []
         self._populate_view()
 
     def _apply_outline(self, event=None):
         # Read the editor's current value explicitly and apply the arrangement
         # to both the live report and the exports.
-        self._story_outline = list(self._outline_editor.value or [])
+        self._story.outline = list(self._outline_editor.value or [])
         self._populate_view()
         self._outline_dialog.open = False
 
@@ -1526,7 +1458,6 @@ class Report(TaskGroup):
         """Write an AI blog-post story over the selected charts/tables and render it."""
         if self.llm is None or not len(self):
             return
-        from .agents.story import StoryAgent, build_catalog
         catalog = self._collect_story_views()
         if not catalog:
             return
@@ -1560,16 +1491,16 @@ class Report(TaskGroup):
                 blocks.append(("view", view))
         # Each story is kept as its own version, so regenerating offers a fresh
         # take without throwing away one the user may have edited by hand.
-        self._story_versions.append({"title": story.title or "Story", "blocks": blocks})
-        self._select_version(len(self._story_versions) - 1)
+        self._story.versions.append({"title": story.title or "Story", "blocks": blocks})
+        self._select_version(len(self._story.versions) - 1)
 
     def _select_version(self, index):
         """Show one of the generated versions of the story."""
-        self._story_version = index
-        version = self._story_versions[index]
-        self._story_title = version["title"]
+        self._story.version = index
+        version = self._story.versions[index]
+        self._story.title = version["title"]
         # The version's own list is used live, so edits stay with that version.
-        self._story_blocks = version["blocks"]
+        self._story.blocks = version["blocks"]
         self._render_story()
 
     def _switch_version(self, event):
@@ -1591,14 +1522,14 @@ class Report(TaskGroup):
         editable on screen and plain Markdown when exported.
         """
         items = []
-        if self._story_title:
-            heading = Typography(self._story_title, variant="h4", margin=(10, 10, 0, 10))
+        if self._story.title:
+            heading = Typography(self._story.title, variant="h4", margin=(10, 10, 0, 10))
             if editable and self.llm is not None:
                 controls = [heading]
-                if len(self._story_versions) > 1:
+                if len(self._story.versions) > 1:
                     version = Select(
-                        options={f"Version {i+1}": i for i in range(len(self._story_versions))},
-                        value=self._story_version, width=140, align="center",
+                        options={f"Version {i+1}": i for i in range(len(self._story.versions))},
+                        value=self._story.version, width=140, align="center",
                         margin=(10, 10, 0, 0), label="",
                         description="Switch between the generated versions of the story",
                     )
@@ -1614,7 +1545,7 @@ class Report(TaskGroup):
                 ))
                 heading = Row(*controls, align="center", sizing_mode="stretch_width")
             items.append(heading)
-        for index, (kind, obj) in enumerate(self._story_blocks):
+        for index, (kind, obj) in enumerate(self._story.blocks):
             if kind != "prose":
                 items.append(self._story_figure(obj))
             elif editable:
@@ -1648,7 +1579,7 @@ class Report(TaskGroup):
     def _update_prose(self, index, event):
         # Keep the story blocks as the single source of truth so manual edits
         # survive tab switches and flow into every export.
-        self._story_blocks[index] = ("prose", event.new)
+        self._story.blocks[index] = ("prose", event.new)
 
     def _open_edit_dialog(self, index, event=None):
         self._edit_index = index
@@ -1660,17 +1591,16 @@ class Report(TaskGroup):
         instruction = (self._edit_instruction.value or "").strip()
         if self.llm is None or self._edit_index is None or not instruction:
             return
-        from .agents.story import StoryAgent, build_catalog
         self._edit_dialog.open = False
         self._edit_apply.loading = True
         try:
             agent = StoryAgent(llm=self.llm)
             edit = await agent.rewrite_prose(
-                self._story_blocks[self._edit_index][1],
+                self._story.blocks[self._edit_index][1],
                 instruction,
                 await build_catalog(self._collect_story_views()),
             )
-            self._story_blocks[self._edit_index] = ("prose", edit.prose)
+            self._story.blocks[self._edit_index] = ("prose", edit.prose)
             self._render_story()
         except Exception:
             tb.print_exc()
@@ -1691,10 +1621,10 @@ class Report(TaskGroup):
 
     def _discard_story(self):
         """Forget every generated version and drop back to the report tab."""
-        self._story_blocks = []
-        self._story_title = ""
-        self._story_versions = []
-        self._story_version = 0
+        self._story.blocks = []
+        self._story.title = ""
+        self._story.versions = []
+        self._story.version = 0
         self._story_column[:] = []
         if len(self._tabs) > self._STORY_TAB:
             self._tabs.pop(self._STORY_TAB)
@@ -1717,7 +1647,7 @@ class Report(TaskGroup):
         dropping duplicates (and, by default, discarded sections).
         """
         seen = set()
-        for block in self._story_outline:
+        for block in self._story.outline:
             if "heading" in block:
                 yield "heading", block["heading"], block.get("level", 2)
             elif "section" in block:
@@ -1731,7 +1661,7 @@ class Report(TaskGroup):
 
     def _ordered_sections(self):
         """Sections in the arranged outline order (unreferenced ones kept at the end)."""
-        if not self._story_outline:
+        if not self._story.outline:
             return list(self)
         ordered = [s for kind, s, _ in self._iter_arrangement(selected_only=False) if kind == "section"]
         seen = {id(section) for section in ordered}
