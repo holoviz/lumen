@@ -929,7 +929,8 @@ class hvPlotBaseView(View):
         objects=[
             'area', 'bar', 'barh', 'bivariate', 'box', 'contour', 'contourf',
             'errorbars', 'hist', 'image', 'kde', 'labels',
-            'line', 'scatter', 'heatmap', 'hexbin', 'ohlc', 'points', 'step', 'violin'
+            'line', 'scatter', 'heatmap', 'hexbin', 'ohlc', 'paths', 'points',
+            'polygons', 'step', 'violin'
         ]
     )
 
