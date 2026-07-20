@@ -93,6 +93,40 @@ class AltairSpec(BaseModel):
     )
 
 
+def category_palette(ncolors: int = 20) -> list[str]:
+    """
+    Colours used for categorical encodings the model did not color itself.
+
+    Glasbey seeded on category10, so the first ten entries are visually the same
+    as Vega's own default (largest total RGB difference is 3 out of 765). Charts
+    with ten categories or fewer are unchanged; only the ones that used to
+    recycle colors differ. The b_ prefix is the hex form, since
+    colorcet.glasbey_category10 gives float RGB tuples that cannot be
+    serialized into a spec.
+    """
+    import colorcet as cc
+
+    return cc.b_glasbey_category10[:ncolors]
+
+
+def has_categorical_color(spec: Any) -> bool:
+    """
+    Whether anything in the spec maps a field to color by category.
+
+    Only those charts can use the palette, so only they are worth adding it to.
+    Layered, concatenated and faceted specs nest their encodings, hence the
+    walk rather than a single lookup.
+    """
+    if isinstance(spec, dict):
+        color = spec.get("encoding", {}).get("color")
+        if isinstance(color, dict) and "field" in color and color.get("type") in ("nominal", "ordinal"):
+            return True
+        return any(has_categorical_color(value) for value in spec.values())
+    if isinstance(spec, list):
+        return any(has_categorical_color(item) for item in spec)
+    return False
+
+
 class VegaLiteAgent(BaseCodeAgent):
 
     conditions = param.List(
@@ -484,7 +518,7 @@ class VegaLiteAgent(BaseCodeAgent):
 
         return await self._extract_spec(context, {"yaml_spec": dump_yaml(spec)})
 
-    async def _extract_spec(self, context: TContext, spec: dict[str, Any]):
+    async def _extract_spec(self, context: TContext, spec: dict[str, Any], apply_defaults: bool = True):
         # .encode().decode('unicode_escape') fixes a JSONDecodeError in Python
         # where it's expecting property names enclosed in double quotes
         # by properly handling the escaped characters in your JSON string
@@ -492,6 +526,14 @@ class VegaLiteAgent(BaseCodeAgent):
             vega_spec = load_yaml(yaml_spec)
         elif json_spec := spec.get("json_spec"):
             vega_spec = load_json(json_spec)
+        # Supply the palette as a default the model can override, so charts in a
+        # single report share colors unless a chart asked for something else.
+        # Only on the way in: re-applying it on a later edit would undo a
+        # palette the user had deliberately removed.
+        if apply_defaults and has_categorical_color(vega_spec):
+            vega_spec = self._deep_merge_dicts(
+                {"config": {"range": {"category": category_palette()}}}, vega_spec
+            )
         return normalize_vegalite_spec(vega_spec, editor_type=self._editor_type)
 
     async def _get_doc_examples(self, user_query: str) -> list[str]:
@@ -583,7 +625,9 @@ class VegaLiteAgent(BaseCodeAgent):
                 try:
                     # Validate merged spec, and keep what normalization added to it
                     merged_spec = self._deep_merge_dicts(out._spec_dict["spec"], update_dict)
-                    normalized = await self._extract_spec(context, {"yaml_spec": dump_yaml(merged_spec)})
+                    normalized = await self._extract_spec(
+                        context, {"yaml_spec": dump_yaml(merged_spec)}, apply_defaults=False
+                    )
                 except Exception as e:
                     log_debug(f"Skipping invalid {step_name} update due to error: {e}")
                     continue
@@ -679,7 +723,9 @@ class VegaLiteAgent(BaseCodeAgent):
 
         try:
             final_dict["spec"] = self._deep_merge_dicts(final_dict["spec"], update_dict)
-            spec = await self._extract_spec(context, {"yaml_spec": dump_yaml(final_dict["spec"])})
+            spec = await self._extract_spec(
+                context, {"yaml_spec": dump_yaml(final_dict["spec"])}, apply_defaults=False
+            )
         except Exception as e:
             log_debug(f"Skipping invalid annotation update due to error: {e}")
             raise e
