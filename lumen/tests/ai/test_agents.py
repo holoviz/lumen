@@ -27,8 +27,10 @@ from lumen.ai.agents.vega_lite import VegaLiteSpec, VegaLiteSpecUpdate
 from lumen.ai.analysis import Analysis
 from lumen.ai.editors import AnalysisOutput, SQLEditor, VegaLiteEditor
 from lumen.ai.llm import Llm
-from lumen.ai.schemas import Metaset, get_metaset
-from lumen.config import dump_yaml
+from lumen.ai.schemas import (
+    Column, Metaset, TableCatalogEntry, get_metaset,
+)
+from lumen.config import SOURCE_TABLE_SEPARATOR, dump_yaml
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
 from lumen.views import Panel
@@ -284,6 +286,151 @@ def test_map_agents_route_geometry_columns():
     coordinator routes GeoDataFrame data to a map-capable view."""
     assert any("geometry" in c.lower() for c in hvPlotAgent.conditions)
     assert any("geometry" in c.lower() for c in DeckGLAgent.conditions)
+
+
+def _revise_ms(*slugs):
+    catalog = {
+        s: TableCatalogEntry(table_slug=s, similarity=1.0, columns=[])
+        for s in slugs
+    }
+    return Metaset(query=None, catalog=catalog)
+
+
+def test_resolve_revise_table_from_pipeline_component(llm):
+    """A Pipeline editor component exposes its own .table."""
+    agent = SQLAgent(llm=llm)
+    ms = _revise_ms(f"S{SOURCE_TABLE_SEPARATOR}t1", f"S{SOURCE_TABLE_SEPARATOR}t2")
+    view = SimpleNamespace(component=SimpleNamespace(table="t1", pipeline=None))
+    assert agent._resolve_revise_table({"metaset": ms}, view) == f"S{SOURCE_TABLE_SEPARATOR}t1"
+
+
+def test_resolve_revise_table_from_view_component(llm):
+    """A View editor component has no .table, so fall back to .pipeline.table."""
+    agent = SQLAgent(llm=llm)
+    ms = _revise_ms(f"S{SOURCE_TABLE_SEPARATOR}t1")
+    view = SimpleNamespace(component=SimpleNamespace(pipeline=SimpleNamespace(table="t1")))
+    assert agent._resolve_revise_table({"metaset": ms}, view) == f"S{SOURCE_TABLE_SEPARATOR}t1"
+
+
+def test_resolve_revise_table_prefers_own_table_over_chained_parent(llm):
+    """A chained Pipeline exposes .table (its own) and .pipeline (its parent);
+    the component's own table must win."""
+    agent = SQLAgent(llm=llm)
+    ms = _revise_ms(f"S{SOURCE_TABLE_SEPARATOR}child", f"S{SOURCE_TABLE_SEPARATOR}parent")
+    view = SimpleNamespace(component=SimpleNamespace(
+        table="child", pipeline=SimpleNamespace(table="parent")))
+    assert agent._resolve_revise_table({"metaset": ms}, view) == f"S{SOURCE_TABLE_SEPARATOR}child"
+
+
+def test_resolve_revise_table_from_context_pipeline(llm):
+    agent = SQLAgent(llm=llm)
+    ms = _revise_ms(f"S{SOURCE_TABLE_SEPARATOR}t1")
+    ctx = {"metaset": ms, "pipeline": SimpleNamespace(table="t1")}
+    assert agent._resolve_revise_table(ctx, None) == f"S{SOURCE_TABLE_SEPARATOR}t1"
+
+
+def test_resolve_revise_table_from_context_table(llm):
+    agent = SQLAgent(llm=llm)
+    ms = _revise_ms(f"S{SOURCE_TABLE_SEPARATOR}t1")
+    assert agent._resolve_revise_table({"metaset": ms, "table": "t1"}, None) == f"S{SOURCE_TABLE_SEPARATOR}t1"
+
+
+def test_resolve_revise_table_non_dict_context_returns_none(llm):
+    """The base_view auto-retry path passes a string context/view; must not crash."""
+    agent = SQLAgent(llm=llm)
+    assert agent._resolve_revise_table("```yaml\nfoo\n```", "some string") is None
+
+
+def test_resolve_revise_table_unknown_name_returns_none(llm):
+    agent = SQLAgent(llm=llm)
+    ms = _revise_ms(f"S{SOURCE_TABLE_SEPARATOR}t1")
+    view = SimpleNamespace(component=SimpleNamespace(table="nonexistent", pipeline=None))
+    assert agent._resolve_revise_table({"metaset": ms}, view) is None
+
+
+def _revise_ms_cols(entries):
+    """Build a Metaset from {slug: (column_name, sql_expr)}."""
+    catalog = {
+        slug: TableCatalogEntry(
+            table_slug=slug, similarity=1.0,
+            columns=[Column(name=col)], sql_expr=sql,
+        )
+        for slug, (col, sql) in entries.items()
+    }
+    return Metaset(query=None, catalog=catalog)
+
+
+@pytest.mark.parametrize("agent_cls", [SQLAgent, VegaLiteAgent, DeckGLAgent])
+async def test_revise_output_prompt_scopes_to_revise_table(llm, agent_cls):
+    """With revise_table set, only that table's schema + derived SQL appears.
+    Parametrized to prove every child revise_output template inherits the fix."""
+    agent = agent_cls(llm=llm)
+    t1 = f"S{SOURCE_TABLE_SEPARATOR}orders"
+    t2 = f"S{SOURCE_TABLE_SEPARATOR}customers"
+    ms = _revise_ms_cols({t1: ("order_id", "SELECT * FROM raw_orders"),
+                          t2: ("customer_id", None)})
+    prompt = await agent._render_prompt(
+        "revise_output", [{"role": "user", "content": "fix"}], {"metaset": ms},
+        numbered_text="1: SELECT 1", language="sql", feedback="fix",
+        errors=None, revise_table=t1,
+    )
+    assert "order_id" in prompt
+    assert "raw_orders" in prompt          # derived SQL (read_with) of the scoped table
+    assert "customer_id" not in prompt     # unrelated table's columns excluded
+    assert "customers" not in prompt
+
+
+async def test_revise_output_prompt_fallback_without_revise_table(llm):
+    """Without revise_table (or None), both tables appear (prior behaviour) and
+    the StrictUndefined template does not raise."""
+    agent = SQLAgent(llm=llm)
+    t1 = f"S{SOURCE_TABLE_SEPARATOR}orders"
+    t2 = f"S{SOURCE_TABLE_SEPARATOR}customers"
+    ms = _revise_ms_cols({t1: ("order_id", None), t2: ("customer_id", None)})
+    base_kwargs = dict(
+        numbered_text="1: SELECT 1", language="sql", feedback="fix", errors=None,
+    )
+    for extra in ({}, {"revise_table": None}):
+        prompt = await agent._render_prompt(
+            "revise_output", [{"role": "user", "content": "fix"}], {"metaset": ms},
+            **base_kwargs, **extra,
+        )
+        assert "order_id" in prompt
+        assert "customer_id" in prompt
+
+
+async def test_revise_output_prompt_unknown_slug_falls_back(llm):
+    """A revise_table not in the catalog falls back to the broader context."""
+    agent = SQLAgent(llm=llm)
+    t1 = f"S{SOURCE_TABLE_SEPARATOR}orders"
+    t2 = f"S{SOURCE_TABLE_SEPARATOR}customers"
+    ms = _revise_ms_cols({t1: ("order_id", None), t2: ("customer_id", None)})
+    prompt = await agent._render_prompt(
+        "revise_output", [{"role": "user", "content": "fix"}], {"metaset": ms},
+        numbered_text="1: SELECT 1", language="sql", feedback="fix",
+        errors=None, revise_table=f"S{SOURCE_TABLE_SEPARATOR}does_not_exist",
+    )
+    assert "order_id" in prompt
+    assert "customer_id" in prompt
+
+
+async def test_revise_forwards_resolved_table_to_prompt(llm):
+    """revise() resolves the current table and forwards it to the prompt render."""
+    agent = SQLAgent(llm=llm)
+    t1 = f"S{SOURCE_TABLE_SEPARATOR}orders"
+    ms = _revise_ms(t1, f"S{SOURCE_TABLE_SEPARATOR}customers")
+    captured = {}
+
+    async def fake_invoke(prompt_name, messages, context, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(edits=[])
+
+    with patch.object(agent, "_invoke_prompt", side_effect=fake_invoke):
+        await agent.revise(
+            "fix it", [{"role": "user", "content": "fix"}],
+            {"metaset": ms, "table": "orders"}, spec="SELECT 1", language="sql",
+        )
+    assert captured.get("revise_table") == t1
 
 
 def test_sqlagent_active_filters_describes_conditions():

@@ -6,6 +6,7 @@ from ..context import TContext
 from ..editors import LumenEditor
 from ..llm import Message
 from ..models import RetrySpec
+from ..schemas import slug_to_table_name
 from ..utils import apply_changes, retry_llm_output
 from .base import Agent
 
@@ -31,6 +32,40 @@ class BaseLumenAgent(Agent):
     _max_width = None
     _editor_type = LumenEditor
 
+    def _resolve_revise_table(self, context: TContext, view: LumenEditor | None) -> str | None:
+        """Slug of the table the output being revised uses, so the revise
+        prompt can scope its schema context to just that table. Returns None
+        when it cannot be determined (e.g. SQL generation before a pipeline
+        exists), in which case the prompt falls back to the broader context.
+        """
+        metaset = context.get("metaset") if isinstance(context, dict) else None
+        if metaset is None:
+            return None
+        # Prefer the component being revised (unambiguous), then the context.
+        # Table-first: a Pipeline component exposes its own .table, while a View
+        # component has no .table so we fall back to its .pipeline.table. A
+        # chained Pipeline also has a .pipeline (its parent), whose table is NOT
+        # the one being revised, so .table must win over .pipeline.
+        candidate = None
+        component = getattr(view, "component", None)
+        if component is not None:
+            candidate = getattr(component, "table", None)
+            if candidate is None:
+                pipeline = getattr(component, "pipeline", None)
+                candidate = getattr(pipeline, "table", None) if pipeline is not None else None
+        if candidate is None:
+            candidate = getattr(context.get("pipeline"), "table", None) or context.get("table")
+        slug = metaset._resolve_table_slug(candidate)
+        if slug is None:
+            return None
+        # Prefer the active (newest) generation so _generate_context's
+        # active-slug filter does not empty the scoped context.
+        active = set(metaset._deduplicated_slugs())
+        if slug not in active:
+            name = slug_to_table_name(slug)
+            slug = next((s for s in active if slug_to_table_name(s) == name), slug)
+        return slug
+
     @retry_llm_output()
     async def revise(
         self,
@@ -53,6 +88,7 @@ class BaseLumenAgent(Agent):
             raise ValueError("Must provide previous spec to revise.")
         lines = spec.splitlines()
         numbered_text = "\n".join(f"{i:2d}: {line}" for i, line in enumerate(lines, 1))
+        revise_table = kwargs.pop("revise_table", None) or self._resolve_revise_table(context, view)
         result = await self._invoke_prompt(
             "revise_output",
             messages,
@@ -62,6 +98,7 @@ class BaseLumenAgent(Agent):
             language=language,
             feedback=instruction,
             errors=errors,
+            revise_table=revise_table,
             **kwargs
         )
         new_spec_raw = apply_changes(lines, result.edits)
