@@ -2,6 +2,7 @@ from typing import Any, Literal
 
 import param
 
+from hvplot.ui import CMAPS, DEFAULT_CMAPS, Colormapping
 from pydantic import BaseModel, Field, create_model
 
 from ...views import hvPlotUIView
@@ -10,19 +11,21 @@ from ..context import TContext
 from ..utils import get_data
 from .base_view import BaseViewAgent
 
+# Taken from hvPlot rather than restated, so the options cannot drift apart.
+CMAP_KINDS = tuple(DEFAULT_CMAPS)
+CNORMS = tuple(Colormapping.param["cnorm"].objects)
+
 
 def resolve_cmap(cmap: str) -> str:
     """
     Map a semantic colormap name onto a concrete one.
 
-    hvPlot understands 'linear', 'diverging', 'categorical' and 'cyclic' in its
-    converter, but `hvplot.ui.Colormapping.cmap` is a Selector over concrete
-    colormap names and rejects them, so they have to be resolved before the
-    spec reaches the view. The categorical default resolves to a list of
-    colours, which the Selector also rejects, hence the named fallback.
+    hvPlot understands these names in its converter, but
+    `hvplot.ui.Colormapping.cmap` is a Selector over concrete colormap names
+    and rejects them, so they have to be resolved before the spec reaches the
+    view. The categorical default resolves to a list of colors, which the
+    Selector also rejects, hence the named fallback.
     """
-    from hvplot.ui import CMAPS, DEFAULT_CMAPS
-
     resolved = DEFAULT_CMAPS.get(cmap, cmap)
     if not isinstance(resolved, str) or resolved not in CMAPS:
         return "glasbey"
@@ -36,19 +39,19 @@ class hvPlotSpec(BaseModel):
         description="Your thought process behind the plot."
     )
 
-    cmap: Literal["linear", "diverging", "categorical", "cyclic"] | None = Field(
+    cmap: Literal[CMAP_KINDS] | None = Field(
         default=None,
         description=(
-            "Colormap to use when a column is mapped to colour. Pick 'diverging' "
+            "Colormap to use when a column is mapped to color. Pick 'diverging' "
             "for values around a meaningful centre such as anomalies or deviations, "
             "'categorical' for unordered categories, 'cyclic' for wrapping values "
             "such as wind direction or hour of day, and 'linear' otherwise."
         ),
     )
 
-    cnorm: Literal["linear", "log", "eq_hist"] | None = Field(
+    cnorm: Literal[CNORMS] | None = Field(
         default=None,
-        description="Colour scale normalization. Use 'log' for values spanning orders of magnitude.",
+        description="Color scale normalization. Use 'log' for values spanning orders of magnitude.",
     )
 
     colorbar: bool | None = Field(
@@ -95,7 +98,7 @@ def make_hvplot_model(view_type: type[hvPlotUIView], schema: dict[str, Any]) -> 
         ),
         color=(
             column | None,
-            Field(default=None, description="Column to map onto colour."),
+            Field(default=None, description="Column to map onto color."),
         ),
         groupby=(
             list[column] | None,
@@ -159,8 +162,8 @@ class hvPlotAgent(BaseViewAgent):
         if "cmap" in spec:
             spec["cmap"] = resolve_cmap(spec["cmap"])
 
-        # Colouring by a non-numeric column makes hvPlot default the colormap to
-        # a list of colours, which the explorer's Selector rejects, so name one.
+        # Coloring by a non-numeric column makes hvPlot default the colormap to
+        # a list of colors, which the explorer's Selector rejects, so name one.
         if (color := spec.get("color")) in data and data[color].dtype.kind in "OSU":
             spec.setdefault("cmap", resolve_cmap("categorical"))
 

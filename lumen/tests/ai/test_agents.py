@@ -15,6 +15,7 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
+from hvplot.ui import DEFAULT_CMAPS
 from panel.pane import Markdown
 
 from lumen.ai.agents import (
@@ -314,7 +315,7 @@ def test_hvplot_agent_model_exposes_colormap(llm):
         assert field in model.model_fields
 
     cmap_literal, _none = get_args(model.model_fields["cmap"].annotation)
-    assert set(get_args(cmap_literal)) == {"linear", "diverging", "categorical", "cyclic"}
+    assert set(get_args(cmap_literal)) == set(DEFAULT_CMAPS)
 
 
 def test_resolve_cmap_returns_names_the_explorer_accepts():
