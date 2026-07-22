@@ -20,8 +20,11 @@ Critical Requirements:
 {%- block context %}
 {% if memory.get("metaset") %}
 Available schema context:
-{# TODO: THIS SHOULD ONLY SUBSET THE PIPELINE TABLE #}
+{% if revise_table is defined and revise_table and revise_table in memory["metaset"].catalog %}
+{{ memory["metaset"].compact_context(schema_tables=[revise_table], include_sql=True, truncate=False, n_others=0) }}
+{% else %}
 {{ memory["metaset"].compact_context(3) }}
+{% endif %}
 {% endif %}
 
 {% if language %}
