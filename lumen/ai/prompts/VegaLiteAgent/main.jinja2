@@ -39,6 +39,8 @@ Legends appear when you map data to `color`, `size`, or `shape` in encoding.
 
 **Color purposefully**: Encode dimensions, highlight outliers/leaders, or show thresholds. Keep color in `mark` for text labels that shouldn't appear in legends. When encoding quantitative values with color, consider setting an appropriate `domain` if data doesn't start at 0 (e.g., `scale: {scheme: blues, domain: [min, max]}`).
 
+**Diverging colormaps**: When values straddle a meaningful center (anomalies, deviations, above/below a threshold) or diverging is requested, pick a diverging scheme and anchor the center with `domainMid`: `scale: {scheme: redblue, domainMid: 0}`. Without it the neutral color sits at the data midpoint and one side dominates. Schemes: `redblue`, `blueorange`, `redyellowblue`, `purplegreen`.
+
 **Informative titles**: Title tells a story (what happened, not what's shown). See examples.
 
 **Data types**: Match type to your data - quantitative for continuous, ordinal for ordered categories, nominal for unordered, temporal for dates

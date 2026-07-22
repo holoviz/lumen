@@ -116,6 +116,10 @@ class BaseViewAgent(BaseLumenAgent):
             for i in range(3):
                 try:
                     spec = await self._extract_spec(context, spec)
+                    # Clear the earlier failure: the `if error` check after the
+                    # loop would otherwise turn a successful retry into a raise
+                    # (the exhausted case already re-raises above).
+                    error = ""
                     break
                 except Exception as e:
                     e = get_root_exception(e, exceptions=(MissingContextError,))
@@ -124,16 +128,26 @@ class BaseViewAgent(BaseLumenAgent):
 
                     error = str(e)
                     traceback.print_exception(e)
-                    context = f"```\n{dump_yaml(load_yaml(self._last_output['yaml_spec']))}\n```"
-                    report_error(e, step, language="json", context=context, status="failed")
+                    # Report the spec we actually have: agents differ in output
+                    # shape (VegaLite emits a yaml_spec field, hvPlot a flat param
+                    # dict), so assuming a yaml_spec key raises KeyError here.
+                    # Keep `context` intact, the next attempt and revise need it.
+                    error_context = f"```\n{dump_yaml(spec)}\n```"
+                    report_error(e, step, language="json", context=error_context, status="failed")
                     with self._add_step(
                         title="Re-attempted view generation",
                         steps_layout=self._steps_layout,
                     ) as retry_step:
-                        view = await self.revise(e, messages, context, dump_yaml(spec), language="yaml")
-                        if "yaml_spec: " in view:
-                            view = view.split("yaml_spec: ")[-1].rstrip('"').rstrip("'")
-                        retry_step.stream(f"\n\n```yaml\n{view}\n```")
+                        revised = await self.revise(e, messages, context, spec=dump_yaml(spec), language="yaml")
+                        if "yaml_spec: " in revised:
+                            revised = revised.split("yaml_spec: ")[-1].rstrip('"').rstrip("'")
+                        retry_step.stream(f"\n\n```yaml\n{revised}\n```")
+                        # Feed the revision into the next attempt, otherwise the
+                        # loop re-runs _extract_spec on the identical spec and can
+                        # never recover.
+                        revised_spec = load_yaml(revised)
+                        if isinstance(revised_spec, dict):
+                            spec = revised_spec
                     if i == 2:
                         raise
 

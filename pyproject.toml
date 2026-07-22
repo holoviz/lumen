@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "lumen"
 dynamic = ["version"]
-description = "A monitoring solution built on Panel."
+description = "Agent framework for chatting with data and building dashboards."
 readme = "README.md"
 license = { text = "BSD" }
 requires-python = ">=3.11"
