@@ -2,6 +2,7 @@ import json
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import get_args
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -21,7 +22,7 @@ from lumen.ai.agents import (
 )
 from lumen.ai.agents.analysis import make_analysis_model
 from lumen.ai.agents.deck_gl import DeckGLAgent
-from lumen.ai.agents.hvplot import hvPlotAgent
+from lumen.ai.agents.hvplot import hvPlotAgent, resolve_cmap
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.agents.vega_lite import VegaLiteSpec, VegaLiteSpecUpdate
 from lumen.ai.analysis import Analysis
@@ -31,7 +32,7 @@ from lumen.ai.schemas import Metaset, get_metaset
 from lumen.config import dump_yaml
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
-from lumen.views import Panel
+from lumen.views import Panel, hvPlotUIView
 
 root = str(Path(__file__).parent.parent / "sources")
 
@@ -277,6 +278,53 @@ class TestTemplateOverrides:
         messages = [{"role": "user", "content": "test"}]
         prompt = await agent._render_prompt("main", messages, {})
         assert "Footer appended." in prompt
+
+
+def test_hvplot_agent_builds_response_model(llm):
+    """hvPlotAgent must be able to build its structured-output model. The model
+    is requested on every response (Actor._invoke), so a failure here makes the
+    agent unusable rather than degraded."""
+    schema = {
+        "A": {"type": "number"},
+        "B": {"type": "number"},
+        "C": {"type": "string"},
+    }
+    model = hvPlotAgent(llm=llm)._get_model("main", schema=schema)
+
+    assert "chain_of_thought" in model.model_fields
+    for field in ("kind", "x", "y", "by", "groupby"):
+        assert field in model.model_fields
+
+    # x/y are restricted to real columns so the LLM cannot invent one.
+    x_literal, _none = get_args(model.model_fields["x"].annotation)
+    assert set(get_args(x_literal)) == set(schema)
+
+    # kind tracks the view's own Selector rather than a duplicated list.
+    assert set(get_args(model.model_fields["kind"].annotation)) == set(
+        hvPlotUIView.param["kind"].objects
+    )
+
+
+def test_hvplot_agent_model_exposes_colormap(llm):
+    """The model offers semantic colormap names rather than the full list of
+    concrete colormaps, which is far easier for an LLM to choose from."""
+    model = hvPlotAgent(llm=llm)._get_model("main", schema={"A": {"type": "number"}})
+
+    for field in ("cmap", "cnorm", "colorbar", "color"):
+        assert field in model.model_fields
+
+    cmap_literal, _none = get_args(model.model_fields["cmap"].annotation)
+    assert set(get_args(cmap_literal)) == {"linear", "diverging", "categorical", "cyclic"}
+
+
+def test_resolve_cmap_returns_names_the_explorer_accepts():
+    """hvplot.ui.Colormapping.cmap is a Selector over concrete colormap names,
+    so the semantic names have to be resolved before reaching the view. The
+    categorical default resolves to a list of colours, which it rejects."""
+    from hvplot.ui import CMAPS
+
+    for semantic in ("linear", "diverging", "categorical", "cyclic"):
+        assert resolve_cmap(semantic) in CMAPS
 
 
 def test_map_agents_route_geometry_columns():
