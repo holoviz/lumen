@@ -33,7 +33,7 @@ from lumen.ai.schemas import (
 from lumen.config import SOURCE_TABLE_SEPARATOR, dump_yaml
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
-from lumen.views import Panel
+from lumen.views import Panel, Table
 
 root = str(Path(__file__).parent.parent / "sources")
 
@@ -296,37 +296,56 @@ def _revise_ms(*slugs):
     return Metaset(query=None, catalog=catalog)
 
 
-def test_resolve_revise_table_from_pipeline_component(llm):
-    """A Pipeline editor component exposes its own .table."""
-    agent = SQLAgent(llm=llm)
-    ms = _revise_ms(f"S{SOURCE_TABLE_SEPARATOR}t1", f"S{SOURCE_TABLE_SEPARATOR}t2")
-    view = SimpleNamespace(component=SimpleNamespace(table="t1", pipeline=None))
-    assert agent._resolve_revise_table({"metaset": ms}, view) == f"S{SOURCE_TABLE_SEPARATOR}t1"
+def _editor(component):
+    """Minimal stand-in for the editor, which only needs to carry .component."""
+    return SimpleNamespace(component=component)
 
 
-def test_resolve_revise_table_from_view_component(llm):
-    """A View editor component has no .table, so fall back to .pipeline.table."""
+def test_resolve_revise_table_from_pipeline_component(llm, tiny_source):
+    """A Pipeline names its own table."""
     agent = SQLAgent(llm=llm)
-    ms = _revise_ms(f"S{SOURCE_TABLE_SEPARATOR}t1")
-    view = SimpleNamespace(component=SimpleNamespace(pipeline=SimpleNamespace(table="t1")))
-    assert agent._resolve_revise_table({"metaset": ms}, view) == f"S{SOURCE_TABLE_SEPARATOR}t1"
+    ms = _revise_ms(f"{tiny_source.name}{SOURCE_TABLE_SEPARATOR}tiny")
+    pipeline = Pipeline(source=tiny_source, table="tiny")
+    assert agent._resolve_revise_table({"metaset": ms}, _editor(pipeline)) == (
+        f"{tiny_source.name}{SOURCE_TABLE_SEPARATOR}tiny"
+    )
+
+
+def test_resolve_revise_table_from_view_component(llm, tiny_source):
+    """A View has no table of its own, so it reaches one through its pipeline."""
+    agent = SQLAgent(llm=llm)
+    ms = _revise_ms(f"{tiny_source.name}{SOURCE_TABLE_SEPARATOR}tiny")
+    view = Table(pipeline=Pipeline(source=tiny_source, table="tiny"))
+    assert agent._resolve_revise_table({"metaset": ms}, _editor(view)) == (
+        f"{tiny_source.name}{SOURCE_TABLE_SEPARATOR}tiny"
+    )
 
 
 def test_resolve_revise_table_prefers_own_table_over_chained_parent(llm):
-    """A chained Pipeline exposes .table (its own) and .pipeline (its parent);
-    the component's own table must win."""
+    """A chained Pipeline also has a parent pipeline; the child's own table wins."""
     agent = SQLAgent(llm=llm)
-    ms = _revise_ms(f"S{SOURCE_TABLE_SEPARATOR}child", f"S{SOURCE_TABLE_SEPARATOR}parent")
-    view = SimpleNamespace(component=SimpleNamespace(
-        table="child", pipeline=SimpleNamespace(table="parent")))
-    assert agent._resolve_revise_table({"metaset": ms}, view) == f"S{SOURCE_TABLE_SEPARATOR}child"
+    source = DuckDBSource(tables={
+        "parent": "SELECT 1 AS id",
+        "child": "SELECT 2 AS id",
+    })
+    parent = Pipeline(source=source, table="parent")
+    child = Pipeline(source=source, table="child", pipeline=parent)
+    ms = _revise_ms(
+        f"{source.name}{SOURCE_TABLE_SEPARATOR}parent",
+        f"{source.name}{SOURCE_TABLE_SEPARATOR}child",
+    )
+    assert agent._resolve_revise_table({"metaset": ms}, _editor(child)) == (
+        f"{source.name}{SOURCE_TABLE_SEPARATOR}child"
+    )
 
 
-def test_resolve_revise_table_from_context_pipeline(llm):
+def test_resolve_revise_table_from_context_pipeline(llm, tiny_source):
     agent = SQLAgent(llm=llm)
-    ms = _revise_ms(f"S{SOURCE_TABLE_SEPARATOR}t1")
-    ctx = {"metaset": ms, "pipeline": SimpleNamespace(table="t1")}
-    assert agent._resolve_revise_table(ctx, None) == f"S{SOURCE_TABLE_SEPARATOR}t1"
+    ms = _revise_ms(f"{tiny_source.name}{SOURCE_TABLE_SEPARATOR}tiny")
+    ctx = {"metaset": ms, "pipeline": Pipeline(source=tiny_source, table="tiny")}
+    assert agent._resolve_revise_table(ctx, None) == (
+        f"{tiny_source.name}{SOURCE_TABLE_SEPARATOR}tiny"
+    )
 
 
 def test_resolve_revise_table_from_context_table(llm):
@@ -335,17 +354,13 @@ def test_resolve_revise_table_from_context_table(llm):
     assert agent._resolve_revise_table({"metaset": ms, "table": "t1"}, None) == f"S{SOURCE_TABLE_SEPARATOR}t1"
 
 
-def test_resolve_revise_table_non_dict_context_returns_none(llm):
-    """The base_view auto-retry path passes a string context/view; must not crash."""
+def test_resolve_revise_table_unknown_name_returns_none(llm, tiny_source):
+    """A table the metaset has never heard of resolves to nothing, so the
+    prompt falls back to the broader context rather than an empty scope."""
     agent = SQLAgent(llm=llm)
-    assert agent._resolve_revise_table("```yaml\nfoo\n```", "some string") is None
-
-
-def test_resolve_revise_table_unknown_name_returns_none(llm):
-    agent = SQLAgent(llm=llm)
-    ms = _revise_ms(f"S{SOURCE_TABLE_SEPARATOR}t1")
-    view = SimpleNamespace(component=SimpleNamespace(table="nonexistent", pipeline=None))
-    assert agent._resolve_revise_table({"metaset": ms}, view) is None
+    ms = _revise_ms(f"other{SOURCE_TABLE_SEPARATOR}elsewhere")
+    pipeline = Pipeline(source=tiny_source, table="tiny")
+    assert agent._resolve_revise_table({"metaset": ms}, _editor(pipeline)) is None
 
 
 def _revise_ms_cols(entries):

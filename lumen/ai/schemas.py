@@ -273,7 +273,7 @@ class Metaset:
         n_others: int = 0,
         schema_tables: list[str] | None = None,
     ) -> str:
-        # Deduplicate catalog slugs — keep only the newest entry per
+        # Deduplicate catalog slugs, keeping only the newest entry per
         # table name so stale materialization generations don't appear.
         active_slugs = set(self._deduplicated_slugs())
 

@@ -1,6 +1,8 @@
 import param
 
 from ...config import dump_yaml, load_yaml
+from ...pipeline import Pipeline
+from ...views import View
 from ..config import PROMPTS_DIR
 from ..context import TContext
 from ..editors import LumenEditor
@@ -38,23 +40,23 @@ class BaseLumenAgent(Agent):
         when it cannot be determined (e.g. SQL generation before a pipeline
         exists), in which case the prompt falls back to the broader context.
         """
-        metaset = context.get("metaset") if isinstance(context, dict) else None
+        metaset = context.get("metaset")
         if metaset is None:
             return None
-        # Prefer the component being revised (unambiguous), then the context.
-        # Table-first: a Pipeline component exposes its own .table, while a View
-        # component has no .table so we fall back to its .pipeline.table. A
-        # chained Pipeline also has a .pipeline (its parent), whose table is NOT
-        # the one being revised, so .table must win over .pipeline.
-        candidate = None
-        component = getattr(view, "component", None)
-        if component is not None:
-            candidate = getattr(component, "table", None)
-            if candidate is None:
-                pipeline = getattr(component, "pipeline", None)
-                candidate = getattr(pipeline, "table", None) if pipeline is not None else None
+        # Prefer the component being revised, since it is unambiguous. A
+        # Pipeline names its own table; a View reaches one through the pipeline
+        # it renders. A chained Pipeline also has a .pipeline, but that is its
+        # parent and not the table being revised, hence Pipeline first.
+        component = view.component if view else None
+        if isinstance(component, Pipeline):
+            candidate = component.table
+        elif isinstance(component, View) and component.pipeline:
+            candidate = component.pipeline.table
+        else:
+            candidate = None
         if candidate is None:
-            candidate = getattr(context.get("pipeline"), "table", None) or context.get("table")
+            pipeline = context.get("pipeline")
+            candidate = (pipeline.table if pipeline else None) or context.get("table")
         slug = metaset._resolve_table_slug(candidate)
         if slug is None:
             return None
