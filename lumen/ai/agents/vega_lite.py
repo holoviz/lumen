@@ -18,9 +18,9 @@ from ...pipeline import Pipeline
 from ...views import Panel, VegaLiteView
 from ..code_executor import AltairExecutor, CodeSafetyCheck
 from ..config import (
-    LUMEN_CACHE_DIR, PROMPTS_DIR, VECTOR_STORE_ASSETS_URL,
-    VEGA_LITE_EXAMPLES_NUMPY_DB_FILE, VEGA_LITE_EXAMPLES_OPENAI_DB_FILE,
-    UserCancelledError,
+    LUMEN_CACHE_DIR, PROMPTS_DIR, UNRECOVERABLE_ERRORS,
+    VECTOR_STORE_ASSETS_URL, VEGA_LITE_EXAMPLES_NUMPY_DB_FILE,
+    VEGA_LITE_EXAMPLES_OPENAI_DB_FILE, UserCancelledError,
 )
 from ..context import TContext
 from ..editors import LumenEditor, MultiChartEditor, VegaLiteEditor
@@ -460,22 +460,31 @@ class VegaLiteAgent(BaseCodeAgent):
 
             # Extract each chart independently so one malformed spec does not
             # discard the charts that did parse.
-            specs, titles = [], []
+            charts, chart_errors = [], []
             for chart_spec in output.charts:
                 try:
-                    specs.append(await self._extract_spec(context, {"yaml_spec": chart_spec.yaml_spec}))
-                    titles.append(chart_spec.title)
+                    spec = await self._extract_spec(context, {"yaml_spec": chart_spec.yaml_spec})
+                except UNRECOVERABLE_ERRORS:
+                    # e.g. missing context or a cancelled run; retrying cannot help.
+                    raise
                 except Exception as e:
                     log_debug(f"Skipping chart {chart_spec.title!r} that failed to parse: {e}")
-            if not specs:
-                # Nothing parsed; let retry_llm_output regenerate with the errors.
-                raise ValueError("None of the generated chart specifications could be parsed.")
-            skipped = len(output.charts) - len(specs)
+                    chart_errors.append(f"{chart_spec.title or 'chart'}: {e}")
+                    continue
+                charts.append((spec, chart_spec.title))
+            if not charts:
+                # Nothing parsed; report every failure so the regenerated specs
+                # from retry_llm_output have something concrete to fix.
+                raise ValueError(
+                    "None of the generated chart specifications could be parsed. "
+                    + "; ".join(chart_errors)
+                )
+            skipped = len(output.charts) - len(charts)
             if skipped:
                 # Surface the drop to the user instead of only logging it.
                 step.stream(f"\n\nSkipped {skipped} chart(s) whose specification could not be parsed.")
             step.success_title = "Complete visualization with titles and colors created"
-        return {"specs": specs, "titles": titles}
+        return {"charts": charts}
 
     @retry_llm_output()
     async def _generate_code_spec(
@@ -521,20 +530,17 @@ class VegaLiteAgent(BaseCodeAgent):
                 chart = await self._execute_code(chart_spec.code, df, system=system, step=step)
                 if chart is None:
                     raise UserCancelledError("Code execution rejected by user.")
-                chart_objects.append(chart)
+                chart_objects.append((chart, chart_spec.title))
 
-        specs = []
-        for chart in chart_objects:
+        charts = []
+        for chart, title in chart_objects:
             # Convert to Vega-Lite spec
             spec = chart.to_dict()
             spec.pop("datasets", None)  # Remove inline data
             spec["data"] = {"name": pipeline.table}  # Use named data source
-            specs.append(await self._extract_spec(context, {"yaml_spec": dump_yaml(spec)}))
+            charts.append((await self._extract_spec(context, {"yaml_spec": dump_yaml(spec)}), title))
 
-        return {
-            "specs": specs,
-            "titles": [chart_spec.title for chart_spec in output.charts],
-        }
+        return {"charts": charts}
 
     async def _extract_spec(self, context: TContext, spec: dict[str, Any]):
         # .encode().decode('unicode_escape') fixes a JSONDecodeError in Python
@@ -681,7 +687,7 @@ class VegaLiteAgent(BaseCodeAgent):
 
         # Step 1: Generate one or more specs
         doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
-        # Produces {"specs": [{"spec": {...}, ...}], "titles": [...]}
+        # Produces {"charts": [({"spec": {...}, ...}, title), ...]}
         result = await self._generate_spec(
             messages, context, pipeline, doc, doc_examples=doc_examples
         )
@@ -690,30 +696,35 @@ class VegaLiteAgent(BaseCodeAgent):
             return [], {}
 
         # Step 2: One editable editor per chart. The UI renders each as its own
-        # tab with a code editor beside the plot.
-        titles = result["titles"]
-        views = [self.view_type(pipeline=pipeline, **spec) for spec in result["specs"]]
-        if len(views) == 1:
-            editors = [self._editor_type(component=views[0], title=step_title)]
-        else:
-            editors = [
-                self._editor_type(component=view, title=titles[i] or f"Chart {i + 1}")
-                for i, view in enumerate(views)
-            ]
+        # tab with a code editor beside the plot. A lone chart keeps the task's
+        # own title; several charts are labelled individually so their tabs are
+        # distinguishable.
+        charts = result["charts"]
+        editors = [
+            self._editor_type(
+                component=self.view_type(pipeline=pipeline, **spec),
+                title=step_title if len(charts) == 1 else (title or f"Chart {i}"),
+            )
+            for i, (spec, title) in enumerate(charts, start=1)
+        ]
 
-        # Step 3: For multiple charts, append a view-only "All" tab that stacks
-        # every plot together as an overview (no code editor of its own). It is
+        # Step 3: For multiple charts, append an "All" tab that stacks every plot
+        # together as an overview, with one code editor sub-tab per chart. It is
         # added last so the UI opens it by default as the final tab. Each plot
         # re-renders from its editor's component, so edits (or the polish pass)
         # to a chart tab stay in sync with the overview.
         outs = editors
-        if len(views) > 1:
-            overview = Column(
+        if len(editors) > 1:
+            # Left at its natural height so it overflows the editor's view,
+            # which is what gives that view something to scroll.
+            stacked = Column(
                 *(self._overview_item(editor) for editor in editors),
                 sizing_mode="stretch_width",
-                scroll=True,
             )
-            outs = [*editors, MultiChartEditor(component=Panel(object=overview), title="All")]
+            overview = MultiChartEditor(
+                component=Panel(object=stacked), title="All", chart_editors=editors
+            )
+            outs = [*editors, overview]
 
         # Step 4: enhancements (LLM-driven creative decisions), per editable chart
         if not self.code_execution_enabled:

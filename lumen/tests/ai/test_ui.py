@@ -43,7 +43,7 @@ from lumen.ai.models import ErrorDescription
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
 from lumen.ai.ui import UI, Exploration, ExplorerUI
-from lumen.config import SOURCE_TABLE_SEPARATOR, dump_yaml
+from lumen.config import SOURCE_TABLE_SEPARATOR, dump_yaml, load_yaml
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
 from lumen.sources.sqlalchemy import SQLAlchemySource
@@ -395,9 +395,10 @@ async def test_find_view_in_tabs(explorer_ui):
         assert tab_idx >= 0
 
 
-async def test_multichart_all_tab_last_and_view_only(explorer_ui):
-    """A multi-chart response renders one editable tab per chart plus a view-only
-    'All' overview that is placed last and opened by default."""
+async def test_multichart_all_tab_last_and_editable(explorer_ui):
+    """A multi-chart response renders one editable tab per chart plus an 'All'
+    overview that is placed last, opened by default, and exposes every chart's
+    spec as an editor sub-tab."""
     ui = explorer_ui
     test_source = ui.context["source"]
     SQLQueryWithTables = make_sql_model([(test_source.name, "test_table")])
@@ -445,17 +446,36 @@ async def test_multichart_all_tab_last_and_view_only(explorer_ui):
     await ui._execute_plan(plan)
 
     exploration = ui._exploration["view"]
-    # The multi-chart output includes the view-only "All" overview.
-    assert any(isinstance(v, MultiChartEditor) for v in exploration.plan.views)
+    # The multi-chart output includes the "All" overview.
+    overview = next(v for v in exploration.plan.views if isinstance(v, MultiChartEditor))
 
     tabs = exploration.view[0]
     # "All" is the last tab and is opened by default.
     assert tabs._names[-1] == "All"
     assert tabs.active == len(tabs) - 1
 
-    # The "All" tab is view-only (no code-editor VSplit); a chart tab has one.
-    assert not any(isinstance(child, VSplit) for child in tabs[-1])
-    assert any(isinstance(child, VSplit) for child in tabs[-2])
+    # The "All" tab lays out exactly like a chart tab: same editor/plot split,
+    # same proportions, and nothing pinning a pane open (which would stop the
+    # divider being dragged).
+    overview_split = next(child for child in tabs[-1] if isinstance(child, VSplit))
+    chart_split = next(child for child in tabs[-2] if isinstance(child, VSplit))
+    assert overview_split.sizes == chart_split.sizes
+    assert overview_split.min_size == chart_split.min_size
+
+    # The overview's editor pane is one sub-tab per chart, and editing a sub-tab
+    # writes through to that chart's own spec.
+    sub_tabs = overview.editor
+    assert sub_tabs._names == ["By category", "Value line"]
+    edited = dump_yaml({**load_yaml(overview.chart_editors[1].spec), "mark": "point"})
+    sub_tabs[1].value = edited
+    assert overview.chart_editors[1].spec == edited
+    assert overview.chart_editors[1].component.spec["mark"] == "point"
+    # The chart's own tab shows the same edit, not a stale copy.
+    assert overview.chart_editors[1]._editor.value == edited
+
+    # The overview wraps its view to scroll the stacked plots; pop-out and rerun
+    # must still locate it through that wrapper.
+    assert ui._find_view_in_tabs(exploration, overview) == len(tabs) - 1
 
 
 async def test_find_view_in_popped_out(explorer_ui):

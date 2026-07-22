@@ -27,6 +27,7 @@ from lumen.ai.agents.vega_lite import (
     AltairChartSpec, AltairSpec, ChartSpec, VegaLiteSpec, VegaLiteSpecUpdate,
 )
 from lumen.ai.analysis import Analysis
+from lumen.ai.config import RetriesExceededError
 from lumen.ai.editors import (
     AnalysisOutput, MultiChartEditor, SQLEditor, VegaLiteEditor,
 )
@@ -202,10 +203,12 @@ async def test_vegalite_agent_multiple(llm, duckdb_source, test_messages):
     assert isinstance(out[1], VegaLiteEditor)
     assert "field: B" in out[0].spec
     assert "field: C" in out[1].spec
-    # ...then the view-only "All" overview as the last tab (no code editor).
+    # ...then the "All" overview as the last tab, editing every chart's spec
+    # through one sub-tab each.
     assert isinstance(out[-1], MultiChartEditor)
     assert out[-1].title == "All"
-    assert out[-1]._render_editor() is None
+    assert out[-1].chart_editors == out[:2]
+    assert out[-1].editor._names == ["A vs B", "A vs C"]
     assert isinstance(out[-1].component, Panel)
     assert len(out[-1].component.object) == 2  # both plots stacked in the overview
 
@@ -249,6 +252,40 @@ async def test_vegalite_agent_skips_unparseable_chart(llm, duckdb_source, test_m
     assert len(out) == 1
     assert isinstance(out[0], VegaLiteEditor)
     assert "field: B" in out[0].spec
+
+
+async def test_vegalite_agent_reports_why_every_chart_failed(llm, duckdb_source, test_messages):
+    """When no chart parses the underlying errors reach the retry, which would
+    otherwise regenerate blind against an identical message."""
+
+    agent = VegaLiteAgent(llm=llm, code_execution="disabled")
+
+    context = {
+        "source": duckdb_source,
+        "pipeline": Pipeline(source=duckdb_source, table="test_sql"),
+        "table": "test_sql",
+        "sources": [duckdb_source],
+        "metaset": await get_metaset([duckdb_source], ["test_sql"]),
+        "data": duckdb_source.get("test_sql")
+    }
+
+    # Unbalanced braces -> YAML parse error, for every chart.
+    malformed = "mark: bar\nencoding:\n  x: {field: A, type: quantitative}}"
+    llm.set_responses([
+        VegaLiteSpec(
+            chain_of_thought="all malformed",
+            charts=[
+                ChartSpec(title="first", yaml_spec=malformed),
+                ChartSpec(title="second", yaml_spec=malformed),
+            ],
+            insufficient_context=False,
+            insufficient_context_reason="none"
+        ),
+    ] * 3)  # one response per retry_llm_output attempt
+    with pytest.raises(RetriesExceededError) as excinfo:
+        await agent.respond(test_messages, context)
+    message = str(excinfo.value.__cause__)
+    assert "first:" in message and "second:" in message
 
 
 async def test_vegalite_agent_altair_multiple(llm, duckdb_source, test_messages):
