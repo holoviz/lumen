@@ -321,7 +321,7 @@ def test_hvplot_agent_model_exposes_colormap(llm):
 def test_resolve_cmap_returns_names_the_explorer_accepts():
     """hvplot.ui.Colormapping.cmap is a Selector over concrete colormap names,
     so the semantic names have to be resolved before reaching the view. The
-    categorical default resolves to a list of colours, which it rejects."""
+    categorical default resolves to a list of colors, which it rejects."""
     from hvplot.ui import CMAPS
 
     for semantic in ("linear", "diverging", "categorical", "cyclic"):
@@ -345,9 +345,9 @@ async def test_hvplot_agent_resolves_semantic_colormap(llm, tiny_source):
     assert "chain_of_thought" not in spec
 
 
-async def test_hvplot_agent_names_colormap_for_categorical_colour(llm, tiny_source):
-    """Colouring by a non-numeric column makes hvPlot default the colormap to a
-    list of colours, which the same Selector rejects, so name one instead."""
+async def test_hvplot_agent_names_colormap_for_categorical_color(llm, tiny_source):
+    """Coloring by a non-numeric column makes hvPlot default the colormap to a
+    list of colors, which the same Selector rejects, so name one instead."""
     agent = hvPlotAgent(llm=llm)
     context = {"pipeline": Pipeline(source=tiny_source, table="tiny")}
     base = {"chain_of_thought": "why", "kind": "scatter", "x": "id", "y": "value"}
@@ -355,13 +355,13 @@ async def test_hvplot_agent_names_colormap_for_categorical_colour(llm, tiny_sour
     spec = await agent._extract_spec(context, dict(base, color="category"))
     assert spec["cmap"] == "glasbey"
 
-    # Numeric colour columns are left alone for hvPlot to decide.
+    # Numeric color columns are left alone for hvPlot to decide.
     spec = await agent._extract_spec(context, dict(base, color="value"))
     assert "cmap" not in spec
 
 
 async def test_hvplot_agent_keeps_explicit_cnorm_on_large_data(llm):
-    """Large datasets get a log colour norm, but not at the cost of one the
+    """Large datasets get a log color norm, but not at the cost of one the
     model asked for."""
     source = DuckDBSource(tables={
         "big": "SELECT i AS id, i * 1.0 AS value FROM range(25000) t(i)"
