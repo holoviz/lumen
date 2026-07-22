@@ -327,6 +327,59 @@ def test_resolve_cmap_returns_names_the_explorer_accepts():
         assert resolve_cmap(semantic) in CMAPS
 
 
+async def test_hvplot_agent_resolves_semantic_colormap(llm, tiny_source):
+    """The semantic colormap names exist for the model's benefit;
+    hvplot.ui.Colormapping.cmap is a Selector over concrete colormaps and
+    rejects them, so they have to be resolved before the spec reaches the view.
+    The reasoning field has to go for the same reason."""
+    agent = hvPlotAgent(llm=llm)
+    context = {"pipeline": Pipeline(source=tiny_source, table="tiny")}
+
+    spec = await agent._extract_spec(context, {
+        "chain_of_thought": "why", "kind": "scatter",
+        "x": "id", "y": "value", "cmap": "diverging",
+    })
+
+    assert spec["cmap"] == "coolwarm"
+    assert "chain_of_thought" not in spec
+
+
+async def test_hvplot_agent_names_colormap_for_categorical_colour(llm, tiny_source):
+    """Colouring by a non-numeric column makes hvPlot default the colormap to a
+    list of colours, which the same Selector rejects, so name one instead."""
+    agent = hvPlotAgent(llm=llm)
+    context = {"pipeline": Pipeline(source=tiny_source, table="tiny")}
+    base = {"chain_of_thought": "why", "kind": "scatter", "x": "id", "y": "value"}
+
+    spec = await agent._extract_spec(context, dict(base, color="category"))
+    assert spec["cmap"] == "glasbey"
+
+    # Numeric colour columns are left alone for hvPlot to decide.
+    spec = await agent._extract_spec(context, dict(base, color="value"))
+    assert "cmap" not in spec
+
+
+async def test_hvplot_agent_keeps_explicit_cnorm_on_large_data(llm):
+    """Large datasets get a log colour norm, but not at the cost of one the
+    model asked for."""
+    source = DuckDBSource(tables={
+        "big": "SELECT i AS id, i * 1.0 AS value FROM range(25000) t(i)"
+    })
+    agent = hvPlotAgent(llm=llm)
+    context = {"pipeline": Pipeline(source=source, table="big")}
+    base = {"chain_of_thought": "why", "kind": "scatter", "x": "id", "y": "value"}
+
+    spec = await agent._extract_spec(context, dict(base, cnorm="eq_hist"))
+    assert spec["rasterize"] is True
+    assert spec["cnorm"] == "eq_hist"
+
+    # Without an explicit choice the log norm is applied, with a colormap to
+    # go alongside it rather than a bare norm.
+    spec = await agent._extract_spec(context, dict(base))
+    assert spec["cnorm"] == "log"
+    assert spec["cmap"] == "kbc_r"
+
+
 def test_map_agents_route_geometry_columns():
     """hvPlot and DeckGL agents advertise a geometry-column condition so the
     coordinator routes GeoDataFrame data to a map-capable view."""
