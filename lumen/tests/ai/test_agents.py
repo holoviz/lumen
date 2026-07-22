@@ -2,6 +2,7 @@ import json
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import get_args
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -14,6 +15,7 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
+from hvplot.ui import DEFAULT_CMAPS
 from panel.pane import Markdown
 
 from lumen.ai.agents import (
@@ -21,7 +23,7 @@ from lumen.ai.agents import (
 )
 from lumen.ai.agents.analysis import make_analysis_model
 from lumen.ai.agents.deck_gl import DeckGLAgent
-from lumen.ai.agents.hvplot import hvPlotAgent
+from lumen.ai.agents.hvplot import hvPlotAgent, resolve_cmap
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.agents.vega_lite import VegaLiteSpec, VegaLiteSpecUpdate
 from lumen.ai.analysis import Analysis
@@ -31,7 +33,7 @@ from lumen.ai.schemas import Metaset, get_metaset
 from lumen.config import dump_yaml
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
-from lumen.views import Panel
+from lumen.views import Panel, hvPlotUIView
 
 root = str(Path(__file__).parent.parent / "sources")
 
@@ -277,6 +279,106 @@ class TestTemplateOverrides:
         messages = [{"role": "user", "content": "test"}]
         prompt = await agent._render_prompt("main", messages, {})
         assert "Footer appended." in prompt
+
+
+def test_hvplot_agent_builds_response_model(llm):
+    """hvPlotAgent must be able to build its structured-output model. The model
+    is requested on every response (Actor._invoke), so a failure here makes the
+    agent unusable rather than degraded."""
+    schema = {
+        "A": {"type": "number"},
+        "B": {"type": "number"},
+        "C": {"type": "string"},
+    }
+    model = hvPlotAgent(llm=llm)._get_model("main", schema=schema)
+
+    assert "chain_of_thought" in model.model_fields
+    for field in ("kind", "x", "y", "by", "groupby"):
+        assert field in model.model_fields
+
+    # x/y are restricted to real columns so the LLM cannot invent one.
+    x_literal, _none = get_args(model.model_fields["x"].annotation)
+    assert set(get_args(x_literal)) == set(schema)
+
+    # kind tracks the view's own Selector rather than a duplicated list.
+    assert set(get_args(model.model_fields["kind"].annotation)) == set(
+        hvPlotUIView.param["kind"].objects
+    )
+
+
+def test_hvplot_agent_model_exposes_colormap(llm):
+    """The model offers semantic colormap names rather than the full list of
+    concrete colormaps, which is far easier for an LLM to choose from."""
+    model = hvPlotAgent(llm=llm)._get_model("main", schema={"A": {"type": "number"}})
+
+    for field in ("cmap", "cnorm", "colorbar", "color"):
+        assert field in model.model_fields
+
+    cmap_literal, _none = get_args(model.model_fields["cmap"].annotation)
+    assert set(get_args(cmap_literal)) == set(DEFAULT_CMAPS)
+
+
+def test_resolve_cmap_returns_names_the_explorer_accepts():
+    """hvplot.ui.Colormapping.cmap is a Selector over concrete colormap names,
+    so the semantic names have to be resolved before reaching the view. The
+    categorical default resolves to a list of colors, which it rejects."""
+    from hvplot.ui import CMAPS
+
+    for semantic in ("linear", "diverging", "categorical", "cyclic"):
+        assert resolve_cmap(semantic) in CMAPS
+
+
+async def test_hvplot_agent_resolves_semantic_colormap(llm, tiny_source):
+    """The semantic colormap names exist for the model's benefit;
+    hvplot.ui.Colormapping.cmap is a Selector over concrete colormaps and
+    rejects them, so they have to be resolved before the spec reaches the view.
+    The reasoning field has to go for the same reason."""
+    agent = hvPlotAgent(llm=llm)
+    context = {"pipeline": Pipeline(source=tiny_source, table="tiny")}
+
+    spec = await agent._extract_spec(context, {
+        "chain_of_thought": "why", "kind": "scatter",
+        "x": "id", "y": "value", "cmap": "diverging",
+    })
+
+    assert spec["cmap"] == "coolwarm"
+    assert "chain_of_thought" not in spec
+
+
+async def test_hvplot_agent_names_colormap_for_categorical_color(llm, tiny_source):
+    """Coloring by a non-numeric column makes hvPlot default the colormap to a
+    list of colors, which the same Selector rejects, so name one instead."""
+    agent = hvPlotAgent(llm=llm)
+    context = {"pipeline": Pipeline(source=tiny_source, table="tiny")}
+    base = {"chain_of_thought": "why", "kind": "scatter", "x": "id", "y": "value"}
+
+    spec = await agent._extract_spec(context, dict(base, color="category"))
+    assert spec["cmap"] == "glasbey"
+
+    # Numeric color columns are left alone for hvPlot to decide.
+    spec = await agent._extract_spec(context, dict(base, color="value"))
+    assert "cmap" not in spec
+
+
+async def test_hvplot_agent_keeps_explicit_cnorm_on_large_data(llm):
+    """Large datasets get a log color norm, but not at the cost of one the
+    model asked for."""
+    source = DuckDBSource(tables={
+        "big": "SELECT i AS id, i * 1.0 AS value FROM range(25000) t(i)"
+    })
+    agent = hvPlotAgent(llm=llm)
+    context = {"pipeline": Pipeline(source=source, table="big")}
+    base = {"chain_of_thought": "why", "kind": "scatter", "x": "id", "y": "value"}
+
+    spec = await agent._extract_spec(context, dict(base, cnorm="eq_hist"))
+    assert spec["rasterize"] is True
+    assert spec["cnorm"] == "eq_hist"
+
+    # Without an explicit choice the log norm is applied, with a colormap to
+    # go alongside it rather than a bare norm.
+    spec = await agent._extract_spec(context, dict(base))
+    assert spec["cnorm"] == "log"
+    assert spec["cmap"] == "kbc_r"
 
 
 def test_map_agents_route_geometry_columns():

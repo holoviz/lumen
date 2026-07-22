@@ -6,4 +6,9 @@ no repeated columns are allowed. Do not arbitrarily set `groupby` and `by` field
 histogram is requested, use `y` instead of `x`. If x is categorical or strings, prefer barh over bar, and use `y` for
 the values. If a column has `format: geometry`, set `kind` from its `geometry_type`: `polygons` for Polygon or
 MultiPolygon, `paths` for LineString or MultiLineString, otherwise `points`.
+
+Only set `color` when a column should drive the color; `by` already separates series. When you do, pick the
+`cmap` that matches the data: `diverging` for values around a meaningful centre such as anomalies or deviations
+from a reference, `categorical` for unordered categories, `cyclic` for values that wrap such as wind direction or
+hour of day, and `linear` otherwise. Set `cnorm` to `log` only when values span orders of magnitude.
 {% endblock %}
