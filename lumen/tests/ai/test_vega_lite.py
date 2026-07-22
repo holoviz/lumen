@@ -10,9 +10,9 @@ except ModuleNotFoundError:
 
 import vl_convert
 
-from lumen.ai.agents.vega_lite import VegaLiteAgent, category_palette
+from lumen.ai.agents.vega_lite import VegaLiteAgent
 from lumen.ai.editors import VegaLiteEditor
-from lumen.ai.utils import normalize_vegalite_spec
+from lumen.ai.utils import category_palette, normalize_vegalite_spec
 from lumen.config import dump_yaml
 
 

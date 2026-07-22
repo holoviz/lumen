@@ -3,7 +3,6 @@ import base64
 from functools import partial
 from typing import Any
 
-import colorcet as cc
 import param
 import requests
 
@@ -25,8 +24,8 @@ from ..editors import LumenEditor, VegaLiteEditor
 from ..llm import Message, OpenAI
 from ..models import EscapeBaseModel, RetrySpec
 from ..utils import (
-    get_data, get_schema, load_json, log_debug, normalize_vegalite_spec,
-    retry_llm_output,
+    category_palette, get_data, get_schema, has_categorical_color, load_json,
+    log_debug, normalize_vegalite_spec, retry_llm_output,
 )
 from ..vector_store import DuckDBVectorStore
 from .base_code import BaseCodeAgent
@@ -92,38 +91,6 @@ class AltairSpec(BaseModel):
         - Use 'container' for width to make charts responsive
         """
     )
-
-
-def category_palette(ncolors: int = 20) -> list[str]:
-    """
-    Colours used for categorical encodings the model did not color itself.
-
-    Glasbey seeded on category10, so the first ten entries are visually the same
-    as Vega's own default (largest total RGB difference is 3 out of 765). Charts
-    with ten categories or fewer are unchanged; only the ones that used to
-    recycle colors differ. The b_ prefix is the hex form, since
-    colorcet.glasbey_category10 gives float RGB tuples that cannot be
-    serialized into a spec.
-    """
-    return cc.b_glasbey_category10[:ncolors]
-
-
-def has_categorical_color(spec: Any) -> bool:
-    """
-    Whether anything in the spec maps a field to color by category.
-
-    Only those charts can use the palette, so only they are worth adding it to.
-    Layered, concatenated and faceted specs nest their encodings, hence the
-    walk rather than a single lookup.
-    """
-    if isinstance(spec, dict):
-        color = spec.get("encoding", {}).get("color")
-        if isinstance(color, dict) and "field" in color and color.get("type") in ("nominal", "ordinal"):
-            return True
-        return any(has_categorical_color(value) for value in spec.values())
-    if isinstance(spec, list):
-        return any(has_categorical_color(item) for item in spec)
-    return False
 
 
 class VegaLiteAgent(BaseCodeAgent):
