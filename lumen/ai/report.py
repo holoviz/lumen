@@ -910,9 +910,9 @@ class Report(TaskGroup):
     level = 1
 
     # The Story tab is appended after the Report tab once a story exists.
-    _STORY_TAB = 1
+    _story_tab = 1
 
-    _STORY_PRESETS = [
+    _tone_presets = [
         ("Executive summary", "Write a concise executive summary for decision-makers, leading with the key takeaways."),
         ("Technical deep-dive", "Write a detailed technical analysis that explains the methods and the data behind each chart."),
         ("Highlights only", "Keep it brief: just the headline finding for each chart and table."),
@@ -1075,7 +1075,7 @@ class Report(TaskGroup):
                     label=label, variant="outlined", size="small", color="default",
                     on_click=partial(self._apply_story_preset, text=text),
                 )
-                for label, text in self._STORY_PRESETS
+                for label, text in self._tone_presets
             ],
             sizing_mode="stretch_width",
         )
@@ -1610,14 +1610,14 @@ class Report(TaskGroup):
     @property
     def _show_story(self):
         """Whether the story, rather than the report, is the view on screen."""
-        return len(self._tabs) > self._STORY_TAB and self._tabs.active == self._STORY_TAB
+        return len(self._tabs) > self._story_tab and self._tabs.active == self._story_tab
 
     def _render_story(self):
         """Build the blog-post flow into the Story tab, then switch to it."""
         self._story_column[:] = self._story_flow(editable=True)
-        if len(self._tabs) <= self._STORY_TAB:
+        if len(self._tabs) <= self._story_tab:
             self._tabs.append(("Story", self._story_column))
-        self._tabs.active = self._STORY_TAB
+        self._tabs.active = self._story_tab
 
     def _discard_story(self):
         """Forget every generated version and drop back to the report tab."""
@@ -1626,8 +1626,8 @@ class Report(TaskGroup):
         self._story.versions = []
         self._story.version = 0
         self._story_column[:] = []
-        if len(self._tabs) > self._STORY_TAB:
-            self._tabs.pop(self._STORY_TAB)
+        if len(self._tabs) > self._story_tab:
+            self._tabs.pop(self._story_tab)
         # Popping leaves ``active`` pointing at the removed tab.
         self._tabs.active = 0
 
