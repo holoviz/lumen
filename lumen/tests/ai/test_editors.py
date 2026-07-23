@@ -11,7 +11,9 @@ from PIL import Image
 
 import lumen.ai.editors as editors_module
 
-from lumen.ai.editors import LumenEditor, SQLEditor, VegaLiteEditor
+from lumen.ai.editors import (
+    LumenEditor, MultiChartEditor, SQLEditor, VegaLiteEditor,
+)
 from lumen.base import Component
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
@@ -272,3 +274,56 @@ def test_class_name_with_numbers():
         pass
 
     assert Editor2D._class_name_to_download_filename("png") == "editor2_d.png"
+
+
+@pytest.fixture
+def make_multi_chart_editor(monkeypatch):
+    monkeypatch.setattr(editors_module, 'ParamMethod', lambda *args, **kwargs: None)
+
+    def factory(n_charts, spec_lines=9, unserializable=()):
+        charts = [
+            LumenEditor(
+                component=MockComponent(),
+                spec=None if c in unserializable else "\n".join(
+                    f"line{i}" for i in range(spec_lines)
+                ),
+                title=f"Chart {c}",
+            )
+            for c in range(n_charts)
+        ]
+        return MultiChartEditor(
+            component=MockComponent(), title="All", chart_editors=charts
+        )
+
+    return factory
+
+
+@pytest.mark.parametrize("n_charts", [2, 3, 5, 9])
+def test_multichart_shows_one_editor_sub_tab_per_chart(make_multi_chart_editor, n_charts):
+    """Every chart's spec is reachable, however many charts there are, and only
+    the active one is mounted."""
+    editor = make_multi_chart_editor(n_charts).editor
+    assert editor._names == [f"Chart {c}" for c in range(n_charts)]
+    assert editor.dynamic
+
+
+def test_multichart_scrolls_its_stacked_plots(make_multi_chart_editor):
+    """The overview stacks every plot, so its view has to scroll rather than
+    grow past the pane and spill."""
+    assert make_multi_chart_editor(5).view.scroll == "y-auto"
+
+
+def test_multichart_survives_an_unserializable_spec(make_multi_chart_editor):
+    """spec is None when a component could not be serialized; the sub-tab still
+    renders and export skips it rather than failing outright."""
+    multi = make_multi_chart_editor(3, unserializable=(0,))
+    assert len(multi.editor) == 3
+    assert multi.export("yaml").getvalue().count("line0") == 2
+
+
+def test_multichart_export_concatenates_every_chart_spec(make_multi_chart_editor):
+    """The overview has no spec of its own; exporting yields all of them."""
+    multi = make_multi_chart_editor(3, spec_lines=2)
+    assert multi.export("yaml").getvalue().count("line0") == 3
+    with pytest.raises(ValueError, match="Unknown export format"):
+        multi.export("png")

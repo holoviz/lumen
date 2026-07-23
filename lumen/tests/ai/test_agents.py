@@ -23,9 +23,14 @@ from lumen.ai.agents.analysis import make_analysis_model
 from lumen.ai.agents.deck_gl import DeckGLAgent
 from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import make_sql_model
-from lumen.ai.agents.vega_lite import VegaLiteSpec, VegaLiteSpecUpdate
+from lumen.ai.agents.vega_lite import (
+    AltairChartSpec, AltairSpec, ChartSpec, VegaLiteSpec, VegaLiteSpecUpdate,
+)
 from lumen.ai.analysis import Analysis
-from lumen.ai.editors import AnalysisOutput, SQLEditor, VegaLiteEditor
+from lumen.ai.config import RetriesExceededError
+from lumen.ai.editors import (
+    AnalysisOutput, MultiChartEditor, SQLEditor, VegaLiteEditor,
+)
 from lumen.ai.llm import Llm
 from lumen.ai.schemas import (
     Column, Metaset, TableCatalogEntry, get_metaset,
@@ -136,7 +141,7 @@ async def test_vegalite_agent(llm, duckdb_source, test_messages):
     llm.set_responses([
         VegaLiteSpec(
             chain_of_thought="Test plot",
-            yaml_spec=dump_yaml(spec),
+            charts=[ChartSpec(title="A vs B", yaml_spec=dump_yaml(spec))],
             insufficient_context=False,
             insufficient_context_reason="none"
         ),
@@ -149,6 +154,197 @@ async def test_vegalite_agent(llm, duckdb_source, test_messages):
     assert len(out) == 1
     assert isinstance(out[0], VegaLiteEditor)
     assert out[0].spec == "$schema: https://vega.github.io/schema/vega-lite/v5.json\ndata:\n  values:\n  - A: 1\n    B: 2\n    C: 3\n    D: '2023-01-01T00:00:00Z'\n  - A: 4\n    B: 5\n    C: 6\n    D: '2023-01-02T00:00:00Z'\nencoding:\n  x:\n    field: A\n    type: quantitative\n  y:\n    field: B\n    type: quantitative\nheight: container\nmark: bar\nwidth: container\n"
+
+
+async def test_vegalite_agent_multiple(llm, duckdb_source, test_messages):
+    """Multiple charts: a view-only 'All' overview plus one editable editor per chart."""
+
+    agent = VegaLiteAgent(llm=llm, code_execution="disabled")
+
+    context = {
+        "source": duckdb_source,
+        "pipeline": Pipeline(source=duckdb_source, table="test_sql"),
+        "table": "test_sql",
+        "sources": [duckdb_source],
+        "metaset": await get_metaset([duckdb_source], ["test_sql"]),
+        "data": duckdb_source.get("test_sql")
+    }
+
+    spec_ab = {
+        "mark": "bar",
+        "encoding": {
+            "x": {"field": "A", "type": "quantitative"},
+            "y": {"field": "B", "type": "quantitative"},
+        }
+    }
+    spec_ac = {
+        "mark": "line",
+        "encoding": {
+            "x": {"field": "A", "type": "quantitative"},
+            "y": {"field": "C", "type": "quantitative"},
+        }
+    }
+    llm.set_responses([
+        VegaLiteSpec(
+            chain_of_thought="Two distinct relationships",
+            charts=[
+                ChartSpec(title="A vs B", yaml_spec=dump_yaml(spec_ab)),
+                ChartSpec(title="A vs C", yaml_spec=dump_yaml(spec_ac)),
+            ],
+            insufficient_context=False,
+            insufficient_context_reason="none"
+        ),
+        # One polish response per editable editor.
+        VegaLiteSpecUpdate(chain_of_thought="ok", yaml_update=""),
+        VegaLiteSpecUpdate(chain_of_thought="ok", yaml_update=""),
+    ])
+    out, out_context = await agent.respond(test_messages, context)
+    assert len(out) == 3
+    # One editable VegaLiteEditor per chart first...
+    assert isinstance(out[0], VegaLiteEditor)
+    assert isinstance(out[1], VegaLiteEditor)
+    assert "field: B" in out[0].spec
+    assert "field: C" in out[1].spec
+    # ...then the "All" overview as the last tab, editing every chart's spec
+    # through one sub-tab each.
+    assert isinstance(out[-1], MultiChartEditor)
+    assert out[-1].title == "All"
+    assert out[-1].chart_editors == out[:2]
+    assert out[-1].editor._names == ["A vs B", "A vs C"]
+    assert isinstance(out[-1].component, Panel)
+    assert len(out[-1].component.object) == 2  # both plots stacked in the overview
+
+
+async def test_vegalite_agent_skips_unparseable_chart(llm, duckdb_source, test_messages):
+    """A chart whose spec fails to parse is skipped; valid charts still render."""
+
+    agent = VegaLiteAgent(llm=llm, code_execution="disabled")
+
+    context = {
+        "source": duckdb_source,
+        "pipeline": Pipeline(source=duckdb_source, table="test_sql"),
+        "table": "test_sql",
+        "sources": [duckdb_source],
+        "metaset": await get_metaset([duckdb_source], ["test_sql"]),
+        "data": duckdb_source.get("test_sql")
+    }
+
+    good = {
+        "mark": "bar",
+        "encoding": {
+            "x": {"field": "A", "type": "quantitative"},
+            "y": {"field": "B", "type": "quantitative"},
+        }
+    }
+    llm.set_responses([
+        VegaLiteSpec(
+            chain_of_thought="one good, one malformed",
+            charts=[
+                ChartSpec(title="good", yaml_spec=dump_yaml(good)),
+                # Unbalanced braces -> YAML parse error.
+                ChartSpec(title="bad", yaml_spec="mark: bar\nencoding:\n  x: {field: A, type: quantitative}}"),
+            ],
+            insufficient_context=False,
+            insufficient_context_reason="none"
+        ),
+        VegaLiteSpecUpdate(chain_of_thought="ok", yaml_update=""),
+    ])
+    out, out_context = await agent.respond(test_messages, context)
+    # Only the valid chart survives -> a single editor, no "All" overview.
+    assert len(out) == 1
+    assert isinstance(out[0], VegaLiteEditor)
+    assert "field: B" in out[0].spec
+
+
+async def test_vegalite_agent_reports_why_every_chart_failed(llm, duckdb_source, test_messages):
+    """When no chart parses the underlying errors reach the retry, which would
+    otherwise regenerate blind against an identical message."""
+
+    agent = VegaLiteAgent(llm=llm, code_execution="disabled")
+
+    context = {
+        "source": duckdb_source,
+        "pipeline": Pipeline(source=duckdb_source, table="test_sql"),
+        "table": "test_sql",
+        "sources": [duckdb_source],
+        "metaset": await get_metaset([duckdb_source], ["test_sql"]),
+        "data": duckdb_source.get("test_sql")
+    }
+
+    # Unbalanced braces -> YAML parse error, for every chart.
+    malformed = "mark: bar\nencoding:\n  x: {field: A, type: quantitative}}"
+    llm.set_responses([
+        VegaLiteSpec(
+            chain_of_thought="all malformed",
+            charts=[
+                ChartSpec(title="first", yaml_spec=malformed),
+                ChartSpec(title="second", yaml_spec=malformed),
+            ],
+            insufficient_context=False,
+            insufficient_context_reason="none"
+        ),
+    ] * 3)  # one response per retry_llm_output attempt
+    with pytest.raises(RetriesExceededError) as excinfo:
+        await agent.respond(test_messages, context)
+    message = str(excinfo.value.__cause__)
+    assert "first:" in message and "second:" in message
+
+
+async def test_vegalite_agent_altair_multiple(llm, duckdb_source, test_messages):
+    """VegaLiteAgent Altair (code) mode returns one editor per generated chart."""
+
+    agent = VegaLiteAgent(llm=llm, code_execution="allow")
+
+    context = {
+        "source": duckdb_source,
+        "pipeline": Pipeline(source=duckdb_source, table="test_sql"),
+        "table": "test_sql",
+        "sources": [duckdb_source],
+        "metaset": await get_metaset([duckdb_source], ["test_sql"]),
+        "data": duckdb_source.get("test_sql")
+    }
+
+    chart_ab = SimpleNamespace(to_dict=lambda: {
+        "mark": "bar",
+        "encoding": {
+            "x": {"field": "A", "type": "quantitative"},
+            "y": {"field": "B", "type": "quantitative"},
+        },
+    })
+    chart_ac = SimpleNamespace(to_dict=lambda: {
+        "mark": "line",
+        "encoding": {
+            "x": {"field": "A", "type": "quantitative"},
+            "y": {"field": "C", "type": "quantitative"},
+        },
+    })
+    # Bypass real code execution; return a chart object per generated code block.
+    agent._execute_code = AsyncMock(side_effect=[chart_ab, chart_ac])
+
+    llm.set_responses([
+        AltairSpec(
+            chain_of_thought="Two independent charts",
+            charts=[
+                AltairChartSpec(
+                    title="A vs B",
+                    code="chart = alt.Chart(df).mark_bar().encode(x='A:Q', y='B:Q')"
+                ),
+                AltairChartSpec(
+                    title="A vs C",
+                    code="chart = alt.Chart(df).mark_line().encode(x='A:Q', y='C:Q')"
+                ),
+            ],
+        ),
+    ])
+    out, out_context = await agent.respond(test_messages, context)
+    # One editable editor per chart, then a view-only "All" overview last.
+    assert len(out) == 3
+    assert isinstance(out[0], VegaLiteEditor)
+    assert isinstance(out[1], VegaLiteEditor)
+    assert "field: B" in out[0].spec
+    assert "field: C" in out[1].spec
+    assert isinstance(out[-1], MultiChartEditor)
+    assert out[-1].title == "All"
 
 
 async def test_analysis_agent(llm, duckdb_source, test_messages):
