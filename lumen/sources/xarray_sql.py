@@ -284,7 +284,13 @@ class XArraySQLSource(BaseSQLSource):
         on the dataset dims for xarray-sql < 0.3.
         """
         result = self._ctx.sql(self._build_sql(table, **query))
-        dims = list(self._dataset.dims)
+        # A single variable's own dims exclude unrelated dataset dims (e.g. an
+        # nbnds bounds dim from a *_bounds variable) that the query result has
+        # no column for and that would break to_dataset(dims=...).
+        if table in self._dataset.data_vars:
+            dims = list(self._dataset[table].dims)
+        else:
+            dims = list(self._dataset.dims)
         if hasattr(result, 'to_dataset'):
             # Pass dims explicitly: with multiple data variables registered the
             # source cannot infer them unambiguously from the FROM clause.

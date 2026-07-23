@@ -676,6 +676,18 @@ class TestToDataset:
         ds = source.to_dataset("temperature", lat=30.0)
         assert ds.sizes["lat"] == 1
 
+    def test_to_dataset_ignores_bounds_dim(self, synthetic_dataset):
+        """A bounds variable adds a dim (e.g. nbnds) the queried variable lacks;
+        to_dataset must use the variable's own dims, not every dataset dim, or
+        the extra dim has no column in the result and to_dataset crashes."""
+        ds = synthetic_dataset.assign(
+            time_bnds=(["time", "nbnds"], np.zeros((10, 2)))
+        )
+        source = XArraySQLSource(_dataset=ds)
+        result = source.to_dataset("temperature")
+        assert "nbnds" not in result.dims
+        assert set(result.dims) >= {"time", "lat", "lon"}
+
     def test_get_still_returns_long_form(self, synthetic_dataset):
         """get() is unchanged: it returns the long-form pandas frame."""
         source = XArraySQLSource(_dataset=synthetic_dataset)
