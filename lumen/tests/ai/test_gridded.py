@@ -124,6 +124,27 @@ def test_gridded_metadata_handles_datetime_coord():
     assert result["regular"] is True
 
 
+def test_gridded_metadata_handles_cftime_coord():
+    """cftime (non-standard calendar) time coords stay object-dtype and cannot
+    become datetime64, so the regularity check must not crash on them: np.diff
+    yields timedeltas and np.allclose cannot add a float tolerance to one."""
+    cftime = pytest.importorskip("cftime")
+    times = np.array(
+        [cftime.DatetimeNoLeap(2026, m, 1) for m in (1, 2, 3, 4)], dtype=object
+    )
+    lons = np.array([10.0, 20.0, 30.0])
+    temp = np.arange(12, dtype=float).reshape(4, 3)
+    ds = xr.Dataset(
+        {"temp": (["time", "lon"], temp)},
+        coords={"time": times, "lon": lons},
+    )
+    pipeline = Pipeline(source=XArraySQLSource(_dataset=ds), table="temp")
+    result = get_gridded_metadata(pipeline)
+    assert result is not None
+    # month starts are unevenly spaced, so the grid is irregular
+    assert result["regular"] is False
+
+
 # ---- Prompt rendering tests ----
 
 def _base_context(gridded=None):

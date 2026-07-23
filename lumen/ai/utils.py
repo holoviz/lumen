@@ -1669,11 +1669,12 @@ def get_gridded_metadata(pipeline: Pipeline) -> dict[str, Any] | None:
         arr = np.asarray(values)
         if arr.ndim != 1 or arr.size < 2:
             return False
-        # datetime64 coords need int64 conversion before allclose
-        if np.issubdtype(arr.dtype, np.datetime64):
-            arr = arr.astype('int64')
         diffs = np.diff(arr)
-        return bool(np.allclose(diffs, diffs[0], rtol=1e-6))
+        # Real-number steps compare with a tolerance; datetime/timedelta/object
+        # steps (e.g. cftime) can't, since allclose adds a float atol to them.
+        if diffs.dtype.kind in 'fiu':
+            return bool(np.allclose(diffs, diffs[0], rtol=1e-6))
+        return bool((diffs == diffs[0]).all())
 
     regular = all(
         _is_regular(ds.coords[d].values) for d in ds.dims if d in ds.coords
