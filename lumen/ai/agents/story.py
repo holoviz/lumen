@@ -63,6 +63,25 @@ class ProseEdit(BaseModel):
     )
 
 
+class StoryState(param.Parameterized):
+    """The report's generated story: its versions and which one is shown."""
+
+    blocks = param.List(default=[], doc="""
+        The (kind, value) blocks of the story currently shown.""")
+
+    outline = param.List(default=[], doc="""
+        The arranged section and heading order applied to the export.""")
+
+    title = param.String(default="", doc="""
+        The title of the story currently shown.""")
+
+    version = param.Integer(default=0, doc="""
+        Index of the version currently shown.""")
+
+    versions = param.List(default=[], doc="""
+        Every generated story, kept so regenerating never discards manual edits.""")
+
+
 class StoryAgent(LLMUser):
     """
     Writes a "story" that reads like a blog post: short prose paragraphs

@@ -33,7 +33,7 @@ from ..views.base import Panel, View
 from .actor import (
     Actor, ContextProvider, NullStep, TContext,
 )
-from .agents.story import StoryAgent, build_catalog
+from .agents.story import StoryAgent, StoryState, build_catalog
 from .config import MissingContextError
 from .context import (
     LWW, ContextError, ValidationIssue, collect_task_outputs,
@@ -82,25 +82,6 @@ def _export_header(section, status_source, variant="h3"):
         _export_checkbox(section, status_source), title,
         align="center", sizing_mode="stretch_width",
     )
-
-
-class StoryState(param.Parameterized):
-    """The report's generated story: its versions and which one is shown."""
-
-    blocks = param.List(default=[], doc="""
-        The (kind, value) blocks of the story currently shown.""")
-
-    outline = param.List(default=[], doc="""
-        The arranged section and heading order applied to the export.""")
-
-    title = param.String(default="", doc="""
-        The title of the story currently shown.""")
-
-    version = param.Integer(default=0, doc="""
-        Index of the version currently shown.""")
-
-    versions = param.List(default=[], doc="""
-        Every generated story, kept so regenerating never discards manual edits.""")
 
 
 class Task(Viewer):
