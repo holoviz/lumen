@@ -1669,11 +1669,12 @@ def get_gridded_metadata(pipeline: Pipeline) -> dict[str, Any] | None:
         arr = np.asarray(values)
         if arr.ndim != 1 or arr.size < 2:
             return False
-        # datetime64 coords need int64 conversion before allclose
-        if np.issubdtype(arr.dtype, np.datetime64):
-            arr = arr.astype('int64')
         diffs = np.diff(arr)
-        return bool(np.allclose(diffs, diffs[0], rtol=1e-6))
+        # Real-number steps compare with a tolerance; datetime/timedelta/object
+        # steps (e.g. cftime) can't, since allclose adds a float atol to them.
+        if diffs.dtype.kind in 'fiu':
+            return bool(np.allclose(diffs, diffs[0], rtol=1e-6))
+        return bool((diffs == diffs[0]).all())
 
     regular = all(
         _is_regular(ds.coords[d].values) for d in ds.dims if d in ds.coords
@@ -1729,16 +1730,21 @@ def subset_gridded_to_2d(
     time on a lon/lat map) collapse. Returns the pipeline unchanged when it is
     not gridded or the spec already references every dimension.
     """
-    md = get_gridded_metadata(pipeline)
-    if not md:
+    # The compact gridded dataset (lazy, coords only -- never the long-form
+    # frame) carries just this variable's dims and, crucially, its coords in the
+    # materialized column's dtype (e.g. cftime coords become datetime64 there),
+    # so both the dims to collapse and the pin values come from it. Pinning from
+    # the raw dataset would leave cftime dims uncollapsed (the object value can't
+    # match the datetime64 column).
+    grid = pipeline.get_dataset()
+    if grid is None:
         return pipeline
-    ds = pipeline.source.dataset
     referenced = _spec_field_references(spec, kind)
-    collapse = [dim for dim in ds.dims if dim not in referenced]
+    collapse = [dim for dim in grid.dims if dim not in referenced]
     if not collapse:
         return pipeline
     filters = [
-        ConstantFilter(field=dim, value=ds[dim].values[0]) for dim in collapse
+        ConstantFilter(field=dim, value=grid[dim].values[0]) for dim in collapse
     ]
     return pipeline.chain(filters=filters)
 

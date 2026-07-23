@@ -124,6 +124,27 @@ def test_gridded_metadata_handles_datetime_coord():
     assert result["regular"] is True
 
 
+def test_gridded_metadata_handles_cftime_coord():
+    """cftime (non-standard calendar) time coords stay object-dtype and cannot
+    become datetime64, so the regularity check must not crash on them: np.diff
+    yields timedeltas and np.allclose cannot add a float tolerance to one."""
+    cftime = pytest.importorskip("cftime")
+    times = np.array(
+        [cftime.DatetimeNoLeap(2026, m, 1) for m in (1, 2, 3, 4)], dtype=object
+    )
+    lons = np.array([10.0, 20.0, 30.0])
+    temp = np.arange(12, dtype=float).reshape(4, 3)
+    ds = xr.Dataset(
+        {"temp": (["time", "lon"], temp)},
+        coords={"time": times, "lon": lons},
+    )
+    pipeline = Pipeline(source=XArraySQLSource(_dataset=ds), table="temp")
+    result = get_gridded_metadata(pipeline)
+    assert result is not None
+    # month starts are unevenly spaced, so the grid is irregular
+    assert result["regular"] is False
+
+
 # ---- Prompt rendering tests ----
 
 def _base_context(gridded=None):
@@ -303,6 +324,24 @@ def test_subset_keeps_dims_the_spec_uses(simple_dataset_3d_pipeline):
     sub = subset_gridded_to_2d(simple_dataset_3d_pipeline, spec, "vega-lite")
     assert sub.data["time"].nunique() > 1
     assert sub.data["lat"].nunique() == 1
+
+
+def test_subset_collapses_cftime_dim():
+    """A cftime time dim must still collapse: the raw cftime coord value can't
+    match the materialized (datetime64) column, so the pin comes from the data."""
+    cftime = pytest.importorskip("cftime")
+    times = np.array(
+        [cftime.DatetimeGregorian(2026, m, 1) for m in (1, 2, 3)], dtype=object
+    )
+    ds = xr.Dataset(
+        {"air": (["time", "lat", "lon"], np.arange(3 * 3 * 4, dtype=float).reshape(3, 3, 4))},
+        coords={"time": times, "lat": [0.0, 1.0, 2.0], "lon": [10.0, 20.0, 30.0, 40.0]},
+    )
+    pipeline = Pipeline(source=XArraySQLSource(_dataset=ds), table="air")
+    spec = {"encoding": {"x": {"field": "lon"}, "y": {"field": "lat"}}}  # collapse time
+    sub = subset_gridded_to_2d(pipeline, spec, "vega-lite")
+    assert len(sub.data) < len(pipeline.data)
+    assert sub.data["time"].nunique() == 1
 
 
 def test_subset_noop_when_spec_uses_all_dims(xarray_pipeline):
