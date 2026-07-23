@@ -284,19 +284,17 @@ class XArraySQLSource(BaseSQLSource):
         on the dataset dims for xarray-sql < 0.3.
         """
         result = self._ctx.sql(self._build_sql(table, **query))
-        # A single variable's own dims exclude unrelated dataset dims (e.g. an
-        # nbnds bounds dim from a *_bounds variable) that the query result has
-        # no column for and that would break to_dataset(dims=...).
-        if table in self._dataset.data_vars:
-            dims = list(self._dataset[table].dims)
-        else:
-            dims = list(self._dataset.dims)
         if hasattr(result, 'to_dataset'):
-            # Pass dims explicitly: with multiple data variables registered the
-            # source cannot infer them unambiguously from the FROM clause.
+            # Pass only the dims the result actually has a column for. Multiple
+            # data vars need dims passed explicitly (the FROM clause is
+            # ambiguous), but a bounds dim (e.g. nbnds) or a projecting/
+            # aggregating sql_transform can leave a dataset dim out of the
+            # result, and to_dataset(dims=...) errors on a dim it can't find.
+            names = set(result.schema().names)
+            dims = [d for d in self._dataset.dims if d in names]
             return result.to_dataset(dims=dims)
         df = result.to_pandas()
-        present = [d for d in dims if d in df.columns]
+        present = [d for d in self._dataset.dims if d in df.columns]
         return df.set_index(present).to_xarray() if present else df
 
     def create_sql_expr_source(

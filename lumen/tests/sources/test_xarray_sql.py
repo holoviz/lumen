@@ -23,6 +23,7 @@ xr = pytest.importorskip("xarray")
 pytest.importorskip("xarray_sql")
 
 from lumen.sources.xarray_sql import XArraySQLSource
+from lumen.transforms.sql import SQLColumns
 
 # ---- Fixtures ----
 
@@ -687,6 +688,16 @@ class TestToDataset:
         result = source.to_dataset("temperature")
         assert "nbnds" not in result.dims
         assert set(result.dims) >= {"time", "lat", "lon"}
+
+    def test_to_dataset_ignores_projected_away_dim(self, synthetic_dataset):
+        """A projecting sql_transform (e.g. DeckGL keeping only lat/lon/value)
+        drops a dim from the result; to_dataset must pass only the dims the
+        result still has a column for, not every dataset dim."""
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        transform = SQLColumns(columns=["lat", "lon", "temperature"])  # drops time
+        result = source.to_dataset("temperature", sql_transforms=[transform])
+        assert "time" not in result.dims
+        assert set(result.dims) == {"lat", "lon"}
 
     def test_get_still_returns_long_form(self, synthetic_dataset):
         """get() is unchanged: it returns the long-form pandas frame."""
