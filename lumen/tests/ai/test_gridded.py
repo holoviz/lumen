@@ -1,8 +1,12 @@
 import datetime
 
+import holoviews as hv
 import numpy as np
 import pandas as pd
+import panel as pn
 import pytest
+
+from hvplot.ui import hvDataFrameExplorer, hvGridExplorer
 
 xr = pytest.importorskip("xarray")
 pytest.importorskip("xarray_sql")
@@ -15,8 +19,9 @@ from lumen.ai.utils import (
 from lumen.pipeline import Pipeline
 from lumen.sources.base import InMemorySource
 from lumen.sources.xarray_sql import XArraySQLSource
+from lumen.transforms.base import Columns
 from lumen.util import try_import_xarray
-from lumen.views.base import hvPlotView
+from lumen.views.base import hvPlotUIView, hvPlotView
 
 pytestmark = pytest.mark.skipif(
     try_import_xarray() is None, reason="xarray not installed"
@@ -337,7 +342,6 @@ def test_pipeline_get_dataset_none_for_tabular(tabular_pipeline):
 def test_pipeline_get_dataset_none_with_python_transform(simple_dataset_3d):
     """A Python transform means the pipeline can't defer to the source's
     gridded to_dataset, so get_dataset returns None (callers use the frame)."""
-    from lumen.transforms.base import Columns
     source = XArraySQLSource(_dataset=simple_dataset_3d)
     pipeline = Pipeline(
         source=source, table="air", transforms=[Columns(columns=["lat", "lon", "air"])]
@@ -348,13 +352,11 @@ def test_pipeline_get_dataset_none_with_python_transform(simple_dataset_3d):
 def test_hvplotview_renders_gridded_from_source_dataset(simple_dataset_3d_pipeline):
     """hvPlotView renders an image from the source's gridded Dataset (paging the
     extra time dim), not by pivoting the long-form frame."""
-    from lumen.views.base import hvPlotView
     view = hvPlotView(
         pipeline=simple_dataset_3d_pipeline,
         kind="image", x="lon", y="lat", z="air", groupby="time",
     )
     plot = view.get_plot(view.get_data())
-    import holoviews as hv
     assert isinstance(plot, (hv.DynamicMap, hv.HoloMap))
 
 
@@ -362,11 +364,6 @@ def test_hvplotuiview_uses_grid_explorer_for_gridded(simple_dataset_3d_pipeline)
     """The AI explorer view (hvPlotUIView) renders a gridded 'image' via hvPlot's
     grid explorer over the compact Dataset -- the long-form dataframe explorer
     would raise 'image requires gridded data'."""
-    import panel as pn
-
-    from hvplot.ui import hvGridExplorer
-
-    from lumen.views.base import hvPlotUIView
     view = hvPlotUIView(
         pipeline=simple_dataset_3d_pipeline,
         kind="image", x="lon", y="lat", z="air", groupby="time",
@@ -378,8 +375,5 @@ def test_hvplotuiview_uses_grid_explorer_for_gridded(simple_dataset_3d_pipeline)
 
 def test_hvplotuiview_uses_dataframe_explorer_for_tabular(tabular_pipeline):
     """A non-xarray pipeline still uses the dataframe explorer."""
-    from hvplot.ui import hvDataFrameExplorer
-
-    from lumen.views.base import hvPlotUIView
     view = hvPlotUIView(pipeline=tabular_pipeline, kind="scatter", x="x", y="y")
     assert isinstance(view.get_panel(), hvDataFrameExplorer)
