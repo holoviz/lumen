@@ -757,9 +757,11 @@ class MultiChartEditor(LumenEditor):
         self.view = Column(self.view, sizing_mode="stretch_both", scroll="y-auto")
 
     def _render_editor(self):
+        # No margin of its own: each sub-tab's CodeEditor already carries the
+        # (0, 10) inset, so a margin here would double the left gap.
         return Tabs(
             *((editor.title, editor._code_editor()) for editor in self.chart_editors),
-            dynamic=True, sizing_mode="stretch_both", margin=(0, 10)
+            dynamic=True, sizing_mode="stretch_both", margin=0
         )
 
     def export(self, fmt: str) -> StringIO:
