@@ -23,6 +23,7 @@ from textwrap import dedent
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import parse_qs
 
+import colorcet as cc
 import numpy as np
 import pandas as pd
 import param
@@ -1740,6 +1741,39 @@ def subset_gridded_to_2d(
         ConstantFilter(field=dim, value=ds[dim].values[0]) for dim in collapse
     ]
     return pipeline.chain(filters=filters)
+
+
+def category_palette(ncolors: int = 20) -> list[str]:
+    """
+    Colors used for categorical encodings a plot did not color itself.
+
+    Glasbey seeded on category10, so the first ten entries are visually the same
+    as Vega's own default (largest total RGB difference is 3 out of 765). Charts
+    with ten categories or fewer are unchanged; only the ones that used to
+    recycle colors differ. hvPlot reaches for the same palette when it picks a
+    colormap itself, so the two agree. The b_ prefix is the hex form, since
+    colorcet.glasbey_category10 gives float RGB tuples that cannot be
+    serialized into a spec.
+    """
+    return cc.b_glasbey_category10[:ncolors]
+
+
+def has_categorical_color(spec: Any) -> bool:
+    """
+    Whether anything in the Vega-Lite spec maps a field to color by category.
+
+    Only those charts can use the palette, so only they are worth adding it to.
+    Layered, concatenated and faceted specs nest their encodings, hence the
+    walk rather than a single lookup.
+    """
+    if isinstance(spec, dict):
+        color = spec.get("encoding", {}).get("color")
+        if isinstance(color, dict) and "field" in color and color.get("type") in ("nominal", "ordinal"):
+            return True
+        return any(has_categorical_color(value) for value in spec.values())
+    if isinstance(spec, list):
+        return any(has_categorical_color(item) for item in spec)
+    return False
 
 
 def normalize_vegalite_spec(

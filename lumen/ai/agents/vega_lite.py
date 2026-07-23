@@ -24,8 +24,9 @@ from ..editors import LumenEditor, VegaLiteEditor
 from ..llm import Message, OpenAI
 from ..models import EscapeBaseModel, RetrySpec
 from ..utils import (
-    get_data, get_gridded_metadata, get_schema, load_json, log_debug,
-    normalize_vegalite_spec, retry_llm_output, subset_gridded_to_2d,
+    category_palette, get_data, get_gridded_metadata, get_schema,
+    has_categorical_color, load_json, log_debug, normalize_vegalite_spec,
+    retry_llm_output, subset_gridded_to_2d,
 )
 from ..vector_store import DuckDBVectorStore
 from .base_code import BaseCodeAgent
@@ -488,7 +489,7 @@ class VegaLiteAgent(BaseCodeAgent):
 
         return await self._extract_spec(context, {"yaml_spec": dump_yaml(spec)})
 
-    async def _extract_spec(self, context: TContext, spec: dict[str, Any]):
+    async def _extract_spec(self, context: TContext, spec: dict[str, Any], apply_defaults: bool = True):
         # .encode().decode('unicode_escape') fixes a JSONDecodeError in Python
         # where it's expecting property names enclosed in double quotes
         # by properly handling the escaped characters in your JSON string
@@ -496,6 +497,14 @@ class VegaLiteAgent(BaseCodeAgent):
             vega_spec = load_yaml(yaml_spec)
         elif json_spec := spec.get("json_spec"):
             vega_spec = load_json(json_spec)
+        # Supply the palette as a default the model can override, so charts in a
+        # single report share colors unless a chart asked for something else.
+        # Only on the way in: re-applying it on a later edit would undo a
+        # palette the user had deliberately removed.
+        if apply_defaults and has_categorical_color(vega_spec):
+            vega_spec = self._deep_merge_dicts(
+                {"config": {"range": {"category": category_palette()}}}, vega_spec
+            )
         return normalize_vegalite_spec(vega_spec, editor_type=self._editor_type)
 
     async def _get_doc_examples(self, user_query: str) -> list[str]:
@@ -585,13 +594,15 @@ class VegaLiteAgent(BaseCodeAgent):
                     step_name, step_desc, out.spec, step_name, messages, context, doc=doc, out=out
                 )
                 try:
-                    # Validate merged spec
+                    # Validate merged spec, and keep what normalization added to it
                     merged_spec = self._deep_merge_dicts(out._spec_dict["spec"], update_dict)
-                    await self._extract_spec(context, {"yaml_spec": dump_yaml(merged_spec)})
+                    normalized = await self._extract_spec(
+                        context, {"yaml_spec": dump_yaml(merged_spec)}, apply_defaults=False
+                    )
                 except Exception as e:
                     log_debug(f"Skipping invalid {step_name} update due to error: {e}")
                     continue
-                out.spec = dump_yaml(merged_spec)
+                out.spec = dump_yaml(normalized["spec"])
             log_debug(f"📊 Applied {step_name} updates and refreshed visualization")
 
     async def respond(
@@ -688,7 +699,9 @@ class VegaLiteAgent(BaseCodeAgent):
 
         try:
             final_dict["spec"] = self._deep_merge_dicts(final_dict["spec"], update_dict)
-            spec = await self._extract_spec(context, {"yaml_spec": dump_yaml(final_dict["spec"])})
+            spec = await self._extract_spec(
+                context, {"yaml_spec": dump_yaml(final_dict["spec"])}, apply_defaults=False
+            )
         except Exception as e:
             log_debug(f"Skipping invalid annotation update due to error: {e}")
             raise e

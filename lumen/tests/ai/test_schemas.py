@@ -151,6 +151,59 @@ class TestSchemaTables:
         assert "Others available:" in output
         assert "tbl" in output
 
+    def test_schema_tables_param_scopes_primary(self):
+        a = _entry(f"S{SEP}shown", columns=[_col("alpha")])
+        b = _entry(f"S{SEP}hidden", columns=[_col("omega")])
+        ms = _metaset([a, b])
+        output = ms.compact_context(schema_tables=[f"S{SEP}shown"], n_others=0)
+        assert "alpha" in output
+        assert "shown" in output
+        # the unrelated table and its columns are absent
+        assert "omega" not in output
+        assert "hidden" not in output
+
+    def test_schema_tables_param_non_mutating(self):
+        a = _entry(f"S{SEP}shown", columns=[_col("alpha")])
+        b = _entry(f"S{SEP}hidden", columns=[_col("omega")])
+        ms = _metaset([a, b])
+        ms.compact_context(schema_tables=[f"S{SEP}shown"])
+        assert ms.schema_tables is None
+        ms2 = _metaset([a, b], schema_tables=[f"S{SEP}hidden"])
+        ms2.compact_context(schema_tables=[f"S{SEP}shown"])
+        assert ms2.schema_tables == [f"S{SEP}hidden"]
+
+    def test_schema_tables_param_none_falls_back_to_instance(self):
+        high = _entry(f"S{SEP}high", similarity=1.0, columns=[_col("highcol")])
+        low = _entry(f"S{SEP}low", similarity=0.1, columns=[_col("lowcol")])
+        ms = _metaset([high, low], schema_tables=[f"S{SEP}low"])
+        # param omitted -> uses instance schema_tables ([low]), not top-n similarity
+        output = ms.compact_context(n=1, n_others=0)
+        assert "lowcol" in output
+        assert "highcol" not in output
+
+    def test_schema_tables_param_empty_list_distinct_from_none(self):
+        a = _entry(f"S{SEP}tbl", columns=[_col("alpha")])
+        ms = _metaset([a])
+        # explicit [] scopes to zero primary tables (does not fall back to top-n)
+        scoped = ms.compact_context(schema_tables=[], n_others=5)
+        assert "alpha" not in scoped
+        assert "Others available:" in scoped
+        assert "tbl" in scoped
+        # omitting the param falls back to top-n, so the table IS primary
+        default = ms.compact_context(n_others=0)
+        assert "alpha" in default
+
+    def test_compact_context_include_sql_surfaces_read_with(self):
+        slug = f"S{SEP}derived"
+        e = _entry(slug, columns=[_col("alpha")], sql_expr="SELECT * FROM raw_source")
+        ms = _metaset([e])
+        with_sql = ms.compact_context(schema_tables=[slug], include_sql=True)
+        assert "read_with" in with_sql
+        assert "raw_source" in with_sql
+        # compact_context defaults to include_sql=False, so no SQL by default
+        without_sql = ms.compact_context(schema_tables=[slug])
+        assert "read_with" not in without_sql
+
 
 # ---------------------------------------------------------------
 # Column rendering
