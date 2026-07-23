@@ -15,6 +15,7 @@ from typing import (
 )
 from weakref import WeakKeyDictionary
 
+import hvplot.pandas  # type: ignore  # noqa: F401
 import numpy as np
 import pandas as pd
 import panel as pn
@@ -979,7 +980,6 @@ class hvPlotBaseView(View):
     __abstract = True
 
     def __init__(self, **params):
-        import hvplot.pandas  # type: ignore
         if 'dask' in sys.modules:
             try:
                 import hvplot.dask  # type: ignore  # noqa: F401

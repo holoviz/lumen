@@ -16,6 +16,12 @@ Every visualization must:
   - Use aggregation and/or binning either in the encoding fields or as distinct transforms
   - OR enable canvas rendering using `{config: {render: {renderer: "canvas"}}}` (up to 50k rows)
 
+## MULTIPLE CHARTS
+
+Return several charts in `charts` ONLY when the request clearly spans distinct metrics or relationships that should not share one plot (e.g. "sales over time and sales by region"), or when the user explicitly asks for more than one. When a single chart answers the question, return exactly one.
+- Each entry in `charts` is a complete, standalone single-view spec following the rules above; do not pack several plots into one entry with `hconcat`/`vconcat`/`facet`/`repeat`.
+- Give each chart a short, descriptive `title` used as its tab label.
+
 ## MARK vs ENCODING
 
 This is the most common source of errors. See examples for correct placement:

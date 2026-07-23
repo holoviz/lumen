@@ -7,20 +7,23 @@ import param
 import requests
 
 from instructor import Image
+from panel import bind
 from panel.io import state
+from panel.layout import Column
+from panel.param import ParamFunction
 from pydantic import BaseModel, Field
 
 from ...config import dump_yaml, load_yaml
 from ...pipeline import Pipeline
-from ...views import VegaLiteView
+from ...views import Panel, VegaLiteView
 from ..code_executor import AltairExecutor, CodeSafetyCheck
 from ..config import (
-    LUMEN_CACHE_DIR, PROMPTS_DIR, VECTOR_STORE_ASSETS_URL,
-    VEGA_LITE_EXAMPLES_NUMPY_DB_FILE, VEGA_LITE_EXAMPLES_OPENAI_DB_FILE,
-    UserCancelledError,
+    LUMEN_CACHE_DIR, PROMPTS_DIR, UNRECOVERABLE_ERRORS,
+    VECTOR_STORE_ASSETS_URL, VEGA_LITE_EXAMPLES_NUMPY_DB_FILE,
+    VEGA_LITE_EXAMPLES_OPENAI_DB_FILE, UserCancelledError,
 )
 from ..context import TContext
-from ..editors import LumenEditor, VegaLiteEditor
+from ..editors import LumenEditor, MultiChartEditor, VegaLiteEditor
 from ..llm import Message, OpenAI
 from ..models import EscapeBaseModel, RetrySpec
 from ..utils import (
@@ -32,6 +35,18 @@ from ..vector_store import DuckDBVectorStore
 from .base_code import BaseCodeAgent
 
 
+class ChartSpec(BaseModel):
+    """A single Vega-Lite chart within a (potentially multi-chart) response."""
+
+    title: str = Field(
+        default="",
+        description="Short, human-readable label for this chart, used as its tab or section heading when several charts are returned."
+    )
+    yaml_spec: str = Field(
+        description="A basic vega-lite YAML specification with core plot elements only (mark, basic x/y encoding). Skip $schema and data fields."
+    )
+
+
 class VegaLiteSpec(EscapeBaseModel):
 
     chain_of_thought: str = Field(
@@ -41,15 +56,16 @@ class VegaLiteSpec(EscapeBaseModel):
         - What additional context adds value without repeating the title (for the subtitle)?
         - Which visual encodings (position, color, size) best reveal patterns?
         - Should color highlight specific insights or remain neutral?
-        - What makes this plot engaging and useful for the user?
+        - When several charts are warranted, why each one earns its place.
         Keep response to 1-2 sentences.""",
         examples=[
             "The data reveals US dominance in Winter Olympic hosting (4 times vs France's 3)—title should emphasize this leadership. Position encoding via horizontal bars sorted descending makes comparison immediate, neutral blue keeps focus on counts rather than categories, and the subtitle can note the 23-country spread to add context without redundancy.",
             "This time series shows a 40% revenue spike in Q3 2024—the key trend for the title. A line chart with position encoding (time→x, revenue→y) reveals the pattern, endpoint labels eliminate need for constant grid reference making it cleaner, and color remains neutral since there's one series; the subtitle should explain what drove the spike (e.g., 'Three offshore projects') to add insight."
         ]
     )
-    yaml_spec: str = Field(
-        description="A basic vega-lite YAML specification with core plot elements only (mark, basic x/y encoding). Skip $schema and data fields."
+    charts: list[ChartSpec] = Field(
+        min_length=1,
+        description="One or more chart specifications. Return several charts only when the request spans distinct metrics or relationships that should not share a single plot; otherwise return exactly one."
     )
 
 
@@ -67,20 +83,12 @@ class VegaLiteSpecUpdate(BaseModel):
     )
 
 
-class AltairSpec(BaseModel):
-    """Response model for Altair code generation."""
+class AltairChartSpec(BaseModel):
+    """A single Altair chart within a (potentially multi-chart) response."""
 
-    chain_of_thought: str = Field(
+    title: str = Field(
         default="",
-        description="""Explain your design choices based on visualization theory:
-        - What story does this data tell?
-        - What's the most compelling insight or trend (for the title)?
-        - Which visual encodings (position, color, size) best reveal patterns?
-        Keep response to 1-2 sentences.""",
-        examples=[
-            "The data reveals US dominance in Winter Olympic hosting—a horizontal bar chart sorted descending makes comparison immediate, with the leader highlighted in a distinct color.",
-            "This time series shows a 40% revenue spike in Q3 2024—a line chart with point markers reveals the trend clearly."
-        ]
+        description="Short, human-readable label for this chart, used as its tab or section heading when several charts are returned."
     )
     code: str = Field(
         description="""Python code that creates an Altair chart.
@@ -94,6 +102,28 @@ class AltairSpec(BaseModel):
     )
 
 
+class AltairSpec(BaseModel):
+    """Response model for Altair code generation."""
+
+    chain_of_thought: str = Field(
+        default="",
+        description="""Explain your design choices based on visualization theory:
+        - What story does this data tell?
+        - What's the most compelling insight or trend (for the title)?
+        - Which visual encodings (position, color, size) best reveal patterns?
+        - When several charts are warranted, why each one earns its place.
+        Keep response to 1-2 sentences.""",
+        examples=[
+            "The data reveals US dominance in Winter Olympic hosting—a horizontal bar chart sorted descending makes comparison immediate, with the leader highlighted in a distinct color.",
+            "This time series shows a 40% revenue spike in Q3 2024—a line chart with point markers reveals the trend clearly."
+        ]
+    )
+    charts: list[AltairChartSpec] = Field(
+        min_length=1,
+        description="One or more chart specifications. Return several charts only when the request spans distinct metrics or relationships that should not share a single plot; otherwise return exactly one."
+    )
+
+
 class VegaLiteAgent(BaseCodeAgent):
 
     conditions = param.List(
@@ -103,7 +133,7 @@ class VegaLiteAgent(BaseCodeAgent):
         ]
     )
 
-    purpose = param.String(default="Generates a vega-lite plot specification from the input data pipeline.")
+    purpose = param.String(default="Generates one or more vega-lite plot specifications from the input data pipeline.")
 
     prompts = param.Dict(
         default={
@@ -414,7 +444,7 @@ class VegaLiteAgent(BaseCodeAgent):
         doc_examples: list | None = None,
         errors: list | None = None
     ) -> dict[str, Any]:
-        """Generate VegaLite spec via YAML (declarative mode)."""
+        """Generate one or more VegaLite specs via YAML (declarative mode)."""
         errors_context = self._build_errors_context(pipeline, context, errors)
         gridded = get_gridded_metadata(pipeline)
         with self._add_step(title="Creating basic plot structure", steps_layout=self._steps_layout) as step:
@@ -431,9 +461,33 @@ class VegaLiteAgent(BaseCodeAgent):
             async for output in response:
                 step.stream(output.chain_of_thought, replace=True)
 
-            current_spec = await self._extract_spec(context, {"yaml_spec": output.yaml_spec})
+            # Extract each chart independently so one malformed spec does not
+            # discard the charts that did parse.
+            charts, chart_errors = [], []
+            for chart_spec in output.charts:
+                try:
+                    spec = await self._extract_spec(context, {"yaml_spec": chart_spec.yaml_spec})
+                except UNRECOVERABLE_ERRORS:
+                    # e.g. missing context or a cancelled run; retrying cannot help.
+                    raise
+                except Exception as e:
+                    log_debug(f"Skipping chart {chart_spec.title!r} that failed to parse: {e}")
+                    chart_errors.append(f"{chart_spec.title or 'chart'}: {e}")
+                    continue
+                charts.append((spec, chart_spec.title))
+            if not charts:
+                # Nothing parsed; report every failure so the regenerated specs
+                # from retry_llm_output have something concrete to fix.
+                raise ValueError(
+                    "None of the generated chart specifications could be parsed. "
+                    + "; ".join(chart_errors)
+                )
+            skipped = len(output.charts) - len(charts)
+            if skipped:
+                # Surface the drop to the user instead of only logging it.
+                step.stream(f"\n\nSkipped {skipped} chart(s) whose specification could not be parsed.")
             step.success_title = "Complete visualization with titles and colors created"
-        return current_spec
+        return {"charts": charts}
 
     @retry_llm_output()
     async def _generate_code_spec(
@@ -445,7 +499,7 @@ class VegaLiteAgent(BaseCodeAgent):
         doc_examples: list | None = None,
         errors: list | None = None,
     ) -> dict[str, Any] | None:
-        """Generate spec via Altair code execution."""
+        """Generate one or more specs via Altair code execution."""
         errors_context = self._build_errors_context(pipeline, context, errors)
         gridded = get_gridded_metadata(pipeline)
 
@@ -463,31 +517,35 @@ class VegaLiteAgent(BaseCodeAgent):
             async for output in response:
                 step.stream(output.chain_of_thought, replace=True)
 
-            step.stream(f"\n```python\n{output.code}\n```\n", replace=False)
-
-            # Get LLM system prompt for safety validation if needed
-            system = None
-            if self.code_execution == "llm":
-                system = await self._render_prompt(
-                    "code_safety",
-                    messages,
-                    context,
-                    code=output.code,
-                )
-
-            # Execute code using mixin (handles AST validation, LLM validation, user prompt)
+            # Execute each generated code block into its own chart object
             df = await get_data(pipeline)
-            chart = await self._execute_code(output.code, df, system=system, step=step)
+            chart_objects = []
+            for chart_spec in output.charts:
+                step.stream(f"\n```python\n{chart_spec.code}\n```\n", replace=False)
+                # Get LLM system prompt for safety validation if needed
+                system = None
+                if self.code_execution == "llm":
+                    system = await self._render_prompt(
+                        "code_safety",
+                        messages,
+                        context,
+                        code=chart_spec.code,
+                    )
+                # Execute code using mixin (handles AST validation, LLM validation, user prompt)
+                chart = await self._execute_code(chart_spec.code, df, system=system, step=step)
+                if chart is None:
+                    raise UserCancelledError("Code execution rejected by user.")
+                chart_objects.append((chart, chart_spec.title))
 
-        if chart is None:
-            raise UserCancelledError("Code execution rejected by user.")
+        charts = []
+        for chart, title in chart_objects:
+            # Convert to Vega-Lite spec
+            spec = chart.to_dict()
+            spec.pop("datasets", None)  # Remove inline data
+            spec["data"] = {"name": pipeline.table}  # Use named data source
+            charts.append((await self._extract_spec(context, {"yaml_spec": dump_yaml(spec)}), title))
 
-        # Convert to Vega-Lite spec
-        spec = chart.to_dict()
-        spec.pop("datasets", None)  # Remove inline data
-        spec["data"] = {"name": pipeline.table}  # Use named data source
-
-        return await self._extract_spec(context, {"yaml_spec": dump_yaml(spec)})
+        return {"charts": charts}
 
     async def _extract_spec(self, context: TContext, spec: dict[str, Any], apply_defaults: bool = True):
         # .encode().decode('unicode_escape') fixes a JSONDecodeError in Python
@@ -605,6 +663,19 @@ class VegaLiteAgent(BaseCodeAgent):
                 out.spec = dump_yaml(normalized["spec"])
             log_debug(f"📊 Applied {step_name} updates and refreshed visualization")
 
+    @staticmethod
+    def _overview_item(editor: VegaLiteEditor) -> ParamFunction:
+        """A plot for the "All" overview that tracks an editor's component.
+
+        Binding to the editor's ``component`` means the overview re-renders when
+        the chart is edited or polished, instead of showing a stale snapshot.
+        """
+        render = bind(
+            lambda component: component.get_panel() if component is not None else None,
+            editor.param.component,
+        )
+        return ParamFunction(render, sizing_mode="stretch_width")
+
     async def respond(
         self,
         messages: list[Message],
@@ -612,7 +683,8 @@ class VegaLiteAgent(BaseCodeAgent):
         step_title: str | None = None,
     ) -> tuple[list[Any], TContext]:
         """
-        Generates a VegaLite visualization using progressive building approach with real-time updates.
+        Generates one or more VegaLite visualizations using a progressive building
+        approach with real-time updates.
         """
         pipeline = context.get("pipeline")
         if not pipeline:
@@ -628,31 +700,59 @@ class VegaLiteAgent(BaseCodeAgent):
         except Exception:
             doc_examples = []
 
-        # Step 1: Generate basic spec
+        # Step 1: Generate one or more specs
         doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
-        # Produces {"spec": {$schema: ..., ...}, "sizing_mode": ..., ...}
-        full_dict = await self._generate_spec(
+        # Produces {"charts": [({"spec": {...}, ...}, title), ...]}
+        result = await self._generate_spec(
             messages, context, pipeline, doc, doc_examples=doc_examples
         )
-        if full_dict is None:
+        if result is None:
             # User rejected code execution
             return [], {}
 
-        # Vega-Lite cannot page a dimension, so once the spec has picked its
-        # axes, collapse every gridded dim it does not reference to a single
-        # slice (keeps e.g. a lon/time Hovmoller, drops an unused time on a map).
-        pipeline = subset_gridded_to_2d(pipeline, full_dict.get("spec", {}), "vega-lite")
+        # Step 2: One editable editor per chart. The UI renders each as its own
+        # tab with a code editor beside the plot. A lone chart keeps the task's
+        # own title; several charts are labelled individually so their tabs are
+        # distinguishable. Vega-Lite cannot page a dimension, so per chart
+        # collapse every gridded dim its spec does not reference to a single
+        # slice (each chart may pick different axes).
+        charts = result["charts"]
+        editors = [
+            self._editor_type(
+                component=self.view_type(
+                    pipeline=subset_gridded_to_2d(pipeline, spec.get("spec", {}), "vega-lite"),
+                    **spec,
+                ),
+                title=step_title if len(charts) == 1 else (title or f"Chart {i}"),
+            )
+            for i, (spec, title) in enumerate(charts, start=1)
+        ]
 
-        # Step 2: Show complete plot immediately
-        view = self.view_type(pipeline=pipeline, **full_dict)
-        out = self._editor_type(component=view, title=step_title)
+        # Step 3: For multiple charts, append an "All" tab that stacks every plot
+        # together as an overview, with one code editor sub-tab per chart. It is
+        # added last so the UI opens it by default as the final tab. Each plot
+        # re-renders from its editor's component, so edits (or the polish pass)
+        # to a chart tab stay in sync with the overview.
+        outs = editors
+        if len(editors) > 1:
+            # Left at its natural height so it overflows the editor's view,
+            # which is what gives that view something to scroll.
+            stacked = Column(
+                *(self._overview_item(editor) for editor in editors),
+                sizing_mode="stretch_width",
+            )
+            overview = MultiChartEditor(
+                component=Panel(object=stacked), title="All", chart_editors=editors
+            )
+            outs = [*editors, overview]
 
-        # Step 3: enhancements (LLM-driven creative decisions)
+        # Step 4: enhancements (LLM-driven creative decisions), per editable chart
         if not self.code_execution_enabled:
-            state.execute(partial(self._polish_plot, out, messages, context, doc))
+            for editor in editors:
+                state.execute(partial(self._polish_plot, editor, messages, context, doc))
 
-        out_context = await out.render_context()
-        return [out], out_context
+        out_context = await editors[-1].render_context()
+        return outs, out_context
 
     async def annotate(
         self,

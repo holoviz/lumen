@@ -3,6 +3,9 @@
 {% block instructions %}
 Generate Altair code. Data is `df`, assign to `chart`, end with `.interactive()`. Use `width='container'` for single charts only. NO I/O methods.
 
+## MULTIPLE CHARTS
+Return several entries in `charts` ONLY when the request spans distinct metrics or relationships, or the user asks for more than one; otherwise return exactly one. Each entry is an independent code block that assigns its own `chart` (use `alt.hconcat`/`alt.vconcat`/`.facet`/`.repeat` only to compose within a single entry), and give each entry a short `title` used as its tab label.
+
 ## Encodings: `:Q` quantitative | `:N` nominal | `:O` ordinal | `:T` temporal
 
 ## Reference
