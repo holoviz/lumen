@@ -326,6 +326,24 @@ def test_subset_keeps_dims_the_spec_uses(simple_dataset_3d_pipeline):
     assert sub.data["lat"].nunique() == 1
 
 
+def test_subset_skips_collapse_when_spec_aggregates(simple_dataset_3d_pipeline):
+    """An aggregating spec (mean per lat) reduces over the dims it does not plot,
+    so the grid must stay whole; pinning lon/time would make Vega-Lite average a
+    single slice and report wrong values."""
+    spec = {
+        "mark": "bar",
+        "encoding": {
+            "x": {"field": "lat"},
+            "y": {"field": "air", "aggregate": "mean"},
+        },
+    }
+    full = len(simple_dataset_3d_pipeline.data)
+    sub = subset_gridded_to_2d(simple_dataset_3d_pipeline, spec, "vega-lite")
+    assert len(sub.data) == full  # not collapsed
+    assert sub.data["time"].nunique() > 1
+    assert sub.data["lon"].nunique() > 1
+
+
 def test_subset_collapses_cftime_dim():
     """A cftime time dim must still collapse: the raw cftime coord value can't
     match the materialized (datetime64) column, so the pin comes from the data."""

@@ -1717,6 +1717,19 @@ def _spec_field_references(
     return refs
 
 
+def _spec_has_aggregate(spec: Any) -> bool:
+    """True if a Vega-Lite spec aggregates anywhere -- an encoding ``aggregate``
+    (``{"field": "x", "aggregate": "mean"}``) or an ``aggregate`` transform.
+    Such a spec reduces over the dims it does not plot, so those dims must not
+    be pinned to a single slice.
+    """
+    if isinstance(spec, dict):
+        return 'aggregate' in spec or any(_spec_has_aggregate(v) for v in spec.values())
+    if isinstance(spec, list):
+        return any(_spec_has_aggregate(item) for item in spec)
+    return False
+
+
 def subset_gridded_to_2d(
     pipeline: Pipeline, spec: Any, kind: Literal['vega-lite', 'deckgl']
 ) -> Pipeline:
@@ -1736,6 +1749,14 @@ def subset_gridded_to_2d(
     # so both the dims to collapse and the pin values come from it. Pinning from
     # the raw dataset would leave cftime dims uncollapsed (the object value can't
     # match the datetime64 column).
+    # A Vega-Lite spec that aggregates (e.g. mean per latitude, or a heatmap of
+    # a temporal mean) reduces over every dim it does not plot. Pinning those
+    # dims to one slice would make the aggregate run on a single slice and
+    # report wrong values, so leave the grid whole and let Vega-Lite aggregate.
+    # ponytail: sends the full grid to the browser; push the aggregate into SQL
+    # if that row volume becomes a problem.
+    if kind == 'vega-lite' and _spec_has_aggregate(spec):
+        return pipeline
     grid = pipeline.get_dataset()
     if grid is None:
         return pipeline
