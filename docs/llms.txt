@@ -1,0 +1,80 @@
+# Lumen
+
+> Lumen is an open-source and extensible agent framework for chatting with data and for retrieval augmented generation. It turns natural language into SQL, data transformation pipelines, visualizations and dashboards, and every step stays inspectable, editable and reproducible.
+
+Lumen is built on Panel and the wider HoloViz stack. Its declarative data model means anything the language model produces can be serialized to YAML, reopened in a notebook, or composed into a dashboard. It connects to local files, SQL databases, data lakes and multidimensional array data, and it can be extended with custom sources, agents, tools and analyses.
+
+Install with `pip install 'lumen[ai-openai]'` and start with `lumen-ai serve data.csv`.
+
+## Getting started
+
+- [Quick Start](https://lumen.holoviz.org/quick_start/): install, serve a dataset and ask the first question
+- [Installation](https://lumen.holoviz.org/installation/): install options for each LLM provider
+- [Launching Lumen](https://lumen.holoviz.org/getting_started/launching_lumen/): the `lumen-ai` command line interface
+- [Using Lumen AI](https://lumen.holoviz.org/getting_started/using_lumen_ai/): the conversational workflow end to end
+- [Navigating the UI](https://lumen.holoviz.org/getting_started/navigating_the_ui/): explorations, tables, charts and reports
+- [Building Lumen Apps](https://lumen.holoviz.org/getting_started/building_lumen_apps/): embedding Lumen in your own application
+- [FAQ](https://lumen.holoviz.org/faq/)
+
+## Configuration
+
+- [CLI](https://lumen.holoviz.org/configuration/cli/): all `lumen-ai serve` flags
+- [Data Sources](https://lumen.holoviz.org/configuration/sources/): DuckDB, Snowflake, BigQuery, SQLAlchemy, Intake, Prometheus, xarray
+- [LLM Providers](https://lumen.holoviz.org/configuration/llm_providers/): OpenAI, Anthropic, Google, Mistral, Bedrock, Ollama, LlamaCpp and others
+- [Agents](https://lumen.holoviz.org/configuration/agents/): the agents that generate SQL, charts and prose
+- [Tools](https://lumen.holoviz.org/configuration/tools/): lookup tools and MCP server integration
+- [Analyses](https://lumen.holoviz.org/configuration/analyses/): packaging domain logic as a reusable analysis
+- [Coordinator](https://lumen.holoviz.org/configuration/coordinators/): how a request is planned and dispatched
+- [Prompts](https://lumen.holoviz.org/configuration/prompts/): overriding the prompt templates
+- [Context](https://lumen.holoviz.org/configuration/context/): what the model is told about your data
+- [Reports](https://lumen.holoviz.org/configuration/reports/): assembling and exporting reports
+- [UI](https://lumen.holoviz.org/configuration/ui/) and [Controls](https://lumen.holoviz.org/configuration/controls/): customizing the interface
+- [Embeddings](https://lumen.holoviz.org/configuration/embeddings/) and [Vector Stores](https://lumen.holoviz.org/configuration/vector_stores/): retrieval configuration
+- [Extending Lumen](https://lumen.holoviz.org/extending/): custom sources, agents, tools and views
+
+## Declarative specification
+
+- [Overview](https://lumen.holoviz.org/configuration/spec/): the YAML specification
+- [Core Concepts](https://lumen.holoviz.org/configuration/spec/concepts/)
+- [Loading Data](https://lumen.holoviz.org/configuration/spec/sources/)
+- [Transforming Data](https://lumen.holoviz.org/configuration/spec/pipelines/)
+- [Visualizing Data](https://lumen.holoviz.org/configuration/spec/views/)
+- [Variables and References](https://lumen.holoviz.org/configuration/spec/variables/)
+- [Custom Components](https://lumen.holoviz.org/configuration/spec/customization/)
+- [Python API](https://lumen.holoviz.org/configuration/spec/python-api/)
+- [Data Downloads](https://lumen.holoviz.org/configuration/spec/downloads/)
+- [Authentication](https://lumen.holoviz.org/configuration/spec/authentication/)
+- [Deployment](https://lumen.holoviz.org/configuration/spec/deployment/)
+
+## Examples
+
+- [Tutorials](https://lumen.holoviz.org/examples/tutorials/): worked end-to-end walkthroughs
+- [Weather Data AI Explorer](https://lumen.holoviz.org/examples/tutorials/weather_data_ai_explorer/)
+- [SaaS Company Report Dashboard](https://lumen.holoviz.org/examples/tutorials/saas_company_report_dashboard/)
+- [Census Data AI Explorer](https://lumen.holoviz.org/examples/tutorials/census_data_ai_explorer/)
+- [Mesonet Weather Explorer](https://lumen.holoviz.org/examples/tutorials/mesonet_weather_explorer/)
+- [Gallery](https://lumen.holoviz.org/examples/gallery/): short declarative specification examples
+
+## API reference
+
+- [AI Agents](https://lumen.holoviz.org/reference/api/ai/agents/)
+- [AI Coordinator](https://lumen.holoviz.org/reference/api/ai/coordinator/)
+- [AI Tools](https://lumen.holoviz.org/reference/api/ai/tools/)
+- [AI Models](https://lumen.holoviz.org/reference/api/ai/models/)
+- [AI Core](https://lumen.holoviz.org/reference/api/ai/core/)
+- [Pipeline](https://lumen.holoviz.org/reference/api/pipeline/)
+- [Sources](https://lumen.holoviz.org/reference/api/sources/)
+- [Transforms](https://lumen.holoviz.org/reference/api/transforms/)
+- [Views](https://lumen.holoviz.org/reference/api/views/)
+
+## Optional
+
+- [Penguins](https://lumen.holoviz.org/examples/gallery/penguins/)
+- [London Bike Points](https://lumen.holoviz.org/examples/gallery/bikes/)
+- [Seattle Weather](https://lumen.holoviz.org/examples/gallery/seattle/)
+- [NYC Taxi](https://lumen.holoviz.org/examples/gallery/nyc_taxi/)
+- [Precipitation](https://lumen.holoviz.org/examples/gallery/precip/)
+- [Earthquakes](https://lumen.holoviz.org/examples/gallery/earthquakes/)
+- [Wind Turbines](https://lumen.holoviz.org/examples/gallery/windturbines/)
+- [Releases](https://lumen.holoviz.org/releases/)
+- [Contributing](https://lumen.holoviz.org/contributing/)
