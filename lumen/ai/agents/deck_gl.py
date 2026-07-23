@@ -21,7 +21,8 @@ from ..config import PROMPTS_DIR, UserCancelledError
 from ..editors import DeckGLEditor
 from ..models import BaseModel, EscapeBaseModel, RetrySpec
 from ..utils import (
-    get_data, get_schema, retry_llm_output, sanitize_column_names,
+    get_data, get_gridded_metadata, get_schema, retry_llm_output,
+    sanitize_column_names, subset_gridded_to_2d,
 )
 from .base_code import BaseCodeAgent
 
@@ -153,6 +154,7 @@ class DeckGLAgent(BaseCodeAgent):
     ) -> dict[str, Any]:
         """Generate DeckGL spec via YAML/JSON (declarative mode)."""
         errors_context = self._build_errors_context(pipeline, context, errors)
+        gridded = get_gridded_metadata(pipeline)
 
         with self._add_step(title="Generating DeckGL specification", steps_layout=self._steps_layout) as step:
             response = self._stream_prompt(
@@ -161,6 +163,7 @@ class DeckGLAgent(BaseCodeAgent):
                 context,
                 table=pipeline.table,
                 doc=doc,
+                gridded=gridded,
                 **errors_context,
             )
             async for output in response:
@@ -183,6 +186,7 @@ class DeckGLAgent(BaseCodeAgent):
     ) -> dict[str, Any] | None:
         """Generate spec via PyDeck code execution."""
         errors_context = self._build_errors_context(pipeline, context, errors)
+        gridded = get_gridded_metadata(pipeline)
 
         with self._add_step(title="Generating PyDeck code", steps_layout=self._steps_layout) as step:
             response = self._stream_prompt(
@@ -191,6 +195,7 @@ class DeckGLAgent(BaseCodeAgent):
                 context,
                 table=pipeline.table,
                 doc=doc,
+                gridded=gridded,
                 **errors_context,
             )
 
@@ -292,6 +297,11 @@ class DeckGLAgent(BaseCodeAgent):
         if full_dict is None:
             # User rejected code execution
             return [], {}
+
+        # DeckGL renders a static layer and cannot page a dimension, so once
+        # the spec has picked its axes, collapse every gridded dim it does not
+        # reference to a single slice (else a gridded source blows the row cap).
+        pipeline = subset_gridded_to_2d(pipeline, full_dict.get("spec", {}), "deckgl")
 
         # Create view and output
         view = self.view_type(pipeline=pipeline, **full_dict)

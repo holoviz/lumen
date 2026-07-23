@@ -15,7 +15,9 @@ from typing import (
 )
 from weakref import WeakKeyDictionary
 
+import hvplot.pandas  # type: ignore  # noqa: F401
 import numpy as np
+import pandas as pd
 import panel as pn
 import param  # type: ignore
 
@@ -43,7 +45,7 @@ from ..transforms.base import Transform
 from ..transforms.sql import SQLTransform
 from ..util import (
     VARIABLE_RE, catch_and_notify, geometry_to_wkt, is_geodataframe, is_ref,
-    resolve_module_reference,
+    resolve_module_reference, try_import_xarray,
 )
 from ..validation import ValidationError
 
@@ -52,6 +54,29 @@ if TYPE_CHECKING:
     from holoviews.selection import link_selections  # type: ignore
 
 DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
+
+# Safety cap on a pivoted hvPlot grid. 10M cells is ~80MB for float64;
+# anything larger is rejected rather than risking OOM.
+GRIDDED_MAX_CELLS = 10_000_000
+
+# hvPlot kinds we pivot long-form data into a 2D xarray grid for: the 2D
+# scalar-field kinds that map cleanly from x/y/z columns.
+GRIDDED_KINDS = ("contour", "contourf", "image", "quadmesh")
+
+# deck.gl serialises every row into the browser as JSON; beyond a few hundred
+# thousand it reliably OOMs the tab, so DeckGLView rejects larger frames.
+DECKGL_MAX_ROWS = 250_000
+
+# hvPlot draws one glyph per row for non-reducing kinds; past this many rows a
+# browser tab can exhaust its memory (a gridded xarray source expands to millions
+# of long-form rows), so hvPlotView/hvPlotUIView refuse to render such a frame.
+MAX_RENDER_ROWS = 250_000
+
+# Kinds whose rendered output size is bounded regardless of row count -- they
+# pivot to a grid or aggregate -- so they are exempt from MAX_RENDER_ROWS.
+REDUCING_KINDS = GRIDDED_KINDS + (
+    "heatmap", "hexbin", "hist", "kde", "box", "violin", "bivariate",
+)
 
 
 class View(MultiTypeComponent, Viewer):
@@ -930,7 +955,7 @@ class hvPlotBaseView(View):
             'area', 'bar', 'barh', 'bivariate', 'box', 'contour', 'contourf',
             'errorbars', 'hist', 'image', 'kde', 'labels',
             'line', 'scatter', 'heatmap', 'hexbin', 'ohlc', 'paths', 'points',
-            'polygons', 'step', 'violin'
+            'polygons', 'quadmesh', 'step', 'violin'
         ]
     )
 
@@ -942,19 +967,22 @@ class hvPlotBaseView(View):
 
     groupby = param.ListSelector(doc="The column(s) to group by.")
 
+    z = param.Selector(doc="""
+        Column of z-values for gridded plot kinds (image, quadmesh, heatmap, contourf).
+        Internally mapped to hvPlot's C= for kind='heatmap' and z= for other kinds.""")
+
     geo = param.Boolean(
         default=False, doc="Toggle True if the plot is on a geographic map."
     )
 
-    _field_params = ['x', 'y', 'by', 'groupby']
+    _field_params = ['x', 'y', 'by', 'groupby', 'z']
 
     __abstract = True
 
     def __init__(self, **params):
-        import hvplot.pandas  # type: ignore
         if 'dask' in sys.modules:
             try:
-                import hvplot.dask  # type: ignore # noqa
+                import hvplot.dask  # type: ignore  # noqa: F401
             except Exception:
                 pass
         if 'by' in params and isinstance(params['by'], str):
@@ -969,6 +997,34 @@ class hvPlotBaseView(View):
     def _valid_keys_(cls):
         return None
 
+    def _check_render_size(self, df) -> None:
+        """Refuse to render more per-row glyphs than a browser tab can hold.
+
+        Kinds that pivot to a grid or aggregate (``REDUCING_KINDS``) bound their
+        output regardless of row count, as does server-side ``rasterize``/
+        ``datashade``; every other kind draws one glyph per row and can exhaust
+        browser memory on a large frame (e.g. a gridded xarray source expanded
+        to millions of long-form rows).
+        """
+        if not isinstance(df, pd.DataFrame):
+            return
+        n = len(df)
+        if n <= MAX_RENDER_ROWS or self.kind in REDUCING_KINDS:
+            return
+        if self.kwargs.get('rasterize') or self.kwargs.get('datashade'):
+            return
+        raise ValueError(
+            f"Cannot render {n:,} rows as kind={self.kind!r}: each row becomes a "
+            f"glyph in the browser and would exhaust its memory. Reduce the "
+            f"pipeline to at most {MAX_RENDER_ROWS:,} rows (e.g. a SQL LIMIT or "
+            f"aggregation), use a gridded/aggregating kind, or set rasterize=True."
+        )
+
+    def _source_dataset(self):
+        """The compact gridded ``xarray.Dataset`` from the pipeline's source
+        (xarray-sql ``to_dataset``), or None when the source can't produce one."""
+        return self.pipeline.get_dataset() if self.pipeline is not None else None
+
 
 class hvPlotUIView(hvPlotBaseView):
     """
@@ -977,26 +1033,43 @@ class hvPlotUIView(hvPlotBaseView):
 
     view_type = 'hvplot_ui'
 
-    def _get_args(self):
+    def _get_args(self, explorer_cls=None, data=None):
         from hvplot.ui import Geographic, hvPlotExplorer  # type: ignore
+        if explorer_cls is None:
+            explorer_cls = hvPlotExplorer
+        if data is None:
+            data = self.get_data()
         params = {
             k: v for k, v in self.param.values().items()
-            if (k in hvPlotExplorer.param or k in Geographic.param)
+            if (k in explorer_cls.param or k in Geographic.param)
             and v is not None and k != 'name'
         }
-        return (self.get_data(),), dict(params, **self.kwargs)
+        return (data,), dict(params, **self.kwargs)
 
     def __panel__(self):
         panel = self.get_panel()
         def ui(*events):
-            panel._data = self.get_data()
+            gridded = self._source_dataset()
+            panel._data = gridded if gridded is not None else self.get_data()
             panel._plot()
             return panel
         return pn.bind(ui, self.param.rerender)
 
     def get_panel(self):
-        from hvplot.ui import hvDataFrameExplorer
+        from hvplot.ui import (  # type: ignore
+            hvDataFrameExplorer, hvGridExplorer,
+        )
+
+        # An xarray-backed pipeline explores the compact gridded Dataset (via
+        # to_dataset) with hvPlot's grid explorer, so gridded kinds like image
+        # and quadmesh work; tabular data uses the dataframe explorer.
+        gridded = self._source_dataset()
+        if gridded is not None:
+            import hvplot.xarray  # type: ignore  # noqa: F401
+            args, kwargs = self._get_args(hvGridExplorer, gridded)
+            return hvGridExplorer(*args, **kwargs)
         args, kwargs = self._get_args()
+        self._check_render_size(args[0])
         return hvDataFrameExplorer(*args, **kwargs)
 
 
@@ -1033,7 +1106,74 @@ class hvPlotView(hvPlotBaseView):
         self._linked_objs = []
         super().__init__(**params)
 
+    def _gridded_index(self) -> list[str]:
+        """Columns that index the pivoted grid: any groupby axes (e.g. time)
+        that hvPlot pages through a widget, then the y/x grid axes."""
+        return [*(self.groupby or []), self.y, self.x]
+
+    def _gridded_pivot_blocker(self, df) -> str | None:
+        """Return None if df can be pivoted to a grid, else a human-readable reason."""
+        if try_import_xarray() is None:
+            return "xarray is not installed"
+        if not (self.x and self.y and self.z):
+            return "x, y, and z must all be set for gridded plot kinds"
+        index = self._gridded_index()
+        missing = {*index, self.z} - set(df.columns)
+        if missing:
+            return f"missing required column(s): {sorted(missing)}"
+        if df.duplicated(subset=index).any():
+            return f"duplicate {tuple(index)} rows prevent pivot to a grid"
+        n_cells = 1
+        for col in index:
+            n_cells *= df[col].nunique()
+        if n_cells > GRIDDED_MAX_CELLS:
+            return (
+                f"pivoted grid would have {n_cells:,} cells, exceeding the "
+                f"{GRIDDED_MAX_CELLS:,} safety cap"
+            )
+        return None
+
+    def _to_gridded(self, df):
+        """Pivot a long-form DataFrame to an xarray DataArray for hvPlot's
+        quadmesh/image/contourf kinds.
+
+        The y/x columns form the 2D grid; any ``groupby`` columns become extra
+        axes hvPlot pages through with a widget. Returns the input unchanged if
+        it is already an xarray object or if the pivot is blocked (see
+        ``_gridded_pivot_blocker``); callers that require gridded data should
+        check the blocker themselves and raise.
+        """
+        if isinstance(df, pd.DataFrame) and self._gridded_pivot_blocker(df) is not None:
+            return df
+        # Reached only when xarray is available (an xarray object passed
+        # through, or a pivotable DataFrame). Register hvPlot's xarray accessor
+        # so .hvplot works on the returned xarray object.
+        import hvplot.xarray  # type: ignore  # noqa: F401
+        if not isinstance(df, pd.DataFrame):
+            return df
+        return df.set_index(self._gridded_index())[self.z].to_xarray()
+
+    def _gridded_plot_source(self, df):
+        """Object to hand hvPlot for a gridded kind: a compact xarray Dataset
+        straight from the source (xarray-sql ``to_dataset``) when available,
+        else the long-form frame pivoted to xarray."""
+        gridded = self._source_dataset()
+        if gridded is not None:
+            import hvplot.xarray  # type: ignore  # noqa: F401
+            return gridded
+        if isinstance(df, pd.DataFrame):
+            blocker = self._gridded_pivot_blocker(df)
+            if blocker is not None:
+                raise ValueError(
+                    f"Cannot render kind={self.kind!r} from this pipeline: "
+                    f"{blocker}. Either provide xarray-backed data, switch "
+                    f"to a tabular kind (e.g. 'heatmap' for ordinal axes), "
+                    f"or fix the spec."
+                )
+        return self._to_gridded(df)
+
     def get_plot(self, df):
+        self._check_render_size(df)
         processed = {}
         for k, v in self.kwargs.items():
             if k in self._ignore_kwargs:
@@ -1043,16 +1183,21 @@ class hvPlotView(hvPlotBaseView):
             processed[k] = v
         if self.streaming:
             processed['stream'] = self._data_stream
+        if self.z is not None:
+            processed['C' if self.kind == 'heatmap' else 'z'] = self.z
 
         kind = self.kind
+        plot_source = df
         if is_geodataframe(df):
             # hvplot infers the geometry kind (polygons/paths/points); just
             # clear a non-geometry default so it isn't forced to scatter/points
             if kind in (None, 'scatter', 'points'):
                 kind = None
             processed['geo'] = self.geo
+        elif kind in GRIDDED_KINDS:
+            plot_source = self._gridded_plot_source(df)
 
-        plot = df.hvplot(
+        plot = plot_source.hvplot(
             kind=kind, x=self.x, y=self.y, by=self.by, groupby=self.groupby, **processed
         )
         if self.operations:
@@ -1374,6 +1519,13 @@ class DeckGLView(View):
 
     def _get_params(self) -> dict[str, Any]:
         df = self.get_data()
+        if len(df) > DECKGL_MAX_ROWS:
+            raise ValueError(
+                f"DeckGLView cannot render {len(df):,} rows; deck.gl serialises "
+                f"every row into the browser and would exhaust its memory. "
+                f"Reduce the pipeline to at most {DECKGL_MAX_ROWS:,} rows (e.g. via "
+                f"a SQL LIMIT, aggregation, or coarser grid) before rendering."
+            )
         # Deep copy to avoid modifying self.spec when injecting data
         spec = copy.deepcopy(self.spec)
 

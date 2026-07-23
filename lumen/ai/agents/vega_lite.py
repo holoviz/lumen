@@ -27,8 +27,9 @@ from ..editors import LumenEditor, MultiChartEditor, VegaLiteEditor
 from ..llm import Message, OpenAI
 from ..models import EscapeBaseModel, RetrySpec
 from ..utils import (
-    category_palette, get_data, get_schema, has_categorical_color, load_json,
-    log_debug, normalize_vegalite_spec, retry_llm_output,
+    category_palette, get_data, get_gridded_metadata, get_schema,
+    has_categorical_color, load_json, log_debug, normalize_vegalite_spec,
+    retry_llm_output, subset_gridded_to_2d,
 )
 from ..vector_store import DuckDBVectorStore
 from .base_code import BaseCodeAgent
@@ -445,6 +446,7 @@ class VegaLiteAgent(BaseCodeAgent):
     ) -> dict[str, Any]:
         """Generate one or more VegaLite specs via YAML (declarative mode)."""
         errors_context = self._build_errors_context(pipeline, context, errors)
+        gridded = get_gridded_metadata(pipeline)
         with self._add_step(title="Creating basic plot structure", steps_layout=self._steps_layout) as step:
             response = self._stream_prompt(
                 "main",
@@ -453,6 +455,7 @@ class VegaLiteAgent(BaseCodeAgent):
                 table=pipeline.table,
                 doc=doc,
                 doc_examples=doc_examples,
+                gridded=gridded,
                 **errors_context,
             )
             async for output in response:
@@ -498,6 +501,7 @@ class VegaLiteAgent(BaseCodeAgent):
     ) -> dict[str, Any] | None:
         """Generate one or more specs via Altair code execution."""
         errors_context = self._build_errors_context(pipeline, context, errors)
+        gridded = get_gridded_metadata(pipeline)
 
         with self._add_step(title="Generating Altair code", steps_layout=self._steps_layout) as step:
             response = self._stream_prompt(
@@ -507,6 +511,7 @@ class VegaLiteAgent(BaseCodeAgent):
                 table=pipeline.table,
                 doc=doc,
                 doc_examples=doc_examples,
+                gridded=gridded,
                 **errors_context,
             )
             async for output in response:
@@ -708,11 +713,16 @@ class VegaLiteAgent(BaseCodeAgent):
         # Step 2: One editable editor per chart. The UI renders each as its own
         # tab with a code editor beside the plot. A lone chart keeps the task's
         # own title; several charts are labelled individually so their tabs are
-        # distinguishable.
+        # distinguishable. Vega-Lite cannot page a dimension, so per chart
+        # collapse every gridded dim its spec does not reference to a single
+        # slice (each chart may pick different axes).
         charts = result["charts"]
         editors = [
             self._editor_type(
-                component=self.view_type(pipeline=pipeline, **spec),
+                component=self.view_type(
+                    pipeline=subset_gridded_to_2d(pipeline, spec.get("spec", {}), "vega-lite"),
+                    **spec,
+                ),
                 title=step_title if len(charts) == 1 else (title or f"Chart {i}"),
             )
             for i, (spec, title) in enumerate(charts, start=1)

@@ -720,7 +720,7 @@ async def test_view_retry_keeps_context_and_passes_spec_by_keyword(llm):
         with pytest.raises(Exception):
             await agent._generate_yaml_spec(
                 [{"role": "user", "content": "x"}], ctx,
-                SimpleNamespace(table="t"), {},
+                SimpleNamespace(table="t", source=None), {},
             )
 
     # context must still be the TContext dict, not a formatted yaml string
@@ -761,7 +761,7 @@ async def test_view_retry_recovers_using_revised_spec(llm):
          patch.object(agent, "revise", side_effect=fake_revise):
         result = await agent._generate_yaml_spec(
             [{"role": "user", "content": "x"}], ctx,
-            SimpleNamespace(table="t"), {},
+            SimpleNamespace(table="t", source=None), {},
         )
 
     # revise was reached (no KeyError on the missing yaml_spec) and retried once

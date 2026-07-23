@@ -25,6 +25,12 @@ Generate PyDeck code. Data is `df`, assign to `deck`. NO I/O methods (.to_html()
 - `bearing`: 0 or slight angle (-15 to 15) for visual interest
 - `elevation_scale`: Controls the height of 3D elements
 - `extruded`: Set to True for 3D extrusion
+{%- if gridded is defined and gridded %}
+
+## Gridded xarray data
+`df` is a long-form grid from an xarray dataset (dimensions: {{ gridded.dims | join(', ') }}; variables: {{ gridded.data_vars | join(', ') }}).
+Make a geographic map with `ColumnLayer`: `get_position` on the longitude/latitude columns and `get_elevation="{{ gridded.data_vars[0] }}"`. Plot only the two map axes; any dimension you leave unused is reduced to a single slice automatically.
+{%- endif %}
 
 ## Map Styles (no API key needed)
 - `"https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"` (dark - best for 3D)

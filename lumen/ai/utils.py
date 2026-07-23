@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import parse_qs
 
 import colorcet as cc
+import numpy as np
 import pandas as pd
 import param
 import sqlglot
@@ -40,10 +41,12 @@ from markupsafe import escape
 from panel_material_ui import Details
 
 from ..config import dump_yaml
+from ..filters.base import ConstantFilter
 from ..pipeline import Pipeline
 from ..sources.base import Source
+from ..sources.xarray_sql import XArraySQLSource
 from ..transforms import SQLRemoveSourceSeparator
-from ..util import log
+from ..util import log, try_import_xarray
 from .config import (
     PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, UNRECOVERABLE_ERRORS, VEGA_MAP_LAYER,
     VEGA_ZOOMABLE_MAP_ITEMS, MissingContextError, RetriesExceededError,
@@ -1643,6 +1646,101 @@ def result_to_dataframe(result) -> pd.DataFrame | None:
             return None
 
     return None
+
+
+def get_gridded_metadata(pipeline: Pipeline) -> dict[str, Any] | None:
+    """Return gridded metadata for an xarray-backed pipeline, else None.
+
+    Returns a dict with keys ``source_type``, ``dims``, ``coords``,
+    ``data_vars``, and ``regular`` (True iff every coordinate dimension is
+    uniformly spaced). It deliberately does not label which dims are spatial:
+    a grid can be plotted many ways (a lon/lat map, a lon/time Hovmoller, a
+    lat/level section), so the view spec picks the axes and the leftover dims
+    are collapsed afterwards. Coord arrays are 1-D and held in memory by
+    xarray even for large lazy datasets, so the regularity check is cheap; do
+    not call on a hot path.
+    """
+    if not isinstance(pipeline.source, XArraySQLSource) or try_import_xarray() is None:
+        return None
+
+    ds = pipeline.source.dataset
+
+    def _is_regular(values) -> bool:
+        arr = np.asarray(values)
+        if arr.ndim != 1 or arr.size < 2:
+            return False
+        # datetime64 coords need int64 conversion before allclose
+        if np.issubdtype(arr.dtype, np.datetime64):
+            arr = arr.astype('int64')
+        diffs = np.diff(arr)
+        return bool(np.allclose(diffs, diffs[0], rtol=1e-6))
+
+    regular = all(
+        _is_regular(ds.coords[d].values) for d in ds.dims if d in ds.coords
+    )
+
+    return {
+        'source_type': 'xarray',
+        'dims': list(ds.dims),
+        'coords': {k: list(ds.coords[k].shape) for k in ds.coords},
+        'data_vars': list(ds.data_vars),
+        'regular': regular,
+    }
+
+
+def _spec_field_references(
+    spec: Any, kind: Literal['vega-lite', 'deckgl']
+) -> set[str]:
+    """Column names a generated view ``spec`` references, so the gridded subset
+    can keep the dims a spec actually plots (an axis, color, ...) and collapse
+    the rest. The two grammars reference columns differently, so the caller
+    states which it is: a Vega-Lite spec names columns in encoding ``field``
+    values, a deck.gl spec in ``@@=`` accessor expressions.
+    """
+    refs: set[str] = set()
+
+    def walk(node):
+        if isinstance(node, dict):
+            for key, val in node.items():
+                if kind == 'vega-lite' and key == 'field' and isinstance(val, str):
+                    refs.add(val)
+                elif kind == 'deckgl' and isinstance(val, str) and val.startswith('@@='):
+                    refs.update(re.findall(r'[A-Za-z_]\w*', val))
+                else:
+                    walk(val)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(spec)
+    return refs
+
+
+def subset_gridded_to_2d(
+    pipeline: Pipeline, spec: Any, kind: Literal['vega-lite', 'deckgl']
+) -> Pipeline:
+    """Pin every gridded dimension the view ``spec`` does not reference to its
+    first value, so a view that cannot page a dimension (VegaLite, DeckGL)
+    renders a single 2D slice instead of the full grid. ``kind`` selects the
+    spec grammar (see :func:`_spec_field_references`).
+
+    Runs after the spec is generated, so the dims the model chose for x/y/color
+    are kept -- a lon/time Hovmoller works -- and only the leftover dims (e.g.
+    time on a lon/lat map) collapse. Returns the pipeline unchanged when it is
+    not gridded or the spec already references every dimension.
+    """
+    md = get_gridded_metadata(pipeline)
+    if not md:
+        return pipeline
+    ds = pipeline.source.dataset
+    referenced = _spec_field_references(spec, kind)
+    collapse = [dim for dim in ds.dims if dim not in referenced]
+    if not collapse:
+        return pipeline
+    filters = [
+        ConstantFilter(field=dim, value=ds[dim].values[0]) for dim in collapse
+    ]
+    return pipeline.chain(filters=filters)
 
 
 def category_palette(ncolors: int = 20) -> list[str]:

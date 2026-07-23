@@ -45,6 +45,11 @@ Column names: spaces→underscores, non-alphanumeric removed (e.g., "Plant latit
 - **Elevation/Radius:** Use simple math only: `"@@=value"` or `"@@=value * 100"` (NO Math.min, Math.max, etc.)
 - Zoom levels: 1-3 continent, 4-6 country, 7-10 city, 11+ street
 - Pitch: 45-60 for good 3D perspective
+{%- if gridded is defined and gridded %}
+
+**Gridded xarray data** with dimensions {{ gridded.dims | join(', ') }} and variables {{ gridded.data_vars | join(', ') }}.
+deck.gl is a geographic map, so put the longitude/latitude columns in `getPosition` and a variable in `getElevation` or color (`ColumnLayer` for per-cell elevation, `HexagonLayer` to aggregate). Plot only the two map axes; any dimension you leave unused is reduced to a single slice automatically.
+{%- endif %}
 {% endblock %}
 
 {% block examples %}
