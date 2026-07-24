@@ -854,7 +854,8 @@ class UI(Viewer):
             else:
                 main_content = Report(
                     *(Section(item["view"].plan, *(it["view"].plan for it in item["items"]), title=item["view"].plan.title)
-                      for item in self._explorations.items[1:])
+                      for item in self._explorations.items[1:]),
+                    llm=self.llm,
                 )
             self._current_mode = "Report"
             self._navigation_caption.object = REPORT_CAPTION
@@ -1764,7 +1765,7 @@ class UI(Viewer):
     def _create_view(self, server: bool = False):
         if server:
             panel_extension(
-                *{ext for agent in self._coordinator.agents for ext in agent._extensions} | {"filedropper"},
+                *{ext for agent in self._coordinator.agents for ext in agent._extensions} | {"filedropper", "jsoneditor"},
                 css_files=["https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css"]
             )
             return self._page

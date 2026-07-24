@@ -73,7 +73,21 @@ Use the [navigation menu](navigating_the_ui.md#understanding-explorations) to mo
 - **Review everything** — Scroll through all analyses in one place
 - **Edit prompts** — Click any task to modify its instructions and rerun
 - **Customize agents** — Edit underlying agent prompts to change behavior
+- **Choose what to export** — Untick any chart, table, or note to leave it out of the export
+- **Annotate as a story** — Turn the report into a readable, editable narrative.
 - **Export all** — Download everything as a single Jupyter notebook
+
+### Annotate a report as a story
+
+Charts and tables answer questions, but a report you can share reads like a story. Click **Annotate** (the book icon) in the report toolbar to write one.
+
+- **Generate** — Pick a tone preset or type your own guidance, then generate. Lumen writes prose interleaved with the charts and tables it discusses and opens it in a new **Story** tab beside the **Report** tab.
+- **Edit the prose** — Click any paragraph to edit it like a document, or use the wand icon next to it to have the AI rewrite just that paragraph from an instruction.
+- **Regenerate** — Ask for a fresh take with different guidance. Each generation is kept as a version, so a story you edited by hand is never thrown away; switch between versions from the picker.
+- **Export** follows whichever tab is showing: from the **Story** tab you save the narrative, from the **Report** tab you save the sections.
+
+!!! example "Try it"
+    Ask for a couple of charts, for example a bar chart of streams by genre and a table of the top artists. Switch to **Report** mode and click **Annotate**. Give it a tone such as *"an executive summary that leads with the single most important number"* and generate. Click a paragraph to tweak the wording, then export the Story tab as a notebook.
 
 !!! tip "Planned Feature: Report Templates"
     We're working on the ability to export your report structure as a reusable YAML configuration file. This will let you:
