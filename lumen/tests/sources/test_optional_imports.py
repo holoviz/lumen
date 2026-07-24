@@ -34,7 +34,7 @@ OPTIONAL_SOURCES = [
 def test_error_message_contains_pip_install(module_path, class_name, guard_package, pip_extra):
     """Error messages should include the correct pip install command."""
     module_file = module_path.replace(".", "/") + ".py"
-    source_text = Path(module_file).read_text()
+    source_text = Path(module_file).read_text(encoding="utf-8")
     expected = f"pip install lumen[{pip_extra}]"
     assert expected in source_text, (
         f"{module_path} should contain '{expected}' in its error message"
@@ -49,7 +49,7 @@ def test_error_message_contains_pip_install(module_path, class_name, guard_packa
 def test_import_guard_uses_try_except(module_path, class_name, guard_package, pip_extra):
     """Each module should have a try/except guard around the optional import."""
     module_file = module_path.replace(".", "/") + ".py"
-    source_text = Path(module_file).read_text()
+    source_text = Path(module_file).read_text(encoding="utf-8")
     assert "except ImportError" in source_text, (
         f"{module_path} should have 'except ImportError' guard"
     )
