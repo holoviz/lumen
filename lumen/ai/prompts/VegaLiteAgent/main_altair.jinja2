@@ -3,6 +3,9 @@
 {% block instructions %}
 Generate Altair code. Data is `df`, assign to `chart`, end with `.interactive()`. Use `width='container'` for single charts only. NO I/O methods.
 
+## MULTIPLE CHARTS
+Return several entries in `charts` ONLY when the request spans distinct metrics or relationships, or the user asks for more than one; otherwise return exactly one. Each entry is an independent code block that assigns its own `chart` (use `alt.hconcat`/`alt.vconcat`/`.facet`/`.repeat` only to compose within a single entry), and give each entry a short `title` used as its tab label.
+
 ## Encodings: `:Q` quantitative | `:N` nominal | `:O` ordinal | `:T` temporal
 
 ## Reference
@@ -16,6 +19,12 @@ Generate Altair code. Data is `df`, assign to `chart`, end with `.interactive()`
 - When the n_rows > 5000:
   - You **MUST** include `alt.data_transformers.disable_max_rows()` and `alt.renderers.set_embed_options(renderer="canvas")`
   - Prefer aggregated and binned plots
+{%- if gridded is defined and gridded %}
+
+## Gridded xarray data
+`df` is a long-form grid from an xarray dataset (dimensions: {{ gridded.dims | join(', ') }}; variables: {{ gridded.data_vars | join(', ') }}).
+Pick two dimensions for `x`/`y` and use `mark_rect()` with `color` as the quantitative value (`alt.Scale(scheme='viridis')`). Keep the axes ordinal; Vega-Lite cannot project `mark_rect`, so a true geographic map needs the hvPlot or DeckGL views instead. Any dimension you leave unencoded is reduced to a single slice automatically.
+{%- endif %}
 {% endblock %}
 
 {% block examples %}

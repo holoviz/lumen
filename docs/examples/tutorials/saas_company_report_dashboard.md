@@ -996,4 +996,4 @@ if __name__ == "__main__":
 
 ## Next steps
 
-Extend the dashboard by implementing cohort analysis, LTV calculations, or revenue forecasting. Add nested reports for drill-down analysis. Connect to your actual database using [Sources configuration](../../configuration/sources.md). Schedule execution and export to notebooks. Learn more about styling in [Views configuration](../../configuration/views.md).
+Extend the dashboard by implementing cohort analysis, LTV calculations, or revenue forecasting. Add nested reports for drill-down analysis. Connect to your actual database using [Sources configuration](../../configuration/sources.md). Schedule execution and export to notebooks. Learn more about styling in [Views configuration](../../configuration/spec/views.md).

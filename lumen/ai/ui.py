@@ -2000,7 +2000,6 @@ class ExplorerUI(UI):
             *switches,
             anchor_origin={"horizontal": "right", "vertical": "center"},
             transform_origin={"horizontal": "left", "vertical": "top"},
-            styles={"z-index": '1300'},
             theme_config={"light": {"palette": {"background": {"paper": "var(--mui-palette-grey-50)"}}}, "dark": {}}
         )
         self._sidebar_menu = menu = MenuList(
@@ -2142,6 +2141,16 @@ class ExplorerUI(UI):
             # Hug the drawer's own width (tab when closed, ``size`` when open)
             # instead of flex-growing to eat half the Row.
             styles={"flex": "0 0 auto"},
+            # The sidebar Settings popup is ``attached`` to the sidebar MenuList,
+            # so it portals into a container nested inside the Page's left sidebar
+            # Drawer paper, which sits at MUI's ``theme.zIndex.drawer`` (1200) and
+            # forms a stacking context. This nav drawer's paper defaults to that
+            # same 1200 and, appearing later in the DOM, paints over the popup
+            # (raising the popup's own z-index can't escape the sidebar's 1200
+            # context). Drop the nav drawer below 1200 so the popup wins; it is
+            # inline/docked and only overlays main content (z-auto), so it stays
+            # above everything it needs to.
+            sx={"zIndex": 1199},
         )
         # Content lives in a growing wrapper beside the drawer so it fills the
         # width the drawer leaves free. _compose_main swaps the wrapper's child.

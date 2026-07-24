@@ -88,8 +88,9 @@ class LumenEditor(Viewer):
         self.view = ParamMethod(self.render, inplace=True, sizing_mode='stretch_width')
         self._last_output = {}
 
-    def _render_editor(self):
-        self._editor = CodeEditor(
+    def _code_editor(self) -> CodeEditor:
+        """A CodeEditor two-way bound to this editor's spec."""
+        editor = CodeEditor(
             value=self.param.spec.rx.or_(f'{self.title} output could not be serialized and may therefore not be edited.'),
             language=self.language,
             theme="github_dark" if config.theme == "dark" else "github_light_default",
@@ -101,7 +102,11 @@ class LumenEditor(Viewer):
             disabled=self.param.spec.rx.is_(None),
             styles={"border": "1px solid var(--border-color)"}
         )
-        self._editor.link(self, bidirectional=True, value='spec')
+        editor.link(self, bidirectional=True, value='spec')
+        return editor
+
+    def _render_editor(self):
+        self._editor = self._code_editor()
         self._icons = Row(
             *self.footer,
             margin=(0, 0, 5, 10)
@@ -724,6 +729,49 @@ class SQLEditor(LumenEditor):
 
     def __str__(self):
         return f"{self.__class__.__name__}:\n```sql\n{self.spec}\n```"
+
+
+class MultiChartEditor(LumenEditor):
+    """
+    Editor for a composite of several charts, e.g. an "All" tab that stacks
+    every plot as an overview.
+
+    The composite has no single spec, so instead of one code editor it shows a
+    sub-tab per chart, each bound to that chart's own spec; edits made here and
+    on the chart's own tab are therefore the same edit.
+    """
+
+    chart_editors = param.List(default=[], item_type=LumenEditor, doc="""
+        The editors of the individual charts, whose specs are exposed as
+        sub-tabs.""")
+
+    _label = "Charts"
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        # A scrollbar only appears on a height-constrained container, and the
+        # base view is stretch_width, so stacking every plot just grows it past
+        # its pane and the overflow spills. Wrapping it the way
+        # ExplorerUI._render_view wraps the editor puts the scroll container
+        # directly in the split pane, which is what gives it a fixed height.
+        self.view = Column(self.view, sizing_mode="stretch_both", scroll="y-auto")
+
+    def _render_editor(self):
+        # No margin of its own: each sub-tab's CodeEditor already carries the
+        # (0, 10) inset, so a margin here would double the left gap.
+        return Tabs(
+            *((editor.title, editor._code_editor()) for editor in self.chart_editors),
+            dynamic=True, sizing_mode="stretch_both", margin=0
+        )
+
+    def export(self, fmt: str) -> StringIO:
+        if fmt != "yaml":
+            raise ValueError(f"Unknown export format {fmt!r} for {self.__class__.__name__}")
+        # A chart that could not be serialized has no spec; skip it rather than
+        # failing the export of the ones that did.
+        return StringIO("---\n".join(
+            editor.spec for editor in self.chart_editors if editor.spec
+        ))
 
 
 class DocumentEditor(LumenEditor):

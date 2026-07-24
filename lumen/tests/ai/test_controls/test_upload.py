@@ -9,13 +9,7 @@ import pytest
 from lumen.ai.controls import SourceResult, UploadedFileRow
 from lumen.ai.controls.ingest.utils import read_geo_file
 from lumen.sources.duckdb import DuckDBSource
-
-try:
-    import geopandas as gpd
-
-    from shapely.geometry import Polygon
-except ImportError:
-    gpd = None
+from lumen.tests.utils import Polygon, gpd, requires_geopandas
 
 
 @pytest.mark.asyncio
@@ -373,11 +367,10 @@ class TestUploadControlsUX:
         assert upload_controls._add_button.name == "Upload file(s)"
 
 
+@requires_geopandas
 def test_read_geo_file_captures_crs():
     """read_geo_file surfaces the source CRS in source_params so DuckDBSource
     can reapply it after the WKB roundtrip (gh-1904)."""
-    if gpd is None:
-        pytest.skip("geopandas is not installed")
     gdf = gpd.GeoDataFrame(
         {"name": ["a"]}, geometry=[Polygon([(0, 0), (1, 0), (1, 1)])], crs="EPSG:4326"
     )

@@ -255,8 +255,9 @@ class XArraySQLSource(BaseSQLSource):
         result = self._ctx.sql(sql_query)
         return result.to_pandas()
 
-    @cached
-    def get(self, table, **query):
+    def _build_sql(self, table, **query) -> str:
+        """Build the SQL for a table query, applying filters and any
+        sql_transforms. Shared by ``get`` and ``to_dataset``."""
         query.pop('__dask', None)
         sql_expr = self.get_sql_expr(table)
         sql_transforms = query.pop('sql_transforms', [])
@@ -268,7 +269,33 @@ class XArraySQLSource(BaseSQLSource):
         sql_transforms = [SQLFilter(conditions=conditions, read=self.dialect)] + sql_transforms
         for st in sql_transforms:
             sql_expr = st.apply(sql_expr)
-        return self.execute(sql_expr)
+        return sql_expr
+
+    @cached
+    def get(self, table, **query):
+        return self.execute(self._build_sql(table, **query))
+
+    def to_dataset(self, table, **query):
+        """Return the query result as a gridded ``xr.Dataset``.
+
+        Uses xarray-sql's ``to_dataset`` (lazy, keeps the data gridded) when
+        the installed version supports it, so a gridded source is never
+        materialized as long-form. Falls back to pivoting the long-form result
+        on the dataset dims for xarray-sql < 0.3.
+        """
+        result = self._ctx.sql(self._build_sql(table, **query))
+        if hasattr(result, 'to_dataset'):
+            # Pass only the dims the result actually has a column for. Multiple
+            # data vars need dims passed explicitly (the FROM clause is
+            # ambiguous), but a bounds dim (e.g. nbnds) or a projecting/
+            # aggregating sql_transform can leave a dataset dim out of the
+            # result, and to_dataset(dims=...) errors on a dim it can't find.
+            names = set(result.schema().names)
+            dims = [d for d in self._dataset.dims if d in names]
+            return result.to_dataset(dims=dims)
+        df = result.to_pandas()
+        present = [d for d in self._dataset.dims if d in df.columns]
+        return df.set_index(present).to_xarray() if present else df
 
     def create_sql_expr_source(
         self,

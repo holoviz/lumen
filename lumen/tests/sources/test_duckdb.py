@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
+from lumen.tests.utils import Polygon, gpd
 from lumen.transforms.sql import SQLGroupBy
 
 try:
@@ -17,13 +18,6 @@ try:
     pytestmark = pytest.mark.xdist_group("duckdb")
 except ImportError:
     pytestmark = pytest.mark.skip(reason="Duckdb is not installed")
-
-try:
-    import geopandas as gpd
-
-    from shapely.geometry import Polygon
-except ImportError:
-    gpd = None
 
 
 @pytest.fixture

@@ -18,6 +18,9 @@ Here are some ideas to spark your exploration:
 - "Show me a scatter plot of 'flipper_length_mm' vs 'body_mass_g'."
 - "Create a histogram of 'bill_length_mm'."
 - "Show me a bar chart of average values by species."
+- "Create separate charts of average body mass by species and average flipper length by species."
+
+When a request calls for more than one chart, each chart opens in its own tab that you can edit, alongside an "All" tab that shows every chart together.
 
 **Complex queries:**
 
@@ -100,6 +103,6 @@ The notebook includes:
 
 ## Next steps
 
-- [**Building Lumen Apps**](building_lumen_ai_apps.md) — Configure models, add source controls, and customize behavior
+- [**Building Lumen Apps**](building_lumen_apps.md) — Configure models, add source controls, and customize behavior
 - [**Agents**](../configuration/agents.md) — Learn about the different agent types
 - [**Reports**](../configuration/reports.md) — Build structured, reproducible analytical workflows
