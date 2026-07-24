@@ -2,7 +2,7 @@
 
 Historical weather patterns from 2012-2015 with multi-panel time series and heatmap visualizations.
 
-![Seattle Weather Dashboard](https://raw.githubusercontent.com/holoviz/lumen/main/doc/_static/seattle.png)
+![Seattle Weather Dashboard](../../assets/gallery/seattle.png)
 
 ## Features
 

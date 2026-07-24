@@ -194,13 +194,13 @@ class OpenAPISourceControls(RESTAPISourceControls):
 
         return endpoints
 
-    @staticmethod
+    @classmethod
     def _merge_params(
-        path_params: list[dict], operation: dict, components: dict,
+        cls, path_params: list[dict], operation: dict, components: dict,
     ) -> list[dict]:
         """Merge path-level and operation-level parameters, filtering to path+query only."""
         op_params = [
-            OpenAPISourceControls._resolve_param(p, components)
+            cls._resolve_param(p, components)
             for p in operation.get("parameters", [])
         ]
         merged = {p["name"]: p for p in path_params}
@@ -231,7 +231,11 @@ class OpenAPISourceControls(RESTAPISourceControls):
         """
         Resolve a ``$ref`` parameter reference and flatten into a
         simple dict with ``name``, ``in``, ``type``, ``required``,
-        ``description``, ``default``.
+        ``description``, ``default``, and optionally ``enum`` and
+        ``format``.
+
+        Falls back to ``example`` when no ``default`` is provided,
+        which is common in OpenAPI specs (e.g. Massive/Polygon).
 
         .. note::
             Only handles single-level ``$ref`` resolution.  Nested
@@ -256,8 +260,15 @@ class OpenAPISourceControls(RESTAPISourceControls):
             "required": param_spec.get("required", False),
             "description": param_spec.get("description", ""),
         }
+
+        # Prefer schema.default, fall back to param-level example
         if "default" in schema:
             result["default"] = schema["default"]
+        elif "example" in param_spec:
+            result["default"] = param_spec["example"]
+        elif "example" in schema:
+            result["default"] = schema["example"]
+
         if enum:
             result["enum"] = enum
 

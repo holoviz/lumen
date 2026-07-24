@@ -10,7 +10,7 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
-from panel.layout import Column
+from panel.layout import Column, Row
 from panel.pane import Markdown
 from typing_extensions import NotRequired
 
@@ -18,6 +18,12 @@ from lumen.ai.actor import ContextModel
 from lumen.ai.report import (
     Action, Report, Section, TaskGroup, Typography,
 )
+
+try:
+    from panel_material_ui import ChatMessage, Checkbox
+except ImportError:
+    ChatMessage = None
+    Checkbox = None
 
 
 class HelloAction(Action):
@@ -392,3 +398,451 @@ async def test_report_to_html():
     assert "<html" in html_string.lower()
     assert "Hello Report" in html_string
     assert "Hello" in html_string
+
+
+async def test_section_include_in_export_default():
+    section = Section(HelloAction())
+    assert section.include_in_export is True
+
+
+async def test_report_to_notebook_excludes_deselected_section():
+    report = Report(
+        Section(A(order=[]), title='Section A'),
+        Section(B(order=[]), title='Section B'),
+        title='Multi Report',
+    )
+    await report.execute()
+
+    # By default every section is included in the export.
+    all_sources = "".join(
+        "".join(cell["source"]) for cell in json.loads(report.to_notebook())["cells"]
+    )
+    assert "A done" in all_sources
+    assert "B done" in all_sources
+
+    # Deselecting a section drops it (and its header) from the notebook.
+    report[1].include_in_export = False
+    sources = "".join(
+        "".join(cell["source"]) for cell in json.loads(report.to_notebook())["cells"]
+    )
+    assert "A done" in sources
+    assert "B done" not in sources
+    assert "Section B" not in sources
+    assert "Multi Report" in sources
+
+
+async def test_report_export_excludes_a_single_deselected_chart():
+    # Two charts made in one session: each is selectable on its own.
+    bar, pie = A(order=[], title='Bar'), B(order=[], title='Pie')
+    report = Report(Section(bar, pie, title='Genre Streams'), title='Multi Report')
+    await report.execute()
+
+    sources = "".join(
+        "".join(cell["source"]) for cell in json.loads(report.to_notebook())["cells"]
+    )
+    assert "A done" in sources and "B done" in sources
+
+    # Dropping one chart keeps the other, and keeps the section it came from.
+    pie.include_in_export = False
+    sources = "".join(
+        "".join(cell["source"]) for cell in json.loads(report.to_notebook())["cells"]
+    )
+    assert "A done" in sources
+    assert "B done" not in sources
+    assert "Genre Streams" in sources
+
+
+async def test_report_export_excludes_deselected_nested_section():
+    nested = Section(B(order=[]), title='Nested Section')
+    report = Report(
+        Section(A(order=[]), nested, title='Outer Section'),
+        title='Multi Report',
+    )
+    await report.execute()
+
+    # A nested section is included by default, like a top level one.
+    sources = "".join(
+        "".join(cell["source"]) for cell in json.loads(report.to_notebook())["cells"]
+    )
+    assert "A done" in sources
+    assert "B done" in sources
+
+    # Deselecting the nested section drops it (and its heading) but keeps the
+    # rest of the section it lives in.
+    nested.include_in_export = False
+    sources = "".join(
+        "".join(cell["source"]) for cell in json.loads(report.to_notebook())["cells"]
+    )
+    assert "A done" in sources
+    assert "Outer Section" in sources
+    assert "B done" not in sources
+    assert "Nested Section" not in sources
+
+    # The HTML export honours the nested selection too.
+    html = report.to_html()
+    assert "A done" in html
+    assert "B done" not in html
+
+
+def _find_checkboxes(obj, found=None):
+    """Every Checkbox rendered anywhere in a component tree."""
+    found = [] if found is None else found
+    if isinstance(obj, Checkbox):
+        found.append(obj)
+        return found
+    for child in (getattr(obj, 'objects', None) or []):
+        _find_checkboxes(child[1] if isinstance(child, tuple) else child, found)
+    return found
+
+
+async def test_section_renders_a_checkbox_per_task():
+    nested = Section(B(order=[]), title='Nested Section')
+    outer = Section(A(order=[]), nested, title='Outer Section')
+    report = Report(outer, title='Multi Report')
+    await report.execute()
+
+    # Everything inside a section is selectable, so a single chart can be
+    # dropped on its own: the action, the nested section, and the action within
+    # it each get a checkbox.
+    assert len(_find_checkboxes(outer._view)) == 3
+
+    # Each checkbox is bound to the include_in_export of its own task.
+    nested.include_in_export = False
+    assert False in [checkbox.value for checkbox in _find_checkboxes(outer._view)]
+
+
+async def test_report_to_html_excludes_deselected_section():
+    report = Report(
+        Section(A(order=[]), title='Section A'),
+        Section(B(order=[]), title='Section B'),
+        title='Multi Report',
+    )
+    await report.execute()
+
+    report[1].include_in_export = False
+    html = report.to_html()
+
+    assert "A done" in html
+    assert "B done" not in html
+    # Exporting a subset must not disturb the live report view.
+    assert len(report._view) == 2
+
+
+async def test_report_section_header_has_bound_export_checkbox():
+    report = Report(
+        Section(A(order=[]), title='Section A'),
+        Section(B(order=[]), title='Section B'),
+        title='Multi Report',
+    )
+    await report.execute()
+
+    headers = report._view._headers
+    assert len(headers) == len(report) == 2
+    for section, header in zip(report, headers):
+        assert isinstance(header, Row)
+        checkboxes = [obj for obj in header.objects if isinstance(obj, Checkbox)]
+        assert len(checkboxes) == 1
+        checkbox = checkboxes[0]
+        # Checked by default and bound to include_in_export in both directions.
+        assert checkbox.value is True
+        section.include_in_export = False
+        assert checkbox.value is False
+        checkbox.value = True
+        assert section.include_in_export is True
+
+
+async def test_report_export_empty_selection():
+    report = Report(
+        Section(A(order=[]), title='Section A'),
+        Section(B(order=[]), title='Section B'),
+        title='Multi Report',
+    )
+    await report.execute()
+
+    report[0].include_in_export = False
+    report[1].include_in_export = False
+
+    cells = json.loads(report.to_notebook())["cells"]
+    sources = "".join("".join(cell["source"]) for cell in cells)
+    assert "A done" not in sources
+    assert "B done" not in sources
+    # Only the import preamble survives when nothing is selected.
+    assert len(cells) == 1
+
+    # HTML export of an empty selection should not raise.
+    html = report.to_html()
+    assert "A done" not in html
+    assert "B done" not in html
+
+
+def test_report_from_views_assembles_exportable_report():
+    views = [Markdown("# My Title"), Markdown("Some body text")]
+
+    report = Report.from_views(views, title="Prebuilt Report")
+
+    # No tasks were run, but the report is in an exportable state.
+    assert len(report) == 0
+    assert report.status == "success"
+    assert report.views == views
+
+    nb = json.loads(report.to_notebook())
+    sources = ["".join(cell["source"]) for cell in nb["cells"]]
+    assert any("# My Title" in source for source in sources)
+    assert any("Some body text" in source for source in sources)
+
+    html_string = report.to_html()
+    assert "<html" in html_string.lower()
+    assert "Some body text" in html_string
+
+
+def test_report_from_views_without_title():
+    report = Report.from_views([Markdown("Body")])
+
+    assert report.status == "success"
+    assert "<html" in report.to_html().lower()
+
+
+class BlockingAction(Action):
+    """Action that waits on a signal before returning, so tests can deterministically cancel mid-execution."""
+
+    def __init__(self, started, release, **params):
+        super().__init__(**params)
+        self._started = started
+        self._release = release
+
+    async def _execute(self, context, **kwargs):
+        self._started.set()
+        await self._release.wait()
+        return [Markdown("should not render")], {"text": "never"}
+
+
+async def test_task_execute_marks_cancelled():
+    started = asyncio.Event()
+    release = asyncio.Event()
+    action = BlockingAction(started, release, title="Blocks")
+
+    task = asyncio.create_task(action.execute())
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert action.status == "cancelled"
+    assert action.running is False
+
+
+async def test_taskgroup_cancel_propagates():
+    started = asyncio.Event()
+    release = asyncio.Event()
+    tg = TaskGroup(BlockingAction(started, release, title="Blocks"), B(), title="Group")
+
+    task = asyncio.create_task(tg.execute())
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert tg.status == "cancelled"
+    assert tg[0].status == "cancelled"
+    assert tg[1].status == "idle"
+
+
+async def test_report_cancel_mid_execution():
+    started = asyncio.Event()
+    release = asyncio.Event()
+    report = Report(
+        Section(BlockingAction(started, release, title="Blocks"), title="S1"),
+        Section(B(), title="S2"),
+        title="Cancellable",
+    )
+
+    await report._execute_event()
+    await started.wait()
+    assert report._active_task is not None and not report._active_task.done()
+
+    report._handle_cancel()
+    # Wait for the task to finish reacting to the cancel
+    while report._active_task is not None:
+        await asyncio.sleep(0.01)
+
+    assert report.status == "cancelled"
+    assert report[0].status == "cancelled"
+    assert report[1].status == "idle"
+
+
+async def test_report_handle_cancel_idempotent():
+    report = Report(Section(HelloAction(), title="S1"), title="NoOp")
+    # No task running: _handle_cancel must not raise
+    report._handle_cancel()
+    assert report._active_task is None
+
+
+async def test_report_completed_sections_preserved_on_cancel():
+    started = asyncio.Event()
+    release = asyncio.Event()
+    report = Report(
+        Section(HelloAction(), title="Done"),
+        Section(BlockingAction(started, release, title="Blocks"), title="S2"),
+        title="Partial",
+    )
+
+    await report._execute_event()
+    await started.wait()
+    report._handle_cancel()
+    while report._active_task is not None:
+        await asyncio.sleep(0.01)
+
+    assert report[0].status == "success"
+    assert report[1].status == "cancelled"
+    assert report.status == "cancelled"
+
+
+# ---------------------------------------------------------------------------
+# to_notebook: header buffering, str/ChatMessage handling, Viewable skipping
+# ---------------------------------------------------------------------------
+
+class StrAction(Action):
+    """Action that returns a plain string output."""
+    async def _execute(self, context, **kwargs):
+        return ["Plain text summary"], {}
+
+
+class ChatMessageAction(Action):
+    """Action that returns a ChatMessage with string content."""
+    async def _execute(self, context, **kwargs):
+        msg = ChatMessage(object="Chat response text", user="Agent")
+        return [msg], {}
+
+
+class ChatMessageMarkdownAction(Action):
+    """Action that returns a ChatMessage wrapping a Markdown pane."""
+    async def _execute(self, context, **kwargs):
+        md = Markdown("Markdown inside ChatMessage")
+        msg = ChatMessage(object=md, user="Agent")
+        return [msg], {}
+
+
+class ViewableAction(Action):
+    """Action that returns a non-LumenEditor Viewable (should be skipped)."""
+    async def _execute(self, context, **kwargs):
+        from panel.widgets import TextInput
+        return [TextInput(value="skip me")], {}
+
+
+class EmptyAction(Action):
+    """Action that returns no outputs (header-only after rendering)."""
+    async def _execute(self, context, **kwargs):
+        return [], {}
+
+
+async def test_to_notebook_string_output():
+    """Plain string views are exported as markdown cells."""
+    report = Report(
+        Section(StrAction(title="Summary"), title="S1"),
+        title="String Report",
+    )
+    await report.execute()
+    nb = json.loads(report.to_notebook())
+
+    md_cells = [c for c in nb["cells"] if c["cell_type"] == "markdown"]
+    md_sources = ["".join(c["source"]) for c in md_cells]
+    assert any("Plain text summary" in s for s in md_sources)
+
+
+@pytest.mark.skipif(ChatMessage is None, reason="panel_material_ui.ChatMessage not available")
+async def test_to_notebook_chatmessage_string():
+    """ChatMessage with string content is exported as markdown."""
+    report = Report(
+        Section(ChatMessageAction(title="Chat"), title="S1"),
+        title="ChatMsg Report",
+    )
+    await report.execute()
+    nb = json.loads(report.to_notebook())
+
+    md_cells = [c for c in nb["cells"] if c["cell_type"] == "markdown"]
+    md_sources = ["".join(c["source"]) for c in md_cells]
+    assert any("Chat response text" in s for s in md_sources)
+
+
+@pytest.mark.skipif(ChatMessage is None, reason="panel_material_ui.ChatMessage not available")
+async def test_to_notebook_chatmessage_markdown():
+    """ChatMessage wrapping a Markdown pane is exported as markdown."""
+    report = Report(
+        Section(ChatMessageMarkdownAction(title="Chat"), title="S1"),
+        title="ChatMdMsg Report",
+    )
+    await report.execute()
+    nb = json.loads(report.to_notebook())
+
+    md_cells = [c for c in nb["cells"] if c["cell_type"] == "markdown"]
+    md_sources = ["".join(c["source"]) for c in md_cells]
+    assert any("Markdown inside ChatMessage" in s for s in md_sources)
+
+
+async def test_to_notebook_viewable_skipped():
+    """Non-LumenEditor Viewables produce no cells (not even error stubs)."""
+    report = Report(
+        Section(ViewableAction(title="Widget"), title="S1"),
+        title="Viewable Report",
+    )
+    await report.execute()
+    nb = json.loads(report.to_notebook())
+
+    # Only preamble + report title; no code cells beyond preamble
+    code_cells = [c for c in nb["cells"] if c["cell_type"] == "code"]
+    assert len(code_cells) == 1  # just preamble
+    # No "Cannot export" comments
+    for c in nb["cells"]:
+        source = "".join(c["source"])
+        assert "Cannot export" not in source
+
+
+async def test_to_notebook_orphaned_header_dropped():
+    """A Typography header followed by no content is not emitted."""
+    report = Report(
+        Section(EmptyAction(title="Orphan"), title="S1"),
+        title="Orphan Report",
+    )
+    await report.execute()
+    nb = json.loads(report.to_notebook())
+
+    md_cells = [c for c in nb["cells"] if c["cell_type"] == "markdown"]
+    md_sources = ["".join(c["source"]) for c in md_cells]
+    # The task-level header "Orphan" should NOT appear
+    assert not any("Orphan" in s for s in md_sources)
+
+
+async def test_to_notebook_header_emitted_before_content():
+    """A Typography header IS emitted when followed by real content."""
+    report = Report(
+        Section(HelloAction(title="KeepMe"), title="S1"),
+        title="Header Report",
+    )
+    await report.execute()
+    nb = json.loads(report.to_notebook())
+
+    md_cells = [c for c in nb["cells"] if c["cell_type"] == "markdown"]
+    md_sources = ["".join(c["source"]) for c in md_cells]
+    # The section title appears (report title = "# Header Report")
+    assert any("Header Report" in s for s in md_sources)
+    # The Markdown content is present
+    assert any("**Hello**" in s for s in md_sources)
+
+
+async def test_to_notebook_consecutive_orphaned_headers():
+    """Multiple consecutive orphaned headers produce zero cells."""
+    report = Report(
+        Section(
+            EmptyAction(title="First"),
+            EmptyAction(title="Second"),
+            title="S1",
+        ),
+        title="Multi Orphan",
+    )
+    await report.execute()
+    nb = json.loads(report.to_notebook())
+
+    md_cells = [c for c in nb["cells"] if c["cell_type"] == "markdown"]
+    md_sources = ["".join(c["source"]) for c in md_cells]
+    assert not any("First" in s for s in md_sources)
+    assert not any("Second" in s for s in md_sources)

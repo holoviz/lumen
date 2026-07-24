@@ -14,7 +14,7 @@ from .rest_api import RESTAPISourceControls
 from .result import SourceResult
 from .upload import UploadSourceControls
 from .url import URLSourceControls
-from .utils import download_file
+from .utils import FileReadResult, download_file
 
 __all__ = (
     "METADATA_EXTENSIONS",
@@ -25,6 +25,7 @@ __all__ = (
     "CodeSourceControls",
     "DownloadConfig",
     "DownloadSourceControls",
+    "FileReadResult",
     "FileSourceControls",
     "OpenAPISourceControls",
     "ParametricSourceControls",

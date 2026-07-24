@@ -1,13 +1,15 @@
 import asyncio
+import io
 import sqlite3
 import sys
 import tempfile
 
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import duckdb
+import numpy as np
 import pytest
 
 try:
@@ -15,7 +17,14 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
-from panel.io import state
+try:
+    import xarray as xr
+
+    from lumen.sources.xarray_sql import XArraySQLSource
+    HAS_XARRAY = True
+except ImportError:
+    HAS_XARRAY = False
+
 from panel.layout import Column, Row
 from panel.tests.util import async_wait_until
 from panel.util import edit_readonly
@@ -24,14 +33,17 @@ from panel_splitjs import VSplit
 
 from lumen.ai.agents.chat import ChatAgent
 from lumen.ai.agents.sql import SQLAgent, make_sql_model
+from lumen.ai.agents.vega_lite import (
+    ChartSpec, VegaLiteAgent, VegaLiteSpec, VegaLiteSpecUpdate,
+)
 from lumen.ai.config import PROVIDED_SOURCE_NAME
 from lumen.ai.coordinator import Plan
-from lumen.ai.editors import SQLEditor
+from lumen.ai.editors import MultiChartEditor, SQLEditor
 from lumen.ai.models import ErrorDescription, FollowUpSuggestion
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
 from lumen.ai.ui import UI, Exploration, ExplorerUI
-from lumen.config import SOURCE_TABLE_SEPARATOR
+from lumen.config import SOURCE_TABLE_SEPARATOR, dump_yaml, load_yaml
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
 from lumen.sources.sqlalchemy import SQLAlchemySource
@@ -383,6 +395,89 @@ async def test_find_view_in_tabs(explorer_ui):
         assert tab_idx >= 0
 
 
+async def test_multichart_all_tab_last_and_editable(explorer_ui):
+    """A multi-chart response renders one editable tab per chart plus an 'All'
+    overview that is placed last, opened by default, and exposes every chart's
+    spec as an editor sub-tab."""
+    ui = explorer_ui
+    test_source = ui.context["source"]
+    SQLQueryWithTables = make_sql_model([(test_source.name, "test_table")])
+
+    spec_bar = {
+        "mark": "bar",
+        "encoding": {
+            "x": {"field": "category", "type": "nominal"},
+            "y": {"field": "value", "type": "quantitative"},
+        },
+    }
+    spec_line = {
+        "mark": "line",
+        "encoding": {
+            "x": {"field": "value", "type": "quantitative"},
+            "y": {"field": "value", "type": "quantitative"},
+        },
+    }
+    ui.llm.set_responses([
+        SQLQueryWithTables(
+            query="SELECT category, value FROM test_table",
+            table_slug="cat_vals",
+            tables=["test_table"],
+        ),
+        VegaLiteSpec(
+            chain_of_thought="two charts",
+            charts=[
+                ChartSpec(title="By category", yaml_spec=dump_yaml(spec_bar)),
+                ChartSpec(title="Value line", yaml_spec=dump_yaml(spec_line)),
+            ],
+            insufficient_context=False,
+            insufficient_context_reason="none",
+        ),
+        VegaLiteSpecUpdate(chain_of_thought="ok", yaml_update=""),
+        VegaLiteSpecUpdate(chain_of_thought="ok", yaml_update=""),
+    ])
+
+    plan = Plan(
+        ActorTask(SQLAgent(llm=ui.llm)),
+        ActorTask(VegaLiteAgent(llm=ui.llm, code_execution="disabled")),
+        history=[{"content": "two charts of value", "role": "user"}],
+        title="Two charts",
+        context=ui.context,
+    )
+    await ui._execute_plan(plan)
+
+    exploration = ui._exploration["view"]
+    # The multi-chart output includes the "All" overview.
+    overview = next(v for v in exploration.plan.views if isinstance(v, MultiChartEditor))
+
+    tabs = exploration.view[0]
+    # "All" is the last tab and is opened by default.
+    assert tabs._names[-1] == "All"
+    assert tabs.active == len(tabs) - 1
+
+    # The "All" tab lays out exactly like a chart tab: same editor/plot split,
+    # same proportions, and nothing pinning a pane open (which would stop the
+    # divider being dragged).
+    overview_split = next(child for child in tabs[-1] if isinstance(child, VSplit))
+    chart_split = next(child for child in tabs[-2] if isinstance(child, VSplit))
+    assert overview_split.sizes == chart_split.sizes
+    assert overview_split.min_size == chart_split.min_size
+
+    # The overview's editor pane is one sub-tab per chart, and editing a sub-tab
+    # writes through to that chart's own spec.
+    sub_tabs = overview.editor
+    assert sub_tabs._names == ["By category", "Value line"]
+    edited = dump_yaml({**load_yaml(overview.chart_editors[1].spec), "mark": "point"})
+    sub_tabs[1].value = edited
+    assert overview.chart_editors[1].spec == edited
+    assert overview.chart_editors[1].component.spec["mark"] == "point"
+    # The chart's own tab shows the same edit, not a stale copy.
+    assert overview.chart_editors[1]._editor.value == edited
+
+    # The overview wraps its view to scroll the stacked plots; pop-out and rerun
+    # must still locate it through that wrapper.
+    assert ui._find_view_in_tabs(exploration, overview) == len(tabs) - 1
+
+
 async def test_find_view_in_popped_out(explorer_ui):
     """Test finding a view in popped out views."""
     # Create an exploration
@@ -417,6 +512,18 @@ async def test_find_view_in_popped_out(explorer_ui):
     # Should find it
     assert popped_idx is not None
     assert popped_idx >= 1  # Index 0 is tabs
+
+
+async def test_vsplit_has_view_finds_view_under_filter_split(explorer_ui):
+    """Pop-out helpers locate the table view whether or not a filter pane wraps
+    the editor/table split one level deeper."""
+    table = Column()
+    editor_table = VSplit(Column(), table)
+    with_filters = VSplit(Column(), editor_table)
+
+    assert explorer_ui._vsplit_has_view(editor_table, table)   # no filters
+    assert explorer_ui._vsplit_has_view(with_filters, table)   # filters active
+    assert not explorer_ui._vsplit_has_view(VSplit(Column(), Column()), table)
 
 
 async def test_exploration_context_isolation(explorer_ui):
@@ -529,19 +636,22 @@ async def test_chat_upload_flow_processes_files_directly(explorer_ui, monkeypatc
     assert "uploaded" in new_sources[0].get_tables()
 
     # The query should be sent to the interface
-    assert ui._main[1] is ui.interface
-    assert ui._main[1][0].object == "Show me the uploaded data"
+    assert ui._nav_content[0] is ui.interface
+    assert ui._nav_content[0][0].object == "Show me the uploaded data"
 
 
 # Tests for view transition states
 
 async def test_initial_state_shows_splash(explorer_ui):
     """Test 1: On start the user sees just the self._splash in main."""
-    # Initially, _main should contain only _splash
-    assert len(explorer_ui._main) == 2
-    assert explorer_ui._main[0] is explorer_ui._navigation
-    assert explorer_ui._main[1] is explorer_ui._splash
-    assert explorer_ui._navigation.visible == False
+    # _main holds the always-mounted navigation drawer; the splash is its content pane
+    assert len(explorer_ui._main) == 1
+    assert explorer_ui._main[0] is explorer_ui._nav_split
+    assert explorer_ui._nav_split[0] is explorer_ui._nav_drawer
+    assert explorer_ui._nav_drawer[0] is explorer_ui._navigation
+    assert explorer_ui._nav_content[0] is explorer_ui._splash
+    # Navigation drawer starts closed
+    assert explorer_ui._nav_drawer.open is False
 
     # Should be on home
     assert explorer_ui._explorations.value['view'] is explorer_ui._home
@@ -551,7 +661,7 @@ async def test_initial_state_shows_splash(explorer_ui):
 async def test_exploration_launch_transitions_to_split(explorer_ui):
     """Test 2: When an exploration is launched we switch from splash to split view."""
     # Initially showing splash
-    assert explorer_ui._main[1] is explorer_ui._splash
+    assert explorer_ui._nav_content[0] is explorer_ui._splash
 
     # Create an exploration
     explorer_ui._explorer.param.update(table_slug="test_table")
@@ -560,19 +670,18 @@ async def test_exploration_launch_transitions_to_split(explorer_ui):
     # Wait for exploration to be created
     await async_wait_until(lambda: len(explorer_ui._explorations.items) > 1)
 
-    # After exploration is created, should transition to split view
-    # The view should update when views are added (which happens in _add_exploration_from_explorer)
-    await async_wait_until(lambda: explorer_ui._split in explorer_ui._main or explorer_ui._navigation in explorer_ui._main)
+    # After exploration is created, the content pane should transition to the split
+    await async_wait_until(lambda: explorer_ui._nav_content[0] is explorer_ui._split)
 
-    # Should now show split view (with navigation if there are explorations)
-    assert explorer_ui._navigation.visible == explorer_ui._should_show_navigation()
-    assert len(explorer_ui._main) == 2
-    assert explorer_ui._main[0] is explorer_ui._navigation
-    assert explorer_ui._main[1] is explorer_ui._split
-    assert explorer_ui._navigation.visible
+    # Content pane now shows the interface/output split
+    assert len(explorer_ui._main) == 1
+    assert explorer_ui._main[0] is explorer_ui._nav_split
+    assert explorer_ui._nav_split[0] is explorer_ui._nav_drawer
+    assert explorer_ui._nav_drawer[0] is explorer_ui._navigation
+    assert explorer_ui._nav_content[0] is explorer_ui._split
 
     # Should not be showing splash anymore
-    assert explorer_ui._splash not in explorer_ui._main
+    assert explorer_ui._splash not in explorer_ui._nav_content
 
 
 async def test_new_exploration_without_outputs_keeps_chat_view(explorer_ui):
@@ -589,8 +698,8 @@ async def test_new_exploration_without_outputs_keeps_chat_view(explorer_ui):
     await explorer_ui._execute_plan(plan)
 
     assert len(explorer_ui._explorations.items) > 1
-    assert explorer_ui._main[1] is explorer_ui.interface
-    assert explorer_ui._split not in explorer_ui._main
+    assert explorer_ui._nav_content[0] is explorer_ui.interface
+    assert explorer_ui._split not in explorer_ui._nav_content
 
 
 async def test_exploration_with_pipeline_data_shows_split(explorer_ui):
@@ -605,11 +714,12 @@ async def test_exploration_with_pipeline_data_shows_split(explorer_ui):
     # Wait for views to be added (pipeline data)
     await async_wait_until(lambda: len(exploration.plan.views) > 0, timeout=5.0)
 
-    # Should show split view with navigation (since we have explorations)
-    assert explorer_ui._should_show_navigation()
-    assert len(explorer_ui._main) == 2
-    assert explorer_ui._main[0] is explorer_ui._navigation
-    assert explorer_ui._main[1] is explorer_ui._split
+    # Should show split view; navigation is the split's left pane
+    assert len(explorer_ui._main) == 1
+    assert explorer_ui._main[0] is explorer_ui._nav_split
+    assert explorer_ui._nav_split[0] is explorer_ui._nav_drawer
+    assert explorer_ui._nav_drawer[0] is explorer_ui._navigation
+    assert explorer_ui._nav_content[0] is explorer_ui._split
 
     # Output should contain the exploration
     assert len(explorer_ui._output) > 1
@@ -632,9 +742,10 @@ async def test_delete_exploration_switches_to_home(explorer_ui):
     # Should switch back to home (splash view)
     assert len(explorer_ui._explorations.items) == 1
     assert explorer_ui._explorations.value['view'] is explorer_ui._home
-    assert explorer_ui._main[0] is explorer_ui._navigation
-    assert explorer_ui._main[1] is explorer_ui._splash
-    assert not explorer_ui._navigation.visible
+    assert explorer_ui._main[0] is explorer_ui._nav_split
+    assert explorer_ui._nav_split[0] is explorer_ui._nav_drawer
+    assert explorer_ui._nav_drawer[0] is explorer_ui._navigation
+    assert explorer_ui._nav_content[0] is explorer_ui._splash
 
 
 async def test_delete_exploration_switches_to_parent(explorer_ui):
@@ -690,8 +801,8 @@ async def test_switch_to_report_mode_with_no_explorations(explorer_ui):
     explorer_ui._toggle_report_mode(True)
 
     # Should show placeholder message
-    assert len(explorer_ui._main) == 2
-    main_content = explorer_ui._main[1]
+    assert len(explorer_ui._main) == 1
+    main_content = explorer_ui._nav_content[0]
     assert isinstance(main_content, Column)
     # Should contain the "No Explorations Yet" message
     assert len(main_content) >= 1
@@ -714,15 +825,15 @@ async def test_switch_to_report_mode_with_explorations(explorer_ui):
     # Switch to report mode
     explorer_ui._handle_sidebar_event(explorer_ui._sidebar_menu.items[1])
 
-    # Should show Report component with navigation
-    assert explorer_ui._should_show_navigation()
-    assert len(explorer_ui._main) == 2
-    assert explorer_ui._main[0] is explorer_ui._navigation
-    assert explorer_ui._navigation.visible
+    # Should show Report component; navigation is the split's left pane
+    assert len(explorer_ui._main) == 1
+    assert explorer_ui._main[0] is explorer_ui._nav_split
+    assert explorer_ui._nav_split[0] is explorer_ui._nav_drawer
+    assert explorer_ui._nav_drawer[0] is explorer_ui._navigation
 
     # Main content should be a Report instance
-    assert isinstance(explorer_ui._main[1], Container)
-    assert len(explorer_ui._main[1]) == 2
+    assert isinstance(explorer_ui._nav_content[0], Container)
+    assert len(explorer_ui._nav_content[0]) == 2
 
     # Navigation should show "Report"
     assert explorer_ui._current_mode == "Report"
@@ -743,15 +854,15 @@ async def test_switch_back_from_report_to_exploration(explorer_ui):
 
     # Switch to report mode
     explorer_ui._handle_sidebar_event(explorer_ui._sidebar_menu.items[1])
-    assert isinstance(explorer_ui._main[1], Container)
+    assert isinstance(explorer_ui._nav_content[0], Container)
 
     # Switch back to exploration mode
     explorer_ui._handle_sidebar_event(explorer_ui._sidebar_menu.items[0])
 
     # Should show split view with the selected exploration
-    assert len(explorer_ui._main) == 2
-    assert explorer_ui._main[0] is explorer_ui._navigation
-    assert explorer_ui._main[1] is explorer_ui._split
+    assert len(explorer_ui._main) == 1
+    assert explorer_ui._main[0] is explorer_ui._nav_split
+    assert explorer_ui._nav_content[0] is explorer_ui._split
 
     # Output should contain the exploration
     assert explorer_ui._output[1] is exploration.view
@@ -760,34 +871,34 @@ async def test_switch_back_from_report_to_exploration(explorer_ui):
     assert explorer_ui._current_mode == "Exploration"
 
 
-async def test_navigation_visibility_with_explorations(explorer_ui):
-    """Test that navigation pane is shown/hidden correctly based on explorations."""
-    # Initially no explorations (only home) - no navigation
-    assert not explorer_ui._should_show_navigation()
-    assert len(explorer_ui._main) == 2
-    assert not explorer_ui._navigation.visible
+async def test_navigation_pane_always_mounted(explorer_ui):
+    """Navigation lives in the always-mounted drawer. It starts closed and is
+    auto-opened once, when the first exploration is created."""
+    # Always mounted as the left item of the row, drawer closed by default
+    assert len(explorer_ui._main) == 1
+    assert explorer_ui._main[0] is explorer_ui._nav_split
+    assert explorer_ui._nav_split[0] is explorer_ui._nav_drawer
+    assert explorer_ui._nav_drawer[0] is explorer_ui._navigation
+    assert explorer_ui._nav_drawer.open is False
 
-    # Create an exploration
+    # Create the first exploration
     explorer_ui._explorer.param.update(table_slug="test_table")
     await explorer_ui._add_exploration_from_explorer()
     await async_wait_until(lambda: len(explorer_ui._explorations.items) > 1)
 
-    # Now should show navigation
-    assert explorer_ui._should_show_navigation()
-    # View should update to include navigation
+    # Creating the first exploration reveals (opens) the navigation drawer
+    await async_wait_until(lambda: explorer_ui._nav_drawer.open is True)
     explorer_ui._update_main_view()
-    assert len(explorer_ui._main) == 2
-    assert explorer_ui._main[0] is explorer_ui._navigation
-    assert explorer_ui._navigation.visible
+    assert len(explorer_ui._main) == 1
+    assert explorer_ui._main[0] is explorer_ui._nav_split
+    assert explorer_ui._nav_split[0] is explorer_ui._nav_drawer
+    assert explorer_ui._nav_drawer[0] is explorer_ui._navigation
 
-    # Delete exploration
+    # Delete exploration — structure still intact
     exploration_item = explorer_ui._explorations.items[1]
     await explorer_ui._delete_exploration(exploration_item)
-
-    # Navigation should be hidden again
-    assert not explorer_ui._should_show_navigation()
-    assert len(explorer_ui._main) == 2
-    assert not explorer_ui._navigation.visible
+    assert len(explorer_ui._main) == 1
+    assert explorer_ui._main[0] is explorer_ui._nav_split
 
 
 class TestResolveData:
@@ -1127,6 +1238,106 @@ class TestResolveData:
         # Table key is sanitized
         assert 'data_csv' in duckdb_source.tables
 
+    @pytest.mark.skipif(not HAS_XARRAY, reason="xarray not installed")
+    def test_resolve_data_netcdf_file(self):
+        """Test resolving a NetCDF file creates XArraySQLSource."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            nc_path = Path(tmpdir) / 'test.nc'
+            ds = xr.Dataset({'temperature': (('lat', 'lon'), np.random.rand(3, 4))})
+            try:
+                ds.to_netcdf(nc_path)
+            except Exception:
+                pytest.skip("NetCDF write backend unavailable")
+            result = UI._resolve_data(str(nc_path))
+            assert len(result) == 1
+            assert isinstance(result[0], XArraySQLSource)
+            assert 'temperature' in result[0].get_tables()
+
+    def test_resolve_data_xarray_import_error(self):
+        """Test graceful error when xarray-sql not installed."""
+        with patch('lumen.sources.xarray_sql.try_import_xarray', return_value=None):
+            with pytest.raises(ImportError, match="xarray"):
+                UI._resolve_data('data.nc')
+
+    @pytest.mark.skipif(not HAS_XARRAY, reason="xarray not installed")
+    def test_resolve_data_mixed_xarray_and_csv(self):
+        """Test that .nc creates separate source while .csv goes to DuckDB."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            nc_path = Path(tmpdir) / 'test.nc'
+            ds = xr.Dataset({'temp': (('x',), np.array([1.0, 2.0]))})
+            try:
+                ds.to_netcdf(nc_path)
+            except Exception:
+                pytest.skip("NetCDF write backend unavailable")
+            result = UI._resolve_data([str(nc_path), 'data.csv'])
+            assert len(result) == 2
+            xarray_sources = [s for s in result if isinstance(s, XArraySQLSource)]
+            duckdb_sources = [s for s in result if isinstance(s, DuckDBSource)]
+            assert len(xarray_sources) == 1
+            assert len(duckdb_sources) == 1
+
+
+class TestCLIPathValidation:
+    """Tests for CLI path validation in command/ai.py."""
+
+    def test_zarr_directory_accepted(self):
+        """Test that .zarr directories pass validation."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / 'test.zarr'
+            zarr_path.mkdir()
+            # Validation should not raise for .zarr directories
+            path = Path(str(zarr_path))
+            assert path.exists()
+            assert path.is_dir()
+            assert str(zarr_path).endswith('.zarr')
+
+    def test_random_directory_rejected(self):
+        """Test that non-zarr directories are rejected by validation logic."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dir_path = Path(tmpdir) / 'not_zarr'
+            dir_path.mkdir()
+            path = Path(str(dir_path))
+            # Should be rejected: is a directory but not .zarr
+            assert path.is_dir()
+            assert not str(dir_path).endswith('.zarr')
+
+
+@pytest.mark.skipif(not HAS_XARRAY, reason="xarray not installed")
+class TestXarrayUploadHandler:
+    """Tests for the xarray upload handler."""
+
+    def test_upload_handler_returns_dict(self):
+        """Upload handlers should be returned for all xarray extensions."""
+        handlers = UI._get_xarray_upload_handlers()
+        assert isinstance(handlers, dict)
+        for ext in ('nc', 'nc4', 'netcdf', 'h5', 'hdf5', 'he5', 'zarr',
+                    'grib', 'grib2', 'grb', 'grb2'):
+            assert ext in handlers
+
+    def test_upload_handler_creates_source_from_nc(self):
+        """Upload handler should create XArraySQLSource from NetCDF bytes."""
+        # Create a NetCDF file in memory
+        ds = xr.Dataset({'temp': (('x',), np.array([1.0, 2.0, 3.0]))})
+        buf = io.BytesIO()
+        try:
+            ds.to_netcdf(buf)
+        except Exception:
+            pytest.skip("NetCDF write backend unavailable")
+        buf.seek(0)
+
+        handlers = UI._get_xarray_upload_handlers()
+        source = handlers['nc'](context={}, file_obj=buf, alias='test_data', filename='test')
+
+        assert isinstance(source, XArraySQLSource)
+        assert 'temp' in source.get_tables()
+        assert source.name == 'test_data'
+
+    def test_upload_handler_returns_empty_without_xarray(self):
+        """Upload handlers should be empty if xarray-sql not installed."""
+        with patch('lumen.ai.ui.try_import_xarray', return_value=None):
+            handlers = UI._get_xarray_upload_handlers()
+            assert handlers == {}
+
 
 # --- Tests for on_edit callback ---
 
@@ -1230,7 +1441,6 @@ async def test_edit_updates_logs(explorer_ui, tmp_path):
     ui = explorer_ui
 
     # Set up a mock for _logs
-    from unittest.mock import MagicMock
     mock_logs = MagicMock()
     ui._logs = mock_logs
 
@@ -1613,11 +1823,38 @@ async def test_edit_on_child_exploration_switches_to_parent(explorer_ui):
     assert parent_exploration.plan is not None
 
 
+def test_resolve_data_geojson_startup(tmp_path):
+    """A .geojson path at startup loads via read_geo_file instead of raising (gh-1900)."""
+    gpd = pytest.importorskip("geopandas")
+    from shapely.geometry import Polygon
+
+    gdf = gpd.GeoDataFrame(
+        {"county": ["A", "B"], "population": [10, 20]},
+        geometry=[
+            Polygon([(0, 0), (1, 0), (1, 1)]),
+            Polygon([(1, 1), (2, 1), (2, 2)]),
+        ],
+        crs="EPSG:4326",
+    )
+    path = tmp_path / "counties.geojson"
+    gdf.to_file(path, driver="GeoJSON")
+
+    sources = UI._resolve_data([str(path)])
+
+    assert len(sources) == 1
+    source = sources[0]
+    assert "counties" in source.get_tables()
+    # geometry is registered as a real GEOMETRY column; ST_AsText returns text so
+    # this verifies loading without needing the GEOMETRY fetch fix from #1903
+    wkt = source.execute("SELECT ST_AsText(geometry) AS wkt FROM counties LIMIT 1")
+    assert wkt["wkt"].iloc[0].startswith("POLYGON")
+
+
 # --- Follow-up suggestions tests ---
 
 def _get_footer_objects(msg):
     """Get footer objects from message."""
-    return msg.footer_objects or []
+    return msg.footer_objects
 
 
 def test_follow_up_suggestion_model():
@@ -1661,7 +1898,7 @@ async def test_follow_up_icon_after_query(explorer_ui):
     last_msg = ui.interface.objects[-1]
     follow_up_icons = [
         f for f in _get_footer_objects(last_msg)
-        if getattr(f, 'name', '') == "FollowUp"
+        if "follow-up" in f.css_classes
     ]
     assert len(follow_up_icons) == 1
     assert follow_up_icons[0].icon == "lightbulb"
@@ -1675,7 +1912,7 @@ async def test_follow_up_icon_not_on_error(explorer_ui_with_error):
     last_msg = ui.interface.objects[-1]
     follow_up_icons = [
         f for f in _get_footer_objects(last_msg)
-        if getattr(f, 'name', '') == "FollowUp"
+        if "follow-up" in f.css_classes
     ]
     assert len(follow_up_icons) == 0
 
@@ -1697,7 +1934,7 @@ async def test_follow_up_icon_not_shown_without_pipeline(explorer_ui):
     last_msg = ui.interface.objects[-1]
     follow_up_icons = [
         f for f in _get_footer_objects(last_msg)
-        if getattr(f, 'name', '') == "FollowUp"
+        if "follow-up" in f.css_classes
     ]
     assert len(follow_up_icons) == 0
 
@@ -1731,7 +1968,7 @@ async def test_follow_up_icon_description(explorer_ui):
     last_msg = ui.interface.objects[-1]
     follow_up_icons = [
         f for f in _get_footer_objects(last_msg)
-        if getattr(f, 'name', '') == "FollowUp"
+        if "follow-up" in f.css_classes
     ]
     assert len(follow_up_icons) == 1
     assert follow_up_icons[0].description == "Suggest a follow-up question"

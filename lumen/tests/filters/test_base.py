@@ -1,5 +1,6 @@
 import param  # type: ignore
 
+from panel.util import edit_readonly
 from panel.widgets import RangeSlider
 
 from lumen.filters.base import Filter
@@ -58,7 +59,7 @@ def test_widget_filter_link_throttled():
     assert wfilter.query is None
     assert widget.value == (0, 2)
 
-    with param.edit_constant(widget):
+    with edit_readonly(widget):
         widget.value_throttled = (1, 2)
 
     assert wfilter.value == (1, 2)

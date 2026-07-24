@@ -1258,6 +1258,13 @@ class DuckDBVectorStore(VectorStore):
                         f"empty query results. Use compatible embeddings or create a new vector store."
                     )
 
+    @property
+    def metadata(self):
+        if not self._initialized:
+            return []
+        return [
+            json.loads(row[0]) for row in self.connection.execute("SELECT metadata FROM documents").fetchall()
+        ]
 
     def _get_embeddings_config(self):
         """

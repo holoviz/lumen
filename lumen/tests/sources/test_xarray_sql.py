@@ -23,6 +23,7 @@ xr = pytest.importorskip("xarray")
 pytest.importorskip("xarray_sql")
 
 from lumen.sources.xarray_sql import XArraySQLSource
+from lumen.transforms.sql import SQLColumns
 
 # ---- Fixtures ----
 
@@ -65,11 +66,53 @@ def synthetic_dataset():
 
 
 @pytest.fixture
+def bounds_dataset():
+    """
+    CF-compliant dataset where a bounds variable spans only a subset of dims.
+
+    Models the common NOAA/CF pattern (time_bnds, climatology_bounds, lat_bnds):
+    `climatology_bounds` has dims (time, nbnds) only, while the data variable
+    `air` carries the full (time, lat, lon) grid. Reproduces gh-1885.
+    """
+    times = pd.date_range("2020-01-01", periods=10, freq="D")
+    lats = np.array([10.0, 20.0, 30.0, 40.0, 50.0])
+    lons = np.array([100.0, 110.0, 120.0, 130.0])
+
+    rng = np.random.default_rng(42)
+    air = rng.uniform(250, 310, (10, 5, 4))
+    bounds = np.stack(
+        [np.arange(10, dtype="float64"), np.arange(1, 11, dtype="float64")], axis=1
+    )  # (time, nbnds=2)
+
+    return xr.Dataset(
+        {
+            "air": (["time", "lat", "lon"], air, {"units": "K"}),
+            "climatology_bounds": (["time", "nbnds"], bounds),
+        },
+        coords={
+            "time": times,
+            "lat": ("lat", lats, {"units": "degrees_north"}),
+            "lon": ("lon", lons, {"units": "degrees_east"}),
+        },
+        attrs={"title": "Synthetic CF Dataset with bounds"},
+    )
+
+
+@pytest.fixture
 def nc_file(synthetic_dataset, tmp_path):
     """Write synthetic dataset to a temporary NetCDF file."""
     pytest.importorskip("netCDF4")
     path = tmp_path / "test_data.nc"
     synthetic_dataset.to_netcdf(path)
+    return str(path)
+
+
+@pytest.fixture
+def bounds_nc_file(bounds_dataset, tmp_path):
+    """Write the CF bounds dataset to a temporary NetCDF file."""
+    pytest.importorskip("netCDF4")
+    path = tmp_path / "test_bounds.nc"
+    bounds_dataset.to_netcdf(path)
     return str(path)
 
 
@@ -91,6 +134,13 @@ class TestConstruction:
     def test_from_dataset(self, synthetic_dataset):
         source = XArraySQLSource(_dataset=synthetic_dataset)
         assert source.get_tables() == ["pressure", "temperature"]
+
+    def test_bounds_variable_loads(self, bounds_dataset):
+        # gh-1885: a bounds variable (time, nbnds) must not crash _initialize
+        # with "chunks keys (...) not found in data dimensions".
+        source = XArraySQLSource(_dataset=bounds_dataset)
+        assert "climatology_bounds" in source.get_tables()
+        assert "air" in source.get_tables()
 
     def test_from_netcdf(self, nc_file):
         source = XArraySQLSource(uri=nc_file)
@@ -119,7 +169,7 @@ class TestConstruction:
 
     def test_dialect(self, synthetic_dataset):
         source = XArraySQLSource(_dataset=synthetic_dataset)
-        assert source.dialect == "any"
+        assert source.dialect is None
 
     def test_from_dataset_classmethod(self, synthetic_dataset):
         source = XArraySQLSource.from_dataset(synthetic_dataset)
@@ -161,6 +211,55 @@ class TestConstruction:
         assert "z" in df.columns
         assert "latitude" in df.columns
         assert "longitude" in df.columns
+
+
+# ---- Bounds variables (CF subset-dim regression, gh-1885) ----
+
+class TestBoundsVariables:
+
+    def test_query_bounds_variable(self, bounds_dataset):
+        source = XArraySQLSource(_dataset=bounds_dataset)
+        df = source.execute("SELECT * FROM climatology_bounds")
+        # nbnds is a bare dimension (no coordinate), so 10 time x 2 nbnds rows.
+        assert len(df) == 20
+        assert "climatology_bounds" in df.columns
+        assert "time" in df.columns
+
+    def test_query_full_dim_variable_still_works(self, bounds_dataset):
+        # The primary data var keeps its full grid alongside the bounds var.
+        source = XArraySQLSource(_dataset=bounds_dataset)
+        df = source.execute("SELECT COUNT(*) as cnt FROM air")
+        assert df["cnt"].iloc[0] == 10 * 5 * 4
+
+    def test_schema_bounds_variable(self, bounds_dataset):
+        source = XArraySQLSource(_dataset=bounds_dataset)
+        schema = source.get_schema("climatology_bounds")
+        assert "climatology_bounds" in schema
+        assert "time" in schema
+        assert "__len__" in schema
+
+    def test_bounds_from_netcdf(self, bounds_nc_file):
+        # Exercises the real _load_dataset + engine path, closest to gh-1885.
+        source = XArraySQLSource(uri=bounds_nc_file)
+        assert "climatology_bounds" in source.get_tables()
+        assert "air" in source.get_tables()
+
+    def test_bounds_with_user_chunks(self, bounds_dataset):
+        # A user-supplied chunks dict naming a dim some var lacks must also be
+        # filtered per variable (covers the dict branch of _resolve_chunks).
+        source = XArraySQLSource(_dataset=bounds_dataset, chunks={"time": 5, "lat": 5})
+        assert "climatology_bounds" in source.get_tables()
+        df = source.execute("SELECT * FROM climatology_bounds LIMIT 3")
+        assert len(df) == 3
+
+    def test_bounds_dask_backed(self, bounds_dataset):
+        # Large CF files are opened lazily; the dask branch of _resolve_chunks
+        # builds the spec from dataset.chunks, which still spans every dim.
+        pytest.importorskip("dask")
+        source = XArraySQLSource(_dataset=bounds_dataset.chunk({"time": 5}))
+        assert "climatology_bounds" in source.get_tables()
+        assert "air" in source.get_tables()
+        assert source.execute("SELECT COUNT(*) as cnt FROM air")["cnt"].iloc[0] == 10 * 5 * 4
 
 
 # ---- SQL Execution ----
@@ -260,6 +359,38 @@ class TestSchemaMetadata:
         source = XArraySQLSource(_dataset=synthetic_dataset)
         schema = source.get_schema("temperature")
         assert "inclusiveMinimum" in schema.get("lat", {}) or "inclusiveMinimum" in schema.get("temperature", {})
+
+    def test_get_schema_flags_coordinate_dimensions(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        schema = source.get_schema("temperature")
+        # Coordinate dimensions are flagged so filter UIs can surface them.
+        assert schema["time"].get("dimension") is True
+        assert schema["lat"].get("dimension") is True
+        assert schema["lon"].get("dimension") is True
+        # The data variable itself is not a dimension.
+        assert "dimension" not in schema["temperature"]
+        # The flag must not leak onto the bookkeeping key.
+        assert schema["__len__"] == int(synthetic_dataset["temperature"].size)
+
+    def test_get_schema_all_tables_flags_dimensions(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        schemas = source.get_schema()
+        for table in ("temperature", "pressure"):
+            assert schemas[table]["lat"].get("dimension") is True
+            assert "dimension" not in schemas[table][table]
+
+    def test_get_schema_flags_dimensions_on_derived_table(self, synthetic_dataset):
+        # Explorations query a derived slug table, not the raw data variable.
+        # Coordinate dimensions must still be flagged there.
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        derived = source.create_sql_expr_source(
+            {"derived_slug": "SELECT * FROM temperature"}
+        )
+        schema = derived.get_schema("derived_slug")
+        assert schema["lat"].get("dimension") is True
+        assert schema["lon"].get("dimension") is True
+        assert schema["time"].get("dimension") is True
+        assert "dimension" not in schema["temperature"]
 
     def test_get_schema_with_limit(self, synthetic_dataset):
         source = XArraySQLSource(_dataset=synthetic_dataset)
@@ -527,3 +658,69 @@ class TestAsync:
         source = XArraySQLSource(_dataset=synthetic_dataset)
         df = await source.get_async("temperature")
         assert len(df) > 0
+
+
+# ---- to_dataset (gridded output via xarray-sql) ----
+
+class TestToDataset:
+
+    def test_to_dataset_returns_gridded(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        ds = source.to_dataset("temperature")
+        assert isinstance(ds, xr.Dataset)
+        assert set(ds.dims) >= {"time", "lat", "lon"}
+        assert "temperature" in ds.data_vars
+
+    def test_to_dataset_applies_sql_filter(self, synthetic_dataset):
+        """A filter is applied in SQL before to_dataset, subsetting the grid."""
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        ds = source.to_dataset("temperature", lat=30.0)
+        assert ds.sizes["lat"] == 1
+
+    def test_to_dataset_ignores_bounds_dim(self, synthetic_dataset):
+        """A bounds variable adds a dim (e.g. nbnds) the queried variable lacks;
+        to_dataset must use the variable's own dims, not every dataset dim, or
+        the extra dim has no column in the result and to_dataset crashes."""
+        ds = synthetic_dataset.assign(
+            time_bnds=(["time", "nbnds"], np.zeros((10, 2)))
+        )
+        source = XArraySQLSource(_dataset=ds)
+        result = source.to_dataset("temperature")
+        assert "nbnds" not in result.dims
+        assert set(result.dims) >= {"time", "lat", "lon"}
+
+    def test_to_dataset_ignores_projected_away_dim(self, synthetic_dataset):
+        """A projecting sql_transform (e.g. DeckGL keeping only lat/lon/value)
+        drops a dim from the result; to_dataset must pass only the dims the
+        result still has a column for, not every dataset dim."""
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        transform = SQLColumns(columns=["lat", "lon", "temperature"])  # drops time
+        result = source.to_dataset("temperature", sql_transforms=[transform])
+        assert "time" not in result.dims
+        assert set(result.dims) == {"lat", "lon"}
+
+    def test_get_still_returns_long_form(self, synthetic_dataset):
+        """get() is unchanged: it returns the long-form pandas frame."""
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        assert isinstance(source.get("temperature"), pd.DataFrame)
+
+    def test_to_dataset_fallback_when_native_absent(self, synthetic_dataset, monkeypatch):
+        """When the query result lacks a native to_dataset (xarray-sql < 0.3),
+        to_dataset falls back to pivoting the long-form result on the dims."""
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        real_sql = source._ctx.sql
+
+        class _NoNativeToDataset:
+            def __init__(self, result):
+                self._result = result
+
+            def to_pandas(self):
+                return self._result.to_pandas()
+
+        monkeypatch.setattr(
+            source._ctx, "sql", lambda q: _NoNativeToDataset(real_sql(q))
+        )
+        ds = source.to_dataset("temperature")
+        assert isinstance(ds, xr.Dataset)
+        assert set(ds.dims) >= {"time", "lat", "lon"}
+        assert "temperature" in ds.data_vars

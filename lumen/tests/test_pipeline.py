@@ -21,6 +21,7 @@ from lumen.filters.base import ConstantFilter
 from lumen.pipeline import Pipeline
 from lumen.sources.intake_sql import IntakeSQLSource
 from lumen.state import state
+from lumen.tests.utils import Polygon, gpd, requires_geopandas
 from lumen.transforms.base import Columns, Transform
 from lumen.transforms.sql import SQLColumns, SQLGroupBy
 from lumen.validation import ValidationError
@@ -347,7 +348,7 @@ def test_pipeline_with_sql_transform_nested_widget_vars(mixed_df_object_type):
         uri=str(root / 'catalog.yml'), root=str(root)
     )
 
-    sel = Select(options=['A', 'B'], value='A', name='Agg')
+    sel = Select(options=['A', 'B'], value='A', label='Agg')
     transform = SQLGroupBy(aggregates={'AVG': sel}, by=['C'])
     pipeline = Pipeline(source=source, table='test_sql', sql_transforms=[transform])
 
@@ -391,3 +392,43 @@ def test_pipeline_update_data_resets_loading_on_error(make_filesource):
 
     # The loading flag must be False so future updates aren't blocked
     assert not pipeline._update_widget.loading
+
+
+@requires_geopandas
+def test_pipeline_preserves_geodataframe():
+    """A GeoDataFrame survives source -> filter -> Pipeline.data without downcast."""
+    if duckdb is None:
+        pytest.skip("duckdb is not installed")
+    try:
+        source = DuckDBSource(
+            uri=':memory:',
+            initializers=["INSTALL spatial;", "LOAD spatial;"],
+            tables={'geo': 'SELECT * FROM geo_tbl'},
+        )
+    except Exception as e:  # pragma: no cover - environment dependent
+        pytest.skip(f"duckdb spatial extension unavailable: {e}")
+    gdf = gpd.GeoDataFrame(
+        {
+            'pop': [1, 2, 3],
+            'geometry': [
+                Polygon([(0, 0), (1, 0), (1, 1)]),
+                Polygon([(2, 0), (3, 0), (3, 1)]),
+                Polygon([(4, 0), (5, 0), (5, 1)]),
+            ],
+        },
+        crs='EPSG:4326',
+    )
+    tmp = pd.DataFrame({'pop': gdf['pop'], 'geometry': gdf['geometry'].to_wkb()})
+    source._connection.register('geo_temp', tmp)
+    source._connection.execute(
+        'CREATE TABLE geo_tbl AS '
+        'SELECT pop, ST_GeomFromWKB(geometry) AS geometry FROM geo_temp'
+    )
+
+    cfilter = ConstantFilter(field='pop', value=(2, 3))
+    pipeline = Pipeline(source=source, filters=[cfilter], table='geo')
+    data = pipeline.data
+    assert isinstance(data, gpd.GeoDataFrame)
+    assert 'geometry' in data.columns
+    assert len(data) == 2
+    assert data.geometry.notna().all()

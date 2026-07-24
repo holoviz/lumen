@@ -7,7 +7,7 @@ Try not to take the query too literally, but instead focus on the user's intent 
 
 
 {%- block examples %}
-# Examples
+## Examples (illustrative — metric/dimension names below are placeholders, not real ones)
 ```
 # Monthly metrics for the current year
 {
@@ -34,12 +34,12 @@ Try not to take the query too literally, but instead focus on the user's intent 
 
 {%- block errors %}
 {% if errors is defined and errors %}
-`invalid identifier` might indicate you left out the time granularity or forgot to include it in group_by, i.e. metric_time -> metric_time__month"
+`invalid identifier` might indicate you left out the time granularity or forgot to include it in group_by, i.e. metric_time -> metric_time__month
 {% endif %}
 {% endblock -%}
 
 {% block context -%}
-Checklist:
+## Checklist
 - Only use metrics and dimensions explicitly available in the dbt Semantic Layer.
 - If referencing a dimension in the WHERE clause, be sure the dimension is also included in the GROUP BY clause.
 - When using time dimensions, always specify both the dimension name and granularity: `dimension_name__granularity`.
@@ -49,12 +49,12 @@ Checklist:
 {{ tool_context | default('') }}
 
 {% if memory["dbtsl_metaset"] %}
-# Available Metrics and Dimensions
+## Available Metrics and Dimensions
 {{ memory["dbtsl_metaset"] }}
 {% endif %}
 
 {% if "dbtsl_query_params" in memory %}
-# Previous dbt Semantic Layer query parameters
+## Previous dbt Semantic Layer query parameters
 {{ memory["dbtsl_query_params"] }}
 {% endif %}
 {%- endblock -%}

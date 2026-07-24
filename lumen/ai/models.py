@@ -29,13 +29,6 @@ class EscapeBaseModel(BaseModel):
             raise MissingContextError(self.insufficient_context_reason)
 
 
-class FollowUpSuggestion(BaseModel):
-    query: str = Field(
-        description="A single dataset-specific follow-up question referencing actual column names",
-        max_length=100
-    )
-
-
 class ErrorDescription(BaseModel):
     """
     Represents a user-facing error explanation.
@@ -84,6 +77,17 @@ class FollowUpClassification(BaseModel):
     )
 
     follow_up_type: Literal["direct", "derived", "new"]
+
+
+class FollowUpSuggestion(BaseModel):
+    """
+    Represents a single suggested follow-up question.
+    """
+
+    query: str = Field(
+        description="A single dataset-specific follow-up question referencing actual column names",
+        max_length=100
+    )
 
 
 class InsertLine(BaseModel):

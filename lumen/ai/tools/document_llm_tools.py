@@ -38,8 +38,15 @@ def make_document_vector_llm_tools(context: TContext) -> list[Any]:
     """
 
     store: VectorStore | None = context.get("document_vector_store")
-    if store is None:
+    if store is None or len(store) == 0:
         return []
+
+    # When the document store is shared with the table-metadata store,
+    # len(store) > 0 can be true even with zero document entries.
+    # Check for actual document-type chunks before exposing the tools.
+    if context.get("document_vector_store") is context.get("vector_store"):
+        if not store.filter_by({"type": "document"}, limit=1):
+            return []
 
     visible_docs: set[str] | None = context.get("visible_docs")
     list_cap = 4000

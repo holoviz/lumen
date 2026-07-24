@@ -17,6 +17,7 @@ from panel import state
 from panel.template import DarkTheme, DefaultTheme
 from panel.template.base import BasicTemplate
 from panel.widgets.indicators import Indicator
+from panel_material_ui import Accordion, Tabs
 
 from .util import NumpyDumper, expand_spec
 from .validation import ValidationError, match_suggestion_message
@@ -104,11 +105,11 @@ _INDICATORS = {k.lower(): v for k, v in param.concrete_descendents(Indicator).it
 _INDICATORS = ConfigDict("Indicator", **_INDICATORS)
 
 _LAYOUTS: dict[str, type[pn.layout.Panel]] = {
-    'accordion': pn.Accordion,
+    'accordion': Accordion,
     'column'   : pn.Column,
     'grid'     : pn.GridBox,
     'row'      : pn.Row,
-    'tabs'     : pn.Tabs
+    'tabs'     : Tabs
 }
 
 try:

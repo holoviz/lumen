@@ -211,8 +211,8 @@ class SQLAlchemySource(BaseSQLSource):
         try:
             return self._url.get_dialect().name
         except Exception:
-            # Fallback to 'any' if dialect detection fails
-            return 'any'
+            # Fallback to dialect-agnostic (None) if detection fails.
+            return None
 
     def create_sql_expr_source(self, tables: dict[str, str], params: dict[str, list | dict] | None = None, **kwargs):
         """

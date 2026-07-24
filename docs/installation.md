@@ -11,7 +11,7 @@ Lumen works with any LLM provider. Choose the approach that fits your needs:
 
 - ☁️ **Cloud providers** — OpenAI, Anthropic, Google, Mistral, Azure (easiest to get started)
 - 🖥️ **Locally hosted** — Ollama, Llama.cpp (free, runs on your machine, no API keys)
-- 🔀 **Router/Multi-provider** — LiteLLM (unified interface, 100+ models)
+- 🔀 **Router/Multi-provider** — OpenRouter, LiteLLM (unified interface, many providers and models)
 
 ---
 
@@ -267,6 +267,48 @@ Run open-source LLMs on your own machine. No API keys required, full privacy, fr
 ## Router / Multi-Provider
 
 Use a unified interface to access multiple LLM providers and models.
+
+=== "OpenRouter"
+
+    ```bash
+    pip install 'lumen[ai-openrouter]'
+    export OPENROUTER_API_KEY=sk-or-...
+    ```
+
+    [OpenRouter](https://openrouter.ai/) provides an OpenAI-compatible API for accessing models from multiple providers through a single API key.
+
+    **Get your API key:**
+    
+    1. Visit [openrouter.ai/keys](https://openrouter.ai/keys)
+    2. Create or copy an API key
+    3. Set environment variable:
+    
+    ```bash
+    # macOS/Linux
+    export OPENROUTER_API_KEY='sk-or-your-key-here'
+    
+    # Windows PowerShell
+    $env:OPENROUTER_API_KEY='sk-or-your-key-here'
+    
+    # Windows CMD
+    set OPENROUTER_API_KEY=sk-or-your-key-here
+    ```
+
+    Then use OpenRouter with any supported model:
+
+    ```python
+    import lumen.ai as lmai
+
+    llm = lmai.llm.OpenRouter(
+        model_kwargs={
+            "default": {"model": "openai/gpt-4o-mini"},
+            "edit": {"model": "anthropic/claude-3.5-sonnet"},
+            "sql": {"model": "google/gemini-2.5-flash"},
+        }
+    )
+    ui = lmai.ExplorerUI(data='data.csv', llm=llm)
+    ui.servable()
+    ```
 
 === "LiteLLM"
 

@@ -85,11 +85,14 @@ def format_output(output: Any):
     elif hasattr(output, 'to_spec'):
         component = output
     else:
-        return nbformat.v4.new_code_cell(source=f'# Cannot export output of type {type(output).__name__}'), None
+        return None, None
 
     with config.param.update(serializer='csv'):
         # replace |2- |3- |4-... etc with | for a cleaner look
-        spec = re.sub(r'(\|[-\d]*)', '|', yaml.dump(component.to_spec(), sort_keys=False))
+        try:
+            spec = re.sub(r'(\|[-\d]*)', '|', yaml.dump(component.to_spec(), sort_keys=False))
+        except (TypeError, yaml.YAMLError):
+            return None, None
     read_code = [
         f'yaml_spec = """\n{spec}"""',
         'spec = yaml.safe_load(yaml_spec)',
@@ -116,7 +119,8 @@ def render_cells(outputs: list[Viewable]) -> tuple[Any, list[str]]:
             cells += format_markdown(out)
         elif isinstance(out, LumenEditor):
             cell, ext = format_output(out)
-            cells.append(cell)
+            if cell is not None:
+                cells.append(cell)
             if ext and ext not in extensions:
                 extensions.append(ext)
     return cells, extensions

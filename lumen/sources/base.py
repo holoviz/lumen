@@ -941,7 +941,7 @@ class BaseSQLSource(Source):
     a SQL based data source.
     """
 
-    dialect = 'any'
+    dialect = None
 
     excluded_tables = param.List(default=[], doc="""
         List of table names that should be excluded from the results. Supports:

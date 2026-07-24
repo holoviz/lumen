@@ -2,7 +2,7 @@
 
 {%- block instructions %}
 ## Instructions
-{% if memory.get('sql') %}
+{%- if memory.get('sql') -%}
 Analyze if the SQL query matches the user's request by checking:
 1. What the user asked for
 2. What the SQL actually does (read it carefully)
@@ -12,20 +12,26 @@ VALID = SQL implements the user's intent correctly
 - Check actual SQL syntax, not assumptions
 - Verify GROUP BY, WHERE, SELECT match request
 - Accept reasonable interpretations; do not over-interpret `limit` (100,000 is default)
+- When data was fetched from an external source, the table is already scoped to the fetched parameters. A `SELECT *` or unfiltered query against such a table is valid if the data overview shows it contains the requested rows.
 {% endif %}
 {% if memory.get('view') %}
-Analyze if the generated view matches the user's visualization request.
-VALID = view type, encodings, and data mappings reflect the user's intent
+Analyze if the generated view and responses match the user's request.
 {% endif %}
-{% if memory.get('chat') %}
-Analyze if the assistant's response answers the user's request.
-VALID = all parts of the query addressed using available data context correctly
+{% if memory.get('listing') %}
+A listing of items was displayed to the user. VALID if it matches what they asked to see.
 {% endif %}
-{%- endblock %}
+Analyze if the assistant's response addresses the user's request given the context it had.
+VALID = response uses the available context to answer; do not penalize for missing data that was never loaded or available.
+A clarifying question IS a valid response when the user's request is ambiguous or when the assistant lacks sufficient context to act directly.
+{%- if memory.get('clarifications') %}
+Clarifications were collected from the user during planning. The user's answers refine or override the original request. Validate against the CLARIFIED intent, not the original ambiguous request.
+{%- endif %}
+Items labeled "(From previous plan)" are leftover context from an earlier plan. They may provide useful background context, but the current plan's outputs are what should be directly validated against the user's request.
+{%- endblock -%}
 
 {%- block examples %}
-## Examples
-{% if memory.get('sql') %}
+## Examples (illustrative — `data`, `sales`, `region` etc. are placeholders, not real tables/columns)
+{% if memory.get('sql') -%}
 User: "by region?"
 SQL: SELECT region, SUM(sales) FROM data GROUP BY region
 ✓ VALID - has GROUP BY region
@@ -46,39 +52,56 @@ User: "total by state"
 SQL: SELECT state, SUM(amount) FROM data GROUP BY state
 ✓ VALID - groups by state with SUM
 {% endif %}
-{% if memory.get('chat') %}
 User: "Summarize the survey results" → Response with field breakdowns and patterns → ✓ VALID
 User: "What are the top selling products?" → Generic discussion, no rankings → ✗ INVALID
-{% endif %}
-{% if memory.get('view') %}
+User: "Show me data" → Response listing available columns and asking what to explore → ✓ VALID (clarifying question when request is ambiguous)
+{% if memory.get('view') -%}
 User: "bar chart of sales by region" → bar mark with region on x, sales on y → ✓ VALID
 User: "line chart over time" → bar chart with no time axis → ✗ INVALID
 {% endif %}
-{%- endblock %}
+{%- endblock -%}
 
-{% block context %}
-{%- if executed_steps %}
-Steps: {% for step in executed_steps %}{{ step }}{% if not loop.last %}, {% endif %}{% endfor %}
-{% endif %}
+{%- block context %}
+## Context
 Current context contains the following keys: {{ ", ".join(memory) }}
 
-{% if memory.get('sql') %}
-SQL: `{{ memory['sql'] }}`
+{%- if memory.get('sql') %}
+{% if 'sql' in previous_keys %}(From previous plan) {% endif %}SQL: `{{ memory['sql'] }}`
 {%- endif -%}
 {%- if memory.get('data') is not none %}
-Data Overview:
+{% if 'data' in previous_keys %}(From previous plan) {% endif %}Data Overview:
 {{ memory["data"] }}
 {%- endif -%}
 {% if memory.get('view') %}
-Generated View:
+{% if 'view' in previous_keys %}(From previous plan) {% endif %}Generated View:
 ```yaml
 {{ memory["view"] | json_to_yaml }}
 ```
 {%- endif -%}
-{% if memory.get('chat') %}
-Assistant Response:
+{#- Render the ChatAgent's typed output (memory['chat']) rather than the
+    interface chat history: the executed response reaches this agent through
+    context, not as a message, so it must be surfaced explicitly here. -#}
+{%- if memory.get('chat') %}
+{% if 'chat' in previous_keys %}(From previous plan) {% endif %}Assistant Response:
 """
 {{ memory['chat'] }}
 """
+{%- endif -%}
+{%- if memory.get('listing') and 'listing' not in previous_keys %}
+Listing displayed:
+{{ memory['listing'] }}
+{%- endif -%}
+{%- if memory.get('clarifications') %}
+Clarifications collected:
+{%- for clarification in memory['clarifications'] %}
+{{ clarification }}
+{%- endfor %}
+{%- endif -%}
+
+{%- if memory.get('source_actions') %}
+Configured external data sources:
+{%- for name, info in memory['source_actions'].items() %}
+- {{ name }}: {{ info.get('description', '(no description)') }}
+{%- endfor %}
 {%- endif -%}
 {%- endblock -%}

@@ -7,9 +7,9 @@
 - Keep map_style URLs as CartoDB (no Mapbox API key available)
 - Ensure latitude/longitude column names match the data schema
 
-# Common Fixes
+## Common Fixes
 
-## View State Issues
+### View State Issues
 If the map appears blank or shows wrong location:
 ```python
 # Center on data
@@ -21,22 +21,22 @@ view_state = pdk.ViewState(
 )
 ```
 
-## Layer Configuration
+### Layer Configuration
 - **No data showing**: Check column names in `get_position`
 - **Points too small/large**: Adjust `radius` or `get_radius`
 - **Colors not visible**: Use RGBA format `[r, g, b, alpha]` with alpha 0-255
 - **3D not working**: Add `extruded=True`, `elevation_scale`, `elevation_range`
 
-## Map Style
+### Map Style
 Use CartoDB styles (no API key needed):
 - Dark: `"https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"`
 - Light: `"https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"`
 {% endblock %}
 
 {%- block examples -%}
-# EXAMPLES
+## EXAMPLES
 
-## Fix blank map (center on data):
+### Fix blank map (center on data)
 ```python
 view_state = pdk.ViewState(
     latitude=df["lat"].mean(),
@@ -45,7 +45,7 @@ view_state = pdk.ViewState(
 )
 ```
 
-## Fix missing 3D elevation:
+### Fix missing 3D elevation
 ```python
 layer = pdk.Layer(
     "HexagonLayer",
@@ -59,7 +59,7 @@ layer = pdk.Layer(
 )
 ```
 
-## Fix color visibility:
+### Fix color visibility
 ```python
 get_fill_color=[255, 140, 0, 200]  # Orange with alpha
 ```

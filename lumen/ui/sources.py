@@ -194,7 +194,7 @@ class SourceGallery(WizardItem, Gallery):
         for name, item in self.items.items():
             self.sources[name] = item.editor
         self._editor = SourcesEditor(spec={}, margin=10)
-        self._save_button = pn.widgets.Button(name='Save sources')
+        self._save_button = pn.widgets.Button(label='Save sources')
         self._save_button.on_click(self._save_sources)
         self._modal_content = [self._editor, self._save_button]
 

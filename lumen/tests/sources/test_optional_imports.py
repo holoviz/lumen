@@ -7,12 +7,15 @@ from __future__ import annotations
 
 import builtins
 import importlib
+import json
 import sys
 
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+
+from lumen.util import try_import, try_import_xarray
 
 # Each entry: (module_path, class_name, guard_package, pip_extra)
 OPTIONAL_SOURCES = [
@@ -31,7 +34,7 @@ OPTIONAL_SOURCES = [
 def test_error_message_contains_pip_install(module_path, class_name, guard_package, pip_extra):
     """Error messages should include the correct pip install command."""
     module_file = module_path.replace(".", "/") + ".py"
-    source_text = Path(module_file).read_text()
+    source_text = Path(module_file).read_text(encoding="utf-8")
     expected = f"pip install lumen[{pip_extra}]"
     assert expected in source_text, (
         f"{module_path} should contain '{expected}' in its error message"
@@ -46,7 +49,7 @@ def test_error_message_contains_pip_install(module_path, class_name, guard_packa
 def test_import_guard_uses_try_except(module_path, class_name, guard_package, pip_extra):
     """Each module should have a try/except guard around the optional import."""
     module_file = module_path.replace(".", "/") + ".py"
-    source_text = Path(module_file).read_text()
+    source_text = Path(module_file).read_text(encoding="utf-8")
     assert "except ImportError" in source_text, (
         f"{module_path} should have 'except ImportError' guard"
     )
@@ -84,3 +87,70 @@ def test_import_raises_when_dependency_missing(module_path, class_name, guard_pa
     finally:
         # Restore original modules so other tests are not affected
         sys.modules.update(saved)
+
+
+def test_try_import_returns_module_when_installed():
+    """try_import returns the module object for an importable module."""
+    assert try_import("json") is json
+
+
+def test_try_import_returns_none_when_missing():
+    """try_import returns None (not raises) for a module that cannot be imported."""
+    assert try_import("a_module_that_does_not_exist_xyz") is None
+
+
+def test_try_import_load_false_returns_already_imported_module():
+    """try_import(load=False) returns a module that is already imported."""
+    assert try_import("json", load=False) is json
+
+
+def test_try_import_load_false_never_imports():
+    """try_import(load=False) must not trigger an import, only consult sys.modules."""
+    with patch("lumen.util.importlib.import_module", side_effect=AssertionError("imported")):
+        assert try_import("a_module_that_does_not_exist_xyz", load=False) is None
+
+
+def test_try_import_geopandas_returns_module_when_installed():
+    """try_import returns the geopandas module when it is importable."""
+    gpd = pytest.importorskip("geopandas")
+    assert try_import("geopandas") is gpd
+
+
+def test_try_import_geopandas_none_when_missing():
+    """try_import returns None (not raises) when geopandas is absent."""
+    real_import = builtins.__import__
+
+    def mock_import(name, *args, **kwargs):
+        if name == "geopandas" or name.startswith("geopandas."):
+            raise ImportError("No module named 'geopandas'")
+        return real_import(name, *args, **kwargs)
+
+    saved = {
+        key: sys.modules.pop(key)
+        for key in [k for k in sys.modules if k == "geopandas" or k.startswith("geopandas.")]
+    }
+    try:
+        with patch("builtins.__import__", side_effect=mock_import):
+            assert try_import("geopandas") is None
+    finally:
+        sys.modules.update(saved)
+
+
+def test_try_import_xarray_returns_module_when_installed():
+    """try_import_xarray returns the xarray module when xarray and xarray-sql are installed."""
+    xr = pytest.importorskip("xarray")
+    pytest.importorskip("xarray_sql")
+    assert try_import_xarray() is xr
+
+
+def test_try_import_xarray_none_when_missing():
+    """try_import_xarray returns None (not raises) when xarray-sql is absent."""
+    real_import = importlib.import_module
+
+    def mock_import(name, *args, **kwargs):
+        if name == "xarray_sql":
+            raise ImportError("No module named 'xarray_sql'")
+        return real_import(name, *args, **kwargs)
+
+    with patch("lumen.util.importlib.import_module", side_effect=mock_import):
+        assert try_import_xarray() is None

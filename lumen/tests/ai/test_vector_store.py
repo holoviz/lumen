@@ -676,6 +676,41 @@ class TestDuckDBVectorStore(VectorStoreTestKit):
         assert len(results) == 1
         store2.close()
 
+    @pytest.mark.asyncio
+    async def test_metadata_returns_all_document_metadata(self, empty_store):
+        await empty_store.add([
+            {"text": "doc one", "metadata": {"source": "alpha", "rank": 1}},
+            {"text": "doc two", "metadata": {"source": "beta", "active": True}},
+        ])
+
+        metadata = empty_store.metadata
+        assert len(metadata) == 2
+        assert {"source": "alpha", "rank": 1} in metadata
+        assert {"source": "beta", "active": True} in metadata
+
+    @pytest.mark.asyncio
+    async def test_metadata_uses_empty_dict_for_missing_metadata(self, empty_store):
+        await empty_store.add([
+            {"text": "doc with explicit metadata", "metadata": {"topic": "test"}},
+            {"text": "doc without metadata"},
+        ])
+
+        metadata = empty_store.metadata
+        assert len(metadata) == 2
+        assert {"topic": "test"} in metadata
+        assert {} in metadata
+
+    @pytest.mark.asyncio
+    async def test_metadata_returns_empty_list_for_uninitialized_and_cleared_store(self, tmp_path):
+        db_path = str(tmp_path / "test_duckdb.db")
+        store = DuckDBVectorStore(uri=db_path, embeddings=NumpyEmbeddings())
+        assert store.metadata == []
+
+        await store.add([{"text": "doc to clear", "metadata": {"k": "v"}}])
+        store.clear()
+        assert store.metadata == []
+        store.close()
+
 
 # Sample readme content for testing (mimics real-world metadata files)
 SAMPLE_README = """# Population - Data package

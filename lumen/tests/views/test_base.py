@@ -1,3 +1,6 @@
+import importlib.util
+import json
+
 from pathlib import Path
 
 import pandas as pd
@@ -8,9 +11,24 @@ from lumen.panel import DownloadButton
 from lumen.pipeline import Pipeline
 from lumen.sources.base import FileSource
 from lumen.state import state
+from lumen.tests.utils import Polygon, gpd, requires_geopandas
 from lumen.variables.base import Variables
 from lumen.views.base import (
-    Panel, Table, VegaLiteView, View, hvOverlayView, hvPlotView,
+    DeckGLView, Panel, Table, VegaLiteView, View, hvOverlayView, hvPlotView,
+)
+
+# duckdb is a core dependency but the minimal test-core env omits it, and the
+# geometry tests skip on their own via the DuckDBSource(...) guard below.
+try:
+    from lumen.sources.duckdb import DuckDBSource
+except ImportError:
+    DuckDBSource = None
+
+# geoviews is checked without importing it: importing geoviews (-> matplotlib)
+# at collection under xdist can deadlock the font cache on macOS. hvplot imports
+# it lazily when the geometry plot is actually rendered.
+requires_geoviews = pytest.mark.skipif(
+    importlib.util.find_spec("geoviews") is None, reason="geoviews not installed"
 )
 
 
@@ -364,3 +382,103 @@ def test_vega_datasets(set_root):
     final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
     assert final_spec["data"]["url"] == "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"
     pd.testing.assert_frame_equal(final_spec["datasets"]["test"], pipeline.data)
+
+
+@requires_geopandas
+@requires_geoviews
+def test_view_hvplot_geometry_auto_kind():
+    """A GeoDataFrame view renders its geometry with an auto-selected kind."""
+    try:
+        source = DuckDBSource(
+            uri=':memory:',
+            initializers=["INSTALL spatial;", "LOAD spatial;"],
+            tables={'geo': 'SELECT * FROM geo_tbl'},
+        )
+    except Exception as e:  # pragma: no cover - environment dependent
+        pytest.skip(f"duckdb spatial extension unavailable: {e}")
+    gdf = gpd.GeoDataFrame(
+        {
+            'pop': [1, 2],
+            'geometry': [
+                Polygon([(0, 0), (1, 0), (1, 1)]),
+                Polygon([(2, 0), (3, 0), (3, 1)]),
+            ],
+        },
+        crs='EPSG:4326',
+    )
+    tmp = pd.DataFrame({'pop': gdf['pop'], 'geometry': gdf['geometry'].to_wkb()})
+    source._connection.register('geo_temp', tmp)
+    source._connection.execute(
+        'CREATE TABLE geo_tbl AS '
+        'SELECT pop, ST_GeomFromWKB(geometry) AS geometry FROM geo_temp'
+    )
+    pipeline = Pipeline(source=source, table='geo')
+    view = hvPlotView(pipeline=pipeline)  # no kind, no geo passed
+    df = view.get_data()
+    assert isinstance(df, gpd.GeoDataFrame)
+    plot = view.get_plot(df)
+    # Polygon geometry -> a Polygons element rather than an empty/failed plot
+    assert type(plot).__name__ == 'Polygons'
+
+
+@requires_geopandas
+def test_table_view_geometry_rendered_as_wkt():
+    """Table view converts geometry columns to WKT so Bokeh can serialize them."""
+    try:
+        source = DuckDBSource(
+            uri=':memory:',
+            initializers=["INSTALL spatial;", "LOAD spatial;"],
+            tables={'geo': 'SELECT * FROM geo_tbl'},
+        )
+    except Exception as e:  # pragma: no cover - environment dependent
+        pytest.skip(f"duckdb spatial extension unavailable: {e}")
+    gdf = gpd.GeoDataFrame(
+        {'pop': [1, 2], 'geometry': [
+            Polygon([(0, 0), (1, 0), (1, 1)]), Polygon([(2, 0), (3, 0), (3, 1)])]},
+        crs='EPSG:4326',
+    )
+    tmp = pd.DataFrame({'pop': gdf['pop'], 'geometry': gdf['geometry'].to_wkb()})
+    source._connection.register('geo_temp', tmp)
+    source._connection.execute(
+        'CREATE TABLE geo_tbl AS SELECT pop, ST_GeomFromWKB(geometry) AS geometry FROM geo_temp'
+    )
+    pipeline = Pipeline(source=source, table='geo')
+    view = Table(pipeline=pipeline)
+    value = view._get_params()['value']
+    # geometry column is now WKT text, no shapely objects
+    assert not isinstance(value, gpd.GeoDataFrame)
+    assert all(isinstance(v, str) and v.startswith('POLYGON') for v in value['geometry'])
+    # panel builds without raising
+    view.get_panel()
+
+
+@requires_geopandas
+def test_deckgl_view_geometry_as_geojson():
+    """DeckGLView emits a GeoDataFrame as a GeoJSON FeatureCollection for layers."""
+    try:
+        source = DuckDBSource(
+            uri=':memory:',
+            initializers=["INSTALL spatial;", "LOAD spatial;"],
+            tables={'geo': 'SELECT * FROM geo_tbl'},
+        )
+    except Exception as e:  # pragma: no cover - environment dependent
+        pytest.skip(f"duckdb spatial extension unavailable: {e}")
+    gdf = gpd.GeoDataFrame(
+        {'pop': [1, 2], 'geometry': [
+            Polygon([(0, 0), (1, 0), (1, 1)]), Polygon([(2, 0), (3, 0), (3, 1)])]},
+        crs='EPSG:4326',
+    )
+    tmp = pd.DataFrame({'pop': gdf['pop'], 'geometry': gdf['geometry'].to_wkb()})
+    source._connection.register('geo_temp', tmp)
+    source._connection.execute(
+        'CREATE TABLE geo_tbl AS SELECT pop, ST_GeomFromWKB(geometry) AS geometry FROM geo_temp'
+    )
+    pipeline = Pipeline(source=source, table='geo')
+    spec = {'initialViewState': {'latitude': 0, 'longitude': 0, 'zoom': 6},
+            'layers': [{'@@type': 'GeoJsonLayer'}]}
+    view = DeckGLView(pipeline=pipeline, spec=spec)
+    data = view._get_params()['object']['layers'][0]['data']
+    assert data['type'] == 'FeatureCollection'
+    assert len(data['features']) == 2
+    assert data['features'][0]['geometry']['type'] == 'Polygon'
+    json.dumps(data)  # must be serializable

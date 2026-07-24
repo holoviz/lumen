@@ -14,6 +14,7 @@ from typing import (
 )
 
 import instructor
+import openai
 import panel as pn
 import param
 import requests
@@ -69,7 +70,9 @@ LLM_PROVIDERS = {
     "ai-catalyst": "AICatalyst",
     'ollama': 'Ollama',
     'llama-cpp': 'LlamaCpp',
+    'mlx': 'MLX',
     'litellm': 'LiteLLM',
+    'openrouter': 'OpenRouter'
 }
 
 
@@ -138,8 +141,9 @@ class Llm(param.Parameterized):
 
     select_models = param.List(default=[], constant=True, doc="Available models for selection dropdowns")
 
-    temperature = param.Number(default=0.7, bounds=(0, None), constant=True, doc="""
-        The temperature to use for sampling.""")
+    temperature = param.Number(default=0.7, bounds=(0, None), allow_None=True, constant=True, doc="""
+        The temperature to use for sampling. Set to None to omit the
+        temperature from requests entirely, e.g. for models that reject it.""")
 
     timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
         The timeout in seconds for API calls.""")
@@ -227,7 +231,9 @@ class Llm(param.Parameterized):
 
     @property
     def _client_kwargs(self) -> dict[str, Any]:
-        return {}
+        if self.temperature is None:
+            return {}
+        return {"temperature": self.temperature}
 
     def _create_base_client(self, **kwargs) -> Any:
         """Create the underlying SDK client (e.g., AsyncOpenAI, AsyncAnthropic)."""
@@ -268,6 +274,29 @@ class Llm(param.Parameterized):
         system: str,
         input_kwargs: dict[str, Any]
     ) -> tuple[list[Message], dict[str, Any]]:
+        # Collect all system content: the rendered prompt + any system messages in the history
+        system_parts = []
+        if system:
+            system_parts.append(system)
+        non_system_messages = []
+        for msg in messages:
+            if msg["role"] == "system":
+                content = msg.get("content", "")
+                if content:
+                    system_parts.append(content if isinstance(content, str) else str(content))
+            else:
+                non_system_messages.append(msg)
+        merged_system = "\n\n".join(system_parts) if system_parts else ""
+        return self._apply_system(non_system_messages, merged_system, input_kwargs)
+
+    def _apply_system(
+        self,
+        messages: list[Message],
+        system: str,
+        input_kwargs: dict[str, Any]
+    ) -> tuple[list[Message], dict[str, Any]]:
+        """Place the consolidated system prompt. Override for providers that
+        take system as a separate parameter (e.g. Anthropic, Bedrock)."""
         if system:
             messages = [Message(role="system", content=system)] + messages
         return messages, input_kwargs
@@ -306,6 +335,37 @@ class Llm(param.Parameterized):
                         new_content.append(item)
                 messages[i]["content"] = new_content
         return messages, contains_image
+
+    @staticmethod
+    def _normalize_multimodal_messages(messages: list[Message]) -> list[Message]:
+        """Convert instructor Image objects and bare strings in list content
+        to OpenAI-native content-part dicts.
+
+        When response_model is absent (e.g. during the tool-loop phase),
+        the raw OpenAI client is used and it cannot handle instructor
+        Image objects.  This method normalises them.
+        """
+        for message in messages:
+            content = message.get("content")
+            if isinstance(content, Image):
+                message["content"] = [{
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{content.media_type};base64,{content.source}"},
+                }]
+            elif isinstance(content, list):
+                new_content = []
+                for item in content:
+                    if isinstance(item, Image):
+                        new_content.append({
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{item.media_type};base64,{item.source}"},
+                        })
+                    elif isinstance(item, str):
+                        new_content.append({"type": "text", "text": item})
+                    else:
+                        new_content.append(item)
+                message["content"] = new_content
+        return messages
 
     @classmethod
     def warmup(cls, model_kwargs: dict | None):
@@ -400,10 +460,30 @@ class Llm(param.Parameterized):
         max_tool_rounds: int = 16,
         **kwargs
     ) -> BaseModel | str:
+        # ``max_retries`` is consumed by the instructor wrapper; on bare-client
+        # paths it leaks to the SDK and raises ``TypeError``. Pop once and
+        # re-attach only to the instructor (response_model) round-trip.
+        max_retries = kwargs.pop("max_retries", None)
+        requested_stream = bool(kwargs.get("stream", False))
+        if requested_stream and structured_model is None:
+            # In stream mode we can't know upfront whether a tool will be called.
+            # Return the provider stream and let stream() inspect chunks for tool calls.
+            kwargs.pop("response_model", None)
+            messages = self._normalize_multimodal_messages(messages)
+            return await self.run_client(model_spec, messages, **kwargs)
+
+        stream = False
         if structured_model is not None and not tool_instances:
             kwargs["response_model"] = structured_model
+            if max_retries is not None:
+                kwargs["max_retries"] = max_retries
         else:
+            if tool_instances:
+                stream = kwargs.pop("stream", False)
             kwargs.pop("response_model", None)
+            # Without response_model the raw client is used, which
+            # cannot handle instructor Image objects in list content.
+            messages = self._normalize_multimodal_messages(messages)
 
         output = await self.run_client(model_spec, messages, **kwargs)
         if not tool_instances:
@@ -425,7 +505,9 @@ class Llm(param.Parameterized):
 
         if structured_model:
             kwargs["response_model"] = structured_model
-            output = await self.run_client(model_spec, messages_curr, **kwargs)
+            if max_retries is not None:
+                kwargs["max_retries"] = max_retries
+            output = await self.run_client(model_spec, messages_curr, stream=stream, **kwargs)
         return output
 
     @classmethod
@@ -762,7 +844,7 @@ class Llm(param.Parameterized):
         The string or response_model field.
         """
         combined_tools = self._combine_tools(tools)
-        tool_specs, tool_instances, tool_contexts = self._normalize_tools(combined_tools)
+        _, tool_instances, tool_contexts = self._normalize_tools(combined_tools)
         messages, contains_image = self._check_for_image(messages)
         if self.logfire_tags is not None or contains_image:
             output = await self.invoke(
@@ -770,7 +852,7 @@ class Llm(param.Parameterized):
                 system=system,
                 response_model=response_model,
                 model_spec=model_spec,
-                tools=tool_specs,
+                tools=combined_tools,
                 **kwargs,
             )
             if response_model is not None:
@@ -792,7 +874,7 @@ class Llm(param.Parameterized):
                 system=system,
                 response_model=response_model,
                 model_spec=model_spec,
-                tools=tool_specs,
+                tools=combined_tools,
                 **kwargs,
             )
             yield self._get_content(output)
@@ -806,7 +888,7 @@ class Llm(param.Parameterized):
             stream=True,
             allow_partial=True,
             model_spec=model_spec,
-            tools=tool_specs,
+            tools=combined_tools,
             **kwargs,
         )
         if isinstance(chunks, BaseModel):
@@ -881,25 +963,38 @@ class Llm(param.Parameterized):
                     ):
                         yield chunk
 
-    async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
+    def _log_messages(self, messages: list[Message]):
         log_debug(f"Input messages: \033[95m{len(messages)} messages\033[0m including system")
         previous_role = None
         for i, message in enumerate(messages):
-            role = message["role"]
+            if "role" in message:
+                role = message["role"]
+            else:
+                role = message["type"]
             if role == "system":
+                content = message.get("content", "")
+                log_debug(f"System prompt ({len(content)} chars):\n\033[90m{content}\033[0m")
                 continue
-            role_char = "u" if role == "user" else "a"
-            log_debug(f"Message \033[95m{i} ({role_char})\033[0m: {format_msg_content(message['content'])}")
-            if previous_role == role:
+            content = message.get("content") if isinstance(message, dict) else None
+            if not content and "tool_calls" in message:
+                content = truncate_string(json.dumps(message["tool_calls"], indent=2), max_length=1000)
+            role_char = role[0]
+            log_debug(f"Message \033[95m{i} ({role_char})\033[0m: {format_msg_content(content)}")
+            if previous_role == role and not role.startswith("tool"):
                 log_debug(
                     "\033[91mWARNING: Two consecutive messages from the same role; "
                     "some providers disallow this.\033[0m"
                 )
             previous_role = role
 
+    async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
+        self._log_messages(messages)
+        response_model = kwargs.get("response_model")
         client = await self.get_client(model_spec, **kwargs)
+        if not response_model:
+            kwargs.pop("max_retries", None)
         result = await client(messages=messages, **kwargs)
-        if response_model := kwargs.get("response_model"):
+        if response_model:
             log_debug(f"Response model: \033[93m{response_model.__name__!r}\033[0m")
             if isinstance(result, ImageResponse):
                 result = result.output
@@ -934,7 +1029,7 @@ class LlamaCpp(Llm, LlamaCppMixin):
         "nvidia/Nemotron-3-Nano-30B-GGUF"
     ], constant=True)
 
-    temperature = param.Number(default=0.4, bounds=(0, None), constant=True)
+    temperature = param.Number(default=0.4, bounds=(0, None), allow_None=True, constant=True)
 
     # LlamaCpp doesn't use from_* wrapper - uses patch(create=...)
     _instructor_wrapper = None
@@ -956,10 +1051,6 @@ class LlamaCpp(Llm, LlamaCppMixin):
             return self._instantiate_client_kwargs(model_kwargs=model_kwargs)
         except Exception:
             return dict(model_kwargs)
-
-    @property
-    def _client_kwargs(self) -> dict[str, Any]:
-        return {"temperature": self.temperature}
 
     def _create_base_client(self, **kwargs) -> Any:
         return self._instantiate_client(**kwargs)
@@ -1034,7 +1125,7 @@ class OpenAI(Llm, OpenAIMixin):
         "gpt-5.4-nano"
     ], constant=True, doc="""Warning: Reasoning models (gpt-5, o4-mini) are much slower and not suitable for dialog interfaces.""")
 
-    temperature = param.Number(default=0.25, bounds=(0, None), constant=True)
+    temperature = param.Number(default=0.25, bounds=(0, None), allow_None=True, constant=True)
 
     _supports_logfire = True
 
@@ -1085,10 +1176,6 @@ class OpenAI(Llm, OpenAIMixin):
         """Return the set of available model identifiers from OpenAI."""
         client = OpenAIClient(api_key=self.api_key, timeout=5)
         return {m.id for m in client.models.list().data}
-
-    @property
-    def _client_kwargs(self):
-        return {"temperature": self.temperature}
 
     def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
         model_kwargs = super()._get_model_kwargs(model_spec)
@@ -1237,13 +1324,28 @@ class OpenAI(Llm, OpenAIMixin):
                 messages, structured_model, tool_instances, tool_contexts, model_spec, max_tool_rounds, **kwargs
             )
 
-        if structured_model is not None and not tool_instances:
+        max_retries = kwargs.pop("max_retries", None)
+        requested_stream = bool(kwargs.get("stream", False))
+        if requested_stream and structured_model is None:
+            kwargs.pop("response_model", None)
+            return await self.run_client(model_spec, messages, **kwargs)
+
+        has_inbuilt = any(
+            isinstance(t, dict) and t.get("type") not in (None, "function")
+            for t in kwargs.get("tools", [])
+        )
+
+        # When there are NO inbuilt tools and NO function-tool instances we
+        # can ask for the structured response in a single round-trip.
+        if structured_model is not None and not tool_instances and not has_inbuilt:
             kwargs["response_model"] = structured_model
+            if max_retries is not None:
+                kwargs["max_retries"] = max_retries
         else:
             kwargs.pop("response_model", None)
 
         output = await self.run_client(model_spec, messages, **kwargs)
-        if not tool_instances:
+        if not tool_instances and not has_inbuilt:
             return output
 
         for _ in range(max_tool_rounds):
@@ -1267,6 +1369,8 @@ class OpenAI(Llm, OpenAIMixin):
         if structured_model:
             final_kwargs = dict(kwargs)
             final_kwargs["response_model"] = structured_model
+            if max_retries is not None:
+                final_kwargs["max_retries"] = max_retries
             response_id = getattr(output, "id", None)
             if response_id:
                 final_kwargs["previous_response_id"] = response_id
@@ -1298,29 +1402,18 @@ class OpenAI(Llm, OpenAIMixin):
         return partial(client_callable.func, *client_callable.args, timeout=self.timeout, **client_callable.keywords)
 
     async def run_client(self, model_spec: str | dict, messages: list[Message] | list[dict[str, Any]], **kwargs):
-        if self.api == "responses":
-            log_debug(f"Input messages: \033[95m{len(messages)} messages\033[0m including system")
-            for i, message in enumerate(messages):
-                role = message.get("role") if isinstance(message, dict) else None
-                content = message.get("content") if isinstance(message, dict) else None
-                if role == "system":
-                    continue
-                if role in ("user", "assistant", "tool"):
-                    role_char = "u" if role == "user" else "a"
-                    log_debug(f"Message \033[95m{i} ({role_char})\033[0m: {format_msg_content(content)}")
-                else:
-                    item_type = message.get("type") if isinstance(message, dict) else type(message).__name__
-                    log_debug(f"Message \033[95m{i}\033[0m: [{item_type}] {truncate_string(str(message), max_length=2000)}")
+        if self.api == "chat_completions":
+            return await super().run_client(model_spec, messages, **kwargs)
 
-            if kwargs.get("tools"):
-                kwargs = dict(kwargs)
-                kwargs["tools"] = self._transform_responses_tools(kwargs.get("tools"))
-            client = await self.get_client(model_spec, **kwargs)
-            result = await client(input=messages, **kwargs)
-            log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
-            return result
+        self._log_messages(messages)
+        if kwargs.get("tools"):
+            kwargs = dict(kwargs)
+            kwargs["tools"] = self._transform_responses_tools(kwargs.get("tools"))
+        client = await self.get_client(model_spec, **kwargs)
+        result = await client(input=messages, **kwargs)
+        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
+        return result
 
-        return await super().run_client(model_spec, messages, **kwargs)
 
 
 class AzureOpenAI(Llm, AzureOpenAIMixin):
@@ -1346,11 +1439,7 @@ class AzureOpenAI(Llm, AzureOpenAIMixin):
         "gpt-4o-mini"
     ], constant=True)
 
-    temperature = param.Number(default=1, bounds=(0, None), constant=True)
-
-    @property
-    def _client_kwargs(self):
-        return {"temperature": self.temperature}
+    temperature = param.Number(default=1, bounds=(0, None), allow_None=True, constant=True)
 
     def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
         model_kwargs = super()._get_model_kwargs(model_spec)
@@ -1403,7 +1492,7 @@ class MistralAI(Llm, MistralAIMixin):
         "devstral-small-latest"
     ], constant=True)
 
-    temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
+    temperature = param.Number(default=0.7, bounds=(0, 1), allow_None=True, constant=True)
 
     _supports_model_stream = False  # instructor doesn't work with Mistral's streaming
     _instructor_wrapper = "mistral"
@@ -1412,10 +1501,6 @@ class MistralAI(Llm, MistralAIMixin):
         """Return the set of available model identifiers from Mistral."""
         from mistralai import Mistral
         return {m.id for m in Mistral(api_key=self.api_key).models.list().data}
-
-    @property
-    def _client_kwargs(self):
-        return {"temperature": self.temperature}
 
     def _create_base_client(self, **kwargs) -> Any:
         return self._instantiate_client(**kwargs)
@@ -1477,6 +1562,11 @@ class Anthropic(Llm, AnthropicMixin):
     A LLM implementation that calls Anthropic models such as Claude.
     """
 
+    cache = param.Selector(default="5m", objects=[None, "5m", "1h"], doc="""
+        Prompt-caching TTL. None disables caching; "5m" refreshes free on each
+        cache hit; "1h" costs more on write. Caches the tools+system+messages
+        prefix. Ignored on providers that don't support automatic caching.""")
+
     display_name = param.String(default="Anthropic", constant=True)
 
     mode = param.Selector(default=Mode.ANTHROPIC_TOOLS, objects=[Mode.ANTHROPIC_JSON, Mode.ANTHROPIC_TOOLS])
@@ -1492,10 +1582,11 @@ class Anthropic(Llm, AnthropicMixin):
         "claude-opus-4-5"
     ], constant=True)
 
-    temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
+    temperature = param.Number(default=0.7, bounds=(0, 1), allow_None=True, constant=True)
 
     _supports_logfire = True
     _supports_model_stream = True
+    _supports_prompt_cache = True
     _instructor_wrapper = "anthropic"
 
     def models(self) -> set[str]:
@@ -1507,7 +1598,7 @@ class Anthropic(Llm, AnthropicMixin):
 
     @property
     def _client_kwargs(self):
-        return {"temperature": self.temperature, "max_tokens": 1024}
+        return {**super()._client_kwargs, "max_tokens": 1024}
 
     def _create_base_client(self, **kwargs) -> Any:
         client = self._instantiate_client(**kwargs)
@@ -1595,7 +1686,7 @@ class Anthropic(Llm, AnthropicMixin):
 
         return filtered, system_text
 
-    def _add_system_message(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
+    def _apply_system(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
         if system:
             input_kwargs["system"] = system
         return messages, input_kwargs
@@ -1660,6 +1751,14 @@ class Anthropic(Llm, AnthropicMixin):
                 }]
         return []
 
+    def _cache_control(self) -> dict[str, Any] | None:
+        if not (self._supports_prompt_cache and self.cache):
+            return None
+        cache_control = {"type": "ephemeral"}
+        if self.cache == "1h":
+            cache_control["ttl"] = "1h"
+        return cache_control
+
     async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
         """Override to handle Anthropic-specific message format."""
         log_debug(f"Input messages: \033[95m{len(messages)} messages\033[0m including system")
@@ -1699,6 +1798,10 @@ class Anthropic(Llm, AnthropicMixin):
                     "some providers disallow this.\033[0m"
                 )
             previous_role = role
+
+        cache_control = self._cache_control()
+        if cache_control is not None:
+            kwargs["cache_control"] = cache_control
 
         client = await self.get_client(model_spec, **kwargs)
         result = await client(messages=filtered_messages, **kwargs)
@@ -1744,6 +1847,8 @@ class Anthropic(Llm, AnthropicMixin):
 class AnthropicBedrock(BedrockMixin, Anthropic):  # Keep it before Anthropic so API key is correct
 
     display_name = param.String(default="Anthropic on AWS Bedrock", constant=True)
+
+    _supports_prompt_cache = False  # Bedrock does not support automatic prompt caching
 
     model_kwargs = param.Dict(default={
         "default": {"model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"},
@@ -1797,7 +1902,7 @@ class Bedrock(Llm, BedrockMixin):
         "anthropic.claude-3-sonnet-20240229-v1:0",
     ], constant=True, doc="Available Claude models on Bedrock")
 
-    temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
+    temperature = param.Number(default=0.7, bounds=(0, 1), allow_None=True, constant=True)
 
     _instructor_wrapper = "bedrock"
     _supports_stream = True
@@ -1805,7 +1910,7 @@ class Bedrock(Llm, BedrockMixin):
 
     @property
     def _client_kwargs(self):
-        return {"temperature": self.temperature, "maxTokens": 4096}
+        return {**super()._client_kwargs, "maxTokens": 4096}
 
     def _create_base_client(self, **kwargs) -> Any:
         """Create boto3 bedrock-runtime client for inference."""
@@ -1862,7 +1967,7 @@ class Bedrock(Llm, BedrockMixin):
 
         return bedrock_messages, system_text
 
-    def _add_system_message(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
+    def _apply_system(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
         if system:
             input_kwargs["system"] = [{"text": system}]
         return messages, input_kwargs
@@ -1942,6 +2047,7 @@ class Google(Llm, GenAIMixin):
     })
 
     select_models = param.List(default=[
+        "gemini-3.5-flash",
         "gemini-3-flash-preview",
         "gemini-3-pro-preview",
         "gemini-2.5-pro",
@@ -1953,7 +2059,7 @@ class Google(Llm, GenAIMixin):
         "gemini-1.5-pro"
     ], constant=True)
 
-    temperature = param.Number(default=1, bounds=(0, 1), constant=True)
+    temperature = param.Number(default=1, bounds=(0, 1), allow_None=True, constant=True)
 
     _supports_logfire = True
     _supports_model_stream = True
@@ -1994,12 +2100,16 @@ class Google(Llm, GenAIMixin):
         return str(response)
 
     @classmethod
-    def _messages_to_contents(cls, messages: list[Message]) -> tuple[list[dict[str, Any]], str | None]:
+    def _messages_to_contents(
+        cls, messages: list[Message]
+    ) -> tuple[list[dict[str, Any]], str | None, list[dict[str, Any]]]:
         """
         Transform messages into contents format expected by Google GenAI API.
 
         Extracts system messages and returns them separately since Google
-        requires them via the system_instruction parameter.
+        requires them via the system_instruction parameter. Also returns a
+        role-normalized (assistant → model) flat messages list for use with
+        instructor's Gemini provider, which rejects role="assistant".
 
         Parameters
         ----------
@@ -2008,21 +2118,29 @@ class Google(Llm, GenAIMixin):
 
         Returns
         -------
-        tuple[list[dict[str, Any]], str | None]
-            Tuple of (contents list, system_instruction)
+        tuple[list[dict[str, Any]], str | None, list[dict[str, Any]]]
+            Tuple of (contents list, system_instruction, instructor_messages)
         """
+        # Normalize roles up front: Gemini (and instructor's Gemini converter)
+        # use "model" instead of "assistant".
+        normalized = [
+            {**m, "role": "model"} if m.get("role") == "assistant" else m
+            for m in messages
+        ]
+
         contents = []
         system_instruction = None
+        instructor_messages = []
 
-        for message in messages:
+        for message in normalized:
             role = message["role"]
             content = message["content"]
             if role == "system":
                 system_instruction = content
                 continue
 
-            # Assistant message containing tool calls → model with function_call parts
-            if role == "assistant" and message.get("tool_calls"):
+            # Model message containing tool calls → function_call parts
+            if role == "model" and message.get("tool_calls"):
                 parts = []
                 for tc in message["tool_calls"]:
                     name, args, _ = cls._parse_tool_call(tc)
@@ -2063,8 +2181,9 @@ class Google(Llm, GenAIMixin):
                     "role": role,
                     "parts": [{"text": content}]
                 })
+                instructor_messages.append({"role": role, "content": content})
 
-        return contents, system_instruction
+        return contents, system_instruction, instructor_messages
 
     async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         model_kwargs = self._get_model_kwargs(model_spec)
@@ -2146,7 +2265,7 @@ class Google(Llm, GenAIMixin):
                 description=func.get("description", ""),
                 parameters=parameters,
             ))
-        return Tool(function_declarations=declarations) if declarations else None
+        return [Tool(function_declarations=declarations)] if declarations else None
 
     @classmethod
     def _get_delta(cls, chunk: Any) -> str:
@@ -2185,17 +2304,19 @@ class Google(Llm, GenAIMixin):
 
         tools = self._translate_tool_specs(kwargs.pop("tools", []))
         client = await self.get_client(model_spec, **kwargs)
-        contents, system_instruction = self._messages_to_contents(messages)
-        config = GenerateContentConfig(
+        contents, system_instruction, instructor_messages = self._messages_to_contents(messages)
+        config_kwargs = dict(
             http_options=http_options,
-            temperature=self.temperature,
             thinking_config=thinking_config,
             system_instruction=system_instruction,
             tools=tools,
         )
+        if self.temperature is not None:
+            config_kwargs["temperature"] = self.temperature
+        config = GenerateContentConfig(**config_kwargs)
 
         if response_model:
-            result = await client(messages=messages, config=config, **kwargs)
+            result = await client(messages=instructor_messages, config=config, **kwargs)
             return result
 
         kwargs.pop("stream", None)
@@ -2279,7 +2400,7 @@ class Ollama(OpenAI):
         "mistral-small3.2:24b",
     ], constant=True)
 
-    temperature = param.Number(default=0.25, bounds=(0, None), constant=True)
+    temperature = param.Number(default=0.25, bounds=(0, None), allow_None=True, constant=True)
 
     def models(self, endpoint: str | None = None) -> set[str]:
         """Return the set of available model identifiers from Ollama."""
@@ -2288,6 +2409,235 @@ class Ollama(OpenAI):
         if tags_response.status_code != 200:
             return set()
         return {m.get("name", "") for m in tags_response.json().get("models", [])}
+
+
+class MLX(Llm):
+    """
+    An LLM implementation using Apple MLX via mlx-lm.
+
+    Requires ``mlx-lm`` (``pip install mlx-lm``).
+
+    Two modes of operation:
+
+    - **In-process** (default, ``endpoint=None``): Loads the model
+      directly into the Python process via ``mlx_lm.load`` and runs
+      inference on the Metal GPU. No server needed.
+    - **Server** (``endpoint="http://localhost:8080/v1"``): Connects
+      to a running ``mlx_lm.server`` via its OpenAI-compatible API.
+      Start the server separately with::
+
+          mlx_lm.server --model mlx-community/Qwen3.5-27B-4bit --port 8080
+    """
+
+    display_name = param.String(default="MLX", constant=True, doc="""
+        Display name shown in the UI.""")
+
+    endpoint = param.String(default="http://localhost:8080/v1", allow_None=True, doc="""
+        If set, connect to a running mlx_lm.server at this URL
+        (e.g. 'http://localhost:8080/v1') instead of loading the
+        model in-process. When None, the model is loaded directly
+        via mlx_lm.load.""")
+
+    mode = param.Selector(default=Mode.JSON, objects=BASE_MODES, doc="""
+        The instructor calling mode. Defaults to JSON for
+        structured output from local MLX models.""")
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "mlx-community/Qwen3.5-9B-MLX-4bit"},
+    }, doc="""
+        Model definitions indexed by type. Each value is a dict
+        with at least a 'model' key naming a Hugging Face model ID.""")
+
+    select_models = param.List(default=[
+        "mlx-community/Qwen3.5-9B-MLX-4bit",
+        "mlx-community/Qwen3.5-27B-4bit",
+        "mlx-community/Qwen3.6-35B-A3B-4bit",
+    ], constant=True, doc="""
+        Available MLX models for selection dropdowns.""")
+
+    chat_template_kwargs = param.Dict(default={}, doc="""
+        Additional keyword arguments passed to the tokenizer's
+        apply_chat_template. Only used in in-process mode.
+        In server mode, set these via the server's
+        --chat-template-args flag instead.
+        Note: 'enable_thinking' is set automatically from the
+        enable_thinking param; no need to include it here.""")
+
+    enable_thinking = param.Boolean(default=False, doc="""
+        Whether to enable the model's thinking/reasoning mode.
+        In in-process mode this is passed to apply_chat_template.
+        In server mode this is sent per-request and does NOT
+        change the server's --chat-template-args flag.""")
+
+    max_tokens = param.Integer(default=8192, bounds=(1, None), constant=True, doc="""
+        Default maximum number of tokens to generate per request.
+        Can be overridden per-call via invoke/stream kwargs.
+        Note: in server mode this is sent as a per-request parameter
+        and does NOT change the server's --max-tokens default.""")
+
+    temperature = param.Number(default=0.4, bounds=(0, None), allow_None=True, constant=True, doc="""
+        The sampling temperature. Lower values produce more
+        deterministic outputs. In server mode this is sent
+        per-request and does NOT change the server's --temp flag.
+        When None, the backend's own default sampler is used.""")
+
+    _instructor_wrapper = None
+    _supports_vision = False
+
+    @property
+    def _use_endpoint(self) -> bool:
+        return self.endpoint is not None
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._mlx_models: dict[str, tuple] = {}  # model_id -> (model, tokenizer)
+        if self._use_endpoint:
+            # Override to use OpenAI-compatible wrapper
+            self._instructor_wrapper = "openai"
+
+    def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
+        if isinstance(model_spec, dict):
+            return model_spec
+        model_kwargs = self.model_kwargs.get(model_spec) or self.model_kwargs["default"]
+        return dict(model_kwargs)
+
+    def _load_mlx_model(self, model_id: str) -> tuple:
+        """Load and cache an MLX model. Duplicate loads are harmless but wasteful."""
+        if model_id not in self._mlx_models:
+            from mlx_lm import load
+            self._mlx_models[model_id] = load(model_id)
+        return self._mlx_models[model_id]
+
+    def _messages_to_prompt(self, tokenizer, messages: list[Message]) -> str:
+        """Convert chat messages to a prompt string using the tokenizer's chat template."""
+        chat_messages = []
+        for msg in messages:
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                content = "\n".join(
+                    item if isinstance(item, str) else item["text"]
+                    for item in content
+                    if isinstance(item, str) or (isinstance(item, dict) and item.get("type") == "text")
+                )
+            if not isinstance(content, str):
+                content = str(content)
+            chat_messages.append({"role": msg["role"], "content": content})
+        template_kwargs = {"enable_thinking": self.enable_thinking, **self.chat_template_kwargs}
+        return tokenizer.apply_chat_template(
+            chat_messages, tokenize=False, add_generation_prompt=True,
+            **template_kwargs,
+        )
+
+    def _make_sampler(self):
+        """Create an MLX sampler from the configured temperature."""
+        from mlx_lm.sample_utils import make_sampler
+        if self.temperature is None:
+            return make_sampler()
+        return make_sampler(temp=self.temperature)
+
+    def _create_chat_completion(self, messages: list[Message], **kwargs) -> Any:
+        """Synchronous chat completion compatible with instructor's patch(create=...)."""
+        from mlx_lm import generate as mlx_generate
+
+        model_spec = kwargs.pop("model", "default")
+        model_kwargs = self._get_model_kwargs(model_spec)
+        model_id = model_kwargs["model"]
+        model, tokenizer = self._load_mlx_model(model_id)
+
+        max_tokens = kwargs.pop("max_tokens", self.max_tokens)
+        prompt = self._messages_to_prompt(tokenizer, messages)
+        sampler = self._make_sampler()
+
+        text = mlx_generate(
+            model, tokenizer, prompt=prompt,
+            max_tokens=max_tokens, sampler=sampler, verbose=False,
+        )
+
+        msg = MessageModel(content=text, name=None, role="assistant")
+        return Response(choices=[Choice(message=msg, delta=None, finish_reason="stop")])
+
+    def _create_endpoint_client(self, async_client: bool = True):
+        """Create an AsyncOpenAI client pointed at the mlx_lm.server endpoint."""
+        cls = openai.AsyncOpenAI if async_client else openai.OpenAI
+        return cls(base_url=self.endpoint, api_key="mlx")
+
+    def _create_base_client(self, **kwargs) -> Any:
+        if self._use_endpoint:
+            return self._create_endpoint_client(async_client=True)
+        return self
+
+    def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
+        if self._use_endpoint:
+            return instructor.from_openai(base_client, mode=mode)
+        return patch(create=self._create_chat_completion, mode=mode)
+
+    def _get_completion_method(self) -> Callable:
+        if self._use_endpoint:
+            return self._base_client.chat.completions.create
+        return self._create_chat_completion
+
+    @property
+    def _client_kwargs(self) -> dict[str, Any]:
+        return {**super()._client_kwargs, "max_tokens": self.max_tokens}
+
+    @classmethod
+    def warmup(cls, model_kwargs: dict | None):
+        """Pre-download model weights from Hugging Face Hub."""
+        from mlx_lm import load
+        model_kwargs = model_kwargs or {}
+        if "default" not in model_kwargs:
+            model_kwargs["default"] = cls.model_kwargs["default"]
+        for spec in model_kwargs.values():
+            if isinstance(spec, dict) and "model" in spec:
+                load(spec["model"])
+
+    async def get_client(self, model_spec: str | dict, response_model: type[BaseModel] | None = None, **kwargs):
+        model_kwargs = self._get_model_kwargs(model_spec)
+        model_id = model_kwargs["model"]
+        mode = kwargs.pop("mode", self.mode)
+
+        if self._use_endpoint:
+            # Server mode: use the OpenAI-compatible client
+            if self._base_client is None:
+                self._base_client = self._create_base_client()
+        else:
+            # In-process mode: ensure model is loaded
+            await asyncio.to_thread(self._load_mlx_model, model_id)
+
+        if response_model:
+            if mode not in self._instructor_clients:
+                base = self._base_client if self._use_endpoint else self
+                self._instructor_clients[mode] = self._create_instructor_client(base, mode)
+            client = self._instructor_clients[mode]
+            if self._use_endpoint:
+                return partial(client.chat.completions.create, model=model_id, **self._get_create_kwargs(response_model))
+            return client
+
+        if self._use_endpoint:
+            return partial(self._base_client.chat.completions.create, model=model_id, **self._get_create_kwargs(response_model))
+        return self._create_chat_completion
+
+    async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
+        self._log_messages(messages)
+        response_model = kwargs.get("response_model")
+        kwargs.pop("max_retries", None)
+        client = await self.get_client(model_spec, **kwargs)
+
+        if self._use_endpoint:
+            # Server mode: async OpenAI client
+            result = await client(messages=messages, **kwargs)
+        # In-process mode: run synchronous mlx_lm in a thread
+        elif response_model:
+            result = await asyncio.to_thread(client, messages=messages, **kwargs)
+        else:
+            kwargs.pop("response_model", None)
+            kwargs.pop("stream", None)
+            result = await asyncio.to_thread(
+                self._create_chat_completion, messages, model=model_spec, **kwargs
+            )
+
+        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
+        return result
 
 
 class Groq(OpenAI):
@@ -2363,10 +2713,16 @@ class WebLLM(Llm):
         "Qwen2.5-7B-Instruct-q4f16_1-MLC"
     ], constant=True)
 
-    temperature = param.Number(default=0.4, bounds=(0, None))
+    temperature = param.Number(default=0.4, bounds=(0, None), allow_None=True)
 
     # WebLLM doesn't use from_* wrapper - uses patch(create=...)
     _instructor_wrapper = None
+
+    @property
+    def _client_kwargs(self) -> dict[str, Any]:
+        # WebLLM has never forwarded temperature through this path; the sampler
+        # is configured on the panel_web_llm component itself.
+        return {}
 
     def __init__(self, **params):
         from panel_web_llm import WebLLM as pnWebLLM
@@ -2496,7 +2852,7 @@ class LiteLLM(Llm):
         "mistral/codestral-latest"
     ], constant=True)
 
-    temperature = param.Number(default=0.7, bounds=(0, 2), constant=True)
+    temperature = param.Number(default=0.7, bounds=(0, 2), allow_None=True, constant=True)
 
     _supports_logfire = True
     _supports_stream = True
@@ -2532,9 +2888,7 @@ class LiteLLM(Llm):
     @property
     def _client_kwargs(self):
         """Base kwargs for all LiteLLM calls."""
-        kwargs = {"temperature": self.temperature}
-        kwargs.update(self.litellm_params)
-        return kwargs
+        return {**super()._client_kwargs, **self.litellm_params}
 
     def _create_base_client(self, **kwargs) -> Any:
         return self._get_router()
@@ -2564,3 +2918,64 @@ class LiteLLM(Llm):
             if hasattr(choice, 'delta') and hasattr(choice.delta, 'content'):
                 return choice.delta.content or ""
         return ""
+
+
+class OpenRouter(OpenAI):
+    """
+    An LLM implementation using the OpenRouter API.
+
+    OpenRouter provides an OpenAI-compatible endpoint that routes requests to
+    models from multiple providers. Set the ``OPENROUTER_API_KEY`` environment
+    variable or pass ``api_key`` directly. The provider is auto-detected when
+    ``OPENROUTER_API_KEY`` is present, or can be selected explicitly with
+    ``--provider openrouter``.
+    """
+
+    api_key_env_var: str = PROVIDER_ENV_VARS["openrouter"]
+
+    display_name = param.String(
+        default="OpenRouter",
+        constant=True,
+        doc="Display name for UI",
+    )
+
+    endpoint = param.String(
+        default="https://openrouter.ai/api/v1",
+        doc="The OpenRouter API endpoint.",
+    )
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "openai/gpt-4o-mini"},
+    })
+
+    select_models = param.List(default=[
+        "openai/gpt-4o-mini",
+        "openai/gpt-4o",
+        "anthropic/claude-3.5-sonnet",
+        "anthropic/claude-3.5-haiku",
+        "google/gemini-2.5-flash",
+        "google/gemini-2.5-pro",
+        "mistralai/mistral-large",
+        "mistralai/mistral-small",
+        "meta-llama/llama-3.3-70b-instruct",
+    ], constant=True, doc="Available OpenRouter models for selection dropdowns.")
+
+    def models(self) -> set[str]:
+        """Return the set of available model identifiers from OpenRouter."""
+        headers = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        response = requests.get(
+            f"{self.endpoint.rstrip('/')}/models",
+            headers=headers,
+            timeout=5,
+        )
+        if response.status_code != 200:
+            return set()
+
+        return {
+            model["id"]
+            for model in response.json().get("data", [])
+            if model.get("id")
+        }

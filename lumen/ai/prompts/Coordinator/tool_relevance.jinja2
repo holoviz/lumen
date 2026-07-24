@@ -16,7 +16,7 @@ Determine if a tool will help an actor complete its task by evaluating:
 {% endblock %}
 
 {%- block examples %}
-# Examples
+## Examples (illustrative — outputs below are placeholders, not real tool results)
 
 ❌ NOT RELEVANT:
 Task: "Find users who joined this month"
@@ -33,7 +33,7 @@ Tool: DbtslLookup | Purpose: "Looks up dbt semantic layer metrics"
 {% endblock %}
 
 {% block context %}
-# Context
+## Context
 
 Task: {{ actor_task }}
 Actor: {{ actor_name }} | Purpose: {{ actor_purpose }}

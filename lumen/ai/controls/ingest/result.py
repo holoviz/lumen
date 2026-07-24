@@ -14,13 +14,15 @@ class SourceResult(param.Parameterized):
     Use the factory methods for common patterns.
     """
 
-    sources = param.List(default=[], doc="List of data sources loaded.")
+    sources = param.List(default=[], doc="List of data sources loaded. Each source may contain multiple tables in source.tables.")
 
-    table = param.String(default=None, allow_None=True, doc="Primary table name.")
+    table = param.String(default=None, allow_None=True, doc="Primary table name for display/default selection. All tables are in source.tables.")
 
     metadata = param.Dict(default={}, doc="Additional metadata about the loaded data.")
 
     message = param.String(default=None, allow_None=True, doc="Status message to display.")
+
+    document_only = param.Boolean(default=False, doc="True if only a document was indexed (no tables).")
 
     @classmethod
     def from_dataframe(
@@ -49,10 +51,25 @@ class SourceResult(param.Parameterized):
         table: str | None = None,
         message: str | None = None,
     ) -> SourceResult:
-        """Create a result from an existing source."""
+        """Create a result from an existing source.
+
+        All tables in source.tables are available; `table` is the primary/default.
+        """
         return cls(sources=[source], table=table, message=message)
 
     @classmethod
     def empty(cls, message: str = "No data loaded") -> SourceResult:
         """Return an empty result with an optional message."""
         return cls(message=message)
+
+    @classmethod
+    def from_document(cls, message: str) -> SourceResult:
+        """Return a result indicating only a document was indexed (no tables)."""
+        return cls(message=message, document_only=True)
+
+    def __str__(self) -> str:
+        """Return the message for LLM tool responses."""
+        return self.message or "No data loaded"
+
+    def __repr__(self) -> str:
+        return self.__str__()

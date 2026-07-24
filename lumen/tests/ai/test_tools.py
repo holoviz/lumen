@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 try:
@@ -6,10 +8,14 @@ except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
 from panel.viewable import Viewable
+from panel_material_ui import (
+    Button, ChatAreaInput, Column, RadioBoxGroup,
+)
 
 from lumen.ai.coordinator import Coordinator
 from lumen.ai.schemas import DocumentChunk, Metaset, TableCatalogEntry
 from lumen.ai.tools import FunctionTool, MetadataLookup, define_tool
+from lumen.ai.tools.clarification_llm_tool import make_clarification_llm_tool
 from lumen.ai.tools.document_llm_tools import make_document_vector_llm_tools
 from lumen.ai.vector_store import NumpyVectorStore
 from lumen.config import SOURCE_TABLE_SEPARATOR
@@ -225,3 +231,142 @@ async def test_document_llm_tools_list_and_search():
     assert "zoo.md" in listed
     searched = await tools[1].function(query="penguins", top_k=3, min_similarity=-1.0)
     assert "cold water" in searched
+
+
+class _DummyInterface:
+
+    def __init__(self):
+        self.objects = []
+
+    def send(self, obj, **kwargs):
+        self.objects.append(obj)
+
+
+async def test_clarification_tool_requires_confirm_click_for_options():
+    context: dict = {}
+    interface = _DummyInterface()
+    tool = make_clarification_llm_tool(interface=interface, context=context)
+
+    task = asyncio.create_task(
+        tool.function("Pick one", options=["Option A", "Option B"])
+    )
+
+    await asyncio.sleep(0.05)
+    assert interface.objects
+    layout = interface.objects[-1]
+    assert isinstance(layout, Column)
+    widget = layout[1]
+    confirm = layout[2]
+    assert isinstance(widget, RadioBoxGroup)
+    assert isinstance(confirm, Button)
+    assert confirm.icon == "check"
+
+    widget.value = "Option A"
+    await asyncio.sleep(0.2)
+    assert not task.done()
+
+    confirm.clicks += 1
+    result = await asyncio.wait_for(task, timeout=1)
+    assert result == "User provided following clarification: Option A"
+    assert "clarification" not in context
+
+
+async def test_clarification_tool_requires_confirm_click_for_text():
+    context: dict = {}
+    interface = _DummyInterface()
+    tool = make_clarification_llm_tool(interface=interface, context=context)
+
+    task = asyncio.create_task(tool.function("Describe preference"))
+
+    await asyncio.sleep(0.05)
+    layout = interface.objects[-1]
+    assert isinstance(layout, Column)
+    widget = layout[1]
+    assert isinstance(widget, ChatAreaInput)
+    assert len(layout) == 2
+
+    widget.value = "   concise answers   "
+    await asyncio.sleep(0.2)
+    assert not task.done()
+
+    widget.param.trigger("enter_pressed")
+    result = await asyncio.wait_for(task, timeout=1)
+    assert result == "User provided following clarification: concise answers"
+    assert "clarification" not in context
+
+
+# ---- apply_filter tool (SQLAgent) ----
+
+from lumen.ai.agents.sql import (
+    _coerce_filter_value, make_apply_filter_llm_tool, make_apply_filter_tool,
+)
+from lumen.pipeline import Pipeline
+
+
+@pytest.fixture
+def tiny_filter_pipeline():
+    src = DuckDBSource(tables={
+        't': "SELECT * FROM (VALUES (1,'A',10.5),(2,'B',20.0),(3,'A',7.5)) AS t(id, cat, val)"
+    })
+    return Pipeline(source=src, table='t')
+
+
+def test_coerce_filter_value_ranges_and_passthrough():
+    assert _coerce_filter_value({"type": "number"}, [10, 20]) == (10, 20)
+    assert _coerce_filter_value({"type": "integer"}, [1, 3]) == (1, 3)
+    assert _coerce_filter_value({"type": "number"}, 5) == 5
+    assert _coerce_filter_value({"type": "string"}, ["A", "B"]) == ["A", "B"]
+    lo, hi = _coerce_filter_value(
+        {"type": "string", "format": "datetime"}, ["2020-01-02", "2020-01-05"]
+    )
+    assert (str(lo), str(hi)) == ("2020-01-02 00:00:00", "2020-01-05 00:00:00")
+
+
+async def test_apply_filter_tool_unknown_field_is_graceful(tiny_filter_pipeline):
+    tool = make_apply_filter_tool(tiny_filter_pipeline)
+    msg = await tool.function(field="nope", value=1)
+    assert "Cannot filter" in msg
+    assert len(tiny_filter_pipeline.data) == 3  # unchanged
+
+
+async def test_apply_filter_tool_numeric_range(tiny_filter_pipeline):
+    tool = make_apply_filter_tool(tiny_filter_pipeline)
+    await tool.function(field="val", value=[8, 15])
+    assert list(tiny_filter_pipeline.data["val"]) == [10.5]
+
+
+async def test_apply_filter_tool_replaces_existing_filter(tiny_filter_pipeline):
+    tool = make_apply_filter_tool(tiny_filter_pipeline)
+    await tool.function(field="cat", value=["A"])
+    await tool.function(field="cat", value=["B"])
+    assert set(tiny_filter_pipeline.data["cat"]) == {"B"}
+    assert len([f for f in tiny_filter_pipeline.filters if f.field == "cat"]) == 1
+
+
+def test_apply_filter_llm_tool_is_context_gated(tiny_filter_pipeline):
+    assert make_apply_filter_llm_tool({}) == []
+    assert make_apply_filter_llm_tool({"pipeline": None}) == []
+    tool = make_apply_filter_llm_tool({"pipeline": tiny_filter_pipeline})
+    assert isinstance(tool, FunctionTool)
+    # pipeline is closed over; the LLM only supplies field + value.
+    assert set(tool._model.model_fields) == {"field", "value"}
+
+
+def test_apply_filter_tool_subsets_xarray_like_sel():
+    xr = pytest.importorskip("xarray")
+    pytest.importorskip("xarray_sql")
+    import numpy as np
+
+    from lumen.sources.xarray_sql import XArraySQLSource
+
+    ds = xr.Dataset(
+        {"temperature": (["lat", "lon"], np.arange(6.0).reshape(3, 2))},
+        coords={"lat": ("lat", np.array([10.0, 20.0, 30.0])),
+                "lon": ("lon", np.array([100.0, 110.0]))},
+    )
+    pipeline = Pipeline(source=XArraySQLSource(_dataset=ds), table="temperature")
+    tool = make_apply_filter_tool(pipeline)
+    asyncio.run(tool.function(field="lat", value=[20.0, 30.0]))
+    expected = ds.sel(lat=slice(20.0, 30.0)).to_dataframe().reset_index().shape[0]
+    assert len(pipeline.data) == expected
+    assert set(pipeline.data["lat"].unique()) == {20.0, 30.0}

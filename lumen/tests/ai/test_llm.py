@@ -13,17 +13,32 @@ try:
 
     from lumen.ai.agents.vega_lite import VegaLiteAgent
     from lumen.ai.llm import (
-        Anthropic, AzureOpenAI, Google, Groq, Message, MistralAI, OpenAI,
+        MLX, Anthropic, AnthropicBedrock, AzureOpenAI, Bedrock, Google, Groq,
+        LiteLLM, LlamaCpp, Llm, Message, MistralAI, Ollama, OpenAI, WebLLM,
     )
 
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
 from instructor.processing.multimodal import Image
+from pydantic import BaseModel
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+# (provider, required_init_kwargs, non-temperature keys retained in _client_kwargs, default temperature)
+PROVIDER_SPECS = [
+    pytest.param(OpenAI, {}, set(), 0.25, id="openai"),
+    pytest.param(AzureOpenAI, {"api_version": "av", "endpoint": "ep"}, set(), 1, id="azure"),
+    pytest.param(MistralAI, {}, set(), 0.7, id="mistral"),
+    pytest.param(Anthropic, {}, {"max_tokens"}, 0.7, id="anthropic"),
+    pytest.param(Bedrock, {}, {"maxTokens"}, 0.7, id="bedrock"),
+    pytest.param(LlamaCpp, {}, set(), 0.4, id="llamacpp"),
+    pytest.param(MLX, {}, {"max_tokens"}, 0.4, id="mlx"),
+    pytest.param(LiteLLM, {}, set(), 0.7, id="litellm"),
+    pytest.param(Ollama, {"api_key": "ollama"}, set(), 0.25, id="ollama"),
+]
 
 def _make_test_image() -> Image:
     """Create a tiny 1x1 PNG encoded as an instructor Image."""
@@ -35,6 +50,14 @@ def _make_test_image() -> Image:
     ).decode('utf-8')
     return Image.from_raw_base64(pixel)
 
+
+def _make(provider, required, temperature="__default__"):
+    # temperature is constant=True; the sentinel lets us build with the default too.
+    kw = dict(required)
+    kw["model_kwargs"] = {"default": {"model": "m"}}
+    if temperature != "__default__":
+        kw["temperature"] = temperature
+    return provider(**kw)
 
 # ---------------------------------------------------------------------------
 # AzureOpenAI model kwargs tests
@@ -276,6 +299,41 @@ async def test_openai_responses_stream_tool_loop_uses_function_call_output(monke
     assert second_kwargs["previous_response_id"] == "resp_1"
 
 
+async def test_stream_keeps_streaming_when_tools_registered_but_unused(monkeypatch):
+    """stream() should still yield deltas when tools are present but not called."""
+    llm = OpenAI(model_kwargs={"default": {"model": "gpt-4.1-mini"}})
+
+    def fake_normalize_tools(_tools):
+        return (
+            [{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}}],
+            {"lookup": object()},
+            {},
+        )
+
+    async def fake_run_client(_model_spec, _messages, **kwargs):
+        assert kwargs.get("stream") is True
+        return [
+            SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(content="he", tool_calls=None))]
+            ),
+            SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(content="llo", tool_calls=None))]
+            ),
+        ]
+
+    monkeypatch.setattr(llm, "_normalize_tools", fake_normalize_tools)
+    monkeypatch.setattr(llm, "run_client", fake_run_client)
+
+    outputs = []
+    async for chunk in llm.stream(
+        [{"role": "user", "content": "say hello"}],
+        tools=[{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}}],
+    ):
+        outputs.append(chunk)
+
+    assert outputs == ["he", "hello"]
+
+
 def test_openai_responses_stream_tool_call_id_preserved_from_added_event():
     """Tool output call_id should come from function_call item (call_id), not item_id."""
     added_event = SimpleNamespace(
@@ -296,6 +354,137 @@ def test_openai_responses_stream_tool_call_id_preserved_from_added_event():
     OpenAI._accumulate_tool_calls(accum, order, OpenAI._extract_stream_tool_calls(done_event))
     tool_calls = OpenAI._tool_calls_from_accum(accum, order)
     assert tool_calls[0]["id"] == "call_abc"
+
+
+async def test_run_tool_loop_drops_max_retries_on_bare_client(monkeypatch):
+    """Regression: ``max_retries`` is an instructor-only kwarg.
+
+    When both ``response_model`` and ``tools`` are supplied (the planner's
+    path), ``_run_tool_loop`` drops ``response_model`` and routes to the bare
+    SDK client.  Before the fix, ``max_retries`` was left in ``kwargs`` and
+    leaked through to ``AsyncMessages.create`` / ``AsyncCompletions.create``,
+    raising ``TypeError: got an unexpected keyword argument 'max_retries'``.
+    """
+
+    class _Plan(BaseModel):
+        next_step: str
+
+    llm = OpenAI(model_kwargs={"default": {"model": "gpt-4.1-mini"}})
+    calls: list[dict] = []
+
+    async def fake_run_client(_model_spec, _messages, **kwargs):
+        calls.append(dict(kwargs))
+        return SimpleNamespace(content="done", tool_calls=None)
+
+    monkeypatch.setattr(llm, "run_client", fake_run_client)
+    monkeypatch.setattr(llm, "_extract_tool_calls", lambda _output: [])
+
+    await llm._run_tool_loop(
+        messages=[{"role": "user", "content": "hi"}],
+        structured_model=_Plan,
+        tool_instances={"lookup": object()},
+        tool_contexts={},
+        max_retries=3,
+    )
+    # The first call uses the bare client (no response_model). It must not
+    # carry max_retries through, since the bare SDK rejects it.
+    bare_call = calls[0]
+    assert "response_model" not in bare_call
+    assert "max_retries" not in bare_call, (
+        "max_retries must be popped from kwargs on the bare-client path; "
+        "it is consumed by the instructor wrapper, not the underlying SDK."
+    )
+    # Final structured-output call (instructor) should still carry the
+    # user-passed max_retries so retry semantics are preserved end to end.
+    final_call = calls[-1]
+    assert final_call.get("response_model") is _Plan
+    assert final_call.get("max_retries") == 3
+
+
+# ---------------------------------------------------------------------------
+# _normalize_multimodal_messages tests
+# ---------------------------------------------------------------------------
+
+class TestNormalizeMultimodalMessages:
+    """Tests for Llm._normalize_multimodal_messages.
+
+    When response_model is absent (e.g. during the tool-loop phase),
+    the raw OpenAI client is used and cannot handle instructor Image
+    objects.  _normalize_multimodal_messages converts them to
+    OpenAI-native content-part dicts.
+    """
+
+    def test_standalone_image_converted(self):
+        """A bare Image as content is wrapped in an image_url dict list."""
+        img = _make_test_image()
+        messages: list[Message] = [{"role": "user", "content": img}]
+        result = Llm._normalize_multimodal_messages(messages)
+        content = result[0]["content"]
+        assert isinstance(content, list)
+        assert len(content) == 1
+        assert content[0]["type"] == "image_url"
+        assert "base64," in content[0]["image_url"]["url"]
+
+    def test_list_image_and_string_converted(self):
+        """A [str, Image] list is converted to [{type: text}, {type: image_url}]."""
+        img = _make_test_image()
+        messages: list[Message] = [
+            {"role": "user", "content": ["Describe this:", img]},
+        ]
+        result = Llm._normalize_multimodal_messages(messages)
+        content = result[0]["content"]
+        assert isinstance(content, list)
+        assert len(content) == 2
+        assert content[0] == {"type": "text", "text": "Describe this:"}
+        assert content[1]["type"] == "image_url"
+        assert "base64," in content[1]["image_url"]["url"]
+
+    def test_plain_text_unchanged(self):
+        """Plain string content passes through untouched."""
+        messages: list[Message] = [{"role": "user", "content": "Hello"}]
+        result = Llm._normalize_multimodal_messages(messages)
+        assert result[0]["content"] == "Hello"
+
+    def test_already_normalized_dicts_unchanged(self):
+        """Content that is already OpenAI-native dicts passes through."""
+        messages: list[Message] = [{"role": "user", "content": [
+            {"type": "text", "text": "Hi"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+        ]}]
+        result = Llm._normalize_multimodal_messages(messages)
+        content = result[0]["content"]
+        assert content[0] == {"type": "text", "text": "Hi"}
+        assert content[1] == {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}}
+
+    def test_multiple_images_in_list(self):
+        """Multiple Image objects in a list are all converted."""
+        img1 = _make_test_image()
+        img2 = _make_test_image()
+        messages: list[Message] = [
+            {"role": "user", "content": ["Compare:", img1, img2]},
+        ]
+        result = Llm._normalize_multimodal_messages(messages)
+        content = result[0]["content"]
+        assert len(content) == 3
+        assert content[0] == {"type": "text", "text": "Compare:"}
+        assert content[1]["type"] == "image_url"
+        assert content[2]["type"] == "image_url"
+
+    def test_mixed_messages_only_image_ones_affected(self):
+        """Non-image messages in the list are left alone."""
+        img = _make_test_image()
+        messages: list[Message] = [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "Hello"},
+            {"role": "user", "content": ["Chart:", img]},
+        ]
+        result = Llm._normalize_multimodal_messages(messages)
+        assert result[0]["content"] == "You are helpful."
+        assert result[1]["content"] == "Hello"
+        assert result[2]["content"][0] == {"type": "text", "text": "Chart:"}
+        assert result[2]["content"][1]["type"] == "image_url"
+
+
 # ---------------------------------------------------------------------------
 # _check_for_image tests
 # ---------------------------------------------------------------------------
@@ -434,3 +623,87 @@ class TestPrepareVisionMessages:
         assert len(content) == 2
         assert content[0] == "Annotate this"
         assert isinstance(content[1], Image)
+
+
+@pytest.mark.parametrize(
+    "cls, cache, expected",
+    [
+        (Anthropic, "5m", {"type": "ephemeral"}),
+        (Anthropic, "1h", {"type": "ephemeral", "ttl": "1h"}),
+        (Anthropic, None, None),
+        (AnthropicBedrock, "1h", None),
+    ],
+    ids=["5m", "1h", "off", "bedrock"],
+)
+def test_anthropic_cache_control(cls, cache, expected):
+    llm = cls(model_kwargs={"default": {"model": "m"}}, cache=cache)
+    assert llm._cache_control() == expected
+
+
+def _all_llm_classes():
+    """Recursively collect ``Llm`` and every subclass so new providers are
+    covered automatically (``__subclasses__`` is not transitive)."""
+    seen = {Llm}
+    stack = [Llm]
+    while stack:
+        for sub in stack.pop().__subclasses__():
+            if sub not in seen:
+                seen.add(sub)
+                stack.append(sub)
+    return sorted(seen, key=lambda c: c.__name__)
+
+
+@pytest.mark.parametrize("provider", _all_llm_classes(), ids=lambda c: c.__name__)
+def test_temperature_param_allows_none(provider):
+    assert provider.param["temperature"].allow_None is True
+
+
+@pytest.mark.parametrize(
+    ("provider", "required", "extra_keys", "default_temp"),
+    PROVIDER_SPECS + [pytest.param(Google, {}, set(), 1, id="google")],
+)
+def test_construct_with_temperature_none(provider, required, extra_keys, default_temp):
+    llm = _make(provider, required, temperature=None)
+    assert llm.temperature is None
+
+
+@pytest.mark.parametrize(("provider", "required", "extra_keys", "default_temp"), PROVIDER_SPECS)
+def test_client_kwargs_omits_temperature_when_none(provider, required, extra_keys, default_temp):
+    kwargs = _make(provider, required, temperature=None)._client_kwargs
+    assert "temperature" not in kwargs
+    assert set(kwargs) == extra_keys
+
+
+@pytest.mark.parametrize("temperature", [0.5, 0.0], ids=["positive", "zero_boundary"])
+@pytest.mark.parametrize(("provider", "required", "extra_keys", "default_temp"), PROVIDER_SPECS)
+def test_client_kwargs_includes_temperature_when_set(provider, required, extra_keys, default_temp, temperature):
+    kwargs = _make(provider, required, temperature=temperature)._client_kwargs
+    assert kwargs["temperature"] == temperature
+    assert extra_keys <= set(kwargs)
+
+
+@pytest.mark.parametrize(("provider", "required", "extra_keys", "default_temp"), PROVIDER_SPECS)
+def test_default_temperature_preserved(provider, required, extra_keys, default_temp):
+    llm = _make(provider, required)
+    assert llm.temperature == default_temp
+    assert llm._client_kwargs["temperature"] == default_temp
+
+
+def test_google_client_kwargs_unaffected_by_temperature():
+    assert Google(model_kwargs={"default": {"model": "m"}}, temperature=None)._client_kwargs == {}
+    assert Google(model_kwargs={"default": {"model": "m"}}, temperature=0.5)._client_kwargs == {}
+
+
+def test_webllm_client_kwargs_never_includes_temperature():
+    # WebLLM configures sampling on the panel_web_llm component, not via _client_kwargs.
+    pytest.importorskip("panel_web_llm")
+    assert WebLLM(model_kwargs={"default": {"model": "m"}}, temperature=None)._client_kwargs == {}
+    assert WebLLM(model_kwargs={"default": {"model": "m"}}, temperature=0.5)._client_kwargs == {}
+
+
+def test_mlx_make_sampler_handles_none():
+    pytest.importorskip("mlx_lm.sample_utils")
+    none_llm = MLX(model_kwargs={"default": {"model": "m"}}, temperature=None)
+    set_llm = MLX(model_kwargs={"default": {"model": "m"}}, temperature=0.5)
+    assert callable(none_llm._make_sampler())
+    assert callable(set_llm._make_sampler())

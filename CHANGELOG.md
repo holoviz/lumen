@@ -1,5 +1,167 @@
 # Releases
 
+## Version 1.2.0
+
+Lumen AI 1.2 deepens the tool-calling architecture introduced in 1.1, adds new LLM providers and data sources, and delivers a large batch of agent reliability and UX improvements.
+
+### New Providers & Models
+
+* OpenRouter LLM provider integration ([#1863](https://github.com/holoviz/lumen/pull/1863))
+* MLX (Apple Silicon) model support ([#1861](https://github.com/holoviz/lumen/pull/1861))
+* OpenAI Responses API support ([#1807](https://github.com/holoviz/lumen/pull/1807))
+
+### Data Sources & Ingestion
+
+* XArraySQLSource for natural language queries on N-dimensional scientific data ([#1741](https://github.com/holoviz/lumen/pull/1741), [#1791](https://github.com/holoviz/lumen/pull/1791))
+* Kaggle dataset support in DownloadSourceControls ([#1848](https://github.com/holoviz/lumen/pull/1848))
+* Auto catalog source discovery ([#1826](https://github.com/holoviz/lumen/pull/1826))
+* Read tables and text directly from URLs ([#1839](https://github.com/holoviz/lumen/pull/1839))
+* Image upload support ([#1802](https://github.com/holoviz/lumen/pull/1802))
+
+### Agents & Planning
+
+* New SourceAgent for data source management ([#1810](https://github.com/holoviz/lumen/pull/1810))
+* SQLAgent discovery mode replaced with tool calling ([#1803](https://github.com/holoviz/lumen/pull/1803))
+* Improved Planner validation flow with clarification LLM tool ([#1833](https://github.com/holoviz/lumen/pull/1833))
+* Simplified Planner reasoning and clarification ([#1836](https://github.com/holoviz/lumen/pull/1836))
+* Planned context added to ChatAgent's prompt ([#1847](https://github.com/holoviz/lumen/pull/1847))
+* ValidationAgent improvements: better context, logic, and TableListAgent interop ([#1820](https://github.com/holoviz/lumen/pull/1820), [#1827](https://github.com/holoviz/lumen/pull/1827), [#1845](https://github.com/holoviz/lumen/pull/1845))
+* Custom clarification support ([#1856](https://github.com/holoviz/lumen/pull/1856))
+
+### Reports & Exports
+
+* HTML export option for Reports ([#1798](https://github.com/holoviz/lumen/pull/1798))
+* Cancel support for running reports ([#1819](https://github.com/holoviz/lumen/pull/1819))
+* Explain query icon in SQL editor ([#1785](https://github.com/holoviz/lumen/pull/1785))
+* Task previews in the UI ([#1792](https://github.com/holoviz/lumen/pull/1792))
+
+### UX & Interface
+
+* Updated to use panel-material-ui ([#1876](https://github.com/holoviz/lumen/pull/1876))
+* All new controls interface ([#1805](https://github.com/holoviz/lumen/pull/1805))
+* Show table names in exploration tool ([#1854](https://github.com/holoviz/lumen/pull/1854))
+* Show popout only when more than one exploration exists ([#1869](https://github.com/holoviz/lumen/pull/1869))
+* Unified LLM message logging ([#1841](https://github.com/holoviz/lumen/pull/1841))
+* Various minor UI polish fixes ([#1837](https://github.com/holoviz/lumen/pull/1837))
+* Improved DocumentEditor document rendering ([#1817](https://github.com/holoviz/lumen/pull/1817))
+* Downloaded source propagated into global context ([#1858](https://github.com/holoviz/lumen/pull/1858))
+
+### Tools & Vector Stores
+
+* LLM tools can now be provided per Actor ([#1808](https://github.com/holoviz/lumen/pull/1808))
+* Custom embedding functions in ChromaDBVectorStore ([#1814](https://github.com/holoviz/lumen/pull/1814))
+* DuckDBVectorStore metadata property implemented ([#1838](https://github.com/holoviz/lumen/pull/1838))
+* Document search tools added ([#1813](https://github.com/holoviz/lumen/pull/1813))
+
+### Bug Fixes
+
+* Fix XArraySQLSource crashes on NetCDF files with bounds variables ([#1886](https://github.com/holoviz/lumen/pull/1886))
+* Fix SQLAgent crash on columns absent from the source catalog ([#1881](https://github.com/holoviz/lumen/pull/1881))
+* Fix SQLAgent crash on sources with the legacy 'any' dialect ([#1879](https://github.com/holoviz/lumen/pull/1879))
+* Fix message format and tool handling for Google LLMs ([#1877](https://github.com/holoviz/lumen/pull/1877))
+* Fix correctly logging tool call results ([#1884](https://github.com/holoviz/lumen/pull/1884))
+* Ensure OpenAI LLM doesn't error when no tools provided ([#1883](https://github.com/holoviz/lumen/pull/1883))
+* Fix report export ([#1870](https://github.com/holoviz/lumen/pull/1870))
+* Fix `max_retries` leaking to bare SDK client in `_run_tool_loop` ([#1850](https://github.com/holoviz/lumen/pull/1850))
+* Fix issues handling tool calls in OpenAI responses API ([#1811](https://github.com/holoviz/lumen/pull/1811))
+* Ensure stream responses handled correctly with tool calls ([#1832](https://github.com/holoviz/lumen/pull/1832))
+* Fix ingestion of source not showing in controls ([#1853](https://github.com/holoviz/lumen/pull/1853))
+* Fix blocking calls ([#1818](https://github.com/holoviz/lumen/pull/1818))
+* Fix prefilter and add tests ([#1797](https://github.com/holoviz/lumen/pull/1797))
+* Fix provenance bug ([#1796](https://github.com/holoviz/lumen/pull/1796))
+* Prevent error on reconnection ([#1795](https://github.com/holoviz/lumen/pull/1795))
+* Fix TableListAgent to list one or more data sources available ([#1872](https://github.com/holoviz/lumen/pull/1872))
+* Fix format floats ([#1851](https://github.com/holoviz/lumen/pull/1851))
+* Fix copy icon ([#1868](https://github.com/holoviz/lumen/pull/1868))
+* Prevent duplicate system prompts ([#1860](https://github.com/holoviz/lumen/pull/1860))
+* Handle missing user messages in plan task history rendering ([#1864](https://github.com/holoviz/lumen/pull/1864))
+
+### Documentation
+
+* Panel extensions docs ([#1787](https://github.com/holoviz/lumen/pull/1787))
+
+### Contributors
+
+Many thanks to @philippjfr, @ahuang11, @hoxbro, @maximlt, and @caioaao for their contributions to this release.
+
+**Full changelog:** [v1.1.0 → v1.2.0](https://github.com/holoviz/lumen/compare/v1.1.0...v1.2.0)
+
+## Version 1.1.0
+
+Lumen AI 1.1 builds on the stable foundation of 1.0 with first-class LLM tool support, stronger retrieval-augmented generation, and a broad sweep of usability and reliability improvements.
+
+### LLM Tool Calls & MCP Support
+
+* First-class support for LLM tool calls
+    * New `FunctionTool` and `MCPTool` abstractions
+* Expanded provider support
+    * Dedicated Groq provider
+    * Fixed non-streaming Anthropic response handling
+    * Fixed annotation support for Google Gemini
+    * Graceful multimodal content handling for non-vision providers
+    * Cleaner LLM inheritance and provider configuration
+    * Default mini model updated to GPT-5.4-mini
+
+### Retrieval-Augmented Generation
+
+* ChromaDB as a vector store backend
+    * New `ChromaDBVectorStore` with native embedding model support
+    * Shared `BaseOpenAIEmbeddings` base class with normalized whitespace handling
+* Smarter metadata handling
+    * Per-exploration metadata vector stores for up-to-date context
+    * Metadata better surfaced in agent prompts
+    * Race condition in `MetadataLookup` indexing resolved
+* New `DocumentSummarizerAgent`
+    * Document ingestion and summarization as a first-class workflow
+
+### Upload, Export & Editors
+
+* Improved upload experience
+    * Configurable file size limits and `FileDropper` options
+    * Simplified drag-and-drop flow with better guidance for new users
+    * Deduplicated source references for multi-file uploads
+* New export formats
+    * SQLEditor: JSON and Markdown
+    * VegaLiteEditor: WebP, TIFF, and EPS
+    * Copy button tooltips now reflect the active editor language
+
+### UX & Interface
+
+* More flexible explorations
+    * Explorations can now be created without requiring a data pipeline
+    * Direct editing of chat messages via `edit_callback`
+    * Label lineage and distinct follow-ups improve conversation traceability
+* Refined controls and layout
+    * Improved controls abstraction, report UX, and pop-out insertion logic
+    * Exploration "prevent and allow" limits for finer administrative control
+    * Various prompt improvements for better SQL, revision, and insertion quality
+
+### Data & SQL
+
+* Broader SQL capabilities
+    * `BETWEEN` query support via slice syntax in `SQLFilter`
+    * Fixed transforms on unselected data and list-typed `source.tables`
+* Better table rendering
+    * Nested JSON objects flattened correctly, preventing `[object Object]` display
+    * Fixed horizontal overflow with long string columns
+
+### Stability
+
+* Pipeline and source fixes
+* Broader reliability improvements
+
+### Documentation
+
+* Updated LLM docs and added the AI Catalyst guide
+* Documented `template_overrides` with subclassing patterns
+* Improved `contributing.md` formatting and fixed a broken README link
+
+### Contributors
+
+Many thanks to @philippjfr and @ahuang11, and a special welcome to the four new contributors making their first commits to the project: @ghostiee-11, @SuMayaBee, @SanketMeghale, and @crypticsaiyan.
+
+**Full changelog:** [v1.0.0 → v1.1.0](https://github.com/holoviz/lumen/compare/v1.0.0...v1.1.0)
+
 ## Version 0.10.1
 Version 0.10.1 focuses on refining the user experience and improving the robustness of the system. It introduces several bug fixes and minor enhancements to ensure smoother operation and better usability.
 

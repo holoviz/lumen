@@ -40,15 +40,15 @@ Response: "HoloViews docs: plot hooks for low-level backend customization to mod
 {%- endblock -%}
 
 {%- block context -%}
-# Full Document
+## Full Document
 {{ document }}
 
 {% if previous_context %}
-# Previous Chunk Context
+## Previous Chunk Context
 {{ previous_context }}
 {% endif %}
 
-# Metadata
+## Metadata
 {% for key, value in metadata.items() %}
 - {{ key }}: {{ value }}
 {% endfor %}

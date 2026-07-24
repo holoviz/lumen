@@ -14,17 +14,9 @@ from typing import Any, ClassVar
 import param
 
 from ..transforms.sql import SQLFilter
+from ..util import try_import_xarray
 from .base import BaseSQLSource, cached
 
-
-def _check_xarray_available():
-    """Check xarray and xarray-sql are installed, import lazily."""
-    try:
-        import xarray  # noqa
-        import xarray_sql  # noqa
-        return True
-    except ImportError:
-        return False
 
 class XArraySQLSource(BaseSQLSource):
     """
@@ -101,7 +93,7 @@ class XArraySQLSource(BaseSQLSource):
         The SQL expression template for table queries.""")
 
     def __init__(self, _dataset=None, _ctx=None, **params):
-        if not _check_xarray_available():
+        if try_import_xarray() is None:
             raise ImportError(
                 "xarray and xarray-sql are required for XArraySQLSource. "
                 "Install them with: pip install lumen[xarray]"
@@ -141,7 +133,8 @@ class XArraySQLSource(BaseSQLSource):
 
         for var_name in self._dataset.data_vars:
             var_ds = self._dataset[[var_name]]
-            self._ctx.from_dataset(var_name, var_ds, chunks=chunk_spec)
+            var_chunks = {k: v for k, v in chunk_spec.items() if k in var_ds.dims}
+            self._ctx.from_dataset(var_name, var_ds, chunks=var_chunks)
             self._registered_tables.add(var_name)
 
         if self.tables is None:
@@ -168,7 +161,7 @@ class XArraySQLSource(BaseSQLSource):
                 kw["engine"] = resolved_engine
             if chunks is not None:
                 kw["chunks"] = chunks
-            import xarray as xr
+            xr = try_import_xarray()
             ds = xr.open_dataset(uri, **kw)
         else:
             raise ValueError("Either 'uri' or '_dataset' must be provided.")
@@ -212,7 +205,30 @@ class XArraySQLSource(BaseSQLSource):
     def get_schema(self, table=None, limit=None, shuffle=False):
         # DataFusion supports neither TABLESAMPLE nor ORDER BY RAND(),
         # so force shuffle=False to make the parent use SQLLimit instead.
-        return super().get_schema(table, limit, shuffle=False)
+        schema = super().get_schema(table, limit, shuffle=False)
+        if table is None:
+            for tname, tschema in schema.items():
+                self._annotate_dimensions(tname, tschema)
+        else:
+            self._annotate_dimensions(table, schema)
+        return schema
+
+    def _annotate_dimensions(self, table: str, tschema: dict[str, Any]) -> None:
+        """Flag coordinate-dimension columns so filter UIs can surface them.
+
+        A column is marked ``"dimension": True`` when it is a dimension
+        coordinate of the dataset (a label-based axis such as ``time``/``lat``/
+        ``lon``). This holds for any table exposing those columns -- the raw
+        data variable as well as the derived/exploration tables produced by SQL
+        queries -- not just the data-variable table itself. The flag is
+        additive: consumers that do not understand it (tabular filter widgets,
+        ``auto_filters``) ignore it.
+        """
+        ds = self._dataset
+        dim_coords = {dim for dim in ds.dims if dim in ds.coords}
+        for col, col_schema in tschema.items():
+            if col in dim_coords and isinstance(col_schema, dict):
+                col_schema["dimension"] = True
 
     # ---- BaseSQLSource required overrides ----
 
@@ -239,8 +255,9 @@ class XArraySQLSource(BaseSQLSource):
         result = self._ctx.sql(sql_query)
         return result.to_pandas()
 
-    @cached
-    def get(self, table, **query):
+    def _build_sql(self, table, **query) -> str:
+        """Build the SQL for a table query, applying filters and any
+        sql_transforms. Shared by ``get`` and ``to_dataset``."""
         query.pop('__dask', None)
         sql_expr = self.get_sql_expr(table)
         sql_transforms = query.pop('sql_transforms', [])
@@ -252,7 +269,33 @@ class XArraySQLSource(BaseSQLSource):
         sql_transforms = [SQLFilter(conditions=conditions, read=self.dialect)] + sql_transforms
         for st in sql_transforms:
             sql_expr = st.apply(sql_expr)
-        return self.execute(sql_expr)
+        return sql_expr
+
+    @cached
+    def get(self, table, **query):
+        return self.execute(self._build_sql(table, **query))
+
+    def to_dataset(self, table, **query):
+        """Return the query result as a gridded ``xr.Dataset``.
+
+        Uses xarray-sql's ``to_dataset`` (lazy, keeps the data gridded) when
+        the installed version supports it, so a gridded source is never
+        materialized as long-form. Falls back to pivoting the long-form result
+        on the dataset dims for xarray-sql < 0.3.
+        """
+        result = self._ctx.sql(self._build_sql(table, **query))
+        if hasattr(result, 'to_dataset'):
+            # Pass only the dims the result actually has a column for. Multiple
+            # data vars need dims passed explicitly (the FROM clause is
+            # ambiguous), but a bounds dim (e.g. nbnds) or a projecting/
+            # aggregating sql_transform can leave a dataset dim out of the
+            # result, and to_dataset(dims=...) errors on a dim it can't find.
+            names = set(result.schema().names)
+            dims = [d for d in self._dataset.dims if d in names]
+            return result.to_dataset(dims=dims)
+        df = result.to_pandas()
+        present = [d for d in self._dataset.dims if d in df.columns]
+        return df.set_index(present).to_xarray() if present else df
 
     def create_sql_expr_source(
         self,

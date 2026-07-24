@@ -22,9 +22,11 @@ from lumen.ai.controls.ingest import (
     BaseSourceControls, FileSourceControls, UploadedFileRow,
 )
 from lumen.ai.coordinator import Coordinator, Plan, Planner
-from lumen.ai.coordinator.planner import Reasoning, make_plan_model
+from lumen.ai.coordinator.planner import make_plan_model
 from lumen.ai.editors import SQLEditor
-from lumen.ai.models import FollowUpSuggestion, ReplaceLine, RetrySpec
+from lumen.ai.models import (
+    FollowUpSuggestion, ReplaceLine, RetrySpec, ThinkingYesNo,
+)
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
 from lumen.ai.tools import FunctionTool, define_tool
@@ -74,8 +76,8 @@ async def test_planner_empty_plan(llm):
     plan_model = make_plan_model(["ChatAgent"], [])
 
     llm.set_responses([
-        Reasoning(chain_of_thought="Just use ChatAgent"),
-        plan_model(title="Hello!", steps=[])
+        ThinkingYesNo(chain_of_thought="Simple greeting", yes=False),
+        plan_model(chain_of_thought="Say Hello", title="Hello!", steps=[])
     ])
 
     planner = Planner(llm=llm)
@@ -100,8 +102,11 @@ async def test_planner_simple_plan(llm):
     (StepModel,) = get_args(PlanModel.__annotations__['steps'])
 
     llm.set_responses([
-        Reasoning(chain_of_thought="Just use ChatAgent"),
-        PlanModel(title="Hello!", steps=[
+        ThinkingYesNo(chain_of_thought="Simple greeting", yes=False),
+        PlanModel(
+            chain_of_thought="Just use ChatAgent",
+            title="Hello!",
+            steps=[
             StepModel(
                 actor="ChatAgent",
                 instruction="Say Hello!",
@@ -143,9 +148,11 @@ async def test_planner_error(llm):
     (StepModel,) = get_args(PlanModel.__annotations__['steps'])
 
     llm.set_responses([
-        Reasoning(chain_of_thought="Just use ChatAgent"),
+        ThinkingYesNo(chain_of_thought="Invalid plan", yes=False),
         lambda: PlanModel(
-            title="Hello!", steps=[
+            chain_of_thought="Just use ChatAgent",
+            title="Hello!",
+            steps=[
                 StepModel(
                     actor="Invalid",
                     instruction="Say Hello!",
@@ -566,7 +573,9 @@ async def test_process_files_duplicate_table_name():
     assert df.iloc[0, 0] == 99
 
 
-# --- Follow-up suggestion coordinator tests ---
+# -------------------------------------------------------------------
+# Tests for follow-up suggestion generation
+# -------------------------------------------------------------------
 
 async def test_suggest_follow_up_returns_suggestion(llm):
     """Coordinator.suggest_follow_up should return a query string."""
@@ -731,7 +740,7 @@ class TestRenderTaskHistoryMultimodal:
         user_msg = next(m for m in rendered if m["role"] == "user")
         assert isinstance(user_msg["content"], str)
         assert "Hello" in user_msg["content"]
-        assert "🟡" in user_msg["content"]
+        assert "🟡 say hi" in todos
 
     def test_multimodal_content_preserves_image(self, llm):
         img = object()
@@ -748,7 +757,7 @@ class TestRenderTaskHistoryMultimodal:
         assert img in user_msg["content"]
         text = content_to_text(user_msg["content"])
         assert "What is this?" in text
-        assert "🟡" in text
+        assert "🟡 describe" in todos
 
     def test_multimodal_multiple_tasks(self, llm):
         img = object()
@@ -766,8 +775,8 @@ class TestRenderTaskHistoryMultimodal:
         assert isinstance(user_msg["content"], list)
         assert img in user_msg["content"]
         text = content_to_text(user_msg["content"])
-        assert "🟡 step 1" in text
-        assert "⚪ step 2" in text
+        assert "🟡 step 1" in todos
+        assert "⚪ step 2" in todos
 
     def test_assistant_messages_unchanged(self, llm):
         task = ActorTask(ChatAgent(), instruction="reply", title="Reply")
@@ -794,8 +803,11 @@ async def test_planner_multimodal_user_message(llm):
     (StepModel,) = get_args(PlanModel.__annotations__['steps'])
 
     llm.set_responses([
-        Reasoning(chain_of_thought="Describe the image"),
-        PlanModel(title="Image Q&A", steps=[
+        ThinkingYesNo(chain_of_thought="Multimodal query", yes=False),
+        PlanModel(
+            chain_of_thought="Describe the Image",
+            title="Image Q&A",
+            steps=[
             StepModel(
                 actor="ChatAgent",
                 instruction="Describe the uploaded image",

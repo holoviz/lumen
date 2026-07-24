@@ -343,4 +343,4 @@ Questions? Join our community:
 - **Forum:** [Discourse](https://discourse.holoviz.org/c/lumen/)
 - **Chat:** [Discord](https://discord.com/invite/rb6gPXbdAr)
 - **Bugs:** [GitHub Issues](https://github.com/holoviz/lumen/issues)
-- **Contributing:** [Guide](reference/contributing.md)
+- **Contributing:** [Guide](contributing.md)

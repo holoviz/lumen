@@ -4,7 +4,12 @@ from __future__ import annotations
 # File type constants
 # ─────────────────────────────────────────────────────────────────────────────
 
-TABLE_EXTENSIONS = ("csv", "parquet", "parq", "json", "xlsx", "geojson", "wkt", "zip")
+XARRAY_EXTENSIONS = (
+    "nc", "nc4", "netcdf", "h5", "hdf5", "he5", "zarr",
+    "grib", "grib2", "grb", "grb2",
+)
+
+TABLE_EXTENSIONS = ("csv", "parquet", "parq", "json", "xlsx", "geojson", "wkt", "zip", "html", "htm", *XARRAY_EXTENSIONS)
 
 METADATA_EXTENSIONS = ("md", "txt", "yaml", "yml", "json", "pdf", "docx", "doc", "pptx", "ppt")
 METADATA_FILENAME_PATTERNS = ("_metadata", "metadata_", "readme", "schema")
@@ -13,6 +18,7 @@ METADATA_FILENAME_PATTERNS = ("_metadata", "metadata_", "readme", "schema")
 # HTTP / download constants
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Timeout for short API requests (e.g. REST endpoints, OpenAPI spec fetches)
 HTTP_TIMEOUT_SECONDS = 30
 
 CONTENT_TYPE_TO_EXTENSION: dict[str, str] = {
@@ -26,14 +32,15 @@ CONTENT_TYPE_TO_EXTENSION: dict[str, str] = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
     "application/vnd.ms-excel": "xlsx",
     "text/plain": "csv",
+    "text/html": "html",
 }
 
 
 class DownloadConfig:
-    """Configuration constants for HTTP file downloads."""
+    """Configuration constants for large file downloads (longer timeouts than API requests)."""
 
     CHUNK_SIZE = 1024 * 1024          # 1MB chunks
-    TIMEOUT_SECONDS = 300             # 5 minutes
+    TIMEOUT_SECONDS = 300             # 5 minutes — for streaming large file downloads
     PROGRESS_UPDATE_INTERVAL = 50     # Update every 50 chunks
     DEFAULT_HASH_MODULO = 10000
     UNKNOWN_SIZE_MAX = 1_000_000_000  # 1GB max for unknown file sizes

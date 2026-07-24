@@ -87,6 +87,8 @@ class FunctionTool(Tool):
     keys listed in the provides parameter will be copied into working memory.
     """
 
+    conditions = param.List(default=[])
+
     formatter = param.Parameter(default="{function}({arguments}) returned: {output}", doc="""
         Formats the return value for inclusion in the global context.
         Accepts the 'function', 'arguments' and 'output' as formatting variables.""")
@@ -121,7 +123,8 @@ class FunctionTool(Tool):
             params["purpose"] = annotations["purpose"]
         if "render_output" not in params and "render_output" in annotations:
             params["render_output"] = annotations["render_output"]
-        model = function_to_model(function, skipped=self.requires)
+        requires = list(params.get("requires", []))
+        model = function_to_model(function, skipped=requires)
         if "purpose" not in params:
             params["purpose"] = f"{model.__name__}: {model.__doc__}" if model.__doc__ else model.__name__
         super().__init__(

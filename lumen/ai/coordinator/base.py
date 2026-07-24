@@ -8,7 +8,9 @@ from collections.abc import Callable
 from functools import partial
 from textwrap import dedent, indent
 from types import FunctionType
-from typing import TYPE_CHECKING, Any, Self
+from typing import (
+    TYPE_CHECKING, Any, Self, get_type_hints,
+)
 
 import param
 
@@ -23,19 +25,22 @@ from panel_material_ui import (
 )
 
 from ..actor import Actor
-from ..agents import Agent, AnalysisAgent, ChatAgent
+from ..agents import (
+    Agent, AnalysisAgent, ChatAgent, SourceAgent,
+)
 from ..config import PROMPTS_DIR, MissingContextError
 from ..context import TContext
 from ..llm import LlamaCpp, Llm, Message
 from ..models import FollowUpSuggestion, ThinkingYesNo
 from ..report import ActorTask, Section, TaskGroup
-from ..tools import MetadataLookup, Tool, VectorLookupToolUser
+from ..tools import (
+    MetadataLookup, SourceLookup, Tool, VectorLookupToolUser,
+)
 from ..tools.document_llm_tools import make_document_vector_llm_tools
 from ..tools.metaset_docs_llm_tools import make_load_metaset_relevant_docs_tool
 from ..utils import (
-    content_to_text, describe_data_sync, fuse_messages, get_root_exception,
-    log_debug, mutate_user_message, normalized_name, set_content_text,
-    wrap_logfire,
+    describe_data_sync, fuse_messages, get_root_exception, log_debug,
+    mutate_user_message, normalized_name, wrap_logfire,
 )
 from ..vector_store import NumpyVectorStore
 
@@ -68,6 +73,7 @@ class Plan(Section):
 
     def render_task_history(self, i: int | None = None, failed: bool = False) -> tuple[list[Message], str]:
         i = self._current if i is None else i
+
         user_query = None
         for msg in reversed(self.history):
             if msg.get("role") == "user":
@@ -88,23 +94,23 @@ class Plan(Section):
             todos_list.append(f"- {status} {instruction}")
         todos = "\n".join(todos_list)
 
-        rendered_history = []
-        for msg in self.history:
-            if msg is user_query:
-                user_content = user_query["content"]
-                if not isinstance(user_content, (str, list)):
-                    user_content = [user_content]
-                user_text = content_to_text(user_content)
-                roadmap_text = (
-                    f"User: {user_text!r}\n"
-                    f"Roadmap:\n{indent(todos, '    ')}\n"
-                    f"Tasks marked ⚪ are scheduled for others later. "
-                    f"Your EXCLUSIVE goal is to focus on the 🟡 task"
-                )
-                formatted_content = set_content_text(roadmap_text, user_content)
-                rendered_history.append({"content": formatted_content, "role": "user"})
-            else:
+        roadmap_system = (
+            f"<roadmap>\n{indent(todos, '  ')}\n</roadmap>\n"
+            "Tasks marked 🟢 are completed, ⚪ are pending, 🟡 is current."
+        )
+        if user_query is None:
+            rendered_history = list(self.history)
+            rendered_history.append(
+                {"role": "system", "content": roadmap_system}
+            )
+        else:
+            rendered_history = []
+            for msg in self.history:
                 rendered_history.append(msg)
+                if msg is user_query:
+                    rendered_history.append(
+                        {"role": "system", "content": roadmap_system}
+                    )
         return rendered_history, todos
 
     async def _run_task(self, i: int, task: Self | Actor, context: TContext, **kwargs):
@@ -141,7 +147,7 @@ class Plan(Section):
                 raise RuntimeError(f"{task.title!r} task failed to provide declared context.")
 
             context_keys = ", ".join(f"`{k}`" for k in task_context)
-            step.stream(f"Generated {len(outputs)} and provided {context_keys}.")
+            step.stream(f"\n\nGenerated {len(outputs)} outputs and provided {context_keys}.")
             step.success_title = f"Task {task.title!r} successfully completed"
             log_debug(f"\033[96mCompleted: {task.title}\033[0m", show_length=False)
         return outputs, task_context
@@ -249,6 +255,7 @@ class Plan(Section):
         context = context or self.context
         if "__error__" in context:
             del context["__error__"]
+        context["plan"] = self
         outputs, out_context = await super().execute(context, **kwargs)
         _, todos = self.render_task_history(failed=self.status == "error")
         if self.steps_layout is not None:
@@ -409,15 +416,38 @@ class Coordinator(Viewer, VectorLookupToolUser):
     def _process_tools(self, tools: list[type[Tool] | Tool] | None) -> list[type[Tool] | Tool | FunctionType]:
         tools = list(tools) if tools else []
 
+        def _schema_provides(tool, key: str) -> bool:
+            """Check if a tool's output_schema provides a given key,
+            using get_type_hints to handle inheritance correctly."""
+            schema = getattr(tool, 'output_schema', None)
+            if schema is None:
+                return False
+            try:
+                return key in get_type_hints(schema)
+            except Exception:
+                return key in getattr(schema, '__annotations__', {})
+
         # If none of the tools provide metaset, add MetadataLookup
         provides_metaset = any(
-            "metaset" in tool.output_schema.__annotations__ for tool in tools
+            _schema_provides(tool, "metaset") for tool in tools
             if isinstance(tool, Tool) or (isinstance(tool, type) and issubclass(tool, Tool))
         )
         if not provides_metaset:
             # Add both tools - they will share the same vector store through VectorLookupToolUser
             # Both need to be added as classes, not instances, for proper initialization
             tools += [MetadataLookup]
+
+        # If any agent is a SourceAgent and no tool provides source_actions, add SourceLookup
+        has_source_agent = any(
+            (isinstance(a, SourceAgent) if isinstance(a, Agent) else (isinstance(a, type) and issubclass(a, SourceAgent)))
+            for a in self.agents
+        )
+        provides_source_actions = any(
+            _schema_provides(tool, "source_actions") for tool in tools
+            if isinstance(tool, Tool) or (isinstance(tool, type) and issubclass(tool, Tool))
+        )
+        if has_source_agent and not provides_source_actions:
+            tools += [SourceLookup]
         return tools
 
     def _process_prompts(self, prompts: dict[str, dict[str, Any]], tools: list[type[Tool] | Tool]) -> dict[str, dict[str, Any]]:

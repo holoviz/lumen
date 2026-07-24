@@ -38,7 +38,7 @@ class UploadSourceControls(FileSourceControls):
         self._file_input = FileDropper(**file_dropper_params)
         self._file_input.param.watch(self._on_file_upload, "value")
         self._clear_button = Button(
-            name="Clear selected",
+            label="Clear selected",
             icon="delete",
             on_click=self._on_clear_selection,
             visible=self._upload_cards.param.visible,

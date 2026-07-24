@@ -23,7 +23,7 @@ Here's a list of tools:
 {% endfor %}
 {%- endif %}
 {% if primary %}
-If the request requires multiple steps, pick the agent that can will perform the final step and provide the user with the output the user asked for, e.g. if the request requires performing some calculation and a plot, pick the plotting agent. The agent you select can request other agents to fill in the blanks.
+If the request requires multiple steps, pick the agent that will perform the final step and provide the user with the output the user asked for, e.g. if the request requires performing some calculation and a plot, pick the plotting agent. The agent you select can request other agents to fill in the blanks.
 {% else %}
 The agent is only responsible for answering part of the query and should provide one (or more) of the following pieces of information {{ unmet_dependencies }}.
 {% endif %}

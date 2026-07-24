@@ -5,17 +5,20 @@ You are responsible for selecting the appropriate analysis to perform on the dat
 
 Available analyses include:
 {% for name, analysis in analyses.items() %}
-- **{{ name }}**: {{ analysis.__doc__ if analysis.__doc__ else analysis.__name__ | replace("\n", " ") }}
+- **{{ name }}**: {{ (analysis.__doc__ or analysis.__name__) | replace("\n", " ") }}
 {% endfor -%}
 {%- endblock -%}
 
 {% block context -%}
 {%- if memory.get('data') is not none %}
-Here is the current dataset:
+Here is a summary of the current dataset:
 {% if memory.data|length == 0 %}
 The data is empty.
 {% else %}
 {{ memory['data'] }}
+{% if 'rows_capped_at_limit' in memory['data'] %}
+Note: `rows_capped_at_limit` means the result was truncated for display and is not the table's total row count.
+{%- endif %}
 {%- endif %}
 {%- endif -%}
 {%- endblock -%}

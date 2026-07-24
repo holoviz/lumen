@@ -1,5 +1,6 @@
 import typing as t
 
+import pandas as pd
 import param
 import yaml
 
@@ -7,6 +8,7 @@ from panel.chat import ChatStep
 from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 
+from ...filters import ConstantFilter
 from ...pipeline import Pipeline
 from ...sources.base import BaseSQLSource, Source
 from ...sources.duckdb import DuckDBSource
@@ -155,15 +157,18 @@ def make_run_exploration_sql_tool(sources: dict[tuple[str, str], BaseSQLSource])
         return await execute_exploration_sql(source, sql_query, sources=sources)
 
     names = ", ".join(sorted({s for s, _ in sources})) or "(none)"
+    tables = ", ".join(sorted({t for _, t in sources})) or "(none)"
     run_exploration_sql.__doc__ = (
         f"Execute read-only SQL on the named source to inspect data (use LIMIT on raw selects). "
-        f"Sources: {names}."
+        f"Sources: {names}. "
+        f"Tables: {tables}. "
+        f"Reference tables by name directly (e.g. SELECT * FROM my_table), not with read_csv() or read_parquet()."
     )
     return FunctionTool(
         run_exploration_sql,
         purpose=(
             "Run exploratory read-only SQL (SELECT/WITH) on a datasource by name; "
-            "returns a small text preview of the result or an error message."
+            "returns a small text preview of the result or an error message. "
             "Do not use this tool to generate the result, it is meant as an exploratory "
             "tool to gather the information needed to generate the final SQL query."
         ),
@@ -235,8 +240,11 @@ def make_load_table_schemas_tool(metaset: Metaset) -> FunctionTool:
                 for k, v in live.items():
                     if k == "__len__":
                         continue
-                    col = col_info.get(k, {})
-                    if col.description:
+                    # col_info only carries cataloged columns; live keys not
+                    # in the catalog (e.g. xarray dim coordinates absent from
+                    # a STAC datacube extension) get the live schema as-is.
+                    col = col_info.get(k)
+                    if col is not None and col.description:
                         schema[k] = dict(col.description, **v)
                     else:
                         schema[k] = v
@@ -265,6 +273,93 @@ def make_load_table_schemas_tool(metaset: Metaset) -> FunctionTool:
             "or exploratory SQL when planning which tables to use."
         ),
     )
+
+
+_RANGE_FIELD_TYPES = ("number", "integer")
+
+
+def _coerce_filter_value(field_schema: dict[str, t.Any], value: t.Any) -> t.Any:
+    """Coerce an LLM-supplied filter value to what the Source expects.
+
+    A two-element ``[lo, hi]`` list on a numeric or datetime field becomes a
+    ``(lo, hi)`` tuple (interpreted as an inclusive range / ``BETWEEN``); datetime
+    bounds are parsed to timestamps. Scalars (equality) and longer lists
+    (membership / ``IN``) are passed through unchanged.
+    """
+    is_datetime = field_schema.get("format") in ("date", "date-time", "datetime")
+    if isinstance(value, (list, tuple)) and len(value) == 2 and (
+        field_schema.get("type") in _RANGE_FIELD_TYPES or is_datetime
+    ):
+        lo, hi = value
+        if is_datetime:
+            lo, hi = pd.Timestamp(lo), pd.Timestamp(hi)
+        return (lo, hi)
+    return value
+
+
+def make_apply_filter_tool(pipeline: Pipeline) -> FunctionTool:
+    """Build a :class:`~lumen.ai.tools.FunctionTool` that filters ``pipeline``.
+
+    The tool lets the chat agent narrow the data already loaded in the current
+    exploration -- subsetting an xarray coordinate dimension (``time``/``lat``/
+    ``lon``/level) or a tabular column. It adds a
+    :class:`~lumen.filters.base.Filter` to the pipeline (the same machinery as
+    the manual "Add Filter" UI), which subsets the data without modifying the
+    SQL query.
+
+    Known limitation: this tool is registered on :class:`SQLAgent`, whose
+    response also emits a SQL query. A single "filter" request can therefore
+    both apply this in-place pipeline filter to the current exploration and open
+    a new exploration whose SQL carries an equivalent ``WHERE`` clause. Giving
+    the tool a dedicated, non-SQL-emitting home is tracked as follow-up work.
+    """
+    schema = pipeline.schema or {}
+    filterable = [c for c in schema if c != "__len__"]
+
+    async def apply_filter(field: str, value: t.Any) -> str:
+        if field not in filterable:
+            return (
+                f"Cannot filter on {field!r}: not a column of this table. "
+                f"Filterable fields: {', '.join(filterable) or '(none)'}."
+            )
+        try:
+            coerced = _coerce_filter_value(schema[field], value)
+            filt = ConstantFilter(field=field, value=coerced, schema=schema)
+            # Replace any existing filter on the same field so repeated calls
+            # refine rather than stack contradictory conditions.
+            pipeline.filters = [f for f in pipeline.filters if f.field != field]
+            pipeline.add_filter(filt)
+        except Exception as exc:
+            return f"Could not apply filter on {field!r} with value {value!r}: {exc}"
+        return f"Applied filter on {field!r} ({value!r}); {len(pipeline.data)} rows match."
+
+    fields = ", ".join(filterable) or "(none)"
+    apply_filter.__doc__ = (
+        "Filter the current exploration's data on a single field. "
+        f"Filterable fields: {fields}. "
+        "Pass a [min, max] list for a numeric or datetime range, a single value "
+        "for an exact match, or a list of values for membership."
+    )
+    return FunctionTool(
+        apply_filter,
+        purpose=(
+            "Subset the data already loaded in the current exploration (e.g. an "
+            "xarray coordinate such as time/lat/lon, or a tabular column). Prefer "
+            "this over rewriting SQL when the user wants to narrow the existing result."
+        ),
+    )
+
+
+def make_apply_filter_llm_tool(context: TContext):
+    """Expose :func:`make_apply_filter_tool` as a context-gated ``llm_tools`` entry.
+
+    Returns the tool only when a pipeline is present in working memory, so it is
+    offered to the LLM exactly when there is an existing exploration to filter.
+    """
+    pipeline = context.get("pipeline")
+    if pipeline is None:
+        return []
+    return make_apply_filter_tool(pipeline)
 
 
 class SQLInputs(ContextModel):
@@ -300,12 +395,19 @@ class SQLAgent(BaseLumenAgent):
             "Use for querying, filtering, aggregating, or transforming data with SQL",
             "Use for calculations that require executing SQL (e.g., 'calculate average', 'sum by category')",
             "Use when user asks to 'show', 'get', 'fetch', 'query', 'find', 'filter', 'calculate', 'aggregate', or 'transform' data",
+            "Use after external data has been fetched and the user expects the fetched fields/rows to be presented, selected, filtered, or otherwise queried",
             "NOT when user asks to 'explain', 'interpret', 'analyze', 'summarize', or 'comment on' existing data",
             "NOT useful if the user is using the same data for plotting",
         ]
     )
 
     exclusions = param.List(default=["dbtsl_metaset"])
+
+    # When an exploration pipeline is already in context, let the LLM narrow it
+    # with apply_filter. NOTE: SQLAgent also emits a SQL query, so a filter
+    # request may both apply this in-place filter and open a new SQL exploration
+    # (see make_apply_filter_tool for the known limitation / follow-up).
+    llm_tools = param.List(default=[make_apply_filter_llm_tool])
 
     not_with = param.List(default=["DbtslAgent", "MetadataLookup", "TableListAgent"])
 
@@ -381,7 +483,7 @@ class SQLAgent(BaseLumenAgent):
     async def _execute_query(
         self, source: BaseSQLSource, context: TContext, expr_slug: str, sql_query: str, tables: list[str],
         is_final: bool, should_materialize: bool, step: ChatStep
-    ) -> tuple[Pipeline, Source, str]:
+    ) -> Pipeline:
         """Execute SQL query and return pipeline and summary."""
         # Create SQL source
         source_tables = source.tables if source.tables is not None else {}
@@ -432,7 +534,7 @@ class SQLAgent(BaseLumenAgent):
             summary_formatted += f"\n\nMaterialized data: `{sql_expr_source.name}{SOURCE_TABLE_SEPARATOR}{expr_slug}`"
         stream_details(f"{summary_formatted}", step, title=expr_slug)
 
-        return pipeline, sql_expr_source, summary
+        return pipeline
 
     async def _finalize_execution(
         self,
@@ -445,7 +547,10 @@ class SQLAgent(BaseLumenAgent):
 
         df = await get_data(pipeline)
         if df.empty and raise_if_empty:
-            raise ValueError(f"\nQuery `{sql}` returned empty results; ensure all the WHERE filter values exist in the dataset.")
+            raise ValueError(
+                f"\nQuery `{sql}` returned empty results."
+                "\nUse `run_exploration_sql` to check what values actually exist before filtering."
+            )
 
         view = self._editor_type(
             component=pipeline, title=step_title, spec=sql
@@ -467,6 +572,27 @@ class SQLAgent(BaseLumenAgent):
                 renamed_table = m.table
             mirrors[renamed_table] = (sources[(m.source, m.table)], m.table)
         return DuckDBSource(uri=":memory:", mirrors=mirrors), list(mirrors)
+
+    @staticmethod
+    def _active_filters(pipeline: Pipeline | None) -> list[str] | None:
+        """Describe the interactive filters currently applied to ``pipeline`` as
+        WHERE-style conditions so a follow-up query can preserve the subset.
+        Returns None when there is no pipeline or no active filter."""
+        if pipeline is None:
+            return None
+        conditions = []
+        for filt in pipeline.filters:
+            query = filt.query
+            if query is None:
+                continue
+            if isinstance(query, tuple) and len(query) == 2:
+                condition = f"between {query[0]} and {query[1]}"
+            elif isinstance(query, (list, set)):
+                condition = f"in ({', '.join(repr(v) for v in query)})"
+            else:
+                condition = f"= {query!r}"
+            conditions.append(f"{filt.field} {condition}")
+        return conditions or None
 
     @retry_llm_output()
     async def _render_execute_query(
@@ -538,6 +664,7 @@ class SQLAgent(BaseLumenAgent):
                 sql_plan_context=None,
                 errors=errors,
                 discovery_context=discovery_context,
+                active_filters=self._active_filters(context.get("pipeline")),
                 source_names=sorted({s for s, _ in sources}),
                 tools=tool_list,
             )
@@ -565,7 +692,7 @@ class SQLAgent(BaseLumenAgent):
             # Only materialize for DuckDB sources
             should_materialize = isinstance(source, DuckDBSource)
 
-            pipeline, sql_expr_source, summary = await self._execute_query(
+            pipeline = await self._execute_query(
                 source, context, expr_slug, validated_sql, tables=tables,
                 is_final=True, should_materialize=should_materialize, step=step
             )

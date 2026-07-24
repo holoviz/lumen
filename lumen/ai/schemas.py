@@ -174,7 +174,7 @@ class Metaset:
         if include_schema and self.has_schemas:
             schema = self.schemas.get(table_slug)
             if schema and schema.get("__len__"):
-                data['n_rows'] = len(schema)
+                data['n_rows'] = schema["__len__"]
 
         if include_lineage and catalog_entry.derived_from:
             data['derived_from'] = [
@@ -271,15 +271,22 @@ class Metaset:
         offset: int = 0,
         show_source: bool | None = None,
         n_others: int = 0,
+        schema_tables: list[str] | None = None,
     ) -> str:
-        # Deduplicate catalog slugs — keep only the newest entry per
+        # Deduplicate catalog slugs, keeping only the newest entry per
         # table name so stale materialization generations don't appear.
         active_slugs = set(self._deduplicated_slugs())
 
-        # Determine which tables to show with full details
-        if self.schema_tables is not None:
+        # Determine which tables to show with full details. A per-call
+        # schema_tables scopes this render without mutating the shared
+        # instance; None means "not provided" so an explicit [] can still
+        # scope to zero primary tables.
+        effective_schema_tables = (
+            self.schema_tables if schema_tables is None else schema_tables
+        )
+        if effective_schema_tables is not None:
             # Use explicitly set schema_tables, filtered to active slugs
-            primary_slugs = [s for s in self.schema_tables if s in self.catalog and s in active_slugs]
+            primary_slugs = [s for s in effective_schema_tables if s in self.catalog and s in active_slugs]
         else:
             # Fall back to top n by similarity, filtered to active slugs
             primary_slugs = [s for s in self.get_top_tables(n, offset) if s in active_slugs]

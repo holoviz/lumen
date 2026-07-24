@@ -85,11 +85,28 @@ def get_dataframe_schema(df, columns=None):
     if columns is None:
         columns = list(df.columns)
 
+    geom_cols = set(geometry_columns(df))
+
     properties = schema['items']['properties']
     for name in columns:
         dtype = df.dtypes[name]
         column = df[name]
-        if dtype.kind in 'uifM':
+        if name in geom_cols:
+            geom_type = 'unknown'
+            crs = None
+            if not (df.empty or is_dask):
+                non_null = column.dropna()
+                if len(non_null):
+                    geom_type = non_null.iloc[0].geom_type
+                # crs lets a consumer decide whether a basemap adds context: a
+                # geographic (lat/lon) crs suits a map, a projected/absent one a plain plot
+                crs = column.array.crs
+            properties[name] = {
+                'type': 'string', 'format': 'geometry', 'geometry_type': geom_type,
+                'crs': str(crs) if crs is not None else None,
+                'geographic': bool(crs is not None and crs.is_geographic),
+            }
+        elif dtype.kind in 'uifM':
             kind = None
             if df.empty:
                 if dtype.kind == 'M':
@@ -491,3 +508,67 @@ def normalize_table_name(name: str) -> str:
     'table_name'
     """
     return re.sub(r'\W+', '_', name).strip('_').lower()
+
+
+def try_import(module_name, load=True):
+    """Import and return a module, or None if it is unavailable.
+
+    With load=False the module is returned only if it has already been
+    imported, a cheap check that never triggers an import; this lets a hot path
+    ask whether an optional dependency is in play without paying to import it.
+    With load=True (the default) the module is imported on demand.
+    """
+    if not load:
+        return sys.modules.get(module_name)
+    try:
+        return importlib.import_module(module_name)
+    except ImportError:
+        return None
+
+
+def try_import_xarray(load=True):
+    """Import and return xarray, or None if xarray or xarray-sql is unavailable."""
+    if try_import("xarray_sql", load=load) is None:
+        return None
+    return try_import("xarray", load=load)
+
+
+def is_geodataframe(df):
+    """Return True if df is a geopandas GeoDataFrame.
+
+    Uses an already-imported geopandas rather than importing it: a df cannot be
+    a GeoDataFrame unless geopandas is loaded, so this stays cheap on the hot
+    path and never speculatively imports geopandas.
+    """
+    gpd = try_import("geopandas", load=False)
+    return gpd is not None and isinstance(df, gpd.GeoDataFrame)
+
+
+def geometry_columns(df):
+    """Return the names of geometry-typed columns in df.
+
+    Empty when geopandas is not imported (no geometry column can exist without
+    it) or df has no geometry columns; never speculatively imports geopandas.
+    """
+    gpd = try_import("geopandas", load=False)
+    if gpd is None:
+        return []
+    return [c for c in df.columns if isinstance(df[c].dtype, gpd.array.GeometryDtype)]
+
+
+def geometry_to_wkt(df):
+    """Return a copy of df with geometry columns converted to WKT strings.
+
+    A GeoDataFrame geometry column holds shapely objects that cannot be
+    serialized to the browser (e.g. by Bokeh in a Tabulator), so convert them
+    to WKT text for tabular display. Returns df unchanged if it has no
+    geometry columns.
+    """
+    geom_cols = geometry_columns(df)
+    if not geom_cols:
+        return df
+    gpd = try_import("geopandas", load=False)
+    df = pd.DataFrame(df).copy()
+    for col in geom_cols:
+        df[col] = gpd.GeoSeries(df[col]).to_wkt()
+    return df

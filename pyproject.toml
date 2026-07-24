@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "lumen"
 dynamic = ["version"]
-description = "A monitoring solution built on Panel."
+description = "Agent framework for chatting with data and building dashboards."
 readme = "README.md"
 license = { text = "BSD" }
 requires-python = ">=3.11"
@@ -29,6 +29,7 @@ dependencies = [
     "bokeh",
     "chardet",
     "duckdb >=1.2.0",
+    "lxml",
     "griffe",
     "holoviews >=1.17.0",
     "hvplot",
@@ -42,8 +43,8 @@ dependencies = [
     "pandas",
     "panel >=1.7.5",
     "panel-graphic-walker[kernel] >=0.6.4",
-    "panel-material-ui >=0.9.1",
-    "panel-splitjs >=0.3.2",
+    "panel-material-ui >=0.14.0",
+    "panel-splitjs >=0.4.0",
     "param >=2.2.1",
     "pyarrow",
     "pydantic >=2.8.0",
@@ -61,22 +62,28 @@ Source = "https://github.com/holoviz/lumen"
 HoloViz = "https://holoviz.org/"
 
 [project.optional-dependencies]
-tests = ['pytest', 'pytest-rerunfailures', 'pytest-asyncio']
+tests = ['pytest', 'pytest-rerunfailures', 'pytest-asyncio', 'pytest-xdist', 'lxml']
+dev = [
+    'lumen[tests,sql,ai-openai,xarray,geo]',
+    'panel>=1.9.0rc0',
+]
 sql = ['sqlalchemy']
 ai-local = ['huggingface_hub', 'hf_xet']
 ai-openai = ['openai']
+ai-openrouter = ['lumen[ai-openai]']
 ai-mistralai = ['mistralai']
 ai-bedrock = ['boto3>=1.42.23']
 ai-anthropic = ['anthropic']
 ai-transformers = ['lumen[ai-local]', 'sentence_transformers>=2.7.0', 'transformers>=4.51.0']  # for embeddings
 ai-llama = ['lumen[ai-local]', 'llama-cpp-python >=0.3.15']
-ai-google = ['google-genai>=1.56.0', 'jsonref']
+ai-google = ['google-genai>=1.56.0', 'jsonref', 'opentelemetry-instrumentation-google-genai']
 ai-litellm = ['litellm']
 ai-ollama = ['ollama']
 chromadb = ['chromadb']
 bigquery = ['google-cloud-bigquery', 'sqlalchemy-bigquery']
-xarray = ['xarray', 'xarray-sql', 'netCDF4', 'zarr']
+xarray = ['xarray', 'xarray-sql >=0.3.1', 'netCDF4', 'zarr']
 xarray-grib = ['lumen[xarray]', 'cfgrib', 'eccodes']
+geo = ['geopandas', 'geoviews']
 snowflake = ['snowflake-connector-python', 'cryptography']
 ae5 = ['ae5-tools']
 mcp = ['fastmcp']
@@ -111,6 +118,9 @@ addopts = [
     "--doctest-modules",
     "--doctest-ignore-import-errors",
 ]
+markers = [
+    "xdist_group: mark tests to run in the same xdist worker group",
+]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 minversion = "7"
@@ -124,6 +134,7 @@ filterwarnings = [
     "ignore:unclosed <socket.socket:ResourceWarning", # Windows Python 3.10 test-example
     "ignore:ArrowStringArray._data is a deprecated and will be removed in a future version, use ._pa_array instead:FutureWarning",
     "ignore::pytest.PytestUnraisableExceptionWarning", # Panel/asyncio event loop cleanup on fixture teardown
+    "ignore:The 'generic' unit for NumPy timedelta is deprecated:DeprecationWarning:fastparquet",
 ]
 
 [tool.ruff]
