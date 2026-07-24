@@ -26,7 +26,11 @@ nav = [
       {"Weather Data AI Explorer" = "examples/tutorials/weather_data_ai_explorer.md"},
       {"SaaS Company Report Dashboard" = "examples/tutorials/saas_company_report_dashboard.md"},
       {"Census Data AI Explorer" = "examples/tutorials/census_data_ai_explorer.md"},
-      {"Mesonet Weather Explorer" = "examples/tutorials/mesonet_weather_explorer.md"}
+      {"Mesonet Weather Explorer" = "examples/tutorials/mesonet_weather_explorer.md"},
+      {"Weather API Explorer (OpenAPI)" = "examples/tutorials/weather_openapi_explorer.md"},
+      {"Stock Market Explorer" = "examples/tutorials/massive_stock_explorer.md"},
+      {"Build Dashboard with Spec" = "examples/tutorials/penguins_dashboard_spec.md"},
+      {"SaaS Executive Dashboard" = "examples/tutorials/saas_metrics_reports.md"}
     ]},
     {"Gallery" = [
       {"Overview" = "examples/gallery/index.md"},
