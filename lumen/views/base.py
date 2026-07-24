@@ -1466,15 +1466,19 @@ class VegaLiteView(View):
     def _get_params(self) -> dict[str, Any]:
         df = self.get_data()
         spec_data = self.spec.get('data', {})
+        spec = {
+            '$schema': 'https://vega.github.io/schema/vega-lite/v5.json',
+            **self.spec,
+        }
 
         if 'url' in spec_data or 'inline' in spec_data:
             # If data already has url/inline data, make pipeline data available as named dataset
             # Don't inject into primary data, use datasets instead
             datasets = self.spec.get('datasets', {})
             datasets[self.pipeline.table] = df
-            encoded = dict(self.spec, datasets=datasets)
+            encoded = dict(spec, datasets=datasets)
         else:
-            encoded = dict(self.spec, data={'values': df, **spec_data})
+            encoded = dict(spec, data={'values': df, **spec_data})
         return dict(object=encoded, **self.kwargs)
 
     def get_panel(self) -> pn.pane.Vega:

@@ -384,6 +384,23 @@ def test_vega_datasets(set_root):
     pd.testing.assert_frame_equal(final_spec["datasets"]["test"], pipeline.data)
 
 
+def test_vega_defaults_schema(set_root):
+    set_root(str(Path(__file__).parent.parent))
+    source = FileSource(tables={'test': 'sources/test.csv'})
+    pipeline = Pipeline(source=source, table="test")
+    spec = {
+        "mark": "bar",
+        "encoding": {
+            "x": {"field": "A", "type": "nominal"},
+            "y": {"field": "B", "type": "quantitative"},
+        },
+    }
+
+    final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
+
+    assert final_spec["$schema"] == "https://vega.github.io/schema/vega-lite/v5.json"
+
+
 @requires_geopandas
 @requires_geoviews
 def test_view_hvplot_geometry_auto_kind():
