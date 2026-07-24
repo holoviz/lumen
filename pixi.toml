@@ -117,7 +117,9 @@ mkdocs-literate-nav = "*"
 
 [feature.doc.tasks]
 # Updated tasks to use zensical instead of mkdocs
-docs-build = { cmd = 'zensical build --clean', depends-on = ['install'] }
+_docs-build-site = { cmd = 'zensical build --clean', depends-on = ['install'] }
+# llms.txt is written into builtdocs, so it has to run after --clean has wiped it.
+docs-build = { cmd = 'python scripts/build_llms_txt.py', depends-on = ['_docs-build-site'] }
 docs-serve = { cmd = 'zensical serve', depends-on = ['install'] }
 docs-clean = { cmd = 'rm -rf builtdocs', depends-on = ['install'] }
 
