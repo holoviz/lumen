@@ -2,7 +2,7 @@
 
 Global earthquake data with magnitude and depth analysis.
 
-![Earthquakes Dashboard](https://raw.githubusercontent.com/holoviz/lumen/main/doc/_static/earthquakes.png)
+![Earthquakes Dashboard](../../assets/gallery/earthquakes.png)
 
 ## Features
 

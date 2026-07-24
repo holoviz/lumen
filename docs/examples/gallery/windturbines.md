@@ -2,7 +2,7 @@
 
 Wind turbine performance metrics and geographic distribution across the US.
 
-![Wind Turbines Dashboard](https://raw.githubusercontent.com/holoviz/lumen/main/doc/_static/windturbines.png)
+![Wind Turbines Dashboard](../../assets/gallery/windturbines.png)
 
 ## Features
 

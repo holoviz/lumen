@@ -2,7 +2,7 @@
 
 Real-time bike sharing data from Transport for London with interactive maps and linked selections.
 
-![London Bike Points Dashboard](https://raw.githubusercontent.com/holoviz/lumen/main/doc/_static/bikes.png)
+![London Bike Points Dashboard](../../assets/gallery/bikes.png)
 
 ## Features
 

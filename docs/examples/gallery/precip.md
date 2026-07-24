@@ -2,7 +2,7 @@
 
 US precipitation data with geographic visualizations and temporal analysis.
 
-![Precipitation Dashboard](https://raw.githubusercontent.com/holoviz/lumen/main/doc/_static/precip.png)
+![Precipitation Dashboard](../../assets/gallery/precip.png)
 
 ## Features
 

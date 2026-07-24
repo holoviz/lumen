@@ -12,8 +12,8 @@
 | Support | [![Discourse](https://img.shields.io/discourse/status?server=https%3A%2F%2Fdiscourse.holoviz.org)](https://discourse.holoviz.org/) |
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/holoviz/lumen/main/doc/_static/ai-diagram-dark.png">
-  <img src="https://raw.githubusercontent.com/holoviz/lumen/main/doc/_static/ai-diagram.png" alt="Lumen AI Diagram" width="100%"/>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/holoviz/lumen/main/docs/assets/ai-diagram-dark.png">
+  <img src="https://raw.githubusercontent.com/holoviz/lumen/main/docs/assets/ai-diagram.png" alt="Lumen AI Diagram" width="100%"/>
 </picture>
 
 Lumen is a fully open-source and extensible agent based framework for chatting with data and for retrieval augmented generation (RAG). The declarative nature of Lumen's data model make it possible for LLMs to easily generate entire data transformation pipelines, visualizations and other many other types of output. Once generated the data pipelines and visual output can be easily serialized, making it possible to share them, to continue the analysis in a notebook and/or build entire dashboards.
