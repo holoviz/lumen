@@ -1466,10 +1466,9 @@ class VegaLiteView(View):
     def _get_params(self) -> dict[str, Any]:
         df = self.get_data()
         spec_data = self.spec.get('data', {})
-        spec = {
-            '$schema': 'https://vega.github.io/schema/vega-lite/v5.json',
-            **self.spec,
-        }
+        spec = dict(self.spec)
+        if "$schema" not in spec:
+            spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
 
         if 'url' in spec_data or 'inline' in spec_data:
             # If data already has url/inline data, make pipeline data available as named dataset
