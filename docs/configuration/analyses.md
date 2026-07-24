@@ -4,7 +4,7 @@
 
 Like tools or hooks, analyses give you control over specific calculations. Use them when you need reliable, repeatable results—financial metrics, scientific formulas, or statistical tests that must be calculated exactly the same way every time.
 
-**Difference from Views:** [Views](../../configuration/spec/views.md) are interactive visualizations that display data. Analyses are computational functions that calculate new insights from data. You can think of views as "how it looks" and analyses as "what it means."
+**Difference from Views:** [Views](configuration/spec/views.md) are interactive visualizations that display data. Analyses are computational functions that calculate new insights from data. You can think of views as "how it looks" and analyses as "what it means."
 
 ## Quick example
 
