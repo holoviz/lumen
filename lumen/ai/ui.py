@@ -1193,18 +1193,36 @@ class UI(Viewer):
         if self.document_vector_store is None:
             self.document_vector_store = self._coordinator.document_vector_store
 
+    def _format_llm_provider_label(self) -> str:
+        """Markdown label naming the LLM provider for the status line.
+
+        When the wrapper points at a custom endpoint (e.g. the OpenAI wrapper
+        aimed at a self-hosted or third-party service) naming the provider
+        alone is misleading, so flag it as a custom compatible endpoint. The
+        exact host and model are deliberately left out to keep the splash
+        approachable for non-technical users; those details live in the LLM
+        settings dialog.
+        """
+        name = self.llm.display_name or type(self.llm).__name__
+        params = self.llm.param
+        endpoint = getattr(self.llm, "endpoint", None)
+        default_endpoint = params["endpoint"].default if "endpoint" in params else None
+        if endpoint and endpoint != default_endpoint:
+            return f"a **custom {name}-compatible endpoint**"
+        return f"**{name}**"
+
     def _get_status_text(self) -> str:
         """Generate the status text showing sources and LLM provider."""
         num_sources = len(self.context.get("sources", []))
-        llm_name = type(self.llm).__name__
+        llm_label = self._format_llm_provider_label()
 
         # Build LLM status text
         if self._llm_status == 'verifying':
-            llm_text = f"verifying **{llm_name}** connection"
+            llm_text = f"verifying {llm_label} connection"
         elif self._llm_status == 'connected':
-            llm_text = f"using **{llm_name}** as the LLM provider"
+            llm_text = f"using {llm_label} as the LLM provider"
         else:
-            llm_text = f"connecting to **{llm_name}** failed"
+            llm_text = f"connecting to {llm_label} failed"
 
         if num_sources == 0:
             status = f"Drag & drop your dataset here to begin; {llm_text}."
