@@ -171,7 +171,7 @@ class SQLTransform(Transform):
 
         return expr
 
-    def _to_subquery(self, expression: Expression, alias: str | None = None) -> Expression:
+    def _to_subquery(self, expression: Expression, alias: str = "subquery") -> Expression:
         """
         Convert an expression to a subquery, handling Alias expressions that don't have .subquery().
 
@@ -180,7 +180,8 @@ class SQLTransform(Transform):
         expression : Expression
             The expression to convert to a subquery
         alias : str, optional
-            Alias for the subquery
+            Alias for the subquery. Always aliased by default because SQL Server
+            rejects a derived table in FROM that carries no alias.
 
         Returns
         -------
