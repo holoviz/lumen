@@ -161,7 +161,7 @@ def test_sql_group_by_single_column():
     result = SQLGroupBy.apply_to(
         "SELECT * FROM TABLE", by=["A"], aggregates={"AVG": "B"}
     )
-    expected = "SELECT A, AVG(B) AS B FROM (SELECT * FROM TABLE) GROUP BY A"
+    expected = "SELECT A, AVG(B) AS B FROM (SELECT * FROM TABLE) AS subquery GROUP BY A"
     assert result == expected
 
 
@@ -170,20 +170,20 @@ def test_sql_group_by_multi_columns():
         "SELECT * FROM TABLE", by=["A"], aggregates={"AVG": ["B", "C"]}
     )
     expected = (
-        "SELECT A, AVG(B) AS B, AVG(C) AS C FROM (SELECT * FROM TABLE) GROUP BY A"
+        "SELECT A, AVG(B) AS B, AVG(C) AS C FROM (SELECT * FROM TABLE) AS subquery GROUP BY A"
     )
     assert result == expected
 
 
 def test_sql_limit():
     result = SQLLimit.apply_to("SELECT * FROM TABLE", limit=10)
-    expected = "SELECT * FROM (SELECT * FROM TABLE) LIMIT 10"
+    expected = "SELECT * FROM (SELECT * FROM TABLE) AS subquery LIMIT 10"
     assert result == expected
 
 
 def test_sql_limit_lower_than_original():
     result = SQLLimit.apply_to("SELECT * FROM TABLE LIMIT 15", limit=10)
-    expected = "SELECT * FROM (SELECT * FROM TABLE LIMIT 15) LIMIT 10"
+    expected = "SELECT * FROM (SELECT * FROM TABLE LIMIT 15) AS subquery LIMIT 10"
     assert result == expected
 
 
@@ -193,21 +193,28 @@ def test_sql_limit_higher_than_original():
     assert result == expected
 
 
+def test_sql_limit_mssql_aliases_derived_table():
+    """SQL Server rejects a derived table in FROM unless it carries an alias."""
+    result = SQLLimit.apply_to("SELECT * FROM TABLE", limit=1, write="mssql")
+    expected = "SELECT TOP 1 * FROM (SELECT * FROM TABLE) AS subquery"
+    assert result == expected
+
+
 def test_sql_columns():
     result = SQLColumns.apply_to("SELECT * FROM TABLE", columns=["A", "B"])
-    expected = "SELECT A, B FROM (SELECT * FROM TABLE)"
+    expected = "SELECT A, B FROM (SELECT * FROM TABLE) AS subquery"
     assert result == expected
 
 
 def test_sql_distinct():
     result = SQLDistinct.apply_to("SELECT * FROM TABLE", columns=["A", "B"])
-    expected = 'SELECT DISTINCT "A", "B" FROM (SELECT * FROM TABLE)'
+    expected = 'SELECT DISTINCT "A", "B" FROM (SELECT * FROM TABLE) AS subquery'
     assert result == expected
 
 
 def test_sql_min_max():
     result = SQLMinMax.apply_to("SELECT * FROM TABLE", columns=["A", "B"])
-    expected = "SELECT MIN(A) AS A_min, MAX(A) AS A_max, MIN(B) AS B_min, MAX(B) AS B_max FROM (SELECT * FROM TABLE)"
+    expected = "SELECT MIN(A) AS A_min, MAX(A) AS A_max, MIN(B) AS B_min, MAX(B) AS B_max FROM (SELECT * FROM TABLE) AS subquery"
     assert result == expected
 
 
@@ -217,20 +224,20 @@ def test_sql_min_max_nonalphanum_characters():
         'SELECT MIN("A_B-123") AS "A_B-123_min", MAX("A_B-123") AS "A_B-123_max", '
         'MIN("Period life expectancy at birth - Sex: total - Age: 0") AS "Period life expectancy at birth - Sex: total - Age: 0_min", '
         'MAX("Period life expectancy at birth - Sex: total - Age: 0") AS "Period life expectancy at birth - Sex: total - Age: 0_max" '
-        'FROM (SELECT * FROM TABLE)'
+        'FROM (SELECT * FROM TABLE) AS subquery'
     )
     assert result == expected
 
 
 def test_sql_filter_none():
     result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", None)])
-    expected = 'SELECT * FROM (SELECT * FROM TABLE) WHERE "A" IS NULL'
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" IS NULL'
     assert result == expected
 
 
 def test_sql_filter_scalar():
     result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", 1)])
-    expected = 'SELECT * FROM (SELECT * FROM TABLE) WHERE "A" = 1'
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" = 1'
     assert result == expected
 
 
@@ -238,7 +245,7 @@ def test_sql_filter_isin():
     result = SQLFilter.apply_to(
         "SELECT * FROM TABLE", conditions=[("A", ["A", "B", "C"])]
     )
-    expected = 'SELECT * FROM (SELECT * FROM TABLE) WHERE "A" IN (\'A\', \'B\', \'C\')'
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" IN (\'A\', \'B\', \'C\')'
     assert result == expected
 
 
@@ -246,7 +253,7 @@ def test_sql_filter_datetime():
     result = SQLFilter.apply_to(
         "SELECT * FROM TABLE", conditions=[("A", dt.datetime(2017, 4, 14))]
     )
-    expected = 'SELECT * FROM (SELECT * FROM TABLE) WHERE "A" = \'2017-04-14 00:00:00\''
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" = \'2017-04-14 00:00:00\''
     assert result == expected
 
 
@@ -254,7 +261,7 @@ def test_sql_filter_date():
     result = SQLFilter.apply_to(
         "SELECT * FROM TABLE", conditions=[("A", dt.date(2017, 4, 14))]
     )
-    expected = 'SELECT * FROM (SELECT * FROM TABLE) WHERE "A" BETWEEN \'2017-04-14 00:00:00\' AND \'2017-04-14 23:59:59\''
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" BETWEEN \'2017-04-14 00:00:00\' AND \'2017-04-14 23:59:59\''
     assert result == expected
 
 
@@ -263,7 +270,7 @@ def test_sql_filter_date_range():
         "SELECT * FROM TABLE",
         conditions=[("A", (dt.date(2017, 2, 22), dt.date(2017, 4, 14)))],
     )
-    expected = 'SELECT * FROM (SELECT * FROM TABLE) WHERE "A" BETWEEN \'2017-02-22 00:00:00\' AND \'2017-04-14 23:59:59\''
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" BETWEEN \'2017-02-22 00:00:00\' AND \'2017-04-14 23:59:59\''
     assert result == expected
 
 
@@ -272,7 +279,7 @@ def test_sql_filter_datetime_range():
         "SELECT * FROM TABLE",
         conditions=[("A", (dt.datetime(2017, 2, 22), dt.datetime(2017, 4, 14)))],
     )
-    expected = 'SELECT * FROM (SELECT * FROM TABLE) WHERE "A" BETWEEN \'2017-02-22 00:00:00\' AND \'2017-04-14 00:00:00\''
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" BETWEEN \'2017-02-22 00:00:00\' AND \'2017-04-14 00:00:00\''
     assert result == expected
 
 
@@ -280,7 +287,7 @@ def test_sql_filter_slice_numeric():
     result = SQLFilter.apply_to(
         "SELECT * FROM TABLE", conditions=[("A", slice(20.0, 40.0))]
     )
-    expected = 'SELECT * FROM (SELECT * FROM TABLE) WHERE "A" BETWEEN \'20.0\' AND \'40.0\''
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" BETWEEN \'20.0\' AND \'40.0\''
     assert result == expected
 
 
@@ -289,7 +296,7 @@ def test_sql_filter_slice_date():
         "SELECT * FROM TABLE",
         conditions=[("A", slice(dt.date(2017, 2, 22), dt.date(2017, 4, 14)))],
     )
-    expected = 'SELECT * FROM (SELECT * FROM TABLE) WHERE "A" BETWEEN \'2017-02-22 00:00:00\' AND \'2017-04-14 23:59:59\''
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" BETWEEN \'2017-02-22 00:00:00\' AND \'2017-04-14 23:59:59\''
     assert result == expected
 
 
@@ -298,7 +305,7 @@ def test_sql_filter_slice_datetime():
         "SELECT * FROM TABLE",
         conditions=[("A", slice(dt.datetime(2017, 2, 22), dt.datetime(2017, 4, 14)))],
     )
-    expected = 'SELECT * FROM (SELECT * FROM TABLE) WHERE "A" BETWEEN \'2017-02-22 00:00:00\' AND \'2017-04-14 00:00:00\''
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" BETWEEN \'2017-02-22 00:00:00\' AND \'2017-04-14 00:00:00\''
     assert result == expected
 
 
@@ -743,7 +750,7 @@ def test_sql_prefilter_does_not_double_wrap():
 
 def test_sql_count():
     result = SQLCount.apply_to("SELECT * FROM TABLE")
-    expected = "SELECT COUNT(*) AS count FROM (SELECT * FROM TABLE)"
+    expected = "SELECT COUNT(*) AS count FROM (SELECT * FROM TABLE) AS subquery"
     assert result == expected
 
 
