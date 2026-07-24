@@ -103,6 +103,6 @@ The notebook includes:
 
 ## Next steps
 
-- [**Building Lumen Apps**](building_lumen_ai_apps.md) — Configure models, add source controls, and customize behavior
+- [**Building Lumen Apps**](building_lumen_apps.md) — Configure models, add source controls, and customize behavior
 - [**Agents**](../configuration/agents.md) — Learn about the different agent types
 - [**Reports**](../configuration/reports.md) — Build structured, reproducible analytical workflows
