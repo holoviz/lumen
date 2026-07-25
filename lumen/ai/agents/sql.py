@@ -122,11 +122,26 @@ async def execute_exploration_sql(
     str
         Tabular preview, or an error message string if execution fails.
     """
-    try:
-        base = next(obj for (s, _), obj in sources.items() if s == source)
-    except StopIteration:
+    # Exact source-name match: the intended usage.
+    base = next((obj for (s, _), obj in sources.items() if s == source), None)
+    if base is None:
+        # Weak models frequently pass a *table* name (or the wrong token)
+        # instead of the source name — e.g. run_exploration_sql(source="obs")
+        # when the source is "AnnDataSource00679". Resolve gracefully rather
+        # than forcing a failed round-trip: prefer a table-name match, else
+        # fall back to the sole source when the mapping is unambiguous.
+        base = next((obj for (_, t), obj in sources.items() if t == source), None)
+        if base is None:
+            unique_sources = {s for s, _ in sources}
+            if len(unique_sources) == 1:
+                base = next(iter(sources.values()))
+    if base is None:
         avail = sorted({s for s, _ in sources})
-        return f"Unknown source {source!r}. Available sources: {avail}"
+        tables = sorted({t for _, t in sources})
+        return (
+            f"Unknown source {source!r}. Available sources: {avail}; "
+            f"tables: {tables}"
+        )
 
     raw = sql_query.strip()
     leader = raw.lstrip().upper()
