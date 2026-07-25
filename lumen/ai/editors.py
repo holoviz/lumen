@@ -745,6 +745,10 @@ class MultiChartEditor(LumenEditor):
         The editors of the individual charts, whose specs are exposed as
         sub-tabs.""")
 
+    export_formats = ("yaml", "png", "jpeg", "pdf", "webp", "tiff", "eps")
+
+    _raster_formats = ("png", "jpeg", "webp", "tiff", "eps")
+
     _label = "Charts"
 
     def __init__(self, **params):
@@ -764,14 +768,43 @@ class MultiChartEditor(LumenEditor):
             dynamic=True, sizing_mode="stretch_both", margin=0
         )
 
-    def export(self, fmt: str) -> StringIO:
-        if fmt != "yaml":
+    def export(self, fmt: str) -> StringIO | BytesIO:
+        if fmt not in self.export_formats:
             raise ValueError(f"Unknown export format {fmt!r} for {self.__class__.__name__}")
         # A chart that could not be serialized has no spec; skip it rather than
         # failing the export of the ones that did.
-        return StringIO("---\n".join(
-            editor.spec for editor in self.chart_editors if editor.spec
-        ))
+        editors = [editor for editor in self.chart_editors if editor.spec]
+        if fmt == "yaml":
+            return StringIO("---\n".join(editor.spec for editor in editors))
+        if not editors:
+            return StringIO("")
+        # Every other format combines the individual chart renders. Each chart is
+        # rendered to PNG first (reusing VegaLiteEditor.export, so scale and the
+        # default sizing come for free), then stacked or paginated with Pillow.
+        images = [Image.open(editor.export("png")) for editor in editors]
+        if fmt == "pdf":
+            pages = [img.convert("RGB") for img in images]
+            buf = BytesIO()
+            pages[0].save(buf, "PDF", save_all=True, append_images=pages[1:])
+            buf.seek(0)
+            return buf
+        return self._stack_images(images, fmt)
+
+    def _stack_images(self, images: list, fmt: str) -> BytesIO:
+        """Vertically stack the chart images into a single image saved as fmt."""
+        mode = "RGB" if fmt in ("jpeg", "eps") else "RGBA"
+        background = (255, 255, 255) if mode == "RGB" else (255, 255, 255, 0)
+        width = max(img.width for img in images)
+        height = sum(img.height for img in images)
+        canvas = Image.new(mode, (width, height), background)
+        offset = 0
+        for img in images:
+            canvas.paste(img.convert(mode), (0, offset))
+            offset += img.height
+        buf = BytesIO()
+        canvas.save(buf, format=fmt.upper())
+        buf.seek(0)
+        return buf
 
 
 class DocumentEditor(LumenEditor):

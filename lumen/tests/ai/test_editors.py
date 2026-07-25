@@ -321,6 +321,73 @@ def test_multichart_survives_an_unserializable_spec(make_multi_chart_editor):
     assert multi.export("yaml").getvalue().count("line0") == 2
 
 
+@pytest.fixture
+def make_multi_vegalite_editor(monkeypatch):
+    """Build an "All" tab whose children are real VegaLiteEditors with a fake
+    Vega pane, so the combined image/pdf/svg/html exports can be exercised."""
+    monkeypatch.setattr(editors_module, 'ParamMethod', lambda *args, **kwargs: None)
+    monkeypatch.setattr(VegaLiteEditor, '_update_component', lambda self, *a, **kw: None)
+
+    class FakePanel:
+        def export(self, fmt, **kwargs):
+            if fmt == "svg":
+                return '<svg width="20" height="30"><rect/></svg>'
+            return _make_png_bytes()
+
+    def factory(n_charts, unserializable=()):
+        charts = [
+            VegaLiteEditor(
+                component=MockVegaComponent(_mock_panel=FakePanel()),
+                spec=None if c in unserializable else _MINIMAL_VEGALITE_SPEC,
+                title=f"Chart {c}",
+            )
+            for c in range(n_charts)
+        ]
+        return MultiChartEditor(
+            component=MockComponent(), title="All", chart_editors=charts
+        )
+
+    return factory
+
+
+def test_multichart_export_png_stacks_every_chart(make_multi_vegalite_editor):
+    result = make_multi_vegalite_editor(3).export("png")
+    assert isinstance(result, BytesIO)
+    img = Image.open(result)
+    assert img.format == "PNG"
+    # Three 10x10 child renders stacked vertically -> one 10x30 image.
+    assert img.size == (10, 30)
+
+
+@pytest.mark.parametrize("fmt,pil_format", [
+    ("jpeg", "JPEG"), ("webp", "WEBP"), ("tiff", "TIFF"),
+])
+def test_multichart_export_raster_formats(make_multi_vegalite_editor, fmt, pil_format):
+    result = make_multi_vegalite_editor(2).export(fmt)
+    img = Image.open(result)
+    assert img.format == pil_format
+    assert img.size == (10, 20)
+
+
+def test_multichart_export_eps(make_multi_vegalite_editor):
+    result = make_multi_vegalite_editor(2).export("eps")
+    assert result.read().startswith(b"%!PS")
+
+
+def test_multichart_export_pdf_is_one_page_per_chart(make_multi_vegalite_editor):
+    result = make_multi_vegalite_editor(3).export("pdf")
+    data = result.getvalue()
+    assert data.startswith(b"%PDF")
+    pypdf = pytest.importorskip("pypdf")
+    assert len(pypdf.PdfReader(BytesIO(data)).pages) == 3
+
+
+def test_multichart_export_skips_unserializable_for_images(make_multi_vegalite_editor):
+    # Chart 0 has spec=None; it is skipped, leaving two 10x10 renders -> 10x20.
+    result = make_multi_vegalite_editor(3, unserializable=(0,)).export("png")
+    assert Image.open(result).size == (10, 20)
+
+
 def test_multichart_export_concatenates_every_chart_spec(make_multi_chart_editor):
     """The overview has no spec of its own; exporting yields all of them."""
     multi = make_multi_chart_editor(3, spec_lines=2)
