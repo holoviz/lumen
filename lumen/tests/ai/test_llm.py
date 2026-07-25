@@ -3,6 +3,7 @@
 import base64
 import os
 
+from functools import partial
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -20,6 +21,7 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
+from instructor import Mode
 from instructor.processing.multimodal import Image
 from pydantic import BaseModel
 
@@ -707,3 +709,89 @@ def test_mlx_make_sampler_handles_none():
     set_llm = MLX(model_kwargs={"default": {"model": "m"}}, temperature=0.5)
     assert callable(none_llm._make_sampler())
     assert callable(set_llm._make_sampler())
+
+
+# ---------------------------------------------------------------------------
+# Tool-free structured extraction resolves to a JSON instructor mode
+# ---------------------------------------------------------------------------
+
+class _StructuredModel(BaseModel):
+    ok: bool
+
+
+async def _resolve_client_mode(llm, **get_client_kwargs):
+    """Return the instructor ``mode`` that ``get_client`` resolves to.
+
+    ``_get_cached_client`` is stubbed so no real client is created; we only
+    capture the ``mode`` it would have been built with.
+    """
+    captured = {}
+
+    def fake_cached(response_model=None, model=None, **kwargs):
+        captured["mode"] = kwargs.get("mode")
+        return partial(lambda **kw: None)
+
+    with patch.object(llm, "_get_cached_client", new=fake_cached):
+        await llm.get_client("default", **get_client_kwargs)
+    return captured["mode"]
+
+
+async def test_openai_tool_free_structured_uses_json():
+    """A structured request with no tools is extracted via JSON, not TOOLS."""
+    llm = OpenAI(api_key="test", model_kwargs={"default": {"model": "m"}})
+    mode = await _resolve_client_mode(llm, response_model=_StructuredModel)
+    assert mode is Mode.JSON
+
+
+async def test_openai_structured_with_tools_keeps_tools_mode():
+    """When tools are attached the exploration loop still uses TOOLS mode."""
+    llm = OpenAI(api_key="test", model_kwargs={"default": {"model": "m"}})
+    tools = [{"type": "function", "function": {"name": "f", "parameters": {}}}]
+    mode = await _resolve_client_mode(llm, response_model=_StructuredModel, tools=tools)
+    assert mode is Mode.TOOLS
+
+
+async def test_openai_tool_free_structured_mode_can_be_disabled():
+    """Setting tool_free_structured_mode=None preserves the wrapper's mode."""
+    llm = OpenAI(
+        api_key="test",
+        model_kwargs={"default": {"model": "m"}},
+        tool_free_structured_mode=None,
+    )
+    mode = await _resolve_client_mode(llm, response_model=_StructuredModel)
+    assert mode is Mode.TOOLS
+
+
+async def test_openai_no_response_model_keeps_tools_mode():
+    """The rule only affects structured (response_model) requests."""
+    llm = OpenAI(api_key="test", model_kwargs={"default": {"model": "m"}})
+    mode = await _resolve_client_mode(llm)
+    assert mode is Mode.TOOLS
+
+
+async def test_tool_loop_terminal_structured_step_drops_tools():
+    """After exploration, the terminal structured turn must be tool-free so it
+    is extracted via JSON rather than a fragile TOOLS-mode tool call."""
+    llm = OpenAI(api_key="test", model_kwargs={"default": {"model": "m"}})
+    calls = []
+
+    async def fake_run_client(model_spec, messages, **kwargs):
+        calls.append(kwargs)
+        return "OUT"
+
+    with patch.object(llm, "run_client", new=fake_run_client), \
+         patch.object(llm, "_extract_tool_calls", return_value=[]):
+        await llm._run_tool_loop(
+            messages=[{"role": "user", "content": "hi"}],
+            structured_model=_StructuredModel,
+            tool_instances={"t": object()},
+            tool_contexts={},
+            model_spec="default",
+            tools=[{"type": "function", "function": {"name": "t", "parameters": {}}}],
+        )
+
+    # exploration call keeps the tools; the terminal structured call drops them
+    assert "tools" in calls[0]
+    assert calls[-1].get("response_model") is _StructuredModel
+    assert "tools" not in calls[-1]
+    assert "tool_choice" not in calls[-1]

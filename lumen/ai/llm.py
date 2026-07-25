@@ -419,7 +419,9 @@ class Llm(param.Parameterized):
         kwargs.update(input_kwargs)
         combined_tools = self._combine_tools(tools)
         tool_specs, tool_instances, tool_contexts = self._normalize_tools(combined_tools)
-        if tool_specs is not None:
+        # Only attach ``tools`` when non-empty; an empty array is rejected by
+        # some OpenAI-compatible endpoints (see run_client for details).
+        if tool_specs:
             kwargs["tools"] = tool_specs
 
         messages, contains_image = self._check_for_image(messages)
@@ -507,6 +509,14 @@ class Llm(param.Parameterized):
             kwargs["response_model"] = structured_model
             if max_retries is not None:
                 kwargs["max_retries"] = max_retries
+            # Exploration is done: the terminal turn only needs to emit the
+            # structured result, not call more tools. Drop the tool specs so
+            # this becomes a tool-free structured request — that lets the
+            # OpenAI wrapper extract it via JSON (see tool_free_structured_mode)
+            # instead of TOOLS mode, which weak endpoints (vLLM/Gemma) answer
+            # with prose and crash instructor's tool-call reask.
+            kwargs.pop("tools", None)
+            kwargs.pop("tool_choice", None)
             output = await self.run_client(model_spec, messages_curr, stream=stream, **kwargs)
         return output
 
@@ -745,6 +755,14 @@ class Llm(param.Parameterized):
                     f"{name!r} (call_id={call_id!r}); registered: {sorted(tool_instances)}",
                     prefix="[LLM tools]",
                 )
+                # Drop the call rather than appending a synthetic tool result.
+                # The strict vLLM/HF router rejects a tool-role message that
+                # references a tool_call the structured re-ask no longer carries
+                # (422 missing tool_call_id). Returning None leaves the loop to
+                # break on empty tool_messages and re-ask cleanly on the
+                # original messages. Weak models commonly emit an actor name
+                # here as if it were a tool; the planning prompt already tells
+                # them not to, and the clean re-ask recovers the structured plan.
                 return None
             tool = tool_instances[name]
             context = tool_contexts.get(name, {})
@@ -993,6 +1011,13 @@ class Llm(param.Parameterized):
         client = await self.get_client(model_spec, **kwargs)
         if not response_model:
             kwargs.pop("max_retries", None)
+        # Omit an empty ``tools`` array entirely: the OpenAI SDK tolerates
+        # ``tools: []``, but some OpenAI-compatible endpoints (e.g. vLLM behind
+        # the HuggingFace router) reject it with a 400. Drop ``tool_choice``
+        # alongside it since it's meaningless without tools.
+        if "tools" in kwargs and not kwargs["tools"]:
+            kwargs.pop("tools")
+            kwargs.pop("tool_choice", None)
         result = await client(messages=messages, **kwargs)
         if response_model:
             log_debug(f"Response model: \033[93m{response_model.__name__!r}\033[0m")
@@ -1110,6 +1135,15 @@ class OpenAI(Llm, OpenAIMixin):
     display_name = param.String(default="OpenAI", constant=True)
 
     mode = param.Selector(default=Mode.TOOLS)
+
+    tool_free_structured_mode = param.ClassSelector(class_=Mode, default=Mode.JSON, allow_None=True, doc="""
+        instructor mode used for a structured (``response_model``) request when
+        NO tools are attached. TOOLS-family structured extraction routes the
+        schema through a synthetic tool call, which some OpenAI-compatible
+        endpoints (e.g. vLLM/Gemma behind the HuggingFace router) answer with
+        prose instead of a tool call, crashing instructor. Extracting tool-free
+        responses via JSON keeps these calls robust and costs fewer tokens. Set
+        to ``None`` to leave ``mode`` unchanged (i.e. keep TOOLS everywhere).""")
 
     model_kwargs = param.Dict(default={
         "default": {"model": "gpt-5.4-mini"},  # Use standard models, not reasoning models (gpt-5, o4-mini)
@@ -1382,6 +1416,20 @@ class OpenAI(Llm, OpenAIMixin):
         model = model_kwargs.pop("model")
         log_debug(f"LLM Model: \033[96m{model!r}\033[0m")
         mode = model_kwargs.pop("mode", self.mode)
+
+        # No tools in play: a tool-call transport for the structured output
+        # buys nothing and is unreliable on some OpenAI-compatible endpoints
+        # (vLLM/Gemma answer with prose, crashing instructor). Extract via JSON
+        # instead. Only the chat_completions path is affected; see
+        # ``tool_free_structured_mode``.
+        if (
+            self.api == "chat_completions"
+            and response_model is not None
+            and self.tool_free_structured_mode is not None
+            and not kwargs.get("tools")
+            and mode is Mode.TOOLS
+        ):
+            mode = self.tool_free_structured_mode
 
         if self.api == "responses":
             if self._base_client is None:

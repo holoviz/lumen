@@ -22,7 +22,10 @@ from lumen.ai.agents import (
 from lumen.ai.agents.analysis import make_analysis_model
 from lumen.ai.agents.deck_gl import DeckGLAgent
 from lumen.ai.agents.hvplot import hvPlotAgent
-from lumen.ai.agents.sql import make_sql_model
+from lumen.ai.agents.sql import execute_exploration_sql, make_sql_model
+from lumen.ai.agents.validation import (
+    QueryCompletionValidation, ValidationAgent,
+)
 from lumen.ai.agents.vega_lite import (
     AltairChartSpec, AltairSpec, ChartSpec, VegaLiteSpec, VegaLiteSpecUpdate,
 )
@@ -769,3 +772,45 @@ async def test_view_retry_recovers_using_revised_spec(llm):
     assert seen_specs[0]["kind"] == "line"   # first attempt used the original
     assert seen_specs[1]["kind"] == "bar"    # retry used the REVISED spec
     assert result["kind"] == "bar"
+
+
+async def test_validation_agent_degrades_on_llm_error(llm, test_messages):
+    """A failed validation call must not abort an already-successful plan.
+
+    If the structured validation request raises (e.g. the model won't return
+    parseable structured output after retries), ValidationAgent degrades to
+    "assume complete" rather than propagating and crashing the plan.
+    """
+    agent = ValidationAgent(llm=llm)
+    with patch.object(
+        agent, "_invoke_prompt",
+        new=AsyncMock(side_effect=RuntimeError("structured output failed")),
+    ):
+        out, out_context = await agent.respond(test_messages, {})
+
+    result = out[0]
+    assert isinstance(result, QueryCompletionValidation)
+    assert result.correct is True
+    assert out_context["validation_result"] is result
+
+
+async def test_exploration_sql_resolves_source(duckdb_source):
+    """run_exploration_sql should not fail when the model passes a table name
+    (or the wrong token) instead of the source name."""
+    src = duckdb_source.name
+    sources = {(src, "test_sql"): duckdb_source}
+    query = "SELECT * FROM test_sql LIMIT 1"
+
+    # exact source name works
+    assert "Unknown source" not in await execute_exploration_sql(src, query, sources=sources)
+    # a *table* name in the source slot resolves to its owning source
+    assert "Unknown source" not in await execute_exploration_sql("test_sql", query, sources=sources)
+    # an unrecognized token falls back to the sole source
+    assert "Unknown source" not in await execute_exploration_sql("obs", query, sources=sources)
+
+
+async def test_exploration_sql_unknown_source_with_multiple_sources(duckdb_source):
+    """With multiple sources an unresolvable token still errors (no silent guess)."""
+    sources = {("src_a", "ta"): duckdb_source, ("src_b", "tb"): duckdb_source}
+    res = await execute_exploration_sql("nope", "SELECT 1", sources=sources)
+    assert "Unknown source 'nope'" in res
