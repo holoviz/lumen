@@ -9,7 +9,7 @@ from ..config import PROMPTS_DIR
 from ..context import ContextModel, TContext
 from ..llm import Message
 from ..models import BaseModel
-from ..utils import content_to_text
+from ..utils import content_to_text, format_exception, log_debug
 from .base import Agent
 
 
@@ -117,7 +117,27 @@ class ValidationAgent(Agent):
             suggestions_list = '\n- '.join(result.suggestions)
             interface.send(f"Follow these suggestions to fulfill the original intent:\n\n> {text_content}\n\n{suggestions_list}")
 
-        result = await self._invoke_prompt("main", messages, context)
+        try:
+            result = await self._invoke_prompt("main", messages, context)
+        except Exception as e:
+            # Validation is a quality gate, not part of the answer: the plan's
+            # actual outputs were already produced/displayed. If the structured
+            # validation call itself fails (e.g. the LLM won't return parseable
+            # structured output after retries), degrade to "assume complete" so
+            # a gate failure can never abort an otherwise-successful plan.
+            log_debug(
+                f"ValidationAgent could not run; treating plan as complete: "
+                f"{format_exception(e)}"
+            )
+            result = QueryCompletionValidation(
+                chain_of_thought=(
+                    "Validation could not be completed due to an LLM error; "
+                    "treating the executed plan as complete."
+                ),
+                correct=True,
+            )
+            return [result], {"validation_result": result}
+
         if result.correct:
             return [result], {"validation_result": result}
 
