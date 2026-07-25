@@ -4,6 +4,7 @@ import json
 from io import BytesIO
 
 import pandas as pd
+import panel as pn
 import param
 import pytest
 
@@ -343,8 +344,13 @@ def make_multi_vegalite_editor(monkeypatch):
             )
             for c in range(n_charts)
         ]
+        # The composite's own component supplies the live stacked view that the
+        # html export saves; a plain Column stands in for it here.
+        composite = MockVegaComponent(_mock_panel=pn.Column(*(
+            pn.pane.Markdown(f"Chart {c}") for c in range(n_charts)
+        )))
         return MultiChartEditor(
-            component=MockComponent(), title="All", chart_editors=charts
+            component=composite, title="All", chart_editors=charts
         )
 
     return factory
@@ -375,11 +381,11 @@ def test_multichart_export_eps(make_multi_vegalite_editor):
 
 
 def test_multichart_export_pdf_is_one_page_per_chart(make_multi_vegalite_editor):
-    result = make_multi_vegalite_editor(3).export("pdf")
-    data = result.getvalue()
+    data = make_multi_vegalite_editor(3).export("pdf").getvalue()
     assert data.startswith(b"%PDF")
-    pypdf = pytest.importorskip("pypdf")
-    assert len(pypdf.PdfReader(BytesIO(data)).pages) == 3
+    # Pillow writes one "/Type /Page" per page plus a single "/Type /Pages" tree
+    # node, so page count is the difference.
+    assert data.count(b"/Type /Page") - data.count(b"/Type /Pages") == 3
 
 
 def test_multichart_export_skips_unserializable_for_images(make_multi_vegalite_editor):
@@ -388,9 +394,26 @@ def test_multichart_export_skips_unserializable_for_images(make_multi_vegalite_e
     assert Image.open(result).size == (10, 20)
 
 
+def test_multichart_export_svg_stacks_children(make_multi_vegalite_editor):
+    content = make_multi_vegalite_editor(3).export("svg").getvalue()
+    # One outer <svg> wrapping three nested child <svg> blocks.
+    assert content.count("<svg") == 4
+    # Child mock is 30 tall; three stacked -> outer height 90.
+    assert 'height="90"' in content
+    # Second and third children carry a non-zero y offset.
+    assert 'y="30"' in content and 'y="60"' in content
+
+
+def test_multichart_export_html_is_one_offline_page(make_multi_vegalite_editor):
+    content = make_multi_vegalite_editor(2).export("html").getvalue()
+    assert content.lstrip().startswith("<!DOCTYPE html>")
+    assert "Chart 0" in content and "Chart 1" in content
+
+
 def test_multichart_export_concatenates_every_chart_spec(make_multi_chart_editor):
-    """The overview has no spec of its own; exporting yields all of them."""
+    """The overview has no spec of its own; exporting yaml yields all of them,
+    and a format it does not support still raises."""
     multi = make_multi_chart_editor(3, spec_lines=2)
     assert multi.export("yaml").getvalue().count("line0") == 3
     with pytest.raises(ValueError, match="Unknown export format"):
-        multi.export("png")
+        multi.export("csv")
