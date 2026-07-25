@@ -9,7 +9,8 @@ import yaml
 
 from .config import SOURCE_TABLE_SEPARATOR
 from .utils import (
-    get_schema, log_debug, slug_to_table_name, truncate_string,
+    collapse_indexed_columns, get_schema, log_debug, slug_to_table_name,
+    truncate_string,
 )
 
 if TYPE_CHECKING:
@@ -190,8 +191,14 @@ class Metaset:
         data['columns'] = cols = self._build_columns_data(
             table_slug, catalog_entry.columns, include_schema, truncate
         )
-        if isinstance(cols, dict) and not any(info for info in cols.values()):
-            data['columns'] = list(cols)
+        # Collapse large numbered column series (e.g. embedding/PCA matrices)
+        # wherever columns render as a bare name list: either schema was
+        # excluded (list), or no per-column schema was available and the dict
+        # degenerates to names. A dict with real per-column info stays a mapping.
+        if isinstance(cols, list):
+            data['columns'] = collapse_indexed_columns(cols)
+        elif not any(info for info in cols.values()):
+            data['columns'] = collapse_indexed_columns(list(cols))
         return data
 
     def _build_columns_data(
@@ -201,7 +208,9 @@ class Metaset:
         include_schema: bool,
         truncate: bool
     ) -> dict | list:
-        # If include_schema is False, just return column names as a list
+        # If include_schema is False, just return column names as a list.
+        # (Numbered-series collapsing happens in the caller, which also handles
+        # the case where a schema dict degenerates to a bare name list.)
         if not include_schema:
             return [col.name for col in columns]
 
