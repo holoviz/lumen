@@ -9,7 +9,7 @@ from ..config import PROMPTS_DIR
 from ..context import ContextModel, TContext
 from ..llm import Message
 from ..models import BaseModel
-from ..utils import content_to_text, format_exception, log_debug
+from ..utils import content_to_text, log_debug
 from .base import Agent
 
 
@@ -127,7 +127,7 @@ class ValidationAgent(Agent):
             # a gate failure can never abort an otherwise-successful plan.
             log_debug(
                 f"ValidationAgent could not run; treating plan as complete: "
-                f"{format_exception(e)}"
+                f"{type(e).__name__}: {e}"
             )
             result = QueryCompletionValidation(
                 chain_of_thought=(
