@@ -745,6 +745,12 @@ class MultiChartEditor(LumenEditor):
         The editors of the individual charts, whose specs are exposed as
         sub-tabs.""")
 
+    # The "All" tab is only ever built from VegaLiteEditors, so it offers the
+    # same formats; referencing the tuple keeps the two in sync.
+    export_formats = VegaLiteEditor.export_formats
+
+    _raster_formats = ("png", "jpeg", "webp", "tiff", "eps")
+
     _label = "Charts"
 
     def __init__(self, **params):
@@ -764,14 +770,70 @@ class MultiChartEditor(LumenEditor):
             dynamic=True, sizing_mode="stretch_both", margin=0
         )
 
-    def export(self, fmt: str) -> StringIO:
-        if fmt != "yaml":
+    def export(self, fmt: str) -> StringIO | BytesIO:
+        if fmt not in self.export_formats:
             raise ValueError(f"Unknown export format {fmt!r} for {self.__class__.__name__}")
         # A chart that could not be serialized has no spec; skip it rather than
         # failing the export of the ones that did.
-        return StringIO("---\n".join(
-            editor.spec for editor in self.chart_editors if editor.spec
-        ))
+        editors = [editor for editor in self.chart_editors if editor.spec]
+        if fmt == "yaml":
+            return StringIO("---\n".join(editor.spec for editor in editors))
+        if fmt == "html":
+            # Save the live stacked composite as one standalone, offline page.
+            buf = StringIO()
+            self.component.get_panel().save(buf)
+            buf.seek(0)
+            return buf
+        if not editors:
+            return StringIO("")
+        if fmt == "svg":
+            return self._combine_svg([editor.export("svg").getvalue() for editor in editors])
+        # The remaining formats combine the individual chart renders. Each chart
+        # is rendered to PNG first (reusing VegaLiteEditor.export, so scale and
+        # the default sizing come for free), then stacked or paginated with Pillow.
+        images = [Image.open(editor.export("png")) for editor in editors]
+        if fmt == "pdf":
+            pages = [img.convert("RGB") for img in images]
+            buf = BytesIO()
+            pages[0].save(buf, "PDF", save_all=True, append_images=pages[1:])
+            buf.seek(0)
+            return buf
+        return self._stack_images(images, fmt)
+
+    def _combine_svg(self, svgs: list[str]) -> StringIO:
+        """Stack child SVGs vertically inside one outer SVG via nested tags."""
+        parts, offset, max_width = [], 0.0, 0.0
+        for svg in svgs:
+            svg = re.sub(r"^\s*<\?xml[^>]*\?>\s*", "", svg)
+            width_match = re.search(r'<svg\b[^>]*\bwidth="([\d.]+)"', svg)
+            height_match = re.search(r'<svg\b[^>]*\bheight="([\d.]+)"', svg)
+            width = float(width_match.group(1)) if width_match else 800.0
+            height = float(height_match.group(1)) if height_match else 400.0
+            # Nest each child as a positioned inner <svg> by injecting a y offset.
+            parts.append(re.sub(r"<svg\b", f'<svg y="{offset:g}"', svg, count=1))
+            offset += height
+            max_width = max(max_width, width)
+        inner = "\n".join(parts)
+        return StringIO(
+            f'<svg xmlns="http://www.w3.org/2000/svg" '
+            f'width="{max_width:g}" height="{offset:g}">\n{inner}\n</svg>'
+        )
+
+    def _stack_images(self, images: list, fmt: str) -> BytesIO:
+        """Vertically stack the chart images into a single image saved as fmt."""
+        mode = "RGB" if fmt in ("jpeg", "eps") else "RGBA"
+        background = (255, 255, 255) if mode == "RGB" else (255, 255, 255, 0)
+        width = max(img.width for img in images)
+        height = sum(img.height for img in images)
+        canvas = Image.new(mode, (width, height), background)
+        offset = 0
+        for img in images:
+            canvas.paste(img.convert(mode), (0, offset))
+            offset += img.height
+        buf = BytesIO()
+        canvas.save(buf, format=fmt.upper())
+        buf.seek(0)
+        return buf
 
 
 class DocumentEditor(LumenEditor):
