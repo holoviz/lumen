@@ -1193,18 +1193,43 @@ class UI(Viewer):
         if self.document_vector_store is None:
             self.document_vector_store = self._coordinator.document_vector_store
 
+    def _format_llm_provider_label(self) -> str:
+        """Markdown label naming the LLM provider for the status line.
+
+        When the *generic* OpenAI wrapper points at a custom endpoint (e.g. a
+        self-hosted or third-party service) naming the provider alone is
+        misleading, so flag it as a custom compatible endpoint. Dedicated
+        providers (AI Navigator, AI Catalyst, Ollama, Groq, ...) carry a
+        meaningful ``display_name`` and their own default endpoint, so they are
+        always named directly. The exact host and model are deliberately left
+        out to keep the splash approachable for non-technical users; those
+        details live in the LLM settings dialog.
+        """
+        name = self.llm.display_name or type(self.llm).__name__
+        # Only the base OpenAI wrapper is generic enough that a non-default
+        # endpoint changes what it actually connects to; subclasses set their
+        # own endpoint (sometimes in __init__), so comparing against the param
+        # default would spuriously flag their default config as "custom".
+        # NB: exact type check, not isinstance — the OpenAI subclasses
+        # (AINavigator, AICatalyst, Ollama, Groq, OpenRouter) are exactly the
+        # dedicated providers we want named directly, and all carry a truthy
+        # endpoint, so isinstance would reintroduce the false "custom" label.
+        if type(self.llm) is OpenAI and self.llm.endpoint:
+            return f"a **custom {name}-compatible endpoint**"
+        return f"**{name}**"
+
     def _get_status_text(self) -> str:
         """Generate the status text showing sources and LLM provider."""
         num_sources = len(self.context.get("sources", []))
-        llm_name = type(self.llm).__name__
+        llm_label = self._format_llm_provider_label()
 
         # Build LLM status text
         if self._llm_status == 'verifying':
-            llm_text = f"verifying **{llm_name}** connection"
+            llm_text = f"verifying {llm_label} connection"
         elif self._llm_status == 'connected':
-            llm_text = f"using **{llm_name}** as the LLM provider"
+            llm_text = f"using {llm_label} as the LLM provider"
         else:
-            llm_text = f"connecting to **{llm_name}** failed"
+            llm_text = f"connecting to {llm_label} failed"
 
         if num_sources == 0:
             status = f"Drag & drop your dataset here to begin; {llm_text}."
