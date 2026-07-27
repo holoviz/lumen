@@ -378,7 +378,6 @@ class Planner(Coordinator):
             response_model=plan_model,
             agents=agents,
             tools=tools,
-            llm_tools=llm_tools,
             unmet_dependencies=unmet_dependencies,
             candidates=agent_candidates + tool_candidates,
             previous_actors=previous_actors,
