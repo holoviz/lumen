@@ -77,6 +77,11 @@ DEFAULT_MAX_SUMMARY_COLS = 16
 # human-meaningful "enum"/categorical columns and prioritised.
 LOW_CARDINALITY_MAX = 10
 
+# Matches a column name ending in a stem + integer index, with an optional
+# separator so all common series conventions are caught: "X_pca_12", "PC1",
+# "dim-1", "emb.2". Used to collapse machine-generated numbered column series.
+INDEXED_COLUMN_RE = re.compile(r"^(?P<stem>.+?)[_.\-]?(?P<idx>\d+)$")
+
 
 def deterministic_hash(text: str) -> int:
     """Stable hash using MD5, consistent across Python sessions."""
@@ -1233,6 +1238,96 @@ def truncate_string(s, max_length=30, ellipsis="..."):
         return s
     part_length = (max_length - len(ellipsis)) // 2
     return f"{s[:part_length]}{ellipsis}{s[-part_length:]}"
+
+
+def collapse_indexed_columns(
+    names: list[str], min_series: int = 8, max_gaps: int = 5
+) -> list[str]:
+    """
+    Collapse machine-generated numbered column series into a single entry.
+
+    A *series* is a group of columns that share a stem and differ only by a
+    trailing integer index (e.g. ``X_pca_0 … X_pca_99`` or ``PCs_0 … PCs_99``),
+    such as embedding/PCA matrices or one-hot expansions. Individually the names
+    carry no meaning, so listing every one wastes prompt budget without adding
+    signal. A run of at least *min_series* members collapses; a near-complete
+    run is still collapsed and its missing indices are named. Genuinely distinct
+    names, short runs, and sparse/heavily-gapped runs (which includes any
+    step > 1 series) are returned unchanged and in their original position.
+
+    Parameters
+    ----------
+    names : list[str]
+        Column names in their original order.
+    min_series : int
+        Minimum present members before a stem is collapsed. Smaller runs stay
+        expanded since the token savings don't justify hiding the columns.
+    max_gaps : int
+        Most missing indices tolerated within a run's span. A run with more
+        holes than this stays expanded, since the gaps are likely meaningful
+        (and too numerous to name compactly). This also excludes step > 1
+        series, whose "gaps" exceed the budget.
+
+    Returns
+    -------
+    list[str]
+        Column names with each qualifying series replaced by a single
+        ``"{first}..{last} ({n} cols)"`` entry — with ``", missing <indices>"``
+        appended when the run has holes. The real first/last column names are
+        used, so the original separator and any zero-padding are preserved. The
+        entry sits where the series first appeared.
+
+    Examples
+    --------
+    >>> collapse_indexed_columns(["obs_id", "PCs_0", "PCs_1", "PCs_2"], min_series=2)
+    ['obs_id', 'PCs_0..PCs_2 (3 cols)']
+    >>> collapse_indexed_columns(["x_0", "x_1", "x_3"], min_series=2)
+    ['x_0..x_3 (3 cols, missing 2)']
+    >>> collapse_indexed_columns(["gender", "age", "smoking_status"])
+    ['gender', 'age', 'smoking_status']
+    """
+    stem_members: dict[str, list[tuple[int, str]]] = {}
+    name_stem: dict[str, str] = {}
+    for name in names:
+        match = INDEXED_COLUMN_RE.match(name)
+        if match:
+            stem = match.group("stem")
+            stem_members.setdefault(stem, []).append((int(match.group("idx")), name))
+            name_stem[name] = stem
+
+    collapsible: dict[str, str] = {}
+    for stem, members in stem_members.items():
+        indices = [idx for idx, _ in members]
+        # Skip small runs, and any with duplicate indices (not a clean series).
+        if len(indices) < min_series or len(set(indices)) != len(indices):
+            continue
+        lo, hi = min(indices), max(indices)
+        # Collapse a contiguous run, or a near-complete one whose few holes we
+        # can name. A sparse or heavily-gapped run (including any step > 1
+        # series) exceeds max_gaps and stays expanded — its holes may matter.
+        missing = sorted(set(range(lo, hi + 1)) - set(indices))
+        if len(missing) > max_gaps:
+            continue
+        # Label from the real endpoint names so the source's separator and any
+        # zero-padding (``_``, ``-``, ``.`` or none) are preserved.
+        lo_name = next(name for idx, name in members if idx == lo)
+        hi_name = next(name for idx, name in members if idx == hi)
+        label = f"{lo_name}..{hi_name} ({len(indices)} cols"
+        if missing:
+            label += f", missing {', '.join(map(str, missing))}"
+        collapsible[stem] = label + ")"
+
+    result: list[str] = []
+    emitted: set[str] = set()
+    for name in names:
+        stem = name_stem.get(name)
+        if stem in collapsible:
+            if stem not in emitted:
+                result.append(collapsible[stem])
+                emitted.add(stem)
+        else:
+            result.append(name)
+    return result
 
 
 def truncate_iterable(iterable, max_length=150) -> tuple[list, list, bool]:

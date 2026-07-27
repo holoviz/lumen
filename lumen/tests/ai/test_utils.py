@@ -20,12 +20,91 @@ from lumen.ai.config import PROMPTS_DIR
 from lumen.ai.models import DeleteLine, InsertLine, ReplaceLine
 from lumen.ai.utils import (
     IMAGE_MIME_TYPES, UNRECOVERABLE_ERRORS, apply_changes, clean_sql,
-    content_to_text, describe_data, find_slug_by_table_name,
-    format_msg_content, fuse_messages, get_schema, mutate_user_message,
-    parse_huggingface_url, render_template, report_error, retry_llm_output,
-    serialize_image_content, set_content_text, slug_to_table_name,
+    collapse_indexed_columns, content_to_text, describe_data,
+    find_slug_by_table_name, format_msg_content, fuse_messages, get_schema,
+    mutate_user_message, parse_huggingface_url, render_template, report_error,
+    retry_llm_output, serialize_image_content, set_content_text,
+    slug_to_table_name,
 )
 from lumen.config import SOURCE_TABLE_SEPARATOR as SEP
+
+
+def test_collapse_indexed_columns_collapses_large_series():
+    """A dense numbered series (e.g. an embedding matrix) collapses to one entry."""
+    names = ["obs_id"] + [f"X_pca_{i}" for i in range(100)]
+    assert collapse_indexed_columns(names) == ["obs_id", "X_pca_0..X_pca_99 (100 cols)"]
+
+
+def test_collapse_indexed_columns_leaves_unique_names():
+    """Genuinely distinct columns are never collapsed."""
+    names = ["gender", "age", "smoking_status", "tissue_site"]
+    assert collapse_indexed_columns(names) == names
+
+
+def test_collapse_indexed_columns_short_series_untouched():
+    """Runs below the threshold stay expanded (e.g. tSNE/UMAP 2-D embeddings)."""
+    names = ["X_tsne_0", "X_tsne_1", "obs_id"]
+    assert collapse_indexed_columns(names) == names
+
+
+def test_collapse_indexed_columns_preserves_position_and_interleaving():
+    """Each series collapses at its first occurrence, even when interleaved."""
+    names = []
+    for i in range(10):
+        names.extend([f"a_{i}", f"b_{i}"])
+    result = collapse_indexed_columns(names)
+    assert result == ["a_0..a_9 (10 cols)", "b_0..b_9 (10 cols)"]
+
+
+def test_collapse_indexed_columns_near_complete_gap_named():
+    """A near-complete run collapses and names its missing index."""
+    names = [f"X_pca_{i}" for i in range(100) if i != 50]
+    assert collapse_indexed_columns(names) == ["X_pca_0..X_pca_99 (99 cols, missing 50)"]
+
+
+def test_collapse_indexed_columns_multiple_gaps_listed():
+    """Several holes (within budget) are all named, in order."""
+    names = [f"x_{i}" for i in range(100) if i not in (50, 73)]
+    assert collapse_indexed_columns(names) == ["x_0..x_99 (98 cols, missing 50, 73)"]
+
+
+def test_collapse_indexed_columns_too_many_gaps_expanded():
+    """More holes than max_gaps: left expanded, since the gaps likely matter."""
+    drop = {1, 3, 5, 7, 9, 11}  # 6 gaps > default max_gaps of 5
+    names = [f"x_{i}" for i in range(20) if i not in drop]
+    assert collapse_indexed_columns(names) == names
+
+
+def test_collapse_indexed_columns_step_series_expanded():
+    """A step-2 series is too gappy to be a run and stays expanded."""
+    names = [f"x_{2 * i}" for i in range(10)]  # span 19, 9 holes
+    assert collapse_indexed_columns(names) == names
+
+
+def test_collapse_indexed_columns_nonzero_start():
+    """Contiguous runs that don't start at zero collapse honestly."""
+    names = [f"p_{i}" for i in range(5, 21)]  # p_5..p_20, 16 members
+    assert collapse_indexed_columns(names) == ["p_5..p_20 (16 cols)"]
+
+
+def test_collapse_indexed_columns_non_numeric_suffix_ignored():
+    """Names whose suffix isn't a bare integer don't match the series pattern."""
+    names = ["total_counts", "total_counts_mt", "n_genes_by_counts"]
+    assert collapse_indexed_columns(names) == names
+
+
+def test_collapse_indexed_columns_no_separator():
+    """The classic PCA convention (no separator, e.g. PC1..PC50) collapses too."""
+    names = [f"PC{i}" for i in range(1, 51)]
+    assert collapse_indexed_columns(names) == ["PC1..PC50 (50 cols)"]
+
+
+def test_collapse_indexed_columns_alternate_separators():
+    """Hyphen- and dot-separated series are recognised, not just underscores."""
+    hyphen = [f"dim-{i}" for i in range(8)]
+    dot = [f"emb.{i}" for i in range(8)]
+    assert collapse_indexed_columns(hyphen) == ["dim-0..dim-7 (8 cols)"]
+    assert collapse_indexed_columns(dot) == ["emb.0..emb.7 (8 cols)"]
 
 
 def test_render_template_with_valid_template():
