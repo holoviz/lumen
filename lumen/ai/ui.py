@@ -1219,7 +1219,7 @@ class UI(Viewer):
 
     def _render_main(self) -> list[Viewable]:
         self._cta = Typography(self._get_status_text(), margin=(0, 0, 5, 0))
-        self._chat_splash = Column(self._cta, self._chat_input, margin=(0, 0, 0, -10))
+        self._chat_splash = Column(self._cta, self._chat_input, margin=(0, 0, 0, -10), sizing_mode="stretch_width")
         self._error_alert = Alert(
             object="",
             severity="error",
@@ -1253,10 +1253,11 @@ class UI(Viewer):
                 self._success_alert,
                 max_width=850,
                 styles={'margin': 'auto'},
-                sx={'p': '0 20px 20px 20px'}
+                sx={'p': '0 20px 20px 20px'},
+                sizing_mode="stretch_width"
             ),
             sx={'display': 'flex', 'align-items': 'center'},
-            height_policy='max'
+            height_policy="max"
         )
 
         self._main = Row(self._splash, sizing_mode='stretch_both', align="center")
@@ -2059,7 +2060,7 @@ class ExplorerUI(UI):
             disabled=[] if num_sources else [1],
             min_height=125,
             margin=(0, 10),
-            sizing_mode="stretch_height",
+            sizing_mode="stretch_width",
             stylesheets=[".MuiTabsPanel > .MuiBox-root { overflow: visible}"]
         )
 
