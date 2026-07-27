@@ -1196,18 +1196,25 @@ class UI(Viewer):
     def _format_llm_provider_label(self) -> str:
         """Markdown label naming the LLM provider for the status line.
 
-        When the wrapper points at a custom endpoint (e.g. the OpenAI wrapper
-        aimed at a self-hosted or third-party service) naming the provider
-        alone is misleading, so flag it as a custom compatible endpoint. The
-        exact host and model are deliberately left out to keep the splash
-        approachable for non-technical users; those details live in the LLM
-        settings dialog.
+        When the *generic* OpenAI wrapper points at a custom endpoint (e.g. a
+        self-hosted or third-party service) naming the provider alone is
+        misleading, so flag it as a custom compatible endpoint. Dedicated
+        providers (AI Navigator, AI Catalyst, Ollama, Groq, ...) carry a
+        meaningful ``display_name`` and their own default endpoint, so they are
+        always named directly. The exact host and model are deliberately left
+        out to keep the splash approachable for non-technical users; those
+        details live in the LLM settings dialog.
         """
         name = self.llm.display_name or type(self.llm).__name__
-        params = self.llm.param
-        endpoint = getattr(self.llm, "endpoint", None)
-        default_endpoint = params["endpoint"].default if "endpoint" in params else None
-        if endpoint and endpoint != default_endpoint:
+        # Only the base OpenAI wrapper is generic enough that a non-default
+        # endpoint changes what it actually connects to; subclasses set their
+        # own endpoint (sometimes in __init__), so comparing against the param
+        # default would spuriously flag their default config as "custom".
+        # NB: exact type check, not isinstance — the OpenAI subclasses
+        # (AINavigator, AICatalyst, Ollama, Groq, OpenRouter) are exactly the
+        # dedicated providers we want named directly, and all carry a truthy
+        # endpoint, so isinstance would reintroduce the false "custom" label.
+        if type(self.llm) is OpenAI and self.llm.endpoint:
             return f"a **custom {name}-compatible endpoint**"
         return f"**{name}**"
 
