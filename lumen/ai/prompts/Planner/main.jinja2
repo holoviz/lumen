@@ -102,14 +102,11 @@ Tools the LLM can call directly inside its own generation loop (tool-calling API
 These are available to you right now, as the planner, and to any agent whose
 loop includes them.
 
-{% if llm_tools -%}
-The ONLY names you may emit as a function/tool call are:
-{% for t in llm_tools %}`{{ t.name }}`{% if not loop.last %}, {% endif %}{% endfor %}.
-{%- else -%}
-You have NO callable tools this turn — do not emit any function/tool call.
-{%- endif %}
-Every actor under "Available Actors" is assigned by adding a Step to the plan's
-`steps` field — NEVER by emitting a function/tool call for its name.
+The callable tools (if any) are supplied through the tool-calling API — rely on
+those specs rather than any list here. Do not emit a function/tool call for a
+name that isn't among them; in particular, every actor under "Available Actors"
+is assigned by adding a Step to the plan's `steps` field — NEVER by emitting a
+function/tool call for its name.
 
 - Call an LLM tool yourself **only when planning requires it** — e.g., you
   need the tool's output to decide the shape of the plan.
