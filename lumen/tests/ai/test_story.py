@@ -10,7 +10,8 @@ except ModuleNotFoundError:
 
 from panel.pane import Markdown
 
-from lumen.ai.report import Action, Report, Section
+from lumen.ai.report import Action, Section
+from lumen.ai.story import StoryReport
 
 
 class A(Action):
@@ -56,7 +57,7 @@ def _kinds(report):
 
 def _prose_editors(report):
     """Every editable prose block rendered in the story, at any nesting."""
-    from lumen.ai.report import EditableProse
+    from lumen.ai.editors import EditableProse
 
     found = []
 
@@ -107,7 +108,7 @@ async def test_build_catalog_numbers_and_summarizes(tiny_source):
 async def test_report_annotate_interleaves_prose_and_view(llm, tiny_source):
     from lumen.ai.agents.story import Story, StoryBlock
 
-    report = Report(
+    report = StoryReport(
         Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
         title='My Report',
         llm=llm,
@@ -136,7 +137,7 @@ async def test_report_annotate_interleaves_prose_and_view(llm, tiny_source):
 async def test_report_annotate_appends_unreferenced_views(llm, tiny_source):
     from lumen.ai.agents.story import Story, StoryBlock
 
-    report = Report(
+    report = StoryReport(
         Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
         Section(ChartAction(source=tiny_source, label='Chart B'), title='Section B'),
         title='R',
@@ -157,7 +158,7 @@ async def test_report_annotate_appends_unreferenced_views(llm, tiny_source):
 async def test_report_annotate_only_selected_sections(llm, tiny_source):
     from lumen.ai.agents.story import Story, StoryBlock
 
-    report = Report(
+    report = StoryReport(
         Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
         Section(ChartAction(source=tiny_source, label='Chart B'), title='Section B'),
         title='R',
@@ -178,7 +179,7 @@ async def test_report_annotate_only_selected_sections(llm, tiny_source):
 async def test_report_annotate_is_idempotent(llm, tiny_source):
     from lumen.ai.agents.story import Story, StoryBlock
 
-    report = Report(
+    report = StoryReport(
         Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
         title='R', llm=llm,
     )
@@ -199,7 +200,7 @@ async def test_report_annotate_is_idempotent(llm, tiny_source):
 
 
 async def test_report_annotate_no_llm_is_noop(tiny_source):
-    report = Report(
+    report = StoryReport(
         Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
         title='R',
     )
@@ -214,7 +215,7 @@ async def test_report_annotate_no_llm_is_noop(tiny_source):
 async def test_report_story_dialog_presets_and_generate(llm, tiny_source):
     from lumen.ai.agents.story import Story, StoryBlock
 
-    report = Report(
+    report = StoryReport(
         Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
         title='R', llm=llm,
     )
@@ -241,7 +242,7 @@ async def test_report_story_dialog_presets_and_generate(llm, tiny_source):
 async def test_report_story_tab_added_and_export_follows_active_tab(llm, tiny_source):
     from lumen.ai.agents.story import Story, StoryBlock
 
-    report = Report(
+    report = StoryReport(
         Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
         title='R', llm=llm,
     )
@@ -278,9 +279,8 @@ async def test_report_story_tab_added_and_export_follows_active_tab(llm, tiny_so
 
 async def test_story_prose_is_editable_and_edits_reach_the_exports(llm, tiny_source):
     from lumen.ai.agents.story import Story, StoryBlock
-    from lumen.ai.report import EditableProse
 
-    report = Report(
+    report = StoryReport(
         Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
         title='R', llm=llm,
     )
@@ -309,7 +309,7 @@ async def test_story_prose_is_editable_and_edits_reach_the_exports(llm, tiny_sou
 
 
 def test_editable_prose_renders_markdown():
-    from lumen.ai.report import EditableProse
+    from lumen.ai.editors import EditableProse
 
     prose = EditableProse(value="**Pop** leads with *1,252*")
 
@@ -327,7 +327,7 @@ def test_editable_prose_renders_markdown():
 async def test_story_prose_rewritten_by_ai(llm, tiny_source):
     from lumen.ai.agents.story import ProseEdit, Story, StoryBlock
 
-    report = Report(
+    report = StoryReport(
         Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
         title='R', llm=llm,
     )
@@ -353,7 +353,7 @@ async def test_story_prose_rewritten_by_ai(llm, tiny_source):
 async def test_regenerating_keeps_the_previous_version_and_its_edits(llm, tiny_source):
     from lumen.ai.agents.story import Story, StoryBlock
 
-    report = Report(
+    report = StoryReport(
         Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
         title='R', llm=llm,
     )
@@ -388,7 +388,7 @@ async def test_regenerating_keeps_the_previous_version_and_its_edits(llm, tiny_s
 async def test_report_reset_discards_story(llm, tiny_source):
     from lumen.ai.agents.story import Story, StoryBlock
 
-    report = Report(
+    report = StoryReport(
         Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
         title='R', llm=llm,
     )
@@ -409,12 +409,12 @@ async def test_report_reset_discards_story(llm, tiny_source):
 
 
 async def test_report_outline_defaults_empty():
-    report = Report(Section(A(order=[]), title='Section A'), title='R')
+    report = StoryReport(Section(A(order=[]), title='Section A'), title='R')
     assert report._story.outline == []
 
 
 async def test_report_default_outline_from_sections():
-    report = Report(
+    report = StoryReport(
         Section(A(order=[]), title='Section A'),
         Section(B(order=[]), title='Section B'),
         title='R',
@@ -426,7 +426,7 @@ async def test_report_default_outline_from_sections():
 
 
 async def test_report_outline_reorders_export():
-    report = Report(
+    report = StoryReport(
         Section(A(order=[]), title='Section A'),
         Section(B(order=[]), title='Section B'),
         title='R',
@@ -440,7 +440,7 @@ async def test_report_outline_reorders_export():
 
 
 async def test_report_outline_inserts_headings():
-    report = Report(Section(A(order=[]), title='Section A'), title='R')
+    report = StoryReport(Section(A(order=[]), title='Section A'), title='R')
     await report.execute()
 
     report._story.outline = [{"heading": "Introduction", "level": 1}, {"section": "Section A"}]
@@ -451,7 +451,7 @@ async def test_report_outline_inserts_headings():
 
 
 async def test_report_outline_reorders_html_export():
-    report = Report(
+    report = StoryReport(
         Section(A(order=[]), title='Section A'),
         Section(B(order=[]), title='Section B'),
         title='R',
@@ -470,7 +470,7 @@ async def test_report_outline_reorders_html_export():
 
 
 async def test_report_arrange_editor_seeds_and_binds_outline():
-    report = Report(
+    report = StoryReport(
         Section(A(order=[]), title='Section A'),
         Section(B(order=[]), title='Section B'),
         title='R',

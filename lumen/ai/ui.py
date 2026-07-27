@@ -61,7 +61,8 @@ from .llm import Llm, OpenAI, get_available_llm
 from .llm_dialog import LLMConfigDialog
 from .logs import ChatLogs
 from .models import ErrorDescription
-from .report import ActorTask, Report, Section
+from .report import ActorTask, Section
+from .story import StoryReport
 from .utils import (
     IMAGE_MIME_TYPES, content_to_text, format_msg_content, log_debug,
     wrap_logfire,
@@ -852,7 +853,7 @@ class UI(Viewer):
                 )
                 main_content = Column(no_explorations_msg, back_button, styles={"margin": "auto"})
             else:
-                main_content = Report(
+                main_content = StoryReport(
                     *(Section(item["view"].plan, *(it["view"].plan for it in item["items"]), title=item["view"].plan.title)
                       for item in self._explorations.items[1:]),
                     llm=self.llm,
