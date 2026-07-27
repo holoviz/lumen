@@ -1,13 +1,15 @@
 import asyncio
 import io
+import threading
 
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pandas as pd
 import pytest
 
 from lumen.ai.controls import SourceResult, UploadedFileRow
-from lumen.ai.controls.ingest.utils import read_geo_file
+from lumen.ai.controls.ingest.utils import FileReadResult, read_geo_file
 from lumen.sources.duckdb import DuckDBSource
 from lumen.tests.utils import Polygon, gpd, requires_geopandas
 
@@ -365,6 +367,164 @@ class TestUploadControlsUX:
     def test_upload_button_label_is_explicit(self, upload_controls):
         """Upload controls should use explicit upload action text."""
         assert upload_controls._add_button.name == "Upload file(s)"
+
+
+@pytest.mark.asyncio
+class TestProcessFilesAsync:
+    """Tests for the non-blocking ``_process_files_async`` ingest path.
+
+    The async path exists so slow pure-compute work (custom upload handlers,
+    file parsing) runs off the event loop. It must stay behaviourally identical
+    to the blocking ``_process_files``, and must not perform the compute on the
+    event loop thread.
+    """
+
+    async def test_matches_sync_path_for_csv(self, upload_controls, download_controls):
+        """Async and blocking paths produce the same counts, tables and source."""
+        files = {"a.csv": b"x,y\n1,2\n", "b.csv": b"x,y\n3,4\n"}
+
+        upload_controls._generate_file_cards(files)
+        async_result = await upload_controls._process_files_async()
+
+        download_controls._generate_file_cards(files)
+        sync_result = download_controls._process_files()
+
+        assert async_result == sync_result == (2, 0, 0)
+        assert set(upload_controls.outputs["sources"][0].get_tables()) == {"a", "b"}
+        assert len(upload_controls.outputs["sources"]) == 1
+
+    async def test_custom_handler_runs_off_event_loop(self, upload_controls):
+        """A registered handler must execute on a worker thread, not the loop.
+
+        This is the whole point of the async path: a slow handler (e.g. reading
+        an .h5ad) would otherwise freeze the session.
+        """
+        loop_thread = threading.get_ident()
+        handler_threads = []
+
+        def handler(context, file_obj, alias, filename):
+            handler_threads.append(threading.get_ident())
+            return DuckDBSource(
+                uri=":memory:", ephemeral=True, name="custom", tables={}
+            )
+
+        upload_controls.upload_handlers = {"h5ad": handler}
+        upload_controls._file_cards = [
+            UploadedFileRow(
+                file_obj=io.BytesIO(b"binary"),
+                filename="cells",
+                extension="h5ad",
+                file_type="data",
+            )
+        ]
+
+        await upload_controls._process_files_async()
+
+        assert handler_threads and handler_threads[0] != loop_thread
+
+    async def test_parsing_runs_off_event_loop(self, upload_controls):
+        """Standard table parsing is also offloaded to a worker thread."""
+        loop_thread = threading.get_ident()
+        read_threads = []
+        original = upload_controls._read_tables
+
+        def spy(file, card):
+            read_threads.append(threading.get_ident())
+            return original(file, card)
+
+        upload_controls._generate_file_cards({"a.csv": b"x,y\n1,2\n"})
+        with patch.object(upload_controls, "_read_tables", side_effect=spy):
+            await upload_controls._process_files_async()
+
+        assert read_threads and read_threads[0] != loop_thread
+
+    async def test_no_cards_returns_zero_counts(self, upload_controls):
+        """An empty batch short-circuits without touching the error placeholder."""
+        upload_controls._file_cards = []
+
+        assert await upload_controls._process_files_async() == (0, 0, 0)
+        assert upload_controls._error_placeholder.visible is False
+
+    async def test_unsupported_extension_shows_warning(self, upload_controls):
+        """Unsupported extensions are reported even though errors are deferred
+        to the end of the batch on the main thread."""
+        upload_controls._file_cards = [
+            UploadedFileRow(
+                file_obj=io.BytesIO(b"some content"),
+                filename="script",
+                extension="py",
+                file_type="data",
+            )
+        ]
+
+        n_tables, _, _ = await upload_controls._process_files_async()
+
+        assert n_tables == 0
+        assert upload_controls._error_placeholder.visible is True
+        assert "script.py" in upload_controls._error_placeholder.object
+        assert "unsupported format" in upload_controls._error_placeholder.object
+
+    async def test_unreadable_file_does_not_abort_remaining_cards(self, upload_controls):
+        """A card that fails to parse is reported but the batch continues.
+
+        Errors accumulate rather than short-circuiting, so a single bad file
+        cannot silently drop the files queued behind it.
+        """
+        upload_controls._generate_file_cards(
+            {"bad.csv": b"x,y\n1,2\n", "good.csv": b"x,y\n3,4\n"}
+        )
+        bad_card = next(c for c in upload_controls._file_cards if c.filename == "bad")
+
+        def selective_read(file, card):
+            if card.filename == "bad":
+                return None, "\n⚠️ Error processing 'bad.csv': boom"
+            return FileReadResult(tables={card.alias: pd.DataFrame({"x": [1]})}), None
+
+        with patch.object(upload_controls, "_read_tables", side_effect=selective_read):
+            n_tables, _, _ = await upload_controls._process_files_async()
+
+        assert bad_card is not None
+        assert n_tables == 1
+        assert "bad.csv" in upload_controls._error_placeholder.object
+        assert upload_controls.outputs["sources"][0].get_tables() == ["good"]
+
+
+class TestReadTablesPurity:
+    """``_read_tables`` must be safe to call from a worker thread."""
+
+    def test_returns_error_without_mutating_placeholder(self, upload_controls):
+        """Parse failures are returned, not written to Panel models.
+
+        Writing to ``_error_placeholder`` off-thread would mutate the Bokeh
+        document from a worker thread; the string is surfaced by the caller.
+        """
+        card = UploadedFileRow(
+            file_obj=io.BytesIO(b"not really a parquet"),
+            filename="broken",
+            extension="parquet",
+            file_type="data",
+        )
+
+        result, error = upload_controls._read_tables(card.file_obj, card)
+
+        assert result is None
+        assert "broken.parquet" in error
+        assert upload_controls._error_placeholder.object == ""
+        assert upload_controls._error_placeholder.visible is False
+
+    def test_returns_result_for_valid_csv(self, upload_controls):
+        """A readable file yields a FileReadResult and no error."""
+        card = UploadedFileRow(
+            file_obj=io.BytesIO(b"x,y\n1,2\n"),
+            filename="fine",
+            extension="csv",
+            file_type="data",
+        )
+
+        result, error = upload_controls._read_tables(card.file_obj, card)
+
+        assert error is None
+        assert list(result.tables) == ["fine"]
 
 
 @requires_geopandas

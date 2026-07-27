@@ -271,7 +271,7 @@ class DownloadSourceControls(FileSourceControls):
             self._message_placeholder.visible = False
 
     @param.depends("add", watch=True)
-    def _on_add(self):
+    async def _on_add(self):
         """Process downloaded files."""
         if not self._file_cards:
             return
@@ -279,7 +279,7 @@ class DownloadSourceControls(FileSourceControls):
         self._active_download_task = None
 
         with self._layout.param.update(loading=True):
-            n_tables, n_docs, n_metadata = self._process_files()
+            n_tables, n_docs, n_metadata = await self._process_files_async()
 
             total_files = len(self._file_cards)
             if self.clear_uploads:

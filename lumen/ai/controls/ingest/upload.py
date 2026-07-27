@@ -78,13 +78,13 @@ class UploadSourceControls(FileSourceControls):
         )
 
     @param.depends("add", watch=True)
-    def _on_add(self):
+    async def _on_add(self):
         """Process uploaded files."""
         if len(self._file_cards) == 0:
             return
 
         with self._layout.param.update(loading=True):
-            n_tables, n_docs, n_metadata = self._process_files()
+            n_tables, n_docs, n_metadata = await self._process_files_async()
 
             total_files = len(self._file_cards)
             n_successful = n_tables + n_docs + n_metadata

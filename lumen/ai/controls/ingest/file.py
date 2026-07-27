@@ -5,6 +5,8 @@ import io
 import json
 import pathlib
 
+from typing import TYPE_CHECKING
+
 import pandas as pd
 import param
 
@@ -17,6 +19,11 @@ from .base import BaseSourceControls
 from .constants import TABLE_EXTENSIONS
 from .file_row import UploadedFileRow
 from .utils import FileReadResult, read_file_to_dataframes
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from ....sources.base import Source
 
 
 class FileSourceControls(BaseSourceControls):
@@ -130,36 +137,48 @@ class FileSourceControls(BaseSourceControls):
     # File reading
     # ──────────────────────────────────────────────────────────────────────────
 
-    def _add_table(
+    def _read_tables(
         self,
-        duckdb_source: DuckDBSource,
         file: io.BytesIO | io.StringIO,
         card: UploadedFileRow,
-    ) -> int:
-        conn = duckdb_source._connection
-        extension = card.extension
-        alias = card.alias
-        filename = f"{card.filename}.{extension}"
+    ) -> tuple[FileReadResult | None, str | None]:
+        """Read a file into DataFrames. Pure compute: safe to run in a thread.
 
+        Touches no Panel/Bokeh models; errors are returned as a message string
+        for the caller to surface on the main thread.
+
+        Returns
+        -------
+        (result, error) where exactly one is None.
+        """
+        extension = card.extension
+        filename = f"{card.filename}.{extension}"
         try:
             if extension.endswith("json"):
                 # Use the more robust JSON parser on this class
                 df = self._read_json_file(file, filename)
-                result = FileReadResult(tables={alias: df})
-            else:
-                result = read_file_to_dataframes(
-                    file, extension, alias=alias, sheet_name=card.sheet,
-                )
-                if result is None:
-                    self._error_placeholder.object += (
-                        f"\n⚠️ Could not convert {filename!r}: unsupported format."
-                    )
-                    self._error_placeholder.visible = True
-                    return 0
+                return FileReadResult(tables={card.alias: df}), None
+            result = read_file_to_dataframes(
+                file, extension, alias=card.alias, sheet_name=card.sheet,
+            )
+            if result is None:
+                return None, f"\n⚠️ Could not convert {filename!r}: unsupported format."
         except Exception as e:
-            self._error_placeholder.object += f"\n⚠️ Error processing {filename!r}: {e}"
-            self._error_placeholder.visible = True
-            return 0
+            return None, f"\n⚠️ Error processing {filename!r}: {e}"
+        return result, None
+
+    def _commit_tables(
+        self,
+        duckdb_source: DuckDBSource,
+        result: FileReadResult,
+        card: UploadedFileRow,
+    ) -> int:
+        """Register read DataFrames with DuckDB and publish outputs.
+
+        Must run on the main thread: mutates Panel models and triggers watchers.
+        """
+        conn = duckdb_source._connection
+        filename = f"{card.filename}.{card.extension}"
 
         # Apply source-level params (e.g. spatial initializers)
         if result.source_params:
@@ -202,6 +221,20 @@ class FileSourceControls(BaseSourceControls):
             self._error_placeholder.visible = True
 
         return added
+
+    def _add_table(
+        self,
+        duckdb_source: DuckDBSource,
+        file: io.BytesIO | io.StringIO,
+        card: UploadedFileRow,
+    ) -> int:
+        """Read and register a file in one blocking call (read + commit)."""
+        result, error = self._read_tables(file, card)
+        if error is not None:
+            self._error_placeholder.object += error
+            self._error_placeholder.visible = True
+            return 0
+        return self._commit_tables(duckdb_source, result, card)
 
     def _read_json_file(self, file: io.BytesIO | io.StringIO, filename: str) -> pd.DataFrame:
         file.seek(0)
@@ -309,56 +342,157 @@ class FileSourceControls(BaseSourceControls):
     # Batch processing
     # ──────────────────────────────────────────────────────────────────────────
 
-    def _process_files(self):
+    def _ephemeral_source(self, source: DuckDBSource | None) -> DuckDBSource:
+        """Reuse the batch's ephemeral in-memory source, or create it.
+
+        Cheap and main-thread only (reads ``self.outputs``, bumps ``_count``).
+        """
+        if source is not None:
+            return source
+        for existing in self.outputs.get("sources", []):
+            if isinstance(existing, DuckDBSource) and existing.ephemeral:
+                return existing
+        source_id = f"{self.source_name_prefix}{self._count:06d}"
+        self._count += 1
+        return DuckDBSource(uri=":memory:", ephemeral=True, name=source_id, tables={})
+
+    def _begin_process_files(
+        self,
+    ) -> tuple[dict[str, Callable], tuple[str, ...], list[UploadedFileRow], list[UploadedFileRow]]:
+        """Reset error state and partition staged cards. Main thread.
+
+        Returns
+        -------
+        (handlers, handler_extensions, data_cards, metadata_cards)
+        """
         self._error_placeholder.object = ""
         self._error_placeholder.visible = False
+        handlers = {
+            key.lstrip("."): value for key, value in self.upload_handlers.items()
+        }
+        return (
+            handlers,
+            tuple(handlers),
+            [c for c in self._file_cards if c.file_type == "data"],
+            [c for c in self._file_cards if c.file_type == "metadata"],
+        )
 
+    def _register_custom_source(self, source: Source | None) -> int:
+        """Publish a Source returned by a custom upload handler. Main thread."""
+        if source is None:
+            return 0
+        n_tables = len(source.get_tables())
+        self._register_source_output(source)
+        self.param.trigger("outputs")
+        return n_tables
+
+    def _prepare_table_card(
+        self, source: DuckDBSource | None, card: UploadedFileRow
+    ) -> DuckDBSource:
+        """Ensure an ephemeral source exists and record the card's filename."""
+        source = self._ephemeral_source(source)
+        source.metadata.setdefault(card.alias, {})["filename"] = (
+            f"{card.filename}.{card.extension}"
+        )
+        return source
+
+    async def _process_files_async(self):
+        """Non-blocking :meth:`_process_files`.
+
+        Identical behaviour, except the expensive pure-compute work (custom
+        upload handlers such as ``.h5ad``, and file parsing) runs in a worker
+        thread so the event loop -- and therefore the UI -- stays responsive.
+        All Panel model mutation stays on this (main) thread.
+
+        Cards are processed sequentially rather than concurrently: they share a
+        single DuckDB connection, which is not safe for concurrent writes.
+        """
         if not self._file_cards:
             return 0, 0, 0
 
+        callbacks, custom_exts, data_cards, metadata_cards = self._begin_process_files()
         source = None
-        n_tables = 0
-        n_metadata = 0
-        table_upload_callbacks = {
-            key.lstrip("."): value for key, value in self.upload_handlers.items()
-        }
-        custom_table_extensions = tuple(table_upload_callbacks)
-
-        data_cards = [c for c in self._file_cards if c.file_type == "data"]
-        metadata_cards = [c for c in self._file_cards if c.file_type == "metadata"]
+        n_tables = n_metadata = 0
+        errors: list[str] = []
 
         for card in data_cards:
             log_debug(f"Processing data card: {card.filename}.{card.extension} (alias: {card.alias})")
-            if card.extension.endswith(custom_table_extensions):
-                source = table_upload_callbacks[card.extension](
-                    self.context, card.file_obj, card.alias, card.filename
+            if card.extension.endswith(custom_exts):
+                # Off-thread: handler is pure compute returning a Source.
+                source = await asyncio.to_thread(
+                    callbacks[card.extension],
+                    self.context, card.file_obj, card.alias, card.filename,
                 )
-                if source is not None:
-                    n_tables += len(source.get_tables())
-                    self._register_source_output(source)
-                    self.param.trigger("outputs")
+                n_tables += self._register_custom_source(source)
             elif card.extension.endswith(TABLE_EXTENSIONS):
-                if source is None:
-                    existing_sources = self.outputs.get("sources", [])
-                    for existing in existing_sources:
-                        if isinstance(existing, DuckDBSource) and existing.ephemeral:
-                            source = existing
-                            break
-                    if source is None:
-                        source_id = f"{self.source_name_prefix}{self._count:06d}"
-                        source = DuckDBSource(uri=":memory:", ephemeral=True, name=source_id, tables={})
-                        self._count += 1
-                table_name = card.alias
-                filename = f"{card.filename}.{card.extension}"
-                source.metadata.setdefault(table_name, {})["filename"] = filename
-                added = self._add_table(source, card.file_obj, card)
-                n_tables += added
+                source = self._prepare_table_card(source, card)
+                # Off-thread: parse file into DataFrames.
+                result, error = await asyncio.to_thread(
+                    self._read_tables, card.file_obj, card
+                )
+                if error is not None:
+                    errors.append(error)
+                    continue
+                n_tables += self._commit_tables(source, result, card)
             else:
-                self._error_placeholder.object += f"\n⚠️ Skipped '{card.filename}.{card.extension}': unsupported format."
-                self._error_placeholder.visible = True
+                errors.append(
+                    f"\n⚠️ Skipped '{card.filename}.{card.extension}': unsupported format."
+                )
 
         for card in metadata_cards:
             n_metadata += self._add_metadata_file(card)
+
+        if errors:
+            self._error_placeholder.param.update(
+                object=self._error_placeholder.object + "".join(errors), visible=True
+            )
+
+        log_debug(f"Processed files: {n_tables} tables, {n_metadata} metadata files")
+        return n_tables, 0, n_metadata
+
+    def _process_files(self):
+        """Blocking variant of :meth:`_process_files_async`.
+
+        Retained because it is called from synchronous contexts (notably the
+        chat-input submit handler in ``lumen.ai.ui``). A coroutine cannot be run
+        to completion from inside the already-running event loop, so the two
+        entry points share every step via helpers rather than one wrapping the
+        other; keep the loop below in sync with the async version.
+        """
+        if not self._file_cards:
+            return 0, 0, 0
+
+        callbacks, custom_exts, data_cards, metadata_cards = self._begin_process_files()
+        source = None
+        n_tables = n_metadata = 0
+        errors: list[str] = []
+
+        for card in data_cards:
+            log_debug(f"Processing data card: {card.filename}.{card.extension} (alias: {card.alias})")
+            if card.extension.endswith(custom_exts):
+                source = callbacks[card.extension](
+                    self.context, card.file_obj, card.alias, card.filename
+                )
+                n_tables += self._register_custom_source(source)
+            elif card.extension.endswith(TABLE_EXTENSIONS):
+                source = self._prepare_table_card(source, card)
+                result, error = self._read_tables(card.file_obj, card)
+                if error is not None:
+                    errors.append(error)
+                    continue
+                n_tables += self._commit_tables(source, result, card)
+            else:
+                errors.append(
+                    f"\n⚠️ Skipped '{card.filename}.{card.extension}': unsupported format."
+                )
+
+        for card in metadata_cards:
+            n_metadata += self._add_metadata_file(card)
+
+        if errors:
+            self._error_placeholder.param.update(
+                object=self._error_placeholder.object + "".join(errors), visible=True
+            )
 
         log_debug(f"Processed files: {n_tables} tables, {n_metadata} metadata files")
         return n_tables, 0, n_metadata
