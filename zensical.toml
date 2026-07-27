@@ -115,6 +115,14 @@ features = [
 ]
 
 # Color palette
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme)"
+
+[project.theme.palette.toggle]
+icon = "material/BrightnessAuto"
+name = "Switch to light mode"
+
 [[project.theme.palette]]
 media = "(prefers-color-scheme: light)"
 scheme = "default"
@@ -133,7 +141,7 @@ accent = "black"
 
 [project.theme.palette.toggle]
 icon = "material/brightness-4"
-name = "Switch to light mode"
+name = "Switch to system preference"
 
 # Markdown extensions
 [project.markdown_extensions.toc]
