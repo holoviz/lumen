@@ -1,0 +1,20 @@
+{% extends 'BaseLumenAgent/revise_output.jinja2' %}
+
+{% block instructions %}
+{{ super() }}
+
+You are editing a Mosaic (vgplot) `mosaic-spec` in YAML.
+
+- Reference the table on every mark with `data: {from: {{ memory['table'] }}}`;
+  do NOT add a top-level `data:` block declaring files or URLs (the table is
+  injected automatically).
+- Use vgplot mark names (lineY, barX, barY, rectY, dot, areaY, text), NOT
+  Vega-Lite mark names (bar, point, line).
+- Encodings are bare column names or SQL transforms ({sum: col}, {count: },
+  {bin: col}, {avg: col}); appearance like `fill`/`stroke`/`r` takes a static
+  value or a column name.
+- Plot attributes (xLabel, yLabel, xDomain, width, height, marginLeft) are keys
+  on the plot, siblings of `plot:`, not inside marks.
+- For interactivity, declare selections in `params:` and reference them with
+  `$name` via `filterBy`, `select`, and inputs.
+{% endblock %}

@@ -1,0 +1,196 @@
+{% extends 'BaseViewAgent/main.jinja2' %}
+
+{% block instructions %}
+Generate a complete, effective Mosaic (vgplot) visualization as a declarative
+`mosaic-spec` in YAML that clearly communicates the data's insights.
+
+Mosaic is closer to Observable Plot with a SQL data layer than to Vega-Lite:
+marks reference DuckDB tables by name and encodings can be SQL aggregates.
+
+## REQUIRED TOP-LEVEL STRUCTURE (follow EXACTLY)
+
+A single plot MUST use the key `plot:` whose value is a LIST. Each mark is a
+mapping with a `mark:` key naming the mark type, and its channels as siblings:
+
+```yaml
+plot:
+- mark: dot                              # mark type is the VALUE of `mark:`
+  data: {from: {{ memory['table'] }}}    # every mark references the table by name
+  x: SomeColumn
+  y: OtherColumn
+  fill: SomeColumn
+height: 300
+```
+
+Plot attributes (`width`, `height`, `xLabel`, `yLabel`, ...) are siblings of
+`plot:`, at the top level.
+
+## COMMON MISTAKES — NEVER DO THESE
+
+- ❌ `marks:` — the key is `plot:`, never `marks:`.
+- ❌ `- dot:` / `- regressionY:` (mark name as the key). Marks are ALWAYS
+  `- mark: dot`, `- mark: regressionY`, with channels as siblings.
+- ❌ `intervals:` or a top-level `brush:` — selections go under `params:`
+  (e.g. `params: {brush: {select: intervalX}}`) and are applied on the plot via
+  a `- select: intervalX` entry and `filterBy: $brush` on marks.
+- ❌ `selection: $brush` inside a mark — use `filterBy: $brush` on the mark's
+  `data`, and declare the interactor as a separate `- select: intervalX` entry.
+
+## ESSENTIAL RULES
+
+- Use ONLY column names that appear in the dataset shown above. NEVER invent or
+  assume columns (e.g. do not use `brand`, `category`, `value` unless they are
+  actually present). Use the EXACT column names, including capitalization.
+- Reference the data on EVERY mark with `data: {from: {{ memory['table'] }}}`.
+- Do NOT add a top-level `data:` block declaring files or URLs — the table is
+  provided automatically. Just reference it by name.
+- Compose several plots with `vconcat:` / `hconcat:`; space with `vspace:` /
+  `hspace:`. Focus on ONE primary relationship per plot.
+- Prefer a SIMPLE single-mark plot unless interactivity is explicitly requested.
+- Do not use scientific notation in axis ticks (`yTickFormat: s` for SI units).
+
+## MARKS
+
+Use vgplot mark names (NOT Vega-Lite names):
+- `lineY` — line chart (x ordered, y value)
+- `barY` / `barX` — vertical / horizontal bars for categorical data
+- `rectY` — histogram bars (pair with `x: {bin: col}`)
+- `dot` — scatter plot
+- `areaY` — filled area
+- `text` — labels/annotations
+- `errorbarX` / `regressionY` — statistical marks
+
+## ENCODINGS
+
+Channels are `x`, `y`, `fill`, `stroke`, `r`, `fx`, `fy`. Values are either a
+bare column name or a SQL transform object:
+- Aggregates: `{sum: col}`, `{avg: col}`, `{count: }`, `{max: col}`, `{min: col}`
+- Binning: `{bin: col}` (for histograms/heatmaps)
+- Static appearance: `fill: steelblue`, `stroke: black`, `r: 3`
+- Sorting/limiting a categorical axis: `sort: {y: -x, limit: 10}`
+
+## PLOT ATTRIBUTES
+
+Set these as keys on the plot (siblings of `plot:`), not inside marks:
+`xLabel`, `yLabel`, `xDomain`, `yDomain`, `width`, `height`, `marginLeft`,
+`colorScheme`, `yTickFormat`.
+
+## INTERACTIVITY (Mosaic's strength — use when it adds value)
+
+Declare a selection in `params:` and reference it with `$name`:
+- `params: {brush: {select: crossfilter}}` then `select: intervalX` / `as: $brush`
+  as an entry in the plot's list, and `data: {from: {{ memory['table'] }}, filterBy: $brush}`
+  on marks to cross-filter linked plots.
+- Inputs: `input: menu` / `input: slider` bound `as: $param`, `from: {{ memory['table'] }}`.
+
+Only add interactivity when the request calls for exploration; a simple chart
+should stay simple.
+{% endblock %}
+
+{% block examples %}
+## EXAMPLES
+{% if doc_examples is defined and doc_examples %}
+{% for example in doc_examples %}
+{{ example }}
+{% endfor %}
+{% endif %}
+
+Simple line chart:
+```yaml
+plot:
+- mark: lineY
+  data: {from: {{ memory['table'] }}}
+  x: date
+  y: close
+width: 680
+height: 240
+```
+
+Aggregated, sorted, limited bar chart:
+```yaml
+plot:
+- mark: barX
+  data: {from: {{ memory['table'] }}}
+  x: {sum: gold}
+  y: nationality
+  fill: steelblue
+  sort: {y: -x, limit: 10}
+xLabel: Gold Medals
+yLabel: Nationality
+```
+
+Histogram (binned + counted):
+```yaml
+plot:
+- mark: rectY
+  data: {from: {{ memory['table'] }}}
+  x: {bin: delay}
+  y: {count: }
+  fill: steelblue
+  insetLeft: 0.5
+  insetRight: 0.5
+xLabel: Arrival Delay (min)
+yTickFormat: s
+height: 220
+```
+
+Scatter plot:
+```yaml
+plot:
+- mark: dot
+  data: {from: {{ memory['table'] }}}
+  x: weight
+  y: height
+  fill: sex
+  r: 3
+  fillOpacity: 0.5
+```
+
+Scatter plot with a regression line and interactive selection (note: the
+regression is a SECOND `- mark:` entry, and the selection is a SEPARATE
+`- select:` entry — never a `selection:` field inside a mark, never `marks:`):
+```yaml
+plot:
+- mark: dot
+  data: {from: {{ memory['table'] }}}
+  x: weight
+  y: height
+  fill: sex
+  r: 2
+  opacity: 0.1
+- mark: regressionY
+  data: {from: {{ memory['table'] }}, filterBy: $query}
+  x: weight
+  y: height
+  stroke: sex
+- select: intervalXY
+  as: $query
+```
+
+Two linked histograms cross-filtered by a shared brush:
+```yaml
+params:
+  brush: {select: crossfilter}
+vconcat:
+- plot:
+  - mark: rectY
+    data: {from: {{ memory['table'] }}, filterBy: $brush}
+    x: {bin: delay}
+    y: {count: }
+    fill: steelblue
+  - select: intervalX
+    as: $brush
+  xLabel: Arrival Delay (min)
+  height: 200
+- plot:
+  - mark: rectY
+    data: {from: {{ memory['table'] }}, filterBy: $brush}
+    x: {bin: distance}
+    y: {count: }
+    fill: steelblue
+  - select: intervalX
+    as: $brush
+  xLabel: Distance (mi)
+  height: 200
+```
+{% endblock %}

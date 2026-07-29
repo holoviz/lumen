@@ -1780,6 +1780,79 @@ class VegaLiteView(View):
         return pn.pane.Vega(**spec)
 
 
+class MosaicView(View):
+    """
+    `MosaicView` renders interactive Mosaic/vgplot visualizations from a
+    declarative ``mosaic-spec`` specification.
+
+    Unlike `VegaLiteView`, which embeds the data inline, Mosaic references
+    tables by name and pushes computation down to DuckDB, rendering in the
+    browser via the `mosaic_widget` anywidget. This lets it scale to far
+    larger, cross-filtered and linked views.
+
+    See https://idl.uw.edu/mosaic/ for the specification format.
+    """
+
+    spec = param.Dict(doc="""
+        The declarative mosaic-spec (plot/marks/params/layout). Marks reference
+        the pipeline table via ``data: {from: <table>}``.""")
+
+    view_type = 'mosaic'
+
+    _extension = 'ipywidgets'
+
+    @classmethod
+    def _rebind_table(cls, obj: Any, table: str) -> None:
+        """Point every ``from:`` reference in the spec at ``table`` in place.
+
+        A Lumen view is backed by exactly one pipeline table, so all dataset
+        references must resolve to it. This makes the binding robust to whatever
+        name the LLM (or a hand edit) wrote in the spec: we register the data
+        under ``table`` and rewrite the spec to match, instead of trusting the
+        two to agree — a mismatch renders nothing and errors only in the browser.
+        """
+        if isinstance(obj, dict):
+            if "from" in obj and isinstance(obj["from"], str):
+                obj["from"] = table
+            for value in obj.values():
+                cls._rebind_table(value, table)
+        elif isinstance(obj, list):
+            for item in obj:
+                cls._rebind_table(item, table)
+
+    def _get_widget(self):
+        try:
+            from mosaic_widget import MosaicWidget
+        except ImportError as e:
+            raise ImportError(
+                "MosaicView requires the `mosaic_widget` package. Install it "
+                "with `pip install mosaic-widget` or `pip install 'lumen[ai-mosaic]'`."
+            ) from e
+
+        # Register the pipeline's already filtered/transformed data as a DuckDB
+        # table named after the pipeline table; the spec's marks reference it via
+        # `data: {from: <table>}`. Passing a DataFrame keeps the view correct for
+        # any Source type. For a DuckDB-backed pipeline the data could instead be
+        # served from the existing connection (con=) to avoid materializing large
+        # tables — a future scaling optimization.
+        df = self.get_data()
+        if df is None or len(df) == 0:
+            raise ValueError(
+                f"MosaicView has no data to render: pipeline table "
+                f"{self.pipeline.table!r} produced an empty result. Ensure the "
+                "data query ran successfully before generating the chart."
+            )
+        table = self.pipeline.table
+        spec = copy.deepcopy(self.spec)
+        # Rewrite every `from:` in the spec to the registered table name so the
+        # binding cannot break on an LLM-invented or drifted table name.
+        self._rebind_table(spec, table)
+        return MosaicWidget(spec, data={table: df})
+
+    def get_panel(self) -> pn.pane.IPyWidget:
+        return pn.pane.IPyWidget(self._get_widget(), **self.kwargs)
+
+
 class DeckGLView(View):
     """
     `DeckGLView` renders geographic data as 3D visualizations using deck.gl.

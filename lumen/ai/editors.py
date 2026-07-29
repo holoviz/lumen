@@ -527,6 +527,76 @@ class DeckGLEditor(LumenEditor):
         return f"{self.__class__.__name__}:\n```yaml\n{self.spec}\n```"
 
 
+class MosaicEditor(LumenEditor):
+    """Editor for Mosaic/vgplot declarative specifications.
+
+    Handles serialization/deserialization of mosaic-specs and validates their
+    top-level structure before the view is (re)built.
+    """
+
+    export_formats = ("yaml", "json")
+
+    _controls = [RetryControls, ExplainControls, CopyControls]
+    _label = "Chart"
+
+    @classmethod
+    def _serialize_component(cls, component: Component, spec_dict: dict[str, Any] | None = None) -> tuple[str, dict[str, Any]]:
+        component_spec = spec_dict or component.to_spec()
+        mosaic_spec = component_spec['spec']
+        return dump_yaml(mosaic_spec), component_spec
+
+    @classmethod
+    def _deserialize_component(
+        cls, component: Component, yaml_spec: str, spec_dict: dict[str, Any], pipeline: Pipeline | None = None
+    ) -> Component:
+        spec = load_yaml(yaml_spec)
+        cls.validate_spec(spec)
+        spec_dict = dict(spec_dict, spec=spec)
+        if pipeline is not None:
+            spec_dict.pop('pipeline', None)
+        return type(component).from_spec(spec_dict, pipeline=pipeline)
+
+    # Top-level keys that introduce a renderable plot/layout container.
+    _containers = frozenset({"plot", "vconcat", "hconcat"})
+
+    @classmethod
+    def validate_spec(cls, spec: dict[str, Any]) -> dict[str, Any]:
+        """Validate the Mosaic spec's top-level structure.
+
+        Full grammar validation is Mosaic's own ``parseSpec`` in the browser;
+        here we catch the structural mistakes LLMs commonly make so the
+        ``retry_llm_output`` loop can regenerate with a corrective message,
+        rather than shipping an unrenderable spec that silently draws nothing.
+        """
+        if isinstance(spec, dict) and "spec" in spec:
+            spec = spec["spec"]
+        if not isinstance(spec, dict) or not spec:
+            raise ValueError("Mosaic spec must be a non-empty mapping.")
+        if "marks" in spec and "plot" not in spec:
+            raise ValueError(
+                "Use `plot:` (a list of marks), not `marks:`. Each mark is "
+                "`- mark: <type>` with its channels (x, y, fill, ...) as siblings."
+            )
+        if not (cls._containers & set(spec)):
+            raise ValueError(
+                "Mosaic spec must contain a plot container: one of "
+                f"{', '.join(sorted(cls._containers))}. A single chart uses "
+                "`plot:` as a list of marks, e.g. `- mark: dot`."
+            )
+        return super().validate_spec(spec)
+
+    def export(self, fmt: str) -> StringIO | BytesIO:
+        ret = super().export(fmt)
+        if ret is not None:
+            return ret
+        if fmt == "json":
+            return StringIO(json.dumps(load_yaml(self.spec), indent=2))
+        raise ValueError(f"Unknown export format {fmt!r}")
+
+    def __str__(self):
+        return f"{self.__class__.__name__}:\n```yaml\n{self.spec}\n```"
+
+
 class AnalysisOutput(LumenEditor):
 
     analysis = param.ClassSelector(class_=Analysis)
