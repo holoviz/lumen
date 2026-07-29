@@ -251,15 +251,37 @@ class Pipeline(Viewer, Component):
                     refs.append(ref)
         return refs
 
-    def _compute_data(self):
+    def _filter_query(self) -> dict:
+        """Build the query dict of active filter conditions for this table."""
         query = {}
-
-        # Compute Filter query
         for filt in self.filters:
             filt_query = filt.query
             if (filt_query is not None and not getattr(filt, 'disabled', None) and
                 (filt.table is None or filt.table == self.table)):
                 query[filt.field] = filt_query
+        return query
+
+    def get_dataset(self):
+        """Return the pipeline data as a gridded ``xarray.Dataset`` when the
+        source can produce one (xarray-backed, via ``to_dataset``) and this is a
+        plain source query -- no chained pipeline, ParamFilter, or Python
+        transforms. Returns None otherwise so callers fall back to the
+        long-form frame.
+
+        Lets gridded views render from a compact xarray grid instead of
+        pivoting the long-form data back to xarray.
+        """
+        if (self.pipeline is not None or self.transforms or
+                not hasattr(self.source, 'to_dataset') or
+                any(isinstance(f, ParamFilter) for f in self.filters)):
+            return None
+        query = self._filter_query()
+        if self.sql_transforms:
+            query['sql_transforms'] = self.sql_transforms
+        return self.source.to_dataset(self.table, **query)
+
+    def _compute_data(self):
+        query = self._filter_query()
 
         if self.pipeline is None:
             # Compute SQL transform expression

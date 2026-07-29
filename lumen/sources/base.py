@@ -38,8 +38,8 @@ from ..filters.base import Filter
 from ..state import state
 from ..transforms.base import Filter as FilterTransform, Transform
 from ..transforms.sql import (
-    SQLCount, SQLDistinct, SQLFilter, SQLLimit, SQLMinMax, SQLSample,
-    SQLSelectFrom, SQLTransform,
+    ARRAY_AGG_DISTINCT_DIALECTS, SQLCount, SQLDistinct, SQLFilter, SQLLimit,
+    SQLMinMax, SQLSample, SQLSchemaStats, SQLSelectFrom, SQLTransform,
 )
 from ..util import get_dataframe_schema, is_ref, merge_schemas
 from ..validation import ValidationError, match_suggestion_message
@@ -59,6 +59,44 @@ if TYPE_CHECKING:
         dd = None  # type: ignore
         DataFrameTypes = (pd.DataFrame,)
 
+
+def _to_enum_list(values: Any, has_nulls: bool) -> list:
+    """
+    Normalizes an array aggregate result into a list of distinct values.
+
+    Arguments
+    ---------
+    values: Any
+        The aggregate as the driver returned it: a list, an array, a JSON
+        string (snowflake) or NULL if the table was empty.
+    has_nulls: bool
+        Whether the column contained NULL. Dialects disagree on whether an
+        array aggregate retains NULLs, so it is reinstated here rather than
+        relied on, to match what SELECT DISTINCT would have returned.
+    """
+    if values is None:
+        values = []
+    elif isinstance(values, np.ndarray):
+        values = values.tolist()
+    elif isinstance(values, str):
+        # snowflake returns ARRAY columns as JSON strings
+        values = json.loads(values)
+    elif isinstance(values, (list, tuple, set)):
+        values = list(values)
+    elif pd.isna(values):
+        # an aggregate over zero rows yields NULL rather than an array
+        values = []
+    else:
+        values = list(values)
+
+    if has_nulls and not any(
+        value is None or (
+            not isinstance(value, (str, bytes, list, dict, tuple, np.ndarray))
+            and pd.isna(value)
+        ) for value in values
+    ):
+        values.append(None)
+    return values
 
 
 def cached(method, locks=None):
@@ -1146,20 +1184,16 @@ class BaseSQLSource(Source):
                 schemas[entry] = {}
                 continue
             sql_expr = self.get_sql_expr(entry)
+            params = self.table_params.get(entry, [])
             data_sql_expr = sql_expr
             for sql_transform in sql_transforms:
                 data_sql_expr = sql_transform.apply(data_sql_expr)
-            data = self.execute(data_sql_expr, self.table_params.get(entry, []))
+            data = self.execute(data_sql_expr, params)
             schemas[entry] = schema = get_dataframe_schema(data)['items']['properties']
 
-            count_expr = SQLCount(read=self.dialect).apply(sql_expr)
-            count_expr = ' '.join(count_expr.splitlines())
-            count_data = self.execute(count_expr, self.table_params.get(entry, []))
-            count_col = 'count' if 'count' in count_data else 'COUNT'
-            count = int(count_data[count_col].iloc[0])
             if limit:
                 # the min/max and enums will be computed on the limited dataset
-                schema['__len__'] = count
+                schema['__len__'] = self._get_count(sql_expr, params)
                 continue
 
             # patch the min/max and enums from the full dataset
@@ -1169,19 +1203,14 @@ class BaseSQLSource(Source):
                     enums.append(name)
                 elif 'inclusiveMinimum' in col_schema:
                     min_maxes.append(name)
-            for col in enums:
-                distinct_expr = SQLDistinct(columns=[col], read=self.dialect).apply(sql_expr)
-                distinct_expr = ' '.join(distinct_expr.splitlines())
-                distinct = self.execute(distinct_expr, self.table_params.get(entry, []))
-                schema[col]['enum'] = distinct[col].tolist()
+
+            count, enum_values, minmax_values = self._get_schema_stats(
+                sql_expr, params, enums, min_maxes
+            )
+            for col, values in enum_values.items():
+                schema[col]['enum'] = values
 
             schema['__len__'] = count
-            if not min_maxes:
-                continue
-
-            minmax_expr = SQLMinMax(columns=min_maxes, read=self.dialect).apply(sql_expr)
-            minmax_expr = ' '.join(minmax_expr.splitlines())
-            minmax_data = self.execute(minmax_expr, self.table_params.get(entry, []))
             for col in min_maxes:
                 kind = data[col].dtype.kind
                 if kind in 'iu':
@@ -1193,16 +1222,110 @@ class BaseSQLSource(Source):
                 else:
                     cast = lambda v: v
 
-                # some dialects, like snowflake output column names to UPPERCASE regardless of input case
-                min_col = f'{col}_min' if f'{col}_min' in minmax_data else f'{col}_MIN'
-                min_data = minmax_data[min_col].iloc[0]
-                max_col = f'{col}_max' if f'{col}_max' in minmax_data else f'{col}_MAX'
-                max_data = minmax_data[max_col].iloc[0]
+                min_data, max_data = minmax_values[col]
                 schema[col]['inclusiveMinimum'] = min_data if pd.isna(min_data) else cast(min_data)
                 schema[col]['inclusiveMaximum'] = max_data if pd.isna(max_data) else cast(max_data)
 
         return schemas if table is None else schemas[table]
 
+    def _get_count(self, sql_expr: str, params: list | dict | None = None) -> int:
+        """
+        Returns the number of rows the given SQL expression yields.
+        """
+        count_expr = SQLCount(read=self.dialect).apply(sql_expr)
+        count_expr = ' '.join(count_expr.splitlines())
+        count_data = self.execute(count_expr, params)
+        # some dialects, like snowflake, output column names in UPPERCASE
+        count_col = 'count' if 'count' in count_data else 'COUNT'
+        return int(count_data[count_col].iloc[0])
+
+    def _get_schema_stats(
+        self, sql_expr: str, params: list | dict | None, enums: list[str],
+        min_maxes: list[str], batch: bool | None = None
+    ) -> tuple[int, dict[str, list], dict[str, tuple[Any, Any]]]:
+        """
+        Computes the row count, distinct values and min/max of a table.
+
+        Uses a single aggregate query where the dialect supports an array
+        aggregate, otherwise one query per statistic.
+
+        Arguments
+        ---------
+        batch: bool | None
+            Force the batched or per-statistic path; by default the dialect
+            decides. Mostly useful for testing that the two agree.
+
+        Returns
+        -------
+        count: int
+            The total number of rows.
+        enum_values: dict[str, list]
+            The distinct values of each column in `enums`.
+        minmax_values: dict[str, tuple]
+            The (min, max) of each column in `min_maxes`.
+        """
+        if batch is None:
+            batch = self.dialect in ARRAY_AGG_DISTINCT_DIALECTS
+        if batch:
+            try:
+                stats_expr = SQLSchemaStats(
+                    enum_columns=enums, minmax_columns=min_maxes, read=self.dialect
+                ).apply(sql_expr)
+                stats_expr = ' '.join(stats_expr.splitlines())
+                stats_data = self.execute(stats_expr, params)
+
+                # Indexed per column rather than via a row-wise .iloc[0] so that
+                # each value keeps its own dtype; some dialects, like snowflake,
+                # also output column names in UPPERCASE.
+                row = {
+                    str(col).lower(): stats_data[col].iloc[0]
+                    for col in stats_data.columns
+                }
+                count = int(row[SQLSchemaStats.count_alias])
+                return (
+                    count,
+                    {
+                        col: _to_enum_list(
+                            row[SQLSchemaStats.enum_alias(i)],
+                            int(row[SQLSchemaStats.nonnull_alias(i)]) < count
+                        )
+                        for i, col in enumerate(enums)
+                    },
+                    {
+                        col: (
+                            row[SQLSchemaStats.min_alias(i)],
+                            row[SQLSchemaStats.max_alias(i)]
+                        )
+                        for i, col in enumerate(min_maxes)
+                    },
+                )
+            except Exception as e:
+                self.param.warning(
+                    f"Batched schema query failed for dialect {self.dialect!r}, "
+                    f"falling back to one query per column: {e}"
+                )
+
+        count = self._get_count(sql_expr, params)
+        enum_values = {}
+        for col in enums:
+            distinct_expr = SQLDistinct(columns=[col], read=self.dialect).apply(sql_expr)
+            distinct_expr = ' '.join(distinct_expr.splitlines())
+            distinct = self.execute(distinct_expr, params)
+            enum_values[col] = distinct[col].tolist()
+
+        minmax_values = {}
+        if min_maxes:
+            minmax_expr = SQLMinMax(columns=min_maxes, read=self.dialect).apply(sql_expr)
+            minmax_expr = ' '.join(minmax_expr.splitlines())
+            minmax_data = self.execute(minmax_expr, params)
+            for col in min_maxes:
+                # some dialects, like snowflake output column names to UPPERCASE regardless of input case
+                min_col = f'{col}_min' if f'{col}_min' in minmax_data else f'{col}_MIN'
+                max_col = f'{col}_max' if f'{col}_max' in minmax_data else f'{col}_MAX'
+                minmax_values[col] = (
+                    minmax_data[min_col].iloc[0], minmax_data[max_col].iloc[0]
+                )
+        return count, enum_values, minmax_values
 
 
 class JSONSource(FileSource):

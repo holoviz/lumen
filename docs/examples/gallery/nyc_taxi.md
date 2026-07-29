@@ -2,7 +2,7 @@
 
 Million-row taxi trip analysis with pickup/dropoff maps and fare distribution.
 
-![NYC Taxi Dashboard](https://raw.githubusercontent.com/holoviz/lumen/main/doc/_static/nyc_taxi.png)
+![NYC Taxi Dashboard](../../assets/gallery/nyc_taxi.png)
 
 ## Features
 

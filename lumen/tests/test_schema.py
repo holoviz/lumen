@@ -4,19 +4,12 @@ import sys
 
 import pandas as pd
 import panel as pn
-import pytest
 
 from panel_material_ui import Checkbox, FloatSlider, Select
 
 from lumen.schema import JSONSchema
+from lumen.tests.utils import Polygon, gpd, requires_geopandas
 from lumen.util import get_dataframe_schema
-
-try:
-    import geopandas as gpd
-
-    from shapely.geometry import Polygon
-except ImportError:
-    gpd = None
 
 
 def test_boolean_schema():
@@ -41,10 +34,9 @@ def test_enum_schema():
     assert widget.options == ['A', 'B', 'C']
 
 
+@requires_geopandas
 def test_get_dataframe_schema_geometry():
     """A geometry column is emitted as a compact, JSON-serializable marker."""
-    if gpd is None:
-        pytest.skip("geopandas is not installed")
     gdf = gpd.GeoDataFrame(
         {
             "name": ["a", "b"],
@@ -70,10 +62,9 @@ def test_get_dataframe_schema_geometry():
     json.dumps(schema)
 
 
+@requires_geopandas
 def test_get_dataframe_schema_geometry_empty():
     """An empty GeoDataFrame yields geometry_type 'unknown' without raising."""
-    if gpd is None:
-        pytest.skip("geopandas is not installed")
     gdf = gpd.GeoDataFrame({"name": [], "geometry": []})
     schema = get_dataframe_schema(gdf)
     assert schema["items"]["properties"]["geometry"]["format"] == "geometry"

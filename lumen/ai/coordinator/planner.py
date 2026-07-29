@@ -10,7 +10,9 @@ import param
 
 from panel.io.state import state
 from panel_material_ui import ChatStep
-from pydantic import BaseModel, Field, create_model
+from pydantic import (
+    BaseModel, Field, create_model, model_validator,
+)
 from pydantic.fields import FieldInfo
 
 from ..actor import _merge_prompt_tools
@@ -35,7 +37,6 @@ if TYPE_CHECKING:
 
 
 class RawStep(BaseModel):
-    title: str
     actor: str
     instruction: str = Field(
         description="""
@@ -56,6 +57,24 @@ class RawStep(BaseModel):
             "Plot a line chart of sales over time.",
         ],
     )
+    title: str = Field(
+        default="",
+        description="Optional short label for this step; derived from the instruction if omitted.",
+    )
+
+    @model_validator(mode="after")
+    def _default_title(self) -> RawStep:
+        # The per-step title is display-only, and smaller models routinely omit
+        # it — which used to fail plan validation and crash the planner over a
+        # cosmetic field. Fall back to the instruction (trimmed to a reasonable
+        # length) so an otherwise-valid plan is accepted with a readable label.
+        if not self.title.strip():
+            instruction = self.instruction.strip()
+            self.title = (
+                instruction if len(instruction) <= 60
+                else instruction[:59].rstrip() + "…"
+            )
+        return self
 
 
 class RawPlan(BaseModel):

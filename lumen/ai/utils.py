@@ -23,6 +23,8 @@ from textwrap import dedent
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import parse_qs
 
+import colorcet as cc
+import numpy as np
 import pandas as pd
 import param
 import sqlglot
@@ -39,10 +41,12 @@ from markupsafe import escape
 from panel_material_ui import Details
 
 from ..config import dump_yaml
+from ..filters.base import ConstantFilter
 from ..pipeline import Pipeline
 from ..sources.base import Source
+from ..sources.xarray_sql import XArraySQLSource
 from ..transforms import SQLRemoveSourceSeparator
-from ..util import log
+from ..util import log, try_import_xarray
 from .config import (
     PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, UNRECOVERABLE_ERRORS, VEGA_MAP_LAYER,
     VEGA_ZOOMABLE_MAP_ITEMS, MissingContextError, RetriesExceededError,
@@ -72,6 +76,11 @@ DEFAULT_MAX_SUMMARY_COLS = 16
 # Columns with at most this many distinct values are treated as
 # human-meaningful "enum"/categorical columns and prioritised.
 LOW_CARDINALITY_MAX = 10
+
+# Matches a column name ending in a stem + integer index, with an optional
+# separator so all common series conventions are caught: "X_pca_12", "PC1",
+# "dim-1", "emb.2". Used to collapse machine-generated numbered column series.
+INDEXED_COLUMN_RE = re.compile(r"^(?P<stem>.+?)[_.\-]?(?P<idx>\d+)$")
 
 
 def deterministic_hash(text: str) -> int:
@@ -247,7 +256,7 @@ _BLOCK_RE = re.compile(
 
 def get_block_names(template_path: Path | str, relative_to: Path = PROMPTS_DIR):
     env = Environment()
-    parsed = env.parse(Path(template_path).read_text())
+    parsed = env.parse(Path(template_path).read_text(encoding='utf-8'))
     collector = BlockNameCollector()
     collector.visit(parsed)
     return list(collector.blocks)
@@ -1231,6 +1240,96 @@ def truncate_string(s, max_length=30, ellipsis="..."):
     return f"{s[:part_length]}{ellipsis}{s[-part_length:]}"
 
 
+def collapse_indexed_columns(
+    names: list[str], min_series: int = 8, max_gaps: int = 5
+) -> list[str]:
+    """
+    Collapse machine-generated numbered column series into a single entry.
+
+    A *series* is a group of columns that share a stem and differ only by a
+    trailing integer index (e.g. ``X_pca_0 … X_pca_99`` or ``PCs_0 … PCs_99``),
+    such as embedding/PCA matrices or one-hot expansions. Individually the names
+    carry no meaning, so listing every one wastes prompt budget without adding
+    signal. A run of at least *min_series* members collapses; a near-complete
+    run is still collapsed and its missing indices are named. Genuinely distinct
+    names, short runs, and sparse/heavily-gapped runs (which includes any
+    step > 1 series) are returned unchanged and in their original position.
+
+    Parameters
+    ----------
+    names : list[str]
+        Column names in their original order.
+    min_series : int
+        Minimum present members before a stem is collapsed. Smaller runs stay
+        expanded since the token savings don't justify hiding the columns.
+    max_gaps : int
+        Most missing indices tolerated within a run's span. A run with more
+        holes than this stays expanded, since the gaps are likely meaningful
+        (and too numerous to name compactly). This also excludes step > 1
+        series, whose "gaps" exceed the budget.
+
+    Returns
+    -------
+    list[str]
+        Column names with each qualifying series replaced by a single
+        ``"{first}..{last} ({n} cols)"`` entry — with ``", missing <indices>"``
+        appended when the run has holes. The real first/last column names are
+        used, so the original separator and any zero-padding are preserved. The
+        entry sits where the series first appeared.
+
+    Examples
+    --------
+    >>> collapse_indexed_columns(["obs_id", "PCs_0", "PCs_1", "PCs_2"], min_series=2)
+    ['obs_id', 'PCs_0..PCs_2 (3 cols)']
+    >>> collapse_indexed_columns(["x_0", "x_1", "x_3"], min_series=2)
+    ['x_0..x_3 (3 cols, missing 2)']
+    >>> collapse_indexed_columns(["gender", "age", "smoking_status"])
+    ['gender', 'age', 'smoking_status']
+    """
+    stem_members: dict[str, list[tuple[int, str]]] = {}
+    name_stem: dict[str, str] = {}
+    for name in names:
+        match = INDEXED_COLUMN_RE.match(name)
+        if match:
+            stem = match.group("stem")
+            stem_members.setdefault(stem, []).append((int(match.group("idx")), name))
+            name_stem[name] = stem
+
+    collapsible: dict[str, str] = {}
+    for stem, members in stem_members.items():
+        indices = [idx for idx, _ in members]
+        # Skip small runs, and any with duplicate indices (not a clean series).
+        if len(indices) < min_series or len(set(indices)) != len(indices):
+            continue
+        lo, hi = min(indices), max(indices)
+        # Collapse a contiguous run, or a near-complete one whose few holes we
+        # can name. A sparse or heavily-gapped run (including any step > 1
+        # series) exceeds max_gaps and stays expanded — its holes may matter.
+        missing = sorted(set(range(lo, hi + 1)) - set(indices))
+        if len(missing) > max_gaps:
+            continue
+        # Label from the real endpoint names so the source's separator and any
+        # zero-padding (``_``, ``-``, ``.`` or none) are preserved.
+        lo_name = next(name for idx, name in members if idx == lo)
+        hi_name = next(name for idx, name in members if idx == hi)
+        label = f"{lo_name}..{hi_name} ({len(indices)} cols"
+        if missing:
+            label += f", missing {', '.join(map(str, missing))}"
+        collapsible[stem] = label + ")"
+
+    result: list[str] = []
+    emitted: set[str] = set()
+    for name in names:
+        stem = name_stem.get(name)
+        if stem in collapsible:
+            if stem not in emitted:
+                result.append(collapsible[stem])
+                emitted.add(stem)
+        else:
+            result.append(name)
+    return result
+
+
 def truncate_iterable(iterable, max_length=150) -> tuple[list, list, bool]:
     iterable_list = list(iterable)
     if len(iterable_list) > max_length:
@@ -1642,6 +1741,161 @@ def result_to_dataframe(result) -> pd.DataFrame | None:
             return None
 
     return None
+
+
+def get_gridded_metadata(pipeline: Pipeline) -> dict[str, Any] | None:
+    """Return gridded metadata for an xarray-backed pipeline, else None.
+
+    Returns a dict with keys ``source_type``, ``dims``, ``coords``,
+    ``data_vars``, and ``regular`` (True iff every coordinate dimension is
+    uniformly spaced). It deliberately does not label which dims are spatial:
+    a grid can be plotted many ways (a lon/lat map, a lon/time Hovmoller, a
+    lat/level section), so the view spec picks the axes and the leftover dims
+    are collapsed afterwards. Coord arrays are 1-D and held in memory by
+    xarray even for large lazy datasets, so the regularity check is cheap; do
+    not call on a hot path.
+    """
+    if not isinstance(pipeline.source, XArraySQLSource) or try_import_xarray() is None:
+        return None
+
+    ds = pipeline.source.dataset
+
+    def _is_regular(values) -> bool:
+        arr = np.asarray(values)
+        if arr.ndim != 1 or arr.size < 2:
+            return False
+        diffs = np.diff(arr)
+        # Real-number steps compare with a tolerance; datetime/timedelta/object
+        # steps (e.g. cftime) can't, since allclose adds a float atol to them.
+        if diffs.dtype.kind in 'fiu':
+            return bool(np.allclose(diffs, diffs[0], rtol=1e-6))
+        return bool((diffs == diffs[0]).all())
+
+    regular = all(
+        _is_regular(ds.coords[d].values) for d in ds.dims if d in ds.coords
+    )
+
+    return {
+        'source_type': 'xarray',
+        'dims': list(ds.dims),
+        'coords': {k: list(ds.coords[k].shape) for k in ds.coords},
+        'data_vars': list(ds.data_vars),
+        'regular': regular,
+    }
+
+
+def _spec_field_references(
+    spec: Any, kind: Literal['vega-lite', 'deckgl']
+) -> set[str]:
+    """Column names a generated view ``spec`` references, so the gridded subset
+    can keep the dims a spec actually plots (an axis, color, ...) and collapse
+    the rest. The two grammars reference columns differently, so the caller
+    states which it is: a Vega-Lite spec names columns in encoding ``field``
+    values, a deck.gl spec in ``@@=`` accessor expressions.
+    """
+    refs: set[str] = set()
+
+    def walk(node):
+        if isinstance(node, dict):
+            for key, val in node.items():
+                if kind == 'vega-lite' and key == 'field' and isinstance(val, str):
+                    refs.add(val)
+                elif kind == 'deckgl' and isinstance(val, str) and val.startswith('@@='):
+                    refs.update(re.findall(r'[A-Za-z_]\w*', val))
+                else:
+                    walk(val)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(spec)
+    return refs
+
+
+def _spec_has_aggregate(spec: Any) -> bool:
+    """True if a Vega-Lite spec aggregates anywhere -- an encoding ``aggregate``
+    (``{"field": "x", "aggregate": "mean"}``) or an ``aggregate`` transform.
+    Such a spec reduces over the dims it does not plot, so those dims must not
+    be pinned to a single slice.
+    """
+    if isinstance(spec, dict):
+        return 'aggregate' in spec or any(_spec_has_aggregate(v) for v in spec.values())
+    if isinstance(spec, list):
+        return any(_spec_has_aggregate(item) for item in spec)
+    return False
+
+
+def subset_gridded_to_2d(
+    pipeline: Pipeline, spec: Any, kind: Literal['vega-lite', 'deckgl']
+) -> Pipeline:
+    """Pin every gridded dimension the view ``spec`` does not reference to its
+    first value, so a view that cannot page a dimension (VegaLite, DeckGL)
+    renders a single 2D slice instead of the full grid. ``kind`` selects the
+    spec grammar (see :func:`_spec_field_references`).
+
+    Runs after the spec is generated, so the dims the model chose for x/y/color
+    are kept -- a lon/time Hovmoller works -- and only the leftover dims (e.g.
+    time on a lon/lat map) collapse. Returns the pipeline unchanged when it is
+    not gridded or the spec already references every dimension.
+    """
+    # The compact gridded dataset (lazy, coords only -- never the long-form
+    # frame) carries just this variable's dims and, crucially, its coords in the
+    # materialized column's dtype (e.g. cftime coords become datetime64 there),
+    # so both the dims to collapse and the pin values come from it. Pinning from
+    # the raw dataset would leave cftime dims uncollapsed (the object value can't
+    # match the datetime64 column).
+    # A Vega-Lite spec that aggregates (e.g. mean per latitude, or a heatmap of
+    # a temporal mean) reduces over every dim it does not plot. Pinning those
+    # dims to one slice would make the aggregate run on a single slice and
+    # report wrong values, so leave the grid whole and let Vega-Lite aggregate.
+    # ponytail: sends the full grid to the browser; push the aggregate into SQL
+    # if that row volume becomes a problem.
+    if kind == 'vega-lite' and _spec_has_aggregate(spec):
+        return pipeline
+    grid = pipeline.get_dataset()
+    if grid is None:
+        return pipeline
+    referenced = _spec_field_references(spec, kind)
+    collapse = [dim for dim in grid.dims if dim not in referenced]
+    if not collapse:
+        return pipeline
+    filters = [
+        ConstantFilter(field=dim, value=grid[dim].values[0]) for dim in collapse
+    ]
+    return pipeline.chain(filters=filters)
+
+
+def category_palette(ncolors: int = 20) -> list[str]:
+    """
+    Colors used for categorical encodings a plot did not color itself.
+
+    Glasbey seeded on category10, so the first ten entries are visually the same
+    as Vega's own default (largest total RGB difference is 3 out of 765). Charts
+    with ten categories or fewer are unchanged; only the ones that used to
+    recycle colors differ. hvPlot reaches for the same palette when it picks a
+    colormap itself, so the two agree. The b_ prefix is the hex form, since
+    colorcet.glasbey_category10 gives float RGB tuples that cannot be
+    serialized into a spec.
+    """
+    return cc.b_glasbey_category10[:ncolors]
+
+
+def has_categorical_color(spec: Any) -> bool:
+    """
+    Whether anything in the Vega-Lite spec maps a field to color by category.
+
+    Only those charts can use the palette, so only they are worth adding it to.
+    Layered, concatenated and faceted specs nest their encodings, hence the
+    walk rather than a single lookup.
+    """
+    if isinstance(spec, dict):
+        color = spec.get("encoding", {}).get("color")
+        if isinstance(color, dict) and "field" in color and color.get("type") in ("nominal", "ordinal"):
+            return True
+        return any(has_categorical_color(value) for value in spec.values())
+    if isinstance(spec, list):
+        return any(has_categorical_color(item) for item in spec)
+    return False
 
 
 def normalize_vegalite_spec(

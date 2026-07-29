@@ -19,9 +19,7 @@ from ..transforms import Filter
 from ..transforms.sql import (
     SQLCount, SQLFilter, SQLLimit, SQLSelectFrom,
 )
-from ..util import (
-    detect_file_encoding, normalize_table_name, try_import_geopandas,
-)
+from ..util import detect_file_encoding, normalize_table_name, try_import
 from .base import BaseSQLSource, Source, cached
 
 if TYPE_CHECKING:
@@ -530,7 +528,7 @@ class DuckDBSource(BaseSQLSource):
         wrapped = f'SELECT {selected} FROM ({sql_expr})'
         rel = cursor.execute(wrapped, params) if params else cursor.execute(wrapped)
         df = rel.fetch_df(date_as_object=date_as_object)
-        if gpd := try_import_geopandas():
+        if gpd := try_import("geopandas"):
             for col in geom_cols:
                 df[col] = gpd.GeoSeries.from_wkb(
                     df[col].apply(bytes), crs=self.geometry_crs

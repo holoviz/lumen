@@ -4,6 +4,7 @@ import json
 from io import BytesIO
 
 import pandas as pd
+import panel as pn
 import param
 import pytest
 
@@ -11,7 +12,9 @@ from PIL import Image
 
 import lumen.ai.editors as editors_module
 
-from lumen.ai.editors import LumenEditor, SQLEditor, VegaLiteEditor
+from lumen.ai.editors import (
+    LumenEditor, MultiChartEditor, SQLEditor, VegaLiteEditor,
+)
 from lumen.base import Component
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
@@ -272,3 +275,145 @@ def test_class_name_with_numbers():
         pass
 
     assert Editor2D._class_name_to_download_filename("png") == "editor2_d.png"
+
+
+@pytest.fixture
+def make_multi_chart_editor(monkeypatch):
+    monkeypatch.setattr(editors_module, 'ParamMethod', lambda *args, **kwargs: None)
+
+    def factory(n_charts, spec_lines=9, unserializable=()):
+        charts = [
+            LumenEditor(
+                component=MockComponent(),
+                spec=None if c in unserializable else "\n".join(
+                    f"line{i}" for i in range(spec_lines)
+                ),
+                title=f"Chart {c}",
+            )
+            for c in range(n_charts)
+        ]
+        return MultiChartEditor(
+            component=MockComponent(), title="All", chart_editors=charts
+        )
+
+    return factory
+
+
+@pytest.mark.parametrize("n_charts", [2, 3, 5, 9])
+def test_multichart_shows_one_editor_sub_tab_per_chart(make_multi_chart_editor, n_charts):
+    """Every chart's spec is reachable, however many charts there are, and only
+    the active one is mounted."""
+    editor = make_multi_chart_editor(n_charts).editor
+    assert editor._names == [f"Chart {c}" for c in range(n_charts)]
+    assert editor.dynamic
+
+
+def test_multichart_scrolls_its_stacked_plots(make_multi_chart_editor):
+    """The overview stacks every plot, so its view has to scroll rather than
+    grow past the pane and spill."""
+    assert make_multi_chart_editor(5).view.scroll == "y-auto"
+
+
+def test_multichart_survives_an_unserializable_spec(make_multi_chart_editor):
+    """spec is None when a component could not be serialized; the sub-tab still
+    renders and export skips it rather than failing outright."""
+    multi = make_multi_chart_editor(3, unserializable=(0,))
+    assert len(multi.editor) == 3
+    assert multi.export("yaml").getvalue().count("line0") == 2
+
+
+@pytest.fixture
+def make_multi_vegalite_editor(monkeypatch):
+    """Build an "All" tab whose children are real VegaLiteEditors with a fake
+    Vega pane, so the combined image/pdf/svg/html exports can be exercised."""
+    monkeypatch.setattr(editors_module, 'ParamMethod', lambda *args, **kwargs: None)
+    monkeypatch.setattr(VegaLiteEditor, '_update_component', lambda self, *a, **kw: None)
+
+    class FakePanel:
+        def export(self, fmt, **kwargs):
+            if fmt == "svg":
+                return '<svg width="20" height="30"><rect/></svg>'
+            return _make_png_bytes()
+
+    def factory(n_charts, unserializable=()):
+        charts = [
+            VegaLiteEditor(
+                component=MockVegaComponent(_mock_panel=FakePanel()),
+                spec=None if c in unserializable else _MINIMAL_VEGALITE_SPEC,
+                title=f"Chart {c}",
+            )
+            for c in range(n_charts)
+        ]
+        # The composite's own component supplies the live stacked view that the
+        # html export saves; a plain Column stands in for it here.
+        composite = MockVegaComponent(_mock_panel=pn.Column(*(
+            pn.pane.Markdown(f"Chart {c}") for c in range(n_charts)
+        )))
+        return MultiChartEditor(
+            component=composite, title="All", chart_editors=charts
+        )
+
+    return factory
+
+
+def test_multichart_export_png_stacks_every_chart(make_multi_vegalite_editor):
+    result = make_multi_vegalite_editor(3).export("png")
+    assert isinstance(result, BytesIO)
+    img = Image.open(result)
+    assert img.format == "PNG"
+    # Three 10x10 child renders stacked vertically -> one 10x30 image.
+    assert img.size == (10, 30)
+
+
+@pytest.mark.parametrize("fmt,pil_format", [
+    ("jpeg", "JPEG"), ("webp", "WEBP"), ("tiff", "TIFF"),
+])
+def test_multichart_export_raster_formats(make_multi_vegalite_editor, fmt, pil_format):
+    result = make_multi_vegalite_editor(2).export(fmt)
+    img = Image.open(result)
+    assert img.format == pil_format
+    assert img.size == (10, 20)
+
+
+def test_multichart_export_eps(make_multi_vegalite_editor):
+    result = make_multi_vegalite_editor(2).export("eps")
+    assert result.read().startswith(b"%!PS")
+
+
+def test_multichart_export_pdf_is_one_page_per_chart(make_multi_vegalite_editor):
+    data = make_multi_vegalite_editor(3).export("pdf").getvalue()
+    assert data.startswith(b"%PDF")
+    # Pillow writes one "/Type /Page" per page plus a single "/Type /Pages" tree
+    # node, so page count is the difference.
+    assert data.count(b"/Type /Page") - data.count(b"/Type /Pages") == 3
+
+
+def test_multichart_export_skips_unserializable_for_images(make_multi_vegalite_editor):
+    # Chart 0 has spec=None; it is skipped, leaving two 10x10 renders -> 10x20.
+    result = make_multi_vegalite_editor(3, unserializable=(0,)).export("png")
+    assert Image.open(result).size == (10, 20)
+
+
+def test_multichart_export_svg_stacks_children(make_multi_vegalite_editor):
+    content = make_multi_vegalite_editor(3).export("svg").getvalue()
+    # One outer <svg> wrapping three nested child <svg> blocks.
+    assert content.count("<svg") == 4
+    # Child mock is 30 tall; three stacked -> outer height 90.
+    assert 'height="90"' in content
+    # Second and third children carry a non-zero y offset.
+    assert 'y="30"' in content and 'y="60"' in content
+
+
+def test_multichart_export_html_is_one_offline_page(make_multi_vegalite_editor):
+    content = make_multi_vegalite_editor(2).export("html").getvalue()
+    assert content.lstrip().startswith("<!DOCTYPE html>")
+    assert "Chart 0" in content and "Chart 1" in content
+
+
+def test_multichart_export_concatenates_every_chart_spec(make_multi_chart_editor):
+    """The overview has no spec of its own; exporting yaml yields all of them,
+    and a format it does not support still raises."""
+    multi = make_multi_chart_editor(3, spec_lines=2)
+    assert multi.export("yaml").getvalue().count("line0") == 3
+    with pytest.raises(ValueError, match="Unknown export format"):
+        multi.export("csv")
