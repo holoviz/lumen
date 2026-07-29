@@ -1776,7 +1776,7 @@ class UI(Viewer):
         if not applicable_analyses:
             return
         self._add_suggestions_to_footer(
-            [f"Apply {analysis.__name__}" for analysis in applicable_analyses],
+            [(analysis.icon, f"Apply {analysis.__name__}") for analysis in applicable_analyses],
             append_demo=False,
             analysis=True,
             context=plan.out_context,

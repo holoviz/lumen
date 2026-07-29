@@ -33,6 +33,11 @@ class Analysis(param.ParameterizedFunction):
        The columns required for the analysis. May use tuples to declare that one of
        the columns must be present.""")
 
+    icon = param.String(default="analytics", allow_None=True, precedence=-1, doc="""
+        Icon rendered to the left of the label on the Analysis suggestion
+        button. Either an SVG or an icon name loaded from Material Icons.
+        Set to None to render the button without an icon.""")
+
     interface = param.ClassSelector(class_=ChatFeed, doc="""
         The ChatInterface instance that will be used to stream messages.""")
 
