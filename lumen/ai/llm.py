@@ -72,7 +72,8 @@ LLM_PROVIDERS = {
     'llama-cpp': 'LlamaCpp',
     'mlx': 'MLX',
     'litellm': 'LiteLLM',
-    'openrouter': 'OpenRouter'
+    'openrouter': 'OpenRouter',
+    'kilo': 'Kilo',
 }
 
 
@@ -2979,3 +2980,40 @@ class OpenRouter(OpenAI):
             for model in response.json().get("data", [])
             if model.get("id")
         }
+
+
+class Kilo(OpenAI):
+    """
+    An LLM implementation using the Kilo API.
+
+    Kilo provides an OpenAI-compatible endpoint that routes requests to
+    models from multiple providers. Kilo has a free tier, but for other models,
+    optionally set the ``Kilo_API_KEY`` environment variable or pass ``api_key``
+    directly. The provider is auto-detected when
+    ``Kilo_API_KEY`` is present, or can be selected explicitly with
+    ``--provider kilo``.
+    """
+
+    api_key_env_var: str = PROVIDER_ENV_VARS["kilo"]
+
+    display_name = param.String(
+        default="Kilo",
+        constant=True,
+        doc="Display name for UI",
+    )
+
+    endpoint = param.String(
+        default="https://api.kilo.ai/api/gateway",
+        doc="The Kilo API endpoint.",
+    )
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "kilo-auto/free"},
+    })
+
+    select_models = param.List(default=[
+        "kilo-auto/free",
+        "kilo-auto/balanced",
+        "kilo-auto/efficient",
+        "kilo-auto/frontier",
+    ], constant=True, doc="Available Kilo models for selection dropdowns.")
