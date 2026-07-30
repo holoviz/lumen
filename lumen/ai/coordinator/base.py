@@ -301,9 +301,10 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
     prompts = param.Dict(
         default={
-            "main": {
-                "template": PROMPTS_DIR / "Coordinator" / "main.jinja2",
-            },
+            # No template here: the base Coordinator never renders "main" — each
+            # subclass supplies its own, and _lookup_prompt_key walks the MRO to
+            # find it. The key exists so _process_prompts can attach tools to it.
+            "main": {},
             "tool_relevance": {
                 "template": PROMPTS_DIR / "Coordinator" / "tool_relevance.jinja2",
                 "response_model": ThinkingYesNo,

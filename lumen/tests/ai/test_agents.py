@@ -4,6 +4,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import numpy as np
+import pandas as pd
 import pytest
 
 from lumen.ai.agents.document_list import DocumentListAgent
@@ -22,7 +24,9 @@ from lumen.ai.agents import (
 from lumen.ai.agents.analysis import make_analysis_model
 from lumen.ai.agents.deck_gl import DeckGLAgent
 from lumen.ai.agents.hvplot import hvPlotAgent
-from lumen.ai.agents.sql import make_sql_model
+from lumen.ai.agents.sql import (
+    EXPLORATION_MAX_TOKENS, format_exploration_result, make_sql_model,
+)
 from lumen.ai.agents.vega_lite import (
     AltairChartSpec, AltairSpec, ChartSpec, VegaLiteSpec, VegaLiteSpecUpdate,
 )
@@ -35,6 +39,7 @@ from lumen.ai.llm import Llm
 from lumen.ai.schemas import (
     Column, Metaset, TableCatalogEntry, get_metaset,
 )
+from lumen.ai.utils import count_tokens
 from lumen.config import SOURCE_TABLE_SEPARATOR, dump_yaml
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
@@ -769,3 +774,92 @@ async def test_view_retry_recovers_using_revised_spec(llm):
     assert seen_specs[0]["kind"] == "line"   # first attempt used the original
     assert seen_specs[1]["kind"] == "bar"    # retry used the REVISED spec
     assert result["kind"] == "bar"
+
+
+# -------------------------------------------------------------------
+# format_exploration_result
+# -------------------------------------------------------------------
+
+def _exploration_frame(n_rows=53, n_cols=7):
+    rng = np.random.default_rng(0)
+    data = {"station_id": [f"ST{i:04d}" for i in range(n_rows)]}
+    for c in range(n_cols - 1):
+        data[f"metric_{c}"] = rng.uniform(0, 100, n_rows).round(4)
+    return pd.DataFrame(data)
+
+
+def test_format_exploration_result_reports_full_shape():
+    """The true row count is stated, so no follow-up COUNT(*) is needed."""
+
+    result = format_exploration_result(_exploration_frame())
+    assert "53 rows x 7 columns" in result
+    assert "first 5 of 53 rows" in result
+
+
+def test_format_exploration_result_lists_dtypes():
+
+    result = format_exploration_result(_exploration_frame())
+    assert "station_id: object" in result
+    assert "metric_0: float64" in result
+
+
+def test_format_exploration_result_stays_within_budget():
+
+    wide = _exploration_frame(n_rows=100_000, n_cols=40)
+    result = format_exploration_result(wide)
+    assert count_tokens(result) <= EXPLORATION_MAX_TOKENS
+    assert "100000 rows x 40 columns" in result
+    assert "showing the first 25 columns" in result
+
+
+def test_format_exploration_result_is_far_cheaper_than_full_dump():
+    """The preview must cost a fraction of the old 50-row aligned to_string dump."""
+
+    df = _exploration_frame()
+    old = df.head(100).to_string(max_cols=25, max_rows=50)
+    new = format_exploration_result(df)
+    assert count_tokens(new) < count_tokens(old) / 3
+
+
+def test_format_exploration_result_empty_frame():
+
+    result = format_exploration_result(_exploration_frame(n_rows=0))
+    assert "0 rows x 7 columns" in result
+    assert "no rows" in result
+
+
+def test_unique_expr_slug_passes_through_fresh_name():
+
+    assert SQLAgent._unique_expr_slug("top_5_athletes", {"hosts": "SELECT 1"}) == "top_5_athletes"
+
+
+def test_unique_expr_slug_avoids_existing_table():
+    """A slug echoing an input table must not be reused: materializing it would
+    issue CREATE OR REPLACE VIEW over the source table and destroy it."""
+
+    tables = {"data_olympic_hosts_csv": "SELECT * FROM data_olympic_hosts_csv"}
+    slug = SQLAgent._unique_expr_slug("data_olympic_hosts_csv", tables)
+    assert slug not in tables
+    assert slug.startswith("data_olympic_hosts_csv")
+
+
+def test_unique_expr_slug_skips_taken_suffixes():
+
+    tables = {"hosts": "", "hosts_derived_1": "", "hosts_derived_2": ""}
+    assert SQLAgent._unique_expr_slug("hosts", tables) == "hosts_derived_3"
+
+
+def test_colliding_slug_does_not_clobber_source_table():
+    """End-to-end guard for the materialization overwrite: the original table
+    must survive a query whose table_slug collides with its name."""
+
+    source = DuckDBSource(tables={"hosts": "SELECT 2022 AS game_year, 'China' AS game_location"})
+    before = source.get("hosts")
+
+    # A model handing back an unrelated exploration query under the input
+    # table's own name — the observed weak-model failure.
+    bad_sql = "SELECT table_name FROM information_schema.tables WHERE table_type = 'BASE TABLE'"
+    slug = SQLAgent._unique_expr_slug("hosts", source.tables)
+    source.create_sql_expr_source({slug: bad_sql}, materialize=True)
+
+    pd.testing.assert_frame_equal(source.get("hosts"), before)

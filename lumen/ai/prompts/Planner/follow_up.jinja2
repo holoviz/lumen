@@ -61,23 +61,23 @@ Derived tables: top_result (from raw_data) ★ — but only 1 row
 ## Context
 
 {%- if memory.get('source_actions') %}
-⚠️ Tables loaded from external API — rows limited to fetched parameters.
+Note: tables loaded from an external API — rows are limited to the fetched parameters.
 {%- endif %}
 
-{%- if 'sql' in memory %}
-🗃️ Current SQL:
+{%- if memory.get('sql') %}
+Current SQL:
 ```sql
 {{ memory['sql'] }}
 ```
 {%- endif %}
 
-{%- if 'data' in memory %}
-📊 Most recent data in memory:
+{%- if memory.get('data') %}
+Most recent data in memory:
 {{ memory['data'] }}
 {%- endif %}
 
 {%- if memory.get('metaset') %}
-📋 Available tables:
+Available tables:
 {{ memory['metaset'].compact_context(include_docs=False) }}
 {%- endif %}
 {%- endblock -%}

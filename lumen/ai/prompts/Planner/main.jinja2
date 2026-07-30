@@ -3,12 +3,12 @@
 {%- block instructions %}
 You are the team lead responsible for creating a step-by-step plan to address user queries by assigning subtasks to specialized actors (agents and tools).
 
-CRITICAL: Dependency Management
-- ALWAYS check if an agent's Requires are satisfied before including it in your plan
-- If ❌ BLOCKED, find actors with "Provides" matching the missing Requires and add them as prior steps
+## Dependency Management
+- Check that an agent's Requires are satisfied before including it in your plan
+- When an actor is marked Blocked, find actors whose "Provides" cover the missing Requires and add them as prior steps
 - Dependencies must be resolved in the correct order - providers before consumers
 
-Ground Rules:
+## Ground Rules
 - Plan in one shot, do not assume you can replan
 - Respect dependency chains: assign tasks only when input Requires are met
 - Leverage existing memory instead of regenerating information if possible
@@ -38,8 +38,8 @@ Ground Rules:
     {%- set _ = missing_reqs.append(req) %}
   {%- endif %}
 {%- endfor %}
-### `{{ tool.__class__.__name__ }}` {%- if missing_reqs %} ❌ BLOCKED! Requires: `{{ missing_reqs | join('`, `') }}`
-{%- else %} ✅ READY
+### `{{ tool.__class__.__name__ }}` {%- if missing_reqs %} — Blocked, requires: `{{ missing_reqs | join('`, `') }}`
+{%- else %} — Ready
 {%- endif %}
 {{ ' '.join(dedent(tool.purpose).strip().split()) }}
 {% if tool.output_schema.__annotations__ -%}Provides: `{{ tool.output_schema.__annotations__ | join('`, `') }}`{%- endif %}
@@ -58,7 +58,7 @@ Conditions for use:
     {%- set _ = missing_reqs.append(req) %}
   {%- endif %}
 {%- endfor %}
-### `{{ agent.__class__.__name__ }}` {%- if missing_reqs %} ❌ BLOCKED! Requires: `{{ missing_reqs | join('`, `') }}`
+### `{{ agent.__class__.__name__ }}` {%- if missing_reqs %} — Blocked, requires: `{{ missing_reqs | join('`, `') }}`
   {%- set providers = [] %}
   {%- for req in missing_reqs %}
     {%- for tool in tools %}
@@ -72,7 +72,7 @@ Conditions for use:
       {%- endif %}
     {%- endfor %}
   {%- endfor %}
-{%- else %} ✅ READY
+{%- else %} — Ready
 {%- endif %}
 {{ dedent(agent.purpose).strip() }}
 {% if agent.output_schema.__annotations__ -%}Provides: `{{ agent.output_schema.__annotations__ | join('`, `') or 'None' }}`{%- endif %}
@@ -130,11 +130,11 @@ Data sources:
 
 {%- endif %}
 
-{%- if 'table' in memory %}
+{%- if memory.get('table') %}
 Previously used table: `{{ memory['table'] }}`
 {%- endif %}
 
-{%- if 'sql' in memory %}
+{%- if memory.get('sql') %}
 Previously used SQL:
 ```sql
 {{ memory['sql'] }}
@@ -171,11 +171,11 @@ These documents are available and agents may query/summarize them:
 {% endif %}
 
 {%- if follow_up_type == 'direct' %}
-👉 **Direct follow-up**: The data in memory is sufficient. Do NOT run a new SQL query — use existing data directly (e.g., for visualization or reordering).
+**Direct follow-up**: The data in memory is sufficient. Do not run a new SQL query — use the existing data directly (e.g. for visualization or reordering).
 {%- elif follow_up_type == 'derived' %}
-👉 **Derived follow-up**: Query the derived table instead of recomputing from raw sources.
-{%- elif 'metaset' in memory %}
-👉 Existing metadata found: Evaluate if current data is sufficient before requesting more.
+**Derived follow-up**: Query the derived table instead of recomputing from raw sources.
+{%- elif memory.get('metaset') %}
+Existing metadata found: evaluate whether the current data is sufficient before requesting more.
 {%- endif %}
 
 {%- if 'prev_plan' in memory and (follow_up_type in ('direct', 'derived') or 'data' not in memory) %}
@@ -185,7 +185,7 @@ The previous plan that was executed:
 
 {# Break the terrible loop of it not planning properly #}
 {% if previous_plans and not (previous_plans | length) % 2 == 0 and unmet_dependencies %}
-## ❌ Previous Planning Failure
+## Previous Planning Failure
 
 What went wrong: In your previous attempt, you planned:
 """

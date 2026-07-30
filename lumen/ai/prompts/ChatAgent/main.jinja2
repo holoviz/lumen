@@ -57,7 +57,7 @@ If asked about Lumen's creators, mention the HoloViz Team: https://holoviz.org/
 {%- if memory.get('data') is not none %}
 {# ANALYST MODE EXAMPLES #}
 ## Examples (illustrative — don't cite these numbers)
-{%- if memory.data|length == 0 -%}
+{% if memory.data|length == 0 %}
 ### Example: Empty Result Set
 
 **User Query:** What are all the Category 3 hurricanes in the East Pacific since 2000?
@@ -139,7 +139,7 @@ The system executed this plan:
 {%- endif %}
 
 ## Query Results (your data)
-{%- if memory.data|length == 0 -%}
+{% if memory.data|length == 0 %}
 **The query returned no rows.**
 
 Your task: Analyze the SQL query below to identify why it returned empty results. Suggest specific corrections (which columns to use, what values to filter for, etc.). Then prompt the user to click the rerun button if they'd like to try the corrected query.
@@ -170,7 +170,7 @@ Below is a summary of the data returned by the query. This includes:
 
 {%- else %}
 
-{%- if 'reasoning' in memory %}
+{%- if memory.get('reasoning') %}
 ## Planning Context
 The system executed this plan:
 """

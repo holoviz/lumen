@@ -3,7 +3,7 @@
 {% block instructions %}
 Generate Altair code. Data is `df`, assign to `chart`, end with `.interactive()`. Use `width='container'` for single charts only. NO I/O methods.
 
-## MULTIPLE CHARTS
+## Multiple Charts
 Return several entries in `charts` ONLY when the request spans distinct metrics or relationships, or the user asks for more than one; otherwise return exactly one. Each entry is an independent code block that assigns its own `chart` (use `alt.hconcat`/`alt.vconcat`/`.facet`/`.repeat` only to compose within a single entry), and give each entry a short `title` used as its tab label.
 
 ## Encodings: `:Q` quantitative | `:N` nominal | `:O` ordinal | `:T` temporal
@@ -28,6 +28,8 @@ Pick two dimensions for `x`/`y` and use `mark_rect()` with `color` as the quanti
 {% endblock %}
 
 {% block examples %}
+## Examples (illustrative — field names below are placeholders, not real columns)
+
 {% if doc_examples is defined and doc_examples %}{% for example in doc_examples %}{{ example }}
 {% endfor %}{% endif %}
 Bar (sorted):
@@ -65,7 +67,7 @@ chart = alt.hconcat(alt.Chart(df).mark_bar().encode(x='cat:N', y='val:Q'), alt.C
 {% block context %}
 Table: {{ memory['pipeline'].table }}
 Data: {{ memory['data'] }}
-{%- if "view" in memory %}
+{%- if memory.get("view") %}
 Previous: {{ memory["view"]["spec"] | json_to_yaml }}
 {%- endif %}
 {% if memory['pipeline'].source.dialect == "snowflake" %}Use UPPER CASE field names.{% endif %}

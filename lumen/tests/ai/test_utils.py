@@ -19,12 +19,12 @@ except ModuleNotFoundError:
 from lumen.ai.config import PROMPTS_DIR
 from lumen.ai.models import DeleteLine, InsertLine, ReplaceLine
 from lumen.ai.utils import (
-    IMAGE_MIME_TYPES, UNRECOVERABLE_ERRORS, apply_changes, clean_sql,
-    collapse_indexed_columns, content_to_text, describe_data,
-    find_slug_by_table_name, format_msg_content, fuse_messages, get_schema,
-    mutate_user_message, parse_huggingface_url, render_template, report_error,
-    retry_llm_output, serialize_image_content, set_content_text,
-    slug_to_table_name,
+    FALLBACK_CHARS_PER_TOKEN, IMAGE_MIME_TYPES, UNRECOVERABLE_ERRORS,
+    apply_changes, clean_sql, collapse_indexed_columns, content_to_text,
+    count_tokens, describe_data, find_slug_by_table_name, format_msg_content,
+    fuse_messages, get_schema, mutate_user_message, parse_huggingface_url,
+    render_template, report_error, retry_llm_output, serialize_image_content,
+    set_content_text, slug_to_table_name, truncate_to_tokens,
 )
 from lumen.config import SOURCE_TABLE_SEPARATOR as SEP
 
@@ -865,3 +865,74 @@ class TestMutateUserMessageMultimodal:
         assert original[0]["content"] == ["query", img]
         # Result should have the mutation
         assert img in result[0]["content"]
+
+
+# -------------------------------------------------------------------
+# count_tokens / truncate_to_tokens
+# -------------------------------------------------------------------
+
+class TestCountTokens:
+
+    def test_empty_string(self):
+        assert count_tokens("") == 0
+
+    def test_counts_tokens(self):
+        # Exact counts are tokenizer-specific; assert the shape of the answer
+        # rather than a magic number, so a vocab change doesn't break the suite.
+        assert count_tokens("hello world") >= 2
+        assert count_tokens("hello world " * 100) > count_tokens("hello world")
+
+    def test_falls_back_when_encoder_unavailable(self):
+        """A missing tokenizer must degrade to a char estimate, not raise."""
+        text = "a" * 300
+        with patch("lumen.ai.utils._get_token_encoder", return_value=None):
+            assert count_tokens(text) == pytest.approx(300 / FALLBACK_CHARS_PER_TOKEN, abs=1)
+
+    def test_encoder_is_cached(self):
+        from lumen.ai.utils import _get_token_encoder
+        assert _get_token_encoder() is _get_token_encoder()
+
+    def test_encoder_failure_is_soft(self):
+        """A tokenizer that fails to load yields None rather than propagating."""
+        import lumen.ai.utils as utils
+        with patch.dict(utils._TOKEN_ENCODER_CACHE, clear=True):
+            with patch.dict("sys.modules", {"tiktoken": None}):
+                # `import tiktoken` raises ImportError when the module is None.
+                assert utils._get_token_encoder() is None
+                assert utils.count_tokens("some text") > 0
+
+
+class TestTruncateToTokens:
+
+    def test_under_budget_is_unchanged(self):
+        text = "line one\nline two"
+        assert truncate_to_tokens(text, 1000) == text
+
+    def test_over_budget_respects_cap(self):
+        text = "\n".join(f"row {i} has a value of {i * 3.14159}" for i in range(300))
+        result = truncate_to_tokens(text, 100)
+        assert count_tokens(result) <= 100
+        assert len(result) < len(text)
+
+    def test_reports_what_was_dropped(self):
+        text = "\n".join(f"row {i}" for i in range(500))
+        result = truncate_to_tokens(text, 60)
+        assert "truncated, showing" in result
+        assert "tokens)" in result
+
+    def test_cuts_on_a_line_boundary(self):
+        """The last retained line must be whole, so YAML/tables stay parseable."""
+        lines = [f"key_{i}: value_{i}" for i in range(300)]
+        result = truncate_to_tokens("\n".join(lines), 100)
+        body = result.split("\n")[:-1]  # drop the appended note
+        assert body
+        assert all(line in lines for line in body)
+
+    def test_single_oversized_line(self):
+        """One line longer than the whole budget still respects the cap."""
+        result = truncate_to_tokens("x" * 5000, 50)
+        assert count_tokens(result) <= 50
+
+    def test_custom_marker(self):
+        text = "\n".join(f"row {i}" for i in range(500))
+        assert "elided, showing" in truncate_to_tokens(text, 60, marker="elided")

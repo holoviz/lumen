@@ -82,6 +82,18 @@ LOW_CARDINALITY_MAX = 10
 # "dim-1", "emb.2". Used to collapse machine-generated numbered column series.
 INDEXED_COLUMN_RE = re.compile(r"^(?P<stem>.+?)[_.\-]?(?P<idx>\d+)$")
 
+# Tokenizer used to size prompt payloads. o200k_base is what semchunk resolves
+# vector_store's "gpt-4o-mini" default to, so chunking and truncation agree.
+TOKEN_ENCODING = "o200k_base"
+# Used when the tokenizer cannot be loaded. Deliberately below the ~4 chars/token
+# of English prose: dense YAML and aligned numeric tables run nearer 2.5, and
+# under-estimating the ratio over-estimates tokens, so we truncate early rather
+# than blowing a budget.
+FALLBACK_CHARS_PER_TOKEN = 3.0
+# Resolved lazily by _get_token_encoder. Key presence (not its value)
+# distinguishes "not yet resolved" from "resolved, and unavailable".
+_TOKEN_ENCODER_CACHE: dict[str, Any] = {}
+
 
 def deterministic_hash(text: str) -> int:
     """Stable hash using MD5, consistent across Python sessions."""
@@ -1238,6 +1250,99 @@ def truncate_string(s, max_length=30, ellipsis="..."):
         return s
     part_length = (max_length - len(ellipsis)) // 2
     return f"{s[:part_length]}{ellipsis}{s[-part_length:]}"
+
+
+def _get_token_encoder():
+    """
+    Return a cached tiktoken encoder, or ``None`` if one cannot be loaded.
+
+    Resolution is deferred to first use: ``tiktoken.get_encoding`` downloads the
+    BPE vocabulary over HTTPS unless it is already in ``$TIKTOKEN_CACHE_DIR``,
+    so importing this module must not trigger it. Any failure (no tiktoken,
+    offline, upstream 5xx) is logged once and yields ``None``, which callers
+    treat as "estimate from character length" — sizing a prompt payload is never
+    worth raising into an in-flight conversation.
+    """
+    if "encoder" in _TOKEN_ENCODER_CACHE:
+        return _TOKEN_ENCODER_CACHE["encoder"]
+    try:
+        import tiktoken
+
+        encoder = tiktoken.get_encoding(TOKEN_ENCODING)
+    except Exception as e:
+        log.warning(
+            f"Could not load the {TOKEN_ENCODING!r} tokenizer ({type(e).__name__}: {e}); "
+            f"token counts will be estimated from character length at "
+            f"~{FALLBACK_CHARS_PER_TOKEN} chars/token."
+        )
+        encoder = None
+    _TOKEN_ENCODER_CACHE["encoder"] = encoder
+    return encoder
+
+
+def count_tokens(text: str) -> int:
+    """
+    Estimate how many tokens *text* occupies in an LLM prompt.
+
+    Counts with the :data:`TOKEN_ENCODING` tokenizer. Lumen also targets
+    Anthropic, Google, Mistral, Bedrock and LiteLLM models, whose tokenizers
+    differ, so this is an estimate for every provider — use it to size payloads,
+    not to predict billing. Falls back to a character-length estimate when the
+    tokenizer is unavailable.
+    """
+    if not text:
+        return 0
+    encoder = _get_token_encoder()
+    if encoder is None:
+        return math.ceil(len(text) / FALLBACK_CHARS_PER_TOKEN)
+    return len(encoder.encode(text, disallowed_special=()))
+
+
+def truncate_to_tokens(text: str, max_tokens: int, marker: str = "truncated") -> str:
+    """
+    Trim *text* to roughly *max_tokens*, cutting on a line boundary.
+
+    Prompt payloads are YAML, whitespace-aligned tables and markdown, where a
+    mid-line cut leaves a fragment the model may misread as data — so the text
+    is cut back to the last complete line that fits. The appended note reports
+    what was dropped, letting the model distinguish "this is everything" from
+    "there is more", rather than inferring it from a bare ellipsis.
+
+    Parameters
+    ----------
+    text : str
+        Text to trim.
+    max_tokens : int
+        Approximate token budget, per :func:`count_tokens`.
+    marker : str
+        Word used in the appended note.
+
+    Returns
+    -------
+    str
+        *text* unchanged when it already fits, otherwise the leading lines that
+        fit followed by ``... (truncated, showing N of M tokens)``.
+    """
+    total = count_tokens(text)
+    if total <= max_tokens:
+        return text
+
+    # Cut proportionally on characters first, then walk back a line at a time
+    # until the result plus its note fits. The first guess is usually right;
+    # the loop only corrects for uneven token density within the text.
+    note_budget = count_tokens(f"\n... ({marker}, showing {max_tokens} of {total} tokens)")
+    budget = max(max_tokens - note_budget, 1)
+    lines = text.split("\n")
+    keep = max(1, int(len(lines) * budget / total))
+    while keep > 1 and count_tokens("\n".join(lines[:keep])) > budget:
+        keep -= 1
+    kept = "\n".join(lines[:keep])
+    if count_tokens(kept) > budget:
+        # A single line exceeds the budget on its own; fall back to a character
+        # cut so we still respect the cap.
+        kept = kept[: max(1, int(len(kept) * budget / count_tokens(kept)))]
+    shown = count_tokens(kept)
+    return f"{kept}\n... ({marker}, showing {shown} of {total} tokens)"
 
 
 def collapse_indexed_columns(
