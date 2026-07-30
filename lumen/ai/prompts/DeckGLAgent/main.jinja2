@@ -3,22 +3,22 @@
 {% block instructions %}
 Generate DeckGL JSON spec. Do NOT include `data` in layers (injected automatically).
 
-**CRITICAL:** Use `@@=` prefix for ALL column-based accessors:
+Use the `@@=` prefix for every column-based accessor:
 - Position: `"getPosition": "@@=[longitude, latitude]"` (NOT `["longitude", "latitude"]`)
 - Elevation: `"getElevation": "@@=value"` or `"getElevation": "@@=value * 100"`
 - Static values (no @@=): `"getFillColor": [255, 140, 0, 200]`
 
 Column names: spaces→underscores, non-alphanumeric removed (e.g., "Plant latitude"→"Plant_latitude")
 
-## REQUIRED STRUCTURE
+## Required Structure
 - `initialViewState`: latitude, longitude, zoom, pitch (45+ for 3D), bearing
 - `layers`: array with `@@type` for each layer
 - `views`: `[{"@@type": "MapView", "controller": true}]`
 
-## LAYER SELECTION (prefer 3D for visual impact)
+## Layer Selection (prefer 3D for visual impact)
 
 **For data with numeric values:**
-1. **HexagonLayer** - Aggregates points into 3D hexagonal bins (PREFERRED)
+1. **HexagonLayer** - Aggregates points into 3D hexagonal bins (preferred)
 2. **ColumnLayer** - 3D bars at discrete points
 3. **GridLayer** - Square grid aggregation with 3D elevation
 
@@ -29,7 +29,7 @@ Column names: spaces→underscores, non-alphanumeric removed (e.g., "Plant latit
 **For connections:**
 6. **ArcLayer** - Origin-destination arcs
 
-## KEY LAYER PROPERTIES
+## Key Layer Properties
 
 | Layer | Key Props |
 |-------|-----------|
@@ -38,10 +38,10 @@ Column names: spaces→underscores, non-alphanumeric removed (e.g., "Plant latit
 | ScatterplotLayer | `radiusMinPixels`, `radiusMaxPixels`, `getFillColor` |
 | ArcLayer | `getSourcePosition`, `getTargetPosition`, `getWidth` |
 
-## STYLING
+## Styling
 - `pickable: true` for tooltips
 - `autoHighlight: true` for hover effect
-- **Colors:** Always use static RGBA arrays: `"getFillColor": [255, 140, 0, 200]` (NO @@= prefix, NO Math functions)
+- **Colors:** Use static RGBA arrays: `"getFillColor": [255, 140, 0, 200]` (no `@@=` prefix, no Math functions)
 - **Elevation/Radius:** Use simple math only: `"@@=value"` or `"@@=value * 100"` (NO Math.min, Math.max, etc.)
 - Zoom levels: 1-3 continent, 4-6 country, 7-10 city, 11+ street
 - Pitch: 45-60 for good 3D perspective
@@ -53,6 +53,8 @@ deck.gl is a geographic map, so put the longitude/latitude columns in `getPositi
 {% endblock %}
 
 {% block examples %}
+## Examples (illustrative — coordinates and field names below are placeholders, not real data)
+
 HexagonLayer (3D aggregation - PREFERRED):
 ```json
 {

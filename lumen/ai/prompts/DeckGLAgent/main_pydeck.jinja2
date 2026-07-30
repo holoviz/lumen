@@ -39,6 +39,8 @@ Make a geographic map with `ColumnLayer`: `get_position` on the longitude/latitu
 {% endblock %}
 
 {% block examples %}
+## Examples (illustrative — coordinates and field names below are placeholders, not real data)
+
 ColumnLayer (3D bars - PREFERRED for point data with values):
 ```python
 import pydeck as pdk
@@ -144,7 +146,7 @@ Data schema and sample:
 {{ memory['data'] }}
 
 **Important:** Use the exact column names from the data schema above for get_position and other accessors.
-{%- if "view" in memory %}
+{%- if memory.get("view") %}
 
 Previous specification (modify as requested):
 {{ memory["view"]["spec"] | json_to_yaml }}

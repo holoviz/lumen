@@ -2,7 +2,7 @@
 
 {%- block instructions %}
 ## Instructions
-{%- if memory.get('sql') -%}
+{% if memory.get('sql') %}
 Analyze if the SQL query matches the user's request by checking:
 1. What the user asked for
 2. What the SQL actually does (read it carefully)
@@ -34,30 +34,30 @@ Items labeled "(From previous plan)" are leftover context from an earlier plan. 
 {% if memory.get('sql') -%}
 User: "by region?"
 SQL: SELECT region, SUM(sales) FROM data GROUP BY region
-✓ VALID - has GROUP BY region
+VALID - has GROUP BY region
 
 User: "by region?"
 SQL: SELECT SUM(sales) FROM data
-✗ INVALID - missing GROUP BY region
+INVALID - missing GROUP BY region
 
 User: "top 5"
 SQL: SELECT * FROM data ORDER BY revenue DESC LIMIT 5
-✓ VALID - has LIMIT 5
+VALID - has LIMIT 5
 
 User: "show 1000 rows"
 SQL: SELECT * FROM data LIMIT 50
-✗ INVALID - wrong LIMIT value
+INVALID - wrong LIMIT value
 
 User: "total by state"
 SQL: SELECT state, SUM(amount) FROM data GROUP BY state
-✓ VALID - groups by state with SUM
+VALID - groups by state with SUM
 {% endif %}
-User: "Summarize the survey results" → Response with field breakdowns and patterns → ✓ VALID
-User: "What are the top selling products?" → Generic discussion, no rankings → ✗ INVALID
-User: "Show me data" → Response listing available columns and asking what to explore → ✓ VALID (clarifying question when request is ambiguous)
+User: "Summarize the survey results" → Response with field breakdowns and patterns → VALID
+User: "What are the top selling products?" → Generic discussion, no rankings → INVALID
+User: "Show me data" → Response listing available columns and asking what to explore → VALID (clarifying question when request is ambiguous)
 {% if memory.get('view') -%}
-User: "bar chart of sales by region" → bar mark with region on x, sales on y → ✓ VALID
-User: "line chart over time" → bar chart with no time axis → ✗ INVALID
+User: "bar chart of sales by region" → bar mark with region on x, sales on y → VALID
+User: "line chart over time" → bar chart with no time axis → INVALID
 {% endif %}
 {%- endblock -%}
 

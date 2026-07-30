@@ -5,10 +5,10 @@ You are invoking a function, provide the arguments to the function given the cur
 {% endblock -%}
 
 {%- block context %}
-{%- if 'table' in memory %}
+{%- if memory.get('table') %}
 The data table currently being worked on is: {{ memory['table'] }}
 {%- endif %}
-{%- if 'data' in memory %}
+{%- if memory.get('data') %}
 Here is a summary of the current data:
 
 {{ memory['data'] }}
