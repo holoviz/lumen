@@ -1112,7 +1112,8 @@ def log_debug(msg: Any, offset: int = 24, prefix: str = "", suffix: str = "", sh
     else:
         log.debug(msg)
     if show_length:
-        log.debug(f"Characters: \033[94m{len(msg)}\033[0m")
+        num_tokens = count_tokens(msg) if isinstance(msg, str) else sum(count_tokens(m) for m in msg)
+        log.debug(f"Characters: \033[94m{len(msg)}\033[0m Tokens: \033[94m{num_tokens}\033[0m")
     if suffix:
         log.debug(suffix)
     if show_sep == "below":
