@@ -861,11 +861,12 @@ def describe_data_sync(
         if nulls > 0:
             df_describe_dict[col]["nulls"] = nulls
 
-    # select datetime64 columns
-    for col in df.select_dtypes(include=["datetime64"]).columns:
-        for key in df_describe_dict[col]:
-            df_describe_dict[col][key] = str(df_describe_dict[col][key])
-        df[col] = df[col].astype(str)  # shorten output
+    # select datetime64 columns (including tz-aware)
+    for col in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            for key in df_describe_dict[col]:
+                df_describe_dict[col][key] = str(df_describe_dict[col][key])
+            df[col] = df[col].astype(str)  # shorten output
 
     # select all numeric columns and round
     for col in df.select_dtypes(include=["int64", "float64"]).columns:

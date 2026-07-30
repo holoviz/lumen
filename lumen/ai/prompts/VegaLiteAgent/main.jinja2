@@ -1,55 +1,55 @@
 {% extends 'BaseViewAgent/main.jinja2' %}
 
 {% block instructions %}
-Generate complete, effective Vega-Lite visualizations that clearly communicate data insights.
+Generate complete, effective Vega-Lite visualizations clearly communicating data insights.
 
 ## Essential Structure
 
 Every visualization must:
 - Use `data: {name: {{ memory['table'] }}}` with exact column names from source
-- Wrap all marks in a `layer` array, each with its own `mark` and `encoding`
+- Wrap all marks in `layer` array, each with own `mark` and `encoding`
 - Focus on ONE primary metric or relationship per chart
-- Include narrative titles that tell a story about the data (what happened, not just what's shown)
-- Do not overcrowd the plot with too many data points, especially for bars
+- Include narrative titles telling data story (what happened, not just what's shown)
+- Do not overcrowd plot with too many data points, especially for bars
 - Do not use scientific notation in axis ticks
 - When n_rows > 10000:
-  - Use aggregation and/or binning either in the encoding fields or as distinct transforms
+  - Use aggregation and/or binning either in encoding fields or as distinct transforms
   - OR enable canvas rendering using `{config: {render: {renderer: "canvas"}}}` (up to 50k rows)
 
 ## Multiple Charts
 
-Return several charts in `charts` ONLY when the request clearly spans distinct metrics or relationships that should not share one plot (e.g. "sales over time and sales by region"), or when the user explicitly asks for more than one. When a single chart answers the question, return exactly one.
-- Each entry in `charts` is a complete, standalone single-view spec following the rules above; do not pack several plots into one entry with `hconcat`/`vconcat`/`facet`/`repeat`.
-- Give each chart a short, descriptive `title` used as its tab label.
+Return several charts in `charts` ONLY when request clearly spans distinct metrics or relationships that should not share one plot (e.g. "sales over time and sales by region"), or user explicitly asks for more than one. When single chart answers question, return exactly one.
+- Each entry in `charts` complete, standalone single-view spec following rules above; do not pack several plots into one entry with `hconcat`/`vconcat`/`facet`/`repeat`.
+- Give each chart short, descriptive `title` used as tab label.
 
 ## Mark vs Encoding
 
-This is the most common source of errors. See examples for correct placement:
+Most common error source. See examples for correct placement:
 - **Mark**: static styling—position (`dx`, `dy`, `align`, `baseline`) and appearance (`color`, `opacity`, `fontSize`)
 - **Encoding**: data mappings—channels (`x`, `y`, `color`, `size`, `text`) with `{field: ...}` or `{value: ...}`
 - **NEVER put `dx`, `dy`, `align`, `baseline` in encoding**—they belong in mark only
 
 ## Legends
 
-Legends appear when you map data to `color`, `size`, or `shape` in encoding.
+Legends appear when mapping data to `color`, `size`, or `shape` in encoding.
 
 **Single field**: Map directly
-**Multiple series**: Use `transform` to create a constant field, then map it (never use `datum` in color encoding)
-**Avoid redundancy**: If encoding the same field with both size and color, either:
-  - Use size only with a single color: `color: {value: '#1f77b4'}`
+**Multiple series**: Use `transform` to create constant field, then map it (never use `datum` in color encoding)
+**Avoid redundancy**: If encoding same field with both size and color, either:
+  - Use size only with single color: `color: {value: '#1f77b4'}`
   - Or disable one legend: `color: {field: value, scale: {scheme: blues}, legend: null}`
 
 ## Key Patterns
 
-**Sort rankings**: `sort: "-x"` (horizontal) or `sort: "-y"` (vertical) on the categorical axis
+**Sort rankings**: `sort: "-x"` (horizontal) or `sort: "-y"` (vertical) on categorical axis
 
-**Color purposefully**: Encode dimensions, highlight outliers/leaders, or show thresholds. Keep color in `mark` for text labels that shouldn't appear in legends. When encoding quantitative values with color, consider setting an appropriate `domain` if data doesn't start at 0 (e.g., `scale: {scheme: blues, domain: [min, max]}`).
+**Color purposefully**: Encode dimensions, highlight outliers/leaders, or show thresholds. Keep color in `mark` for text labels that shouldn't appear in legends. When encoding quantitative values with color, consider setting appropriate `domain` if data doesn't start at 0 (e.g., `scale: {scheme: blues, domain: [min, max]}`).
 
-**Diverging colormaps**: When values straddle a meaningful center (anomalies, deviations, above/below a threshold) or diverging is requested, pick a diverging scheme and anchor the center with `domainMid`: `scale: {scheme: redblue, domainMid: 0}`. Without it the neutral color sits at the data midpoint and one side dominates. Schemes: `redblue`, `blueorange`, `redyellowblue`, `purplegreen`.
+**Diverging colormaps**: When values straddle meaningful center (anomalies, deviations, above/below threshold) or diverging requested, pick diverging scheme and anchor center with `domainMid`: `scale: {scheme: redblue, domainMid: 0}`. Without it, neutral color sits at data midpoint and one side dominates. Schemes: `redblue`, `blueorange`, `redyellowblue`, `purplegreen`.
 
-**Informative titles**: Title tells a story (what happened, not what's shown). See examples.
+**Informative titles**: Title tells story (what happened, not what's shown). See examples.
 
-**Data types**: Match type to your data - quantitative for continuous, ordinal for ordered categories, nominal for unordered, temporal for dates
+**Data types**: Match type to data - quantitative for continuous, ordinal for ordered categories, nominal for unordered, temporal for dates
 - For year fields: use `type: quantitative` with `axis.format: 'd'` to prevent comma separators (1990 not 1,990)
 
 **Incompatible scales**: Different units cannot share Y-axis. Choose: (1) primary metric only, or (2) faceting with `fold` + `resolve: {scale: {y: independent}}`
@@ -68,11 +68,11 @@ Legends appear when you map data to `color`, `size`, or `shape` in encoding.
 **Choropleth maps**: Join data to map boundaries - `lookup: <map_field>`, `from: {data: {...}, key: <your_field>, fields: [...]}` (key/fields inside from!)
 {%- if gridded is defined and gridded %}
 
-**Gridded xarray data**: This table is a long-form grid derived from an xarray dataset.
+**Gridded xarray data**: Table long-form grid derived from xarray dataset.
 - coordinate dimensions: {{ gridded.dims | join(', ') }}
 - data variables: {{ gridded.data_vars | join(', ') }}
-Use `mark: rect` with `x`/`y` mapped to the coordinate dimensions (type `ordinal`) and
-`color` mapped to a data variable (type `quantitative`, `scale: {scheme: viridis}`).
+Use `mark: rect` with `x`/`y` mapped to coordinate dimensions (type `ordinal`) and
+`color` mapped to data variable (type `quantitative`, `scale: {scheme: viridis}`).
 Do NOT use `longitude`/`latitude` encodings or geographic projections for this data.
 {%- endif %}
 {% endblock %}

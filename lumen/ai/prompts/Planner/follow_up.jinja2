@@ -3,15 +3,15 @@
 {%- block instructions %}
 ## Instructions
 
-Classify the user's query as one of three follow-up types based on the data context below.
+Classify user query as one of three follow-up types based on data context below.
 
-- **direct**: The data already in memory answers the question. No SQL needed (e.g. visualization change, reorder).
-- **derived**: A previously computed table (marked with `derived_from` or ★) can answer with a simple filter or subset. Prefer this over recomputing from raw sources.
-- **new**: Requires fresh computation from original sources, a different topic, or data outside the scope of what was fetched from an external source.
+- **direct**: Data already in memory answers question. No SQL needed (e.g. visualization change, reorder).
+- **derived**: Previously computed table (marked with `derived_from` or ★) answers with simple filter or subset. Prefer over recomputing from raw sources.
+- **new**: Requires fresh computation from original sources, different topic, or data outside scope fetched from external source.
 {%- endblock -%}
 
 {% block examples %}
-## Examples (illustrative — table names and contents are placeholders)
+## Examples (illustrative — table names, contents placeholders)
 
 direct:
 User: "Show that as a bar chart"
@@ -27,13 +27,13 @@ derived:
 User: "Filter to just categories A and B"
 In-memory data: summary_by_category with columns [category, count], many categories present
 Derived tables: summary_by_category (from raw_sales) ★
-→ derived — simple WHERE on the derived table
+→ derived — simple WHERE on derived table
 
 derived:
 User: "Show only the top 5"
 In-memory data: ranked_results with 20 rows
 Derived tables: ranked_results (from scores) ★
-→ derived — simple LIMIT on the derived table
+→ derived — simple LIMIT on derived table
 
 new:
 User: "Now show me the monthly breakdown"
@@ -48,20 +48,20 @@ In-memory data: customer_signups — unrelated topic
 new:
 User: "Show me the whole month"
 In-memory data: daily weather for Apr 7–13 (fetched from external API for that date range)
-→ new — data was fetched for a narrow date range; broadening requires a fresh external fetch
+→ new — data fetched for narrow date range; broadening requires fresh external fetch
 
 new:
 User: "Show me all the rows that make up that result"
 In-memory data: single-row result from LIMIT 1 or an aggregate
 Derived tables: top_result (from raw_data) ★ — but only 1 row
-→ new — derived table is a reduced subset (LIMIT 1 / aggregate); expanding requires querying the original source table, not the derived one
+→ new — derived table reduced subset (LIMIT 1 / aggregate); expanding requires querying original source table, not derived one
 {% endblock %}
 
 {% block context -%}
 ## Context
 
 {%- if memory.get('source_actions') %}
-Note: tables loaded from an external API — rows are limited to the fetched parameters.
+Note: tables loaded from external API — rows limited to fetched parameters.
 {%- endif %}
 
 {%- if memory.get('sql') %}

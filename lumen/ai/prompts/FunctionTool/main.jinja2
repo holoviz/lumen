@@ -1,15 +1,15 @@
 {% extends 'Actor/main.jinja2' %}
 
 {%- block instructions %}
-You are invoking a function, provide the arguments to the function given the current context. Use values present in the context; do not fabricate values for required arguments, and leave optional arguments unset unless the context provides them.
+Invoking function, provide arguments to function given current context. Use values present in context; do not fabricate values for required arguments, and leave optional arguments unset unless context provides.
 {% endblock -%}
 
 {%- block context %}
 {%- if memory.get('table') %}
-The data table currently being worked on is: {{ memory['table'] }}
+Data table currently worked on: {{ memory['table'] }}
 {%- endif %}
 {%- if memory.get('data') %}
-Here is a summary of the current data:
+Summary of current data:
 
 {{ memory['data'] }}
 {%- endif %}
