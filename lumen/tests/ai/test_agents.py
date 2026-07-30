@@ -799,7 +799,7 @@ def test_format_exploration_result_reports_full_shape():
 def test_format_exploration_result_lists_dtypes():
 
     result = format_exploration_result(_exploration_frame())
-    assert "station_id: object" in result
+    assert "station_id: str" in result
     assert "metric_0: float64" in result
 
 
