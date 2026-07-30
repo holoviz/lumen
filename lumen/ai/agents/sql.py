@@ -21,8 +21,8 @@ from ..models import RetrySpec
 from ..schemas import Metaset
 from ..tools import FunctionTool
 from ..utils import (
-    clean_sql, describe_data, get_data, get_pipeline, parse_table_slug,
-    retry_llm_output, stream_details,
+    clean_sql, describe_data, get_data, get_pipeline, log_debug,
+    parse_table_slug, retry_llm_output, stream_details, truncate_to_tokens,
 )
 from .base_lumen import BaseLumenAgent
 
@@ -96,6 +96,49 @@ def make_sql_model(sources: list[tuple[str, str]]):
     )
 
 
+# Rows/columns shown by format_exploration_result. Exploration reveals a frame's
+# shape, dtypes and value domains; a handful of rows does that, and the previous
+# 50-row aligned dump cost ~3.4k tokens for a 53x7 frame — 8x this one.
+EXPLORATION_PREVIEW_ROWS = 5
+EXPLORATION_PREVIEW_COLS = 25
+EXPLORATION_MAX_TOKENS = 1200
+# Schema YAML is dense (nested keys, enum lists) and tokenizes near 2.5
+# chars/token, so the previous 12k-character cap admitted ~4.5k tokens.
+SCHEMA_MAX_TOKENS = 3000
+
+
+def format_exploration_result(df: pd.DataFrame) -> str:
+    """
+    Render an exploration query result as a compact preview for the LLM.
+
+    Reports the full shape first so the model never needs a follow-up
+    ``SELECT COUNT(*)`` to learn how many rows matched, then column dtypes and a
+    few example rows. Markdown without the index: alignment padding and row
+    numbers are pure token cost here, carrying no information about the data.
+    """
+    n_rows, n_cols = df.shape
+    parts = [f"{n_rows} rows x {n_cols} columns"]
+
+    preview = df.iloc[:, :EXPLORATION_PREVIEW_COLS]
+    if n_cols > EXPLORATION_PREVIEW_COLS:
+        parts[0] += f" (showing the first {EXPLORATION_PREVIEW_COLS} columns)"
+
+    dtypes = ", ".join(f"{col}: {dtype}" for col, dtype in preview.dtypes.items())
+    parts.append(f"Columns — {dtypes}")
+
+    if n_rows:
+        shown = min(n_rows, EXPLORATION_PREVIEW_ROWS)
+        label = "all rows" if shown == n_rows else f"first {shown} of {n_rows} rows"
+        parts.append(
+            f"Sample ({label}):\n"
+            + preview.head(EXPLORATION_PREVIEW_ROWS).to_markdown(index=False)
+        )
+    else:
+        parts.append("The query returned no rows.")
+
+    return truncate_to_tokens("\n\n".join(parts), EXPLORATION_MAX_TOKENS)
+
+
 async def execute_exploration_sql(
     source: str,
     sql_query: str,
@@ -158,11 +201,7 @@ async def execute_exploration_sql(
     except Exception as e:
         return f"{type(e).__name__}: {e}"
 
-    preview = df.head(100)
-    text = preview.to_string(max_cols=25, max_rows=50)
-    if len(text) > 8000:
-        text = text[:8000] + "\n... (truncated)"
-    return text
+    return format_exploration_result(df)
 
 
 def make_run_exploration_sql_tool(sources: dict[tuple[str, str], BaseSQLSource]) -> FunctionTool:
@@ -182,10 +221,13 @@ def make_run_exploration_sql_tool(sources: dict[tuple[str, str], BaseSQLSource])
     return FunctionTool(
         run_exploration_sql,
         purpose=(
-            "Run exploratory read-only SQL (SELECT/WITH) on a datasource by name; "
-            "returns a small text preview of the result or an error message. "
-            "Do not use this tool to generate the result, it is meant as an exploratory "
-            "tool to gather the information needed to generate the final SQL query."
+            "Run exploratory read-only SQL (SELECT/WITH) on a datasource by name. "
+            f"Returns the result's full row and column counts, column dtypes and up to "
+            f"{EXPLORATION_PREVIEW_ROWS} example rows — so the reported row count is the "
+            "true total and needs no separate COUNT(*) query. "
+            "This gathers information for the final SQL query; it does not produce the "
+            "result the user sees, so stop exploring once you know the columns, types and "
+            "value formats you need."
         ),
     )
 
@@ -275,9 +317,7 @@ def make_load_table_schemas_tool(metaset: Metaset) -> FunctionTool:
                 block["note"] = "No catalog columns and no live schema could be loaded for this table."
             result[slug] = block
         text = yaml.dump(result, default_flow_style=False, allow_unicode=True, sort_keys=False)
-        if len(text) > 12000:
-            text = text[:12000] + "\n... (truncated)"
-        return text
+        return truncate_to_tokens(text, SCHEMA_MAX_TOKENS)
 
     load_table_schemas.__doc__ = (load_table_schemas.__doc__ or "").strip()
     return FunctionTool(
@@ -497,14 +537,15 @@ class SQLAgent(BaseLumenAgent):
 
     async def _execute_query(
         self, source: BaseSQLSource, context: TContext, expr_slug: str, sql_query: str, tables: list[str],
-        is_final: bool, should_materialize: bool, step: ChatStep
-    ) -> Pipeline:
+        is_final: bool, should_materialize: bool, step: ChatStep, raise_if_empty: bool = False
+    ) -> tuple[Pipeline, str]:
         """Execute SQL query and return pipeline and summary."""
         # Create SQL source
         source_tables = source.tables if source.tables is not None else {}
         if isinstance(source_tables, list):
             source_tables = {t: source.get_sql_expr(t) for t in source_tables}
         table_defs = {table: source_tables[table] for table in tables if table in source_tables}
+        expr_slug = self._unique_expr_slug(expr_slug, source_tables)
         table_defs[expr_slug] = sql_query
 
         # Only pass materialize parameter for DuckDB sources
@@ -514,6 +555,25 @@ class SQLAgent(BaseLumenAgent):
             )
         else:
             sql_expr_source = source.create_sql_expr_source(table_defs)
+
+        # Create pipeline
+        if is_final:
+            sql_transforms = [SQLLimit(limit=1_000_000, write=source.dialect, pretty=True, identify=False)]
+            pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms)
+        else:
+            pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug)
+
+        # Get data summary
+        df = await get_data(pipeline)
+
+        # Reject before promoting the new source: retry_llm_output re-runs this
+        # method on failure, and a rejected query left installed as
+        # ``context["source"]`` becomes the base every later attempt builds on.
+        if df.empty and raise_if_empty:
+            raise ValueError(
+                f"\nQuery `{sql_query}` returned empty results."
+                "\nUse `run_exploration_sql` to check what values actually exist before filtering."
+            )
 
         if should_materialize:
             context["source"] = sql_expr_source
@@ -532,15 +592,6 @@ class SQLAgent(BaseLumenAgent):
                 "created_order": existing_entries + 1,
             }
 
-        # Create pipeline
-        if is_final:
-            sql_transforms = [SQLLimit(limit=1_000_000, write=source.dialect, pretty=True, identify=False)]
-            pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms)
-        else:
-            pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug)
-
-        # Get data summary
-        df = await get_data(pipeline)
         summary = await describe_data(df, reduce_enums=False)
         if len(summary) >= 1000:
             summary = summary[:1000-3] + "..."
@@ -549,23 +600,41 @@ class SQLAgent(BaseLumenAgent):
             summary_formatted += f"\n\nMaterialized data: `{sql_expr_source.name}{SOURCE_TABLE_SEPARATOR}{expr_slug}`"
         stream_details(f"{summary_formatted}", step, title=expr_slug)
 
-        return pipeline
+        return pipeline, expr_slug
+
+    @staticmethod
+    def _unique_expr_slug(expr_slug: str, source_tables: dict[str, str]) -> str:
+        """
+        Return a slug that does not collide with an existing table.
+
+        Materialization issues ``CREATE OR REPLACE VIEW <expr_slug>``, so reusing
+        the name of a table the query reads redefines that table in terms of the
+        query's own output — destroying the original data for the rest of the
+        session and, when the query selects from the same name, producing
+        "infinite recursion detected" on every later read. Weak models routinely
+        echo back an input table name as ``table_slug`` despite the field
+        instructing otherwise, so treat the collision as the agent's problem to
+        resolve rather than the model's to get right.
+        """
+        if expr_slug not in source_tables:
+            return expr_slug
+        for suffix in range(1, 100):
+            candidate = f"{expr_slug}_derived_{suffix}"
+            if candidate not in source_tables:
+                log_debug(
+                    f"table_slug {expr_slug!r} collides with an existing table; "
+                    f"materializing as {candidate!r} to avoid overwriting it."
+                )
+                return candidate
+        raise ValueError(f"Could not derive a non-colliding table slug for {expr_slug!r}.")
 
     async def _finalize_execution(
         self,
         pipeline: Pipeline,
         sql: str,
         step_title: str | None,
-        raise_if_empty: bool = False
     ) -> SQLEditor:
         """Finalize execution for final step."""
-
-        df = await get_data(pipeline)
-        if df.empty and raise_if_empty:
-            raise ValueError(
-                f"\nQuery `{sql}` returned empty results."
-                "\nUse `run_exploration_sql` to check what values actually exist before filtering."
-            )
 
         view = self._editor_type(
             component=pipeline, title=step_title, spec=sql
@@ -707,16 +776,16 @@ class SQLAgent(BaseLumenAgent):
             # Only materialize for DuckDB sources
             should_materialize = isinstance(source, DuckDBSource)
 
-            pipeline = await self._execute_query(
+            pipeline, expr_slug = await self._execute_query(
                 source, context, expr_slug, validated_sql, tables=tables,
-                is_final=True, should_materialize=should_materialize, step=step
+                is_final=True, should_materialize=should_materialize, step=step,
+                raise_if_empty=raise_if_empty
             )
 
             view = await self._finalize_execution(
                 pipeline,
                 validated_sql,
                 output_title,
-                raise_if_empty=raise_if_empty
             )
 
             if isinstance(step, ChatStep):

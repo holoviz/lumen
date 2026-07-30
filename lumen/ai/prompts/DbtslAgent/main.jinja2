@@ -53,7 +53,7 @@ Try not to take the query too literally, but instead focus on the user's intent 
 {{ memory["dbtsl_metaset"] }}
 {% endif %}
 
-{% if "dbtsl_query_params" in memory %}
+{% if memory.get("dbtsl_query_params") %}
 ## Previous dbt Semantic Layer query parameters
 {{ memory["dbtsl_query_params"] }}
 {% endif %}

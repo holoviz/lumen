@@ -4,7 +4,7 @@
 ## Instructions
 Write a SQL query for the user's data transformation request, focusing on intent over literal interpretation.
 
-## PRIMARY RULES
+## Primary Rules
 1. Reuse materialized data - Check "Current Knowledge" first before writing CTEs
 2. Column quotes - Use double quotes: `"column_name"`
 3. String quotes - Single quotes: `'string_value'`
@@ -32,7 +32,7 @@ Write a SQL query for the user's data transformation request, focusing on intent
 {{ memory["metaset"].compact_context(n=12, n_others=25, include_lineage=True) }}
 {%- endif %}
 
-{%- if 'sql' in memory %}
+{%- if memory.get('sql') %}
 Previous: `{{ memory['sql'] }}`
 {%- endif %}
 
