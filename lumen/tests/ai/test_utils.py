@@ -110,9 +110,9 @@ def test_collapse_indexed_columns_alternate_separators():
 def test_render_template_with_valid_template():
     now = dt.datetime.now()
     expected = (
-        "Do not excessively reason in responses; there are chain_of_thought fields for that, but those should also be concise (1-2 sentences).\n"
-        f"The current date time is {now.strftime('%b %d, %Y %I:%M %p')}\n"
-        "What is the topic of the data?"
+        "Do not excessively reason in responses; chain_of_thought fields for that, but should also be concise (1-2 sentences).\n"
+        f"Current date time {now.strftime('%b %d, %Y %I:%M %p')}\n"
+        "What topic of data?"
     )
     assert (
         render_template(PROMPTS_DIR / "_Testing" / "topic.jinja2", {"tools": ""}, current_datetime=now).strip()
@@ -123,9 +123,9 @@ def test_render_template_with_valid_template():
 def test_render_template_with_override():
     now = dt.datetime.now()
     expected = (
-        "Do not excessively reason in responses; there are chain_of_thought fields for that, but those should also be concise (1-2 sentences).\n"
-        f"The current date time is {now.strftime('%b %d, %Y %I:%M %p')}\n"
-        "What is the topic of the data?\n"
+        "Do not excessively reason in responses; chain_of_thought fields for that, but should also be concise (1-2 sentences).\n"
+        f"Current date time {now.strftime('%b %d, %Y %I:%M %p')}\n"
+        "What topic of data?\n"
         "Its Lumen"
     )
     assert (
@@ -894,7 +894,7 @@ class TestCountTokens:
 
     def test_encoder_failure_is_soft(self):
         """A tokenizer that fails to load yields None rather than propagating."""
-        import lumen.ai.utils as utils
+        from lumen.ai import utils
         with patch.dict(utils._TOKEN_ENCODER_CACHE, clear=True):
             with patch.dict("sys.modules", {"tiktoken": None}):
                 # `import tiktoken` raises ImportError when the module is None.

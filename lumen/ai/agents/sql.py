@@ -123,7 +123,10 @@ def format_exploration_result(df: pd.DataFrame) -> str:
     if n_cols > EXPLORATION_PREVIEW_COLS:
         parts[0] += f" (showing the first {EXPLORATION_PREVIEW_COLS} columns)"
 
-    dtypes = ", ".join(f"{col}: {dtype}" for col, dtype in preview.dtypes.items())
+    def _dtype_name(dtype):
+        return "str" if pd.api.types.is_string_dtype(dtype) else str(dtype)
+
+    dtypes = ", ".join(f"{col}: {_dtype_name(dtype)}" for col, dtype in preview.dtypes.items())
     parts.append(f"Columns — {dtypes}")
 
     if n_rows:
