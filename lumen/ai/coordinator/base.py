@@ -21,7 +21,7 @@ from panel.pane import HTML, Image
 from panel.viewable import Viewer
 from panel.widgets import Tabulator
 from panel_material_ui import (
-    Card, ChatInterface, ChatStep, Column, Typography,
+    Card, ChatInterface, ChatStep, Column, Tabs, Typography,
 )
 
 from ..actor import Actor
@@ -40,7 +40,7 @@ from ..tools.document_llm_tools import make_document_vector_llm_tools
 from ..tools.metaset_docs_llm_tools import make_load_metaset_relevant_docs_tool
 from ..utils import (
     describe_data_sync, fuse_messages, get_root_exception, log_debug,
-    mutate_user_message, normalized_name, wrap_logfire,
+    mutate_user_message, normalized_name, truncate_iterable, wrap_logfire,
 )
 from ..vector_store import NumpyVectorStore
 
@@ -498,6 +498,12 @@ class Coordinator(Viewer, VectorLookupToolUser):
         if isinstance(obj, str):
             return obj
 
+        if isinstance(obj, Tabs):
+            return "\n".join(
+                f"## {name}\n{self._serialize(content, exclude_passwords=exclude_passwords)}"
+                for name, content in zip(obj._names, obj, strict=False)
+            )
+
         if isinstance(obj, (ListLike, NamedListLike)):
             return self._serialize(list(obj), exclude_passwords=exclude_passwords)
 
@@ -523,6 +529,10 @@ class Coordinator(Viewer, VectorLookupToolUser):
         # Handle Tabulator widgets - serialize using describe_data_sync for rich summary
         if isinstance(obj, Tabulator):
             df = obj.value
+            if len(df.columns) == 1:
+                # Do not waste tokens with a summary if just one column
+                col_name = df.columns[0]
+                return f"{col_name}: {truncate_iterable(df[col_name].tolist())}"
             if df is not None and not df.empty:
                 return describe_data_sync(df)
             return "[Empty table]"
