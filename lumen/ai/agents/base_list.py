@@ -96,14 +96,8 @@ class BaseListAgent(Agent):
 
         all_items = [item for source_items in items.values() for item in source_items]
         total = len(all_items)
-        max_shown = 10
-        if total > max_shown:
-            shown = ", ".join(all_items[:max_shown])
-            item_list_str = f"{shown}, ... and {total - max_shown} more"
-        else:
-            item_list_str = ", ".join(all_items)
         listing = (
-            f"Displayed {total} {self._column_name.lower()}(s) to the user: {item_list_str}"
+            f"Displayed {total} {self._column_name.lower()}(s) to the user."
         )
 
         if self.interface is not None:
