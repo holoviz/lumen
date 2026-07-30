@@ -803,7 +803,7 @@ class Llm(param.Parameterized):
         try:
             self._ready = False
             await self.invoke(
-                messages=[{'role': 'user', 'content': 'Ready? "Y" or "N"'}],
+                messages=[{'role': 'user', 'content': 'Ready? Just "Y" or "N"'}],
                 model_spec="ui",
             )
             self._ready = True
@@ -2783,7 +2783,7 @@ class WebLLM(Llm):
         self._status.name = pn.rx('Loading LLM {:.1f}%').format(progress)
         try:
             await self.invoke(
-                messages=[{'role': 'user', 'content': 'Ready? "Y" or "N"'}],
+                messages=[{'role': 'user', 'content': 'Ready? Just "Y" or "N"'}],
                 model_spec="ui",
             )
         except Exception as e:
@@ -2988,9 +2988,9 @@ class Kilo(OpenAI):
 
     Kilo provides an OpenAI-compatible endpoint that routes requests to
     models from multiple providers. Kilo has a free tier, but for other models,
-    optionally set the ``Kilo_API_KEY`` environment variable or pass ``api_key``
+    optionally set the ``KILO_API_KEY`` environment variable or pass ``api_key``
     directly. The provider is auto-detected when
-    ``Kilo_API_KEY`` is present, or can be selected explicitly with
+    ``KILO_API_KEY`` is present, or can be selected explicitly with
     ``--provider kilo``.
     """
 
@@ -3017,3 +3017,7 @@ class Kilo(OpenAI):
         "kilo-auto/efficient",
         "kilo-auto/frontier",
     ], constant=True, doc="Available Kilo models for selection dropdowns.")
+
+    def models(self) -> set[str]:
+        """Return the set of available model identifiers from Kilo."""
+        return {model_json["id"] for model_json in requests.get("https://api.kilo.ai/api/gateway/models").json()["data"]}
