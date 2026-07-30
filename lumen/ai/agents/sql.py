@@ -210,8 +210,8 @@ def make_run_exploration_sql_tool(sources: dict[tuple[str, str], BaseSQLSource])
     async def run_exploration_sql(source: str, sql_query: str) -> str:
         return await execute_exploration_sql(source, sql_query, sources=sources)
 
-    names = ", ".join(sorted({s for s, _ in sources})) or "(none)"
-    tables = ", ".join(sorted({t for _, t in sources})) or "(none)"
+    names = "`, `".join(sorted({s for s, _ in sources})) or "(none)"
+    tables = "`, `".join(sorted({t for _, t in sources})) or "(none)"
     run_exploration_sql.__doc__ = (
         f"Execute read-only SQL on the named source to inspect data (use LIMIT on raw selects). "
         f"Sources: {names}. "
