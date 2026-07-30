@@ -23,7 +23,7 @@ To use a specific provider, pass the `--provider` flag:
 ``` bash
 lumen-ai serve penguins.csv --provider anthropic
 lumen-ai serve penguins.csv --provider google --model 'gemini-2.5-flash'
-lumen-ai serve penguins.csv --provider openrouter --model 'openai/gpt-4o-mini'
+lumen-ai serve penguins.csv --provider kilo --model 'openai/gpt-4o-mini'
 lumen-ai serve penguins.csv --provider ollama --model 'qwen3:32b'
 lumen-ai serve penguins.csv --provider mlx
 ```
@@ -124,6 +124,7 @@ For installation and API key setup instructions, see the [Installation guide](..
 
 | Provider | Default Model | Description |
 |----------|---------------|-------------|
+| **Kilo** | `kilo-auto/free` | OpenAI-compatible gateway providing access to models from OpenAI, Anthropic, Google, Meta, Mistral, and more through a single API key. |
 | **OpenRouter** | `openai/gpt-4o-mini` | OpenAI-compatible gateway providing access to models from OpenAI, Anthropic, Google, Meta, Mistral, and more through a single API key. |
 | **AWS Bedrock** | `us.anthropic.claude-sonnet-4-6-20250929-v1:0` | Enterprise gateway providing access to models from Anthropic, Meta, Mistral, and more. |
 | **LiteLLM** | `gpt-5.4-mini` | Unified router to access 100+ models across all supported LLM providers. |
@@ -133,6 +134,25 @@ For installation and API key setup instructions, see the [Installation guide](..
 
 - **AnthropicBedrock** - Optimized for Claude models using Anthropic's SDK
 - **Bedrock** - Universal access to all Bedrock models (Claude, Llama, Mistral, Titan, etc.)
+
+### Kilo
+
+Kilo provides an OpenAI-compatible API for routing requests to models from multiple providers.
+
+``` py title="Kilo configuration"
+import lumen.ai as lmai
+
+llm = lmai.llm.Kilo(
+    model_kwargs={
+        "default": {"model": "kilo-auto/free"},
+        "sql": {"model": "anthropic/claude-sonnet-4.6"},
+        "vega_lite": {"model": "openai/gpt-5.4-mini"},
+    }
+)
+
+ui = lmai.ExplorerUI(data='penguins.csv', llm=llm)
+ui.servable()
+```
 
 ### OpenRouter
 
@@ -151,6 +171,7 @@ llm = lmai.llm.OpenRouter(
 
 ui = lmai.ExplorerUI(data='penguins.csv', llm=llm)
 ui.servable()
+```
 
 ## Advanced configuration
 
