@@ -97,7 +97,7 @@ class BaseListAgent(Agent):
         all_items = [item for source_items in items.values() for item in source_items]
         total = len(all_items)
         listing = (
-            f"Displayed {total} {self._column_name.lower()}(s) to the user."
+            f"Displayed {total} {self._column_name.lower()}(s)"
         )
 
         if self.interface is not None:
