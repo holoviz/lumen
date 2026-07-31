@@ -131,6 +131,7 @@ async def test_vegalite_agent(llm, duckdb_source, test_messages):
     }
 
     spec = {
+        "config": {"numberFormat": ","},
         "data": {
             "values": [
                 {"A": 1, "B": 2, "C": 3, "D": "2023-01-01T00:00:00Z"},
