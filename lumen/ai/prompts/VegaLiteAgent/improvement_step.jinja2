@@ -1,7 +1,7 @@
 {% extends 'Actor/main.jinja2' %}
 
 {% block context %}
-Build off the following Vega-Lite yaml:
+Build off following Vega-Lite yaml:
 ```yaml
 {{ vega_spec | safe }}
 ```
@@ -14,7 +14,7 @@ Data context:
 {{ super() }}
 
 {% if errors is defined and errors %}
-For extra context, here are the data and columns available:
+For extra context, data and columns available:
 {{ columns_context }}
 {% endif %}
 {% endblock %}

@@ -89,7 +89,7 @@ def test_deckgl_prompt_gridded_guidance_is_general():
     )
     assert "time, lat, lon" in rendered
     assert "getPosition" in rendered
-    assert "reduced to a single slice" in rendered
+    assert "reduced to single slice" in rendered
     # no brittle spatial-axis prescription any more
     assert "spatial axes" not in rendered
 

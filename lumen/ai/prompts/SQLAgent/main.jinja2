@@ -2,20 +2,20 @@
 
 {%- block instructions %}
 ## Instructions
-Write a SQL query for the user's data transformation request, focusing on intent over literal interpretation.
+Write SQL query for user's data transformation request, focusing on intent over literal interpretation.
 
 ## Primary Rules
 1. Reuse materialized data - Check "Current Knowledge" first before writing CTEs
 2. Column quotes - Use double quotes: `"column_name"`
 3. String quotes - Single quotes: `'string_value'`
 4. No CREATE statements - System handles materialization
-5. No random LIMIT clauses unless requested — pagination is automatically handled
+5. No random LIMIT clauses unless requested — pagination automatically handled
 6. Progressive approach - Each step builds on previous
 7. Do not rename columns unless explicitly instructed
 
 ## Query Patterns
-- NULL handling: Exclude unless specified
-- Wrangle data: `TRIM("column") != ''`, filter -9999, empty strings, split text columns, etc.
+- Exclude NULLs unless specified
+- Clean data: `TRIM("column") != ''`, filter -9999, empty strings, split text columns
 - Headers: Use OFFSET 1 for header/metadata rows
 - Mixed units: Use CASE to normalize before aggregating
 - Temporal data: Check MIN/MAX dates before joining, ensure overlap validation
@@ -23,7 +23,7 @@ Write a SQL query for the user's data transformation request, focusing on intent
 - Use CTEs only when necessary
 
 ## Data summary vs tools
-**Data summary** below is a capped snapshot (top tables by relevance) without embedded documentation. If you need other tables or richer types, call **browse_data_catalog** and **load_table_schemas** — do not guess column names or types. Use **load_relevant_metaset_docs** when it is available and doc text is needed.
+**Data summary** below: capped snapshot (top tables by relevance) without embedded documentation. For other tables or richer types, call **browse_data_catalog** and **load_table_schemas** — do not guess column names or types. Use **load_relevant_metaset_docs** when available and doc text needed.
 {%- endblock -%}
 
 {%- block context -%}
@@ -40,7 +40,7 @@ Previous: `{{ memory['sql'] }}`
 Data Summary:
 {{ memory["data"] }}
 {%- if 'rows_capped_at_limit' in memory["data"] %}
-(`rows_capped_at_limit` indicates the preview was truncated for display; it is not the table's true row count. Do not add a LIMIT to match it — pagination is handled automatically.)
+(`rows_capped_at_limit` indicates preview truncated for display; not table's true row count. Do not add LIMIT to match — pagination handled automatically.)
 {%- endif %}
 {%- endif %}
 
@@ -49,7 +49,7 @@ Use `{{ dialect }}` SQL dialect.
 
 ## DuckDB Essentials
 - Table references: Use exact names `read_csv('table.csv')`, alias if needed `as table_name`
-- Reference just the table in the SQL query: `source {{ source_table_sep }} table`
+- Reference just table in SQL query: `source {{ source_table_sep }} table`
 - Range predicates: `"date" >= '2023-06-01' AND "date" < '2023-09-01'`
 - Date selection: CAST(col as DATE) == '2023-06-01'
 - Window filtering: `QUALIFY ROW_NUMBER() OVER (...) <= 5`
@@ -72,7 +72,7 @@ Use materialized tables above instead of rebuilding CTEs
 
 {%- if active_filters %}
 ## Active exploration filters
-The user has interactively subset the current data with these filters. Add the equivalent WHERE conditions so the results stay consistent with what they are looking at:
+User interactively subset current data with these filters. Add equivalent WHERE conditions so results stay consistent with displayed view:
 {% for condition in active_filters %}
 - {{ condition }}
 {%- endfor %}

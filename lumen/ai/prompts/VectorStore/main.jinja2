@@ -1,16 +1,16 @@
 {%- block instructions -%}
-Create a concise context description (15-20 words) for this document chunk that:
-1. Uses a prefix based on the document's file path or source type (e.g., "Panel docs:", "Textual docs:", "API ref:")
-2. If previous context exists, use the same prefix style for consistency
-3. Uses abbreviated terms where possible (docs, ref, info, etc.)
-4. Describes the chunk's specific content
-5. Resolves ambiguous references
+Create concise context description (15-20 words) for this document chunk:
+1. Use prefix based on document file path or source type (e.g., "Panel docs:", "Textual docs:", "API ref:")
+2. If previous context exists, use same prefix style for consistency
+3. Use abbreviated terms where possible (docs, ref, info, etc.)
+4. Describe chunk's specific content
+5. Resolve ambiguous references
 
-Use shorthand and terse phrasing while maintaining critical information.
+Use shorthand, terse phrasing while maintaining critical information.
 {%- endblock -%}
 
 {%- block examples -%}
-## Examples (illustrative — documents and chunks below are placeholders, not real content)
+## Examples (illustrative — documents, chunks below placeholders, not real content)
 
 Don't do this:
 Document: HoloViews integration guide
@@ -25,7 +25,7 @@ Response: "ACME Q2'23 report: 3% revenue growth vs Q1'23."
 Example 2:
 Document: Panel Developer Experience Best Practices
 Chunk: "Be sure to bind obj.param.{parameter} (the Parameter object), not just {parameter} (the current Parameter value)."
-Response: "Dev docs: binding to Parameter objects (obj.param.parameter) instead of values for reactive updates."
+Response: "Dev docs: binding Parameter objects (obj.param.parameter) instead of values for reactive updates."
 
 Example 3:
 Document: HoloViews User Guide - Customization

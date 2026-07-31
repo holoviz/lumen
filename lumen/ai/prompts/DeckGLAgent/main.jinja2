@@ -3,7 +3,7 @@
 {% block instructions %}
 Generate DeckGL JSON spec. Do NOT include `data` in layers (injected automatically).
 
-Use the `@@=` prefix for every column-based accessor:
+Use `@@=` prefix for every column-based accessor:
 - Position: `"getPosition": "@@=[longitude, latitude]"` (NOT `["longitude", "latitude"]`)
 - Elevation: `"getElevation": "@@=value"` or `"getElevation": "@@=value * 100"`
 - Static values (no @@=): `"getFillColor": [255, 140, 0, 200]`
@@ -48,7 +48,7 @@ Column names: spaces→underscores, non-alphanumeric removed (e.g., "Plant latit
 {%- if gridded is defined and gridded %}
 
 **Gridded xarray data** with dimensions {{ gridded.dims | join(', ') }} and variables {{ gridded.data_vars | join(', ') }}.
-deck.gl is a geographic map, so put the longitude/latitude columns in `getPosition` and a variable in `getElevation` or color (`ColumnLayer` for per-cell elevation, `HexagonLayer` to aggregate). Plot only the two map axes; any dimension you leave unused is reduced to a single slice automatically.
+deck.gl geographic map: put longitude/latitude columns in `getPosition` and variable in `getElevation` or color (`ColumnLayer` for per-cell elevation, `HexagonLayer` to aggregate). Plot only two map axes; any unused dimension reduced to single slice automatically.
 {%- endif %}
 {% endblock %}
 

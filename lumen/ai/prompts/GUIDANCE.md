@@ -92,7 +92,7 @@ the behavior you want.
 
 - One voice per prompt. The repo historically had two dialects (measured prose in the
   orchestration/data agents; terse caps-and-emoji in the view agents). Prefer the
-  clearer prose style.
+  clearer prose style, then compress it with caveman compression (see below).
 - **At most two emphasis markers per template** (`CRITICAL`, `MUST`, `NEVER`, `ALWAYS`,
   `IMPORTANT`). They only carry signal while they are rare; a prompt where every rule
   shouts has no load-bearing rules.
@@ -138,6 +138,59 @@ that produces it, not in the template.
   followed by 5 rows saves the model a `SELECT COUNT(*)` round trip; 50 rows with no
   total does not.
 
+## Caveman compression
+
+Prompt prose competes for the model's attention budget alongside every injected
+payload. Compress instructions, context descriptions, and rules by stripping
+grammatical scaffolding while preserving every content word that carries meaning.
+The technique is aggressive but mechanical: remove stop words, keep semantics.
+
+### Remove
+
+- Articles: a, an, the
+- Auxiliary verbs: is, are, was, were, am, be, been, being, have, has, had,
+  do, does, did
+- Prepositions when meaning stays clear: of, for, to, in, on, at
+- Pronouns when context is clear: it, this, that, these, those
+- Intensifiers: very, quite, rather, somewhat, really, extremely
+
+### Keep
+
+- Nouns, main verbs, adjectives that add meaning
+- Numbers and quantifiers (at least, approximately, more than, many)
+- Uncertainty qualifiers (appears to be, seems, might)
+- Prepositions that define relationships (from, with, without, stuck to)
+- Time and frequency words (every Tuesday, weekly, daily, always, never)
+- Names, titles, technical terms, domain-specific language
+- Negations (not, no, never, without)
+
+### Judgment calls
+
+- Keep a preposition when it defines a relationship ("made from wood" keeps
+  *from*; "system for processing" drops *for*).
+- Keep in/on/at when they specify location or position; drop when grammatical only.
+- Drop is/are/was/were unless part of a passive voice that carries meaning.
+- **Never compress inside fenced code blocks.** Preserve SQL, YAML, JSON, Python,
+  column names, and example specs verbatim — compress only the prose surrounding them.
+- Few-shot example responses may be compressed, but the demonstrated output
+  format (code, specs, structured fields) must stay intact.
+
+### Examples
+
+```
+"The system was designed to process data efficiently"
+→ "System designed process data efficiently."
+(Removed: The, was, to)
+
+"There were at least 20 people"
+→ "At least 20 people."
+(Kept: at least — quantifier matters; removed: There were)
+
+"Made from wood and metal"
+→ "Made from wood and metal."
+(Kept: from — shows material relationship)
+```
+
 ## Author checklist
 
 Before adding or editing a prompt, confirm:
@@ -147,6 +200,8 @@ Before adding or editing a prompt, confirm:
 - [ ] Conditional sections guard on the value (`memory.get('k')`), not the key.
 - [ ] Examples are under `## Examples` and marked illustrative if they look like real data.
 - [ ] No rule is stated more than once; at most two emphasis markers; no emoji.
+- [ ] Prose is caveman-compressed: articles, auxiliary verbs, and redundant
+      prepositions removed; content words preserved; code blocks untouched.
 - [ ] Shared content comes from the base via `{{ super() }}`, not copy-paste.
 - [ ] The output contract (fields/format/length) is stated.
 - [ ] Any injected `memory['data']` is labeled a summary and capped counts are flagged.

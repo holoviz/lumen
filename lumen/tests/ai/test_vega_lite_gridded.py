@@ -89,6 +89,6 @@ def test_vegalite_altair_prompt_gridded_is_general():
         **_base_context(gridded=gridded),
     )
     assert "mark_rect()" in rendered
-    assert "reduced to a single slice" in rendered
+    assert "reduced to single slice" in rendered
     # the old per-dim subset instruction is gone (code handles it now)
     assert "cannot page a dimension with a slider" not in rendered
