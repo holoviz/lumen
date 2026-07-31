@@ -40,7 +40,7 @@ from ..tools.document_llm_tools import make_document_vector_llm_tools
 from ..tools.metaset_docs_llm_tools import make_load_metaset_relevant_docs_tool
 from ..utils import (
     describe_data_sync, fuse_messages, get_root_exception, log_debug,
-    mutate_user_message, normalized_name, truncate_iterable, wrap_logfire,
+    mutate_user_message, normalized_name, truncate_to_tokens, wrap_logfire,
 )
 from ..vector_store import NumpyVectorStore
 
@@ -532,7 +532,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
             if len(df.columns) == 1:
                 # Do not waste tokens with a summary if just one column
                 col_name = df.columns[0]
-                return f"{col_name}: {truncate_iterable(df[col_name].tolist())}"
+                return f"{col_name}(s): {truncate_to_tokens('`, `'.join(df[col_name].tolist()), max_tokens=1500)}"
             if df is not None and not df.empty:
                 return describe_data_sync(df)
             return "[Empty table]"
