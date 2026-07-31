@@ -10,7 +10,12 @@ Every visualization must:
 - Wrap all marks in `layer` array, each with own `mark` and `encoding`
 - Focus on ONE primary metric or relationship per chart
 - Include narrative titles telling data story (what happened, not just what's shown)
-- Do not overcrowd plot with too many data points, especially for bars
+- Do not overcrowd plot: when a discrete axis (bar categories, ordinal `x`/`y`) would carry more than 25 distinct values, do not plot all of them. Check `nunique` for that column in data summary, then do one of:
+  - Rank and filter to at most 25 with `window` + `filter` (see ranked bar chart example), and name the cut in the title (e.g. "Top 15 Regions by Revenue") — never title a truncated chart as if it showed everything
+  - OR group the tail into a single "Other" category with `calculate` transform
+  - OR switch to a form built for high cardinality: bin the measure into a histogram, or use `mark: rect`
+
+  Text labels on every mark count as overcrowding: only add them to a chart already reduced to 25 marks or fewer.
 - Do not use scientific notation in axis ticks
 - When n_rows > 10000:
   - Use aggregation and/or binning either in encoding fields or as distinct transforms
@@ -77,13 +82,12 @@ Do NOT use `longitude`/`latitude` encodings or geographic projections for this d
 {%- endif %}
 {% endblock %}
 
+{% block docs %}
+{% include 'VegaLiteAgent/doc_pages.jinja2' %}
+{% endblock %}
+
 {% block examples %}
 ## Examples (illustrative — table, column and value names below are placeholders, not real data)
-{% if doc_examples is defined and doc_examples %}
-{% for example in doc_examples %}
-{{ example }}
-{% endfor %}
-{% endif %}
 
 Mark vs Encoding (common error—dx/dy go in mark, NOT encoding):
 ```yaml
@@ -139,7 +143,7 @@ Ranked bar chart with top 10 filter:
 data:
   name: <TABLE_NAME>
 transform:
-  - window: [{op: rank, field: turbine_count, as: rank}]
+  - window: [{op: rank, as: rank}]
     sort: [{field: turbine_count, order: descending}]
   - filter: datum.rank <= 10
 layer:
@@ -193,31 +197,6 @@ config:
   view: {stroke: null}
   axisX: {grid: false}
   axisY: {gridColor: '#eeeeee'}
-```
-
-Dual encoding (size + color for different metrics):
-```yaml
-data:
-  name: <TABLE_NAME>
-layer:
-  - mark: {type: circle, opacity: 0.7}
-    encoding:
-      longitude: {field: xlong, type: quantitative}
-      latitude: {field: ylat, type: quantitative}
-      size: {field: capacity_kw, type: quantitative}
-      color: {field: efficiency_pct, type: quantitative, scale: {scheme: viridis, domain: [85, 95]}, legend: {title: "Efficiency (%)"}}
-```
-
-Bar chart with legend:
-```yaml
-data:
-  name: <TABLE_NAME>
-layer:
-  - mark: bar
-    encoding:
-      x: {field: category, type: nominal}
-      y: {field: sales, type: quantitative}
-      color: {field: category, type: nominal, legend: {title: "Category", orient: "right"}}
 ```
 
 {%- if gridded is defined and gridded %}

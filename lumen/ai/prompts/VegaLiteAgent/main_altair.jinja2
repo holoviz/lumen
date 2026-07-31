@@ -16,6 +16,7 @@ Return several entries in `charts` ONLY when request spans distinct metrics or r
 - **Geo**: `longitude='lon:Q', latitude='lat:Q'` with `.project(type='mercator')`
 
 ## Rules
+- When a discrete axis would carry more than 25 distinct values (check `nunique` in data summary), reduce before plotting: `.transform_window(rank='rank()', sort=[...])` then `.transform_filter('datum.rank <= 25')`, and name the cut in the title. Alternatives: group tail into `"Other"`, or bin the measure instead. Only add text labels to a chart already reduced to 25 marks or fewer.
 - When n_rows > 5000:
   - **MUST** include `alt.data_transformers.disable_max_rows()` and `alt.renderers.set_embed_options(renderer="canvas")`
   - Prefer aggregated and binned plots
@@ -27,11 +28,13 @@ Pick two dimensions for `x`/`y`, use `mark_rect()` with `color` as quantitative 
 {%- endif %}
 {% endblock %}
 
+{% block docs %}
+{% include 'VegaLiteAgent/doc_pages.jinja2' %}
+{% endblock %}
+
 {% block examples %}
 ## Examples (illustrative — field names below placeholders, not real columns)
 
-{% if doc_examples is defined and doc_examples %}{% for example in doc_examples %}{{ example }}
-{% endfor %}{% endif %}
 Bar (sorted):
 ```python
 chart = alt.Chart(df).mark_bar().encode(y=alt.Y('state:N', sort='-x'), x='count:Q', tooltip=['state', 'count']).properties(width='container', height=400).interactive()
