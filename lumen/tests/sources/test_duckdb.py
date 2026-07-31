@@ -1438,3 +1438,24 @@ def test_duckdb_get_schema_geometry_no_distinct():
     # non-geometry columns still summarised as usual
     assert schema['pop']['inclusiveMinimum'] == 1
     assert schema['pop']['inclusiveMaximum'] == 2
+
+
+def test_file_table_key_survives_normalization(tmp_path):
+    """A registered file-based table must be findable by its own name.
+
+    File-based keys were normalized with a bare non-word substitution while
+    every lookup goes through ``normalize_table``, which also strips leading
+    and trailing underscores. An absolute path starts with a separator and so
+    produced a leading underscore, leaving the source unable to resolve the
+    table it had just registered. That broke ``lumen-ai serve /abs/path.csv``
+    for any absolute path.
+    """
+    csv = tmp_path / "sales.csv"
+    pd.DataFrame({"region": ["North", "South"], "revenue": [10, 20]}).to_csv(csv, index=False)
+
+    source = DuckDBSource(tables={str(csv): str(csv)}, uri=":memory:")
+
+    (table,) = source.get_tables()
+    assert not table.startswith("_")
+    assert source.normalize_table(table) in source.tables
+    assert len(source.get(table)) == 2
