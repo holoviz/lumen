@@ -126,25 +126,6 @@ class AltairSpec(BaseModel):
     )
 
 
-def _spec_has_tooltips(spec: dict) -> bool:
-    """Whether every mark-drawing view in a Vega-Lite spec already sets tooltips.
-
-    `interaction_polish` exists only to add tooltips, and costs a full LLM round
-    trip plus a rendered plot image. The main pass now emits tooltips itself on
-    most charts, so the step is often a no-op that rewrites the spec it was
-    handed. Composition containers are walked because a spec is only fully
-    covered when every leaf view is.
-    """
-    for key in ("layer", "concat", "hconcat", "vconcat"):
-        views = spec.get(key)
-        if isinstance(views, list):
-            return bool(views) and all(_spec_has_tooltips(view) for view in views)
-    if (spec.get("encoding") or {}).get("tooltip") is not None:
-        return True
-    mark = spec.get("mark")
-    return isinstance(mark, dict) and mark.get("tooltip") is not None
-
-
 class VegaLiteAgent(BaseCodeAgent):
 
     conditions = param.List(
@@ -215,6 +196,11 @@ class VegaLiteAgent(BaseCodeAgent):
     # Over-fetch multiplier: the per-slug cap needs alternatives below the cut
     # to promote, otherwise capping just returns fewer results.
     _doc_page_pool = 6
+
+    # Marks that annotate an existing view rather than plot data in their own
+    # right. A tooltip on a value label is noise, so their absence must not force
+    # a polish pass over a chart whose data layers are already covered.
+    _annotation_marks = frozenset({"text", "rule"})
 
     def __init__(self, **params):
         self._vector_store: DuckDBVectorStore | None = None
@@ -627,6 +613,13 @@ class VegaLiteAgent(BaseCodeAgent):
             vega_spec = self._deep_merge_dicts(
                 {"config": {"range": {"category": category_palette()}}}, vega_spec
             )
+        if apply_defaults:
+            # Kills scientific notation in axis and legend labels globally.
+            # Per-encoding `axis: {format: ','}` is not sufficient: in a layered
+            # spec the axes of a shared scale are merged, so a format set on one
+            # layer and absent on another does not survive, and the axis falls
+            # back to a default that renders 6000 as 6e+3.
+            vega_spec = self._deep_merge_dicts({"config": {"numberFormat": ","}}, vega_spec)
         return normalize_vegalite_spec(vega_spec, editor_type=self._editor_type)
 
     def _last_user_query(self, messages: list[Message], step_title: str | None = None) -> str:
@@ -782,6 +775,20 @@ class VegaLiteAgent(BaseCodeAgent):
         specs = sum(len(page.get("metadata", {}).get("examples") or ()) for page in doc_pages)
         sources = len({page.get("metadata", {}).get("slug") for page in doc_pages})
         base_forms = sum(1 for page in doc_pages if (page.get("metadata") or {}).get("base_form"))
+        # Similarity of what was kept, against the pool it was drawn from. Ranking
+        # here has repeatedly proved to sit inside the noise floor -- the section
+        # that actually helped has landed anywhere from 2nd to 4th -- so record the
+        # numbers needed to decide whether a relevance floor could separate an
+        # off-topic payload from a useful one, rather than guessing a threshold.
+        scores = [c["similarity"] for c in doc_pages if "similarity" in c]
+        pool_scores = [c["similarity"] for c in candidates if "similarity" in c]
+        spread = ""
+        if scores:
+            spread = (
+                f", similarity {min(scores):.3f}-{max(scores):.3f}"
+                f" (spread {max(scores) - min(scores):.3f}"
+                f", pool floor {min(pool_scores):.3f})"
+            )
         dropped = "".join([
             f", {base_forms} base-form section(s)" if base_forms else "",
             f", {before - deduped} duplicate spec(s) dropped" if before != deduped else "",
@@ -790,8 +797,19 @@ class VegaLiteAgent(BaseCodeAgent):
         log_debug(
             f"Vega-Lite docs lookup returned {len(doc_pages)} section(s) from "
             f"{sources} page(s) of {len(candidates)} candidate(s), {specs} example spec(s)"
-            f"{dropped}"
+            f"{dropped}{spread}"
         )
+        # Per-section detail: which slug scored what, and whether it brought a
+        # spec. Deciding between a relevance floor, a prose-only filter and a
+        # reranker needs the score attached to the section it belongs to.
+        for page in doc_pages:
+            metadata = page.get("metadata") or {}
+            score = page.get("similarity")
+            score_text = f"{score:.3f}" if isinstance(score, float) else "  -  "
+            log_debug(
+                f"    {score_text} {metadata.get('slug')} / {metadata.get('section_title')} "
+                f"[{metadata.get('kind')}, {len(metadata.get('examples') or ())} spec(s)]"
+            )
         return doc_pages
 
     async def revise(
@@ -846,11 +864,38 @@ class VegaLiteAgent(BaseCodeAgent):
             feedback, messages, context, view=view, spec=spec, language=language, **kwargs
         )
 
+    @classmethod
+    def _is_annotation_view(cls, view: dict) -> bool:
+        """Whether a layer only annotates the chart rather than plotting data."""
+        mark = view.get("mark")
+        mark_type = mark.get("type") if isinstance(mark, dict) else mark
+        return mark_type in cls._annotation_marks
+
+    @classmethod
+    def _spec_has_tooltips(cls, spec: dict) -> bool:
+        """Whether every data-drawing view in a spec already sets tooltips.
+
+        `interaction_polish` exists only to add tooltips, and costs a full LLM
+        round trip plus a rendered plot image. The main pass now emits tooltips
+        itself on most charts, so the step is often a no-op that rewrites the spec
+        it was handed. Composition containers are walked because a spec is only
+        fully covered when every leaf view is.
+        """
+        for key in ("layer", "concat", "hconcat", "vconcat"):
+            views = spec.get(key)
+            if isinstance(views, list):
+                data_views = [v for v in views if not cls._is_annotation_view(v)]
+                return bool(data_views) and all(cls._spec_has_tooltips(v) for v in data_views)
+        if (spec.get("encoding") or {}).get("tooltip") is not None:
+            return True
+        mark = spec.get("mark")
+        return isinstance(mark, dict) and mark.get("tooltip") is not None
+
     async def _polish_plot(self, out: VegaLiteEditor, messages: list[Message], context: TContext, doc: str | None = None):
         steps = {
             "interaction_polish": "Add helpful tooltips and ensure responsive, accessible user experience",
         }
-        if _spec_has_tooltips(out._spec_dict.get("spec") or {}):
+        if self._spec_has_tooltips(out._spec_dict.get("spec") or {}):
             log_debug("Skipping interaction_polish: every view already defines tooltips")
             return
         with out.param.update(loading=True):

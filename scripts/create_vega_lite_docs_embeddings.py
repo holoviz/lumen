@@ -794,18 +794,20 @@ async def describe_items(items: list[dict], llm, report: dict) -> None:
         raise
     for item, (key, description) in zip(items, results):
         # Set for every item, so the flag never depends on whether describing
-        # happened to succeed.
-        base_form = _is_base_form(item["metadata"])
-        item["metadata"]["base_form"] = base_form
+        # happened to succeed. Consumed by the agent as a retrieval flag; it is
+        # deliberately NOT written into `text`. A bare "<Page> chart." prefix was
+        # tried and made things worse: it did not lift the canonical section it
+        # was written for, and on a contentless query ("visualize the data") it
+        # became the most query-shaped string in the corpus, so base-form
+        # Introduction pages -- which mostly carry no example spec -- swept the
+        # results.
+        item["metadata"]["base_form"] = _is_base_form(item["metadata"])
         if not description:
             continue
         # Stored for inspection only; it is already inside `text`, so embed_docs
         # must exclude it or it would be embedded twice.
         item["metadata"]["description"] = description
-        # A bare, query-shaped phrase: "a bar chart" is all a user writes, so any
-        # extra wording only dilutes the match.
-        prefix = f"{item['metadata']['page_title']} chart.\n\n" if base_form else ""
-        item["text"] = f"{prefix}{description}\n\n{item['text']}"
+        item["text"] = f"{description}\n\n{item['text']}"
     save_descriptions(cache)
     print(
         f"Descriptions: {counts['cached']} cached, {counts['generated']} generated, "
