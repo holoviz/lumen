@@ -243,7 +243,14 @@ class APIKeyServiceMixin(ServiceMixin):
 
     def __init__(self, **params):
         if "api_key" not in params:
-            params["api_key"] = os.environ.get(self.api_key_env_var)
+            # Only override when the variable is actually set. os.environ.get
+            # returns None otherwise, which overwrote subclass defaults: Ollama
+            # declares api_key="ollama" and does not accept None, so it could
+            # not be constructed at all unless OPENAI_API_KEY happened to be
+            # set, despite needing no key of its own.
+            api_key = os.environ.get(self.api_key_env_var)
+            if api_key:
+                params["api_key"] = api_key
         super().__init__(**params)
 
     def _instantiate_client_kwargs(self, **extra_kwargs) -> dict:
