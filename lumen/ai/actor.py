@@ -268,6 +268,7 @@ class LLMUser(param.Parameterized):
         model_index: int | None = None,
         model_kwargs: dict | None = None,
         tools: list | None = None,
+        max_retries: int | None = None,
         **prompt_kwargs
     ) -> Any:
         """
@@ -318,6 +319,8 @@ class LLMUser(param.Parameterized):
         merged_tools = _merge_prompt_tools(self.llm_tools, tools, context)
         if merged_tools is not None:
             invoke_kw["tools"] = merged_tools
+        if max_retries is not None:
+            invoke_kw["max_retries"] = max_retries
 
         result = await self.llm.invoke(
             messages=messages,

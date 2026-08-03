@@ -108,7 +108,12 @@ class DuckDBSource(BaseSQLSource):
             # First pass: separate file paths from SQL expressions
             for table_name, table_expr in self.tables.items():
                 if isinstance(table_expr, str) and self._is_file_path(table_expr):
-                    table_name = re.sub(r'\W+', '_', table_name)
+                    # Must match normalize_table, which every lookup goes
+                    # through. Substituting non-word characters alone left the
+                    # leading underscore an absolute path produces, so the
+                    # registered key did not survive its own normalization and
+                    # the source could not find its own table.
+                    table_name = normalize_table_name(table_name)
                     self._file_based_tables[table_name] = table_expr
                 else:
                     sql_based_tables[table_name] = table_expr

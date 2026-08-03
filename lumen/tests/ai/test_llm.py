@@ -707,3 +707,21 @@ def test_mlx_make_sampler_handles_none():
     set_llm = MLX(model_kwargs={"default": {"model": "m"}}, temperature=0.5)
     assert callable(none_llm._make_sampler())
     assert callable(set_llm._make_sampler())
+
+
+def test_api_key_env_var_does_not_clobber_provider_default(monkeypatch):
+    """An unset env var must leave the provider's own default alone.
+
+    ``APIKeyServiceMixin`` assigned ``os.environ.get(api_key_env_var)``
+    unconditionally, so a missing variable wrote None over the default. Ollama
+    declares ``api_key="ollama"`` and does not accept None, which made
+    ``lumen-ai serve --provider ollama`` fail at startup unless OPENAI_API_KEY
+    happened to be set, despite Ollama needing no key of its own.
+    """
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    assert Ollama().api_key == "ollama"
+    assert Ollama(api_key="explicit").api_key == "explicit"
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-from-env")
+    assert OpenAI().api_key == "sk-from-env"
