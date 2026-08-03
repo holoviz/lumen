@@ -159,7 +159,7 @@ async def test_vegalite_agent(llm, duckdb_source, test_messages):
     out, out_context = await agent.respond(test_messages, context)
     assert len(out) == 1
     assert isinstance(out[0], VegaLiteEditor)
-    assert out[0].spec == "$schema: https://vega.github.io/schema/vega-lite/v5.json\ndata:\n  values:\n  - A: 1\n    B: 2\n    C: 3\n    D: '2023-01-01T00:00:00Z'\n  - A: 4\n    B: 5\n    C: 6\n    D: '2023-01-02T00:00:00Z'\nencoding:\n  x:\n    field: A\n    type: quantitative\n  y:\n    field: B\n    type: quantitative\nheight: container\nmark: bar\nwidth: container\n"
+    assert out[0].spec == "$schema: https://vega.github.io/schema/vega-lite/v5.json\nconfig:\n  numberFormat: ','\ndata:\n  values:\n  - A: 1\n    B: 2\n    C: 3\n    D: '2023-01-01T00:00:00Z'\n  - A: 4\n    B: 5\n    C: 6\n    D: '2023-01-02T00:00:00Z'\nencoding:\n  x:\n    field: A\n    type: quantitative\n  y:\n    field: B\n    type: quantitative\nheight: container\nmark: bar\nwidth: container\n"
 
 
 async def test_vegalite_agent_multiple(llm, duckdb_source, test_messages):
