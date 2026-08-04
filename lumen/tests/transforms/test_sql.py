@@ -831,6 +831,12 @@ def test_sql_select_from_duckdb_path():
     assert result == expected
 
 
+def test_sql_select_from_table_starting_with_digit():
+    result = SQLSelectFrom.apply_to("2014_world_gdp_with_codes")
+    expected = 'SELECT * FROM "2014_world_gdp_with_codes"'
+    assert result == expected
+
+
 def test_sql_select_from_expression():
     result = SQLSelectFrom.apply_to("""
         SELECT
