@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import importlib
 import io
+import json
 import os
 import re
 import sys
@@ -572,3 +573,14 @@ def geometry_to_wkt(df):
     for col in geom_cols:
         df[col] = gpd.GeoSeries(df[col]).to_wkt()
     return df
+
+
+def geometry_to_geojson(df):
+    """Return a GeoDataFrame as a GeoJSON FeatureCollection dict.
+
+    Shapely geometry cannot be sent to the browser, so views that render
+    geometry emit a FeatureCollection instead. ``default=str`` is required
+    because to_json defers to json.dumps, which cannot encode the Timestamps
+    and Decimals a SQL source yields.
+    """
+    return json.loads(df.to_json(default=str))

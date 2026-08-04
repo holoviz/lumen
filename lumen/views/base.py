@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import copy
 import html
-import json
 import sys
 
 from io import BytesIO, StringIO
@@ -44,8 +43,8 @@ from ..state import state
 from ..transforms.base import Transform
 from ..transforms.sql import SQLTransform
 from ..util import (
-    VARIABLE_RE, catch_and_notify, geometry_to_wkt, is_geodataframe, is_ref,
-    resolve_module_reference, try_import_xarray,
+    VARIABLE_RE, catch_and_notify, geometry_to_geojson, geometry_to_wkt,
+    is_geodataframe, is_ref, resolve_module_reference, try_import_xarray,
 )
 from ..validation import ValidationError
 
@@ -1476,6 +1475,14 @@ class VegaLiteView(View):
             datasets = self.spec.get('datasets', {})
             datasets[self.pipeline.table] = df
             encoded = dict(spec, datasets=datasets)
+        elif is_geodataframe(df):
+            # geoshape consumes a FeatureCollection, so fields then live under
+            # properties, e.g. {"field": "properties.value"}.
+            encoded = dict(spec, data={
+                'values': geometry_to_geojson(df),
+                'format': {'type': 'json', 'property': 'features'},
+                **spec_data,
+            })
         else:
             encoded = dict(spec, data={'values': df, **spec_data})
         return dict(object=encoded, **self.kwargs)
@@ -1517,7 +1524,7 @@ class DeckGLView(View):
         usual list-of-records form.
         """
         if is_geodataframe(df):
-            return json.loads(df.to_json())
+            return geometry_to_geojson(df)
         return df.to_dict(orient='records')
 
     def _get_params(self) -> dict[str, Any]:
