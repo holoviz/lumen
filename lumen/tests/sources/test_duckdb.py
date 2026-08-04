@@ -1401,6 +1401,31 @@ def test_duckdb_geometry_returns_geodataframe():
     assert str(result.geometry.dtype) == 'geometry'
 
 
+def test_duckdb_geometry_crs_read_from_column_type(tmp_path):
+    """ST_Read reports a CRS-carrying column as GEOMETRY('EPSG:4326'), so the
+    type must be matched by prefix and the CRS taken from it."""
+    if gpd is None:
+        pytest.skip("geopandas is not installed")
+    path = tmp_path / 'shapes.geojson'
+    gpd.GeoDataFrame(
+        {'name': ['a']},
+        geometry=[Polygon([(0, 0), (1, 0), (1, 1)])],
+        crs='EPSG:4326',
+    ).to_file(path, driver='GeoJSON')
+    try:
+        source = DuckDBSource(
+            uri=':memory:',
+            initializers=["INSTALL spatial;", "LOAD spatial;"],
+            tables={'geo': f"SELECT * FROM ST_Read('{path}')"},
+        )
+    except Exception as e:  # pragma: no cover - environment dependent
+        pytest.skip(f"duckdb spatial extension unavailable: {e}")
+
+    result = source.get('geo')
+    assert isinstance(result, gpd.GeoDataFrame)
+    assert result.crs.to_epsg() == 4326
+
+
 def test_duckdb_geometry_crs_none_by_default():
     """Without geometry_crs set the CRS stays None (WKB carries none); no regression."""
     source, gpd = _spatial_source()

@@ -25,6 +25,9 @@ from .base import BaseSQLSource, Source, cached
 if TYPE_CHECKING:
     import pandas as pd
 
+# DuckDB reports a geometry column carrying a CRS as GEOMETRY('EPSG:4326')
+GEOMETRY_CRS = re.compile(r"GEOMETRY\('(.+)'\)")
+
 
 class DuckDBSource(BaseSQLSource):
     """
@@ -68,8 +71,9 @@ class DuckDBSource(BaseSQLSource):
 
     geometry_crs = param.String(default=None, allow_None=True, doc="""
         CRS to reapply to geometry columns after the WKB roundtrip through
-        DuckDB, which stores geometry without a CRS. Populated from the source
-        data at ingest; may also be set explicitly for a known dataset.""")
+        DuckDB, used as a fallback when the column type carries no CRS of its
+        own. Populated from the source data at ingest; may also be set
+        explicitly for a known dataset.""")
 
     read_only = param.Boolean(default=None, doc="""
         Whether to open the DuckDB database in read-only mode.""")
@@ -521,7 +525,11 @@ class DuckDBSource(BaseSQLSource):
         a GeoDataFrame when geopandas is available (WKB bytes otherwise).
         """
         rel = cursor.execute(sql_expr, params) if params else cursor.execute(sql_expr)
-        geom_cols = [d[0] for d in rel.description if str(d[1]) == 'GEOMETRY']
+        geom_crs = {
+            d[0]: (m.group(1) if (m := GEOMETRY_CRS.search(str(d[1]))) else self.geometry_crs)
+            for d in rel.description if str(d[1]).startswith('GEOMETRY')
+        }
+        geom_cols = list(geom_crs)
         if not geom_cols:
             return rel.fetch_df(date_as_object=date_as_object)
 
@@ -536,7 +544,7 @@ class DuckDBSource(BaseSQLSource):
         if gpd := try_import("geopandas"):
             for col in geom_cols:
                 df[col] = gpd.GeoSeries.from_wkb(
-                    df[col].apply(bytes), crs=self.geometry_crs
+                    df[col].apply(bytes), crs=geom_crs[col]
                 )
             df = gpd.GeoDataFrame(df, geometry=geom_cols[0])
         return df
