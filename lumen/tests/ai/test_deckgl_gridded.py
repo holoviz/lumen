@@ -136,6 +136,10 @@ def test_deckgl_prompt_covers_geojsonlayer():
     assert "GeoJsonLayer" in rendered
     assert "properties.<column>" in rendered
     assert "no legend property" in rendered
+    # a worked example matters more than the prose: every other layer has one,
+    # and without it the model copies their bare column names
+    assert '"@@type": "GeoJsonLayer"' in rendered
+    assert '"@@=[properties.value * 25, 40, 255 - properties.value * 25, 200]"' in rendered
 
 
 def test_deckgl_prompt_allows_data_driven_colors():

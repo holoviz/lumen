@@ -127,6 +127,27 @@ ScatterplotLayer (simple points):
 }
 ```
 
+GeoJsonLayer (choropleth from a geometry column — note every column is read off
+`properties`, because each datum is a GeoJSON Feature rather than a row):
+```json
+{
+  "initialViewState": {"latitude": 20, "longitude": 0, "zoom": 1.5, "pitch": 0, "bearing": 0},
+  "layers": [{
+    "@@type": "GeoJsonLayer",
+    "id": "choropleth",
+    "filled": true,
+    "stroked": true,
+    "getFillColor": "@@=[properties.value * 25, 40, 255 - properties.value * 25, 200]",
+    "getLineColor": [255, 255, 255, 80],
+    "lineWidthMinPixels": 0.5,
+    "pickable": true,
+    "autoHighlight": true
+  }],
+  "views": [{"@@type": "MapView", "controller": true}],
+  "mapStyle": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+}
+```
+
 ArcLayer (connections):
 ```json
 {
