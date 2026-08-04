@@ -310,8 +310,13 @@ class SQLSelectFrom(SQLFormat):
             # e.g. read_parquet("/path/to/file.parquet"); so we need to quote
             expression = Table(this=Identifier(this=sql_in, quoted=True))
 
-        # if 'data/life-expectancy.csv' becomes 'data / life-expectancy.csv'
-        if not list(expression.find_all(Select)) and " / " in expression.sql():
+        # A bare table name that does not round-trip was mis-parsed as an
+        # expression, e.g. 'data/life-expectancy.csv' becomes
+        # 'data / life-expectancy.csv' and '2014_sales' becomes '2014 AS _sales'
+        if (
+            not list(expression.find_all(Select))
+            and expression.sql().strip().lower() != sql_in.strip().lower()
+        ):
             expression = Table(this=Identifier(this=sql_in, quoted=True))
 
         tables = {}
