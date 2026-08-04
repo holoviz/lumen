@@ -22,13 +22,12 @@ If user asks "make it look better", "professional", "publication-ready", or simi
 8. **Limit results**: For bar charts with 10+ categories, show top 5-10 using **top-level** `transform`
 {% endblock %}
 
+{% block docs %}
+{% include 'VegaLiteAgent/doc_pages.jinja2' %}
+{% endblock %}
+
 {%- block examples -%}
 ## Examples (illustrative — field, category names below placeholders, not real data)
-{% if doc_examples is defined and doc_examples %}
-{% for example in doc_examples %}
-{{ example }}
-{% endfor %}
-{% endif %}
 
 ## Publication-ready config
 ```yaml

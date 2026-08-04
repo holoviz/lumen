@@ -1,0 +1,40 @@
+{#
+  Shared rendering of vector-store hits for the VegaLiteAgent prompts.
+
+  Included by main, main_altair and revise_output so the three stay in step.
+  Example specs live in `metadata.examples` rather than in `text`, deliberately:
+  keeping the JSON out of `text` keeps it out of the embedding vector, so a spec
+  never dilutes the similarity match. That also means the specs are invisible
+  unless rendered here explicitly.
+
+  Specs arrive already normalized to this agent's contract (YAML, no $schema,
+  `data: {name: ...}`) -- see scripts/create_vega_lite_docs_embeddings.py.
+
+  The `###` line below already states section and page, and `result.text` carries its
+  own `# <page> - <section>` heading, so that line is dropped rather than printed
+  twice. Matched by prefix rather than by position: with contextual descriptions
+  enabled the heading is no longer the first line, and body markdown only ever uses
+  `##` or deeper, so `# ` cannot collide with real content.
+#}
+{% if doc_pages is defined and doc_pages %}
+## Relevant Vega-Lite Documentation (reference specs are illustrative — substitute the real table and column names)
+
+{% for result in doc_pages %}
+{%- set body_lines = [] -%}
+{%- for line in result.text.split('\n') if not line.startswith('# ') -%}
+{%- set _ = body_lines.append(line) -%}
+{%- endfor -%}
+{%- set body = body_lines | join('\n') | trim -%}
+### {{ result.metadata.section_title }} — {{ result.metadata.page_title }}
+> Source: {{ result.metadata.url }}
+
+{{ body }}
+{% for example in result.metadata.get('examples') or [] %}
+Reference spec — {{ example.name }}:
+```yaml
+{{ example.spec }}
+```
+{% endfor %}
+---
+{% endfor %}
+{% endif %}

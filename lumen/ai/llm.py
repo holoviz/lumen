@@ -978,7 +978,7 @@ class Llm(param.Parameterized):
                 continue
             content = message.get("content") if isinstance(message, dict) else None
             if not content and "tool_calls" in message:
-                content = truncate_string(json.dumps(message["tool_calls"], indent=2), max_length=1000)
+                content = truncate_string(json.dumps(message["tool_calls"], indent=2), max_length=10000)
             role_char = role[0]
             log_debug(f"Message \033[95m{i} ({role_char})\033[0m: {format_msg_content(content)}")
             if previous_role == role and not role.startswith("tool"):
@@ -999,7 +999,7 @@ class Llm(param.Parameterized):
             log_debug(f"Response model: \033[93m{response_model.__name__!r}\033[0m")
             if isinstance(result, ImageResponse):
                 result = result.output
-        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
+        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=10000)}\033[0m\n---")
         return result
 
 
@@ -1412,7 +1412,7 @@ class OpenAI(Llm, OpenAIMixin):
             kwargs["tools"] = self._transform_responses_tools(kwargs.get("tools"))
         client = await self.get_client(model_spec, **kwargs)
         result = await client(input=messages, **kwargs)
-        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
+        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=10000)}\033[0m\n---")
         return result
 
 
@@ -1810,7 +1810,7 @@ class Anthropic(Llm, AnthropicMixin):
             log_debug(f"Response model: \033[93m{response_model.__name__!r}\033[0m")
             if isinstance(result, ImageResponse):
                 result = result.output
-        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
+        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=10000)}\033[0m\n---")
         return result
 
     @classmethod
@@ -2637,7 +2637,7 @@ class MLX(Llm):
                 self._create_chat_completion, messages, model=model_spec, **kwargs
             )
 
-        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
+        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=10000)}\033[0m\n---")
         return result
 
 
