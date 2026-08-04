@@ -6,7 +6,8 @@ Generate DeckGL JSON spec. Do NOT include `data` in layers (injected automatical
 Use `@@=` prefix for every column-based accessor:
 - Position: `"getPosition": "@@=[longitude, latitude]"` (NOT `["longitude", "latitude"]`)
 - Elevation: `"getElevation": "@@=value"` or `"getElevation": "@@=value * 100"`
-- Static values (no @@=): `"getFillColor": [255, 140, 0, 200]`
+- Colour by value: `"getFillColor": "@@=[value * 25, 40, 255 - value * 25, 200]"`
+- A fixed colour needs no `@@=`: `"getFillColor": [255, 140, 0, 200]`
 
 Column names: spaces→underscores, non-alphanumeric removed (e.g., "Plant latitude"→"Plant_latitude")
 
@@ -29,6 +30,9 @@ Column names: spaces→underscores, non-alphanumeric removed (e.g., "Plant latit
 **For connections:**
 6. **ArcLayer** - Origin-destination arcs
 
+**For a geometry column** (schema `format: geometry`, polygons/lines/points):
+7. **GeoJsonLayer** - Draws the geometry itself; the only choice for a choropleth
+
 ## Key Layer Properties
 
 | Layer | Key Props |
@@ -37,12 +41,21 @@ Column names: spaces→underscores, non-alphanumeric removed (e.g., "Plant latit
 | ColumnLayer | `getElevation`, `radius`, `elevationScale`, `diskResolution`, `extruded: true` |
 | ScatterplotLayer | `radiusMinPixels`, `radiusMaxPixels`, `getFillColor` |
 | ArcLayer | `getSourcePosition`, `getTargetPosition`, `getWidth` |
+| GeoJsonLayer | `filled`, `stroked`, `getFillColor`, `getLineColor`, `lineWidthMinPixels` |
+
+**GeoJsonLayer accessors receive the whole GeoJSON Feature, not a row**, so
+address columns as `properties.<column>`: `"getFillColor": "@@=[properties.value * 25, 40, 255 - properties.value * 25, 200]"`.
+A bare `value` there resolves to undefined and the colour becomes NaN.
 
 ## Styling
 - `pickable: true` for tooltips
 - `autoHighlight: true` for hover effect
-- **Colors:** Use static RGBA arrays: `"getFillColor": [255, 140, 0, 200]` (no `@@=` prefix, no Math functions)
+- **Colors:** a fixed colour is a plain RGBA array: `"getFillColor": [255, 140, 0, 200]`.
+  To colour by a value, use `@@=` with arithmetic or a ternary:
+  `"@@=[value * 25, 40, 255 - value * 25, 200]"` or `"@@=value > 10 ? [255, 0, 0] : [0, 255, 200]"`
 - **Elevation/Radius:** Use simple math only: `"@@=value"` or `"@@=value * 100"` (NO Math.min, Math.max, etc.)
+- **No legend:** deck.gl has no legend property; a `legend` key is silently
+  dropped. When the chart needs a colour legend, prefer Vega-Lite over deck.gl.
 - Zoom levels: 1-3 continent, 4-6 country, 7-10 city, 11+ street
 - Pitch: 45-60 for good 3D perspective
 {%- if gridded is defined and gridded %}
