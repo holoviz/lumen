@@ -92,3 +92,16 @@ def test_vegalite_altair_prompt_gridded_is_general():
     assert "reduced to single slice" in rendered
     # the old per-dim subset instruction is gone (code handles it now)
     assert "cannot page a dimension with a slider" not in rendered
+
+
+def test_vegalite_prompt_covers_choropleth_from_own_geometry():
+    """A table carrying its own geometry needs a geoshape example that omits
+    data and reads fields off properties, not only the external-TopoJSON join."""
+    rendered = render_template(
+        PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2",
+        **_base_context(),
+    )
+    assert "its own geometry column" in rendered
+    assert "properties.<VALUE_COLUMN>" in rendered
+    # the external boundary join stays available for tables without geometry
+    assert "topojson" in rendered

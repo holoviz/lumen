@@ -251,7 +251,24 @@ config:
   view: {stroke: null}
 ```
 {%- endif %}
-Choropleth map:
+Choropleth map, when the table has its own geometry column (schema `format: geometry`).
+Omit `data`: the geometry is injected as a GeoJSON FeatureCollection, so every
+field is addressed as `properties.<column>` because each datum is a Feature.
+```yaml
+mark: geoshape
+projection: {type: naturalEarth1}
+encoding:
+  color:
+    field: properties.<VALUE_COLUMN>
+    type: quantitative
+    scale: {scheme: redblue, reverse: true}
+    legend: {title: "<VALUE_COLUMN>"}
+  tooltip:
+    - {field: properties.<NAME_COLUMN>, type: nominal}
+    - {field: properties.<VALUE_COLUMN>, type: quantitative, format: ".2f"}
+```
+
+Choropleth map, when the table has no geometry and must be joined to external boundaries:
 ```yaml
 data:
   url: "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"

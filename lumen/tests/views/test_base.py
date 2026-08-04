@@ -9,7 +9,7 @@ import pytest
 
 from lumen.panel import DownloadButton
 from lumen.pipeline import Pipeline
-from lumen.sources.base import FileSource
+from lumen.sources.base import FileSource, InMemorySource
 from lumen.state import state
 from lumen.tests.utils import Polygon, gpd, requires_geopandas
 from lumen.variables.base import Variables
@@ -499,3 +499,38 @@ def test_deckgl_view_geometry_as_geojson():
     assert len(data['features']) == 2
     assert data['features'][0]['geometry']['type'] == 'Polygon'
     json.dumps(data)  # must be serializable
+
+
+@requires_geopandas
+def test_vegalite_view_geometry_as_geoshape_data():
+    """VegaLiteView emits a GeoDataFrame as a FeatureCollection with the
+    format.property geoshape needs, rather than an unserializable frame."""
+    gdf = gpd.GeoDataFrame(
+        {'pop': [1, 2],
+         'date': [pd.Timestamp('2026-06-15'), pd.Timestamp('2026-06-15')],
+         'geometry': [
+             Polygon([(0, 0), (1, 0), (1, 1)]), Polygon([(2, 0), (3, 0), (3, 1)])]},
+        crs='EPSG:4326',
+    )
+    pipeline = Pipeline(source=InMemorySource(tables={'geo': gdf}), table='geo')
+    spec = {'mark': 'geoshape',
+            'encoding': {'color': {'field': 'properties.pop', 'type': 'quantitative'}}}
+    data = VegaLiteView(pipeline=pipeline, spec=spec)._get_params()['object']['data']
+
+    assert data['format'] == {'type': 'json', 'property': 'features'}
+    assert data['values']['type'] == 'FeatureCollection'
+    assert len(data['values']['features']) == 2
+    assert data['values']['features'][0]['properties']['pop'] == 1
+    json.dumps(data)  # must be serializable
+
+
+@requires_geopandas
+def test_vegalite_view_plain_frame_unchanged():
+    """A non-geometry frame still goes through as data.values records."""
+    df = pd.DataFrame({'x': [1, 2], 'y': [3, 4]})
+    pipeline = Pipeline(source=InMemorySource(tables={'plain': df}), table='plain')
+    spec = {'mark': 'point', 'encoding': {'x': {'field': 'x'}}}
+    data = VegaLiteView(pipeline=pipeline, spec=spec)._get_params()['object']['data']
+
+    assert 'format' not in data
+    assert data['values'].equals(df)
