@@ -124,3 +124,31 @@ def test_deckglview_row_limit_passes_under_threshold():
         {"lon": 0.0, "lat": 0.0, "value": 1.0},
         {"lon": 1.0, "lat": 1.0, "value": 2.0},
     ]
+
+
+def test_deckgl_prompt_covers_geojsonlayer():
+    """Geometry data needs GeoJsonLayer guidance: accessors receive the Feature,
+    so columns are addressed via properties, and deck.gl has no legend."""
+    rendered = render_template(
+        PROMPTS_DIR / "DeckGLAgent" / "main.jinja2",
+        **_base_context(),
+    )
+    assert "GeoJsonLayer" in rendered
+    assert "properties.<column>" in rendered
+    assert "no legend property" in rendered
+    # a worked example matters more than the prose: every other layer has one,
+    # and without it the model copies their bare column names
+    assert '"@@type": "GeoJsonLayer"' in rendered
+    assert '"@@=[properties.value * 25, 40, 255 - properties.value * 25, 200]"' in rendered
+
+
+def test_deckgl_prompt_allows_data_driven_colors():
+    """deck.gl documents @@= colour accessors, so the prompt must not forbid
+    them; only Math.* is genuinely unavailable."""
+    rendered = render_template(
+        PROMPTS_DIR / "DeckGLAgent" / "main.jinja2",
+        **_base_context(),
+    )
+    assert "no `@@=` prefix" not in rendered
+    assert "To colour by a value" in rendered
+    assert "NO Math.min" in rendered
