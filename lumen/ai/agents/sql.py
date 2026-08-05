@@ -866,9 +866,13 @@ class SQLAgent(BaseLumenAgent):
                     "\n".join(f"- {finding}" for finding in findings),
                     step, title="Data quality findings", auto=False
                 )
-                if self.clean_data:
+                # Only the actionable subset justifies (and is shown to) the
+                # rewriting pass. Constant columns and outliers are reported
+                # above but must not provoke a query rewrite.
+                actionable = lint_data(preview, actionable_only=True) if self.clean_data else []
+                if actionable:
                     validated_sql = await self._clean_data_pass(
-                        validated_sql, findings, len(preview), source, messages, context, step
+                        validated_sql, actionable, len(preview), source, messages, context, step
                     )
 
             # Only materialize for DuckDB sources
