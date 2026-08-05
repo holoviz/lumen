@@ -19,12 +19,13 @@ except ModuleNotFoundError:
 from lumen.ai.config import PROMPTS_DIR
 from lumen.ai.models import DeleteLine, InsertLine, ReplaceLine
 from lumen.ai.utils import (
-    FALLBACK_CHARS_PER_TOKEN, IMAGE_MIME_TYPES, UNRECOVERABLE_ERRORS,
-    apply_changes, clean_sql, collapse_indexed_columns, content_to_text,
-    count_tokens, describe_data, find_slug_by_table_name, format_msg_content,
-    fuse_messages, get_schema, mutate_user_message, parse_huggingface_url,
-    render_template, report_error, retry_llm_output, serialize_image_content,
-    set_content_text, slug_to_table_name, truncate_to_tokens,
+    FALLBACK_CHARS_PER_TOKEN, IMAGE_MIME_TYPES, LINT_SAMPLE_ROWS,
+    UNRECOVERABLE_ERRORS, apply_changes, clean_sql, collapse_indexed_columns,
+    content_to_text, count_tokens, describe_data, find_slug_by_table_name,
+    format_msg_content, fuse_messages, get_schema, lint_data,
+    mutate_user_message, parse_huggingface_url, render_template, report_error,
+    retry_llm_output, serialize_image_content, set_content_text,
+    slug_to_table_name, truncate_to_tokens,
 )
 from lumen.config import SOURCE_TABLE_SEPARATOR as SEP
 
@@ -936,3 +937,96 @@ class TestTruncateToTokens:
     def test_custom_marker(self):
         text = "\n".join(f"row {i}" for i in range(500))
         assert "elided, showing" in truncate_to_tokens(text, 60, marker="elided")
+
+
+class TestLintData:
+    """Deterministic data-quality findings used to drive SQLAgent's cleaning pass."""
+
+    def test_clean_frame_reports_nothing(self):
+        df = pd.DataFrame({
+            "id": range(20),
+            "category": ["a", "b"] * 10,
+            "value": [float(i) for i in range(20)],
+        })
+        assert lint_data(df) == []
+
+    def test_empty_frame_reports_nothing(self):
+        assert lint_data(pd.DataFrame({"a": [], "b": []})) == []
+
+    def test_nulls_reported_with_percentage(self):
+        df = pd.DataFrame({"value": [1.0] * 90 + [None] * 10, "other": range(100)})
+        findings = lint_data(df)
+        assert any('Missing values' in f and '"value" (10.0% null)' in f for f in findings)
+
+    def test_nulls_below_threshold_ignored(self):
+        """One missing value in a thousand is not worth an extra LLM round trip."""
+        df = pd.DataFrame({"value": [1.0] * 999 + [None]})
+        assert not any("Missing values" in f for f in lint_data(df))
+
+    def test_duplicate_rows_reported(self):
+        df = pd.DataFrame({"a": [1, 1, 2, 3], "b": ["x", "x", "y", "z"]})
+        findings = lint_data(df)
+        assert any("1 of 4 rows are exact duplicates" in f for f in findings)
+
+    def test_sentinel_numbers_reported(self):
+        df = pd.DataFrame({"temp": [12.5, 13.0, -9999.0, 14.0, -9999.0, 15.0]})
+        findings = lint_data(df)
+        assert any("Placeholder numbers" in f and '"temp" (2 rows)' in f for f in findings)
+
+    def test_untrimmed_and_empty_text_reported(self):
+        df = pd.DataFrame({"name": ["alice", " bob ", "", "dave"]})
+        findings = lint_data(df)
+        assert any("Untrimmed or empty text" in f and "1 padded, 1 empty" in f for f in findings)
+
+    def test_numbers_stored_as_text_reported(self):
+        df = pd.DataFrame({"amount": ["1.5", "2.5", "3.5", "4.5"]})
+        findings = lint_data(df)
+        assert any("Numbers stored as text" in f and '"amount"' in f for f in findings)
+
+    def test_genuine_text_not_flagged_as_numeric(self):
+        df = pd.DataFrame({"name": ["alice", "bob", "carol", "dave"]})
+        assert not any("Numbers stored as text" in f for f in lint_data(df))
+
+    def test_constant_column_reported(self):
+        df = pd.DataFrame({"region": ["north"] * 10, "value": range(10)})
+        findings = lint_data(df)
+        assert any("Constant column" in f and '"region"' in f for f in findings)
+
+    def test_single_row_frame_reports_no_constant_columns(self):
+        """Every column of a one-row result is trivially constant."""
+        df = pd.DataFrame({"a": [1], "b": ["x"]})
+        assert not any("Constant column" in f for f in lint_data(df))
+
+    def test_iqr_outliers_reported(self):
+        df = pd.DataFrame({"revenue": [float(i) for i in range(50)] + [100000.0]})
+        findings = lint_data(df)
+        assert any("IQR outliers" in f and '"revenue" (1 outside' in f for f in findings)
+
+    def test_degenerate_iqr_column_reports_no_outliers(self):
+        """A flag-shaped column has a zero IQR, where Tukey fences flag every
+        minority value; skipping it is deliberate, not an oversight."""
+        df = pd.DataFrame({"is_active": [0.0] * 50 + [1.0]})
+        assert not any("IQR outliers" in f for f in lint_data(df))
+
+    def test_uniform_numeric_column_has_no_outliers(self):
+        df = pd.DataFrame({"value": [float(i) for i in range(100)]})
+        assert not any("IQR outliers" in f for f in lint_data(df))
+
+    def test_large_frame_notes_that_counts_are_sampled(self):
+        df = pd.DataFrame({
+            "value": [1.0] * (LINT_SAMPLE_ROWS * 2),
+            "flag": [None] * (LINT_SAMPLE_ROWS * 2),
+        })
+        findings = lint_data(df)
+        assert findings
+        assert findings[-1].startswith(f"Counts above come from a random {LINT_SAMPLE_ROWS}-row sample")
+
+    def test_unhashable_values_do_not_raise(self):
+        """A geometry or list column must not break a query that already succeeded."""
+        df = pd.DataFrame({"geom": [[1, 2], [3, 4], [1, 2]], "value": [1.0, 2.0, 3.0]})
+        assert isinstance(lint_data(df), list)
+
+    def test_findings_cap_the_columns_they_name(self):
+        df = pd.DataFrame({f"c{i}": ["  padded  "] * 5 for i in range(20)})
+        finding = next(f for f in lint_data(df) if "Untrimmed" in f)
+        assert "and 12 more" in finding
