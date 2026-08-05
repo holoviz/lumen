@@ -1012,6 +1012,17 @@ class TestLintData:
         df = pd.DataFrame({"value": [float(i) for i in range(100)]})
         assert not any("IQR outliers" in f for f in lint_data(df))
 
+    def test_ordinary_random_data_reports_nothing(self):
+        """The property the cleaning pass depends on: clean data costs no LLM call.
+        At the usual 1.5 IQR fence a gaussian column always reports outliers."""
+        rng = np.random.default_rng(0)
+        df = pd.DataFrame({
+            "measure": rng.normal(size=5000),
+            "count": rng.integers(0, 100, size=5000),
+            "label": rng.choice(["alpha", "beta", "gamma"], size=5000),
+        })
+        assert lint_data(df) == []
+
     def test_large_frame_notes_that_counts_are_sampled(self):
         df = pd.DataFrame({
             "value": [1.0] * (LINT_SAMPLE_ROWS * 2),
