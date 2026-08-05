@@ -7,7 +7,8 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
-from lumen.ai.data_quality import LINT_SAMPLE_ROWS, lint_data
+from lumen.ai.data_quality import lint_data
+from lumen.ai.utils import PROFILE_SAMPLE_ROWS
 
 
 class TestLintData:
@@ -96,12 +97,12 @@ class TestLintData:
 
     def test_large_frame_notes_that_counts_are_sampled(self):
         df = pd.DataFrame({
-            "value": [1.0] * (LINT_SAMPLE_ROWS * 2),
-            "flag": [None] * (LINT_SAMPLE_ROWS * 2),
+            "value": [1.0] * (PROFILE_SAMPLE_ROWS * 2),
+            "flag": [None] * (PROFILE_SAMPLE_ROWS * 2),
         })
         findings = lint_data(df)
         assert findings
-        assert findings[-1].startswith(f"Counts above come from a random {LINT_SAMPLE_ROWS}-row sample")
+        assert findings[-1].startswith(f"Counts above come from a random {PROFILE_SAMPLE_ROWS}-row sample")
 
     def test_constant_and_outlier_findings_are_not_actionable(self):
         """Filtering to one region then grouping is an ordinary query, not a defect:

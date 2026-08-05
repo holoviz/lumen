@@ -25,8 +25,8 @@ from lumen.ai.agents.analysis import make_analysis_model
 from lumen.ai.agents.deck_gl import DeckGLAgent
 from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import (
-    EXPLORATION_MAX_TOKENS, SQLCleanup, aggregates_rows,
-    format_exploration_result, make_sql_model,
+    EXPLORATION_MAX_TOKENS, SQLCleanup, format_exploration_result,
+    make_sql_model, sql_contains_aggregates,
 )
 from lumen.ai.agents.vega_lite import (
     AltairChartSpec, AltairSpec, ChartSpec, VegaLiteSpec, VegaLiteSpecUpdate,
@@ -190,8 +190,8 @@ async def test_sql_agent_clean_data_skipped_when_result_is_clean(llm, tiny_sourc
     ("SELECT id, name FROM dirty WHERE value > 0", False),
     ("not sql at all !!!", False),
 ])
-def test_aggregates_rows(sql, expected):
-    assert aggregates_rows(sql, "duckdb") is expected
+def test_sql_contains_aggregates(sql, expected):
+    assert sql_contains_aggregates(sql, "duckdb") is expected
 
 
 async def test_sql_agent_profiles_source_rows_behind_an_aggregate(llm, dirty_source, test_messages):
