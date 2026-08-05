@@ -81,8 +81,16 @@ then shows the new SQL and the row count before and after. If the rewrite fails,
 rows, or cannot be parsed, the original query is kept.
 
 Profiling is ordinary pandas work on the result the query already produced, so it needs no
-extra database round trip, and a clean result costs no extra LLM call at all. Turn the
-rewriting off to always take the query exactly as first written:
+extra database round trip, and a clean result costs no extra LLM call at all.
+
+Aggregating queries are the exception. `SELECT region, SUM(revenue) ... GROUP BY region`
+returns a handful of rows that no longer show anything about the thousands they came from,
+so a `-9999` placeholder is already inside the total and invisible. For those queries
+SQLAgent samples the source tables directly (one extra query per table, up to three) and
+tells the rewrite to clean the values before they are aggregated. This matters most for
+charts, which are usually built on exactly this kind of query.
+
+Turn the rewriting off to always take the query exactly as first written:
 
 ``` py title="Disable the cleaning rewrite"
 import lumen.ai as lmai
