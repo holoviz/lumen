@@ -105,8 +105,7 @@ def _lint_numeric_text(df: pd.DataFrame) -> list[str]:
         values = df[col].dropna()
         if values.empty:
             continue
-        probe = pd.to_numeric(values.head(LINT_NUMERIC_PROBE_ROWS), errors="coerce")
-        if probe.isna().any():
+        if pd.to_numeric(values.head(LINT_NUMERIC_PROBE_ROWS), errors="coerce").isna().any():
             continue
         if pd.to_numeric(values, errors="coerce").notna().all():
             hits[col] = "every value parses as a number"
@@ -144,9 +143,10 @@ def _lint_outliers(df: pd.DataFrame) -> list[str]:
     if fence.empty:
         return []
 
+    spread = numeric[fence.index]
     low, high = q1[fence.index] - fence, q3[fence.index] + fence
     # NaN compares False on both sides, so missing values never count as outliers.
-    counts = ((numeric[fence.index] < low) | (numeric[fence.index] > high)).sum()
+    counts = ((spread < low) | (spread > high)).sum()
     hits = {
         col: f"{int(count)} outside [{format_float(low[col])}, {format_float(high[col])}]"
         for col, count in counts.items() if count
