@@ -71,6 +71,11 @@ IMAGE_MIME_TYPES = {
     '.bmp': 'image/bmp',
 }
 
+# Rows beyond which a frame is sampled before being profiled. Shared by
+# describe_data_sync and lint_data so the summary an LLM reads and the findings
+# it is asked to act on are drawn from the same amount of data.
+PROFILE_SAMPLE_ROWS = 5000
+
 # Column-selection tuning for describe_data_sync.
 DEFAULT_MAX_SUMMARY_COLS = 16
 # Columns with at most this many distinct values are treated as
@@ -783,9 +788,9 @@ def describe_data_sync(
         return header + df.to_markdown(index=False)
 
     is_sampled = False
-    if shape[0] > 5000:
+    if shape[0] > PROFILE_SAMPLE_ROWS:
         is_sampled = True
-        df = df.sample(5000)
+        df = df.sample(PROFILE_SAMPLE_ROWS)
 
     df = df.sort_index()
 

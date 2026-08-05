@@ -15,11 +15,8 @@ from __future__ import annotations
 
 import pandas as pd
 
-from .utils import format_float, log_debug
+from .utils import PROFILE_SAMPLE_ROWS, format_float, log_debug
 
-# Above this many rows the frame is sampled, matching the cap
-# describe_data_sync already applies, so profiling a large result stays cheap.
-LINT_SAMPLE_ROWS = 5000
 # A column is only worth reporting once a non-trivial share of it is null;
 # a single missing value in a million rows is not a finding worth an LLM call.
 LINT_NULL_THRESHOLD = 0.01
@@ -187,11 +184,11 @@ def lint_data(df: pd.DataFrame, actionable_only: bool = False) -> list[str]:
         # data, so filtering it changes the answer rather than cleaning it.
         checks += (_lint_constant, _lint_outliers)
 
-    sampled = len(df) > LINT_SAMPLE_ROWS
+    sampled = len(df) > PROFILE_SAMPLE_ROWS
     if sampled:
         # Fixed seed so the same result always yields the same findings; a
         # profiler that reported different problems on each run would be noise.
-        df = df.sample(LINT_SAMPLE_ROWS, random_state=0)
+        df = df.sample(PROFILE_SAMPLE_ROWS, random_state=0)
 
     findings = []
     for check in checks:
@@ -205,6 +202,6 @@ def lint_data(df: pd.DataFrame, actionable_only: bool = False) -> list[str]:
 
     if findings and sampled:
         findings.append(
-            f"Counts above come from a random {LINT_SAMPLE_ROWS}-row sample of the result, not the full table."
+            f"Counts above come from a random {PROFILE_SAMPLE_ROWS}-row sample of the result, not the full table."
         )
     return findings
