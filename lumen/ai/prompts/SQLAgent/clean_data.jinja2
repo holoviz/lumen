@@ -28,8 +28,12 @@ listed below. Rewrite the query so the result is clean, or return it unchanged.
 - Never drop rows to make a number look better. Filtering is for values that are not
   real data: placeholders, blanks, unparseable text. A value is not suspect for being
   large.
-- If the query aggregates or groups, clean inside the expressions only. Adding DISTINCT
-  or removing a column there changes what the numbers mean.
+- A finding marked "in the source rows ... (before aggregation)" describes the rows the
+  query reads, not the rows it returns. Fix those in a WHERE clause or inside the
+  aggregate's own expression, so the totals are computed from clean values. A placeholder
+  left in a SUM is the difference between the right answer and a plausible wrong one.
+- Otherwise, if the query aggregates or groups, clean inside the expressions only. Adding
+  DISTINCT or removing a column there changes what the numbers mean.
 - Do not add a LIMIT.
 - Fix nothing you are not confident about. Returning the query unchanged is the correct
   answer whenever the findings do not clearly call for one of the edits above.
