@@ -173,16 +173,24 @@ async def test_sql_agent_clean_data_skipped_when_result_is_clean(llm, tiny_sourc
     llm.set_responses([
         SQLQueryWithTables(query="SELECT * FROM tiny", table_slug="tiny_rows", tables=["tiny"]),
     ])
-    await agent.respond(test_messages, context)
-    assert llm._index == 1
+    # Asserted on the method rather than the response counter: _clean_data_pass
+    # swallows its own failures, so a consumed-responses count cannot tell
+    # "never called" apart from "called and errored".
+    with patch.object(SQLAgent, "_clean_data_pass", new=AsyncMock()) as clean_data_pass:
+        await agent.respond(test_messages, context)
+    clean_data_pass.assert_not_awaited()
 
 
 async def test_sql_agent_clean_data_disabled_leaves_query_alone(llm, dirty_source, test_messages):
     SQLQueryWithTables = make_sql_model([(dirty_source.name, "dirty")])
-    out = await _respond_to_dirty_table(llm, dirty_source, test_messages, [
+    responses = [
         SQLQueryWithTables(query="SELECT * FROM dirty", table_slug="dirty_rows", tables=["dirty"]),
-    ], clean_data=False)
-    assert llm._index == 1
+    ]
+    with patch.object(SQLAgent, "_clean_data_pass", new=AsyncMock()) as clean_data_pass:
+        out = await _respond_to_dirty_table(
+            llm, dirty_source, test_messages, responses, clean_data=False
+        )
+    clean_data_pass.assert_not_awaited()
     assert "DISTINCT" not in out[0].spec
 
 
