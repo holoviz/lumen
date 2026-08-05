@@ -126,4 +126,12 @@ class TestLintData:
     def test_findings_cap_the_columns_they_name(self):
         df = pd.DataFrame({f"c{i}": ["  padded  "] * 5 for i in range(20)})
         finding = next(f for f in lint_data(df) if "Untrimmed" in f)
-        assert "and 12 more" in finding
+        assert "and 12 more columns" in finding
+
+    def test_every_column_is_checked_even_when_not_all_are_named(self):
+        """The cap is on the finding's wording, not on how much is inspected:
+        all 20 columns are counted, only the first 8 are named."""
+        df = pd.DataFrame({f"c{i}": [1.0] * 90 + [None] * 10 for i in range(20)})
+        finding = next(f for f in lint_data(df) if "Missing values" in f)
+        assert finding.startswith("Missing values in 20 column(s):")
+        assert "and 12 more columns" in finding
