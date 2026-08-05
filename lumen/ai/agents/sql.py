@@ -583,14 +583,17 @@ class SQLAgent(BaseLumenAgent):
         rewrite is absent, identical, broken or empty, because a query that
         already ran is worth more than a cleaner one that does not.
         """
-        cleanup = await self._invoke_prompt(
-            "clean_data", messages, context, sql=sql_query,
-            findings=findings, dialect=source.dialect,
-        )
         try:
+            cleanup = await self._invoke_prompt(
+                "clean_data", messages, context, sql=sql_query,
+                findings=findings, dialect=source.dialect,
+            )
             cleaned = clean_sql(cleanup.query, source.dialect, prettify=True)
         except Exception as e:
-            step.stream(f"\n\n⚠️ Could not parse the cleaned query, keeping the original: {e}")
+            # Deliberately swallowed rather than raised: _render_execute_query is
+            # wrapped in retry_llm_output, so letting this escape would throw away
+            # a query that already answered the question and regenerate from zero.
+            step.stream(f"\n\n⚠️ Could not clean the query, keeping the original: {e}")
             return sql_query
         if cleaned == sql_query:
             step.stream("\n\n✅ Query already handles the findings; left unchanged")
