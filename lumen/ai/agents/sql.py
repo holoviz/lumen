@@ -2,6 +2,7 @@ import typing as t
 
 import pandas as pd
 import param
+import sqlglot
 import yaml
 
 from panel.chat import ChatStep
@@ -118,6 +119,11 @@ EXPLORATION_MAX_TOKENS = 1200
 # Schema YAML is dense (nested keys, enum lists) and tokenizes near 2.5
 # chars/token, so the previous 12k-character cap admitted ~4.5k tokens.
 SCHEMA_MAX_TOKENS = 3000
+# Rows sampled from a source table when profiling the inputs of an aggregate.
+SOURCE_PROFILE_ROWS = 5000
+# Source tables profiled for one query. Each costs a query, and a join across
+# more inputs than this is not worth the round trips.
+SOURCE_PROFILE_MAX_TABLES = 3
 
 
 def format_exploration_result(df: pd.DataFrame) -> str:
@@ -346,6 +352,25 @@ def make_load_table_schemas_tool(metaset: Metaset) -> FunctionTool:
     )
 
 
+def aggregates_rows(sql_query: str, dialect: str | None = None) -> bool:
+    """
+    Whether ``sql_query`` collapses many input rows into fewer output rows.
+
+    Such a result no longer shows the problems its inputs carried: ``-9999``
+    placeholders are already inside ``SUM``, and blank strings are already a
+    GROUP BY key. Profiling the result therefore says nothing about the data the
+    numbers came from, so the inputs have to be profiled separately.
+
+    Unparseable SQL returns False: the caller only uses this to decide whether to
+    spend an extra query, and guessing "yes" would spend it on every failed parse.
+    """
+    try:
+        parsed = sqlglot.parse_one(sql_query, read=None if dialect in (None, "any") else dialect)
+    except Exception:
+        return False
+    return bool(parsed.find(sqlglot.exp.Group) or parsed.find(sqlglot.exp.AggFunc))
+
+
 _RANGE_FIELD_TYPES = ("number", "integer")
 
 
@@ -566,6 +591,34 @@ class SQLAgent(BaseLumenAgent):
                 )
                 sql_query = clean_sql(retry_result, source.dialect, prettify=True)
         return sql_query, None
+
+    @staticmethod
+    def _profile_source_rows(source: BaseSQLSource, tables: list[str]) -> list[str]:
+        """
+        Profile a sample of the rows feeding an aggregating query.
+
+        Only called when the result itself cannot show the problem (see
+        :func:`aggregates_rows`), because each table costs one extra query.
+        Findings are prefixed with their table so the rewriting prompt knows the
+        fix belongs before the aggregation rather than in the output columns.
+        """
+        findings = []
+        for table in tables[:SOURCE_PROFILE_MAX_TABLES]:
+            try:
+                limited = SQLLimit(
+                    limit=SOURCE_PROFILE_ROWS, write=source.dialect, pretty=False, identify=False
+                ).apply(source.get_sql_expr(table))
+                sample = source.execute(limited)
+            except Exception as e:
+                # A source that cannot be sampled simply contributes nothing;
+                # the query it feeds has already run successfully.
+                log_debug(f"Could not profile source table {table!r}: {e}")
+                continue
+            findings.extend(
+                f"In the source rows of `{table}` (before aggregation): {finding}"
+                for finding in lint_data(sample, actionable_only=True)
+            )
+        return findings
 
     async def _clean_data_pass(
         self,
@@ -861,20 +914,34 @@ class SQLAgent(BaseLumenAgent):
 
             # Profile the frame validation already fetched, so the user sees what
             # is wrong with the result even when no rewrite follows.
-            findings = lint_data(preview) if preview is not None else []
+            findings: list[str] = []
+            actionable: list[str] = []
+            if preview is not None:
+                findings = lint_data(preview)
+                # Only the actionable subset justifies (and is shown to) the
+                # rewriting pass. Constant columns and outliers are reported but
+                # must not provoke a query rewrite.
+                if self.clean_data:
+                    actionable = lint_data(preview, actionable_only=True)
+
+            # An aggregate has already collapsed its inputs, so nothing above can
+            # see the rows it summed. Profile those rows directly, otherwise a
+            # chart of SUM(revenue) silently inherits every -9999 in the source.
+            if self.clean_data and aggregates_rows(validated_sql, source.dialect):
+                source_findings = self._profile_source_rows(source, tables)
+                findings += source_findings
+                actionable += source_findings
+
             if findings:
                 stream_details(
                     "\n".join(f"- {finding}" for finding in findings),
                     step, title="Data quality findings", auto=False
                 )
-                # Only the actionable subset justifies (and is shown to) the
-                # rewriting pass. Constant columns and outliers are reported
-                # above but must not provoke a query rewrite.
-                actionable = lint_data(preview, actionable_only=True) if self.clean_data else []
-                if actionable:
-                    validated_sql = await self._clean_data_pass(
-                        validated_sql, actionable, len(preview), source, messages, context, step
-                    )
+            if actionable:
+                validated_sql = await self._clean_data_pass(
+                    validated_sql, actionable, 0 if preview is None else len(preview),
+                    source, messages, context, step
+                )
 
             # Only materialize for DuckDB sources
             should_materialize = isinstance(source, DuckDBSource)
