@@ -21,7 +21,7 @@ from ..models import RetrySpec
 from ..schemas import Metaset
 from ..tools import FunctionTool
 from ..utils import (
-    clean_sql, describe_data, get_data, get_pipeline, log_debug,
+    clean_sql, describe_data, get_data, get_pipeline, lint_data, log_debug,
     parse_table_slug, retry_llm_output, stream_details, truncate_to_tokens,
 )
 from .base_lumen import BaseLumenAgent
@@ -505,8 +505,13 @@ class SQLAgent(BaseLumenAgent):
         step: ChatStep,
         max_retries: int = 2,
         discovery_context: str | None = None,
-    ) -> str:
-        """Validate and potentially fix SQL query."""
+    ) -> tuple[str, pd.DataFrame | None]:
+        """Validate and potentially fix SQL query.
+
+        Returns the validated SQL alongside the frame the validating execution
+        already produced, so callers can profile the result without paying for a
+        second query. The frame is None only when every attempt failed.
+        """
         # Clean SQL
         try:
             sql_query = clean_sql(sql_query, source.dialect, prettify=True)
@@ -517,9 +522,9 @@ class SQLAgent(BaseLumenAgent):
         for i in range(max_retries):
             try:
                 step.stream(f"\n\n`{expr_slug}`\n```sql\n{sql_query}\n```")
-                source.execute(sql_query)
+                result = source.execute(sql_query)
                 step.stream("\n\n✅ SQL validation successful")
-                return sql_query
+                return sql_query, result
             except Exception as e:
                 if i == max_retries - 1:
                     step.stream(f"\n\n❌ SQL validation failed after {max_retries} attempts: {e}")
@@ -536,7 +541,7 @@ class SQLAgent(BaseLumenAgent):
                     discovery_context=discovery_context
                 )
                 sql_query = clean_sql(retry_result, source.dialect, prettify=True)
-        return sql_query
+        return sql_query, None
 
     async def _execute_query(
         self, source: BaseSQLSource, context: TContext, expr_slug: str, sql_query: str, tables: list[str],
@@ -771,10 +776,19 @@ class SQLAgent(BaseLumenAgent):
             sql_query = output.query.strip()
             expr_slug = output.table_slug.strip()
 
-            validated_sql = await self._validate_sql(
+            validated_sql, preview = await self._validate_sql(
                 context, sql_query, expr_slug, source, messages,
                 step, discovery_context=discovery_context
             )
+
+            # Profile the frame validation already fetched, so the user sees what
+            # is wrong with the result even when no rewrite follows.
+            findings = lint_data(preview) if preview is not None else []
+            if findings:
+                stream_details(
+                    "\n".join(f"- {finding}" for finding in findings),
+                    step, title="Data quality findings", auto=False
+                )
 
             # Only materialize for DuckDB sources
             should_materialize = isinstance(source, DuckDBSource)
