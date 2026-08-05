@@ -56,6 +56,31 @@ ui.servable()
 
 Most users should keep all default agents. Only customize if you have specific needs.
 
+## Data cleaning mode
+
+SQLAgent profiles every result it produces and reports what is wrong with it: missing values,
+duplicate rows, placeholder numbers like `-9999`, untrimmed text, numbers stored as text,
+constant columns and extreme outliers. The findings appear in the query step, so you can see
+them whether or not anything is done about them.
+
+When findings turn up, SQLAgent spends one extra LLM call rewriting the query to clean them,
+and shows you the rewritten SQL and the row count before and after. If the rewrite fails,
+returns nothing, or cannot be parsed, the original query is kept.
+
+Profiling is ordinary pandas work on the result the query already produced, so a clean result
+costs nothing extra. Turn the rewriting off to always take the query exactly as first written:
+
+``` py title="Disable the cleaning rewrite"
+import lumen.ai as lmai
+from lumen.ai.agents import SQLAgent
+
+ui = lmai.ExplorerUI(
+    data='penguins.csv',
+    agents=[SQLAgent(clean_data=False)]
+)
+ui.servable()
+```
+
 ## Add a custom agent
 
 Add your own agent for specialized tasks:
