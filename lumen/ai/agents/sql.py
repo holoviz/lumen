@@ -23,8 +23,9 @@ from ..models import RetrySpec
 from ..schemas import Metaset
 from ..tools import FunctionTool
 from ..utils import (
-    clean_sql, describe_data, get_data, get_pipeline, log_debug,
-    parse_table_slug, retry_llm_output, stream_details, truncate_to_tokens,
+    PROFILE_SAMPLE_ROWS, clean_sql, describe_data, get_data, get_pipeline,
+    log_debug, parse_table_slug, retry_llm_output, stream_details,
+    truncate_to_tokens,
 )
 from .base_lumen import BaseLumenAgent
 
@@ -119,8 +120,6 @@ EXPLORATION_MAX_TOKENS = 1200
 # Schema YAML is dense (nested keys, enum lists) and tokenizes near 2.5
 # chars/token, so the previous 12k-character cap admitted ~4.5k tokens.
 SCHEMA_MAX_TOKENS = 3000
-# Rows sampled from a source table when profiling the inputs of an aggregate.
-SOURCE_PROFILE_ROWS = 5000
 # Source tables profiled for one query. Each costs a query, and a join across
 # more inputs than this is not worth the round trips.
 SOURCE_PROFILE_MAX_TABLES = 3
@@ -352,14 +351,17 @@ def make_load_table_schemas_tool(metaset: Metaset) -> FunctionTool:
     )
 
 
-def aggregates_rows(sql_query: str, dialect: str | None = None) -> bool:
+def sql_contains_aggregates(sql_query: str, dialect: str | None = None) -> bool:
     """
     Whether ``sql_query`` collapses many input rows into fewer output rows.
 
-    Such a result no longer shows the problems its inputs carried: ``-9999``
-    placeholders are already inside ``SUM``, and blank strings are already a
-    GROUP BY key. Profiling the result therefore says nothing about the data the
-    numbers came from, so the inputs have to be profiled separately.
+    Such a query has already collapsed its inputs by the time it returns, so
+    nothing about the result shows what those inputs carried: a ``-9999``
+    placeholder is already inside ``SUM``, and a blank string is already a GROUP
+    BY key. Profiling the result therefore says nothing about the data the
+    numbers came from, and the source rows have to be profiled separately --
+    otherwise a chart of ``SUM(revenue)`` silently inherits every placeholder in
+    the table it was built from.
 
     Unparseable SQL returns False: the caller only uses this to decide whether to
     spend an extra query, and guessing "yes" would spend it on every failed parse.
@@ -598,15 +600,24 @@ class SQLAgent(BaseLumenAgent):
         Profile a sample of the rows feeding an aggregating query.
 
         Only called when the result itself cannot show the problem (see
-        :func:`aggregates_rows`), because each table costs one extra query.
-        Findings are prefixed with their table so the rewriting prompt knows the
-        fix belongs before the aggregation rather than in the output columns.
+        :func:`sql_contains_aggregates`), because each table costs one extra
+        query. Findings are prefixed with their table so the rewriting prompt
+        knows the fix belongs before the aggregation rather than in the output
+        columns.
+
+        Example: for a query grouping ``sales``, this runs
+        ``SELECT * FROM sales LIMIT 5000``, lints those rows, and returns
+        findings such as "In the source rows of `sales` (before aggregation):
+        Placeholder numbers [-9999, ...] appear as data in "revenue"".
         """
         findings = []
         for table in tables[:SOURCE_PROFILE_MAX_TABLES]:
             try:
+                # get_sql_expr turns a table name into the SELECT that defines it
+                # (for a CSV-backed table that is a read_csv call, not a name),
+                # and SQLLimit appends the row cap in the source's own dialect.
                 limited = SQLLimit(
-                    limit=SOURCE_PROFILE_ROWS, write=source.dialect, pretty=False, identify=False
+                    limit=PROFILE_SAMPLE_ROWS, write=source.dialect, pretty=False, identify=False
                 ).apply(source.get_sql_expr(table))
                 sample = source.execute(limited)
             except Exception as e:
@@ -924,10 +935,7 @@ class SQLAgent(BaseLumenAgent):
                 if self.clean_data:
                     actionable = lint_data(preview, actionable_only=True)
 
-            # An aggregate has already collapsed its inputs, so nothing above can
-            # see the rows it summed. Profile those rows directly, otherwise a
-            # chart of SUM(revenue) silently inherits every -9999 in the source.
-            if self.clean_data and aggregates_rows(validated_sql, source.dialect):
+            if self.clean_data and sql_contains_aggregates(validated_sql, source.dialect):
                 source_findings = self._profile_source_rows(source, tables)
                 findings += source_findings
                 actionable += source_findings
