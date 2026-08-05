@@ -1032,6 +1032,21 @@ class TestLintData:
         assert findings
         assert findings[-1].startswith(f"Counts above come from a random {LINT_SAMPLE_ROWS}-row sample")
 
+    def test_constant_and_outlier_findings_are_not_actionable(self):
+        """Filtering to one region then grouping is an ordinary query, not a defect:
+        it must be reported without provoking a rewrite that drops the column."""
+        df = pd.DataFrame({
+            "region": ["north"] * 40,
+            "month": list(range(40)),
+            "revenue": [100.0 + i for i in range(40)],
+        })
+        assert any("Constant column" in f for f in lint_data(df))
+        assert lint_data(df, actionable_only=True) == []
+
+    def test_actionable_findings_still_reported(self):
+        df = pd.DataFrame({"name": ["alice", " bob ", "", "dave"]})
+        assert any("Untrimmed" in f for f in lint_data(df, actionable_only=True))
+
     def test_unhashable_values_do_not_raise(self):
         """A geometry or list column must not break a query that already succeeded."""
         df = pd.DataFrame({"geom": [[1, 2], [3, 4], [1, 2]], "value": [1.0, 2.0, 3.0]})

@@ -181,6 +181,27 @@ async def test_sql_agent_clean_data_skipped_when_result_is_clean(llm, tiny_sourc
     clean_data_pass.assert_not_awaited()
 
 
+async def test_sql_agent_clean_data_ignores_report_only_findings(llm, tiny_source, test_messages):
+    """A constant column is reported but must not cost a rewrite: filtering to one
+    value is an ordinary query, and dropping that column would lose the answer."""
+    agent = SQLAgent(llm=llm)
+    context = {
+        "source": tiny_source,
+        "sources": [tiny_source],
+        "metaset": await get_metaset([tiny_source], ["tiny"]),
+    }
+    SQLQueryWithTables = make_sql_model([(tiny_source.name, "tiny")])
+    llm.set_responses([
+        SQLQueryWithTables(
+            query="SELECT 'north' AS region, id FROM tiny",
+            table_slug="tiny_region", tables=["tiny"],
+        ),
+    ])
+    with patch.object(SQLAgent, "_clean_data_pass", new=AsyncMock()) as clean_data_pass:
+        await agent.respond(test_messages, context)
+    clean_data_pass.assert_not_awaited()
+
+
 async def test_sql_agent_clean_data_disabled_leaves_query_alone(llm, dirty_source, test_messages):
     SQLQueryWithTables = make_sql_model([(dirty_source.name, "dirty")])
     responses = [
