@@ -82,6 +82,18 @@ LOW_CARDINALITY_MAX = 10
 # "dim-1", "emb.2". Used to collapse machine-generated numbered column series.
 INDEXED_COLUMN_RE = re.compile(r"^(?P<stem>.+?)[_.\-]?(?P<idx>\d+)$")
 
+# Tuning for lint_data. Above this many rows the frame is sampled, matching the
+# cap describe_data_sync already applies, so profiling a wide result stays cheap.
+LINT_SAMPLE_ROWS = 5000
+# A column is only worth reporting once a non-trivial share of it is null;
+# a single missing value in a million rows is not a finding worth an LLM call.
+LINT_NULL_THRESHOLD = 0.01
+# Placeholder numbers that instruments and legacy exports write in place of a
+# missing value. They pass as data through SUM/AVG and silently wreck results.
+LINT_SENTINELS = (-9999, -999, 9999)
+# Tukey fence multiplier for the IQR outlier check.
+LINT_IQR_MULTIPLIER = 1.5
+
 # Tokenizer used to size prompt payloads. o200k_base is what semchunk resolves
 # vector_store's "gpt-4o-mini" default to, so chunking and truncation agree.
 TOKEN_ENCODING = "o200k_base"
@@ -968,6 +980,165 @@ async def describe_data(
         max_cols, priority_columns,
     )
 
+
+# Cap on how many columns any single lint finding names. A wide result with a
+# systemic problem would otherwise emit a finding longer than the query itself.
+_LINT_MAX_LISTED_COLUMNS = 8
+
+
+def _format_column_hits(hits: dict[str, str]) -> str:
+    """Render ``{column: detail}`` pairs for a lint finding, truncated to a readable length."""
+    listed = list(hits.items())[:_LINT_MAX_LISTED_COLUMNS]
+    rendered = [f'"{col}" ({detail})' for col, detail in listed]
+    if len(hits) > len(listed):
+        rendered.append(f"and {len(hits) - len(listed)} more")
+    return ", ".join(rendered)
+
+
+def _lint_nulls(df: pd.DataFrame) -> list[str]:
+    fractions = df.isnull().mean()
+    dirty = fractions[fractions > LINT_NULL_THRESHOLD]
+    if dirty.empty:
+        return []
+    hits = {col: f"{frac:.1%} null" for col, frac in dirty.items()}
+    return [f"Missing values in {len(dirty)} column(s): {_format_column_hits(hits)}."]
+
+
+def _lint_duplicates(df: pd.DataFrame) -> list[str]:
+    duplicates = int(df.duplicated().sum())
+    if not duplicates:
+        return []
+    return [f"{duplicates} of {len(df)} rows are exact duplicates of an earlier row."]
+
+
+def _lint_sentinels(df: pd.DataFrame) -> list[str]:
+    hits = {}
+    for col in df.select_dtypes(include="number").columns:
+        matched = df[col].isin(LINT_SENTINELS)
+        if matched.any():
+            hits[col] = f"{int(matched.sum())} rows"
+    if not hits:
+        return []
+    return [
+        f"Placeholder numbers {list(LINT_SENTINELS)} appear as data in "
+        f"{_format_column_hits(hits)}; they almost certainly encode missing values."
+    ]
+
+
+def _lint_whitespace(df: pd.DataFrame) -> list[str]:
+    hits = {}
+    for col in df.select_dtypes(include=["object", "string"]).columns:
+        values = df[col].dropna()
+        # The .str accessor yields NaN for non-string entries, so an object
+        # column holding mixed types contributes only its actual strings.
+        stripped = values.str.strip()
+        padded = int((stripped.notna() & (stripped != values)).sum())
+        blank = int((stripped == "").sum())
+        if padded or blank:
+            hits[col] = f"{padded} padded, {blank} empty"
+    if not hits:
+        return []
+    return [f"Untrimmed or empty text in {_format_column_hits(hits)}."]
+
+
+def _lint_numeric_text(df: pd.DataFrame) -> list[str]:
+    hits = {}
+    for col in df.select_dtypes(include=["object", "string"]).columns:
+        values = df[col].dropna()
+        if values.empty:
+            continue
+        if pd.to_numeric(values, errors="coerce").notna().all():
+            hits[col] = "every value parses as a number"
+    if not hits:
+        return []
+    return [f"Numbers stored as text in {_format_column_hits(hits)}; aggregating these needs a cast."]
+
+
+def _lint_constant(df: pd.DataFrame) -> list[str]:
+    # Below two rows every column is trivially constant, which says nothing
+    # about the data.
+    if len(df) < 2:
+        return []
+    hits = {col: "one distinct value" for col in df.columns if df[col].nunique(dropna=False) <= 1}
+    if not hits:
+        return []
+    return [f"Constant column(s) carrying no information: {_format_column_hits(hits)}."]
+
+
+def _lint_outliers(df: pd.DataFrame) -> list[str]:
+    hits = {}
+    for col in df.select_dtypes(include="number").columns:
+        values = df[col].dropna()
+        # Quartiles below four points describe the sample, not a distribution.
+        if len(values) < 4:
+            continue
+        q1, q3 = values.quantile([0.25, 0.75])
+        fence = LINT_IQR_MULTIPLIER * (q3 - q1)
+        if fence == 0:
+            continue
+        low, high = q1 - fence, q3 + fence
+        outliers = int(((values < low) | (values > high)).sum())
+        if outliers:
+            hits[col] = f"{outliers} outside [{format_float(low)}, {format_float(high)}]"
+    if not hits:
+        return []
+    return [f"IQR outliers in {_format_column_hits(hits)}."]
+
+
+_LINT_CHECKS = (
+    _lint_nulls,
+    _lint_duplicates,
+    _lint_sentinels,
+    _lint_whitespace,
+    _lint_numeric_text,
+    _lint_constant,
+    _lint_outliers,
+)
+
+
+def lint_data(df: pd.DataFrame) -> list[str]:
+    """
+    Report data-quality problems in a query result, phrased so an LLM can fix them in SQL.
+
+    Deterministic pandas profiling, not an LLM call: nulls, duplicate rows,
+    placeholder numbers, untrimmed text, numbers stored as text, constant
+    columns and IQR outliers. An empty list means the result looked clean and
+    no follow-up work is warranted.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The query result to profile.
+
+    Returns
+    -------
+    list[str]
+        One sentence per problem found, or an empty list.
+    """
+    if df.empty:
+        return []
+
+    sampled = len(df) > LINT_SAMPLE_ROWS
+    if sampled:
+        # Fixed seed so the same result always yields the same findings; a
+        # profiler that reported different problems on each run would be noise.
+        df = df.sample(LINT_SAMPLE_ROWS, random_state=0)
+
+    findings = []
+    for check in _LINT_CHECKS:
+        try:
+            findings.extend(check(df))
+        except Exception as e:
+            # Profiling must never break a query that already succeeded. Object
+            # columns holding lists, dicts or geometries make several of the
+            # pandas operations above raise rather than return.
+            log_debug(f"lint_data check {check.__name__} skipped: {e}")
+
+    if findings and sampled:
+        findings.append(
+            f"Counts above come from a random {LINT_SAMPLE_ROWS}-row sample of the result, not the full table."
+        )
+    return findings
 
 
 def clean_sql(sql_expr: str, dialect: str | None = None, prettify: bool = False) -> str:
