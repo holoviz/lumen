@@ -14,7 +14,7 @@ Write SQL query for user's data transformation request, focusing on intent over 
 7. Do not rename columns unless explicitly instructed
 
 ## Query Patterns
-- Exclude NULLs unless specified
+- Exclude NULLs unless specified, or unless the question is about missing data, completeness or data quality — then count and report them instead of filtering them out
 - Clean data: `TRIM("column") != ''`, filter -9999, empty strings, split text columns
 - Headers: Use OFFSET 1 for header/metadata rows
 - Mixed units: Use CASE to normalize before aggregating
