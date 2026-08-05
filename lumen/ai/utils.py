@@ -1092,18 +1092,26 @@ def _lint_outliers(df: pd.DataFrame) -> list[str]:
     return [f"IQR outliers in {_format_column_hits(hits)}."]
 
 
-_LINT_CHECKS = (
+# Problems a SQL rewrite can genuinely fix.
+_LINT_ACTIONABLE_CHECKS = (
     _lint_nulls,
     _lint_duplicates,
     _lint_sentinels,
     _lint_whitespace,
     _lint_numeric_text,
+)
+
+# Problems worth telling the reader about but never worth rewriting a query for.
+# A constant column is the normal shape of a result filtered to one value, so
+# dropping it deletes something the user asked for; an outlier is data, and
+# filtering rows for being large changes the answer rather than cleaning it.
+_LINT_REPORT_ONLY_CHECKS = (
     _lint_constant,
     _lint_outliers,
 )
 
 
-def lint_data(df: pd.DataFrame) -> list[str]:
+def lint_data(df: pd.DataFrame, actionable_only: bool = False) -> list[str]:
     """
     Report data-quality problems in a query result, phrased so an LLM can fix them in SQL.
 
@@ -1116,6 +1124,10 @@ def lint_data(df: pd.DataFrame) -> list[str]:
     ----------
     df : pd.DataFrame
         The query result to profile.
+    actionable_only : bool
+        Report only problems a SQL rewrite should act on, omitting constant
+        columns and outliers. Use this to decide whether a rewrite is worth
+        requesting, and to choose what the rewriting prompt is shown.
 
     Returns
     -------
@@ -1125,6 +1137,10 @@ def lint_data(df: pd.DataFrame) -> list[str]:
     if df.empty:
         return []
 
+    checks = _LINT_ACTIONABLE_CHECKS
+    if not actionable_only:
+        checks += _LINT_REPORT_ONLY_CHECKS
+
     sampled = len(df) > LINT_SAMPLE_ROWS
     if sampled:
         # Fixed seed so the same result always yields the same findings; a
@@ -1132,7 +1148,7 @@ def lint_data(df: pd.DataFrame) -> list[str]:
         df = df.sample(LINT_SAMPLE_ROWS, random_state=0)
 
     findings = []
-    for check in _LINT_CHECKS:
+    for check in checks:
         try:
             findings.extend(check(df))
         except Exception as e:
