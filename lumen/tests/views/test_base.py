@@ -534,3 +534,16 @@ def test_vegalite_view_plain_frame_unchanged():
 
     assert 'format' not in data
     assert data['values'].equals(df)
+
+
+@requires_geopandas
+def test_deckgl_view_geometry_with_datetime_column():
+    """A datetime column alongside geometry must not break serialization."""
+    gdf = gpd.GeoDataFrame(
+        {'date': [pd.Timestamp('2026-06-15')],
+         'geometry': [Polygon([(0, 0), (1, 0), (1, 1)])]},
+        crs='EPSG:4326',
+    )
+    data = DeckGLView._layer_data(gdf)
+    assert data['features'][0]['properties']['date'].startswith('2026-06-15')
+    json.dumps(data)  # must be serializable
