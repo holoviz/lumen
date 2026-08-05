@@ -63,6 +63,18 @@ class SQLQuery(BaseModel):
     )
 
 
+class SQLCleanup(BaseModel):
+    """A revision of an existing query that removes data-quality problems from its result."""
+
+    chain_of_thought: str = Field(description="""
+        Which findings you are fixing and which you are leaving alone, in one sentence.""")
+
+    query: str = Field(description="""
+        The rewritten SQL query. Return the original query byte-for-byte unchanged
+        when no finding clearly calls for one of the allowed edits; leaving the
+        query alone is a correct and expected answer.""")
+
+
 def make_sql_model(sources: list[tuple[str, str]]):
     """
     Create a SQL query model with source/table validation.
@@ -448,6 +460,13 @@ class SQLOutputs(ContextModel):
 
 class SQLAgent(BaseLumenAgent):
 
+    clean_data = param.Boolean(default=True, doc="""
+        Profile every query result and, when it contains data-quality problems,
+        spend one extra LLM call rewriting the query to clean them up.
+        Profiling is deterministic and reuses the frame validation already
+        fetched, so a clean result costs nothing; set to False to always take
+        the query exactly as first written.""")
+
     conditions = param.List(
         default=[
             "Use for querying, filtering, aggregating, or transforming data with SQL",
@@ -482,6 +501,7 @@ class SQLAgent(BaseLumenAgent):
                 "response_model": make_sql_model,
                 "template": PROMPTS_DIR / "SQLAgent" / "main.jinja2",
             },
+            "clean_data": {"response_model": SQLCleanup, "template": PROMPTS_DIR / "SQLAgent" / "clean_data.jinja2"},
             "revise_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "SQLAgent" / "revise_output.jinja2"},
         }
     )
@@ -542,6 +562,57 @@ class SQLAgent(BaseLumenAgent):
                 )
                 sql_query = clean_sql(retry_result, source.dialect, prettify=True)
         return sql_query, None
+
+    async def _clean_data_pass(
+        self,
+        sql_query: str,
+        findings: list[str],
+        original_rows: int,
+        source: BaseSQLSource,
+        messages: list[Message],
+        context: TContext,
+        step: ChatStep,
+    ) -> str:
+        """Rewrite ``sql_query`` to fix the data-quality problems in ``findings``.
+
+        The second half of the two-shot: the first pass answered the question,
+        this one cleans the answer. Returns the original query whenever the
+        rewrite is absent, identical, broken or empty, because a query that
+        already ran is worth more than a cleaner one that does not.
+        """
+        cleanup = await self._invoke_prompt(
+            "clean_data", messages, context, sql=sql_query,
+            findings=findings, dialect=source.dialect,
+        )
+        try:
+            cleaned = clean_sql(cleanup.query, source.dialect, prettify=True)
+        except Exception as e:
+            step.stream(f"\n\n⚠️ Could not parse the cleaned query, keeping the original: {e}")
+            return sql_query
+        if cleaned == sql_query:
+            step.stream("\n\n✅ Query already handles the findings; left unchanged")
+            return sql_query
+
+        try:
+            cleaned_result = source.execute(cleaned)
+        except Exception as e:
+            step.stream(f"\n\n⚠️ Cleaned query failed, keeping the original: {e}")
+            return sql_query
+
+        # An empty result means the cleaning filtered away the answer itself.
+        # Silently returning nothing is worse than returning dirty data.
+        if cleaned_result.empty:
+            step.stream("\n\n⚠️ Cleaned query returned no rows, keeping the original")
+            return sql_query
+
+        # Always show the row delta: cleaning that quietly discards half the
+        # answer must be visible to whoever reads the result.
+        step.stream(
+            f"\n\n🧹 Cleaned the query: {cleanup.chain_of_thought}"
+            f"\n\n```sql\n{cleaned}\n```"
+            f"\n\n{original_rows} rows before cleaning, {len(cleaned_result)} after."
+        )
+        return cleaned
 
     async def _execute_query(
         self, source: BaseSQLSource, context: TContext, expr_slug: str, sql_query: str, tables: list[str],
@@ -789,6 +860,10 @@ class SQLAgent(BaseLumenAgent):
                     "\n".join(f"- {finding}" for finding in findings),
                     step, title="Data quality findings", auto=False
                 )
+                if self.clean_data:
+                    validated_sql = await self._clean_data_pass(
+                        validated_sql, findings, len(preview), source, messages, context, step
+                    )
 
             # Only materialize for DuckDB sources
             should_materialize = isinstance(source, DuckDBSource)
