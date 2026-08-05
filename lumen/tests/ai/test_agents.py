@@ -25,8 +25,8 @@ from lumen.ai.agents.analysis import make_analysis_model
 from lumen.ai.agents.deck_gl import DeckGLAgent
 from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import (
-    EXPLORATION_MAX_TOKENS, SQLCleanup, format_exploration_result,
-    make_sql_model,
+    EXPLORATION_MAX_TOKENS, SQLCleanup, aggregates_rows,
+    format_exploration_result, make_sql_model,
 )
 from lumen.ai.agents.vega_lite import (
     AltairChartSpec, AltairSpec, ChartSpec, VegaLiteSpec, VegaLiteSpecUpdate,
@@ -179,6 +179,53 @@ async def test_sql_agent_clean_data_skipped_when_result_is_clean(llm, tiny_sourc
     with patch.object(SQLAgent, "_clean_data_pass", new=AsyncMock()) as clean_data_pass:
         await agent.respond(test_messages, context)
     clean_data_pass.assert_not_awaited()
+
+
+@pytest.mark.parametrize("sql, expected", [
+    ("SELECT region, SUM(revenue) FROM dirty GROUP BY region", True),
+    ("SELECT COUNT(*) FROM dirty", True),
+    ("WITH t AS (SELECT * FROM dirty) SELECT MAX(value) FROM t", True),
+    ("SELECT * FROM dirty", False),
+    ("SELECT DISTINCT * FROM dirty", False),
+    ("SELECT id, name FROM dirty WHERE value > 0", False),
+    ("not sql at all !!!", False),
+])
+def test_aggregates_rows(sql, expected):
+    assert aggregates_rows(sql, "duckdb") is expected
+
+
+async def test_sql_agent_profiles_source_rows_behind_an_aggregate(llm, dirty_source, test_messages):
+    """An aggregate hides its inputs: SUM() already swallowed the -9999 placeholders,
+    so the result cannot show them and the source rows must be profiled instead."""
+    SQLQueryWithTables = make_sql_model([(dirty_source.name, "dirty")])
+    captured = {}
+
+    async def _capture(self, sql_query, findings, original_rows, source, messages, context, step):
+        captured["findings"] = findings
+        return sql_query
+
+    with patch.object(SQLAgent, "_clean_data_pass", new=_capture):
+        await _respond_to_dirty_table(llm, dirty_source, test_messages, [
+            SQLQueryWithTables(
+                query='SELECT "name", SUM("value") AS total FROM dirty GROUP BY "name"',
+                table_slug="dirty_totals", tables=["dirty"],
+            ),
+        ])
+
+    joined = " ".join(captured["findings"])
+    assert "before aggregation" in joined
+    assert "-9999" in joined, "the placeholder the aggregate hid must reach the rewrite"
+
+
+async def test_sql_agent_skips_source_profiling_when_not_aggregating(llm, dirty_source, test_messages):
+    """A plain SELECT already shows its own problems, so it must not pay for extra queries."""
+    SQLQueryWithTables = make_sql_model([(dirty_source.name, "dirty")])
+    with patch.object(SQLAgent, "_profile_source_rows") as profile:
+        await _respond_to_dirty_table(llm, dirty_source, test_messages, [
+            SQLQueryWithTables(query="SELECT * FROM dirty", table_slug="dirty_rows", tables=["dirty"]),
+            SQLCleanup(chain_of_thought="Dropped duplicates.", query="SELECT DISTINCT * FROM dirty"),
+        ])
+    profile.assert_not_called()
 
 
 async def test_sql_agent_clean_data_ignores_report_only_findings(llm, tiny_source, test_messages):
