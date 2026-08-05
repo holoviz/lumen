@@ -25,7 +25,8 @@ from lumen.ai.agents.analysis import make_analysis_model
 from lumen.ai.agents.deck_gl import DeckGLAgent
 from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import (
-    EXPLORATION_MAX_TOKENS, format_exploration_result, make_sql_model,
+    EXPLORATION_MAX_TOKENS, SQLCleanup, format_exploration_result,
+    make_sql_model,
 )
 from lumen.ai.agents.vega_lite import (
     AltairChartSpec, AltairSpec, ChartSpec, VegaLiteSpec, VegaLiteSpecUpdate,
@@ -115,6 +116,111 @@ async def test_sql_agent(llm, duckdb_source, test_messages):
         "FROM test_sql"
     )
     assert set(out_context) == {"data", "pipeline", "sql", "table", "source"}
+
+@pytest.fixture
+def dirty_source():
+    """A table lint_data has something to say about: a duplicated row, padded
+    text and a -9999 placeholder standing in for a missing measurement."""
+    return DuckDBSource(tables={
+        "dirty": """
+            SELECT * FROM (
+              VALUES (1, ' alpha ', 10.0),
+                     (1, ' alpha ', 10.0),
+                     (2, 'beta', -9999.0),
+                     (3, 'gamma', 30.0),
+                     (4, 'delta', 40.0)
+            ) AS t(id, name, value)
+        """
+    })
+
+
+async def _respond_to_dirty_table(llm, source, messages, responses, **agent_kwargs):
+    """Run SQLAgent over the dirty fixture with a queued set of LLM responses."""
+    agent = SQLAgent(llm=llm, **agent_kwargs)
+    context = {
+        "source": source,
+        "sources": [source],
+        "metaset": await get_metaset([source], ["dirty"]),
+    }
+    llm.set_responses(responses)
+    out, _ = await agent.respond(messages, context)
+    return out
+
+
+async def test_sql_agent_clean_data_rewrites_dirty_query(llm, dirty_source, test_messages):
+    SQLQueryWithTables = make_sql_model([(dirty_source.name, "dirty")])
+    out = await _respond_to_dirty_table(llm, dirty_source, test_messages, [
+        SQLQueryWithTables(query="SELECT * FROM dirty", table_slug="dirty_rows", tables=["dirty"]),
+        SQLCleanup(
+            chain_of_thought="Dropped the duplicate row and trimmed the names.",
+            query='SELECT DISTINCT "id", TRIM("name") AS "name", "value" FROM dirty',
+        ),
+    ])
+    assert llm._index == 2, "the cleaning pass should have consumed a second response"
+    assert "DISTINCT" in out[0].spec
+    assert "TRIM" in out[0].spec
+
+
+async def test_sql_agent_clean_data_skipped_when_result_is_clean(llm, tiny_source, test_messages):
+    """No findings must mean no second LLM call, or the pass costs on every query."""
+    agent = SQLAgent(llm=llm)
+    context = {
+        "source": tiny_source,
+        "sources": [tiny_source],
+        "metaset": await get_metaset([tiny_source], ["tiny"]),
+    }
+    SQLQueryWithTables = make_sql_model([(tiny_source.name, "tiny")])
+    llm.set_responses([
+        SQLQueryWithTables(query="SELECT * FROM tiny", table_slug="tiny_rows", tables=["tiny"]),
+    ])
+    await agent.respond(test_messages, context)
+    assert llm._index == 1
+
+
+async def test_sql_agent_clean_data_disabled_leaves_query_alone(llm, dirty_source, test_messages):
+    SQLQueryWithTables = make_sql_model([(dirty_source.name, "dirty")])
+    out = await _respond_to_dirty_table(llm, dirty_source, test_messages, [
+        SQLQueryWithTables(query="SELECT * FROM dirty", table_slug="dirty_rows", tables=["dirty"]),
+    ], clean_data=False)
+    assert llm._index == 1
+    assert "DISTINCT" not in out[0].spec
+
+
+async def test_sql_agent_clean_data_falls_back_when_rewrite_is_empty(llm, dirty_source, test_messages):
+    """A rewrite that filters the answer away must not replace the answer."""
+    SQLQueryWithTables = make_sql_model([(dirty_source.name, "dirty")])
+    out = await _respond_to_dirty_table(llm, dirty_source, test_messages, [
+        SQLQueryWithTables(query="SELECT * FROM dirty", table_slug="dirty_rows", tables=["dirty"]),
+        SQLCleanup(chain_of_thought="Removed every row.", query="SELECT * FROM dirty WHERE 1 = 0"),
+    ])
+    assert llm._index == 2
+    assert "1 = 0" not in out[0].spec
+
+
+async def test_sql_agent_clean_data_falls_back_when_rewrite_is_invalid(llm, dirty_source, test_messages):
+    """A rewrite naming a column that does not exist must not replace the answer."""
+    SQLQueryWithTables = make_sql_model([(dirty_source.name, "dirty")])
+    out = await _respond_to_dirty_table(llm, dirty_source, test_messages, [
+        SQLQueryWithTables(query="SELECT * FROM dirty", table_slug="dirty_rows", tables=["dirty"]),
+        SQLCleanup(chain_of_thought="Trimmed a column.", query='SELECT TRIM("nope") FROM dirty'),
+    ])
+    assert llm._index == 2
+    assert "nope" not in out[0].spec
+
+
+async def test_sql_agent_clean_data_falls_back_when_the_call_fails(llm, dirty_source, test_messages):
+    """A failed cleaning call must keep the working query, not trigger a full retry."""
+    def _explode():
+        raise RuntimeError("cleaning model unavailable")
+
+    SQLQueryWithTables = make_sql_model([(dirty_source.name, "dirty")])
+    out = await _respond_to_dirty_table(llm, dirty_source, test_messages, [
+        SQLQueryWithTables(query="SELECT * FROM dirty", table_slug="dirty_rows", tables=["dirty"]),
+        _explode,
+    ])
+    assert llm._index == 2
+    assert "dirty" in out[0].spec
+
 
 async def test_vegalite_agent(llm, duckdb_source, test_messages):
     """Test VegaLiteAgent instantiation and respond"""
