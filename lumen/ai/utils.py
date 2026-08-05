@@ -1137,7 +1137,7 @@ def lint_data(df: pd.DataFrame, actionable_only: bool = False) -> list[str]:
 
     checks = _LINT_ACTIONABLE_CHECKS
     if not actionable_only:
-        checks += _LINT_REPORT_ONLY_CHECKS
+        checks = _LINT_ACTIONABLE_CHECKS + _LINT_REPORT_ONLY_CHECKS
 
     sampled = len(df) > LINT_SAMPLE_ROWS
     if sampled:
