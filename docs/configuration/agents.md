@@ -13,6 +13,7 @@ Most users never customize agents. The eight default agents handle typical data 
 - [See which agents exist](#default-agents) - What each agent does
 - [Add custom agents](#add-a-custom-agent) - Extend Lumen with new capabilities  
 - [Remove agents](#use-specific-agents-only) - Use only some agents
+- [Data cleaning mode](#data-cleaning-mode) - Profile results and clean up dirty queries
 - [Configure agent models](#use-different-models-per-agent) - Control which LLM each agent uses
 - [Customize agent instructions](#customizing-agent-instructions) - Override agent prompts and behavior
 
@@ -55,6 +56,57 @@ ui.servable()
 - Simpler behavior (predictable agent selection)
 
 Most users should keep all default agents. Only customize if you have specific needs.
+
+## Data cleaning mode
+
+SQLAgent profiles every result it produces and reports what is wrong with it. The findings
+appear in the query step whether or not anything is done about them:
+
+| Finding | Rewritten? |
+|---------|------------|
+| Missing values above 1% of a column | Yes |
+| Exact duplicate rows | Yes |
+| Placeholder numbers (`-9999`, `-999`, `9999`) | Yes |
+| Untrimmed or empty text | Yes |
+| Numbers stored as text | Yes |
+| Constant columns | **No, reported only** |
+| Extreme outliers | **No, reported only** |
+
+The last two are never rewritten. A constant column is the normal shape of a result you
+filtered to a single value, so dropping it would delete something you asked for, and an
+outlier is data, so removing it would change the answer rather than clean it.
+
+When a rewritable finding turns up, SQLAgent spends one extra LLM call rewriting the query,
+then shows the new SQL and the row count before and after. If the rewrite fails, returns no
+rows, or cannot be parsed, the original query is kept.
+
+Profiling is ordinary pandas work on the result the query already produced, so it needs no
+extra database round trip, and a clean result costs no extra LLM call at all.
+
+Aggregating queries are the exception. `SELECT region, SUM(revenue) ... GROUP BY region`
+returns a handful of rows that no longer show anything about the thousands they came from,
+so a `-9999` placeholder is already inside the total and invisible. For those queries
+SQLAgent samples the source tables directly (one extra query per table, up to three) and
+tells the rewrite to clean the values before they are aggregated. This matters most for
+charts, which are usually built on exactly this kind of query.
+
+Turn the rewriting off to always take the query exactly as first written:
+
+``` py title="Disable the cleaning rewrite"
+import lumen.ai as lmai
+from lumen.ai.agents import SQLAgent
+
+ui = lmai.ExplorerUI(
+    data='penguins.csv',
+    agents=[SQLAgent(clean_data=False)]  # (1)!
+)
+ui.servable()
+```
+
+1. Passing a configured *instance* replaces the default SQLAgent rather than adding a second
+   one, because Lumen skips any default agent whose type you have already supplied.
+
+Findings are still reported with `clean_data=False`; only the rewriting stops.
 
 ## Add a custom agent
 
