@@ -15,13 +15,14 @@ from ...sources.duckdb import DuckDBSource
 from ...transforms.sql import SQLLimit
 from ..config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from ..context import ContextModel, TContext
+from ..data_quality import lint_data
 from ..editors import LumenEditor, SQLEditor
 from ..llm import Message
 from ..models import RetrySpec
 from ..schemas import Metaset
 from ..tools import FunctionTool
 from ..utils import (
-    clean_sql, describe_data, get_data, get_pipeline, lint_data, log_debug,
+    clean_sql, describe_data, get_data, get_pipeline, log_debug,
     parse_table_slug, retry_llm_output, stream_details, truncate_to_tokens,
 )
 from .base_lumen import BaseLumenAgent
