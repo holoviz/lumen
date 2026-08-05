@@ -96,6 +96,9 @@ LINT_SENTINELS = (-9999, -999, 9999)
 # column reports outliers and the cleaning pass never short-circuits; measured on
 # 5000-row gaussian samples, 1.5 fired on 200/200 columns and 3.0 on 3/200.
 LINT_IQR_MULTIPLIER = 3.0
+# Cap on how many columns any single lint finding names. A wide result with a
+# systemic problem would otherwise emit a finding longer than the query itself.
+_LINT_MAX_LISTED_COLUMNS = 8
 
 # Tokenizer used to size prompt payloads. o200k_base is what semchunk resolves
 # vector_store's "gpt-4o-mini" default to, so chunking and truncation agree.
@@ -982,11 +985,6 @@ async def describe_data(
         describe_data_sync, df, enum_limit, reduce_enums, row_limit,
         max_cols, priority_columns,
     )
-
-
-# Cap on how many columns any single lint finding names. A wide result with a
-# systemic problem would otherwise emit a finding longer than the query itself.
-_LINT_MAX_LISTED_COLUMNS = 8
 
 
 def _format_column_hits(hits: dict[str, str]) -> str:
