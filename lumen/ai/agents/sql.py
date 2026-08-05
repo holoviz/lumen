@@ -473,6 +473,7 @@ class SQLAgent(BaseLumenAgent):
             "Use for calculations that require executing SQL (e.g., 'calculate average', 'sum by category')",
             "Use when user asks to 'show', 'get', 'fetch', 'query', 'find', 'filter', 'calculate', 'aggregate', or 'transform' data",
             "Use after external data has been fetched and the user expects the fetched fields/rows to be presented, selected, filtered, or otherwise queried",
+            "Use when user asks about data quality, completeness, missing values, duplicates, or outliers",
             "NOT when user asks to 'explain', 'interpret', 'analyze', 'summarize', or 'comment on' existing data",
             "NOT useful if the user is using the same data for plotting",
         ]
@@ -492,7 +493,9 @@ class SQLAgent(BaseLumenAgent):
         default="""
         Creates and executes SQL queries to retrieve, filter, aggregate, or transform data.
         Handles table joins, WHERE clauses, GROUP BY, calculations, and other SQL operations.
-        Generates new data pipelines from SQL transformations."""
+        Generates new data pipelines from SQL transformations.
+        Profiles every result for data-quality problems (missing values, duplicates,
+        placeholder numbers, outliers) and reports them."""
     )
 
     prompts = param.Dict(
