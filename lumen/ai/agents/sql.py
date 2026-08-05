@@ -63,18 +63,6 @@ class SQLQuery(BaseModel):
     )
 
 
-class SQLCleanup(BaseModel):
-    """A revision of an existing query that removes data-quality problems from its result."""
-
-    chain_of_thought: str = Field(description="""
-        Which findings you are fixing and which you are leaving alone, in one sentence.""")
-
-    query: str = Field(description="""
-        The rewritten SQL query. Return the original query byte-for-byte unchanged
-        when no finding clearly calls for one of the allowed edits; leaving the
-        query alone is a correct and expected answer.""")
-
-
 def make_sql_model(sources: list[tuple[str, str]]):
     """
     Create a SQL query model with source/table validation.
@@ -106,6 +94,18 @@ def make_sql_model(sources: list[tuple[str, str]]):
         ),
         __base__=SQLQuery
     )
+
+
+class SQLCleanup(BaseModel):
+    """A revision of an existing query that removes data-quality problems from its result."""
+
+    chain_of_thought: str = Field(description="""
+        Which findings you are fixing and which you are leaving alone, in one sentence.""")
+
+    query: str = Field(description="""
+        The rewritten SQL query. Return the original query byte-for-byte unchanged
+        when no finding clearly calls for one of the allowed edits; leaving the
+        query alone is a correct and expected answer.""")
 
 
 # Rows/columns shown by format_exploration_result. Exploration reveals a frame's
