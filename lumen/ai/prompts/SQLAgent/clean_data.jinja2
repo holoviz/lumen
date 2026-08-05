@@ -30,6 +30,8 @@ listed below. Rewrite the query so the result is clean, or return it unchanged.
   real data: placeholders, blanks, unparseable text.
 - Outliers are reported so you can mention them, not remove them. Do not filter a row
   out because its value is large.
+- If the query aggregates or groups, clean inside the expressions only. Adding DISTINCT
+  or removing a column there changes what the numbers mean.
 - Do not add a LIMIT.
 - Fix nothing you are not confident about. Returning the query unchanged is the correct
   answer whenever the findings do not clearly call for one of the edits above.
