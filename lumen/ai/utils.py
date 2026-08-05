@@ -1074,6 +1074,10 @@ def _lint_outliers(df: pd.DataFrame) -> list[str]:
             continue
         q1, q3 = values.quantile([0.25, 0.75])
         fence = LINT_IQR_MULTIPLIER * (q3 - q1)
+        # A zero IQR means the middle half of the column is a single value, so
+        # Tukey fences collapse onto it and flag every other value. That is the
+        # normal shape of a coded or flag column, where "outlier" is meaningless,
+        # so report nothing rather than guess which degenerate case this is.
         if fence == 0:
             continue
         low, high = q1 - fence, q3 + fence
