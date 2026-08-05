@@ -1,0 +1,38 @@
+{% extends 'Agent/main.jinja2' %}
+
+{%- block instructions %}
+## Instructions
+A query already ran successfully. Profiling its result found the data-quality problems
+listed below. Rewrite the query so the result is clean, or return it unchanged.
+
+## The query
+```sql
+{{ sql }}
+```
+
+## What profiling found
+{% for finding in findings %}
+- {{ finding }}
+{%- endfor %}
+
+## Allowed edits
+- `TRIM("col")` for padded text; `NULLIF(TRIM("col"), '')` to turn blanks into NULL
+- `TRY_CAST("col" AS DOUBLE)` where numbers are stored as text
+- `WHERE "col" NOT IN (-9999, -999, 9999)` or `NULLIF("col", -9999)` for placeholder numbers
+- `SELECT DISTINCT` for exact duplicate rows
+- Drop a constant column from the SELECT list
+- `WHERE "col" IS NOT NULL` only when the nulls would corrupt an aggregate
+
+## Rules
+- Keep the user's intent. Do not change which columns are selected (beyond dropping a
+  constant one), the grouping, the ordering, or any filter the user asked for.
+- Never drop rows to make a number look better. Filtering is for values that are not
+  real data: placeholders, blanks, unparseable text.
+- Outliers are reported so you can mention them, not remove them. Do not filter a row
+  out because its value is large.
+- Do not add a LIMIT.
+- Fix nothing you are not confident about. Returning the query unchanged is the correct
+  answer whenever the findings do not clearly call for one of the edits above.
+- Use `{{ dialect }}` SQL dialect. Double quotes for columns, single quotes for strings.
+- Return one statement, no comments, no trailing semicolon.
+{%- endblock -%}
