@@ -1116,7 +1116,15 @@ class Report(TaskGroup):
         # Task-less reports (e.g. Report.from_views) populate ``views`` directly.
         if not len(self):
             return self.views
-        return self._selected_views(self)
+        views = list(self._header)
+        for section in self:
+            self._append_section_views(views, section)
+        return views
+
+    def _append_section_views(self, views, section):
+        if not section.include_in_export:
+            return
+        views += self._selected_views(section)
 
     def _selected_views(self, group, include_header=True):
         """
@@ -1256,16 +1264,18 @@ class Report(TaskGroup):
         return outputs
 
     def __panel__(self):
+        # Fill the available height and scroll the content within it: the inner
+        # div is bounded to the full height and scrolls, so a tall report or
+        # story slides inside the pane and a short one leaves no gap. (The
+        # surrounding layout must stretch this rather than centre it.)
         return Container(
             self._switcher,
             self._container,
-            align="center",
             sizing_mode="stretch_both",
-            stylesheets=[":host > div { overflow-y: auto; }"],
+            stylesheets=[":host > div { height: 100%; overflow-y: auto; }"],
             sx={
                 "minWidth": "320px",
                 "width": "100%",
-                "height": "auto",
                 ".mui-light &": { "background-color": "var(--mui-palette-grey-100)"},
                 ".mui-dark &": { "background-color": "var(--mui-palette-grey-900)"}
             }
