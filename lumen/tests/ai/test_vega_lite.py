@@ -199,6 +199,50 @@ class TestGeoshapeGeometryValidation:
         }
         VegaLiteEditor.validate_spec(spec)
 
+    def test_accepts_the_two_layer_base_plus_join_pattern(self):
+        """The base layer keeps regions the table does not cover on the map."""
+        boundaries = {"url": self.BOUNDARIES, "format": {"type": "topojson", "feature": "states"}}
+        spec = {
+            "projection": {"type": "albersUsa"},
+            "layer": [
+                {"data": boundaries, "mark": {"type": "geoshape", "fill": "#eeeeee"}},
+                {
+                    "data": boundaries,
+                    "transform": [{
+                        "lookup": "properties.name",
+                        "from": {"data": {"name": "t"}, "key": "state", "fields": ["avg_pm25"]},
+                    }],
+                    "mark": "geoshape",
+                    "encoding": {"color": {"field": "avg_pm25", "type": "quantitative"}},
+                },
+            ],
+        }
+        VegaLiteEditor.validate_spec(spec)
+
+    def test_rejects_a_layer_bound_to_the_table(self):
+        spec = {
+            "projection": {"type": "albersUsa"},
+            "layer": [{
+                "data": {"name": "t"},
+                "mark": "geoshape",
+                "encoding": {"color": {"field": "avg_pm25", "type": "quantitative"}},
+            }],
+        }
+        with pytest.raises(RuntimeError, match="carries no geometry"):
+            VegaLiteEditor.validate_spec(spec)
+
+    def test_rejects_a_layer_inheriting_table_bound_data(self):
+        """A layer with no data of its own uses its parent's, so the check follows it."""
+        spec = {
+            "data": {"name": "t"},
+            "layer": [{
+                "mark": "geoshape",
+                "encoding": {"color": {"field": "avg_pm25", "type": "quantitative"}},
+            }],
+        }
+        with pytest.raises(RuntimeError, match="carries no geometry"):
+            VegaLiteEditor.validate_spec(spec)
+
     def test_leaves_non_geographic_charts_alone(self):
         spec = {
             "data": {"name": "t"},
