@@ -2,6 +2,7 @@ import typing as t
 
 import pandas as pd
 import param
+import sqlglot
 import yaml
 
 from panel.chat import ChatStep
@@ -15,14 +16,16 @@ from ...sources.duckdb import DuckDBSource
 from ...transforms.sql import SQLLimit
 from ..config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from ..context import ContextModel, TContext
+from ..data_quality import lint_data
 from ..editors import LumenEditor, SQLEditor
 from ..llm import Message
 from ..models import RetrySpec
 from ..schemas import Metaset
 from ..tools import FunctionTool
 from ..utils import (
-    clean_sql, describe_data, get_data, get_pipeline, log_debug,
-    parse_table_slug, retry_llm_output, stream_details, truncate_to_tokens,
+    PROFILE_SAMPLE_ROWS, clean_sql, describe_data, get_data, get_pipeline,
+    log_debug, parse_table_slug, retry_llm_output, stream_details,
+    truncate_to_tokens,
 )
 from .base_lumen import BaseLumenAgent
 
@@ -96,6 +99,18 @@ def make_sql_model(sources: list[tuple[str, str]]):
     )
 
 
+class SQLCleanup(BaseModel):
+    """A revision of an existing query that removes data-quality problems from its result."""
+
+    chain_of_thought: str = Field(description="""
+        Which findings you are fixing and which you are leaving alone, in one sentence.""")
+
+    query: str = Field(description="""
+        The rewritten SQL query. Return the original query byte-for-byte unchanged
+        when no finding clearly calls for one of the allowed edits; leaving the
+        query alone is a correct and expected answer.""")
+
+
 # Rows/columns shown by format_exploration_result. Exploration reveals a frame's
 # shape, dtypes and value domains; a handful of rows does that, and the previous
 # 50-row aligned dump cost ~3.4k tokens for a 53x7 frame — 8x this one.
@@ -105,6 +120,9 @@ EXPLORATION_MAX_TOKENS = 1200
 # Schema YAML is dense (nested keys, enum lists) and tokenizes near 2.5
 # chars/token, so the previous 12k-character cap admitted ~4.5k tokens.
 SCHEMA_MAX_TOKENS = 3000
+# Source tables profiled for one query. Each costs a query, and a join across
+# more inputs than this is not worth the round trips.
+SOURCE_PROFILE_MAX_TABLES = 3
 
 
 def format_exploration_result(df: pd.DataFrame) -> str:
@@ -333,6 +351,28 @@ def make_load_table_schemas_tool(metaset: Metaset) -> FunctionTool:
     )
 
 
+def sql_contains_aggregates(sql_query: str, dialect: str | None = None) -> bool:
+    """
+    Whether ``sql_query`` collapses many input rows into fewer output rows.
+
+    Such a query has already collapsed its inputs by the time it returns, so
+    nothing about the result shows what those inputs carried: a ``-9999``
+    placeholder is already inside ``SUM``, and a blank string is already a GROUP
+    BY key. Profiling the result therefore says nothing about the data the
+    numbers came from, and the source rows have to be profiled separately --
+    otherwise a chart of ``SUM(revenue)`` silently inherits every placeholder in
+    the table it was built from.
+
+    Unparseable SQL returns False: the caller only uses this to decide whether to
+    spend an extra query, and guessing "yes" would spend it on every failed parse.
+    """
+    try:
+        parsed = sqlglot.parse_one(sql_query, read=None if dialect in (None, "any") else dialect)
+    except Exception:
+        return False
+    return bool(parsed.find(sqlglot.exp.Group) or parsed.find(sqlglot.exp.AggFunc))
+
+
 _RANGE_FIELD_TYPES = ("number", "integer")
 
 
@@ -448,12 +488,20 @@ class SQLOutputs(ContextModel):
 
 class SQLAgent(BaseLumenAgent):
 
+    clean_data = param.Boolean(default=True, doc="""
+        Profile every query result and, when it contains data-quality problems,
+        spend one extra LLM call rewriting the query to clean them up.
+        Profiling is deterministic and reuses the frame validation already
+        fetched, so a clean result costs nothing; set to False to always take
+        the query exactly as first written.""")
+
     conditions = param.List(
         default=[
             "Use for querying, filtering, aggregating, or transforming data with SQL",
             "Use for calculations that require executing SQL (e.g., 'calculate average', 'sum by category')",
             "Use when user asks to 'show', 'get', 'fetch', 'query', 'find', 'filter', 'calculate', 'aggregate', or 'transform' data",
             "Use after external data has been fetched and the user expects the fetched fields/rows to be presented, selected, filtered, or otherwise queried",
+            "Use when user asks about data quality, completeness, missing values, duplicates, or outliers",
             "NOT when user asks to 'explain', 'interpret', 'analyze', 'summarize', or 'comment on' existing data",
             "NOT useful if the user is using the same data for plotting",
         ]
@@ -473,7 +521,9 @@ class SQLAgent(BaseLumenAgent):
         default="""
         Creates and executes SQL queries to retrieve, filter, aggregate, or transform data.
         Handles table joins, WHERE clauses, GROUP BY, calculations, and other SQL operations.
-        Generates new data pipelines from SQL transformations."""
+        Generates new data pipelines from SQL transformations.
+        Profiles every result for data-quality problems (missing values, duplicates,
+        placeholder numbers, outliers) and reports them."""
     )
 
     prompts = param.Dict(
@@ -482,6 +532,7 @@ class SQLAgent(BaseLumenAgent):
                 "response_model": make_sql_model,
                 "template": PROMPTS_DIR / "SQLAgent" / "main.jinja2",
             },
+            "clean_data": {"response_model": SQLCleanup, "template": PROMPTS_DIR / "SQLAgent" / "clean_data.jinja2"},
             "revise_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "SQLAgent" / "revise_output.jinja2"},
         }
     )
@@ -505,8 +556,13 @@ class SQLAgent(BaseLumenAgent):
         step: ChatStep,
         max_retries: int = 2,
         discovery_context: str | None = None,
-    ) -> str:
-        """Validate and potentially fix SQL query."""
+    ) -> tuple[str, pd.DataFrame | None]:
+        """Validate and potentially fix SQL query.
+
+        Returns the validated SQL alongside the frame the validating execution
+        already produced, so callers can profile the result without paying for a
+        second query. The frame is None only when every attempt failed.
+        """
         # Clean SQL
         try:
             sql_query = clean_sql(sql_query, source.dialect, prettify=True)
@@ -517,9 +573,9 @@ class SQLAgent(BaseLumenAgent):
         for i in range(max_retries):
             try:
                 step.stream(f"\n\n`{expr_slug}`\n```sql\n{sql_query}\n```")
-                source.execute(sql_query)
+                result = source.execute(sql_query)
                 step.stream("\n\n✅ SQL validation successful")
-                return sql_query
+                return sql_query, result
             except Exception as e:
                 if i == max_retries - 1:
                     step.stream(f"\n\n❌ SQL validation failed after {max_retries} attempts: {e}")
@@ -536,7 +592,98 @@ class SQLAgent(BaseLumenAgent):
                     discovery_context=discovery_context
                 )
                 sql_query = clean_sql(retry_result, source.dialect, prettify=True)
-        return sql_query
+        return sql_query, None
+
+    @staticmethod
+    def _profile_source_rows(source: BaseSQLSource, tables: list[str]) -> list[str]:
+        """
+        Profile a sample of the rows feeding an aggregating query.
+
+        Only called when the result itself cannot show the problem (see
+        :func:`sql_contains_aggregates`), because each table costs one extra
+        query. Findings are prefixed with their table so the rewriting prompt
+        knows the fix belongs before the aggregation rather than in the output
+        columns.
+
+        Example: for a query grouping ``sales``, this runs
+        ``SELECT * FROM sales LIMIT 5000``, lints those rows, and returns
+        findings such as "In the source rows of `sales` (before aggregation):
+        Placeholder numbers [-9999, ...] appear as data in "revenue"".
+        """
+        findings = []
+        for table in tables[:SOURCE_PROFILE_MAX_TABLES]:
+            try:
+                # get_sql_expr turns a table name into the SELECT that defines it
+                # (for a CSV-backed table that is a read_csv call, not a name),
+                # and SQLLimit appends the row cap in the source's own dialect.
+                limited = SQLLimit(
+                    limit=PROFILE_SAMPLE_ROWS, write=source.dialect, pretty=False, identify=False
+                ).apply(source.get_sql_expr(table))
+                sample = source.execute(limited)
+            except Exception as e:
+                # A source that cannot be sampled simply contributes nothing;
+                # the query it feeds has already run successfully.
+                log_debug(f"Could not profile source table {table!r}: {e}")
+                continue
+            findings.extend(
+                f"In the source rows of `{table}` (before aggregation): {finding}"
+                for finding in lint_data(sample, actionable_only=True)
+            )
+        return findings
+
+    async def _clean_data_pass(
+        self,
+        sql_query: str,
+        findings: list[str],
+        original_rows: int,
+        source: BaseSQLSource,
+        messages: list[Message],
+        context: TContext,
+        step: ChatStep,
+    ) -> str:
+        """Rewrite ``sql_query`` to fix the data-quality problems in ``findings``.
+
+        The second half of the two-shot: the first pass answered the question,
+        this one cleans the answer. Returns the original query whenever the
+        rewrite is absent, identical, broken or empty, because a query that
+        already ran is worth more than a cleaner one that does not.
+        """
+        try:
+            cleanup = await self._invoke_prompt(
+                "clean_data", messages, context, sql=sql_query,
+                findings=findings, dialect=source.dialect,
+            )
+            cleaned = clean_sql(cleanup.query, source.dialect, prettify=True)
+        except Exception as e:
+            # Deliberately swallowed rather than raised: _render_execute_query is
+            # wrapped in retry_llm_output, so letting this escape would throw away
+            # a query that already answered the question and regenerate from zero.
+            step.stream(f"\n\n⚠️ Could not clean the query, keeping the original: {e}")
+            return sql_query
+        if cleaned == sql_query:
+            step.stream("\n\n✅ Query already handles the findings; left unchanged")
+            return sql_query
+
+        try:
+            cleaned_result = source.execute(cleaned)
+        except Exception as e:
+            step.stream(f"\n\n⚠️ Cleaned query failed, keeping the original: {e}")
+            return sql_query
+
+        # An empty result means the cleaning filtered away the answer itself.
+        # Silently returning nothing is worse than returning dirty data.
+        if cleaned_result.empty:
+            step.stream("\n\n⚠️ Cleaned query returned no rows, keeping the original")
+            return sql_query
+
+        # Always show the row delta: cleaning that quietly discards half the
+        # answer must be visible to whoever reads the result.
+        step.stream(
+            f"\n\n🧹 Cleaned the query: {cleanup.chain_of_thought}"
+            f"\n\n```sql\n{cleaned}\n```"
+            f"\n\n{original_rows} rows before cleaning, {len(cleaned_result)} after."
+        )
+        return cleaned
 
     async def _execute_query(
         self, source: BaseSQLSource, context: TContext, expr_slug: str, sql_query: str, tables: list[str],
@@ -771,10 +918,38 @@ class SQLAgent(BaseLumenAgent):
             sql_query = output.query.strip()
             expr_slug = output.table_slug.strip()
 
-            validated_sql = await self._validate_sql(
+            validated_sql, preview = await self._validate_sql(
                 context, sql_query, expr_slug, source, messages,
                 step, discovery_context=discovery_context
             )
+
+            # Profile the frame validation already fetched, so the user sees what
+            # is wrong with the result even when no rewrite follows.
+            findings: list[str] = []
+            actionable: list[str] = []
+            if preview is not None:
+                findings = lint_data(preview)
+                # Only the actionable subset justifies (and is shown to) the
+                # rewriting pass. Constant columns and outliers are reported but
+                # must not provoke a query rewrite.
+                if self.clean_data:
+                    actionable = lint_data(preview, actionable_only=True)
+
+            if self.clean_data and sql_contains_aggregates(validated_sql, source.dialect):
+                source_findings = self._profile_source_rows(source, tables)
+                findings += source_findings
+                actionable += source_findings
+
+            if findings:
+                stream_details(
+                    "\n".join(f"- {finding}" for finding in findings),
+                    step, title="Data quality findings", auto=False
+                )
+            if actionable:
+                validated_sql = await self._clean_data_pass(
+                    validated_sql, actionable, 0 if preview is None else len(preview),
+                    source, messages, context, step
+                )
 
             # Only materialize for DuckDB sources
             should_materialize = isinstance(source, DuckDBSource)
