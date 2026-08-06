@@ -60,7 +60,9 @@ Legends appear when mapping data to `color`, `size`, or `shape` in encoding.
 
 **Stack order**: A stacked mark orders its segments alphabetically unless told otherwise. Add a numeric field via `calculate` and map it to the `order` channel to get a deliberate sequence.
 
-**Diverging colormaps**: When values straddle meaningful center (anomalies, deviations, above/below threshold) or diverging requested, pick diverging scheme and anchor center with `domainMid`: `scale: {scheme: redblue, domainMid: 0}`. Without it, neutral color sits at data midpoint and one side dominates. Schemes: `redblue`, `blueorange`, `redyellowblue`, `purplegreen`. Only when the values actually cross that center: a column running 6 to 15 never reaches a `domainMid` of 0, so half the ramp goes unused and every value collapses into a narrow band of near-identical color. Values all on one side of zero want a sequential scheme instead.
+**Diverging colormaps**: When values straddle meaningful center (anomalies, deviations, above/below threshold) or diverging requested, pick diverging scheme and anchor center with `domainMid`: `scale: {scheme: redblue, domainMid: 0}`. Without it, neutral color sits at data midpoint and one side dominates. Schemes: `redblue`, `blueorange`, `redyellowblue`, `purplegreen`. Only when the values actually cross that center: when they all sit on one side of the `domainMid`, half the ramp goes unused and the column collapses into a narrow band of near-identical color, so reach for a sequential scheme instead.
+
+**Choropleth layering**: A geoshape draws the geometry in its own `data`, so a table joined to external boundaries puts the boundary file in `data` and names the table inside `transform.lookup.from.data` — the one chart where `data: {name: ...}` is wrong. Layer the boundaries twice: an unfilled base layer, then the joined layer above it. A region with no matching row is dropped rather than drawn, so without the base layer it becomes a hole. Leave the base layer unencoded, since the joined columns do not exist in it.
 
 **Encoding follows intent**: sorted bars for a ranking, line for a trend, slope or dumbbell for before/after, binned bars or `mark: rect` for a distribution. Keep the one mark that makes the point and drop the rest.
 
@@ -271,18 +273,9 @@ encoding:
     - {field: properties.<VALUE_COLUMN>, type: quantitative, format: ".2f"}
 ```
 
-Choropleth map, when the table has no geometry and must be joined to external boundaries.
-A geoshape mark draws whatever geometry is in `data`, so here `data` is the boundary file
-rather than the table; this is the one chart where `data: {name: ...}` is wrong, because a
-table has no geometry and the map would render empty. The table is named inside
-`transform.lookup.from.data`, and the join reads the boundaries first, so `lookup` is the
-field on the boundaries and `key` is the matching column in the table.
-
-Draw the boundaries twice: an unfilled base layer so regions the table does not cover
-still appear, then the joined layer on top. Without the base layer a region with no
-matching row is dropped rather than drawn, and a table covering 15 states leaves the
-other 35 as holes in the map. The base layer is outlined rather than filled so it reads
-on either a light or a dark theme.
+Choropleth map, when the table has no geometry and must be joined to external boundaries
+(see **Choropleth layering** above). The join reads the boundaries first, so `lookup` is
+the field on the boundaries and `key` is the matching column in the table.
 ```yaml
 projection: {type: albersUsa}
 layer:
@@ -290,8 +283,6 @@ layer:
       url: "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"
       format: {type: topojson, feature: states}
     mark: {type: geoshape, fill: null, stroke: "#888888", strokeWidth: 0.5}
-    # no encoding: the joined columns do not exist in this layer, so a tooltip
-    # naming them would show blanks over every region the table does not cover
   - data:
       url: "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"
       format: {type: topojson, feature: states}
@@ -299,7 +290,7 @@ layer:
       - lookup: "properties.name"        # field on the boundaries
         from:
           data: {name: {{ memory['table'] }}}  # the table, exactly as named above
-          key: <TABLE_COLUMN_HOLDING_THE_STATE_NAME>   # must match a real column
+          key: <TABLE_JOIN_COLUMN>                     # must match a real column
           fields: [<VALUE_COLUMN>, <TOOLTIP_COLUMN>]   # columns to pull in, real names
     mark: {type: geoshape, stroke: "white", strokeWidth: 0.5}
     encoding:
