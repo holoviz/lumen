@@ -6,7 +6,10 @@ Generate complete, effective Vega-Lite visualizations clearly communicating data
 ## Essential Structure
 
 Every visualization must:
-- Use `data: {name: {{ memory['table'] }}}` with exact column names from source
+- Use `data: {name: {{ memory['table'] }}}` with exact column names from source. The one
+  exception is a choropleth joined to external boundaries, where `data` must be the
+  boundary file and the table is named inside `transform.lookup.from` instead; see the
+  choropleth example below.
 - Wrap all marks in `layer` array, each with own `mark` and `encoding`
 - Focus on ONE primary metric or relationship per chart
 - If a categorical column separates the rows into more than one series, split on it with `color` (or `detail` when no legend is wanted). A `line` or `area` mark with no split joins points across series and produces a zigzag: two products sharing the same months, drawn as one line, alternate between them.
@@ -268,23 +271,31 @@ encoding:
     - {field: properties.<VALUE_COLUMN>, type: quantitative, format: ".2f"}
 ```
 
-Choropleth map, when the table has no geometry and must be joined to external boundaries:
+Choropleth map, when the table has no geometry and must be joined to external boundaries.
+A geoshape mark draws whatever geometry is in `data`, so here `data` is the boundary file
+rather than the table; this is the one chart where `data: {name: ...}` is wrong, because a
+table has no geometry and the map would render empty. The table is named inside
+`transform.lookup.from.data`, and the join reads the boundaries first, so `lookup` is the
+field on the boundaries and `key` is the matching column in the table.
 ```yaml
 data:
   url: "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"
   format: {type: topojson, feature: states}
 transform:
-  - lookup: "properties.name"
+  - lookup: "properties.name"        # field on the boundaries
     from:
-      data: {name: {{ memory['table'] }}}  # the table name, exactly as given above
-      key: State
-      fields: [Total_Students]
+      data: {name: {{ memory['table'] }}}  # the table, exactly as named above
+      key: <TABLE_COLUMN_HOLDING_THE_STATE_NAME>   # must match a real column
+      fields: [<VALUE_COLUMN>, <TOOLTIP_COLUMN>]   # columns to pull in, real names
 mark: geoshape
 projection: {type: albersUsa}
 encoding:
-  color: {field: Total_Students, type: quantitative, scale: {scheme: blues}, legend: {title: "Total Students"}}
+  color: {field: <VALUE_COLUMN>, type: quantitative, scale: {scheme: blues}, legend: {title: "<VALUE_COLUMN>"}}
   tooltip:
     - {field: "properties.name", type: nominal, title: "State"}
-    - {field: Total_Students, type: quantitative, format: ",", title: "Total Students"}
+    - {field: <VALUE_COLUMN>, type: quantitative, format: ","}
+    - {field: <TOOLTIP_COLUMN>, type: quantitative, format: ","}
 ```
+Only the columns listed in `fields` exist after the join, so every `field` in `encoding`
+must be one of them (or `properties.<something>` from the boundaries).
 {% endblock %}
