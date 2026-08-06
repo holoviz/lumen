@@ -276,7 +276,7 @@ data:
 transform:
   - lookup: "properties.name"
     from:
-      data: {name: <TABLE_NAME>}
+      data: {name: {{ memory['table'] }}}  # the table name, exactly as given above
       key: State
       fields: [Total_Students]
 mark: geoshape
