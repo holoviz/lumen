@@ -1576,12 +1576,25 @@ class DeckGLView(View):
         # Deep copy to avoid modifying self.spec when injecting data
         spec = copy.deepcopy(self.spec)
 
-        # Inject data into layers
-        if 'layers' in spec:
+        # Inject data into layers that do not carry their own
+        pending = [layer for layer in spec.get('layers', []) if 'data' not in layer]
+        if pending:
+            # A GeoJsonLayer draws the geometry in its data. Handed plain records
+            # it renders an empty basemap and reports nothing, so the only symptom
+            # is a blank map; deck.gl cannot join boundaries by name, which is what
+            # a table of place names would need. Checked before serializing, so a
+            # rejected spec does not pay to convert the frame first.
+            if not is_geodataframe(df) and any(
+                layer.get('@@type') == 'GeoJsonLayer' for layer in pending
+            ):
+                raise ValueError(
+                    "A GeoJsonLayer needs geometry to draw, but this table has none. "
+                    "Either supply a table with a geometry column, or render place "
+                    "names as a Vega-Lite choropleth, which joins boundaries by name."
+                )
             data = self._layer_data(df)
-            for layer in spec['layers']:
-                if 'data' not in layer:
-                    layer['data'] = data
+            for layer in pending:
+                layer['data'] = data
 
         return dict(object=spec, tooltips=self.tooltips, **self.kwargs)
 
