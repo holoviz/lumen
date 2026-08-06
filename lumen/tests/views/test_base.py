@@ -629,3 +629,45 @@ def test_deckgl_view_geometry_with_datetime_column():
     data = DeckGLView._layer_data(gdf)
     assert data['features'][0]['properties']['date'].startswith('2026-06-15')
     json.dumps(data)  # must be serializable
+
+
+def test_deckgl_geojson_layer_without_geometry_raises(set_root):
+    """A GeoJsonLayer handed plain records draws an empty basemap and reports
+    nothing, so the mismatch has to surface as an error instead."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = {
+        "layers": [{"@@type": "GeoJsonLayer", "id": "choropleth"}],
+        "initialViewState": {"latitude": 39.5, "longitude": -98.35, "zoom": 3},
+    }
+
+    with pytest.raises(ValueError, match="needs geometry"):
+        DeckGLView(pipeline=pipeline, spec=spec)._get_params()
+
+
+def test_deckgl_non_geojson_layers_still_receive_records(set_root):
+    """Only GeoJsonLayer needs geometry; other layers take records as before."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = {
+        "layers": [{"@@type": "ScatterplotLayer", "id": "points"}],
+        "initialViewState": {"latitude": 39.5, "longitude": -98.35, "zoom": 3},
+    }
+
+    params = DeckGLView(pipeline=pipeline, spec=spec)._get_params()
+
+    assert params["object"]["layers"][0]["data"] == pipeline.data.to_dict(orient="records")
+
+
+def test_deckgl_geojson_layer_with_its_own_data_is_left_alone(set_root):
+    """A layer that already carries data is not the injection path."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = {
+        "layers": [{"@@type": "GeoJsonLayer", "id": "boundaries", "data": "https://example.com/x.json"}],
+        "initialViewState": {"latitude": 39.5, "longitude": -98.35, "zoom": 3},
+    }
+
+    params = DeckGLView(pipeline=pipeline, spec=spec)._get_params()
+
+    assert params["object"]["layers"][0]["data"] == "https://example.com/x.json"
