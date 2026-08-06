@@ -149,3 +149,63 @@ def test_palette_reaches_the_compiled_vega_scale():
     compiled = vl_convert.vegalite_to_vega(spec)
 
     assert compiled["config"]["range"]["category"] == category_palette()
+
+
+class TestGeoshapeGeometryValidation:
+    """A geoshape over a table with no geometry compiles cleanly and draws nothing,
+    so validation has to reject it or the only symptom is an empty canvas."""
+
+    BOUNDARIES = "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"
+
+    def test_rejects_geoshape_bound_to_the_table(self):
+        spec = {
+            "data": {"name": "avg_pm25_by_state"},
+            "projection": {"type": "albersUsa"},
+            "layer": [{
+                "mark": {"type": "geoshape", "stroke": "white"},
+                "encoding": {"color": {"field": "avg_pm25", "type": "quantitative"}},
+            }],
+            "transform": [{
+                "lookup": "properties.name",
+                "from": {
+                    "data": {"url": self.BOUNDARIES, "format": {"type": "topojson", "feature": "states"}},
+                    "key": "properties.name",
+                    "fields": ["state"],
+                },
+            }],
+        }
+        with pytest.raises(RuntimeError, match="carries no geometry"):
+            VegaLiteEditor.validate_spec(spec)
+
+    def test_accepts_boundaries_as_primary_data(self):
+        spec = {
+            "data": {"url": self.BOUNDARIES, "format": {"type": "topojson", "feature": "states"}},
+            "transform": [{
+                "lookup": "properties.name",
+                "from": {"data": {"name": "t"}, "key": "state", "fields": ["avg_pm25"]},
+            }],
+            "mark": "geoshape",
+            "projection": {"type": "albersUsa"},
+            "encoding": {"color": {"field": "avg_pm25", "type": "quantitative"}},
+        }
+        VegaLiteEditor.validate_spec(spec)
+
+    def test_accepts_omitted_data_for_own_geometry(self):
+        """The table's own geometry is injected at render time, so the spec has no data."""
+        spec = {
+            "mark": "geoshape",
+            "projection": {"type": "naturalEarth1"},
+            "encoding": {"color": {"field": "properties.avg_pm25", "type": "quantitative"}},
+        }
+        VegaLiteEditor.validate_spec(spec)
+
+    def test_leaves_non_geographic_charts_alone(self):
+        spec = {
+            "data": {"name": "t"},
+            "mark": "bar",
+            "encoding": {
+                "x": {"field": "state", "type": "nominal"},
+                "y": {"field": "avg_pm25", "type": "quantitative"},
+            },
+        }
+        VegaLiteEditor.validate_spec(spec)
