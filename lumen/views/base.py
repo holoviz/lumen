@@ -1462,6 +1462,39 @@ class VegaLiteView(View):
 
     _extension = 'vega'
 
+    @classmethod
+    def _retarget_lookup_datasets(cls, node: Any, known: set[str], table: str) -> None:
+        """
+        Point every ``lookup`` transform at a dataset that actually exists, in place.
+
+        A choropleth joins the table onto map outlines, so the table travels as a
+        named dataset and the lookup has to name it exactly. Nothing validates
+        that name: Vega-Lite's schema only checks structure, so a spec naming a
+        dataset that was never registered passes every server-side check and then
+        renders an empty canvas with no error at all. Only one table is ever
+        registered per view, so an unresolvable name has exactly one correct value.
+
+        Lookups carrying their own ``values`` or ``url`` are self-contained and
+        left alone; only a dangling ``name`` is repointed.
+        """
+        if isinstance(node, list):
+            for item in node:
+                cls._retarget_lookup_datasets(item, known, table)
+            return
+        if not isinstance(node, dict):
+            return
+
+        source = node.get("from") if "lookup" in node else None
+        data = source.get("data") if isinstance(source, dict) else None
+        if (
+            isinstance(data, dict) and not {"values", "url"} & data.keys()
+            and data.get("name") not in known
+        ):
+            data["name"] = table
+
+        for value in node.values():
+            cls._retarget_lookup_datasets(value, known, table)
+
     def _get_params(self) -> dict[str, Any]:
         df = self.get_data()
         spec_data = self.spec.get('data', {})
@@ -1471,9 +1504,13 @@ class VegaLiteView(View):
 
         if 'url' in spec_data or 'inline' in spec_data:
             # If data already has url/inline data, make pipeline data available as named dataset
-            # Don't inject into primary data, use datasets instead
-            datasets = self.spec.get('datasets', {})
+            # Don't inject into primary data, use datasets instead.
+            # Copied rather than mutated in place: self.spec is reused across
+            # renders, and growing its datasets dict would leak frames.
+            datasets = dict(self.spec.get('datasets', {}))
             datasets[self.pipeline.table] = df
+            spec = copy.deepcopy({k: v for k, v in spec.items() if k != 'datasets'})
+            self._retarget_lookup_datasets(spec, set(datasets), self.pipeline.table)
             encoded = dict(spec, datasets=datasets)
         elif is_geodataframe(df):
             # geoshape consumes a FeatureCollection, so fields then live under
