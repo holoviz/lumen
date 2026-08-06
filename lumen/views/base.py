@@ -1463,6 +1463,24 @@ class VegaLiteView(View):
     _extension = 'vega'
 
     @classmethod
+    def _declares_own_data(cls, node: Any) -> bool:
+        """Whether the spec supplies its own data (a url or inline values) anywhere.
+
+        A layered choropleth carries the boundary url on each layer rather than at
+        the top level, so looking only at ``spec['data']`` would miss it, inject
+        the table as primary data, and leave the lookup's named dataset
+        unregistered -- which renders the boundaries with every value null.
+        """
+        if isinstance(node, list):
+            return any(cls._declares_own_data(item) for item in node)
+        if not isinstance(node, dict):
+            return False
+        data = node.get("data")
+        if isinstance(data, dict) and ("url" in data or "inline" in data):
+            return True
+        return any(cls._declares_own_data(value) for value in node.values())
+
+    @classmethod
     def _retarget_lookup_datasets(cls, node: Any, known: set[str], table: str) -> None:
         """
         Point every ``lookup`` transform at a dataset that actually exists, in place.
@@ -1502,9 +1520,10 @@ class VegaLiteView(View):
         if "$schema" not in spec:
             spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
 
-        if 'url' in spec_data or 'inline' in spec_data:
-            # If data already has url/inline data, make pipeline data available as named dataset
-            # Don't inject into primary data, use datasets instead.
+        if self._declares_own_data(spec):
+            # The spec brings its own data (e.g. map boundaries), so the pipeline
+            # travels as a named dataset for lookups to join against rather than
+            # replacing it.
             # Copied rather than mutated in place: self.spec is reused across
             # renders, and growing its datasets dict would leak frames.
             datasets = dict(self.spec.get('datasets', {}))
