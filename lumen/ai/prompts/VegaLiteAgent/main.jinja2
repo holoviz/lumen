@@ -277,24 +277,35 @@ rather than the table; this is the one chart where `data: {name: ...}` is wrong,
 table has no geometry and the map would render empty. The table is named inside
 `transform.lookup.from.data`, and the join reads the boundaries first, so `lookup` is the
 field on the boundaries and `key` is the matching column in the table.
+
+Draw the boundaries twice: an unfilled base layer so regions the table does not cover
+still appear, then the joined layer on top. Without the base layer a region with no
+matching row is dropped rather than drawn, and a table covering 15 states leaves the
+other 35 as holes in the map. The base layer is outlined rather than filled so it reads
+on either a light or a dark theme.
 ```yaml
-data:
-  url: "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"
-  format: {type: topojson, feature: states}
-transform:
-  - lookup: "properties.name"        # field on the boundaries
-    from:
-      data: {name: {{ memory['table'] }}}  # the table, exactly as named above
-      key: <TABLE_COLUMN_HOLDING_THE_STATE_NAME>   # must match a real column
-      fields: [<VALUE_COLUMN>, <TOOLTIP_COLUMN>]   # columns to pull in, real names
-mark: geoshape
 projection: {type: albersUsa}
-encoding:
-  color: {field: <VALUE_COLUMN>, type: quantitative, scale: {scheme: blues}, legend: {title: "<VALUE_COLUMN>"}}
-  tooltip:
-    - {field: "properties.name", type: nominal, title: "State"}
-    - {field: <VALUE_COLUMN>, type: quantitative, format: ","}
-    - {field: <TOOLTIP_COLUMN>, type: quantitative, format: ","}
+layer:
+  - data:
+      url: "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"
+      format: {type: topojson, feature: states}
+    mark: {type: geoshape, fill: null, stroke: "#888888", strokeWidth: 0.5}
+  - data:
+      url: "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"
+      format: {type: topojson, feature: states}
+    transform:
+      - lookup: "properties.name"        # field on the boundaries
+        from:
+          data: {name: {{ memory['table'] }}}  # the table, exactly as named above
+          key: <TABLE_COLUMN_HOLDING_THE_STATE_NAME>   # must match a real column
+          fields: [<VALUE_COLUMN>, <TOOLTIP_COLUMN>]   # columns to pull in, real names
+    mark: {type: geoshape, stroke: "white", strokeWidth: 0.5}
+    encoding:
+      color: {field: <VALUE_COLUMN>, type: quantitative, scale: {scheme: blues}, legend: {title: "<VALUE_COLUMN>"}}
+      tooltip:
+        - {field: "properties.name", type: nominal, title: "State"}
+        - {field: <VALUE_COLUMN>, type: quantitative, format: ","}
+        - {field: <TOOLTIP_COLUMN>, type: quantitative, format: ","}
 ```
 Only the columns listed in `fields` exist after the join, so every `field` in `encoding`
 must be one of them (or `properties.<something>` from the boundaries).
