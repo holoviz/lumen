@@ -410,6 +410,20 @@ def test_vega_lookup_dataset_name_is_preserved_when_correct(set_root):
     assert final_spec["transform"][0]["from"]["data"]["name"] == "test"
 
 
+def test_vega_lookup_naming_another_registered_dataset_is_left_alone(set_root):
+    """A spec may declare its own datasets; a lookup resolving to one of those is
+    already correct and must not be dragged onto the pipeline table."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = _choropleth_spec("populations")
+    spec["datasets"] = {"populations": [{"A": "a", "B": 1}]}
+
+    final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
+
+    assert final_spec["transform"][0]["from"]["data"]["name"] == "populations"
+    assert set(final_spec["datasets"]) == {"populations", "test"}
+
+
 def test_vega_lookup_dataset_name_is_repointed_when_wrong(set_root):
     """A lookup naming a dataset that was never registered renders an empty map
     and raises nothing, so the only correct table name is substituted in."""
@@ -438,15 +452,18 @@ def test_vega_lookup_with_its_own_data_is_left_alone(set_root):
 
 
 def test_vega_datasets_are_not_accumulated_across_renders(set_root):
-    """self.spec is reused between renders, so registering into it would leak frames."""
+    """self.spec is reused between renders, so registering into its own datasets
+    dict would leave a DataFrame behind on the caller's spec."""
     set_root(str(Path(__file__).parent.parent))
     pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
-    view = VegaLiteView(spec=_choropleth_spec("test"), pipeline=pipeline)
+    spec = _choropleth_spec("test")
+    spec["datasets"] = {"populations": [{"A": "a", "B": 1}]}
+    view = VegaLiteView(spec=spec, pipeline=pipeline)
 
     view.get_panel()
     view.get_panel()
 
-    assert "datasets" not in view.spec
+    assert set(view.spec["datasets"]) == {"populations"}
 
 
 def test_vega_defaults_schema(set_root):
