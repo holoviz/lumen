@@ -384,6 +384,71 @@ def test_vega_datasets(set_root):
     pd.testing.assert_frame_equal(final_spec["datasets"]["test"], pipeline.data)
 
 
+def _choropleth_spec(dataset_name):
+    """A choropleth joining the table onto US state outlines via a lookup."""
+    return {
+        "data": {
+            "url": "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json",
+            "format": {"type": "topojson", "feature": "states"},
+        },
+        "transform": [{
+            "lookup": "properties.name",
+            "from": {"data": {"name": dataset_name}, "key": "A", "fields": ["B"]},
+        }],
+        "mark": "geoshape",
+        "projection": {"type": "albersUsa"},
+        "encoding": {"color": {"field": "B", "type": "quantitative"}},
+    }
+
+
+def test_vega_lookup_dataset_name_is_preserved_when_correct(set_root):
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+
+    final_spec = VegaLiteView(spec=_choropleth_spec("test"), pipeline=pipeline).get_panel().object
+
+    assert final_spec["transform"][0]["from"]["data"]["name"] == "test"
+
+
+def test_vega_lookup_dataset_name_is_repointed_when_wrong(set_root):
+    """A lookup naming a dataset that was never registered renders an empty map
+    and raises nothing, so the only correct table name is substituted in."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = _choropleth_spec("some_table_that_was_never_registered")
+
+    final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
+
+    assert final_spec["transform"][0]["from"]["data"]["name"] == "test"
+    assert "test" in final_spec["datasets"]
+    # the caller's spec must not be edited underneath them
+    assert spec["transform"][0]["from"]["data"]["name"] == "some_table_that_was_never_registered"
+
+
+def test_vega_lookup_with_its_own_data_is_left_alone(set_root):
+    """A lookup carrying inline values is self-contained and must not be repointed."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = _choropleth_spec("irrelevant")
+    spec["transform"][0]["from"]["data"] = {"values": [{"A": 1, "B": 2}]}
+
+    final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
+
+    assert final_spec["transform"][0]["from"]["data"] == {"values": [{"A": 1, "B": 2}]}
+
+
+def test_vega_datasets_are_not_accumulated_across_renders(set_root):
+    """self.spec is reused between renders, so registering into it would leak frames."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    view = VegaLiteView(spec=_choropleth_spec("test"), pipeline=pipeline)
+
+    view.get_panel()
+    view.get_panel()
+
+    assert "datasets" not in view.spec
+
+
 def test_vega_defaults_schema(set_root):
     set_root(str(Path(__file__).parent.parent))
     source = FileSource(tables={'test': 'sources/test.csv'})
