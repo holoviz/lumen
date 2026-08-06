@@ -384,6 +384,120 @@ def test_vega_datasets(set_root):
     pd.testing.assert_frame_equal(final_spec["datasets"]["test"], pipeline.data)
 
 
+def _choropleth_spec(dataset_name):
+    """A choropleth joining the table onto US state outlines via a lookup."""
+    return {
+        "data": {
+            "url": "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json",
+            "format": {"type": "topojson", "feature": "states"},
+        },
+        "transform": [{
+            "lookup": "properties.name",
+            "from": {"data": {"name": dataset_name}, "key": "A", "fields": ["B"]},
+        }],
+        "mark": "geoshape",
+        "projection": {"type": "albersUsa"},
+        "encoding": {"color": {"field": "B", "type": "quantitative"}},
+    }
+
+
+def test_vega_lookup_dataset_name_is_preserved_when_correct(set_root):
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+
+    final_spec = VegaLiteView(spec=_choropleth_spec("test"), pipeline=pipeline).get_panel().object
+
+    assert final_spec["transform"][0]["from"]["data"]["name"] == "test"
+
+
+def test_vega_lookup_naming_another_registered_dataset_is_left_alone(set_root):
+    """A spec may declare its own datasets; a lookup resolving to one of those is
+    already correct and must not be dragged onto the pipeline table."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = _choropleth_spec("populations")
+    spec["datasets"] = {"populations": [{"A": "a", "B": 1}]}
+
+    final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
+
+    assert final_spec["transform"][0]["from"]["data"]["name"] == "populations"
+    assert set(final_spec["datasets"]) == {"populations", "test"}
+
+
+def test_vega_lookup_dataset_name_is_repointed_when_wrong(set_root):
+    """A lookup naming a dataset that was never registered renders an empty map
+    and raises nothing, so the only correct table name is substituted in."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = _choropleth_spec("some_table_that_was_never_registered")
+
+    final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
+
+    assert final_spec["transform"][0]["from"]["data"]["name"] == "test"
+    assert "test" in final_spec["datasets"]
+    # the caller's spec must not be edited underneath them
+    assert spec["transform"][0]["from"]["data"]["name"] == "some_table_that_was_never_registered"
+
+
+def test_vega_lookup_with_its_own_data_is_left_alone(set_root):
+    """A lookup carrying inline values is self-contained and must not be repointed."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = _choropleth_spec("irrelevant")
+    spec["transform"][0]["from"]["data"] = {"values": [{"A": 1, "B": 2}]}
+
+    final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
+
+    assert final_spec["transform"][0]["from"]["data"] == {"values": [{"A": 1, "B": 2}]}
+
+
+def test_vega_datasets_are_not_accumulated_across_renders(set_root):
+    """self.spec is reused between renders, so registering into its own datasets
+    dict would leave a DataFrame behind on the caller's spec."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = _choropleth_spec("test")
+    spec["datasets"] = {"populations": [{"A": "a", "B": 1}]}
+    view = VegaLiteView(spec=spec, pipeline=pipeline)
+
+    view.get_panel()
+    view.get_panel()
+
+    assert set(view.spec["datasets"]) == {"populations"}
+
+
+def test_vega_layered_choropleth_registers_the_named_dataset(set_root):
+    """A layered choropleth carries the boundary url on each layer, not at the top
+    level, so registration has to look deeper or the lookup joins nothing."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    boundaries = {
+        "url": "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json",
+        "format": {"type": "topojson", "feature": "states"},
+    }
+    spec = {
+        "projection": {"type": "albersUsa"},
+        "layer": [
+            {"data": boundaries, "mark": {"type": "geoshape", "fill": None}},
+            {
+                "data": boundaries,
+                "transform": [{
+                    "lookup": "properties.name",
+                    "from": {"data": {"name": "test"}, "key": "A", "fields": ["B"]},
+                }],
+                "mark": "geoshape",
+                "encoding": {"color": {"field": "B", "type": "quantitative"}},
+            },
+        ],
+    }
+
+    final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
+
+    assert "test" in final_spec["datasets"]
+    # the table must not also replace the boundaries as primary data
+    assert "data" not in final_spec
+
+
 def test_vega_defaults_schema(set_root):
     set_root(str(Path(__file__).parent.parent))
     source = FileSource(tables={'test': 'sources/test.csv'})
@@ -547,3 +661,45 @@ def test_deckgl_view_geometry_with_datetime_column():
     data = DeckGLView._layer_data(gdf)
     assert data['features'][0]['properties']['date'].startswith('2026-06-15')
     json.dumps(data)  # must be serializable
+
+
+def test_deckgl_geojson_layer_without_geometry_raises(set_root):
+    """A GeoJsonLayer handed plain records draws an empty basemap and reports
+    nothing, so the mismatch has to surface as an error instead."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = {
+        "layers": [{"@@type": "GeoJsonLayer", "id": "choropleth"}],
+        "initialViewState": {"latitude": 39.5, "longitude": -98.35, "zoom": 3},
+    }
+
+    with pytest.raises(ValueError, match="needs geometry"):
+        DeckGLView(pipeline=pipeline, spec=spec)._get_params()
+
+
+def test_deckgl_non_geojson_layers_still_receive_records(set_root):
+    """Only GeoJsonLayer needs geometry; other layers take records as before."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = {
+        "layers": [{"@@type": "ScatterplotLayer", "id": "points"}],
+        "initialViewState": {"latitude": 39.5, "longitude": -98.35, "zoom": 3},
+    }
+
+    params = DeckGLView(pipeline=pipeline, spec=spec)._get_params()
+
+    assert params["object"]["layers"][0]["data"] == pipeline.data.to_dict(orient="records")
+
+
+def test_deckgl_geojson_layer_with_its_own_data_is_left_alone(set_root):
+    """A layer that already carries data is not the injection path."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = {
+        "layers": [{"@@type": "GeoJsonLayer", "id": "boundaries", "data": "https://example.com/x.json"}],
+        "initialViewState": {"latitude": 39.5, "longitude": -98.35, "zoom": 3},
+    }
+
+    params = DeckGLView(pipeline=pipeline, spec=spec)._get_params()
+
+    assert params["object"]["layers"][0]["data"] == "https://example.com/x.json"

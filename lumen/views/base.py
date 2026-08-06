@@ -1462,6 +1462,57 @@ class VegaLiteView(View):
 
     _extension = 'vega'
 
+    @classmethod
+    def _declares_own_data(cls, node: Any) -> bool:
+        """Whether the spec supplies its own data (a url or inline values) anywhere.
+
+        A layered choropleth carries the boundary url on each layer rather than at
+        the top level, so looking only at ``spec['data']`` would miss it, inject
+        the table as primary data, and leave the lookup's named dataset
+        unregistered -- which renders the boundaries with every value null.
+        """
+        if isinstance(node, list):
+            return any(cls._declares_own_data(item) for item in node)
+        if not isinstance(node, dict):
+            return False
+        data = node.get("data")
+        if isinstance(data, dict) and ("url" in data or "inline" in data):
+            return True
+        return any(cls._declares_own_data(value) for value in node.values())
+
+    @classmethod
+    def _retarget_lookup_datasets(cls, node: Any, known: set[str], table: str) -> None:
+        """
+        Point every ``lookup`` transform at a dataset that actually exists, in place.
+
+        A choropleth joins the table onto map outlines, so the table travels as a
+        named dataset and the lookup has to name it exactly. Nothing validates
+        that name: Vega-Lite's schema only checks structure, so a spec naming a
+        dataset that was never registered passes every server-side check and then
+        renders an empty canvas with no error at all. Only one table is ever
+        registered per view, so an unresolvable name has exactly one correct value.
+
+        Lookups carrying their own ``values`` or ``url`` are self-contained and
+        left alone; only a dangling ``name`` is repointed.
+        """
+        if isinstance(node, list):
+            for item in node:
+                cls._retarget_lookup_datasets(item, known, table)
+            return
+        if not isinstance(node, dict):
+            return
+
+        source = node.get("from") if "lookup" in node else None
+        data = source.get("data") if isinstance(source, dict) else None
+        if (
+            isinstance(data, dict) and not {"values", "url"} & data.keys()
+            and data.get("name") not in known
+        ):
+            data["name"] = table
+
+        for value in node.values():
+            cls._retarget_lookup_datasets(value, known, table)
+
     def _get_params(self) -> dict[str, Any]:
         df = self.get_data()
         spec_data = self.spec.get('data', {})
@@ -1469,11 +1520,16 @@ class VegaLiteView(View):
         if "$schema" not in spec:
             spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
 
-        if 'url' in spec_data or 'inline' in spec_data:
-            # If data already has url/inline data, make pipeline data available as named dataset
-            # Don't inject into primary data, use datasets instead
-            datasets = self.spec.get('datasets', {})
+        if self._declares_own_data(spec):
+            # The spec brings its own data (e.g. map boundaries), so the pipeline
+            # travels as a named dataset for lookups to join against rather than
+            # replacing it.
+            # Copied rather than mutated in place: self.spec is reused across
+            # renders, and growing its datasets dict would leak frames.
+            datasets = dict(self.spec.get('datasets', {}))
             datasets[self.pipeline.table] = df
+            spec = copy.deepcopy({k: v for k, v in spec.items() if k != 'datasets'})
+            self._retarget_lookup_datasets(spec, set(datasets), self.pipeline.table)
             encoded = dict(spec, datasets=datasets)
         elif is_geodataframe(df):
             # geoshape consumes a FeatureCollection, so fields then live under
@@ -1539,12 +1595,25 @@ class DeckGLView(View):
         # Deep copy to avoid modifying self.spec when injecting data
         spec = copy.deepcopy(self.spec)
 
-        # Inject data into layers
-        if 'layers' in spec:
+        # Inject data into layers that do not carry their own
+        pending = [layer for layer in spec.get('layers', []) if 'data' not in layer]
+        if pending:
+            # A GeoJsonLayer draws the geometry in its data. Handed plain records
+            # it renders an empty basemap and reports nothing, so the only symptom
+            # is a blank map; deck.gl cannot join boundaries by name, which is what
+            # a table of place names would need. Checked before serializing, so a
+            # rejected spec does not pay to convert the frame first.
+            if not is_geodataframe(df) and any(
+                layer.get('@@type') == 'GeoJsonLayer' for layer in pending
+            ):
+                raise ValueError(
+                    "A GeoJsonLayer needs geometry to draw, but this table has none. "
+                    "Either supply a table with a geometry column, or render place "
+                    "names as a Vega-Lite choropleth, which joins boundaries by name."
+                )
             data = self._layer_data(df)
-            for layer in spec['layers']:
-                if 'data' not in layer:
-                    layer['data'] = data
+            for layer in pending:
+                layer['data'] = data
 
         return dict(object=spec, tooltips=self.tooltips, **self.kwargs)
 
