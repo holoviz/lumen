@@ -352,6 +352,27 @@ class VegaLiteEditor(LumenEditor):
             spec_dict.pop('pipeline')
         return type(component).from_spec(spec_dict, pipeline=pipeline)
 
+    # Data formats whose features carry geometry a geoshape mark can draw.
+    _geometry_formats = frozenset({"topojson", "geojson"})
+
+    @classmethod
+    def _draws_geoshape(cls, node) -> bool:
+        """Whether any mark in the spec is a geoshape."""
+        if isinstance(node, list):
+            return any(cls._draws_geoshape(item) for item in node)
+        if not isinstance(node, dict):
+            return False
+        mark = node.get("mark")
+        if mark == "geoshape" or (isinstance(mark, dict) and mark.get("type") == "geoshape"):
+            return True
+        return any(cls._draws_geoshape(value) for value in node.values())
+
+    @classmethod
+    def _supplies_geometry(cls, data: dict) -> bool:
+        """Whether a data definition yields features a geoshape can draw."""
+        fmt = data.get("format") or {}
+        return fmt.get("type") in cls._geometry_formats or fmt.get("property") == "features"
+
     @classmethod
     def validate_spec(cls, spec):
         if "spec" in spec:
@@ -364,6 +385,20 @@ class VegaLiteEditor(LumenEditor):
             if '\n    at Nc.' in msg:
                 msg = msg[:msg.index('\n    at Nc.')]
             raise RuntimeError(msg) from e
+
+        # A geoshape over a table with no geometry compiles cleanly and then draws
+        # nothing at all, so the only symptom is an empty canvas. Rejecting it here
+        # turns that silence into an error the agent can retry against. A spec with
+        # no `data` is the valid case where the table's own geometry is injected.
+        data = spec.get("data")
+        if isinstance(data, dict) and cls._draws_geoshape(spec) and not cls._supplies_geometry(data):
+            raise RuntimeError(
+                "A geoshape mark draws the geometry found in `data`, but `data` here is the "
+                "table, which carries no geometry, so the map renders empty. Either set `data` "
+                "to the boundary topojson/geojson and pull the table's columns in with a "
+                "`transform.lookup` whose `from.data` names the table, or omit `data` entirely "
+                "when the table has its own geometry column."
+            )
         return super().validate_spec(spec)
 
     def __str__(self):
