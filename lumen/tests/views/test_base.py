@@ -466,6 +466,38 @@ def test_vega_datasets_are_not_accumulated_across_renders(set_root):
     assert set(view.spec["datasets"]) == {"populations"}
 
 
+def test_vega_layered_choropleth_registers_the_named_dataset(set_root):
+    """A layered choropleth carries the boundary url on each layer, not at the top
+    level, so registration has to look deeper or the lookup joins nothing."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    boundaries = {
+        "url": "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json",
+        "format": {"type": "topojson", "feature": "states"},
+    }
+    spec = {
+        "projection": {"type": "albersUsa"},
+        "layer": [
+            {"data": boundaries, "mark": {"type": "geoshape", "fill": None}},
+            {
+                "data": boundaries,
+                "transform": [{
+                    "lookup": "properties.name",
+                    "from": {"data": {"name": "test"}, "key": "A", "fields": ["B"]},
+                }],
+                "mark": "geoshape",
+                "encoding": {"color": {"field": "B", "type": "quantitative"}},
+            },
+        ],
+    }
+
+    final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
+
+    assert "test" in final_spec["datasets"]
+    # the table must not also replace the boundaries as primary data
+    assert "data" not in final_spec
+
+
 def test_vega_defaults_schema(set_root):
     set_root(str(Path(__file__).parent.parent))
     source = FileSource(tables={'test': 'sources/test.csv'})
