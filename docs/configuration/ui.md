@@ -78,6 +78,10 @@ ui = lmai.ExplorerUI(
 
 1. Tuples of (Material icon name, button text)
 
+### Follow-up suggestions
+
+After each successful query, a lightbulb icon appears in the message footer. Click it to generate an AI-powered follow-up question that references actual column names from your data. The suggestion populates the chat input so you can review or edit before sending.
+
 ## Advanced parameters
 
 ### Enable chat logging

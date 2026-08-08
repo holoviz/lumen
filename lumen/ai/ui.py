@@ -1784,6 +1784,48 @@ class UI(Viewer):
             num_objects=len(self.interface.objects),
         )
 
+    def _add_follow_up_icon(self, plan: Plan):
+        """Add follow-up suggestion icon to the last message footer.
+
+        The icon appears immediately. On click, it calls the coordinator
+        to generate a suggestion and populates the chat input.
+        """
+        if not plan.out_context.get("pipeline") or not plan.out_context.get("data"):
+            return
+        if not len(self.interface):
+            return
+
+        async def _generate_follow_up(event):
+            follow_up_button.disabled = True
+            follow_up_button.description = "Generating suggestion..."
+            try:
+                suggestion = await self._coordinator.suggest_follow_up(plan)
+                if suggestion:
+                    self._chat_input.value = suggestion
+            finally:
+                follow_up_button.disabled = False
+                follow_up_button.description = "Suggest a follow-up question"
+
+        follow_up_button = IconButton(
+            icon="lightbulb",
+            description="Suggest a follow-up question",
+            size="small",
+            icon_size="0.9em",
+            margin=(5, 0),
+            on_click=_generate_follow_up,
+            # Tags the button so re-running a plan replaces the existing
+            # lightbulb rather than stacking a second one in the same footer.
+            css_classes=["follow-up"],
+            disabled=self.interface.param.loading,
+            color="default",
+            sx={"color": "#FFD700", "padding": "0 0.1em"},
+        )
+
+        message = self.interface.objects[-1]
+        message.footer_objects = [
+            obj for obj in message.footer_objects if "follow-up" not in obj.css_classes
+        ] + [follow_up_button]
+
     def __panel__(self):
         return self._main
 
@@ -2794,6 +2836,7 @@ class ExplorerUI(UI):
             await self._sync_sources(SimpleNamespace(new=plan.out_context), global_context=self.context)
             if "pipeline" in plan.out_context:
                 await self._add_analysis_suggestions(plan)
+                self._add_follow_up_icon(plan)
 
             if is_new:
                 plan.param.watch(partial(self._update_views, exploration), "views")
