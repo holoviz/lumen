@@ -36,7 +36,7 @@ def resolve_layout_spec(layout_spec, views, layout_cls=pn.Column, title=None):
 
     The function will recurse over the layout specification and
     resolve integer and string indexes into the views of a Layout and
-    treat lists as an additonal layer of nesting. The outermost list
+    treat lists as an additional layer of nesting. The outermost list
     corresponds to a Column layout and each layer of nesting will
     alternate between a Row and a Column.
 
