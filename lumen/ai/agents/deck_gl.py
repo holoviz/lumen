@@ -98,7 +98,7 @@ class DeckGLAgent(BaseCodeAgent):
             "Use for large-scale geospatial data with latitude/longitude coordinates",
             "Use for hexbin aggregations, heatmaps, or 3D extruded visualizations on maps",
             "Can render a geometry column (GeoDataFrame polygons/lines/points) on a basemap, suited to 3D/extruded maps or geometry whose schema is 'geographic' (a lat/lon CRS) so the basemap gives real-world context",
-            "NOT when the table only names places (a state or country column) without geometry or lat/lon, since deck.gl has nothing to draw and cannot fetch boundaries; that choropleth belongs to VegaLiteAgent",
+            "NOT when the table only names places (a state or country column) without geometry or lat/lon, since deck.gl has nothing to draw and cannot fetch boundaries",
         ]
     )
 
