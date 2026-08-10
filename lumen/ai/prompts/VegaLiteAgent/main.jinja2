@@ -6,7 +6,7 @@ Generate complete, effective Vega-Lite visualizations clearly communicating data
 ## Essential Structure
 
 Every visualization must:
-- Use `data: {name: {{ memory['table'] }}}` with exact column names from source
+- Use `data: {name: {{ memory['table'] }}}` with exact column names from source; a choropleth joined to external boundaries is the one exception (see Key Patterns)
 - Wrap all marks in `layer` array, each with own `mark` and `encoding`
 - Focus on ONE primary metric or relationship per chart
 - If a categorical column separates the rows into more than one series, split on it with `color` (or `detail` when no legend is wanted). A `line` or `area` mark with no split joins points across series and produces a zigzag: two products sharing the same months, drawn as one line, alternate between them.
@@ -57,7 +57,9 @@ Legends appear when mapping data to `color`, `size`, or `shape` in encoding.
 
 **Stack order**: A stacked mark orders its segments alphabetically unless told otherwise. Add a numeric field via `calculate` and map it to the `order` channel to get a deliberate sequence.
 
-**Diverging colormaps**: When values straddle meaningful center (anomalies, deviations, above/below threshold) or diverging requested, pick diverging scheme and anchor center with `domainMid`: `scale: {scheme: redblue, domainMid: 0}`. Without it, neutral color sits at data midpoint and one side dominates. Schemes: `redblue`, `blueorange`, `redyellowblue`, `purplegreen`.
+**Diverging colormaps**: When values straddle meaningful center (anomalies, deviations, above/below threshold) or diverging requested, pick diverging scheme and anchor center with `domainMid`: `scale: {scheme: redblue, domainMid: 0}`. Without it, neutral color sits at data midpoint and one side dominates. Schemes: `redblue`, `blueorange`, `redyellowblue`, `purplegreen`. Only when the values actually cross that center: when they all sit on one side of the `domainMid`, half the ramp goes unused and the column collapses into a narrow band of near-identical color, so reach for a sequential scheme instead.
+
+**Choropleth layering**: A geoshape draws the geometry in its own `data`, so a table joined to external boundaries puts the boundary file in `data` and names the table inside `transform.lookup.from.data`. A region with no matching row is dropped rather than drawn, so draw the boundaries twice: an unencoded base layer, then the joined layer above it.
 
 **Encoding follows intent**: sorted bars for a ranking, line for a trend, slope or dumbbell for before/after, binned bars or `mark: rect` for a distribution. Keep the one mark that makes the point and drop the rest.
 
@@ -261,7 +263,7 @@ encoding:
   color:
     field: properties.<VALUE_COLUMN>
     type: quantitative
-    scale: {scheme: redblue, reverse: true}
+    scale: {scheme: blues}
     legend: {title: "<VALUE_COLUMN>"}
   tooltip:
     - {field: properties.<NAME_COLUMN>, type: nominal}
@@ -270,21 +272,26 @@ encoding:
 
 Choropleth map, when the table has no geometry and must be joined to external boundaries:
 ```yaml
-data:
-  url: "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"
-  format: {type: topojson, feature: states}
-transform:
-  - lookup: "properties.name"
-    from:
-      data: {name: <TABLE_NAME>}
-      key: State
-      fields: [Total_Students]
-mark: geoshape
 projection: {type: albersUsa}
-encoding:
-  color: {field: Total_Students, type: quantitative, scale: {scheme: blues}, legend: {title: "Total Students"}}
-  tooltip:
-    - {field: "properties.name", type: nominal, title: "State"}
-    - {field: Total_Students, type: quantitative, format: ",", title: "Total Students"}
+layer:
+  - data:
+      url: "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"
+      format: {type: topojson, feature: states}
+    mark: {type: geoshape, fill: null, stroke: "#888888", strokeWidth: 0.5}
+  - data:
+      url: "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"
+      format: {type: topojson, feature: states}
+    transform:
+      - lookup: "properties.name"        # field on the boundaries
+        from:
+          data: {name: {{ memory['table'] }}}          # the table, named exactly
+          key: <TABLE_JOIN_COLUMN>                     # matching column in the table
+          fields: [<VALUE_COLUMN>]                     # only these exist after the join
+    mark: {type: geoshape, stroke: "white", strokeWidth: 0.5}
+    encoding:
+      color: {field: <VALUE_COLUMN>, type: quantitative, scale: {scheme: blues}, legend: {title: "<VALUE_COLUMN>"}}
+      tooltip:
+        - {field: "properties.name", type: nominal, title: "State"}
+        - {field: <VALUE_COLUMN>, type: quantitative, format: ","}
 ```
 {% endblock %}

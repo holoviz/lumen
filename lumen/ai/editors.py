@@ -352,6 +352,46 @@ class VegaLiteEditor(LumenEditor):
             spec_dict.pop('pipeline')
         return type(component).from_spec(spec_dict, pipeline=pipeline)
 
+    @staticmethod
+    def _supplies_geometry(data: dict) -> bool:
+        """Whether a data definition yields features a geoshape can draw."""
+        fmt = data.get("format") or {}
+        return fmt.get("type") in ("topojson", "geojson") or fmt.get("property") == "features"
+
+    @classmethod
+    def _check_geoshape_data(cls, node: Any, inherited: dict | None = None) -> None:
+        """Raise if any geoshape mark resolves to data that carries no geometry.
+
+        Such a spec compiles cleanly and then draws nothing at all, so the only
+        symptom is an empty canvas; raising turns that silence into an error the
+        agent can retry against. Layers inherit their parent's ``data`` when they
+        declare none, so the check follows the same scoping rather than looking
+        only at the top level. A spec with no ``data`` anywhere is the valid case
+        where the table's own geometry is injected at render time.
+        """
+        if isinstance(node, list):
+            for item in node:
+                cls._check_geoshape_data(item, inherited)
+            return
+        if not isinstance(node, dict):
+            return
+
+        data = node.get("data", inherited)
+        mark = node.get("mark")
+        mark_type = mark.get("type") if isinstance(mark, dict) else mark
+        if mark_type == "geoshape" and isinstance(data, dict) and not cls._supplies_geometry(data):
+            raise RuntimeError(
+                "A geoshape mark draws the geometry found in `data`, but `data` here is the "
+                "table, which carries no geometry, so the map renders empty. Either set `data` "
+                "to the boundary topojson/geojson and pull the table's columns in with a "
+                "`transform.lookup` whose `from.data` names the table, or omit `data` entirely "
+                "when the table has its own geometry column."
+            )
+
+        for key, value in node.items():
+            if key != "data":
+                cls._check_geoshape_data(value, data)
+
     @classmethod
     def validate_spec(cls, spec):
         if "spec" in spec:
@@ -364,6 +404,8 @@ class VegaLiteEditor(LumenEditor):
             if '\n    at Nc.' in msg:
                 msg = msg[:msg.index('\n    at Nc.')]
             raise RuntimeError(msg) from e
+
+        cls._check_geoshape_data(spec)
         return super().validate_spec(spec)
 
     def __str__(self):
