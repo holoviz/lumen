@@ -352,14 +352,11 @@ class VegaLiteEditor(LumenEditor):
             spec_dict.pop('pipeline')
         return type(component).from_spec(spec_dict, pipeline=pipeline)
 
-    # Data formats whose features carry geometry a geoshape mark can draw.
-    _geometry_formats = frozenset({"topojson", "geojson"})
-
-    @classmethod
-    def _supplies_geometry(cls, data: dict) -> bool:
+    @staticmethod
+    def _supplies_geometry(data: dict) -> bool:
         """Whether a data definition yields features a geoshape can draw."""
         fmt = data.get("format") or {}
-        return fmt.get("type") in cls._geometry_formats or fmt.get("property") == "features"
+        return fmt.get("type") in ("topojson", "geojson") or fmt.get("property") == "features"
 
     @classmethod
     def _check_geoshape_data(cls, node: Any, inherited: dict | None = None) -> None:
