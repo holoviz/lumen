@@ -812,12 +812,15 @@ class Section(TaskGroup):
         only draws headers for its top level sections, so without this nothing
         inside one could be selected.
 
-        A nested section gets a heading too, unless it takes its parent's title
-        (a section wrapping a single plan does), which would repeat the heading
-        the report already shows.
+        A nested section gets a heading too, unless it is untitled or takes its
+        parent's title (a section wrapping a single plan does), which would
+        repeat the heading the report already shows.
+
+        A task whose outputs are not viewable renders nothing, so its row is
+        hidden rather than left as a lone checkbox floating in empty space.
         """
         if isinstance(task, Section):
-            if task.title == self.title:
+            if not task.title or task.title == self.title:
                 return task
             return Column(
                 _export_header(task, task, variant="h4"),
@@ -832,6 +835,7 @@ class Section(TaskGroup):
             sizing_mode="stretch_width",
             styles={'min-height': 'unset'},
             height_policy='fit',
+            visible=task._view.param['objects'].rx().rx.bool(),
         )
 
     async def _run_task(self, i: int, task: Task | Actor, context: TContext | None, **kwargs) -> list[Any]:

@@ -871,6 +871,110 @@ async def test_switch_back_from_report_to_exploration(explorer_ui):
     assert explorer_ui._current_mode == "Exploration"
 
 
+async def _add_followup(explorer_ui, title):
+    """Add a followup exploration below whichever one is currently selected."""
+    test_source = explorer_ui.context["source"]
+    SQLQueryWithTables = make_sql_model([(test_source.name, "test_table")])
+    explorer_ui.llm.set_responses([
+        SQLQueryWithTables(
+            query="SELECT * FROM test_table LIMIT 5",
+            table_slug=f"test_{title}",
+            tables=["test_table"]
+        )
+    ])
+    parent = explorer_ui._explorations.value["view"]
+    plan = Plan(
+        ActorTask(SQLAgent(llm=explorer_ui.llm)),
+        history=[{"content": title, "role": "user"}],
+        title=title,
+        context=parent.context,
+        is_followup=True,
+    )
+    await explorer_ui._add_exploration(plan, parent)
+    await asyncio.sleep(0.1)
+    return plan
+
+
+async def _add_root_exploration(explorer_ui):
+    """Add a top level exploration and wait for it to render its views."""
+    explorer_ui._explorer.param.update(table_slug="test_table")
+    await explorer_ui._add_exploration_from_explorer()
+    await async_wait_until(lambda: len(explorer_ui._explorations.items) > 1)
+    item = explorer_ui._explorations.items[1]
+    await async_wait_until(lambda: len(item['view'].plan.views) > 0, timeout=5.0)
+    return item
+
+
+async def test_report_includes_deeply_nested_followups(explorer_ui):
+    """Followups nest arbitrarily deep, so the report must walk the whole tree."""
+    root = await _add_root_exploration(explorer_ui)
+    child = await _add_followup(explorer_ui, "child")
+    grandchild = await _add_followup(explorer_ui, "grandchild")
+
+    explorer_ui._handle_sidebar_event(explorer_ui._sidebar_menu.items[1])
+
+    assert len(explorer_ui._report) == 1
+    assert list(explorer_ui._report[0]) == [root['view'].plan, child, grandchild]
+
+
+async def test_report_survives_a_trip_back_to_the_chat(explorer_ui):
+    """The report, and any story written on it, is kept when leaving report mode."""
+    await _add_root_exploration(explorer_ui)
+
+    explorer_ui._handle_sidebar_event(explorer_ui._sidebar_menu.items[1])
+    report = explorer_ui._report
+    report._story.title = "Story"
+    report._story.blocks = [("prose", "Some prose")]
+    report._render_story()
+    assert len(report._tabs) == 2
+
+    explorer_ui._handle_sidebar_event(explorer_ui._sidebar_menu.items[0])
+    explorer_ui._handle_sidebar_event(explorer_ui._sidebar_menu.items[1])
+
+    assert explorer_ui._report is report
+    assert len(report._tabs) == 2
+
+
+async def test_new_exploration_rebuilds_the_report(explorer_ui):
+    """A report built before a new exploration exists is out of date."""
+    await _add_root_exploration(explorer_ui)
+
+    explorer_ui._handle_sidebar_event(explorer_ui._sidebar_menu.items[1])
+    report = explorer_ui._report
+
+    explorer_ui._handle_sidebar_event(explorer_ui._sidebar_menu.items[0])
+    await _add_followup(explorer_ui, "child")
+    explorer_ui._handle_sidebar_event(explorer_ui._sidebar_menu.items[1])
+
+    assert explorer_ui._report is not report
+    assert len(explorer_ui._report[0]) == 2
+
+
+async def test_explore_menu_item_keeps_its_icon_in_report_mode(explorer_ui):
+    """Report mode owns the active state, so Explore stays inactive and outlined."""
+    await _add_root_exploration(explorer_ui)
+    explorer_ui._handle_sidebar_event(explorer_ui._sidebar_menu.items[1])
+
+    explorer_ui._update_home()
+
+    explore, report = explorer_ui._sidebar_menu.items[:2]
+    assert report["active"] is True
+    assert explore["active"] is False
+    assert explore["icon"] == "insert_chart_outlined"
+
+
+async def test_selecting_an_exploration_leaves_report_mode(explorer_ui):
+    """Picking an exploration in the navigation returns to the chat."""
+    item = await _add_root_exploration(explorer_ui)
+    explorer_ui._handle_sidebar_event(explorer_ui._sidebar_menu.items[1])
+    assert explorer_ui._current_mode == "Report"
+
+    explorer_ui._select_exploration(item)
+
+    assert explorer_ui._current_mode == "Exploration"
+    assert explorer_ui._nav_content[0] is explorer_ui._split
+
+
 async def test_navigation_pane_always_mounted(explorer_ui):
     """Navigation lives in the always-mounted drawer. It starts closed and is
     auto-opened once, when the first exploration is created."""
