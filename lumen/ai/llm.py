@@ -76,6 +76,23 @@ LLM_PROVIDERS = {
     'kilo': 'Kilo',
 }
 
+# Request parameters an OpenAI-compatible model may reject, and the value to
+# retry with; None omits the parameter entirely. Applied only after the API
+# names the parameter in a 400, so new models need no entry here.
+ADAPTIVE_KWARGS = {
+    "temperature": None,
+    "reasoning_effort": "none",
+}
+
+
+def find_bad_request(error: BaseException | None) -> openai.BadRequestError | None:
+    """Find a provider 400 on an exception's cause chain, if there is one."""
+    while error is not None:
+        if isinstance(error, openai.BadRequestError):
+            return error
+        error = error.__cause__
+    return None
+
 
 def get_available_llm() -> type[Llm] | None:
     """
@@ -1113,11 +1130,12 @@ class OpenAI(Llm, OpenAIMixin):
     mode = param.Selector(default=Mode.TOOLS)
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "gpt-5.4-mini"},  # Use standard models, not reasoning models (gpt-5, o4-mini)
+        "default": {"model": "gpt-5.6-luna"},  # Runs with reasoning disabled; see _reasoning_models
         "ui": {"model": "gpt-5.4-nano"},
     })
 
     select_models = param.List(default=[
+        "gpt-5.6-luna",
         "gpt-5.2",
         "gpt-5-mini",
         "gpt-5-nano",
@@ -1129,6 +1147,12 @@ class OpenAI(Llm, OpenAIMixin):
     temperature = param.Number(default=0.25, bounds=(0, None), allow_None=True, constant=True)
 
     _supports_logfire = True
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        # Per-model request fixes learned from the API, e.g. gpt-5.6-luna
+        # rejecting a non-default temperature. See ADAPTIVE_KWARGS.
+        self._kwarg_fixes: dict[str, dict[str, Any]] = {}
 
     @classmethod
     def _resolve_openai_mode(cls, mode: Mode) -> Mode:
@@ -1402,7 +1426,42 @@ class OpenAI(Llm, OpenAIMixin):
         # Add timeout to the partial
         return partial(client_callable.func, *client_callable.args, timeout=self.timeout, **client_callable.keywords)
 
+    def _apply_kwarg_fixes(self, model: str, kwargs: dict[str, Any]):
+        for key, value in self._kwarg_fixes.get(model, {}).items():
+            if value is None:
+                kwargs.pop(key, None)
+            else:
+                kwargs[key] = value
+
+    def _learn_kwarg_fix(self, model: str, error: openai.BadRequestError) -> bool:
+        """
+        Record how to satisfy a model that rejected a request parameter,
+        returning whether anything new was learned. Explicit ``create_kwargs``
+        are never overridden, so a deliberate choice still surfaces its error.
+        """
+        fixes = self._kwarg_fixes.setdefault(model, {})
+        if error.param not in ADAPTIVE_KWARGS or error.param in fixes or error.param in self.create_kwargs:
+            return False
+        fixes[error.param] = ADAPTIVE_KWARGS[error.param]
+        log_debug(f"Adapting to \033[96m{model!r}\033[0m: {error.param}={fixes[error.param]!r}")
+        return True
+
     async def run_client(self, model_spec: str | dict, messages: list[Message] | list[dict[str, Any]], **kwargs):
+        model = self._get_model_kwargs(model_spec)["model"]
+        self._apply_kwarg_fixes(model, kwargs)
+        while True:
+            try:
+                return await self._send(model_spec, messages, **kwargs)
+            except Exception as e:
+                # instructor re-raises provider errors wrapped in its own
+                # retry exception, so the 400 is found on the cause chain.
+                error = find_bad_request(e)
+                # Each retry records one more parameter, so this terminates.
+                if error is None or not self._learn_kwarg_fix(model, error):
+                    raise
+                self._apply_kwarg_fixes(model, kwargs)
+
+    async def _send(self, model_spec: str | dict, messages: list[Message] | list[dict[str, Any]], **kwargs):
         if self.api == "chat_completions":
             return await super().run_client(model_spec, messages, **kwargs)
 

@@ -6,6 +6,8 @@ import os
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import httpx
+import openai
 import pytest
 
 try:
@@ -399,6 +401,149 @@ async def test_run_tool_loop_drops_max_retries_on_bare_client(monkeypatch):
     final_call = calls[-1]
     assert final_call.get("response_model") is _Plan
     assert final_call.get("max_retries") == 3
+
+
+# ---------------------------------------------------------------------------
+# Adaptive request kwargs
+# ---------------------------------------------------------------------------
+
+def _bad_request(param: str) -> openai.BadRequestError:
+    """The 400 OpenAI returns when a model rejects a request parameter."""
+    request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+    return openai.BadRequestError(
+        "rejected",
+        response=httpx.Response(400, request=request),
+        body={"message": "rejected", "type": "invalid_request_error", "param": param},
+    )
+
+
+def _capture_sends(monkeypatch, reject: list[str]) -> list[dict]:
+    """Record every attempt, rejecting one parameter per entry in ``reject``."""
+    calls: list[dict] = []
+    rejections = list(reject)
+
+    async def fake_send(self, _model_spec, _messages, **kwargs):
+        calls.append(dict(kwargs))
+        if rejections:
+            raise _bad_request(rejections.pop(0))
+
+    monkeypatch.setattr(OpenAI, "_send", fake_send)
+    return calls
+
+
+def test_openai_default_model_is_selectable():
+    """The default has to appear in select_models: opening the settings dialog
+    rewrites model_kwargs to select_models[0] when the current model is missing
+    from the list, silently downgrading the default."""
+    default_model = OpenAI.param.model_kwargs.default["default"]["model"]
+    assert default_model == "gpt-5.6-luna"
+    assert default_model in OpenAI.param.select_models.default
+
+
+async def test_rejected_temperature_is_dropped_and_retried(monkeypatch):
+    """gpt-5.6-luna only accepts the default temperature, which Lumen would
+    otherwise send on every request."""
+    llm = OpenAI(model_kwargs={"default": {"model": "gpt-5.6-luna"}})
+    calls = _capture_sends(monkeypatch, reject=["temperature"])
+
+    # Start from _client_kwargs so this proves the shipped default is safe,
+    # rather than a temperature invented by the test.
+    await llm.run_client("default", [{"role": "user", "content": "hi"}], **llm._client_kwargs)
+
+    assert calls[0]["temperature"] == 0.25
+    assert "temperature" not in calls[1]
+
+
+async def test_rejected_reasoning_effort_is_disabled_and_retried(monkeypatch):
+    """Chat completions rejects function tools while reasoning is active; the
+    API's own error names reasoning_effort as the parameter to set."""
+    llm = OpenAI(model_kwargs={"default": {"model": "gpt-5.6-luna"}})
+    calls = _capture_sends(monkeypatch, reject=["temperature", "reasoning_effort"])
+
+    await llm.run_client("default", [{"role": "user", "content": "hi"}], **llm._client_kwargs)
+
+    assert "reasoning_effort" not in calls[1]
+    assert calls[2]["reasoning_effort"] == "none"
+
+
+async def test_rejection_wrapped_by_instructor_is_still_adapted(monkeypatch):
+    """instructor re-raises provider errors inside its own retry exception, so
+    the 400 has to be found on the cause chain rather than caught directly."""
+    llm = OpenAI(model_kwargs={"default": {"model": "gpt-5.6-luna"}})
+    calls: list[dict] = []
+    rejected = False
+
+    async def fake_send(self, _model_spec, _messages, **kwargs):
+        nonlocal rejected
+        calls.append(dict(kwargs))
+        if not rejected:
+            rejected = True
+            raise RuntimeError("instructor gave up") from _bad_request("temperature")
+
+    monkeypatch.setattr(OpenAI, "_send", fake_send)
+
+    await llm.run_client("default", [{"role": "user", "content": "hi"}], **llm._client_kwargs)
+
+    assert "temperature" not in calls[1]
+
+
+async def test_learned_fixes_are_reused_without_another_rejection(monkeypatch):
+    """The adaptation is paid once per model, not on every request."""
+    llm = OpenAI(model_kwargs={"default": {"model": "gpt-5.6-luna"}})
+    calls = _capture_sends(monkeypatch, reject=["temperature"])
+
+    await llm.run_client("default", [{"role": "user", "content": "hi"}], **llm._client_kwargs)
+    await llm.run_client("default", [{"role": "user", "content": "hi"}], **llm._client_kwargs)
+
+    assert len(calls) == 3
+    assert "temperature" not in calls[2]
+
+
+@pytest.mark.parametrize(
+    ("llm_factory", "model"),
+    [
+        (lambda model: OpenAI(model_kwargs={"default": {"model": model}}), "gpt-5.4-mini"),
+        (lambda model: OpenAI(model_kwargs={"default": {"model": model}}), "gpt-5.4-nano"),
+        (lambda model: Groq(api_key="k", model_kwargs={"default": {"model": model}}), "llama-3.3-70b-versatile"),
+    ],
+)
+async def test_accepted_kwargs_are_left_alone(monkeypatch, llm_factory, model):
+    """Models that accept sampling params must be left exactly as they were."""
+    llm = llm_factory(model)
+    calls = _capture_sends(monkeypatch, reject=[])
+
+    await llm.run_client("default", [{"role": "user", "content": "hi"}], **llm._client_kwargs)
+
+    assert len(calls) == 1
+    assert calls[0]["temperature"] == 0.25
+    assert "reasoning_effort" not in calls[0]
+
+
+async def test_unknown_rejection_is_raised(monkeypatch):
+    """Only parameters Lumen knows how to satisfy are retried; anything else
+    is the caller's problem and must not be swallowed."""
+    llm = OpenAI(model_kwargs={"default": {"model": "gpt-5.6-luna"}})
+    calls = _capture_sends(monkeypatch, reject=["messages"])
+
+    with pytest.raises(openai.BadRequestError):
+        await llm.run_client("default", [{"role": "user", "content": "hi"}], **llm._client_kwargs)
+
+    assert len(calls) == 1
+
+
+async def test_explicit_create_kwargs_are_not_overridden(monkeypatch):
+    """A deliberate create_kwargs choice surfaces its error rather than being
+    silently rewritten."""
+    llm = OpenAI(
+        model_kwargs={"default": {"model": "gpt-5.6-luna"}},
+        create_kwargs={"max_retries": 1, "reasoning_effort": "medium"},
+    )
+    calls = _capture_sends(monkeypatch, reject=["reasoning_effort"])
+
+    with pytest.raises(openai.BadRequestError):
+        await llm.run_client("default", [{"role": "user", "content": "hi"}], **llm._client_kwargs)
+
+    assert len(calls) == 1
 
 
 # ---------------------------------------------------------------------------

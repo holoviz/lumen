@@ -38,7 +38,7 @@ Use cheap models for simple tasks, powerful models for complex tasks:
 import lumen.ai as lmai
 
 model_config = {
-    "default": {"model": "gpt-5.4-mini"},  # Cheap for most agents
+    "default": {"model": "gpt-5.6-luna"},  # Cheap for most agents
     "sql": {"model": "gpt-4.1"},           # Powerful for SQL
     "vega_lite": {"model": "gpt-4.1"},     # Powerful for charts
     "deck_gl": {"model": "gpt-4.1"},       # Powerful for 3D maps
@@ -89,7 +89,7 @@ For installation and API key setup instructions, see the [Installation guide](..
 
 | Provider | Default Model | Popular Models |
 |----------|---------------|----------------|
-| **OpenAI** | `gpt-5.4-mini` | `gpt-5.4`, `gpt-5.4-nano` |
+| **OpenAI** | `gpt-5.6-luna` | `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.4-nano` |
 | **Anthropic** | `claude-haiku-4-5` | `claude-sonnet-4-6`, `claude-opus-4-5` |
 | **Google** | `gemini-3-flash-preview` | `gemini-3-pro-preview`, `gemini-2.5-flash`, `gemini-2.0-flash` |
 | **Mistral** | `mistral-small-latest` | `mistral-large-latest`, `ministral-8b-latest` |
@@ -98,6 +98,8 @@ For installation and API key setup instructions, see the [Installation guide](..
 
 !!! warning "Reasoning Models Not Suitable for Dialog"
     Reasoning models like `gpt-5`, `o4-mini`, and `gemini-2.0-flash-thinking` are **significantly slower** than standard models. They are designed for single, complex queries that require deep thinking, not interactive chat interfaces. For dialog-based applications like Lumen, use standard models for better user experience.
+
+    The OpenAI default, `gpt-5.6-luna`, is a reasoning model. Chat completions rejects function tools while reasoning is active, so Lumen disables reasoning for it and keeps it as fast as a standard model. To use reasoning with function tools, switch to the responses API: `lmai.llm.OpenAI(api="responses")`.
 
 ### Local providers
 
@@ -461,7 +463,7 @@ Additional model types:
 
 Different providers use different model string formats:
 
-- **OpenAI**: `"gpt-5.4"`, `"gpt-5.4-mini"`, `"gpt-5.4-nano"`, `"gpt-5.4"`
+- **OpenAI**: `"gpt-5.6-luna"`, `"gpt-5.4"`, `"gpt-5.4-mini"`, `"gpt-5.4-nano"`
 - **Anthropic**: `"claude-sonnet-4-6"`, `"claude-haiku-4-5"`, `"claude-opus-4-5"`
 - **OpenRouter**: `"openai/gpt-4o-mini"`, `"anthropic/claude-3.5-sonnet"`, `"google/gemini-2.5-flash"`
 - **Google**: `"gemini-3-flash-preview"`, `"gemini-2.5-flash"`
