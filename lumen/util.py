@@ -151,16 +151,16 @@ def _narwhals_dataframe_schema(df, columns=None):
             if df_schema[n].is_numeric() or isinstance(df_schema[n], (nw.Datetime, nw.Date))
         ]
         if bounded:
-            aliases = {f'_{i}': (n, agg) for i, (n, agg) in enumerate(
-                (n, agg) for n in bounded for agg in ('min', 'max')
-            )}
+            # Aliased positionally because a column may legally be named
+            # anything, including whatever we would otherwise build a key from.
+            wanted = [(name, agg) for name in bounded for agg in ('min', 'max')]
             row = df.select(*[
-                getattr(nw.col(n), agg)().alias(alias)
-                for alias, (n, agg) in aliases.items()
+                getattr(nw.col(name), agg)().alias(str(i))
+                for i, (name, agg) in enumerate(wanted)
             ]).to_dict(as_series=False)
             bounds = {
-                aliases[alias]: nw.to_py_scalar(value[0])
-                for alias, value in row.items()
+                pair: nw.to_py_scalar(row[str(i)][0])
+                for i, pair in enumerate(wanted)
             }
 
     for name in names:
