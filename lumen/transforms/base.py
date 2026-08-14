@@ -294,19 +294,21 @@ class Filter(Transform):
             elif isinstance(val, list):
                 if not val:
                     continue
-                # A None in the list means "match nulls" to pandas isin, but
-                # polars drops those rows and pyarrow raises, so ask for nulls
+                # A None in the list matches nulls for pandas isin on an object
+                # column, but polars drops those rows, so ask for nulls
                 # separately. The schema emits such lists for nullable columns.
+                # Numeric columns are excluded because pandas isin([None]) does
+                # not match NaN there, and matching it would be a difference.
                 members = [v for v in val if v is not None]
                 expr = nw.col(k).is_in(members) if members else None
-                if len(members) != len(val):
+                if len(members) != len(val) and not schema[k].is_numeric():
                     is_null = nw.col(k).is_null()
                     expr = is_null if expr is None else (expr | is_null)
             elif isinstance(val, tuple):
                 expr = self._range_expr(temporal, k, *val)
             else:
                 self.param.warning(
-                    'Condition {val!r} on {col!r} column not understood. '
+                    f'Condition {val!r} on {k!r} column not understood. '
                     'Filter query will not be applied.'
                 )
                 continue
@@ -454,12 +456,6 @@ class Aggregate(Transform):
     _narwhals: ClassVar[bool] = True
 
     def apply(self, table: DataFrame) -> DataFrame:
-        if self.with_index:
-            # with_index moves the group keys into the index, and narwhals has
-            # no index, so the narwhals path would return a different set of
-            # columns than pandas for the same spec. Take the pandas path
-            # instead of quietly producing a differently shaped frame.
-            table = type(self)._coerce_to_pandas(table)
         frame = None if self.with_index else self._narwhals_frame(table)
         if frame is not None:
             schema = frame.collect_schema()
@@ -467,13 +463,26 @@ class Aggregate(Transform):
                 name for name, dtype in schema.items()
                 if dtype.is_numeric() and name not in self.by
             ]
-            aggs = [getattr(nw.col(c), self.method)(**self.kwargs) for c in cols]
-            # Two things pandas groupby does that narwhals does not: it drops
-            # rows whose key is null, and it sorts by the key.
-            return (
-                frame.drop_nulls(subset=self.by)
-                .group_by(self.by).agg(*aggs).sort(self.by).to_native()
-            )
+            try:
+                aggs = [getattr(nw.col(c), self.method)(**self.kwargs) for c in cols]
+                # Two things pandas groupby does that narwhals does not: it
+                # drops rows whose key is null or NaN, and it sorts by the key.
+                # polars treats NaN as a value, so exclude it explicitly.
+                keys = reduce(
+                    and_, [nw.col(c).is_finite() if schema[c].is_numeric()
+                           else nw.col(c).is_null().not_() for c in self.by]
+                )
+                return (
+                    frame.filter(keys).group_by(self.by).agg(*aggs)
+                    .sort(self.by).to_native()
+                )
+            except Exception:
+                # method is documented as a pandas aggregation name, and
+                # narwhals has fewer of them (no size, nunique, prod, sem), so
+                # fall back rather than fail on a spec pandas would accept.
+                pass
+        if self.with_index or frame is not None:
+            table = type(self)._coerce_to_pandas(table)
         grouped = table.groupby(self.by)
         if self.columns:
             cols = self.columns

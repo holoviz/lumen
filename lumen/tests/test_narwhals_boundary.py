@@ -19,7 +19,9 @@ from lumen.sources.base import DerivedSource, InMemorySource
 from lumen.transforms.base import (
     Aggregate, Columns, Filter as FilterTransform, Iloc, Query, Sample, Sort,
 )
-from lumen.util import as_narwhals, as_pandas, get_dataframe_schema
+from lumen.util import (
+    as_narwhals, as_pandas, get_dataframe_schema, is_lazyframe,
+)
 from lumen.views.base import Table
 
 
@@ -281,3 +283,60 @@ def test_view_materializes_to_pandas(constructor):
     source = InMemorySource(tables={"t": constructor({"i": [0, 1, 2]})})
     view = Table(pipeline=Pipeline(source=source, table="t"))
     assert isinstance(view.get_data(), pd.DataFrame)
+
+
+def test_pipeline_renders_itself(constructor):
+    """pn.panel(pipeline) drives Tabulator directly, not through View."""
+    source = InMemorySource(tables={"t": constructor({"i": [0, 1, 2]})})
+    Pipeline(source=source, table="t").__panel__()
+
+
+def test_lazy_source_does_not_leak_a_lazyframe():
+    pl = pytest.importorskip("polars")
+    source = InMemorySource(tables={"t": pl.LazyFrame({"i": [0, 1, 2]})})
+    assert not is_lazyframe(as_narwhals(source.get("t")))
+    pipeline = Pipeline(source=source, table="t")
+    assert len(as_pandas(pipeline.data)) == 3
+
+
+def test_aggregate_drops_nan_group_keys_like_pandas(constructor):
+    data = {"g": [1.0, float("nan"), 2.0, 1.0], "v": [1.0, 3.0, 1.0, 5.0]}
+    reference = Aggregate.apply_to(
+        pd.DataFrame(data), by=["g"], with_index=False, method="sum"
+    )
+    result = as_pandas(
+        Aggregate.apply_to(constructor(data), by=["g"], with_index=False, method="sum")
+    )
+    assert result["g"].tolist() == reference["g"].tolist() == [1.0, 2.0]
+
+
+@pytest.mark.parametrize("method", ["nunique", "prod", "sum"])
+def test_aggregate_falls_back_for_unsupported_methods(constructor, method):
+    """method is documented as a pandas name and narwhals has fewer of them."""
+    data = {"g": ["a", "a", "b"], "v": [2.0, 3.0, 4.0]}
+    reference = Aggregate.apply_to(
+        pd.DataFrame(data), by=["g"], with_index=False, method=method
+    )
+    result = as_pandas(
+        Aggregate.apply_to(constructor(data), by=["g"], with_index=False, method=method)
+    )
+    assert result["v"].tolist() == reference["v"].tolist()
+
+
+def test_aggregate_falls_back_for_non_numeric_columns(constructor):
+    data = {"g": ["a", "a", "b"], "s": ["x", "z", "y"]}
+    reference = Aggregate.apply_to(
+        pd.DataFrame(data), by=["g"], columns=["s"], with_index=False, method="sum"
+    )
+    result = as_pandas(Aggregate.apply_to(
+        constructor(data), by=["g"], columns=["s"], with_index=False, method="sum"
+    ))
+    assert result["s"].tolist() == reference["s"].tolist()
+
+
+def test_filter_numeric_enum_with_null_matches_pandas(constructor):
+    """pandas isin([None]) does not match NaN on a numeric column."""
+    data = {"v": [1.0, None, 3.0]}
+    reference = FilterTransform.apply_to(pd.DataFrame(data), conditions=[("v", [1.0, None])])
+    result = as_pandas(FilterTransform.apply_to(constructor(data), conditions=[("v", [1.0, None])]))
+    assert result["v"].tolist() == reference["v"].tolist() == [1.0]

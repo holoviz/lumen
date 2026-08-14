@@ -201,7 +201,8 @@ below run on it natively. Two things to know before choosing one:
 
 - Transforms that encode a pandas concept narwhals has no counterpart for, such
   as `query`, `eval`, `stack`, `unstack` and the index transforms, convert the
-  data to pandas and log a warning saying so.
+  data to pandas and log a warning saying so. `aggregate` does the same unless
+  you set `with_index: false`, because grouping into an index needs pandas.
 - Views convert to pandas regardless, because hvPlot, Tabulator, Perspective and
   Vega only read pandas. Returning polars saves work up to the view, not through
   it.

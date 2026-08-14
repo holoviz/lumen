@@ -10,6 +10,7 @@ from lumen.ai.agents.chat import ChatAgent
 
 from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource
+from ..util import as_pandas
 from .editors import SQLEditor
 from .report import Action
 from .schemas import Metaset, get_metaset
@@ -112,7 +113,7 @@ class SQLQuery(Action):
         out_context = {
             "source": source,
             "pipeline": pipeline,
-            "data": await describe_data(pipeline.data),
+            "data": await describe_data(as_pandas(pipeline.data)),
             "metaset": await get_metaset([source], [self.table]),
             "table": self.table,
         }

@@ -42,8 +42,8 @@ from ..transforms.sql import (
     SQLMinMax, SQLSample, SQLSchemaStats, SQLSelectFrom, SQLTransform,
 )
 from ..util import (
-    as_narwhals, get_dataframe_schema, is_lazyframe, is_narwhals, is_ref,
-    merge_schemas,
+    as_narwhals, collect_lazy, get_dataframe_schema, is_lazyframe, is_narwhals,
+    is_ref, merge_schemas,
 )
 from ..validation import ValidationError, match_suggestion_message
 
@@ -143,11 +143,11 @@ def cached(method, locks=None):
             filtered = FilterTransform.apply_to(
                 df, conditions=list(query.items())
             )
-        if is_lazyframe(as_narwhals(filtered)):
+        collected = collect_lazy(filtered)
+        if collected is not filtered:
             # A lazy frame answers to collect, not compute, so it would
             # otherwise sail past the dask branch below and fail much later.
-            # Test against the wrapped frame: the filter hands back a native one.
-            return as_narwhals(filtered).collect().to_native()
+            return collected
         if getattr(self, 'dask', False) or not hasattr(filtered, 'compute'):
             return filtered
         return filtered.compute()
@@ -816,6 +816,7 @@ class InMemorySource(Source):
         dask = query.pop('__dask', False)
         table = self.tables.get(table)
         df = FilterTransform.apply_to(table, conditions=list(query.items()))
+        df = collect_lazy(df)
         return df if dask or not hasattr(df, 'compute') else df.compute()
 
     def add_table(self, name, table):
@@ -1765,8 +1766,8 @@ class DerivedSource(Source):
             transforms = list(self.transforms)
         transforms.append(FilterTransform(conditions=list(query.items())))
         for transform in transforms:
-            df = transform.apply(type(transform)._coerce(df))
-        return df
+            df = transform.apply(transform._coerce(df))
+        return collect_lazy(df)
 
     get.__doc__ = Source.get.__doc__
 

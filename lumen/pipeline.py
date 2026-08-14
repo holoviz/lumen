@@ -212,7 +212,13 @@ class Pipeline(Viewer, Component):
 
     def __panel__(self) -> Row:
         controls = self.control_panel
-        table = Tabulator(self.param.data, pagination='remote', sizing_mode="stretch_both", min_height=200)
+        # Tabulator reads .index and .iloc, so it needs real pandas. This is
+        # the notebook and pn.panel(pipeline) path, which does not go through
+        # View.get_data where the other materialization lives.
+        table = Tabulator(
+            param.rx(as_pandas)(self.param.data), pagination='remote',
+            sizing_mode="stretch_both", min_height=200
+        )
         if controls:
             return Row(self.control_panel, table)
         return table
@@ -333,7 +339,7 @@ class Pipeline(Viewer, Component):
 
         # Apply transforms
         for transform in self.transforms:
-            data = type(transform)._coerce(data)
+            data = transform._coerce(data)
             data = transform.apply(data)
         return data
 

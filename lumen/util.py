@@ -15,6 +15,7 @@ from pathlib import Path
 from subprocess import check_output
 
 import bokeh
+import narwhals as nwb
 import narwhals.stable.v2 as nw
 import numpy as np
 import pandas as pd
@@ -58,25 +59,14 @@ class NumpyDumper(yaml.SafeDumper):
             data = str(data)
         return super().represent_data(data)
 
-def _narwhals_class_names(obj):
-    """Names of the narwhals classes obj inherits from, if any."""
-    return {
-        cls.__name__ for cls in type(obj).__mro__
-        if cls.__module__.split('.')[0] == 'narwhals'
-    }
-
-
 def is_narwhals(obj):
     """Return True if obj is a narwhals DataFrame or LazyFrame.
 
-    Matches on module and class name rather than isinstance because the same
-    frame wrapped through narwhals.stable.v1, narwhals.stable.v2 or the bare
-    narwhals namespace produces objects that fail isinstance against each
-    other, so a user who wraps with a different namespace than Lumen uses
-    would otherwise be rejected. Walking the MRO keeps subclasses matching,
-    which isinstance would have given for free.
+    Tested against the bare namespace on purpose: narwhals.stable.v1 and v2
+    both subclass it, so this recognises a frame whichever namespace the
+    caller wrapped it with.
     """
-    return bool(_narwhals_class_names(obj) & {'DataFrame', 'LazyFrame'})
+    return isinstance(obj, (nwb.DataFrame, nwb.LazyFrame))
 
 
 def is_lazyframe(obj):
@@ -85,7 +75,7 @@ def is_lazyframe(obj):
     Callers need this before len(), slicing or item access, none of which a
     LazyFrame supports.
     """
-    return 'LazyFrame' in _narwhals_class_names(obj)
+    return isinstance(obj, nwb.LazyFrame)
 
 
 def as_narwhals(df):
@@ -102,6 +92,19 @@ def as_narwhals(df):
     if dd is not None and isinstance(df, dd.DataFrame):
         return df
     return nw.from_native(df, pass_through=True)
+
+
+def collect_lazy(df):
+    """Return df with any lazy frame collected, in its own backend.
+
+    A Source must not hand a lazy frame further in: everything downstream
+    calls len(), .iloc or .index on it, none of which a LazyFrame answers to,
+    and the failure would surface far from its cause.
+    """
+    narwhals_df = as_narwhals(df)
+    if is_lazyframe(narwhals_df):
+        return narwhals_df.collect().to_native()
+    return df
 
 
 def as_pandas(df):
@@ -137,15 +140,32 @@ def _narwhals_dataframe_schema(df, columns=None):
     df_schema = df.collect_schema()
     empty = len(df) == 0
     properties = schema['items']['properties']
-    for name in (df_schema.names() if columns is None else columns):
+    names = df_schema.names() if columns is None else columns
+
+    # One query for every bound rather than two per column: a frame with a
+    # hundred numeric columns is otherwise two hundred separate query plans.
+    bounds = {}
+    if not empty:
+        bounded = [
+            n for n in names
+            if df_schema[n].is_numeric() or isinstance(df_schema[n], (nw.Datetime, nw.Date))
+        ]
+        if bounded:
+            row = df.select(
+                *[nw.col(n).min().alias(f'{n}\x00min') for n in bounded],
+                *[nw.col(n).max().alias(f'{n}\x00max') for n in bounded],
+            ).to_dict(as_series=False)
+            bounds = {k: nw.to_py_scalar(v[0]) for k, v in row.items()}
+
+    for name in names:
         dtype = df_schema[name]
         temporal = isinstance(dtype, (nw.Datetime, nw.Date))
         if temporal:
             if empty:
                 vmin = vmax = pd.NaT
             else:
-                vmin = nw.to_py_scalar(df.select(nw.col(name).min()).item())
-                vmax = nw.to_py_scalar(df.select(nw.col(name).max()).item())
+                vmin = bounds[f'{name}\x00min']
+                vmax = bounds[f'{name}\x00max']
             # An all-null column has no min, and pandas renders its NaT as the
             # string 'NaT', so match that rather than emitting null.
             properties[name] = {
@@ -162,8 +182,8 @@ def _narwhals_dataframe_schema(df, columns=None):
                 cast = int if dtype.is_integer() else float
                 kind = 'integer' if dtype.is_integer() else 'number'
                 try:
-                    vmin = cast(nw.to_py_scalar(df.select(nw.col(name).min()).item()))
-                    vmax = cast(nw.to_py_scalar(df.select(nw.col(name).max()).item()))
+                    vmin = cast(bounds[f'{name}\x00min'])
+                    vmax = cast(bounds[f'{name}\x00max'])
                 except Exception:
                     vmin = vmax = float('NaN')
             properties[name] = {
@@ -176,9 +196,10 @@ def _narwhals_dataframe_schema(df, columns=None):
         elif isinstance(dtype, (nw.String, nw.Categorical, nw.Object)):
             cats = [] if empty else df[name].unique(maintain_order=True).to_list()
             properties[name] = {'type': 'string', 'enum': cats}
-        # Anything else (duration, binary, list, struct, unknown) is left out of
-        # the schema, which is what the pandas path does with the same data:
-        # a widget built on a dtype no filter understands is worse than none.
+        # Anything else (duration, binary, list, struct, unknown) is left out
+        # of the schema: a widget built on a dtype no filter understands is
+        # worse than none. The pandas path also omits these, except for time
+        # columns, which it happens to reach through its object-dtype branch.
     return schema
 
 
