@@ -602,6 +602,14 @@ def try_import_xarray(load=True):
     return try_import("xarray", load=load)
 
 
+def _narwhals_class_names(obj):
+    """Names of the narwhals classes obj inherits from, if any."""
+    return {
+        cls.__name__ for cls in type(obj).__mro__
+        if cls.__module__.split('.')[0] == 'narwhals'
+    }
+
+
 def is_narwhals(obj):
     """Return True if obj is a narwhals DataFrame or LazyFrame.
 
@@ -609,14 +617,10 @@ def is_narwhals(obj):
     frame wrapped through narwhals.stable.v1, narwhals.stable.v2 or the bare
     narwhals namespace produces objects that fail isinstance against each
     other, so a user who wraps with a different namespace than Lumen uses
-    would otherwise be rejected. Subclasses are matched too, which isinstance
-    would give for free but name matching does not.
+    would otherwise be rejected. Walking the MRO keeps subclasses matching,
+    which isinstance would have given for free.
     """
-    return any(
-        cls.__module__.split('.')[0] == 'narwhals' and
-        cls.__name__ in ('DataFrame', 'LazyFrame')
-        for cls in type(obj).__mro__
-    )
+    return bool(_narwhals_class_names(obj) & {'DataFrame', 'LazyFrame'})
 
 
 def is_lazyframe(obj):
@@ -625,7 +629,7 @@ def is_lazyframe(obj):
     Callers need this before len(), slicing or item access, none of which a
     LazyFrame supports.
     """
-    return any(cls.__name__ == 'LazyFrame' for cls in type(obj).__mro__)
+    return 'LazyFrame' in _narwhals_class_names(obj)
 
 
 def as_narwhals(df):
