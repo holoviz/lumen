@@ -635,12 +635,19 @@ def as_pandas(df):
 
     The boundary for consumers that need real pandas: hvplot's accessor,
     Panel's Tabulator, Perspective and Vega panes, and the LLM schema summary.
+    A pandas frame is returned untouched, which also keeps a GeoDataFrame from
+    being flattened into a plain DataFrame on the way through.
     """
-    if not is_narwhals(df):
+    if isinstance(df, pd.DataFrame):
         return df
-    if type(df).__name__ == 'LazyFrame':
-        df = df.collect()
-    return df.to_pandas()
+    narwhals_df = as_narwhals(df)
+    if not is_narwhals(narwhals_df):
+        return df
+    # LazyFrame is matched by name for the same reason is_narwhals is: an
+    # isinstance check fails across narwhals namespace versions.
+    if type(narwhals_df).__name__ == 'LazyFrame':
+        narwhals_df = narwhals_df.collect()
+    return narwhals_df.to_pandas()
 
 
 def is_geodataframe(df):

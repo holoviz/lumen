@@ -24,7 +24,9 @@ from panel.io.cache import _generate_hash
 
 from ..base import MultiTypeComponent
 from ..state import state
-from ..util import as_narwhals, as_pandas, is_narwhals, is_ref
+from ..util import (
+    as_narwhals, as_pandas, is_narwhals, is_ref,
+)
 
 pd_version = Version(pd.__version__)
 
@@ -46,6 +48,10 @@ class Transform(MultiTypeComponent):
     transform_type: ClassVar[str | None] = None
 
     _field_params: ClassVar[list[str]] = []
+
+    # Whether apply() handles narwhals frames. False means _coerce materializes
+    # the data to pandas first, which keeps third-party subclasses working.
+    _narwhals: ClassVar[bool] = False
 
     _valid_keys: ClassVar[list[str] | Literal['params'] | None] = 'params'
 
@@ -127,8 +133,6 @@ class Transform(MultiTypeComponent):
                         "is a param.Selector type."
                     )
         return transform
-
-    _narwhals: ClassVar[bool] = False
 
     @classmethod
     def _coerce(cls, table: Any) -> Any:

@@ -1,12 +1,9 @@
-"""Records every place a non-pandas dataframe is currently rejected.
+"""Covers frames from dataframe libraries other than pandas.
 
-Each test is marked ``xfail(strict=True)`` and names the phase that removes the
-lock-in.  ``xfail_strict`` is enabled, so the moment a phase makes one of these
-pass the suite fails until its marker is deleted -- the marker is the checklist.
-
-pyarrow is used as the probe backend because it is already installed wherever
-Lumen's AI extra is; polars joins the matrix once it is declared as a test
-dependency.
+The ``constructor`` fixture builds the same data in pandas, polars and pyarrow,
+so each test here runs once per backend and skips the ones that are not
+installed. Every assertion is either that the three backends agree, or that a
+pandas caller gets back exactly what it got before.
 """
 import datetime as dt
 
@@ -17,13 +14,11 @@ import pytest
 from lumen.filters.base import ConstantFilter
 from lumen.pipeline import DataFrame as PipelineDataFrame, Pipeline
 from lumen.sources.base import InMemorySource
-from lumen.views.base import Table
 from lumen.transforms.base import (
     Aggregate, Columns, Filter as FilterTransform, Iloc, Query, Sample, Sort,
 )
 from lumen.util import as_narwhals, as_pandas, get_dataframe_schema
-
-pa = pytest.importorskip("pyarrow")
+from lumen.views.base import Table
 
 
 class ParamHolder(param.Parameterized):
@@ -32,9 +27,9 @@ class ParamHolder(param.Parameterized):
     data = PipelineDataFrame()
 
 
-@pytest.fixture
-def arrow_table():
-    return pa.table({"A": [0, 1, 2], "C": ["foo1", "foo2", "foo3"]})
+def rows(frame):
+    """Row count for a frame from any of the three backends."""
+    return frame.num_rows if hasattr(frame, "num_rows") else len(frame)
 
 
 def test_pipeline_data_accepts_backend(constructor):
@@ -77,11 +72,6 @@ def test_schema_column_subset_across_backends(constructor):
     assert set(get_dataframe_schema(frame, columns=["s"])["items"]["properties"]) == {"s"}
 
 
-def rows(frame):
-    """Row count for a frame from any of the three backends."""
-    return frame.num_rows if hasattr(frame, "num_rows") else len(frame)
-
-
 @pytest.mark.parametrize("conditions, expected", [
     ([("i", 1)], 1),
     ([("s", ["a", "b"])], 3),
@@ -112,7 +102,7 @@ def test_filter_preserves_backend(constructor):
 def test_sort_matches_across_backends(constructor):
     frame = constructor({"i": [2, 0, 1], "s": ["c", "a", "b"]})
     sorted_frame = Sort.apply_to(frame, by=["i"])
-    assert as_pandas(as_narwhals(sorted_frame))["s"].tolist() == ["a", "b", "c"]
+    assert as_pandas(sorted_frame)["s"].tolist() == ["a", "b", "c"]
 
 
 def test_columns_matches_across_backends(constructor):
@@ -123,7 +113,7 @@ def test_columns_matches_across_backends(constructor):
 
 def test_iloc_matches_across_backends(constructor):
     frame = constructor({"i": [0, 1, 2, 3]})
-    assert as_pandas(as_narwhals(Iloc.apply_to(frame, start=1, end=3)))["i"].tolist() == [1, 2]
+    assert as_pandas(Iloc.apply_to(frame, start=1, end=3))["i"].tolist() == [1, 2]
 
 
 def test_sample_matches_across_backends(constructor):
@@ -136,14 +126,14 @@ def test_aggregate_matches_pandas_across_backends(constructor):
     reference = Aggregate.apply_to(
         pd.DataFrame(data), by=["g"], with_index=False, method="sum"
     )
-    result = as_pandas(as_narwhals(
+    result = as_pandas(
         Aggregate.apply_to(constructor(data), by=["g"], with_index=False, method="sum")
-    ))
+    )
     assert result["g"].tolist() == reference["g"].tolist()
     assert result["v"].tolist() == reference["v"].tolist()
 
 
-def test_pandas_only_transform_materializes(constructor, caplog):
+def test_pandas_only_transform_materializes(constructor):
     frame = constructor({"i": [0, 1, 2]})
     result = Query.apply_to(frame, query="i > 0")
     assert isinstance(result, pd.DataFrame)
@@ -155,7 +145,7 @@ def test_disk_cache_roundtrip(tmp_path, constructor):
     source._set_cache(constructor({"i": [0, 1]}), "t")
     assert (tmp_path / "t.parq").is_file()
     cached, _ = source._get_cache("t")
-    assert as_pandas(as_narwhals(cached))["i"].tolist() == [0, 1]
+    assert as_pandas(cached)["i"].tolist() == [0, 1]
 
 
 def test_pipeline_end_to_end_across_backends(constructor):
@@ -166,7 +156,7 @@ def test_pipeline_end_to_end_across_backends(constructor):
         filters=[ConstantFilter(field="g", value="a")],
         transforms=[Sort(by=["v"])],
     )
-    assert as_pandas(as_narwhals(pipeline.data))["v"].tolist() == [2.0, 4.0]
+    assert as_pandas(pipeline.data)["v"].tolist() == [2.0, 4.0]
 
 
 def test_view_materializes_to_pandas(constructor):

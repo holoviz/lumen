@@ -44,7 +44,7 @@ from ..state import state
 from ..transforms.base import Transform
 from ..transforms.sql import SQLTransform
 from ..util import (
-    VARIABLE_RE, as_narwhals, as_pandas, catch_and_notify, geometry_to_geojson,
+    VARIABLE_RE, as_pandas, catch_and_notify, geometry_to_geojson,
     geometry_to_wkt, is_geodataframe, is_ref, resolve_module_reference,
     try_import_xarray,
 )
@@ -621,7 +621,7 @@ class View(MultiTypeComponent, Viewer):
         # Views hand the frame straight to hvplot, Tabulator, Perspective, Vega
         # and friends, none of which read anything but pandas, so this is where
         # any other dataframe library is materialized.
-        self._cache = data = as_pandas(as_narwhals(self.pipeline.data))
+        self._cache = data = as_pandas(self.pipeline.data)
         if self.limit is not None:
             data = data.iloc[:self.limit]
         return data.copy()
