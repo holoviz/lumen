@@ -68,7 +68,7 @@ def _narwhals_dataframe_schema(df, columns=None):
     no row uses.
     """
     schema = {'type': 'array', 'items': {'type': 'object', 'properties': {}}}
-    if isinstance(df, nw.LazyFrame):
+    if is_lazyframe(df):
         df = df.collect()
     df_schema = df.collect_schema()
     empty = len(df) == 0
@@ -76,41 +76,45 @@ def _narwhals_dataframe_schema(df, columns=None):
     for name in (df_schema.names() if columns is None else columns):
         dtype = df_schema[name]
         temporal = isinstance(dtype, (nw.Datetime, nw.Date))
-        if dtype.is_numeric() or temporal:
-            kind = None
+        if temporal:
             if empty:
-                vmin = vmax = pd.NaT if temporal else float('NaN')
+                vmin = vmax = pd.NaT
             else:
                 vmin = nw.to_py_scalar(df.select(nw.col(name).min()).item())
                 vmax = nw.to_py_scalar(df.select(nw.col(name).max()).item())
-            if temporal:
-                kind = 'string'
-                vmin, vmax = vmin.isoformat(), vmax.isoformat()
-            else:
-                cast = float if dtype in (nw.Float32, nw.Float64) else int
-                kind = 'number' if cast is float else 'integer'
+            # An all-null column has no min, and pandas renders its NaT as the
+            # string 'NaT', so match that rather than emitting null.
+            properties[name] = {
+                'type': 'string',
+                'inclusiveMinimum': 'NaT' if vmin is None else vmin.isoformat(),
+                'inclusiveMaximum': 'NaT' if vmax is None else vmax.isoformat(),
+                'format': 'datetime',
+            }
+        elif dtype.is_numeric():
+            # pandas leaves the type unset for an empty frame, and auto_filters
+            # keys off that, so an empty frame has to look the same here.
+            kind, vmin, vmax = None, float('NaN'), float('NaN')
+            if not empty:
+                cast = int if dtype.is_integer() else float
+                kind = 'integer' if dtype.is_integer() else 'number'
                 try:
-                    vmin, vmax = cast(vmin), cast(vmax)
+                    vmin = cast(nw.to_py_scalar(df.select(nw.col(name).min()).item()))
+                    vmax = cast(nw.to_py_scalar(df.select(nw.col(name).max()).item()))
                 except Exception:
-                    vmin, vmax = float('NaN'), float('NaN')
+                    vmin = vmax = float('NaN')
             properties[name] = {
                 'type': kind, 'inclusiveMinimum': vmin, 'inclusiveMaximum': vmax
             }
-            if temporal:
-                properties[name]['format'] = 'datetime'
         elif isinstance(dtype, nw.Boolean):
             properties[name] = {'type': 'boolean'}
         elif isinstance(dtype, nw.Enum):
             properties[name] = {'type': 'string', 'enum': list(dtype.categories)}
-        elif empty or not isinstance(dtype, (nw.String, nw.Categorical)):
-            # Object, List and Unknown columns cannot be enumerated. The pandas
-            # path reaches the same empty enum by way of a failing unique(), and
-            # emitting nothing at all would drop the column from the schema and
-            # silently stop auto_filters generating a widget for it.
-            properties[name] = {'type': 'string', 'enum': []}
-        else:
-            cats = df[name].unique(maintain_order=True).to_list()
+        elif isinstance(dtype, (nw.String, nw.Categorical, nw.Object)):
+            cats = [] if empty else df[name].unique(maintain_order=True).to_list()
             properties[name] = {'type': 'string', 'enum': cats}
+        # Anything else (duration, binary, list, struct, unknown) is left out of
+        # the schema, which is what the pandas path does with the same data:
+        # a widget built on a dtype no filter understands is worse than none.
     return schema
 
 
@@ -605,13 +609,23 @@ def is_narwhals(obj):
     frame wrapped through narwhals.stable.v1, narwhals.stable.v2 or the bare
     narwhals namespace produces objects that fail isinstance against each
     other, so a user who wraps with a different namespace than Lumen uses
-    would otherwise be rejected.
+    would otherwise be rejected. Subclasses are matched too, which isinstance
+    would give for free but name matching does not.
     """
-    cls = type(obj)
-    return (
-        cls.__module__.startswith('narwhals') and
+    return any(
+        cls.__module__.split('.')[0] == 'narwhals' and
         cls.__name__ in ('DataFrame', 'LazyFrame')
+        for cls in type(obj).__mro__
     )
+
+
+def is_lazyframe(obj):
+    """Return True if obj is a narwhals LazyFrame, from any narwhals namespace.
+
+    Callers need this before len(), slicing or item access, none of which a
+    LazyFrame supports.
+    """
+    return any(cls.__name__ == 'LazyFrame' for cls in type(obj).__mro__)
 
 
 def as_narwhals(df):
@@ -643,9 +657,7 @@ def as_pandas(df):
     narwhals_df = as_narwhals(df)
     if not is_narwhals(narwhals_df):
         return df
-    # LazyFrame is matched by name for the same reason is_narwhals is: an
-    # isinstance check fails across narwhals namespace versions.
-    if type(narwhals_df).__name__ == 'LazyFrame':
+    if is_lazyframe(narwhals_df):
         narwhals_df = narwhals_df.collect()
     return narwhals_df.to_pandas()
 

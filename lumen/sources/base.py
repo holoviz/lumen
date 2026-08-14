@@ -42,7 +42,8 @@ from ..transforms.sql import (
     SQLMinMax, SQLSample, SQLSchemaStats, SQLSelectFrom, SQLTransform,
 )
 from ..util import (
-    as_narwhals, get_dataframe_schema, is_narwhals, is_ref, merge_schemas,
+    as_narwhals, get_dataframe_schema, is_lazyframe, is_narwhals, is_ref,
+    merge_schemas,
 )
 from ..validation import ValidationError, match_suggestion_message
 
@@ -142,10 +143,11 @@ def cached(method, locks=None):
             filtered = FilterTransform.apply_to(
                 df, conditions=list(query.items())
             )
-        if is_narwhals(filtered) and type(filtered).__name__ == 'LazyFrame':
-            # A lazy narwhals frame answers to collect, not compute, so it would
+        if is_lazyframe(as_narwhals(filtered)):
+            # A lazy frame answers to collect, not compute, so it would
             # otherwise sail past the dask branch below and fail much later.
-            return filtered.collect().to_native()
+            # Test against the wrapped frame: the filter hands back a native one.
+            return as_narwhals(filtered).collect().to_native()
         if getattr(self, 'dask', False) or not hasattr(filtered, 'compute'):
             return filtered
         return filtered.compute()
@@ -539,9 +541,11 @@ class Source(MultiTypeComponent):
             try:
                 narwhals_data = as_narwhals(data)
                 if is_narwhals(narwhals_data) and not isinstance(data, pd.DataFrame):
-                    # polars and pyarrow spell this write_parquet, and reaching
-                    # the except below would delete the cache. Reading back is
-                    # still pd.read_parquet, so a cached frame returns as pandas.
+                    # polars and pyarrow spell this write_parquet, and only an
+                    # eager frame has it. Reading back is still pd.read_parquet,
+                    # so a frame served from disk comes back as pandas.
+                    if is_lazyframe(narwhals_data):
+                        narwhals_data = narwhals_data.collect()
                     narwhals_data.write_parquet(str(filepath))
                 else:
                     data.to_parquet(filepath)
@@ -1761,7 +1765,7 @@ class DerivedSource(Source):
             transforms = list(self.transforms)
         transforms.append(FilterTransform(conditions=list(query.items())))
         for transform in transforms:
-            df = transform.apply(df)
+            df = transform.apply(type(transform)._coerce(df))
         return df
 
     get.__doc__ = Source.get.__doc__

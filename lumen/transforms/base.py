@@ -25,7 +25,7 @@ from panel.io.cache import _generate_hash
 from ..base import MultiTypeComponent
 from ..state import state
 from ..util import (
-    as_narwhals, as_pandas, is_narwhals, is_ref,
+    as_narwhals, as_pandas, is_lazyframe, is_narwhals, is_ref,
 )
 
 pd_version = Version(pd.__version__)
@@ -48,6 +48,10 @@ class Transform(MultiTypeComponent):
     transform_type: ClassVar[str | None] = None
 
     _field_params: ClassVar[list[str]] = []
+
+    # Whether apply() can work on a lazy frame. False means _narwhals_frame
+    # collects one first, because slicing, sampling and len() need real rows.
+    _lazy: ClassVar[bool] = True
 
     # Whether apply() handles narwhals frames. False means _coerce materializes
     # the data to pandas first, which keeps third-party subclasses working.
@@ -142,7 +146,14 @@ class Transform(MultiTypeComponent):
         such as the index or the query expression language. Rather than fail deep
         inside another dataframe library, they convert and say what it cost.
         """
-        if cls._narwhals or isinstance(table, pd.DataFrame):
+        if cls._narwhals:
+            return table
+        return cls._coerce_to_pandas(table)
+
+    @classmethod
+    def _coerce_to_pandas(cls, table: Any) -> Any:
+        """Convert a non-pandas frame to pandas, saying what it cost."""
+        if isinstance(table, pd.DataFrame):
             return table
         narwhals_table = as_narwhals(table)
         if not is_narwhals(narwhals_table):
@@ -158,7 +169,11 @@ class Transform(MultiTypeComponent):
         if isinstance(table, pd.DataFrame):
             return None
         narwhals_table = as_narwhals(table)
-        return narwhals_table if is_narwhals(narwhals_table) else None
+        if not is_narwhals(narwhals_table):
+            return None
+        if not self._lazy and is_lazyframe(narwhals_table):
+            return narwhals_table.collect()
+        return narwhals_table
 
     @classmethod
     def apply_to(cls, table: DataFrame, **kwargs) -> DataFrame:
@@ -279,7 +294,14 @@ class Filter(Transform):
             elif isinstance(val, list):
                 if not val:
                     continue
-                expr = nw.col(k).is_in(val)
+                # A None in the list means "match nulls" to pandas isin, but
+                # polars drops those rows and pyarrow raises, so ask for nulls
+                # separately. The schema emits such lists for nullable columns.
+                members = [v for v in val if v is not None]
+                expr = nw.col(k).is_in(members) if members else None
+                if len(members) != len(val):
+                    is_null = nw.col(k).is_null()
+                    expr = is_null if expr is None else (expr | is_null)
             elif isinstance(val, tuple):
                 expr = self._range_expr(temporal, k, *val)
             else:
@@ -432,7 +454,13 @@ class Aggregate(Transform):
     _narwhals: ClassVar[bool] = True
 
     def apply(self, table: DataFrame) -> DataFrame:
-        frame = self._narwhals_frame(table)
+        if self.with_index:
+            # with_index moves the group keys into the index, and narwhals has
+            # no index, so the narwhals path would return a different set of
+            # columns than pandas for the same spec. Take the pandas path
+            # instead of quietly producing a differently shaped frame.
+            table = Aggregate._coerce_to_pandas(table)
+        frame = None if self.with_index else self._narwhals_frame(table)
         if frame is not None:
             schema = frame.collect_schema()
             cols = self.columns or [
@@ -440,10 +468,14 @@ class Aggregate(Transform):
                 if dtype.is_numeric() and name not in self.by
             ]
             aggs = [getattr(nw.col(c), self.method)(**self.kwargs) for c in cols]
-            # pandas groupby sorts by the group keys and narwhals does not, so
-            # sort to keep the row order the same whichever backend is in play.
-            # with_index has no meaning without an index, so it is ignored here.
-            return frame.group_by(self.by).agg(*aggs).sort(self.by).to_native()
+            # Three things pandas does that narwhals does not: groupby drops
+            # rows whose key is null, it sorts by the key, and with_index moves
+            # the keys into the index. There is no index here, so the keys stay
+            # as columns and with_index cannot be honoured either way.
+            return (
+                frame.drop_nulls(subset=self.by)
+                .group_by(self.by).agg(*aggs).sort(self.by).to_native()
+            )
         grouped = table.groupby(self.by)
         if self.columns:
             cols = self.columns
@@ -485,7 +517,10 @@ class Sort(Transform):
                 descending = [not a for a in self.ascending]
             else:
                 descending = not self.ascending
-            return frame.sort(self.by, descending=descending).to_native()
+            # narwhals sorts nulls first by default, pandas sorts them last.
+            return frame.sort(
+                self.by, descending=descending, nulls_last=True
+            ).to_native()
         return table.sort_values(self.by, ascending=self.ascending)
 
 
@@ -599,6 +634,8 @@ class Iloc(Transform):
 
     transform_type: ClassVar[str] = 'iloc'
 
+    _lazy: ClassVar[bool] = False
+
     _narwhals: ClassVar[bool] = True
 
     def apply(self, table: DataFrame) -> DataFrame:
@@ -625,6 +662,8 @@ class Sample(Transform):
         Sample with or without replacement.""")
 
     transform_type: ClassVar[str] = 'sample'
+
+    _lazy: ClassVar[bool] = False
 
     _narwhals: ClassVar[bool] = True
 
