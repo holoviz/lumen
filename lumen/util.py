@@ -58,13 +58,69 @@ class NumpyDumper(yaml.SafeDumper):
             data = str(data)
         return super().represent_data(data)
 
+def _narwhals_dataframe_schema(df, columns=None):
+    """Return a JSON schema for a narwhals-wrapped frame.
+
+    Mirrors get_dataframe_schema for the dataframe libraries pandas cannot
+    describe. It is a separate function rather than the shared implementation
+    because the pandas path covers two things narwhals has no representation
+    for: geopandas geometry columns, and pandas categorical categories that
+    no row uses.
+    """
+    schema = {'type': 'array', 'items': {'type': 'object', 'properties': {}}}
+    if isinstance(df, nw.LazyFrame):
+        df = df.collect()
+    df_schema = df.collect_schema()
+    empty = len(df) == 0
+    properties = schema['items']['properties']
+    for name in (df_schema.names() if columns is None else columns):
+        dtype = df_schema[name]
+        temporal = isinstance(dtype, (nw.Datetime, nw.Date))
+        if dtype.is_numeric() or temporal:
+            kind = None
+            if empty:
+                vmin = vmax = pd.NaT if temporal else float('NaN')
+            else:
+                vmin = nw.to_py_scalar(df.select(nw.col(name).min()).item())
+                vmax = nw.to_py_scalar(df.select(nw.col(name).max()).item())
+            if temporal:
+                kind = 'string'
+                vmin, vmax = vmin.isoformat(), vmax.isoformat()
+            else:
+                cast = float if dtype in (nw.Float32, nw.Float64) else int
+                kind = 'number' if cast is float else 'integer'
+                try:
+                    vmin, vmax = cast(vmin), cast(vmax)
+                except Exception:
+                    vmin, vmax = float('NaN'), float('NaN')
+            properties[name] = {
+                'type': kind, 'inclusiveMinimum': vmin, 'inclusiveMaximum': vmax
+            }
+            if temporal:
+                properties[name]['format'] = 'datetime'
+        elif isinstance(dtype, nw.Boolean):
+            properties[name] = {'type': 'boolean'}
+        elif isinstance(dtype, nw.Enum):
+            properties[name] = {'type': 'string', 'enum': list(dtype.categories)}
+        elif empty or not isinstance(dtype, (nw.String, nw.Categorical)):
+            # Object, List and Unknown columns cannot be enumerated. The pandas
+            # path reaches the same empty enum by way of a failing unique(), and
+            # emitting nothing at all would drop the column from the schema and
+            # silently stop auto_filters generating a widget for it.
+            properties[name] = {'type': 'string', 'enum': []}
+        else:
+            cats = df[name].unique(maintain_order=True).to_list()
+            properties[name] = {'type': 'string', 'enum': cats}
+    return schema
+
+
 def get_dataframe_schema(df, columns=None):
     """
     Returns a JSON schema optionally filtered by a subset of the columns.
 
     Parameters
     ----------
-    df : pandas.DataFrame or dask.DataFrame
+    df : pandas.DataFrame, dask.DataFrame or any frame narwhals supports
         The DataFrame to describe with the schema
     columns: list(str) or None
         List of columns to include in schema
@@ -74,6 +130,13 @@ def get_dataframe_schema(df, columns=None):
     dict
         The JSON schema describing the DataFrame
     """
+    if df is not None and not isinstance(df, pd.DataFrame):
+        # pandas frames keep the path below: it describes geometry columns and
+        # unused categorical categories, neither of which survives narwhals.
+        narwhals_df = as_narwhals(df)
+        if is_narwhals(narwhals_df):
+            return _narwhals_dataframe_schema(narwhals_df, columns)
+
     if 'dask.dataframe' in sys.modules:
         import dask.dataframe as dd
         is_dask = isinstance(df, dd.DataFrame)

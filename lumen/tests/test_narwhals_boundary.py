@@ -8,6 +8,8 @@ pyarrow is used as the probe backend because it is already installed wherever
 Lumen's AI extra is; polars joins the matrix once it is declared as a test
 dependency.
 """
+import datetime as dt
+
 import param
 import pytest
 
@@ -35,10 +37,34 @@ def test_pipeline_data_accepts_arrow(arrow_table):
     ParamHolder().data = arrow_table
 
 
-@pytest.mark.xfail(strict=True, reason="phase2: get_dataframe_schema dispatches on numpy dtype.kind")
-def test_schema_on_arrow(arrow_table):
-    schema = get_dataframe_schema(arrow_table)
-    assert set(schema["items"]["properties"]) == {"A", "C"}
+def test_schema_matches_across_backends(constructor):
+    data = {
+        "i": [0, 1, 2],
+        "f": [0.5, 1.5, 2.5],
+        "s": ["foo", "bar", "foo"],
+        "b": [True, False, True],
+    }
+    schema = get_dataframe_schema(constructor(data))["items"]["properties"]
+    assert schema["i"] == {"type": "integer", "inclusiveMinimum": 0, "inclusiveMaximum": 2}
+    assert schema["f"] == {"type": "number", "inclusiveMinimum": 0.5, "inclusiveMaximum": 2.5}
+    assert schema["s"] == {"type": "string", "enum": ["foo", "bar"]}
+    assert schema["b"] == {"type": "boolean"}
+
+
+def test_schema_datetime_across_backends(constructor):
+    data = {"d": [dt.datetime(2020, 1, 1), dt.datetime(2020, 1, 3)]}
+    schema = get_dataframe_schema(constructor(data))["items"]["properties"]
+    assert schema["d"] == {
+        "type": "string",
+        "inclusiveMinimum": "2020-01-01T00:00:00",
+        "inclusiveMaximum": "2020-01-03T00:00:00",
+        "format": "datetime",
+    }
+
+
+def test_schema_column_subset_across_backends(constructor):
+    frame = constructor({"i": [0, 1], "s": ["a", "b"]})
+    assert set(get_dataframe_schema(frame, columns=["s"])["items"]["properties"]) == {"s"}
 
 
 @pytest.mark.xfail(strict=True, reason="phase3: Filter builds pandas boolean masks")
