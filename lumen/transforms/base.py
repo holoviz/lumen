@@ -459,7 +459,7 @@ class Aggregate(Transform):
             # no index, so the narwhals path would return a different set of
             # columns than pandas for the same spec. Take the pandas path
             # instead of quietly producing a differently shaped frame.
-            table = Aggregate._coerce_to_pandas(table)
+            table = type(self)._coerce_to_pandas(table)
         frame = None if self.with_index else self._narwhals_frame(table)
         if frame is not None:
             schema = frame.collect_schema()
@@ -468,10 +468,8 @@ class Aggregate(Transform):
                 if dtype.is_numeric() and name not in self.by
             ]
             aggs = [getattr(nw.col(c), self.method)(**self.kwargs) for c in cols]
-            # Three things pandas does that narwhals does not: groupby drops
-            # rows whose key is null, it sorts by the key, and with_index moves
-            # the keys into the index. There is no index here, so the keys stay
-            # as columns and with_index cannot be honoured either way.
+            # Two things pandas groupby does that narwhals does not: it drops
+            # rows whose key is null, and it sorts by the key.
             return (
                 frame.drop_nulls(subset=self.by)
                 .group_by(self.by).agg(*aggs).sort(self.by).to_native()
