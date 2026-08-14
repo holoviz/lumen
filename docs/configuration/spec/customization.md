@@ -199,10 +199,12 @@ A custom `Source` does not have to return pandas. Any dataframe library
 pyarrow, is accepted, and schema generation, filtering and the transforms listed
 below run on it natively. Two things to know before choosing one:
 
-- Transforms that encode a pandas concept narwhals has no counterpart for, such
-  as `query`, `eval`, `stack`, `unstack` and the index transforms, convert the
-  data to pandas and log a warning saying so. `aggregate` does the same unless
-  you set `with_index: false`, because grouping into an index needs pandas.
+- `filter`, `aggregate`, `sort`, `columns`, `iloc`, `sample`, `melt`, `rename`
+  and `dropna` run natively. The rest, and anything that touches the pandas
+  index (`query`, `eval`, `stack`, `unstack`, `set_index`, `reset_index`),
+  convert the data to pandas and log a warning saying so. `aggregate` converts
+  unless you set `with_index: false`, because grouping into an index needs
+  pandas; `rename` and `dropna` convert for their index-specific options.
 - Views convert to pandas regardless, because hvPlot, Tabulator, Perspective and
   Vega only read pandas. Returning polars saves work up to the view, not through
   it.
