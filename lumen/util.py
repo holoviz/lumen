@@ -15,6 +15,7 @@ from pathlib import Path
 from subprocess import check_output
 
 import bokeh
+import narwhals.stable.v2 as nw
 import numpy as np
 import pandas as pd
 import panel as pn
@@ -532,6 +533,51 @@ def try_import_xarray(load=True):
     if try_import("xarray_sql", load=load) is None:
         return None
     return try_import("xarray", load=load)
+
+
+def is_narwhals(obj):
+    """Return True if obj is a narwhals DataFrame or LazyFrame.
+
+    Matches on module and class name rather than isinstance because the same
+    frame wrapped through narwhals.stable.v1, narwhals.stable.v2 or the bare
+    narwhals namespace produces objects that fail isinstance against each
+    other, so a user who wraps with a different namespace than Lumen uses
+    would otherwise be rejected.
+    """
+    cls = type(obj)
+    return (
+        cls.__module__.startswith('narwhals') and
+        cls.__name__ in ('DataFrame', 'LazyFrame')
+    )
+
+
+def as_narwhals(df):
+    """Return df wrapped as a narwhals frame, or df unchanged if it cannot be.
+
+    Wrapping a pandas DataFrame is lossless and free: to_native() returns the
+    caller's original object. Dask frames are deliberately left alone because
+    narwhals maps them to a LazyFrame, which would bypass the hasattr(df,
+    'compute') branches the dask paths rely on.
+    """
+    if df is None or is_narwhals(df):
+        return df
+    dd = try_import('dask.dataframe', load=False)
+    if dd is not None and isinstance(df, dd.DataFrame):
+        return df
+    return nw.from_native(df, pass_through=True)
+
+
+def as_pandas(df):
+    """Return df as a pandas DataFrame, collecting it first if it is lazy.
+
+    The boundary for consumers that need real pandas: hvplot's accessor,
+    Panel's Tabulator, Perspective and Vega panes, and the LLM schema summary.
+    """
+    if not is_narwhals(df):
+        return df
+    if type(df).__name__ == 'LazyFrame':
+        df = df.collect()
+    return df.to_pandas()
 
 
 def is_geodataframe(df):

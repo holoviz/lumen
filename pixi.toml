@@ -25,6 +25,7 @@ hvplot = "*"
 intake = "<2"
 jinja2 = ">3.0"
 lxml = "*"
+narwhals = ">=2"
 numpy = "*"
 packaging = "*"
 pandas = "*"
@@ -97,6 +98,7 @@ test-unit = 'pytest lumen/tests -n logical --dist loadgroup'
 [feature.test.dependencies]
 dask-core = "*"
 fastparquet = "*"
+polars = "*"
 matplotlib-base = ">=3.4" # Ubuntu + Python 3.9 installs old version matplotlib (3.3.2)
 msgpack-python = "*"
 toolz = "*"

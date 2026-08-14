@@ -37,6 +37,7 @@ dependencies = [
     "intake <2",
     "jinja2 >3.0",
     "markitdown",
+    "narwhals >=2",
     "nbformat",
     "numpy",
     "packaging",
@@ -62,7 +63,7 @@ Source = "https://github.com/holoviz/lumen"
 HoloViz = "https://holoviz.org/"
 
 [project.optional-dependencies]
-tests = ['pytest', 'pytest-rerunfailures', 'pytest-asyncio', 'pytest-xdist', 'lxml']
+tests = ['pytest', 'pytest-rerunfailures', 'pytest-asyncio', 'pytest-xdist', 'lxml', 'polars']
 dev = [
     'lumen[tests,sql,ai-openai,xarray,geo]',
     'panel>=1.9.0rc0',
