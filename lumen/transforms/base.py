@@ -175,6 +175,12 @@ class Transform(MultiTypeComponent):
             return narwhals_table.collect()
         return narwhals_table
 
+    def _to_native(self, frame, source):
+        """Return frame as the same kind of object the caller handed in."""
+        if is_lazyframe(as_narwhals(source)) and not is_lazyframe(frame):
+            return frame.lazy().to_native()
+        return frame.to_native()
+
     @classmethod
     def apply_to(cls, table: DataFrame, **kwargs) -> DataFrame:
         """
@@ -646,9 +652,14 @@ class Iloc(Transform):
     _narwhals: ClassVar[bool] = True
 
     def apply(self, table: DataFrame) -> DataFrame:
+        lazy = as_narwhals(table)
+        if is_lazyframe(lazy) and not self.start and self.end and self.end > 0:
+            # A leading slice is head(), which a lazy backend pushes down
+            # rather than materializing the whole frame to throw most away.
+            return lazy.head(self.end).to_native()
         frame = self._narwhals_frame(table)
         if frame is not None:
-            return frame[self.start:self.end].to_native()
+            return self._to_native(frame[self.start:self.end], table)
         return table.iloc[self.start:self.end]
 
 
@@ -677,11 +688,11 @@ class Sample(Transform):
     def apply(self, table: DataFrame) -> DataFrame:
         frame = self._narwhals_frame(table)
         if frame is not None:
-            return frame.sample(
+            return self._to_native(frame.sample(
                 **self._drop_none_values(
                     n=self.n, fraction=self.frac, with_replacement=self.replace
                 )
-            ).to_native()
+            ), table)
         return table.sample(
             **self._drop_none_values(n=self.n, frac=self.frac, replace=self.replace)
         )
@@ -795,7 +806,17 @@ class Melt(Transform):
 
     _field_params: ClassVar[list[str]] = ['id_vars', 'value_vars']
 
+    _narwhals: ClassVar[bool] = True
+
     def apply(self, table: DataFrame) -> DataFrame:
+        frame = self._narwhals_frame(table)
+        if frame is not None:
+            # ignore_index has no counterpart: unpivot never keeps an index.
+            return frame.unpivot(
+                on=self.value_vars, index=self.id_vars,
+                variable_name=self.var_name or 'variable',
+                value_name=self.value_name,
+            ).to_native()
         melt: Callable
         if isinstance(table, pd.DataFrame):
             melt = pd.melt
@@ -906,7 +927,16 @@ class Rename(Transform):
 
     transform_type: ClassVar[str] = 'rename'
 
+    _narwhals: ClassVar[bool] = True
+
     def apply(self, table: DataFrame) -> DataFrame:
+        renaming_columns = self.columns or (self.mapper and self.axis in (1, 'columns'))
+        if renaming_columns and self.level is None:
+            frame = self._narwhals_frame(table)
+            if frame is not None:
+                # Only the columns case maps over: index and level are pandas
+                # index concepts, and narwhals has no index to rename.
+                return frame.rename(self.columns or self.mapper).to_native()
         kwargs: dict[str, Any] = dict(
             axis=self.axis, columns=self.columns,
             index=self.index, mapper=self.mapper, level=self.level,
@@ -1061,7 +1091,16 @@ class DropNA(Transform):
 
     transform_type: ClassVar[str] = 'dropna'
 
+    _narwhals: ClassVar[bool] = True
+
     def apply(self, table: DataFrame) -> DataFrame:
+        droppable = self.axis in (0, 'index') and self.thresh is None
+        if droppable and self.how in (None, 'any'):
+            frame = self._narwhals_frame(table)
+            if frame is not None:
+                # drop_nulls is row-wise how='any' only; axis=1, how='all' and
+                # thresh have no counterpart and keep the pandas path.
+                return frame.drop_nulls(subset=self.subset).to_native()
         kwargs = {'axis': self.axis, 'subset': self.subset}
         if self.how and self.thresh is None:
             kwargs['how'] = self.how

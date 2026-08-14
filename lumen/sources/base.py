@@ -20,6 +20,7 @@ from typing import (
 )
 from urllib.parse import quote, urlparse
 
+import narwhals.stable.v2 as nw
 import numpy as np
 import pandas as pd
 import panel as pn
@@ -504,6 +505,15 @@ class Source(MultiTypeComponent):
                 filename = f'{table}.parq'
             path = self.root / self.cache_dir / filename
             if path.is_file():
+                # A sidecar records which dataframe library wrote the file, so
+                # a warm cache hands back the same kind of frame the cold path
+                # produced rather than silently switching everything to pandas.
+                backend = path.with_suffix('.backend')
+                if backend.is_file():
+                    return (
+                        nw.read_parquet(str(path), backend=backend.read_text()).to_native(),
+                        not bool(query)
+                    )
                 return pd.read_parquet(path), not bool(query)
             if dd and path.is_dir():
                 return dd.read_parquet(path), not bool(query)
@@ -547,6 +557,9 @@ class Source(MultiTypeComponent):
                     if is_lazyframe(narwhals_data):
                         narwhals_data = narwhals_data.collect()
                     narwhals_data.write_parquet(str(filepath))
+                    filepath.with_suffix('.backend').write_text(
+                        str(narwhals_data.implementation)
+                    )
                 else:
                     data.to_parquet(filepath)
             except Exception as e:

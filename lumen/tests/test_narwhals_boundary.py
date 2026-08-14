@@ -17,7 +17,8 @@ from lumen.filters.base import ConstantFilter
 from lumen.pipeline import DataFrame as PipelineDataFrame, Pipeline
 from lumen.sources.base import DerivedSource, InMemorySource
 from lumen.transforms.base import (
-    Aggregate, Columns, Filter as FilterTransform, Iloc, Query, Sample, Sort,
+    Aggregate, Columns, DropNA, Filter as FilterTransform, Iloc, Melt, Query,
+    Rename, Sample, Sort,
 )
 from lumen.util import (
     as_narwhals, as_pandas, get_dataframe_schema, is_lazyframe,
@@ -249,14 +250,8 @@ def test_disk_cache_roundtrip(tmp_path, constructor):
     source._set_cache(frame, "t")
     assert (tmp_path / "t.parq").is_file()
     cached, _ = source._get_cache("t")
-    # Served from memory the frame keeps its backend; only a cold read from
-    # disk comes back as pandas, because _get_cache uses pd.read_parquet.
     assert type(cached) is type(frame)
     assert as_pandas(cached)["i"].tolist() == [0, 1]
-    source._cache.clear()
-    from_disk, _ = source._get_cache("t")
-    assert isinstance(from_disk, pd.DataFrame)
-    assert from_disk["i"].tolist() == [0, 1]
 
 
 def test_set_cache_failure_keeps_other_cached_tables(tmp_path):
@@ -332,6 +327,48 @@ def test_aggregate_falls_back_for_non_numeric_columns(constructor):
         constructor(data), by=["g"], columns=["s"], with_index=False, method="sum"
     ))
     assert result["s"].tolist() == reference["s"].tolist()
+
+
+def test_melt_matches_pandas(constructor):
+    data = {"g": ["a", "b"], "x": [1.0, 2.0], "y": [3.0, 4.0]}
+    reference = Melt.apply_to(pd.DataFrame(data), id_vars=["g"], value_vars=["x", "y"])
+    result = as_pandas(Melt.apply_to(constructor(data), id_vars=["g"], value_vars=["x", "y"]))
+    assert sorted(result.columns) == sorted(reference.columns)
+    assert sorted(map(tuple, result[reference.columns].values.tolist())) == \
+        sorted(map(tuple, reference.values.tolist()))
+
+
+def test_rename_columns_matches_pandas(constructor):
+    data = {"a": [1, 2], "b": [3, 4]}
+    reference = Rename.apply_to(pd.DataFrame(data), columns={"a": "z"})
+    result = as_pandas(Rename.apply_to(constructor(data), columns={"a": "z"}))
+    assert list(result.columns) == list(reference.columns) == ["z", "b"]
+
+
+def test_dropna_matches_pandas(constructor):
+    data = {"a": [1.0, None, 3.0], "b": [1.0, 2.0, None]}
+    reference = DropNA.apply_to(pd.DataFrame(data))
+    result = as_pandas(DropNA.apply_to(constructor(data)))
+    assert result["a"].tolist() == reference["a"].tolist() == [1.0]
+
+
+def test_lazy_transforms_stay_lazy():
+    pl = pytest.importorskip("polars")
+    frame = pl.LazyFrame({"i": [0, 1, 2, 3]})
+    for transform in (Iloc(end=2), Sample(n=2), Sort(by=["i"]), Columns(columns=["i"])):
+        result = transform.apply(frame)
+        assert isinstance(result, pl.LazyFrame), type(transform).__name__
+
+
+def test_disk_cache_keeps_its_backend(tmp_path, constructor):
+    """A cold read must return the same kind of frame the write produced."""
+    frame = constructor({"i": [0, 1]})
+    source = InMemorySource(tables={}, cache_dir=str(tmp_path))
+    source._set_cache(frame, "t")
+    source._cache.clear()
+    from_disk, _ = source._get_cache("t")
+    assert type(from_disk) is type(frame)
+    assert as_pandas(from_disk)["i"].tolist() == [0, 1]
 
 
 def test_filter_numeric_enum_with_null_matches_pandas(constructor):
