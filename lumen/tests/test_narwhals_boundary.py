@@ -14,8 +14,10 @@ import pandas as pd
 import param
 import pytest
 
-from lumen.pipeline import DataFrame as PipelineDataFrame
+from lumen.filters.base import ConstantFilter
+from lumen.pipeline import DataFrame as PipelineDataFrame, Pipeline
 from lumen.sources.base import InMemorySource
+from lumen.views.base import Table
 from lumen.transforms.base import (
     Aggregate, Columns, Filter as FilterTransform, Iloc, Query, Sample, Sort,
 )
@@ -35,9 +37,14 @@ def arrow_table():
     return pa.table({"A": [0, 1, 2], "C": ["foo1", "foo2", "foo3"]})
 
 
-@pytest.mark.xfail(strict=True, reason="phase5: param.DataFrame gates on isinstance(pd.DataFrame)")
-def test_pipeline_data_accepts_arrow(arrow_table):
-    ParamHolder().data = arrow_table
+def test_pipeline_data_accepts_backend(constructor):
+    ParamHolder().data = constructor({"i": [0, 1]})
+
+
+@pytest.mark.parametrize("value", [{"i": [0]}, [0, 1], "frame", 3])
+def test_pipeline_data_still_rejects_non_frames(value):
+    with pytest.raises(ValueError, match="expects a pandas DataFrame"):
+        ParamHolder().data = value
 
 
 def test_schema_matches_across_backends(constructor):
@@ -143,8 +150,26 @@ def test_pandas_only_transform_materializes(constructor, caplog):
     assert result["i"].tolist() == [1, 2]
 
 
-@pytest.mark.xfail(strict=True, reason="phase5: _set_cache calls to_parquet, arrow has no such method")
-def test_disk_cache_roundtrip_arrow(tmp_path, arrow_table):
+def test_disk_cache_roundtrip(tmp_path, constructor):
     source = InMemorySource(tables={}, cache_dir=str(tmp_path))
-    source._set_cache(arrow_table, "t")
+    source._set_cache(constructor({"i": [0, 1]}), "t")
     assert (tmp_path / "t.parq").is_file()
+    cached, _ = source._get_cache("t")
+    assert as_pandas(as_narwhals(cached))["i"].tolist() == [0, 1]
+
+
+def test_pipeline_end_to_end_across_backends(constructor):
+    frame = constructor({"g": ["b", "a", "b", "a"], "v": [1.0, 2.0, 3.0, 4.0]})
+    source = InMemorySource(tables={"t": frame})
+    pipeline = Pipeline(
+        source=source, table="t",
+        filters=[ConstantFilter(field="g", value="a")],
+        transforms=[Sort(by=["v"])],
+    )
+    assert as_pandas(as_narwhals(pipeline.data))["v"].tolist() == [2.0, 4.0]
+
+
+def test_view_materializes_to_pandas(constructor):
+    source = InMemorySource(tables={"t": constructor({"i": [0, 1, 2]})})
+    view = Table(pipeline=Pipeline(source=source, table="t"))
+    assert isinstance(view.get_data(), pd.DataFrame)

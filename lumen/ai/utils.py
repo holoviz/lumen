@@ -46,7 +46,7 @@ from ..pipeline import Pipeline
 from ..sources.base import Source
 from ..sources.xarray_sql import XArraySQLSource
 from ..transforms import SQLRemoveSourceSeparator
-from ..util import log, try_import_xarray
+from ..util import as_narwhals, as_pandas, log, try_import_xarray
 from .config import (
     PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, UNRECOVERABLE_ERRORS, VEGA_MAP_LAYER,
     VEGA_ZOOMABLE_MAP_ITEMS, MissingContextError, RetriesExceededError,
@@ -628,7 +628,10 @@ async def get_data(pipeline):
     block the main thread when calling pipeline.data
     """
     def get_data_sync():
-        return pipeline.data
+        # Every agent reaches the data through here, and everything downstream
+        # (describe_data_sync, result_to_dataframe, the code sandbox) is written
+        # against pandas, so any other dataframe library is materialized here.
+        return as_pandas(as_narwhals(pipeline.data))
     return await asyncio.to_thread(get_data_sync)
 
 

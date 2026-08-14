@@ -7,6 +7,7 @@ from itertools import product
 from typing import Any, ClassVar, Literal
 
 import numpy as np
+import pandas as pd
 import panel as pn
 import param  # type: ignore
 import tqdm  # type: ignore
@@ -27,7 +28,7 @@ from .transforms.base import Filter as FilterTransform, Transform
 from .transforms.sql import SQLTransform
 from .util import (
     VARIABLE_RE, as_narwhals, as_pandas, catch_and_notify, get_dataframe_schema,
-    is_ref,
+    is_narwhals, is_ref,
 )
 from .validation import ValidationError, match_suggestion_message
 
@@ -62,7 +63,20 @@ def auto_filters(schema: dict[str, dict[str, Any]]) -> list[dict[str, str]]:
 class DataFrame(param.DataFrame):
     """
     DataFrame parameter that resolves data on access.
+
+    param.DataFrame is a ClassSelector on pandas.DataFrame, which would reject
+    a frame from any other dataframe library before a Source could hand one
+    over, so the check is widened to anything narwhals can read.
     """
+
+    def _validate(self, val):
+        if val is None or isinstance(val, pd.DataFrame):
+            super()._validate(val)
+        elif not is_narwhals(as_narwhals(val)):
+            raise ValueError(
+                f'{self.name!r} expects a pandas DataFrame or a frame from a '
+                f'dataframe library narwhals supports, not {type(val).__name__}.'
+            )
 
     def __get__(self, obj, objtype):
         if obj is not None:

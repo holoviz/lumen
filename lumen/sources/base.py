@@ -41,7 +41,9 @@ from ..transforms.sql import (
     ARRAY_AGG_DISTINCT_DIALECTS, SQLCount, SQLDistinct, SQLFilter, SQLLimit,
     SQLMinMax, SQLSample, SQLSchemaStats, SQLSelectFrom, SQLTransform,
 )
-from ..util import get_dataframe_schema, is_ref, merge_schemas
+from ..util import (
+    as_narwhals, get_dataframe_schema, is_narwhals, is_ref, merge_schemas,
+)
 from ..validation import ValidationError, match_suggestion_message
 
 if TYPE_CHECKING:
@@ -140,6 +142,10 @@ def cached(method, locks=None):
             filtered = FilterTransform.apply_to(
                 df, conditions=list(query.items())
             )
+        if is_narwhals(filtered) and type(filtered).__name__ == 'LazyFrame':
+            # A lazy narwhals frame answers to collect, not compute, so it would
+            # otherwise sail past the dask branch below and fail much later.
+            return filtered.collect().to_native()
         if getattr(self, 'dask', False) or not hasattr(filtered, 'compute'):
             return filtered
         return filtered.compute()
@@ -531,12 +537,21 @@ class Source(MultiTypeComponent):
                 if isinstance(data, dd.DataFrame):
                     filepath = filepath.with_suffix('')
             try:
-                data.to_parquet(filepath)
+                narwhals_data = as_narwhals(data)
+                if is_narwhals(narwhals_data) and not isinstance(data, pd.DataFrame):
+                    # polars and pyarrow spell this write_parquet, and reaching
+                    # the except below would delete the cache. Reading back is
+                    # still pd.read_parquet, so a cached frame returns as pandas.
+                    narwhals_data.write_parquet(str(filepath))
+                else:
+                    data.to_parquet(filepath)
             except Exception as e:
-                if path.is_file():
-                    path.unlink()
-                elif path.is_dir():
-                    shutil.rmtree(path)
+                # Remove the file this write was aiming at, not the whole cache
+                # directory it lives in.
+                if filepath.is_file():
+                    filepath.unlink()
+                elif filepath.is_dir():
+                    shutil.rmtree(filepath)
                 self.param.warning(
                     f"Could not cache '{table}' to parquet file. "
                     f"Error during saving process: {e}"
