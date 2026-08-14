@@ -181,6 +181,27 @@ class Transform(MultiTypeComponent):
             return frame.lazy().to_native()
         return frame.to_native()
 
+    def _try_narwhals(self, table, build):
+        """Run build() on a narwhals frame, or hand back a pandas table.
+
+        Returns (result, table). A result of None means take the pandas path
+        using the returned table, which has been converted if it was not
+        pandas already.
+
+        Every narwhals gap routes through here: an option narwhals has no
+        counterpart for, an expression method it does not implement, a dtype a
+        backend rejects. Catching them in one place is what stops each ported
+        transform needing its own hand-written predicate for what narwhals can
+        and cannot do, which is where the divergences kept coming from.
+        """
+        frame = self._narwhals_frame(table)
+        if frame is None:
+            return None, table
+        try:
+            return self._to_native(build(frame), table), table
+        except Exception:
+            return None, type(self)._coerce_to_pandas(table)
+
     @classmethod
     def apply_to(cls, table: DataFrame, **kwargs) -> DataFrame:
         """
@@ -339,10 +360,9 @@ class Filter(Transform):
         return mask
 
     def apply(self, df: DataFrame) -> DataFrame:
-        if not isinstance(df, pd.DataFrame):
-            narwhals_df = as_narwhals(df)
-            if is_narwhals(narwhals_df):
-                return self._apply_narwhals(narwhals_df).to_native()
+        result, df = self._try_narwhals(df, self._apply_narwhals)
+        if result is not None:
+            return result
         filters = []
         for k, val in self.conditions:
             if k not in df.columns:
@@ -462,33 +482,39 @@ class Aggregate(Transform):
     _narwhals: ClassVar[bool] = True
 
     def apply(self, table: DataFrame) -> DataFrame:
-        frame = None if self.with_index else self._narwhals_frame(table)
-        if frame is not None:
+        def build(frame):
             schema = frame.collect_schema()
             cols = self.columns or [
                 name for name, dtype in schema.items()
                 if dtype.is_numeric() and name not in self.by
             ]
-            try:
-                aggs = [getattr(nw.col(c), self.method)(**self.kwargs) for c in cols]
-                # Two things pandas groupby does that narwhals does not: it
-                # drops rows whose key is null or NaN, and it sorts by the key.
-                # polars treats NaN as a value, so exclude it explicitly.
-                keys = reduce(
-                    and_, [nw.col(c).is_finite() if schema[c].is_numeric()
-                           else nw.col(c).is_null().not_() for c in self.by]
-                )
-                return (
-                    frame.filter(keys).group_by(self.by).agg(*aggs)
-                    .sort(self.by).to_native()
-                )
-            except Exception:
-                # method is documented as a pandas aggregation name, and
-                # narwhals has fewer of them (no size, nunique, prod, sem), so
-                # fall back rather than fail on a spec pandas would accept.
-                pass
-        if self.with_index or frame is not None:
-            table = type(self)._coerce_to_pandas(table)
+            # pandas aggregations skip NaN; polars propagates it. narwhals
+            # skips nulls, so map NaN onto null for the float columns first.
+            floats = [
+                c for c in cols
+                if schema[c].is_numeric() and not schema[c].is_integer()
+            ]
+            aggs = [getattr(nw.col(c), self.method)(**self.kwargs) for c in cols]
+            # Two things pandas groupby does that narwhals does not: it drops
+            # rows whose key is null or NaN, and it sorts by the key. polars
+            # treats NaN as a value, so exclude it explicitly.
+            keys = reduce(
+                and_, [nw.col(c).is_finite() if schema[c].is_numeric()
+                       else ~nw.col(c).is_null() for c in self.by]
+            )
+            if floats:
+                frame = frame.with_columns(*[
+                    nw.when(~nw.col(c).is_nan()).then(nw.col(c)).alias(c)
+                    for c in floats
+                ])
+            return frame.filter(keys).group_by(self.by).agg(*aggs).sort(self.by)
+
+        if not self.with_index:
+            result, table = self._try_narwhals(table, build)
+            if result is not None:
+                return result
+        # with_index moves the group keys into an index narwhals does not have.
+        table = type(self)._coerce_to_pandas(table)
         grouped = table.groupby(self.by)
         if self.columns:
             cols = self.columns
@@ -524,16 +550,17 @@ class Sort(Transform):
     _narwhals: ClassVar[bool] = True
 
     def apply(self, table: DataFrame) -> DataFrame:
-        frame = self._narwhals_frame(table)
-        if frame is not None:
-            if isinstance(self.ascending, list):
-                descending = [not a for a in self.ascending]
-            else:
-                descending = not self.ascending
+        def build(frame):
+            descending = (
+                [not a for a in self.ascending]
+                if isinstance(self.ascending, list) else not self.ascending
+            )
             # narwhals sorts nulls first by default, pandas sorts them last.
-            return frame.sort(
-                self.by, descending=descending, nulls_last=True
-            ).to_native()
+            return frame.sort(self.by, descending=descending, nulls_last=True)
+
+        result, table = self._try_narwhals(table, build)
+        if result is not None:
+            return result
         return table.sort_values(self.by, ascending=self.ascending)
 
 
@@ -570,9 +597,9 @@ class Columns(Transform):
     _narwhals: ClassVar[bool] = True
 
     def apply(self, table: DataFrame) -> DataFrame:
-        frame = self._narwhals_frame(table)
-        if frame is not None:
-            return frame.select(self.columns).to_native()
+        result, table = self._try_narwhals(table, lambda f: f.select(self.columns))
+        if result is not None:
+            return result
         return table[self.columns]
 
 
@@ -657,9 +684,9 @@ class Iloc(Transform):
             # A leading slice is head(), which a lazy backend pushes down
             # rather than materializing the whole frame to throw most away.
             return lazy.head(self.end).to_native()
-        frame = self._narwhals_frame(table)
-        if frame is not None:
-            return self._to_native(frame[self.start:self.end], table)
+        result, table = self._try_narwhals(table, lambda f: f[self.start:self.end])
+        if result is not None:
+            return result
         return table.iloc[self.start:self.end]
 
 
@@ -686,13 +713,13 @@ class Sample(Transform):
     _narwhals: ClassVar[bool] = True
 
     def apply(self, table: DataFrame) -> DataFrame:
-        frame = self._narwhals_frame(table)
-        if frame is not None:
-            return self._to_native(frame.sample(
-                **self._drop_none_values(
-                    n=self.n, fraction=self.frac, with_replacement=self.replace
-                )
-            ), table)
+        result, table = self._try_narwhals(table, lambda f: f.sample(
+            **self._drop_none_values(
+                n=self.n, fraction=self.frac, with_replacement=self.replace
+            )
+        ))
+        if result is not None:
+            return result
         return table.sample(
             **self._drop_none_values(n=self.n, frac=self.frac, replace=self.replace)
         )
@@ -809,14 +836,26 @@ class Melt(Transform):
     _narwhals: ClassVar[bool] = True
 
     def apply(self, table: DataFrame) -> DataFrame:
-        frame = self._narwhals_frame(table)
-        if frame is not None:
+        def build(frame):
+            if self.value_vars == []:
+                # pandas reads an empty value_vars differently depending on
+                # whether id_vars was given. Not worth reimplementing.
+                raise NotImplementedError
+            # pandas never melts a column that is already an id_var.
+            on = self.value_vars or [
+                c for c in frame.collect_schema().names() if c not in self.id_vars
+            ]
+            on = [c for c in on if c not in self.id_vars]
             # ignore_index has no counterpart: unpivot never keeps an index.
             return frame.unpivot(
-                on=self.value_vars, index=self.id_vars,
-                variable_name=self.var_name or 'variable',
+                on=on, index=self.id_vars,
+                variable_name='variable' if self.var_name is None else self.var_name,
                 value_name=self.value_name,
-            ).to_native()
+            )
+
+        result, table = self._try_narwhals(table, build)
+        if result is not None:
+            return result
         melt: Callable
         if isinstance(table, pd.DataFrame):
             melt = pd.melt
@@ -931,12 +970,19 @@ class Rename(Transform):
 
     def apply(self, table: DataFrame) -> DataFrame:
         renaming_columns = self.columns or (self.mapper and self.axis in (1, 'columns'))
-        if renaming_columns and self.level is None:
-            frame = self._narwhals_frame(table)
-            if frame is not None:
-                # Only the columns case maps over: index and level are pandas
-                # index concepts, and narwhals has no index to rename.
-                return frame.rename(self.columns or self.mapper).to_native()
+        if renaming_columns and self.level is None and not (self.columns and self.mapper):
+            # Only the columns case maps over: index and level are pandas index
+            # concepts, and narwhals has no index to rename. Unknown columns are
+            # dropped from the mapping because pandas rename ignores them.
+            def build(frame):
+                mapping = self.columns or self.mapper
+                known = set(frame.collect_schema().names())
+                return frame.rename({k: v for k, v in mapping.items() if k in known})
+
+            result, table = self._try_narwhals(table, build)
+            if result is not None:
+                return result
+        table = type(self)._coerce_to_pandas(table)
         kwargs: dict[str, Any] = dict(
             axis=self.axis, columns=self.columns,
             index=self.index, mapper=self.mapper, level=self.level,
@@ -1096,11 +1142,28 @@ class DropNA(Transform):
     def apply(self, table: DataFrame) -> DataFrame:
         droppable = self.axis in (0, 'index') and self.thresh is None
         if droppable and self.how in (None, 'any'):
-            frame = self._narwhals_frame(table)
-            if frame is not None:
+            def build(frame):
                 # drop_nulls is row-wise how='any' only; axis=1, how='all' and
-                # thresh have no counterpart and keep the pandas path.
-                return frame.drop_nulls(subset=self.subset).to_native()
+                # thresh have no counterpart and take the pandas path below.
+                # It also keeps NaN, which pandas dropna removes, so float
+                # columns need the extra predicate.
+                schema = frame.collect_schema()
+                considered = self.subset or schema.names()
+                floats = [
+                    c for c in considered
+                    if schema[c].is_numeric() and not schema[c].is_integer()
+                ]
+                frame = frame.drop_nulls(subset=self.subset)
+                if floats:
+                    frame = frame.filter(
+                        reduce(and_, [~nw.col(c).is_nan() for c in floats])
+                    )
+                return frame
+
+            result, table = self._try_narwhals(table, build)
+            if result is not None:
+                return result
+        table = type(self)._coerce_to_pandas(table)
         kwargs = {'axis': self.axis, 'subset': self.subset}
         if self.how and self.thresh is None:
             kwargs['how'] = self.how

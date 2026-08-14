@@ -570,6 +570,9 @@ class Source(MultiTypeComponent):
                     )
                 else:
                     data.to_parquet(filepath)
+                    # A sidecar from an earlier non-pandas write would make the
+                    # next read hand back the wrong kind of frame.
+                    filepath.with_suffix('.backend').unlink(missing_ok=True)
             except Exception as e:
                 # Remove the file this write was aiming at, not the whole cache
                 # directory it lives in.
