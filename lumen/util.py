@@ -15,7 +15,7 @@ from pathlib import Path
 from subprocess import check_output
 
 import bokeh
-import narwhals as nwb
+import narwhals as narwhals_any
 import narwhals.stable.v2 as nw
 import numpy as np
 import pandas as pd
@@ -66,7 +66,7 @@ def is_narwhals(obj):
     both subclass it, so this recognises a frame whichever namespace the
     caller wrapped it with.
     """
-    return isinstance(obj, (nwb.DataFrame, nwb.LazyFrame))
+    return isinstance(obj, (narwhals_any.DataFrame, narwhals_any.LazyFrame))
 
 
 def is_lazyframe(obj):
@@ -75,7 +75,7 @@ def is_lazyframe(obj):
     Callers need this before len(), slicing or item access, none of which a
     LazyFrame supports.
     """
-    return isinstance(obj, nwb.LazyFrame)
+    return isinstance(obj, narwhals_any.LazyFrame)
 
 
 def as_narwhals(df):
@@ -151,11 +151,17 @@ def _narwhals_dataframe_schema(df, columns=None):
             if df_schema[n].is_numeric() or isinstance(df_schema[n], (nw.Datetime, nw.Date))
         ]
         if bounded:
-            row = df.select(
-                *[nw.col(n).min().alias(f'{n}\x00min') for n in bounded],
-                *[nw.col(n).max().alias(f'{n}\x00max') for n in bounded],
-            ).to_dict(as_series=False)
-            bounds = {k: nw.to_py_scalar(v[0]) for k, v in row.items()}
+            aliases = {f'_{i}': (n, agg) for i, (n, agg) in enumerate(
+                (n, agg) for n in bounded for agg in ('min', 'max')
+            )}
+            row = df.select(*[
+                getattr(nw.col(n), agg)().alias(alias)
+                for alias, (n, agg) in aliases.items()
+            ]).to_dict(as_series=False)
+            bounds = {
+                aliases[alias]: nw.to_py_scalar(value[0])
+                for alias, value in row.items()
+            }
 
     for name in names:
         dtype = df_schema[name]
@@ -164,8 +170,8 @@ def _narwhals_dataframe_schema(df, columns=None):
             if empty:
                 vmin = vmax = pd.NaT
             else:
-                vmin = bounds[f'{name}\x00min']
-                vmax = bounds[f'{name}\x00max']
+                vmin = bounds[name, 'min']
+                vmax = bounds[name, 'max']
             # An all-null column has no min, and pandas renders its NaT as the
             # string 'NaT', so match that rather than emitting null.
             properties[name] = {
@@ -182,8 +188,8 @@ def _narwhals_dataframe_schema(df, columns=None):
                 cast = int if dtype.is_integer() else float
                 kind = 'integer' if dtype.is_integer() else 'number'
                 try:
-                    vmin = cast(bounds[f'{name}\x00min'])
-                    vmax = cast(bounds[f'{name}\x00max'])
+                    vmin = cast(bounds[name, 'min'])
+                    vmax = cast(bounds[name, 'max'])
                 except Exception:
                     vmin = vmax = float('NaN')
             properties[name] = {

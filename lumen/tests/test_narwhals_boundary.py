@@ -33,7 +33,7 @@ class ParamHolder(param.Parameterized):
 
 def rows(frame):
     """Row count for a frame from any of the three backends."""
-    return frame.num_rows if hasattr(frame, "num_rows") else len(frame)
+    return len(as_pandas(frame))
 
 
 def test_pipeline_data_accepts_backend(constructor):
