@@ -133,3 +133,58 @@ def export_notebook(outputs: list[Viewable], preamble: str = ""):
     cells, extensions = render_cells(outputs)
     cells = make_preamble(preamble, extensions=extensions) + cells
     return write_notebook(cells)
+
+
+def _docx_add_runs(paragraph, text: str):
+    """Add text to a paragraph, rendering ``**bold**`` spans as bold runs."""
+    for i, part in enumerate(re.split(r'\*\*(.+?)\*\*', text)):
+        if not part:
+            continue
+        run = paragraph.add_run(part)
+        if i % 2 == 1:
+            run.bold = True
+
+
+def docx_add_markdown(doc, text: str):
+    """Render basic markdown (headings, bullets, bold) into a docx document."""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith('#'):
+            level = len(stripped) - len(stripped.lstrip('#'))
+            doc.add_heading(stripped.lstrip('# ').strip(), level=min(level, 4))
+        elif stripped.startswith(('- ', '* ')):
+            _docx_add_runs(doc.add_paragraph(style='List Bullet'), stripped[2:])
+        else:
+            _docx_add_runs(doc.add_paragraph(), stripped)
+
+
+def docx_add_table(doc, df, max_rows: int = 50):
+    """Render a DataFrame as a native Word table (header + capped rows)."""
+    table = doc.add_table(rows=1, cols=len(df.columns))
+    table.style = 'Table Grid'
+    for cell, col in zip(table.rows[0].cells, df.columns, strict=False):
+        cell.text = str(col)
+    for _, record in df.head(max_rows).iterrows():
+        cells = table.add_row().cells
+        for cell, value in zip(cells, record, strict=False):
+            cell.text = '' if value is None else str(value)
+    if len(df) > max_rows:
+        doc.add_paragraph(f'... {len(df) - max_rows} more rows')
+
+
+def docx_add_chart(doc, editor) -> bool:
+    """Embed a chart editor as a PNG image; return True if one was added."""
+    from docx.shared import Inches
+
+    if 'png' not in editor.export_formats:
+        return False
+    try:
+        png = editor.export('png')
+    except Exception:
+        # Best-effort: a chart we cannot render should not abort the document.
+        return False
+    png.seek(0)
+    doc.add_picture(png, width=Inches(6))
+    return True
