@@ -58,6 +58,70 @@ class NumpyDumper(yaml.SafeDumper):
             data = str(data)
         return super().represent_data(data)
 
+def _narwhals_class_names(obj):
+    """Names of the narwhals classes obj inherits from, if any."""
+    return {
+        cls.__name__ for cls in type(obj).__mro__
+        if cls.__module__.split('.')[0] == 'narwhals'
+    }
+
+
+def is_narwhals(obj):
+    """Return True if obj is a narwhals DataFrame or LazyFrame.
+
+    Matches on module and class name rather than isinstance because the same
+    frame wrapped through narwhals.stable.v1, narwhals.stable.v2 or the bare
+    narwhals namespace produces objects that fail isinstance against each
+    other, so a user who wraps with a different namespace than Lumen uses
+    would otherwise be rejected. Walking the MRO keeps subclasses matching,
+    which isinstance would have given for free.
+    """
+    return bool(_narwhals_class_names(obj) & {'DataFrame', 'LazyFrame'})
+
+
+def is_lazyframe(obj):
+    """Return True if obj is a narwhals LazyFrame, from any narwhals namespace.
+
+    Callers need this before len(), slicing or item access, none of which a
+    LazyFrame supports.
+    """
+    return 'LazyFrame' in _narwhals_class_names(obj)
+
+
+def as_narwhals(df):
+    """Return df wrapped as a narwhals frame, or df unchanged if it cannot be.
+
+    Wrapping a pandas DataFrame is lossless and free: to_native() returns the
+    caller's original object. Dask frames are deliberately left alone because
+    narwhals maps them to a LazyFrame, which would bypass the hasattr(df,
+    'compute') branches the dask paths rely on.
+    """
+    if df is None or is_narwhals(df):
+        return df
+    dd = try_import('dask.dataframe', load=False)
+    if dd is not None and isinstance(df, dd.DataFrame):
+        return df
+    return nw.from_native(df, pass_through=True)
+
+
+def as_pandas(df):
+    """Return df as a pandas DataFrame, collecting it first if it is lazy.
+
+    The boundary for consumers that need real pandas: hvplot's accessor,
+    Panel's Tabulator, Perspective and Vega panes, and the LLM schema summary.
+    A pandas frame is returned untouched, which also keeps a GeoDataFrame from
+    being flattened into a plain DataFrame on the way through.
+    """
+    if isinstance(df, pd.DataFrame):
+        return df
+    narwhals_df = as_narwhals(df)
+    if not is_narwhals(narwhals_df):
+        return df
+    if is_lazyframe(narwhals_df):
+        narwhals_df = narwhals_df.collect()
+    return narwhals_df.to_pandas()
+
+
 def _narwhals_dataframe_schema(df, columns=None):
     """Return a JSON schema for a narwhals-wrapped frame.
 
@@ -600,70 +664,6 @@ def try_import_xarray(load=True):
     if try_import("xarray_sql", load=load) is None:
         return None
     return try_import("xarray", load=load)
-
-
-def _narwhals_class_names(obj):
-    """Names of the narwhals classes obj inherits from, if any."""
-    return {
-        cls.__name__ for cls in type(obj).__mro__
-        if cls.__module__.split('.')[0] == 'narwhals'
-    }
-
-
-def is_narwhals(obj):
-    """Return True if obj is a narwhals DataFrame or LazyFrame.
-
-    Matches on module and class name rather than isinstance because the same
-    frame wrapped through narwhals.stable.v1, narwhals.stable.v2 or the bare
-    narwhals namespace produces objects that fail isinstance against each
-    other, so a user who wraps with a different namespace than Lumen uses
-    would otherwise be rejected. Walking the MRO keeps subclasses matching,
-    which isinstance would have given for free.
-    """
-    return bool(_narwhals_class_names(obj) & {'DataFrame', 'LazyFrame'})
-
-
-def is_lazyframe(obj):
-    """Return True if obj is a narwhals LazyFrame, from any narwhals namespace.
-
-    Callers need this before len(), slicing or item access, none of which a
-    LazyFrame supports.
-    """
-    return 'LazyFrame' in _narwhals_class_names(obj)
-
-
-def as_narwhals(df):
-    """Return df wrapped as a narwhals frame, or df unchanged if it cannot be.
-
-    Wrapping a pandas DataFrame is lossless and free: to_native() returns the
-    caller's original object. Dask frames are deliberately left alone because
-    narwhals maps them to a LazyFrame, which would bypass the hasattr(df,
-    'compute') branches the dask paths rely on.
-    """
-    if df is None or is_narwhals(df):
-        return df
-    dd = try_import('dask.dataframe', load=False)
-    if dd is not None and isinstance(df, dd.DataFrame):
-        return df
-    return nw.from_native(df, pass_through=True)
-
-
-def as_pandas(df):
-    """Return df as a pandas DataFrame, collecting it first if it is lazy.
-
-    The boundary for consumers that need real pandas: hvplot's accessor,
-    Panel's Tabulator, Perspective and Vega panes, and the LLM schema summary.
-    A pandas frame is returned untouched, which also keeps a GeoDataFrame from
-    being flattened into a plain DataFrame on the way through.
-    """
-    if isinstance(df, pd.DataFrame):
-        return df
-    narwhals_df = as_narwhals(df)
-    if not is_narwhals(narwhals_df):
-        return df
-    if is_lazyframe(narwhals_df):
-        narwhals_df = narwhals_df.collect()
-    return narwhals_df.to_pandas()
 
 
 def is_geodataframe(df):
