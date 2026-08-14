@@ -7,10 +7,13 @@ import datetime as dt
 import hashlib
 
 from collections.abc import Callable
+from functools import reduce
+from operator import and_, or_
 from typing import (
     TYPE_CHECKING, Any, ClassVar, Literal,
 )
 
+import narwhals.stable.v2 as nw
 import numpy as np
 import pandas as pd
 import panel as pn
@@ -21,7 +24,7 @@ from panel.io.cache import _generate_hash
 
 from ..base import MultiTypeComponent
 from ..state import state
-from ..util import is_ref
+from ..util import as_narwhals, is_narwhals, is_ref
 
 pd_version = Version(pd.__version__)
 
@@ -197,13 +200,70 @@ class Filter(Transform):
       List of filter conditions expressed as tuples of the column
       name and the filter value.""")
 
+    @staticmethod
+    def _widen_dates(start: Any, end: Any) -> tuple[Any, Any]:
+        """Grow a date range to cover the whole of its first and last day."""
+        if isinstance(start, dt.date) and not isinstance(start, dt.datetime):
+            start = dt.datetime(*start.timetuple()[:3], 0, 0, 0)
+        if isinstance(end, dt.date) and not isinstance(end, dt.datetime):
+            end = dt.datetime(*end.timetuple()[:3], 23, 59, 59)
+        return start, end
+
+    @classmethod
+    def _range_expr(cls, temporal: bool, name: str, start: Any, end: Any):
+        """Narwhals counterpart of _range_filter, expressed against a column name."""
+        if temporal:
+            start, end = cls._widen_dates(start, end)
+        if start is None and end is None:
+            return None
+        column = nw.col(name)
+        if start is None:
+            return column <= end
+        if end is None:
+            return column >= start
+        return (column >= start) & (column <= end)
+
+    def _apply_narwhals(self, df):
+        schema = df.collect_schema()
+        exprs = []
+        for k, val in self.conditions:
+            if k not in schema.names():
+                continue
+            temporal = isinstance(schema[k], (nw.Datetime, nw.Date))
+            if np.isscalar(val) or isinstance(val, dt.date):
+                if temporal:
+                    val, _ = self._widen_dates(val, None)
+                expr = nw.col(k) == val
+            elif isinstance(val, list) and all(isinstance(v, tuple) and len(v) == 2 for v in val):
+                ranges = [
+                    self._range_expr(temporal, k, *v) for v in val if v is not None
+                ]
+                ranges = [r for r in ranges if r is not None]
+                if not ranges:
+                    continue
+                expr = reduce(or_, ranges)
+            elif isinstance(val, list):
+                if not val:
+                    continue
+                expr = nw.col(k).is_in(val)
+            elif isinstance(val, tuple):
+                expr = self._range_expr(temporal, k, *val)
+            else:
+                self.param.warning(
+                    'Condition {val!r} on {col!r} column not understood. '
+                    'Filter query will not be applied.'
+                )
+                continue
+            if expr is not None:
+                exprs.append(expr)
+        if exprs:
+            df = df.filter(reduce(and_, exprs))
+        return df
+
     @classmethod
     def _range_filter(cls, column: Series, start: Any, end: Any) -> Series | None:
         if column.dtype.kind == 'M':
-            if isinstance(start, dt.date) and not isinstance(start, dt.datetime):
-                start = dt.datetime(*start.timetuple()[:3], 0, 0, 0)
-            if isinstance(end, dt.date) and not isinstance(end, dt.datetime):
-                end = dt.datetime(*end.timetuple()[:3], 23, 59, 59)
+            start, end = cls._widen_dates(start, end)
         if start is None and end is None:
             return None
         elif start is None:
@@ -215,6 +275,10 @@ class Filter(Transform):
         return mask
 
     def apply(self, df: DataFrame) -> DataFrame:
+        if not isinstance(df, pd.DataFrame):
+            narwhals_df = as_narwhals(df)
+            if is_narwhals(narwhals_df):
+                return self._apply_narwhals(narwhals_df).to_native()
         filters = []
         for k, val in self.conditions:
             if k not in df.columns:
@@ -223,7 +287,7 @@ class Filter(Transform):
             if np.isscalar(val) or isinstance(val, dt.date):
                 if (column.dtype.kind == 'M' and isinstance(val, dt.date)
                     and not isinstance(val, dt.datetime)):
-                    val = dt.datetime(*val.timetuple()[:3], 0, 0, 0)
+                    val, _ = self._widen_dates(val, None)
                 mask = column == val
             elif isinstance(val, list) and all(isinstance(v, tuple) and len(v) == 2 for v in val):
                 val = [v for v in val if v is not None]

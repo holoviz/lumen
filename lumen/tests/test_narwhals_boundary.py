@@ -10,6 +10,7 @@ dependency.
 """
 import datetime as dt
 
+import pandas as pd
 import param
 import pytest
 
@@ -67,10 +68,36 @@ def test_schema_column_subset_across_backends(constructor):
     assert set(get_dataframe_schema(frame, columns=["s"])["items"]["properties"]) == {"s"}
 
 
-@pytest.mark.xfail(strict=True, reason="phase3: Filter builds pandas boolean masks")
-def test_filter_on_arrow(arrow_table):
-    filtered = FilterTransform.apply_to(arrow_table, conditions=[("A", (0, 1))])
-    assert len(filtered) == 2
+def rows(frame):
+    """Row count for a frame from any of the three backends."""
+    return frame.num_rows if hasattr(frame, "num_rows") else len(frame)
+
+
+@pytest.mark.parametrize("conditions, expected", [
+    ([("i", 1)], 1),
+    ([("s", ["a", "b"])], 3),
+    ([("i", (1, 2))], 2),
+    ([("i", [(0, 0), (3, 3)])], 2),
+    ([("i", (1, 2)), ("s", ["a"])], 1),
+    ([("missing", 1)], 4),
+    ([("s", [])], 4),
+])
+def test_filter_matches_across_backends(constructor, conditions, expected):
+    frame = constructor({"i": [0, 1, 2, 3], "s": ["a", "b", "a", "c"]})
+    assert rows(FilterTransform.apply_to(frame, conditions=conditions)) == expected
+
+
+def test_filter_with_nulls_matches_pandas(constructor):
+    data = {"v": [1.0, 2.0, None, 4.0]}
+    conditions = [("v", [(1.0, 2.0), (4.0, 5.0)])]
+    reference = FilterTransform.apply_to(pd.DataFrame(data), conditions=conditions)
+    assert rows(FilterTransform.apply_to(constructor(data), conditions=conditions)) == len(reference)
+
+
+def test_filter_preserves_backend(constructor):
+    frame = constructor({"i": [0, 1, 2]})
+    filtered = FilterTransform.apply_to(frame, conditions=[("i", (0, 1))])
+    assert type(filtered) is type(frame)
 
 
 @pytest.mark.xfail(strict=True, reason="phase5: _set_cache calls to_parquet, arrow has no such method")
