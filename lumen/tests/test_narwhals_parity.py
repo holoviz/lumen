@@ -25,15 +25,25 @@ FRAMES = {
     'nulls': {'g': ['b', None, 'b', 'a'], 'v': [1.0, 2.0, None, 4.0], 'i': [4, 3, 2, 1]},
     'nan': {'g': ['b', 'a', 'b', 'a'], 'v': [1.0, float('nan'), 3.0, 4.0], 'i': [4, 3, 2, 1]},
     'single': {'g': ['a'], 'v': [1.0], 'i': [1]},
+    'inf': {'g': ['b', 'a', 'b', 'a'], 'v': [1.0, float('inf'), 3.0, 4.0],
+            'i': [4, 3, 2, 1]},
+    'nankey': {'g': [1.0, float('nan'), 1.0, 2.0], 'v': [1.0, 2.0, 3.0, 4.0],
+               'i': [4, 3, 2, 1]},
+    'infkey': {'g': [1.0, float('inf'), 1.0, 2.0], 'v': [1.0, 2.0, 3.0, 4.0],
+               'i': [4, 3, 2, 1]},
 }
 
 # (transform, kwargs, frame name). Anything a spec can legally express.
 CASES = [
     (Sort, {'by': ['v']}, 'plain'),
+    (Sort, {'by': ['v']}, 'nan'),
+    (Sort, {'by': ['v'], 'ascending': False}, 'nan'),
+    (Sort, {'by': ['g', 'v']}, 'nan'),
     (Sort, {'by': ['v']}, 'nulls'),
     (Sort, {'by': ['g', 'v']}, 'plain'),
     (Sort, {'by': ['v'], 'ascending': False}, 'nulls'),
     (Sort, {'by': ['g', 'v'], 'ascending': [True, False]}, 'plain'),
+    (Sort, {'by': []}, 'plain'),
     (Columns, {'columns': ['g', 'v']}, 'plain'),
     (Columns, {'columns': ['v']}, 'nulls'),
     (Iloc, {'start': 1, 'end': 3}, 'plain'),
@@ -43,6 +53,14 @@ CASES = [
     (Aggregate, {'by': ['g'], 'with_index': False}, 'plain'),
     (Aggregate, {'by': ['g'], 'with_index': False}, 'nulls'),
     (Aggregate, {'by': ['g'], 'with_index': False}, 'nan'),
+    (Aggregate, {'by': ['g'], 'with_index': False}, 'inf'),
+    (Aggregate, {'by': ['g'], 'with_index': False}, 'nankey'),
+    (Aggregate, {'by': ['g'], 'with_index': False}, 'infkey'),
+    (Aggregate, {'by': ['g'], 'with_index': False, 'method': 'median'}, 'plain'),
+    (Aggregate, {'by': ['g'], 'with_index': False, 'method': 'first'}, 'nan'),
+    (Aggregate, {'by': ['g'], 'with_index': False, 'method': 'std'}, 'plain'),
+    (Aggregate, {'by': ['g'], 'with_index': False, 'method': 'var'}, 'plain'),
+    (Aggregate, {'by': ['g'], 'with_index': False, 'method': 'count'}, 'nulls'),
     (Aggregate, {'by': ['g'], 'with_index': False, 'method': 'sum'}, 'plain'),
     (Aggregate, {'by': ['g'], 'with_index': False, 'method': 'min'}, 'nulls'),
     (Aggregate, {'by': ['g'], 'with_index': False, 'method': 'nunique'}, 'plain'),
@@ -63,11 +81,27 @@ CASES = [
     (Melt, {'id_vars': [], 'value_vars': ['v']}, 'nulls'),
     (Melt, {'id_vars': ['g'], 'var_name': 'field'}, 'plain'),
     (Filter, {'conditions': [('g', 'a')]}, 'plain'),
+    (Filter, {'conditions': [('v', [None])]}, 'nulls'),
+    (Filter, {'conditions': [('g', [None])]}, 'nulls'),
+    (Filter, {'conditions': [('v', [1.0, None])]}, 'nulls'),
     (Filter, {'conditions': [('g', ['a', 'b'])]}, 'nulls'),
     (Filter, {'conditions': [('v', (1.0, 3.0))]}, 'nulls'),
     (Filter, {'conditions': [('v', [(1.0, 1.0), (4.0, 4.0)])]}, 'nulls'),
     (Filter, {'conditions': [('i', 3), ('g', ['a'])]}, 'plain'),
 ]
+
+
+def assert_native_path(caplog, backend):
+    """Fail if a non-pandas backend quietly took the pandas path.
+
+    Without this the matrix compares pandas against pandas and passes no matter
+    what the port does, which would let the whole thing rot green.
+    """
+    if backend == 'pandas':
+        return
+    assert 'converted to pandas' not in caplog.text, (
+        'the narwhals path was not taken; the comparison is vacuous'
+    )
 
 
 def _missing_to_none(row):
@@ -102,6 +136,34 @@ def test_transform_matches_pandas(constructor, transform, kwargs, frame_name):
     reference = normalize(transform.apply_to(pd.DataFrame(data), **kwargs))
     result = normalize(transform.apply_to(constructor(data), **kwargs))
     pd.testing.assert_frame_equal(result, reference, check_dtype=False)
+
+
+# Specs that deliberately fall back: pandas-only options, or aggregations whose
+# narwhals meaning differs from the pandas one. Each is still checked for the
+# same answer above; this list only records that the fallback is intentional.
+FALLS_BACK = {
+    ('Aggregate', 'nunique'), ('Aggregate', 'prod'), ('Aggregate', 'median'),
+    ('Aggregate', 'first'), ('Aggregate', 'count'),
+    ('DropNA', 'all'), ('Melt', '[]'), ('Sort', 'noby'),
+}
+
+
+@pytest.mark.parametrize("transform, kwargs, frame_name", [
+    pytest.param(t, k, f, id=f"{t.__name__}-{f}-{sorted(k.items())}")
+    for t, k, f in CASES
+])
+def test_native_path_is_actually_taken(constructor, caplog, transform, kwargs, frame_name):
+    marker = (
+        transform.__name__,
+        kwargs.get('method') or ('[]' if kwargs.get('value_vars') == [] else None)
+        or ('all' if kwargs.get('how') == 'all' else None)
+        or ('noby' if kwargs.get('by') == [] else None)
+    )
+    if marker in FALLS_BACK:
+        pytest.skip('documented fallback')
+    with caplog.at_level('WARNING'):
+        transform.apply_to(constructor(FRAMES[frame_name]), **kwargs)
+    assert_native_path(caplog, getattr(constructor, '__module__', '').split('.')[0])
 
 
 ORDERED = [c for c in CASES if c[0] in (Sort, Iloc, Aggregate, Filter)]

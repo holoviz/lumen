@@ -560,8 +560,8 @@ class Source(MultiTypeComponent):
                 narwhals_data = as_narwhals(data)
                 if is_narwhals(narwhals_data) and not isinstance(data, pd.DataFrame):
                     # polars and pyarrow spell this write_parquet, and only an
-                    # eager frame has it. Reading back is still pd.read_parquet,
-                    # so a frame served from disk comes back as pandas.
+                    # eager frame has it. The sidecar written below is what
+                    # lets the read hand back this same kind of frame.
                     if is_lazyframe(narwhals_data):
                         narwhals_data = narwhals_data.collect()
                     narwhals_data.write_parquet(str(filepath))

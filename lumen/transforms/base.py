@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import math
 
 from collections.abc import Callable
 from functools import reduce
@@ -25,16 +26,33 @@ from panel.io.cache import _generate_hash
 from ..base import MultiTypeComponent
 from ..state import state
 from ..util import (
-    as_narwhals, as_pandas, is_lazyframe, is_narwhals, is_ref,
+    as_narwhals, as_pandas, is_lazyframe, is_narwhals, is_ref, log,
 )
 
 pd_version = Version(pd.__version__)
+
+# Aggregation names whose narwhals result is verified equal to pandas on every
+# backend. Anything absent takes the pandas path, because a shared name is not
+# a shared meaning: pyarrow's median is approximate, and narwhals `first` does
+# not skip missing values the way pandas groupby.first does.
+_NARWHALS_AGGREGATIONS = frozenset({
+    'max', 'mean', 'min', 'std', 'sum', 'var',
+})
 
 if TYPE_CHECKING:
     from dask.dataframe import DataFrame as dDataFrame, Series as dSeries
     from panel.viewable import Viewable
     DataFrame = pd.DataFrame | dDataFrame
     Series = pd.Series | dSeries
+
+
+def _is_missing(value):
+    """True for every spelling of a missing value a schema enum can carry.
+
+    The pandas schema path emits NaN for a missing string where the narwhals
+    path emits None, and either can arrive back here as a filter value.
+    """
+    return value is None or (isinstance(value, float) and math.isnan(value))
 
 
 class Transform(MultiTypeComponent):
@@ -164,14 +182,14 @@ class Transform(MultiTypeComponent):
         )
         return as_pandas(narwhals_table)
 
-    def _narwhals_frame(self, table: Any):
+    def _narwhals_frame(self, table: Any, lazy: bool = False):
         """Return table as a narwhals frame, or None to take the pandas path."""
         if isinstance(table, pd.DataFrame):
             return None
         narwhals_table = as_narwhals(table)
         if not is_narwhals(narwhals_table):
             return None
-        if not self._lazy and is_lazyframe(narwhals_table):
+        if not (self._lazy or lazy) and is_lazyframe(narwhals_table):
             return narwhals_table.collect()
         return narwhals_table
 
@@ -181,7 +199,7 @@ class Transform(MultiTypeComponent):
             return frame.lazy().to_native()
         return frame.to_native()
 
-    def _try_narwhals(self, table, build):
+    def _try_narwhals(self, table, build, lazy=False):
         """Run build() on a narwhals frame, or hand back a pandas table.
 
         Returns (result, table). A result of None means take the pandas path
@@ -194,13 +212,25 @@ class Transform(MultiTypeComponent):
         transform needing its own hand-written predicate for what narwhals can
         and cannot do, which is where the divergences kept coming from.
         """
-        frame = self._narwhals_frame(table)
+        frame = self._narwhals_frame(table, lazy=lazy)
         if frame is None:
             return None, table
         try:
             return self._to_native(build(frame), table), table
-        except Exception:
-            return None, type(self)._coerce_to_pandas(table)
+        except (MemoryError, RecursionError):
+            # Recovering by materializing the same data as pandas would only
+            # exhaust the same resource again, with the first failure hidden.
+            raise
+        except Exception as e:
+            log.debug(
+                '%s could not be expressed in narwhals, using pandas: %r',
+                type(self).__name__, e, exc_info=True
+            )
+            type(self).param.warning(
+                f'{type(self).__name__} could not run this configuration on '
+                f'{type(table).__name__}, so the data was converted to pandas.'
+            )
+            return None, as_pandas(table)
 
     @classmethod
     def apply_to(cls, table: DataFrame, **kwargs) -> DataFrame:
@@ -326,11 +356,14 @@ class Filter(Transform):
                 # separately. The schema emits such lists for nullable columns.
                 # Numeric columns are excluded because pandas isin([None]) does
                 # not match NaN there, and matching it would be a difference.
-                members = [v for v in val if v is not None]
-                expr = nw.col(k).is_in(members) if members else None
+                # A missing marker matches nulls for pandas isin on an object
+                # column, but polars drops those rows, so ask for nulls
+                # separately. Numeric columns are excluded because pandas
+                # isin([None]) does not match NaN there.
+                members = [v for v in val if not _is_missing(v)]
+                expr = nw.col(k).is_in(members) if members else nw.col(k).is_null() & ~nw.col(k).is_null()
                 if len(members) != len(val) and not schema[k].is_numeric():
-                    is_null = nw.col(k).is_null()
-                    expr = is_null if expr is None else (expr | is_null)
+                    expr = expr | nw.col(k).is_null()
             elif isinstance(val, tuple):
                 expr = self._range_expr(temporal, k, *val)
             else:
@@ -483,6 +516,8 @@ class Aggregate(Transform):
 
     def apply(self, table: DataFrame) -> DataFrame:
         def build(frame):
+            if self.method not in _NARWHALS_AGGREGATIONS:
+                raise NotImplementedError(self.method)
             schema = frame.collect_schema()
             cols = self.columns or [
                 name for name, dtype in schema.items()
@@ -499,8 +534,12 @@ class Aggregate(Transform):
             # rows whose key is null or NaN, and it sorts by the key. polars
             # treats NaN as a value, so exclude it explicitly.
             keys = reduce(
-                and_, [nw.col(c).is_finite() if schema[c].is_numeric()
-                       else ~nw.col(c).is_null() for c in self.by]
+                and_, [
+                    (~nw.col(c).is_nan() & ~nw.col(c).is_null())
+                    if schema[c].is_numeric() and not schema[c].is_integer()
+                    else ~nw.col(c).is_null()
+                    for c in self.by
+                ]
             )
             if floats:
                 frame = frame.with_columns(*[
@@ -551,12 +590,36 @@ class Sort(Transform):
 
     def apply(self, table: DataFrame) -> DataFrame:
         def build(frame):
+            if not self.by:
+                # sort_values([]) is a no-op in pandas but raises in narwhals,
+                # and converting a whole frame to do nothing would be absurd.
+                raise NotImplementedError('by is empty')
             descending = (
                 [not a for a in self.ascending]
-                if isinstance(self.ascending, list) else not self.ascending
+                if isinstance(self.ascending, list) else [not self.ascending] * len(self.by)
             )
-            # narwhals sorts nulls first by default, pandas sorts them last.
-            return frame.sort(self.by, descending=descending, nulls_last=True)
+            # narwhals sorts nulls first by default and polars orders NaN above
+            # every value; pandas puts both last whichever way the sort runs.
+            schema = frame.collect_schema()
+            flags, keys, order = {}, [], []
+            for column, desc in zip(self.by, descending, strict=True):
+                if schema[column].is_numeric() and not schema[column].is_integer():
+                    # The flag has to sort immediately before its own column,
+                    # so NaN lands last within each group of the keys to its
+                    # left rather than being pushed to the end of the frame.
+                    flag = f'_nan_{column}'
+                    flags[flag] = nw.col(column).is_nan()
+                    keys.append(flag)
+                    order.append(False)
+                keys.append(column)
+                order.append(desc)
+            if not flags:
+                return frame.sort(self.by, descending=descending, nulls_last=True)
+            return (
+                frame.with_columns(**flags)
+                .sort(keys, descending=order, nulls_last=True)
+                .drop(list(flags))
+            )
 
         result, table = self._try_narwhals(table, build)
         if result is not None:
@@ -679,11 +742,14 @@ class Iloc(Transform):
     _narwhals: ClassVar[bool] = True
 
     def apply(self, table: DataFrame) -> DataFrame:
-        lazy = as_narwhals(table)
-        if is_lazyframe(lazy) and not self.start and self.end and self.end > 0:
+        if is_lazyframe(as_narwhals(table)) and not self.start and self.end and self.end > 0:
             # A leading slice is head(), which a lazy backend pushes down
             # rather than materializing the whole frame to throw most away.
-            return lazy.head(self.end).to_native()
+            result, table = self._try_narwhals(
+                table, lambda f: f.head(self.end), lazy=True
+            )
+            if result is not None:
+                return result
         result, table = self._try_narwhals(table, lambda f: f[self.start:self.end])
         if result is not None:
             return result
