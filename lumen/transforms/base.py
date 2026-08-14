@@ -24,7 +24,7 @@ from panel.io.cache import _generate_hash
 
 from ..base import MultiTypeComponent
 from ..state import state
-from ..util import as_narwhals, is_narwhals, is_ref
+from ..util import as_narwhals, as_pandas, is_narwhals, is_ref
 
 pd_version = Version(pd.__version__)
 
@@ -128,6 +128,34 @@ class Transform(MultiTypeComponent):
                     )
         return transform
 
+    _narwhals: ClassVar[bool] = False
+
+    @classmethod
+    def _coerce(cls, table: Any) -> Any:
+        """Materialize to pandas for transforms with no narwhals implementation.
+
+        Most transforms encode a pandas concept narwhals has no counterpart for,
+        such as the index or the query expression language. Rather than fail deep
+        inside another dataframe library, they convert and say what it cost.
+        """
+        if cls._narwhals or isinstance(table, pd.DataFrame):
+            return table
+        narwhals_table = as_narwhals(table)
+        if not is_narwhals(narwhals_table):
+            return table
+        cls.param.warning(
+            f'{cls.__name__} has no narwhals implementation, so the data was '
+            'converted to pandas, loading the whole frame into memory.'
+        )
+        return as_pandas(narwhals_table)
+
+    def _narwhals_frame(self, table: Any):
+        """Return table as a narwhals frame, or None to take the pandas path."""
+        if isinstance(table, pd.DataFrame):
+            return None
+        narwhals_table = as_narwhals(table)
+        return narwhals_table if is_narwhals(narwhals_table) else None
+
     @classmethod
     def apply_to(cls, table: DataFrame, **kwargs) -> DataFrame:
         """
@@ -141,7 +169,7 @@ class Transform(MultiTypeComponent):
         -------
         A DataFrame with the results of the transformation.
         """
-        return cls(**kwargs).apply(table)
+        return cls(**kwargs).apply(cls._coerce(table))
 
     def __hash__(self) -> int:
         """
@@ -199,6 +227,8 @@ class Filter(Transform):
     conditions = param.List(doc="""
       List of filter conditions expressed as tuples of the column
       name and the filter value.""")
+
+    _narwhals: ClassVar[bool] = True
 
     @staticmethod
     def _widen_dates(start: Any, end: Any) -> tuple[Any, Any]:
@@ -395,7 +425,21 @@ class Aggregate(Transform):
 
     _field_params: ClassVar[list[str]] = ['by', 'columns']
 
+    _narwhals: ClassVar[bool] = True
+
     def apply(self, table: DataFrame) -> DataFrame:
+        frame = self._narwhals_frame(table)
+        if frame is not None:
+            schema = frame.collect_schema()
+            cols = self.columns or [
+                name for name, dtype in schema.items()
+                if dtype.is_numeric() and name not in self.by
+            ]
+            aggs = [getattr(nw.col(c), self.method)(**self.kwargs) for c in cols]
+            # pandas groupby sorts by the group keys and narwhals does not, so
+            # sort to keep the row order the same whichever backend is in play.
+            # with_index has no meaning without an index, so it is ignored here.
+            return frame.group_by(self.by).agg(*aggs).sort(self.by).to_native()
         grouped = table.groupby(self.by)
         if self.columns:
             cols = self.columns
@@ -428,7 +472,16 @@ class Sort(Transform):
 
     _field_params: ClassVar[list[str]] = ['by']
 
+    _narwhals: ClassVar[bool] = True
+
     def apply(self, table: DataFrame) -> DataFrame:
+        frame = self._narwhals_frame(table)
+        if frame is not None:
+            if isinstance(self.ascending, list):
+                descending = [not a for a in self.ascending]
+            else:
+                descending = not self.ascending
+            return frame.sort(self.by, descending=descending).to_native()
         return table.sort_values(self.by, ascending=self.ascending)
 
 
@@ -462,7 +515,12 @@ class Columns(Transform):
 
     _field_params: ClassVar[list[str]] = ['columns']
 
+    _narwhals: ClassVar[bool] = True
+
     def apply(self, table: DataFrame) -> DataFrame:
+        frame = self._narwhals_frame(table)
+        if frame is not None:
+            return frame.select(self.columns).to_native()
         return table[self.columns]
 
 
@@ -537,7 +595,12 @@ class Iloc(Transform):
 
     transform_type: ClassVar[str] = 'iloc'
 
+    _narwhals: ClassVar[bool] = True
+
     def apply(self, table: DataFrame) -> DataFrame:
+        frame = self._narwhals_frame(table)
+        if frame is not None:
+            return frame[self.start:self.end].to_native()
         return table.iloc[self.start:self.end]
 
 
@@ -559,7 +622,16 @@ class Sample(Transform):
 
     transform_type: ClassVar[str] = 'sample'
 
+    _narwhals: ClassVar[bool] = True
+
     def apply(self, table: DataFrame) -> DataFrame:
+        frame = self._narwhals_frame(table)
+        if frame is not None:
+            return frame.sample(
+                **self._drop_none_values(
+                    n=self.n, fraction=self.frac, with_replacement=self.replace
+                )
+            ).to_native()
         return table.sample(
             **self._drop_none_values(n=self.n, frac=self.frac, replace=self.replace)
         )

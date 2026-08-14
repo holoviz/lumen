@@ -16,8 +16,10 @@ import pytest
 
 from lumen.pipeline import DataFrame as PipelineDataFrame
 from lumen.sources.base import InMemorySource
-from lumen.transforms.base import Filter as FilterTransform
-from lumen.util import get_dataframe_schema
+from lumen.transforms.base import (
+    Aggregate, Columns, Filter as FilterTransform, Iloc, Query, Sample, Sort,
+)
+from lumen.util import as_narwhals, as_pandas, get_dataframe_schema
 
 pa = pytest.importorskip("pyarrow")
 
@@ -98,6 +100,47 @@ def test_filter_preserves_backend(constructor):
     frame = constructor({"i": [0, 1, 2]})
     filtered = FilterTransform.apply_to(frame, conditions=[("i", (0, 1))])
     assert type(filtered) is type(frame)
+
+
+def test_sort_matches_across_backends(constructor):
+    frame = constructor({"i": [2, 0, 1], "s": ["c", "a", "b"]})
+    sorted_frame = Sort.apply_to(frame, by=["i"])
+    assert as_pandas(as_narwhals(sorted_frame))["s"].tolist() == ["a", "b", "c"]
+
+
+def test_columns_matches_across_backends(constructor):
+    frame = constructor({"i": [0, 1], "s": ["a", "b"]})
+    selected = Columns.apply_to(frame, columns=["s"])
+    assert as_narwhals(selected).collect_schema().names() == ["s"]
+
+
+def test_iloc_matches_across_backends(constructor):
+    frame = constructor({"i": [0, 1, 2, 3]})
+    assert as_pandas(as_narwhals(Iloc.apply_to(frame, start=1, end=3)))["i"].tolist() == [1, 2]
+
+
+def test_sample_matches_across_backends(constructor):
+    frame = constructor({"i": [0, 1, 2, 3]})
+    assert rows(Sample.apply_to(frame, n=2)) == 2
+
+
+def test_aggregate_matches_pandas_across_backends(constructor):
+    data = {"g": ["b", "a", "b", "a"], "v": [1.0, 2.0, 3.0, 4.0]}
+    reference = Aggregate.apply_to(
+        pd.DataFrame(data), by=["g"], with_index=False, method="sum"
+    )
+    result = as_pandas(as_narwhals(
+        Aggregate.apply_to(constructor(data), by=["g"], with_index=False, method="sum")
+    ))
+    assert result["g"].tolist() == reference["g"].tolist()
+    assert result["v"].tolist() == reference["v"].tolist()
+
+
+def test_pandas_only_transform_materializes(constructor, caplog):
+    frame = constructor({"i": [0, 1, 2]})
+    result = Query.apply_to(frame, query="i > 0")
+    assert isinstance(result, pd.DataFrame)
+    assert result["i"].tolist() == [1, 2]
 
 
 @pytest.mark.xfail(strict=True, reason="phase5: _set_cache calls to_parquet, arrow has no such method")

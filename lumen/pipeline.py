@@ -11,6 +11,7 @@ import panel as pn
 import param  # type: ignore
 import tqdm  # type: ignore
 
+from holoviews import Dataset  # type: ignore
 from panel.io.document import unlocked
 from panel.io.state import state as pn_state
 from panel.layout import Column, Row
@@ -25,7 +26,8 @@ from .state import state
 from .transforms.base import Filter as FilterTransform, Transform
 from .transforms.sql import SQLTransform
 from .util import (
-    VARIABLE_RE, catch_and_notify, get_dataframe_schema, is_ref,
+    VARIABLE_RE, as_narwhals, as_pandas, catch_and_notify, get_dataframe_schema,
+    is_ref,
 )
 from .validation import ValidationError, match_suggestion_message
 
@@ -309,13 +311,15 @@ class Pipeline(Viewer, Component):
         for filt in self.filters:
             if not isinstance(filt, ParamFilter):
                 continue
-            from holoviews import Dataset  # type: ignore
             if filt.value is not None:
-                ds = Dataset(data)
+                # HoloViews only learned to read narwhals frames in 1.22 and the
+                # floor is lower than that, so hand it pandas.
+                ds = Dataset(as_pandas(as_narwhals(data)))
                 data = ds.select(filt.value).data
 
         # Apply transforms
         for transform in self.transforms:
+            data = type(transform)._coerce(data)
             data = transform.apply(data)
         return data
 
