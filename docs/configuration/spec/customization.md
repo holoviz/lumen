@@ -194,6 +194,18 @@ class APISource(Source):
         return pd.DataFrame(response.json())
 ```
 
+A custom `Source` does not have to return pandas. Any dataframe library
+[narwhals](https://narwhals-dev.github.io/narwhals/) supports, such as polars or
+pyarrow, is accepted, and schema generation, filtering and the transforms listed
+below run on it natively. Two things to know before choosing one:
+
+- Transforms that encode a pandas concept narwhals has no counterpart for, such
+  as `query`, `eval`, `stack`, `unstack` and the index transforms, convert the
+  data to pandas and log a warning saying so.
+- Views convert to pandas regardless, because hvPlot, Tabulator, Perspective and
+  Vega only read pandas. Returning polars saves work up to the view, not through
+  it.
+
 Reference in YAML:
 
 ```yaml
