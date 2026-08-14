@@ -510,10 +510,18 @@ class Source(MultiTypeComponent):
                 # produced rather than silently switching everything to pandas.
                 backend = path.with_suffix('.backend')
                 if backend.is_file():
-                    return (
-                        nw.read_parquet(str(path), backend=backend.read_text()).to_native(),
-                        not bool(query)
-                    )
+                    try:
+                        return (
+                            nw.read_parquet(
+                                str(path), backend=backend.read_text()
+                            ).to_native(),
+                            not bool(query)
+                        )
+                    except Exception:
+                        # The library that wrote this cache is no longer
+                        # installed. Parquet is portable, so read it as pandas
+                        # rather than treating the cache as a miss.
+                        pass
                 return pd.read_parquet(path), not bool(query)
             if dd and path.is_dir():
                 return dd.read_parquet(path), not bool(query)

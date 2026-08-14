@@ -371,6 +371,17 @@ def test_disk_cache_keeps_its_backend(tmp_path, constructor):
     assert as_pandas(from_disk)["i"].tolist() == [0, 1]
 
 
+def test_disk_cache_survives_an_uninstallable_backend(tmp_path):
+    pl = pytest.importorskip("polars")
+    source = InMemorySource(tables={}, cache_dir=str(tmp_path))
+    source._set_cache(pl.DataFrame({"i": [0, 1]}), "t")
+    (tmp_path / "t.backend").write_text("a_library_nobody_has")
+    source._cache.clear()
+    from_disk, _ = source._get_cache("t")
+    assert isinstance(from_disk, pd.DataFrame)
+    assert from_disk["i"].tolist() == [0, 1]
+
+
 def test_filter_numeric_enum_with_null_matches_pandas(constructor):
     """pandas isin([None]) does not match NaN on a numeric column."""
     data = {"v": [1.0, None, 3.0]}
