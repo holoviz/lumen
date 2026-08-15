@@ -107,6 +107,32 @@ def collect_lazy(df):
     return df
 
 
+DATAFRAME_BACKENDS = ['pandas', 'polars', 'pyarrow']
+
+
+def to_backend(df, backend):
+    """Return df as a frame of the named dataframe library.
+
+    A backend of None leaves the frame as whatever produced it. Converting
+    costs a full copy, so this is only worth asking for at a boundary where
+    the consumer needs a specific library.
+    """
+    if backend is None or df is None:
+        return df
+    narwhals_df = as_narwhals(df)
+    if not is_narwhals(narwhals_df):
+        return df
+    if is_lazyframe(narwhals_df):
+        narwhals_df = narwhals_df.collect()
+    if narwhals_df.implementation.name.lower() == backend:
+        return df
+    if backend == 'pandas':
+        return narwhals_df.to_pandas()
+    if backend == 'polars':
+        return narwhals_df.to_polars()
+    return narwhals_df.to_arrow()
+
+
 def as_pandas(df):
     """Return df as a pandas DataFrame, collecting it first if it is lazy.
 

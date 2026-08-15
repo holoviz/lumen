@@ -388,3 +388,25 @@ def test_filter_numeric_enum_with_null_matches_pandas(constructor):
     reference = FilterTransform.apply_to(pd.DataFrame(data), conditions=[("v", [1.0, None])])
     result = as_pandas(FilterTransform.apply_to(constructor(data), conditions=[("v", [1.0, None])]))
     assert result["v"].tolist() == reference["v"].tolist() == [1.0]
+
+
+@pytest.mark.parametrize("backend", ["pandas", "polars", "pyarrow"])
+def test_pipeline_dataframe_backend(constructor, backend):
+    """Pipeline.data can be pinned to a library regardless of the Source."""
+    pytest.importorskip(backend)
+    source = InMemorySource(tables={"t": constructor({"i": [0, 1, 2]})})
+    pipeline = Pipeline(source=source, table="t", dataframe_backend=backend)
+    assert type(pipeline.data).__module__.split(".")[0] == backend
+    assert as_pandas(pipeline.data)["i"].tolist() == [0, 1, 2]
+
+
+def test_pipeline_dataframe_backend_defaults_to_the_source(constructor):
+    frame = constructor({"i": [0, 1, 2]})
+    pipeline = Pipeline(source=InMemorySource(tables={"t": frame}), table="t")
+    assert type(pipeline.data) is type(frame)
+
+
+def test_pipeline_dataframe_backend_rejects_unknown():
+    source = InMemorySource(tables={"t": pd.DataFrame({"i": [0]})})
+    with pytest.raises(ValueError):
+        Pipeline(source=source, table="t", dataframe_backend="nonesuch")

@@ -26,8 +26,8 @@ from .state import state
 from .transforms.base import Filter as FilterTransform, Transform
 from .transforms.sql import SQLTransform
 from .util import (
-    VARIABLE_RE, as_narwhals, as_pandas, catch_and_notify,
-    get_dataframe_schema, is_narwhals, is_ref,
+    DATAFRAME_BACKENDS, VARIABLE_RE, as_narwhals, as_pandas, catch_and_notify,
+    get_dataframe_schema, is_narwhals, is_ref, to_backend,
 )
 from .validation import ValidationError, match_suggestion_message
 
@@ -119,6 +119,11 @@ class Pipeline(Viewer, Component):
     data = DataFrame(doc="The current data on this source.")
 
     schema = param.Dict(doc="The schema of the input data.")
+
+    dataframe_backend = param.Selector(default=None, objects=[None, *DATAFRAME_BACKENDS], doc="""
+        The dataframe library `Pipeline.data` is returned as. Leave unset to
+        get whatever the Source produced, which avoids a conversion."""
+    )
 
     auto_update = param.Boolean(default=True, constant=True, doc="""
         Whether changes in filters, transforms and references automatically
@@ -341,7 +346,7 @@ class Pipeline(Viewer, Component):
         for transform in self.transforms:
             data = transform._coerce(data)
             data = transform.apply(data)
-        return data
+        return to_backend(data, self.dataframe_backend)
 
     def get_schema(self):
         """
