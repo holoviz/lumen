@@ -212,6 +212,18 @@ below run on it natively. Two things to know before choosing one:
   empty `value_vars`.
 - Anything touching the pandas index (`query`, `eval`, `stack`, `unstack`,
   `set_index`, `reset_index`) always converts.
+
+To pin what `Pipeline.data` comes back as regardless of the Source, set
+`dataframe_backend` to `pandas`, `polars` or `pyarrow`. Leaving it unset keeps
+whatever the Source produced, which avoids a conversion:
+
+```yaml
+pipelines:
+  sales:
+    source: my_source
+    table: sales
+    dataframe_backend: polars
+```
 - Views convert to pandas regardless, because hvPlot, Tabulator, Perspective and
   Vega only read pandas. Returning polars saves work up to the view, not through
   it.
