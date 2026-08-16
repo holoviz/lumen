@@ -904,7 +904,7 @@ async def test_no_routing_key_passes_through(monkeypatch):
     llm = _routing_llm()
 
     async def fail_invoke(*args, **kwargs):
-        raise AssertionError("routing model must not be invoked")
+        raise AssertionError("routing model must not be invoked")  # pragma: no cover
 
     monkeypatch.setattr(llm, "invoke", fail_invoke)
     messages = [{"role": "user", "content": "hi"}]
@@ -950,7 +950,7 @@ async def test_dict_model_spec_never_routed(monkeypatch):
     llm = _routing_llm()
 
     async def fail_invoke(*args, **kwargs):
-        raise AssertionError("dict model_spec must not be routed")
+        raise AssertionError("dict model_spec must not be routed")  # pragma: no cover
 
     monkeypatch.setattr(llm, "invoke", fail_invoke)
     messages = [{"role": "user", "content": "hi"}]
