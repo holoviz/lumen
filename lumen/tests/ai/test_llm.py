@@ -18,6 +18,7 @@ try:
         MLX, Anthropic, AnthropicBedrock, AzureOpenAI, Bedrock, Google, Groq,
         LiteLLM, LlamaCpp, Llm, Message, MistralAI, Ollama, OpenAI, WebLLM,
     )
+    from lumen.ai.tools import FunctionTool
 
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
@@ -884,7 +885,9 @@ ROUTED_MODEL_KWARGS = {
 
 
 def _routing_llm():
-    return Llm(model_kwargs={k: dict(v) for k, v in ROUTED_MODEL_KWARGS.items()})
+    llm = _make(OpenAI, {})
+    llm.model_kwargs = {k: dict(v) for k, v in ROUTED_MODEL_KWARGS.items()}
+    return llm
 
 
 def test_route_spec_model_constrains_to_current_model_kwargs_keys():
@@ -913,7 +916,8 @@ async def test_no_routing_key_passes_through(monkeypatch):
 
 async def test_routing_invoked_with_dict_spec_and_decision_used(monkeypatch):
     """When a 'routing' key is present, the routing model is invoked with a dict
-    spec and the messages, and its decision is returned as the resolved model_spec."""
+    spec, a dedicated system prompt and no tools, and its decision resolves to
+    the chosen entry's config dict."""
     llm = _routing_llm()
     calls = []
 
@@ -923,12 +927,43 @@ async def test_routing_invoked_with_dict_spec_and_decision_used(monkeypatch):
 
     monkeypatch.setattr(llm, "invoke", fake_invoke)
     messages = [{"role": "user", "content": "hi"}]
-    assert await llm._resolve_routing("edit", messages) == "sql"
+    resolved = await llm._resolve_routing("edit", messages)
+    assert resolved["model"] == "sql-model"
+    assert "routing" not in resolved
 
     routed_messages, routed_kwargs = calls[0]
     assert routed_messages == messages
     assert routed_kwargs["model_spec"] == {"model": "router-model"}
+    assert routed_kwargs["tools"] == []
+    assert routed_kwargs["system"] == llm._routing_system_prompt()
     assert issubclass(routed_kwargs["response_model"], BaseModel)
+
+
+async def test_routing_prompt_lists_options_with_descriptions(monkeypatch):
+    """The routing call gets a dedicated system prompt listing every configured
+    option with its optional description, and does not inherit the caller's
+    system prompt."""
+    llm = _routing_llm()
+    llm.model_kwargs["edit"]["description"] = "Best for editing tasks"
+    llm.model_kwargs["sql"]["description"] = "Best for SQL tasks"
+    calls = []
+
+    async def fake_invoke(messages, **kwargs):
+        calls.append((messages, kwargs))
+        return SimpleNamespace(model_spec="sql")
+
+    monkeypatch.setattr(llm, "invoke", fake_invoke)
+    messages = [
+        {"role": "system", "content": "You are a data analyst."},
+        {"role": "user", "content": "hi"},
+    ]
+    await llm._resolve_routing("edit", messages)
+
+    routed_messages, routed_kwargs = calls[0]
+    assert routed_kwargs["system"] == llm._routing_system_prompt()
+    assert "Best for editing tasks" in routed_kwargs["system"]
+    assert "Best for SQL tasks" in routed_kwargs["system"]
+    assert routed_messages == [{"role": "user", "content": "hi"}]
 
 
 async def test_routing_exception_falls_back(monkeypatch):
@@ -958,22 +993,112 @@ async def test_dict_model_spec_never_routed(monkeypatch):
     assert await llm._resolve_routing(spec, messages) == spec
 
 
+def test_combine_tools_empty_list_opts_out_of_instance_tools():
+    """tools=[] opts out of instance tools, while None uses them and a non-empty
+    list merges them."""
+    llm = _make(OpenAI, {})
+    llm.tools = ["instance-tool"]
+    assert llm._combine_tools(None) == ["instance-tool"]
+    assert llm._combine_tools([]) == []
+    assert llm._combine_tools(["per-call"]) == ["instance-tool", "per-call"]
+
+
+def test_invalid_routing_config_rejected_at_construction():
+    """A non-dict 'routing' entry fails loudly at construction time, not silently
+    at call time."""
+    with pytest.raises(ValueError, match="routing"):
+        OpenAI(api_key="sk-test", model_kwargs={
+            "default": {"model": "base"},
+            "edit": {"model": "edit-model", "routing": "router-model"},
+        })
+
+
+async def test_get_client_strips_routing_key(monkeypatch):
+    """The 'routing' key must never reach the SDK constructor (reviewer repro:
+    AsyncOpenAI.__init__ must not receive an unexpected 'routing' kwarg)."""
+    fake = MagicMock()
+    monkeypatch.setattr(openai, "AsyncOpenAI", fake)
+    llm = OpenAI(
+        api_key="sk-test",
+        model_kwargs={k: dict(v) for k, v in ROUTED_MODEL_KWARGS.items()},
+    )
+    client = await llm.get_client("edit")
+    assert client is not None
+    assert "routing" not in fake.call_args.kwargs
+
+
 async def test_invoke_uses_routed_model_spec(monkeypatch):
-    """invoke() resolves routing before running the tool loop, so the routed
-    model_spec reaches run_client."""
+    """invoke() resolves routing through the real path: the routing model runs
+    first (with a dedicated prompt and no tools), then the resolved config
+    reaches run_client with no 'routing' key."""
     llm = _routing_llm()
     run_client_specs = []
 
-    async def fake_route(model_spec, messages):
-        return "sql"
-
     async def fake_run_client(model_spec, messages, **kwargs):
-        run_client_specs.append(model_spec)
+        run_client_specs.append(dict(model_spec))
+        if kwargs.get("response_model") is not None:
+            return kwargs["response_model"](model_spec="sql")
         return "done"
 
-    monkeypatch.setattr(llm, "_resolve_routing", fake_route)
     monkeypatch.setattr(llm, "run_client", fake_run_client)
 
     output = await llm.invoke([{"role": "user", "content": "hi"}], model_spec="edit")
     assert output == "done"
-    assert run_client_specs == ["sql"]
+    assert [spec["model"] for spec in run_client_specs] == ["router-model", "sql-model"]
+    assert all("routing" not in spec for spec in run_client_specs)
+
+
+def _stream_chunks(text: str = "", tool_calls: list[dict] | None = None):
+    async def gen():
+        if tool_calls:
+            for call in tool_calls:
+                yield SimpleNamespace(
+                    choices=[SimpleNamespace(delta=SimpleNamespace(content="", tool_calls=[call]))]
+                )
+        else:
+            yield SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(content=text, tool_calls=None))]
+            )
+
+    return gen()
+
+
+async def test_stream_resolves_routing_once_across_tool_rounds(monkeypatch):
+    """Routing is resolved once for a whole stream: the routing model is invoked
+    a single time and follow-up tool-loop rounds reuse the resolved spec instead
+    of re-invoking the router (and paying another blocking network call)."""
+    llm = _routing_llm()
+    router_invocations = []
+    stream_specs = []
+
+    def add(a: int, b: int) -> int:
+        """Adds two integers."""
+        return a + b
+
+    tool = FunctionTool(add)
+
+    async def fake_run_client(model_spec, messages, **kwargs):
+        spec = dict(model_spec) if isinstance(model_spec, dict) else model_spec
+        if kwargs.get("response_model") is not None:
+            router_invocations.append(spec)
+            return kwargs["response_model"](model_spec="sql")
+        stream_specs.append(spec)
+        if kwargs.get("stream"):
+            if len(stream_specs) == 1:
+                return _stream_chunks(tool_calls=[
+                    {"index": 0, "id": "call_1", "type": "function",
+                     "function": {"name": "add", "arguments": ""}},
+                    {"index": 0, "id": "call_1", "type": "function",
+                     "function": {"name": None, "arguments": '{"a": 1, "b": 2}'}},
+                ])
+            return _stream_chunks(text="final answer")
+        return "done"
+
+    monkeypatch.setattr(llm, "run_client", fake_run_client)
+    messages = [{"role": "user", "content": "hi"}]
+    outputs = [out async for out in llm.stream(messages, model_spec="edit", tools=[tool])]
+
+    assert len(router_invocations) == 1
+    assert [spec["model"] for spec in router_invocations] == ["router-model"]
+    assert [spec["model"] for spec in stream_specs] == ["sql-model", "sql-model"]
+    assert "final answer" in outputs
