@@ -23,7 +23,7 @@ except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
 from instructor.processing.multimodal import Image
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -870,3 +870,110 @@ def test_api_key_env_var_does_not_clobber_provider_default(monkeypatch):
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-from-env")
     assert OpenAI().api_key == "sk-from-env"
+
+
+# ---------------------------------------------------------------------------
+# Model routing
+# ---------------------------------------------------------------------------
+
+ROUTED_MODEL_KWARGS = {
+    "default": {"model": "base-model"},
+    "edit": {"model": "edit-model", "routing": {"model": "router-model"}},
+    "sql": {"model": "sql-model"},
+}
+
+
+def _routing_llm():
+    return Llm(model_kwargs={k: dict(v) for k, v in ROUTED_MODEL_KWARGS.items()})
+
+
+def test_route_spec_model_constrains_to_current_model_kwargs_keys():
+    """The Literal is rebuilt from model_kwargs at call time and rejects unknown keys."""
+    llm = _routing_llm()
+    route_spec_model = llm._route_spec_model()
+    schema = route_spec_model.model_json_schema()["properties"]["model_spec"]
+    assert set(schema["enum"]) == set(ROUTED_MODEL_KWARGS)
+    assert route_spec_model(model_spec="sql").model_spec == "sql"
+    with pytest.raises(ValidationError):
+        route_spec_model(model_spec="bogus")
+
+
+async def test_no_routing_key_passes_through(monkeypatch):
+    """Without a 'routing' key the model_spec passes through unchanged and the
+    routing model is never invoked."""
+    llm = _routing_llm()
+
+    async def fail_invoke(*args, **kwargs):
+        raise AssertionError("routing model must not be invoked")
+
+    monkeypatch.setattr(llm, "invoke", fail_invoke)
+    messages = [{"role": "user", "content": "hi"}]
+    assert await llm._resolve_routing("sql", messages) == "sql"
+
+
+async def test_routing_invoked_with_dict_spec_and_decision_used(monkeypatch):
+    """When a 'routing' key is present, the routing model is invoked with a dict
+    spec and the messages, and its decision is returned as the resolved model_spec."""
+    llm = _routing_llm()
+    calls = []
+
+    async def fake_invoke(messages, **kwargs):
+        calls.append((messages, kwargs))
+        return SimpleNamespace(model_spec="sql")
+
+    monkeypatch.setattr(llm, "invoke", fake_invoke)
+    messages = [{"role": "user", "content": "hi"}]
+    assert await llm._resolve_routing("edit", messages) == "sql"
+
+    routed_messages, routed_kwargs = calls[0]
+    assert routed_messages == messages
+    assert routed_kwargs["model_spec"] == {"model": "router-model"}
+    assert issubclass(routed_kwargs["response_model"], BaseModel)
+
+
+async def test_routing_exception_falls_back(monkeypatch):
+    """If the routing call raises, the original string model_spec is used and no
+    exception propagates."""
+    llm = _routing_llm()
+
+    async def fail_invoke(*args, **kwargs):
+        raise RuntimeError("router down")
+
+    monkeypatch.setattr(llm, "invoke", fail_invoke)
+    messages = [{"role": "user", "content": "hi"}]
+    assert await llm._resolve_routing("edit", messages) == "edit"
+
+
+async def test_dict_model_spec_never_routed(monkeypatch):
+    """A dict model_spec is never routed, even when its contents match keys used
+    elsewhere in the config."""
+    llm = _routing_llm()
+
+    async def fail_invoke(*args, **kwargs):
+        raise AssertionError("dict model_spec must not be routed")
+
+    monkeypatch.setattr(llm, "invoke", fail_invoke)
+    messages = [{"role": "user", "content": "hi"}]
+    spec = {"model": "router-model", "routing": {"model": "other"}}
+    assert await llm._resolve_routing(spec, messages) == spec
+
+
+async def test_invoke_uses_routed_model_spec(monkeypatch):
+    """invoke() resolves routing before running the tool loop, so the routed
+    model_spec reaches run_client."""
+    llm = _routing_llm()
+    run_client_specs = []
+
+    async def fake_route(model_spec, messages):
+        return "sql"
+
+    async def fake_run_client(model_spec, messages, **kwargs):
+        run_client_specs.append(model_spec)
+        return "done"
+
+    monkeypatch.setattr(llm, "_resolve_routing", fake_route)
+    monkeypatch.setattr(llm, "run_client", fake_run_client)
+
+    output = await llm.invoke([{"role": "user", "content": "hi"}], model_spec="edit")
+    assert output == "done"
+    assert run_client_specs == ["sql"]

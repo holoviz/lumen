@@ -23,7 +23,7 @@ from instructor import Mode, patch
 from instructor.dsl.partial import Partial
 from instructor.processing.multimodal import Image
 from openai import OpenAI as OpenAIClient
-from pydantic import BaseModel
+from pydantic import BaseModel, create_model
 
 from .interceptor import Interceptor
 from .services import (
@@ -141,7 +141,14 @@ class Llm(param.Parameterized):
     model_kwargs = param.Dict(default={}, doc="""
         LLM model definitions indexed by type. Supported types include
         'default', 'reasoning' and 'sql'. Agents may pick which model to
-        invoke for different reasons.""")
+        invoke for different reasons.
+
+        An entry may declare a 'routing' key to opt in to model routing for
+        that type: the routing model is invoked first to pick which entry to
+        actually use for each call, e.g.
+        {"default": {"model": "gpt-5.4-mini"},
+         "edit": {"model": "gpt-5.2",
+                  "routing": {"model": "nemotron-switchyard"}}}""")
 
     tools = param.List(default=[], doc="""
         Default tools that are always available to this LLM instance.
@@ -393,6 +400,60 @@ class Llm(param.Parameterized):
         files.
         """
 
+    def _route_spec_model(self) -> type[BaseModel]:
+        """Build the pydantic model constraining the routing model's output.
+
+        The ``model_spec`` field is constrained via a ``Literal`` to the keys
+        actually present in ``model_kwargs`` at call time, so a hallucinated
+        key cannot silently fall back to ``'default'`` unnoticed.
+        """
+        return create_model(
+            "RouteSpec",
+            model_spec=(Literal[*tuple(self.model_kwargs)], ...),
+        )
+
+    async def _resolve_routing(
+        self,
+        model_spec: str | dict,
+        messages: list[Message],
+    ) -> str | dict:
+        """
+        Pick which ``model_kwargs`` entry to use via a routing model when the
+        resolved config for ``model_spec`` declares one.
+
+        Only string ``model_spec`` values are routed. A dict ``model_spec``
+        bypasses the ``model_kwargs`` lookup entirely in ``_get_model_kwargs``,
+        which is exactly what the routing call below relies on: it always uses
+        a dict spec, so a routing call can never trigger routing for itself
+        (no recursion guard is needed).
+        """
+        if isinstance(model_spec, dict):
+            return model_spec
+
+        config = self.model_kwargs.get(model_spec) or self.model_kwargs["default"]
+        routing_spec = config.get("routing")
+        if not routing_spec:
+            return model_spec
+
+        try:
+            route = await self.invoke(
+                messages=messages,
+                model_spec=dict(routing_spec),
+                response_model=self._route_spec_model(),
+            )
+        except Exception:
+            log_debug(
+                [
+                    f"Routing for {model_spec!r} failed; falling back to {model_spec!r}",
+                    traceback.format_exc(),
+                ],
+                prefix="[LLM routing]",
+                show_sep="above",
+            )
+            return model_spec
+        log_debug(f"Routing {model_spec!r} -> {route.model_spec!r}", prefix="[LLM routing]")
+        return route.model_spec
+
     async def invoke(
         self,
         messages: list[Message],
@@ -431,6 +492,7 @@ class Llm(param.Parameterized):
         """
         system = system.strip().replace("\n\n", "\n")
         messages, input_kwargs = self._add_system_message(messages, system, input_kwargs)
+        model_spec = await self._resolve_routing(model_spec, messages)
         max_tool_rounds = int(input_kwargs.pop("max_tool_rounds", 16))
 
         kwargs = dict(self._client_kwargs)
