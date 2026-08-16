@@ -79,6 +79,17 @@ class FollowUpClassification(BaseModel):
     follow_up_type: Literal["direct", "derived", "new"]
 
 
+class FollowUpSuggestion(BaseModel):
+    """
+    Represents a single suggested follow-up question.
+    """
+
+    query: str = Field(
+        description="A single dataset-specific follow-up question referencing actual column names",
+        max_length=100
+    )
+
+
 class InsertLine(BaseModel):
     op: Literal["insert"] = "insert"
     line_no: int = Field(ge=1, description=(
