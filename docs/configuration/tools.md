@@ -8,13 +8,15 @@ Most users don't need custom tools. Built-in tools handle common needs.
 
 ## Built-in tools
 
-Lumen includes tools automatically:
+Lumen adds these tools automatically:
 
-- **TableLookup** - Finds relevant tables in your data (see [Vector Stores](vector_stores.md#table-discovery))
-- **DocumentLookup** - Searches uploaded documents (see [Vector Stores](vector_stores.md#document-search))
-- **DbtslLookup** - Queries dbt Semantic Layer metrics
+- **MetadataLookup** - Finds relevant tables in your data (see [Vector Stores](vector_stores.md#table-discovery))
+- **SourceLookup** - Finds relevant external data source actions, added when a `SourceAgent` is present
+- **`list_indexed_documents` and `search_document_chunks`** - Search uploaded documents, added when a document vector store holds documents (see [Vector Stores](vector_stores.md#document-search))
 
 You don't need to configure these. Agents use them when needed.
+
+**DbtslLookup** queries dbt Semantic Layer metrics and is not automatic; pass it via `tools=` to enable it.
 
 ## Create a simple tool
 
@@ -249,7 +251,7 @@ Combine tools for complex workflows:
 === "With built-in tools"
 
     ``` py title="Mix custom and built-in tools"
-    from lumen.ai.tools import DocumentLookup
+    from lumen.ai.tools import MetadataLookup
 
     def get_stats(table) -> dict:
         """Calculate summary statistics."""
@@ -269,7 +271,7 @@ Combine tools for complex workflows:
 
     ui = lmai.ExplorerUI(
         data='penguins.csv',
-        tools=[get_stats, filter_species, DocumentLookup()]
+        tools=[get_stats, filter_species, MetadataLookup(include_columns=False)]
     )
     ui.servable()
     ```
