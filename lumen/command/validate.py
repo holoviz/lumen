@@ -28,7 +28,7 @@ class Validate(Subcommand):
     )
 
     def invoke(self, args: argparse.Namespace):
-        from ..dashboard import Dashboard, load_yaml
+        from ..dashboard import Dashboard, load_yaml  # noqa: PLC0415
         for yaml_file in args.files:
             spec = load_yaml(Path(yaml_file).read_text())
             try:

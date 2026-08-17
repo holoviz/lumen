@@ -261,7 +261,9 @@ class SourceAgent(Agent):
         ctrl_map: dict[str, BaseSourceControls] = {}
         for c in controls:
             if c._supports_tools:
-                from ..tools.source_lookup import _control_hash
+                from ..tools.source_lookup import (  # noqa: PLC0415
+                    _control_hash,
+                )
                 ctrl_map[_control_hash(c)] = c
 
         tools: list[FunctionTool] = []

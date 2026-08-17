@@ -366,7 +366,9 @@ class hvPlotViewEditor(ViewEditor):
         super().__init__(**params)
 
     def render(self):
-        from hvplot.ui import hvDataFrameExplorer  # type: ignore
+        from hvplot.ui import (  # type: ignore  # noqa: PLC0415
+            hvDataFrameExplorer,
+        )
         kwargs = dict(self.spec)
         del kwargs['type']
         pipeline = lm_state.pipelines[kwargs.pop('pipeline', self.pipeline)]

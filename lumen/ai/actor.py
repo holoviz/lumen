@@ -27,7 +27,7 @@ def _expand_llm_tool_entries(entries: list[Any] | None, context: TContext) -> li
     Expand :attr:`LLMUser.llm_tools` entries: keep plain tools; resolve callables
     ``f(context)`` or no-arg ``f()`` to a tool or list of tools.
     """
-    from .tools.base import FunctionTool
+    from .tools.base import FunctionTool  # noqa: PLC0415
 
     if not entries:
         return []

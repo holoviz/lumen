@@ -176,7 +176,7 @@ def docx_add_table(doc, df, max_rows: int = 50):
 
 def docx_add_chart(doc, editor) -> bool:
     """Embed a chart editor as a PNG image; return True if one was added."""
-    from docx.shared import Inches
+    from docx.shared import Inches  # noqa: PLC0415
 
     if 'png' not in editor.export_formats:
         return False

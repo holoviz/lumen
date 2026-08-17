@@ -195,7 +195,7 @@ class SchemaHandler(web.RequestHandler):
 
 
 def lumen_rest_provider(files, endpoint):
-    from panel.io.rest import _exec_files
+    from panel.io.rest import _exec_files  # noqa: PLC0415
     _exec_files(files)
     if endpoint:
         prefix = rf'^/{endpoint}/'

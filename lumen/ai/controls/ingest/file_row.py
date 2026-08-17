@@ -112,7 +112,7 @@ class UploadedFileRow(Viewer):
         """Load sheet names for xlsx files."""
         if self.extension != "xlsx":
             return
-        import openpyxl
+        import openpyxl  # noqa: PLC0415
         wb = openpyxl.load_workbook(self.file_obj, read_only=True)
         self.param.sheet.objects = wb.sheetnames
         self.sheet = wb.sheetnames[0]

@@ -309,7 +309,7 @@ def read_geo_file(
             raise ValueError("ZIP file does not contain a shapefile (.shp)")
         file_obj.seek(0)
 
-    import geopandas as gpd
+    import geopandas as gpd  # noqa: PLC0415
 
     geo_df = gpd.read_file(file_obj)
     if geo_df.empty:

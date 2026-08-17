@@ -468,7 +468,7 @@ class SnowflakeSource(BaseSQLSource):
         def subset_table_slugs(df: pd.DataFrame) -> pd.DataFrame:
             df["TABLE_SLUG"] = df[
                 ["TABLE_CATALOG", "TABLE_SCHEMA", "TABLE_NAME"]
-            ].agg(lambda x: ".".join(x), axis=1).str.upper()
+            ].agg(".".join, axis=1).str.upper()
             df = df[df["TABLE_SLUG"].isin(table_slugs)]
             df = df.drop(
                 columns=["TABLE_CATALOG", "TABLE_SCHEMA", "TABLE_NAME"]

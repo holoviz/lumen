@@ -79,7 +79,7 @@ class Component(Parameterized):
                     self._update_ref(p, ref)
 
     def _extract_refs(self, params: dict[str, Any], refs: dict[str, Any]):
-        from .variables import Variable
+        from .variables import Variable  # noqa: PLC0415
         processed = {}
         for pname, pval in params.items():
             if is_ref(pval):

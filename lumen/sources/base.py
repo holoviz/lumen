@@ -381,7 +381,7 @@ class Source(MultiTypeComponent):
         return source_type(refs=refs, **resolved_spec)
 
     def __init__(self, **params):
-        from ..config import config
+        from ..config import config  # noqa: PLC0415
         params['root'] = Path(params.get('root', config.root))
         super().__init__(**params)
         self.param.watch(self.clear_cache, self._reload_params)
@@ -494,7 +494,7 @@ class Source(MultiTypeComponent):
         elif self.cache_dir:
             if self.cache_with_dask:
                 try:
-                    import dask.dataframe as dd
+                    import dask.dataframe as dd  # noqa: PLC0415
                 except Exception:
                     dd = None
             else:
@@ -541,7 +541,7 @@ class Source(MultiTypeComponent):
         if self.cache_dir and write_to_file:
             if self.cache_with_dask:
                 try:
-                    import dask.dataframe as dd
+                    import dask.dataframe as dd  # noqa: PLC0415
                 except Exception:
                     dd = None
             else:
@@ -914,7 +914,7 @@ class FileSource(Source):
             kwargs.update(self.kwargs)
         if self.use_dask and dask:
             try:
-                import dask.dataframe as dd
+                import dask.dataframe as dd  # noqa: PLC0415
             except Exception:
                 return self._load_fn(ext, dask=False)
             if ext == 'csv':
@@ -998,7 +998,7 @@ class FileSource(Source):
                 if len(dfs) <= 1:
                     df = dfs[0] if dfs else None
                 elif self.use_dask and hasattr(dfs[0], 'compute'):
-                    import dask.dataframe as dd
+                    import dask.dataframe as dd  # noqa: PLC0415
                     df = dd.concat(dfs)
                 else:
                     df = pd.concat(dfs)

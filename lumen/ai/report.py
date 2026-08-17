@@ -1237,9 +1237,11 @@ class Report(TaskGroup):
                 "Exporting a report to Word requires python-docx; install it with "
                 "`pip install python-docx`."
             )
-        from docx import Document
+        from docx import Document  # noqa: PLC0415
 
-        from .export import docx_add_chart, docx_add_markdown, docx_add_table
+        from .export import (  # noqa: PLC0415
+            docx_add_chart, docx_add_markdown, docx_add_table,
+        )
 
         doc = Document()
         pending: list[tuple[int, str]] = []

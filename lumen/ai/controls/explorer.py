@@ -98,7 +98,7 @@ class TableExplorer(Viewer):
         if not self.table_slug:
             return
 
-        from ..editors import SQLEditor
+        from ..editors import SQLEditor  # noqa: PLC0415
 
         source = self.source_map[self.table_slug]
         if SOURCE_TABLE_SEPARATOR in self.table_slug:

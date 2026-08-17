@@ -54,7 +54,7 @@ class Wizard(ReactiveHTML):
             self._next()
 
     def open_modal(self):
-        from .state import state
+        from .state import state  # noqa: PLC0415
         self.preview.object = dict(state.spec)
         if state.modal.objects == [self.preview]:
             state.template.open_modal()

@@ -4,6 +4,7 @@ import asyncio
 import atexit
 import os
 import tempfile
+import traceback
 
 from contextlib import contextmanager
 from functools import partial
@@ -600,7 +601,9 @@ class UI(Viewer):
                     continue
                 elif src.startswith(('sqlite://', 'postgresql://', 'mysql://', 'mssql://', 'oracle://')):
                     try:
-                        from ..sources.sqlalchemy import SQLAlchemySource
+                        from ..sources.sqlalchemy import (  # noqa: PLC0415
+                            SQLAlchemySource,
+                        )
                     except ImportError as e:
                         raise ImportError(
                             "SQLAlchemy is required for database connection strings. "
@@ -626,7 +629,9 @@ class UI(Viewer):
                         sources.append(source)
                     else:
                         try:
-                            from ..sources.sqlalchemy import SQLAlchemySource
+                            from ..sources.sqlalchemy import (  # noqa: PLC0415
+                                SQLAlchemySource,
+                            )
                         except ImportError as e:
                             raise ImportError(
                                 "SQLAlchemy is required to read .db files. "
@@ -745,7 +750,6 @@ class UI(Viewer):
             self._chat_input.disabled = False
             self.interface.disabled = False
         except Exception as e:
-            import traceback
             traceback.print_exc()
             self._llm_status = str(e)
             if self._error_alert is not None:

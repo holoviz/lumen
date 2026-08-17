@@ -28,7 +28,7 @@ class Precache(Subcommand):
     )
 
     def invoke(self, args: argparse.Namespace):
-        from ..dashboard import load_yaml
+        from ..dashboard import load_yaml  # noqa: PLC0415
         for yaml_file in args.files:
             config.root = str(Path(yaml_file).parent)
             state.spec = load_yaml(Path(yaml_file).read_text())

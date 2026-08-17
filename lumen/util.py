@@ -259,7 +259,7 @@ def get_dataframe_schema(df, columns=None):
             return _narwhals_dataframe_schema(narwhals_df, columns)
 
     if 'dask.dataframe' in sys.modules:
-        import dask.dataframe as dd
+        import dask.dataframe as dd  # noqa: PLC0415
         is_dask = isinstance(df, dd.DataFrame)
     else:
         is_dask = False
@@ -541,7 +541,7 @@ def catch_and_notify(message=None):
             try:
                 return func(*args, **kwargs)
             except Exception as e:
-                from .state import state as session_state
+                from .state import state as session_state  # noqa: PLC0415
                 if session_state.config and session_state.config.on_error:
                     state.execute(partial(state.config.on_error, e))
                 if pn.config.notifications:
@@ -643,7 +643,7 @@ def detect_file_encoding(file_obj: Path | str | io.BytesIO | io.StringIO | bytes
 
     # Use chardet if available, otherwise fallback
     try:
-        import chardet
+        import chardet  # noqa: PLC0415
         result = chardet.detect(data)
         encoding = result.get('encoding', 'latin-1')
         # Clean up common names
@@ -656,7 +656,7 @@ def detect_file_encoding(file_obj: Path | str | io.BytesIO | io.StringIO | bytes
 
 def _set_backend_opts(element, cur_opts, compat_opts):
     """Utility to make it possible to serialize hvPlot generated plots"""
-    from hvplot.utilities import hvplot_extension
+    from hvplot.utilities import hvplot_extension  # noqa: PLC0415
     element = element.opts(**cur_opts, backend='bokeh')
     if hvplot_extension.compatibility and compat_opts:
         element = element.opts(**compat_opts, backend=hvplot_extension.compatibility)

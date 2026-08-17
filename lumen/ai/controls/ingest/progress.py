@@ -83,7 +83,7 @@ class Progress(Viewer):
         -------
         Typography or similar widget
         """
-        from panel_material_ui import Typography
+        from panel_material_ui import Typography  # noqa: PLC0415
         return Typography(
             styles={"margin-left": "auto", "margin-right": "auto"},
             visible=False

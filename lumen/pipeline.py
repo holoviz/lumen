@@ -335,7 +335,7 @@ class Pipeline(Viewer, Component):
         for filt in self.filters:
             if not isinstance(filt, ParamFilter):
                 continue
-            from holoviews import Dataset  # type: ignore
+            from holoviews import Dataset  # type: ignore  # noqa: PLC0415
             if filt.value is not None:
                 # HoloViews only learned to read narwhals frames in 1.22 and the
                 # floor is lower than that, so hand it pandas.
@@ -645,7 +645,7 @@ class Pipeline(Viewer, Component):
         chain_update = kwargs.pop('_chain_update', False)
         if sql_transforms:
             try:
-                from .sources.duckdb import DuckDBSource
+                from .sources.duckdb import DuckDBSource  # noqa: PLC0415
             except Exception as e:
                 raise RuntimeError(
                     'Cannot chain SQL transforms on a Pipeline without '
