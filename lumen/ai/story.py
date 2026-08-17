@@ -4,7 +4,7 @@ from __future__ import annotations
 import io
 import traceback as tb
 
-from functools import cache, partial
+from functools import partial
 
 import panel as pn
 import param
@@ -22,6 +22,7 @@ from ..config import config
 from ..pipeline import Pipeline
 from ..views.base import View
 from .agents.story import StoryAgent, StoryState, build_catalog
+from .config import get_markitdown
 from .editors import LumenEditor
 from .report import Report
 
@@ -57,23 +58,9 @@ def _prose_to_html(text: str) -> str:
     return _MARKDOWN.render(text)
 
 
-@cache
-def _markitdown():
-    """
-    Build the converter once, on first edit.
-
-    The import stays here because markitdown reaches pandas through its xlsx
-    converter, which adds about 0.7s to importing lumen.ai for a code path
-    that only runs when someone edits a paragraph.
-    """
-    from markitdown import MarkItDown
-
-    return MarkItDown()
-
-
 def _prose_to_markdown(html: str) -> str:
     """The HTML the editor emits, back to the Markdown a story block stores."""
-    converted = _markitdown().convert_stream(
+    converted = get_markitdown().convert_stream(
         io.BytesIO(html.encode()), file_extension=".html", bullets="-",
     )
     # contenteditable inserts non-breaking spaces for runs of spaces.
