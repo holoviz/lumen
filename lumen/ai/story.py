@@ -1,15 +1,15 @@
 """A Report that can be annotated with an AI-written, editable story."""
 from __future__ import annotations
 
+import io
 import traceback as tb
 
-from functools import partial
+from functools import cache, partial
 
 import panel as pn
 import param
 
 from markdown_it import MarkdownIt
-from markdownify import markdownify
 from panel.layout.base import Column, Row
 from panel.pane import Markdown
 from panel.widgets import TextEditor
@@ -57,10 +57,21 @@ def _prose_to_html(text: str) -> str:
     return _MARKDOWN.render(text)
 
 
+@cache
+def _markitdown():
+    """MarkItDown is slow to construct, so build it once and only when needed."""
+    from markitdown import MarkItDown
+
+    return MarkItDown()
+
+
 def _prose_to_markdown(html: str) -> str:
     """The HTML the editor emits, back to the Markdown a story block stores."""
+    converted = _markitdown().convert_stream(
+        io.BytesIO(html.encode()), file_extension=".html", bullets="-",
+    )
     # contenteditable inserts non-breaking spaces for runs of spaces.
-    return markdownify(html, heading_style="ATX", bullets="-").replace("\xa0", " ").strip()
+    return converted.text_content.replace("\xa0", " ").strip()
 
 
 class StoryReport(Report):

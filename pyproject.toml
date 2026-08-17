@@ -36,7 +36,6 @@ dependencies = [
     "instructor >=1.14.3",
     "intake <2",
     "jinja2 >3.0",
-    "markdownify",
     "markitdown",
     "nbformat",
     "numpy",
