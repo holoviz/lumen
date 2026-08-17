@@ -468,11 +468,11 @@ class Llm(param.Parameterized):
         repo-id strings (e.g. LlamaCpp) are not keys, so both are never routed.
 
         The routing call itself uses a dict spec and ``tools=[]``, so it can
-        never trigger routing for itself nor run the real tool loop. When
-        routing picks an entry, that entry's resolved config is returned as a
-        dict: dict specs bypass ``_resolve_routing`` downstream, so a routed
-        spec threads through the tool loop and ``stream()`` recursion without
-        being re-resolved (and without paying another routing call per round).
+        never trigger routing for itself nor run the real tool loop. Both
+        the success and fallback paths return a dict config: dict specs
+        bypass ``_resolve_routing`` downstream, so a resolved spec threads
+        through the tool loop and ``stream()`` recursion without being
+        re-resolved (and without paying another routing call per round).
         """
         if isinstance(model_spec, dict):
             return model_spec
@@ -500,7 +500,7 @@ class Llm(param.Parameterized):
                 prefix="[LLM routing]",
                 show_sep="above",
             )
-            return model_spec
+            return dict(self._get_model_kwargs(model_spec))
         log_debug(f"Routing {model_spec!r} -> {route.model_spec!r}", prefix="[LLM routing]")
         return dict(self._get_model_kwargs(route.model_spec))
 
@@ -680,7 +680,7 @@ class Llm(param.Parameterized):
     ) -> tuple[list[dict[str, Any]] | None, dict[str, FunctionTool | MCPTool], dict[str, Any]]:
         tool_instances: dict[str, FunctionTool | MCPTool] = {}
         tool_contexts: dict[str, Any] = {}
-        if tools is None:
+        if not tools:
             return None, tool_instances, tool_contexts
         tool_specs: list[dict[str, Any]] = []
         for tool in tools:
@@ -2673,9 +2673,6 @@ class MLX(Llm):
         if self._use_endpoint:
             # Override to use OpenAI-compatible wrapper
             self._instructor_wrapper = "openai"
-
-    def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
-        return super()._get_model_kwargs(model_spec)
 
     def _load_mlx_model(self, model_id: str) -> tuple:
         """Load and cache an MLX model. Duplicate loads are harmless but wasteful."""

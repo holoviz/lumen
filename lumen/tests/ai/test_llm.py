@@ -879,7 +879,7 @@ def test_api_key_env_var_does_not_clobber_provider_default(monkeypatch):
 
 ROUTED_MODEL_KWARGS = {
     "default": {"model": "base-model"},
-    "edit": {"model": "edit-model", "routing": {"model": "router-model"}},
+    "edit": {"model": "edit-model", "routing": {"model": "router-model"}, "description": "Best for editing tables and visualizations"},
     "sql": {"model": "sql-model"},
 }
 
@@ -967,8 +967,9 @@ async def test_routing_prompt_lists_options_with_descriptions(monkeypatch):
 
 
 async def test_routing_exception_falls_back(monkeypatch):
-    """If the routing call raises, the original string model_spec is used and no
-    exception propagates."""
+    """If the routing call raises, the fallback returns the original entry's
+    config dict (not the bare string) so the dict-bypass prevents
+    re-routing downstream."""
     llm = _routing_llm()
 
     async def fail_invoke(*args, **kwargs):
@@ -976,7 +977,10 @@ async def test_routing_exception_falls_back(monkeypatch):
 
     monkeypatch.setattr(llm, "invoke", fail_invoke)
     messages = [{"role": "user", "content": "hi"}]
-    assert await llm._resolve_routing("edit", messages) == "edit"
+    result = await llm._resolve_routing("edit", messages)
+    assert isinstance(result, dict)
+    assert result["model"] == "edit-model"
+    assert "routing" not in result
 
 
 async def test_dict_model_spec_never_routed(monkeypatch):
@@ -1027,6 +1031,20 @@ async def test_get_client_strips_routing_key(monkeypatch):
     assert "routing" not in fake.call_args.kwargs
 
 
+async def test_get_client_strips_description_key(monkeypatch):
+    """The 'description' key must never reach the SDK constructor — it is
+    routing metadata only."""
+    fake = MagicMock()
+    monkeypatch.setattr(openai, "AsyncOpenAI", fake)
+    llm = OpenAI(
+        api_key="sk-test",
+        model_kwargs={k: dict(v) for k, v in ROUTED_MODEL_KWARGS.items()},
+    )
+    client = await llm.get_client("edit")
+    assert client is not None
+    assert "description" not in fake.call_args.kwargs
+
+
 async def test_invoke_uses_routed_model_spec(monkeypatch):
     """invoke() resolves routing through the real path: the routing model runs
     first (with a dedicated prompt and no tools), then the resolved config
@@ -1063,10 +1081,10 @@ def _stream_chunks(text: str = "", tool_calls: list[dict] | None = None):
     return gen()
 
 
-async def test_stream_resolves_routing_once_across_tool_rounds(monkeypatch):
-    """Routing is resolved once for a whole stream: the routing model is invoked
-    a single time and follow-up tool-loop rounds reuse the resolved spec instead
-    of re-invoking the router (and paying another blocking network call)."""
+async def test_stream_resolves_routing_per_invoke_not_per_stream(monkeypatch):
+    """Routing is resolved inside invoke(), not stream(). Both success and
+    fallback paths return a dict, so the dict-bypass mechanism prevents
+    re-routing across tool-loop rounds."""
     llm = _routing_llm()
     router_invocations = []
     stream_specs = []
@@ -1102,3 +1120,27 @@ async def test_stream_resolves_routing_once_across_tool_rounds(monkeypatch):
     assert [spec["model"] for spec in router_invocations] == ["router-model"]
     assert [spec["model"] for spec in stream_specs] == ["sql-model", "sql-model"]
     assert "final answer" in outputs
+
+
+async def test_stream_router_down_single_timeout(monkeypatch):
+    """When the router is unreachable, _resolve_routing returns a dict
+    (the fallback config) so the dict-bypass prevents re-routing on
+    every subsequent call — router-down pays exactly one routing attempt
+    per turn, not one per stream+invoke pair nor one per tool round."""
+    llm = _routing_llm()
+    routing_calls = []
+
+    async def fake_run_client(model_spec, messages, **kwargs):
+        if kwargs.get("response_model") is not None:
+            routing_calls.append(model_spec)
+            raise RuntimeError("router down")
+        return "done"
+
+    monkeypatch.setattr(llm, "run_client", fake_run_client)
+    messages = [{"role": "user", "content": "hi"}]
+    output = await llm.invoke(messages, model_spec="edit")
+    assert output == "done"
+    # Exactly one routing attempt — the fallback dict is returned and
+    # used directly, so invoke() never tries routing a second time.
+    assert len(routing_calls) == 1
+    assert routing_calls[0] == {"model": "router-model"}
