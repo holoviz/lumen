@@ -243,7 +243,7 @@ class Filter(Transform):
                 mask = self._range_filter(column, *val)
             else:
                 self.param.warning(
-                    'Condition {val!r} on {col!r} column not understood. '
+                    f'Condition {val!r} on {k!r} column not understood. '
                     'Filter query will not be applied.'
                 )
                 continue
