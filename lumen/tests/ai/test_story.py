@@ -57,12 +57,12 @@ def _kinds(report):
 
 def _prose_editors(report):
     """Every editable prose block rendered in the story, at any nesting."""
-    from lumen.ai.editors import EditableProse
+    from panel.widgets import TextEditor
 
     found = []
 
     def walk(obj):
-        if isinstance(obj, EditableProse):
+        if isinstance(obj, TextEditor):
             found.append(obj)
             return
         for child in (getattr(obj, 'objects', None) or []):
@@ -290,38 +290,82 @@ async def test_story_prose_is_editable_and_edits_reach_the_exports(llm, tiny_sou
     ])])
     await report._annotate_report()
 
-    # Prose is kept as text and rendered as an editable block on screen.
+    # Prose is kept as Markdown and rendered into a rich text editor on screen.
     assert report._story.blocks[0] == ("prose", "Original prose.")
     editors = _prose_editors(report)
     assert len(editors) == 1
+    assert "<p>Original prose.</p>" in editors[0].value
 
-    # Editing writes back to the story, which every export reads from.
-    editors[0].value = "Edited by hand."
-    assert report._story.blocks[0] == ("prose", "Edited by hand.")
+    # The editor speaks HTML; what lands in the story, and so in every export,
+    # is Markdown.
+    editors[0].value = "<p>Edited <strong>by hand</strong>.</p>"
+    assert report._story.blocks[0] == ("prose", "Edited **by hand**.")
     nb = _nb_text(report)
-    assert "Edited by hand." in nb
+    assert "Edited **by hand**." in nb
     assert "Original prose." not in nb
-    assert "Edited by hand." in report.to_html()
+    assert "<strong>" not in nb
+    assert "by hand" in report.to_html()
 
     # The edit survives re-rendering the story (e.g. switching tabs).
     report._render_story()
-    assert _prose_editors(report)[0].value == "Edited by hand."
+    assert "<strong>by hand</strong>" in _prose_editors(report)[0].value
 
 
-def test_editable_prose_renders_markdown():
-    from lumen.ai.editors import EditableProse
+async def test_rendering_the_story_does_not_rewrite_the_blocks(llm, tiny_source):
+    from lumen.ai.agents.story import Story, StoryBlock
 
-    prose = EditableProse(value="**Pop** leads with *1,252*")
+    report = StoryReport(
+        Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
+        title='R', llm=llm,
+    )
+    await report.execute()
+    llm.set_responses([Story(chain_of_thought="c", title="T", blocks=[
+        StoryBlock(prose="## Findings\n\n- one\n- two"), StoryBlock(view=1),
+    ])])
+    await report._annotate_report()
 
-    # The story shows rendered prose, not Markdown source.
-    assert "<strong>Pop</strong>" in prose._rendered
-    assert "<em>1,252</em>" in prose._rendered
+    # Building the editors must not round-trip the prose back over itself, or
+    # the Markdown the LLM wrote would drift every time the tab is rebuilt.
+    before = list(report._story.blocks)
+    report._render_story()
+    assert report._story.blocks == before
 
-    # Editing the text re-renders it.
-    prose.value = "## Heading"
-    assert "<h2>" in prose._rendered
-    # The source is kept as written, so it exports as Markdown.
-    assert prose.value == "## Heading"
+
+@pytest.mark.parametrize("markdown", [
+    "**Pop** leads with *1,252* units.",
+    "## Heading",
+    "### Deeper heading",
+    "- one\n- two",
+    "1. first\n2. second",
+    "> a quoted insight",
+    "Text with a [link](https://example.com) in it.",
+    "Text with `inline code` in it.",
+    "| a | b |\n| --- | --- |\n| 1 | 2 |",
+    "Line one\nLine two",
+    "## Heading\n\nAnd a paragraph below it.",
+])
+def test_prose_round_trips_through_html(markdown):
+    from lumen.ai.story import _prose_to_html, _prose_to_markdown
+
+    # The editor shows HTML but the story stores Markdown, so what the user
+    # never touched must come back out exactly as the LLM wrote it.
+    assert _prose_to_markdown(_prose_to_html(markdown)) == markdown
+
+
+def test_prose_round_trip_is_a_fixed_point():
+    from lumen.ai.story import _prose_to_html, _prose_to_markdown
+
+    text = "## Heading\n\n- one\n- two\n\nWith **bold** and a [link](https://example.com)."
+    once = _prose_to_markdown(_prose_to_html(text))
+    assert _prose_to_markdown(_prose_to_html(once)) == once
+
+
+def test_prose_normalizes_non_breaking_spaces():
+    from lumen.ai.story import _prose_to_markdown
+
+    # contenteditable inserts &nbsp; for runs of spaces; they must not leak
+    # into the stored Markdown or the exports.
+    assert _prose_to_markdown("<p>a&nbsp;b</p>") == "a b"
 
 
 async def test_story_prose_rewritten_by_ai(llm, tiny_source):
