@@ -122,7 +122,7 @@ The DependencyResolver picks the final agent first, then figures out what it nee
 
 ``` mermaid
 graph BT
-    A[TableLookup] --> B[SQLAgent]
+    A[MetadataLookup] --> B[SQLAgent]
     B --> C[VegaLiteAgent]
     C --> D[Goal Achieved]
 ```
@@ -133,9 +133,9 @@ DependencyResolver thinks:
 ```
 Goal: VegaLiteAgent (needs pipeline)
   ↑ SQLAgent (needs metaset)
-    ↑ TableLookup (no dependencies)
+    ↑ MetadataLookup (no dependencies)
 
-Execution: TableLookup → SQLAgent → VegaLiteAgent
+Execution: MetadataLookup → SQLAgent → VegaLiteAgent
 ```
 
 No planning phase, just direct execution.
