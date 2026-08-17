@@ -135,6 +135,43 @@ async def test_report_to_docx_includes_story(llm, tiny_source):
     assert "Overall narrative." in text
 
 
+async def test_rich_text_edits_reach_word_as_native_formatting(llm, tiny_source):
+    """Word only understands the Markdown the story stores, never the editor's HTML."""
+    from panel.widgets import TextEditor
+
+    from lumen.ai.agents.story import Story, StoryBlock
+
+    report = StoryReport(
+        Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
+        title='My Report', llm=llm,
+    )
+    await report.execute()
+    llm.set_responses([Story(chain_of_thought="c", title="Big Picture", blocks=[
+        StoryBlock(prose="Overall narrative."), StoryBlock(view=1),
+    ])])
+    await report._annotate_report()
+
+    editors = [
+        obj for row in report._story_column
+        for obj in (getattr(row, 'objects', None) or [])
+        if isinstance(obj, TextEditor)
+    ]
+    # What Quill emits once the user has added a heading, a bold run and a list.
+    editors[0].value = (
+        "<h3>Q3 findings</h3>"
+        "<p>Streams grew <strong>23%</strong>.</p>"
+        "<ul><li>Pop</li><li>Hip-hop</li></ul>"
+    )
+
+    doc = Document(BytesIO(report.to_docx()))
+    paragraphs = [(p.style.name, p.text) for p in doc.paragraphs if p.text.strip()]
+    assert ("Heading 3", "Q3 findings") in paragraphs
+    assert ("List Bullet", "Pop") in paragraphs
+    assert "23%" in [run.text for p in doc.paragraphs for run in p.runs if run.bold]
+    # No markup of either flavour survives into the document.
+    assert not any("<" in text or "#" in text for _, text in paragraphs)
+
+
 def test_export_menu_has_word_option():
     report = Report(Section(A(order=[]), title='S'), title='R')
     assert "docx" in [item.get("format") for item in report._export.items]
