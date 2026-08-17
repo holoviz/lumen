@@ -181,7 +181,7 @@ Requires an LLM to generate context - see [LLM Providers](llm_providers.md) for 
 
 ### Table discovery
 
-Lumen embeds the metadata of every table it knows about, then searches those embeddings to pick the tables relevant to a question. This runs by default through the `MetadataLookup` tool, so a session with hundreds of tables only sends a handful of them to the agents.
+Lumen embeds the metadata of every table in your sources, then searches those embeddings to pick the tables relevant to a question. This runs by default through the `MetadataLookup` tool, which returns the 20 closest matches, so a session with hundreds of tables only sends those to the agents.
 
 ``` py title="Reuse a store for table metadata"
 import lumen.ai as lmai
