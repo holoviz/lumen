@@ -154,6 +154,16 @@ results = await vector_store.query('authentication setup')
 
 See [Vector Stores - Searching](vector_stores.md#searching) for query examples.
 
+**Table discovery** - Agents find relevant tables using vector search:
+
+``` py
+from lumen.ai.tools import MetadataLookup
+
+tool = MetadataLookup()
+```
+
+See [Tools - Built-in tools](tools.md#built-in-tools) for details on `MetadataLookup`.
+
 **Contextual augmentation** - Chunks get context descriptions:
 
 ``` py
