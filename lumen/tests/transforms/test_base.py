@@ -5,7 +5,7 @@ import pandas as pd
 import param  # type: ignore
 
 from lumen.transforms.base import (
-    Count, DropNA, Eval, Sum, Transform, project_lnglat,
+    Count, DropNA, Eval, Filter, Sum, Transform, project_lnglat,
 )
 
 
@@ -87,3 +87,15 @@ def test_project_lnglat_default_params():
     transform = project_lnglat()
     assert transform.longitude == 'longitude'
     assert transform.latitude == 'latitude'
+
+
+def test_filter_invalid_condition_warns(caplog):
+    df = pd.DataFrame({'A': [1, 2]})
+
+    result = Filter(conditions=[('A', {'unexpected': True})]).apply(df)
+
+    pd.testing.assert_frame_equal(result, df)
+    assert (
+        "Condition {'unexpected': True} on 'A' column not understood. "
+        "Filter query will not be applied."
+    ) in caplog.text
