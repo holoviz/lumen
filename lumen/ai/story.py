@@ -8,8 +8,11 @@ from functools import partial
 import panel as pn
 import param
 
+from markdown_it import MarkdownIt
+from markdownify import markdownify
 from panel.layout.base import Column, Row
 from panel.pane import Markdown
+from panel.widgets import TextEditor
 from panel_material_ui import (
     Accordion, Button, Card, Dialog, IconButton, Select, Tabs, TextAreaInput,
     Typography,
@@ -19,8 +22,45 @@ from ..config import config
 from ..pipeline import Pipeline
 from ..views.base import View
 from .agents.story import StoryAgent, StoryState, build_catalog
-from .editors import EditableProse, LumenEditor
+from .editors import LumenEditor
 from .report import Report
+
+# The same engine as panel.pane.Markdown, so a paragraph reads identically in
+# the editor and in the exports.
+_MARKDOWN = MarkdownIt("gfm-like")
+
+# Quill ships its own font stack and a full-height container, which would make
+# each paragraph read as a form field rather than as prose. The hover tint is
+# the only hint that a paragraph can be edited at all.
+_PROSE_CSS = """
+.ql-container { height: auto; font-family: inherit; font-size: inherit; }
+.ql-container.ql-bubble { border: none; }
+.ql-editor { padding: 4px 6px; line-height: inherit; }
+.ql-editor > :first-child { margin-top: 0; }
+.ql-editor > :last-child { margin-bottom: 0; }
+.ql-editor ol, .ql-editor ul { padding-left: 1.5em; }
+.ql-editor:not(:focus):hover { background: rgba(127, 127, 127, 0.08); border-radius: 4px; }
+"""
+
+# The editor's Bokeh model fixes its height at 300px, which the layout applies
+# as a flex basis on the element itself. Left alone every paragraph, however
+# short, reserves a 300px block and the story stops flowing. The rule has to
+# live on the row rather than on the widget, because a shadow root cannot
+# restyle its own host.
+_PROSE_ROW_CSS = """
+.story-prose { flex: 1 1 auto !important; height: auto !important; }
+"""
+
+
+def _prose_to_html(text: str) -> str:
+    """The Markdown a story block stores, as the HTML the editor shows."""
+    return _MARKDOWN.render(text)
+
+
+def _prose_to_markdown(html: str) -> str:
+    """The HTML the editor emits, back to the Markdown a story block stores."""
+    # contenteditable inserts non-breaking spaces for runs of spaces.
+    return markdownify(html, heading_style="ATX", bullets="-").replace("\xa0", " ").strip()
 
 
 class StoryReport(Report):
@@ -32,6 +72,16 @@ class StoryReport(Report):
 
     # The Story tab is appended after the Report tab once a story exists.
     _story_tab = 1
+
+    # Only the formatting that survives the round-trip back to Markdown; an
+    # image or colour button would write HTML the exports cannot carry.
+    _prose_toolbar = [
+        ["bold", "italic"],
+        [{"header": 2}, {"header": 3}],
+        [{"list": "bullet"}, {"list": "ordered"}],
+        ["blockquote", "link"],
+        ["clean"],
+    ]
 
     _tone_presets = [
         ("Executive summary", "Write a concise executive summary for decision-makers, leading with the key takeaways."),
@@ -48,6 +98,9 @@ class StoryReport(Report):
         self._story_column = Card(
             sizing_mode="stretch_width", margin=(0, 5, 15, 5),
             collapsible=False, hide_header=True,
+            # The formatting menu of the last paragraph opens downwards and the
+            # card would otherwise cut it in half.
+            stylesheets=[".MuiPaper-root { overflow: visible !important; }"],
         )
         self._tabs = Tabs(
             ("Report", self._view),
@@ -429,7 +482,11 @@ class StoryReport(Report):
 
     def _editable_prose(self, index, text):
         """Prose the user can edit in place, by hand or by asking the LLM."""
-        prose = EditableProse(value=text, sizing_mode="stretch_width", margin=(5, 10))
+        prose = TextEditor(
+            value=_prose_to_html(text), mode="bubble", toolbar=self._prose_toolbar,
+            sizing_mode="stretch_width", margin=(5, 10), css_classes=["story-prose"],
+            stylesheets=[_PROSE_CSS],
+        )
         prose.param.watch(partial(self._update_prose, index), "value")
         edit = IconButton(
             icon="auto_fix_high", size="small", color="default", align="start",
@@ -437,12 +494,13 @@ class StoryReport(Report):
             description="Rewrite this paragraph with AI",
             on_click=partial(self._open_edit_dialog, index),
         )
-        return Row(prose, edit, sizing_mode="stretch_width")
+        return Row(prose, edit, sizing_mode="stretch_width", stylesheets=[_PROSE_ROW_CSS])
 
     def _update_prose(self, index, event):
         # Keep the story blocks as the single source of truth so manual edits
-        # survive tab switches and flow into every export.
-        self._story.blocks[index] = ("prose", event.new)
+        # survive tab switches and flow into every export. The editor speaks
+        # HTML, the blocks stay Markdown, which is what the exports read.
+        self._story.blocks[index] = ("prose", _prose_to_markdown(event.new))
 
     def _open_edit_dialog(self, index, event=None):
         self._edit_index = index
