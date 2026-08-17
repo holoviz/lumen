@@ -59,7 +59,13 @@ def _prose_to_html(text: str) -> str:
 
 @cache
 def _markitdown():
-    """MarkItDown is slow to construct, so build it once and only when needed."""
+    """
+    Build the converter once, on first edit.
+
+    The import stays here because markitdown reaches pandas through its xlsx
+    converter, which adds about 0.7s to importing lumen.ai for a code path
+    that only runs when someone edits a paragraph.
+    """
     from markitdown import MarkItDown
 
     return MarkItDown()

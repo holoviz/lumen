@@ -9,9 +9,15 @@ except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
 from panel.pane import Markdown
+from panel.widgets import TextEditor
 
+from lumen.ai.agents.story import (
+    ProseEdit, Story, StoryAgent, StoryBlock, build_catalog,
+)
+from lumen.ai.editors import LumenEditor
 from lumen.ai.report import Action, Section
-from lumen.ai.story import StoryReport
+from lumen.ai.story import StoryReport, _prose_to_html, _prose_to_markdown
+from lumen.pipeline import Pipeline
 
 
 class A(Action):
@@ -38,9 +44,6 @@ class ChartAction(Action):
     label = param.String(default="Chart")
 
     async def _execute(self, context, **kwargs):
-        from lumen.ai.editors import LumenEditor
-        from lumen.pipeline import Pipeline
-
         pipeline = Pipeline(source=self.source, table='tiny')
         return [LumenEditor(component=pipeline, title=self.label)], {'text': self.label}
 
@@ -57,8 +60,6 @@ def _kinds(report):
 
 def _prose_editors(report):
     """Every editable prose block rendered in the story, at any nesting."""
-    from panel.widgets import TextEditor
-
     found = []
 
     def walk(obj):
@@ -73,8 +74,6 @@ def _prose_editors(report):
 
 
 async def test_story_agent_write_story(llm):
-    from lumen.ai.agents.story import Story, StoryAgent, StoryBlock
-
     llm.set_responses([Story(
         chain_of_thought="arc", title="Olympics",
         blocks=[StoryBlock(prose="Intro."), StoryBlock(view=1), StoryBlock(prose="Wrap up.")],
@@ -91,10 +90,6 @@ async def test_story_agent_write_story(llm):
 
 
 async def test_build_catalog_numbers_and_summarizes(tiny_source):
-    from lumen.ai.agents.story import build_catalog
-    from lumen.ai.editors import LumenEditor
-    from lumen.pipeline import Pipeline
-
     editor = LumenEditor(component=Pipeline(source=tiny_source, table='tiny'), title='Tiny table')
 
     ctx = await build_catalog([editor])
@@ -106,8 +101,6 @@ async def test_build_catalog_numbers_and_summarizes(tiny_source):
 
 
 async def test_report_annotate_interleaves_prose_and_view(llm, tiny_source):
-    from lumen.ai.agents.story import Story, StoryBlock
-
     report = StoryReport(
         Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
         title='My Report',
@@ -135,8 +128,6 @@ async def test_report_annotate_interleaves_prose_and_view(llm, tiny_source):
 
 
 async def test_report_annotate_appends_unreferenced_views(llm, tiny_source):
-    from lumen.ai.agents.story import Story, StoryBlock
-
     report = StoryReport(
         Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
         Section(ChartAction(source=tiny_source, label='Chart B'), title='Section B'),
@@ -156,8 +147,6 @@ async def test_report_annotate_appends_unreferenced_views(llm, tiny_source):
 
 
 async def test_report_annotate_only_selected_sections(llm, tiny_source):
-    from lumen.ai.agents.story import Story, StoryBlock
-
     report = StoryReport(
         Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
         Section(ChartAction(source=tiny_source, label='Chart B'), title='Section B'),
@@ -177,8 +166,6 @@ async def test_report_annotate_only_selected_sections(llm, tiny_source):
 
 
 async def test_report_annotate_is_idempotent(llm, tiny_source):
-    from lumen.ai.agents.story import Story, StoryBlock
-
     report = StoryReport(
         Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
         title='R', llm=llm,
@@ -213,8 +200,6 @@ async def test_report_annotate_no_llm_is_noop(tiny_source):
 
 
 async def test_report_story_dialog_presets_and_generate(llm, tiny_source):
-    from lumen.ai.agents.story import Story, StoryBlock
-
     report = StoryReport(
         Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
         title='R', llm=llm,
@@ -240,8 +225,6 @@ async def test_report_story_dialog_presets_and_generate(llm, tiny_source):
 
 
 async def test_report_story_tab_added_and_export_follows_active_tab(llm, tiny_source):
-    from lumen.ai.agents.story import Story, StoryBlock
-
     report = StoryReport(
         Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
         title='R', llm=llm,
@@ -278,8 +261,6 @@ async def test_report_story_tab_added_and_export_follows_active_tab(llm, tiny_so
 
 
 async def test_story_prose_is_editable_and_edits_reach_the_exports(llm, tiny_source):
-    from lumen.ai.agents.story import Story, StoryBlock
-
     report = StoryReport(
         Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
         title='R', llm=llm,
@@ -312,8 +293,6 @@ async def test_story_prose_is_editable_and_edits_reach_the_exports(llm, tiny_sou
 
 
 async def test_rendering_the_story_does_not_rewrite_the_blocks(llm, tiny_source):
-    from lumen.ai.agents.story import Story, StoryBlock
-
     report = StoryReport(
         Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
         title='R', llm=llm,
@@ -345,32 +324,24 @@ async def test_rendering_the_story_does_not_rewrite_the_blocks(llm, tiny_source)
     "## Heading\n\nAnd a paragraph below it.",
 ])
 def test_prose_round_trips_through_html(markdown):
-    from lumen.ai.story import _prose_to_html, _prose_to_markdown
-
     # The editor shows HTML but the story stores Markdown, so what the user
     # never touched must come back out exactly as the LLM wrote it.
     assert _prose_to_markdown(_prose_to_html(markdown)) == markdown
 
 
 def test_prose_round_trip_is_a_fixed_point():
-    from lumen.ai.story import _prose_to_html, _prose_to_markdown
-
     text = "## Heading\n\n- one\n- two\n\nWith **bold** and a [link](https://example.com)."
     once = _prose_to_markdown(_prose_to_html(text))
     assert _prose_to_markdown(_prose_to_html(once)) == once
 
 
 def test_prose_normalizes_non_breaking_spaces():
-    from lumen.ai.story import _prose_to_markdown
-
     # contenteditable inserts &nbsp; for runs of spaces; they must not leak
     # into the stored Markdown or the exports.
     assert _prose_to_markdown("<p>a&nbsp;b</p>") == "a b"
 
 
 async def test_story_prose_rewritten_by_ai(llm, tiny_source):
-    from lumen.ai.agents.story import ProseEdit, Story, StoryBlock
-
     report = StoryReport(
         Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
         title='R', llm=llm,
@@ -395,8 +366,6 @@ async def test_story_prose_rewritten_by_ai(llm, tiny_source):
 
 
 async def test_regenerating_keeps_the_previous_version_and_its_edits(llm, tiny_source):
-    from lumen.ai.agents.story import Story, StoryBlock
-
     report = StoryReport(
         Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
         title='R', llm=llm,
@@ -430,8 +399,6 @@ async def test_regenerating_keeps_the_previous_version_and_its_edits(llm, tiny_s
 
 
 async def test_report_reset_discards_story(llm, tiny_source):
-    from lumen.ai.agents.story import Story, StoryBlock
-
     report = StoryReport(
         Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
         title='R', llm=llm,

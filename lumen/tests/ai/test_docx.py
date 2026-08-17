@@ -13,7 +13,9 @@ pytest.importorskip("docx")
 
 from docx import Document
 from panel.pane import Markdown
+from panel.widgets import TextEditor
 
+from lumen.ai.agents.story import Story, StoryBlock
 from lumen.ai.report import Action, Report, Section
 from lumen.ai.story import StoryReport
 
@@ -118,8 +120,6 @@ async def test_report_to_docx_headings_and_text():
 
 
 async def test_report_to_docx_includes_story(llm, tiny_source):
-    from lumen.ai.agents.story import Story, StoryBlock
-
     report = StoryReport(
         Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
         title='My Report', llm=llm,
@@ -137,10 +137,6 @@ async def test_report_to_docx_includes_story(llm, tiny_source):
 
 async def test_rich_text_edits_reach_word_as_native_formatting(llm, tiny_source):
     """Word only understands the Markdown the story stores, never the editor's HTML."""
-    from panel.widgets import TextEditor
-
-    from lumen.ai.agents.story import Story, StoryBlock
-
     report = StoryReport(
         Section(ChartAction(source=tiny_source, label='Chart A'), title='Section A'),
         title='My Report', llm=llm,
