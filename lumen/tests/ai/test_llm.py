@@ -981,6 +981,7 @@ async def test_routing_exception_falls_back(monkeypatch):
     assert isinstance(result, dict)
     assert result["model"] == "edit-model"
     assert "routing" not in result
+    assert "description" not in result
 
 
 async def test_dict_model_spec_never_routed(monkeypatch):
@@ -1144,3 +1145,45 @@ async def test_stream_router_down_single_timeout(monkeypatch):
     # used directly, so invoke() never tries routing a second time.
     assert len(routing_calls) == 1
     assert routing_calls[0] == {"model": "router-model"}
+
+
+async def test_stream_router_down_no_reroute_across_rounds(monkeypatch):
+    """When routing fails during stream(), the fallback dict prevents
+    re-routing on tool-loop recursion — stream rounds use the resolved
+    model directly without paying another routing timeout."""
+    llm = _routing_llm()
+    routing_attempts = []
+    stream_specs = []
+
+    def add(a: int, b: int) -> int:
+        """Adds two integers."""
+        return a + b
+
+    tool = FunctionTool(add)
+
+    async def fake_run_client(model_spec, messages, **kwargs):
+        spec = dict(model_spec) if isinstance(model_spec, dict) else model_spec
+        if kwargs.get("response_model") is not None:
+            routing_attempts.append(spec)
+            raise RuntimeError("router down")
+        stream_specs.append(spec)
+        if kwargs.get("stream"):
+            if len(stream_specs) == 1:
+                return _stream_chunks(tool_calls=[
+                    {"index": 0, "id": "call_1", "type": "function",
+                     "function": {"name": "add", "arguments": ""}},
+                    {"index": 0, "id": "call_1", "type": "function",
+                     "function": {"name": None, "arguments": '{"a": 1, "b": 2}'}},
+                ])
+            return _stream_chunks(text="fallback answer")
+        return "done"
+
+    monkeypatch.setattr(llm, "run_client", fake_run_client)
+    messages = [{"role": "user", "content": "hi"}]
+    outputs = [out async for out in llm.stream(messages, model_spec="edit", tools=[tool])]
+
+    assert len(routing_attempts) == 1
+    assert routing_attempts[0] == {"model": "router-model"}
+    assert all(spec["model"] == "edit-model" for spec in stream_specs)
+    assert all("routing" not in spec for spec in stream_specs)
+    assert "fallback answer" in outputs
