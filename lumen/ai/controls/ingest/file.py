@@ -142,7 +142,7 @@ class FileSourceControls(BaseSourceControls):
         filename = f"{card.filename}.{extension}"
 
         try:
-            if extension.endswith("json"):
+            if extension == "json":
                 # Use the more robust JSON parser on this class
                 df = self._read_json_file(file, filename)
                 result = FileReadResult(tables={alias: df})

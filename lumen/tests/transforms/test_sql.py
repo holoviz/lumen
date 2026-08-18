@@ -11,7 +11,7 @@ import lumen as lm
 from lumen.transforms.sql import (
     SQLColumns, SQLCount, SQLDistinct, SQLFilter, SQLFormat, SQLGroupBy,
     SQLLimit, SQLMinMax, SQLOverride, SQLPreFilter, SQLRemoveSourceSeparator,
-    SQLSample, SQLSelectFrom, SQLTransform,
+    SQLSample, SQLSchemaStats, SQLSelectFrom, SQLTransform,
 )
 
 try:
@@ -226,6 +226,36 @@ def test_sql_min_max_nonalphanum_characters():
         'MAX("Period life expectancy at birth - Sex: total - Age: 0") AS "Period life expectancy at birth - Sex: total - Age: 0_max" '
         'FROM (SELECT * FROM TABLE) AS subquery'
     )
+    assert result == expected
+
+
+def test_sql_schema_stats():
+    result = SQLSchemaStats.apply_to(
+        "SELECT * FROM TABLE", enum_columns=["A"], minmax_columns=["B"]
+    )
+    assert result.endswith("FROM (SELECT * FROM TABLE) AS subquery")
+    assert 'COUNT(*) AS "__count"' in result
+    assert 'ARRAY_AGG(DISTINCT "A") AS "__enum_0"' in result
+    # the non-null count is what lets NULL be reinstated afterwards
+    assert 'COUNT("A") AS "__nonnull_0"' in result
+    assert 'MIN("B") AS "__min_0"' in result
+    assert 'MAX("B") AS "__max_0"' in result
+
+
+def test_sql_schema_stats_aliases_are_positional():
+    """Aliases must not be derived from column names, which may be long or
+    contain characters a dialect would mangle."""
+    long_col = "Period life expectancy at birth - Sex: total - Age: 0"
+    result = SQLSchemaStats.apply_to(
+        "SELECT * FROM TABLE", enum_columns=["A"], minmax_columns=[long_col]
+    )
+    assert f'MIN("{long_col}") AS "__min_0"' in result
+    assert f'{long_col}_min' not in result
+
+
+def test_sql_schema_stats_no_columns():
+    result = SQLSchemaStats.apply_to("SELECT * FROM TABLE")
+    expected = 'SELECT COUNT(*) AS "__count" FROM (SELECT * FROM TABLE) AS subquery'
     assert result == expected
 
 
@@ -798,6 +828,12 @@ def test_sql_select_from_path():
 def test_sql_select_from_duckdb_path():
     result = SQLSelectFrom.apply_to("read_csv('data/life_expectancy.csv')", sql_expr="SELECT id, name FROM {table}")
     expected = "SELECT id, name FROM READ_CSV('data/life_expectancy.csv')"
+    assert result == expected
+
+
+def test_sql_select_from_table_starting_with_digit():
+    result = SQLSelectFrom.apply_to("2014_world_gdp_with_codes")
+    expected = 'SELECT * FROM "2014_world_gdp_with_codes"'
     assert result == expected
 
 

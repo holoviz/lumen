@@ -2,6 +2,7 @@ import typing as t
 
 import pandas as pd
 import param
+import sqlglot
 import yaml
 
 from panel.chat import ChatStep
@@ -15,14 +16,16 @@ from ...sources.duckdb import DuckDBSource
 from ...transforms.sql import SQLLimit
 from ..config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from ..context import ContextModel, TContext
+from ..data_quality import lint_data
 from ..editors import LumenEditor, SQLEditor
 from ..llm import Message
 from ..models import RetrySpec
 from ..schemas import Metaset
 from ..tools import FunctionTool
 from ..utils import (
-    clean_sql, describe_data, get_data, get_pipeline, parse_table_slug,
-    retry_llm_output, stream_details,
+    PROFILE_SAMPLE_ROWS, clean_sql, describe_data, get_data, get_pipeline,
+    log_debug, parse_table_slug, retry_llm_output, stream_details,
+    truncate_to_tokens,
 )
 from .base_lumen import BaseLumenAgent
 
@@ -96,6 +99,67 @@ def make_sql_model(sources: list[tuple[str, str]]):
     )
 
 
+class SQLCleanup(BaseModel):
+    """A revision of an existing query that removes data-quality problems from its result."""
+
+    chain_of_thought: str = Field(description="""
+        Which findings you are fixing and which you are leaving alone, in one sentence.""")
+
+    query: str = Field(description="""
+        The rewritten SQL query. Return the original query byte-for-byte unchanged
+        when no finding clearly calls for one of the allowed edits; leaving the
+        query alone is a correct and expected answer.""")
+
+
+# Rows/columns shown by format_exploration_result. Exploration reveals a frame's
+# shape, dtypes and value domains; a handful of rows does that, and the previous
+# 50-row aligned dump cost ~3.4k tokens for a 53x7 frame — 8x this one.
+EXPLORATION_PREVIEW_ROWS = 5
+EXPLORATION_PREVIEW_COLS = 25
+EXPLORATION_MAX_TOKENS = 1200
+# Schema YAML is dense (nested keys, enum lists) and tokenizes near 2.5
+# chars/token, so the previous 12k-character cap admitted ~4.5k tokens.
+SCHEMA_MAX_TOKENS = 3000
+# Source tables profiled for one query. Each costs a query, and a join across
+# more inputs than this is not worth the round trips.
+SOURCE_PROFILE_MAX_TABLES = 3
+
+
+def format_exploration_result(df: pd.DataFrame) -> str:
+    """
+    Render an exploration query result as a compact preview for the LLM.
+
+    Reports the full shape first so the model never needs a follow-up
+    ``SELECT COUNT(*)`` to learn how many rows matched, then column dtypes and a
+    few example rows. Markdown without the index: alignment padding and row
+    numbers are pure token cost here, carrying no information about the data.
+    """
+    n_rows, n_cols = df.shape
+    parts = [f"{n_rows} rows x {n_cols} columns"]
+
+    preview = df.iloc[:, :EXPLORATION_PREVIEW_COLS]
+    if n_cols > EXPLORATION_PREVIEW_COLS:
+        parts[0] += f" (showing the first {EXPLORATION_PREVIEW_COLS} columns)"
+
+    def _dtype_name(dtype):
+        return "str" if pd.api.types.is_string_dtype(dtype) else str(dtype)
+
+    dtypes = ", ".join(f"{col}: {_dtype_name(dtype)}" for col, dtype in preview.dtypes.items())
+    parts.append(f"Columns — {dtypes}")
+
+    if n_rows:
+        shown = min(n_rows, EXPLORATION_PREVIEW_ROWS)
+        label = "all rows" if shown == n_rows else f"first {shown} of {n_rows} rows"
+        parts.append(
+            f"Sample ({label}):\n"
+            + preview.head(EXPLORATION_PREVIEW_ROWS).to_markdown(index=False)
+        )
+    else:
+        parts.append("The query returned no rows.")
+
+    return truncate_to_tokens("\n\n".join(parts), EXPLORATION_MAX_TOKENS)
+
+
 async def execute_exploration_sql(
     source: str,
     sql_query: str,
@@ -122,11 +186,26 @@ async def execute_exploration_sql(
     str
         Tabular preview, or an error message string if execution fails.
     """
-    try:
-        base = next(obj for (s, _), obj in sources.items() if s == source)
-    except StopIteration:
+    # Exact source-name match: the intended usage.
+    base = next((obj for (s, _), obj in sources.items() if s == source), None)
+    if base is None:
+        # Weak models frequently pass a *table* name (or the wrong token)
+        # instead of the source name — e.g. run_exploration_sql(source="obs")
+        # when the source is "AnnDataSource00679". Resolve gracefully rather
+        # than forcing a failed round-trip: prefer a table-name match, else
+        # fall back to the sole source when the mapping is unambiguous.
+        base = next((obj for (_, t), obj in sources.items() if t == source), None)
+        if base is None:
+            unique_sources = {s for s, _ in sources}
+            if len(unique_sources) == 1:
+                base = next(iter(sources.values()))
+    if base is None:
         avail = sorted({s for s, _ in sources})
-        return f"Unknown source {source!r}. Available sources: {avail}"
+        tables = sorted({t for _, t in sources})
+        return (
+            f"Unknown source {source!r}. Available sources: {avail}; "
+            f"tables: {tables}"
+        )
 
     raw = sql_query.strip()
     leader = raw.lstrip().upper()
@@ -143,11 +222,7 @@ async def execute_exploration_sql(
     except Exception as e:
         return f"{type(e).__name__}: {e}"
 
-    preview = df.head(100)
-    text = preview.to_string(max_cols=25, max_rows=50)
-    if len(text) > 8000:
-        text = text[:8000] + "\n... (truncated)"
-    return text
+    return format_exploration_result(df)
 
 
 def make_run_exploration_sql_tool(sources: dict[tuple[str, str], BaseSQLSource]) -> FunctionTool:
@@ -156,8 +231,8 @@ def make_run_exploration_sql_tool(sources: dict[tuple[str, str], BaseSQLSource])
     async def run_exploration_sql(source: str, sql_query: str) -> str:
         return await execute_exploration_sql(source, sql_query, sources=sources)
 
-    names = ", ".join(sorted({s for s, _ in sources})) or "(none)"
-    tables = ", ".join(sorted({t for _, t in sources})) or "(none)"
+    names = "`, `".join(sorted({s for s, _ in sources})) or "(none)"
+    tables = "`, `".join(sorted({t for _, t in sources})) or "(none)"
     run_exploration_sql.__doc__ = (
         f"Execute read-only SQL on the named source to inspect data (use LIMIT on raw selects). "
         f"Sources: {names}. "
@@ -167,10 +242,13 @@ def make_run_exploration_sql_tool(sources: dict[tuple[str, str], BaseSQLSource])
     return FunctionTool(
         run_exploration_sql,
         purpose=(
-            "Run exploratory read-only SQL (SELECT/WITH) on a datasource by name; "
-            "returns a small text preview of the result or an error message. "
-            "Do not use this tool to generate the result, it is meant as an exploratory "
-            "tool to gather the information needed to generate the final SQL query."
+            "Run exploratory read-only SQL (SELECT/WITH) on a datasource by name. "
+            f"Returns the result's full row and column counts, column dtypes and up to "
+            f"{EXPLORATION_PREVIEW_ROWS} example rows — so the reported row count is the "
+            "true total and needs no separate COUNT(*) query. "
+            "This gathers information for the final SQL query; it does not produce the "
+            "result the user sees, so stop exploring once you know the columns, types and "
+            "value formats you need."
         ),
     )
 
@@ -260,9 +338,7 @@ def make_load_table_schemas_tool(metaset: Metaset) -> FunctionTool:
                 block["note"] = "No catalog columns and no live schema could be loaded for this table."
             result[slug] = block
         text = yaml.dump(result, default_flow_style=False, allow_unicode=True, sort_keys=False)
-        if len(text) > 12000:
-            text = text[:12000] + "\n... (truncated)"
-        return text
+        return truncate_to_tokens(text, SCHEMA_MAX_TOKENS)
 
     load_table_schemas.__doc__ = (load_table_schemas.__doc__ or "").strip()
     return FunctionTool(
@@ -273,6 +349,28 @@ def make_load_table_schemas_tool(metaset: Metaset) -> FunctionTool:
             "or exploratory SQL when planning which tables to use."
         ),
     )
+
+
+def sql_contains_aggregates(sql_query: str, dialect: str | None = None) -> bool:
+    """
+    Whether ``sql_query`` collapses many input rows into fewer output rows.
+
+    Such a query has already collapsed its inputs by the time it returns, so
+    nothing about the result shows what those inputs carried: a ``-9999``
+    placeholder is already inside ``SUM``, and a blank string is already a GROUP
+    BY key. Profiling the result therefore says nothing about the data the
+    numbers came from, and the source rows have to be profiled separately --
+    otherwise a chart of ``SUM(revenue)`` silently inherits every placeholder in
+    the table it was built from.
+
+    Unparseable SQL returns False: the caller only uses this to decide whether to
+    spend an extra query, and guessing "yes" would spend it on every failed parse.
+    """
+    try:
+        parsed = sqlglot.parse_one(sql_query, read=None if dialect in (None, "any") else dialect)
+    except Exception:
+        return False
+    return bool(parsed.find(sqlglot.exp.Group) or parsed.find(sqlglot.exp.AggFunc))
 
 
 _RANGE_FIELD_TYPES = ("number", "integer")
@@ -390,12 +488,20 @@ class SQLOutputs(ContextModel):
 
 class SQLAgent(BaseLumenAgent):
 
+    clean_data = param.Boolean(default=True, doc="""
+        Profile every query result and, when it contains data-quality problems,
+        spend one extra LLM call rewriting the query to clean them up.
+        Profiling is deterministic and reuses the frame validation already
+        fetched, so a clean result costs nothing; set to False to always take
+        the query exactly as first written.""")
+
     conditions = param.List(
         default=[
             "Use for querying, filtering, aggregating, or transforming data with SQL",
             "Use for calculations that require executing SQL (e.g., 'calculate average', 'sum by category')",
             "Use when user asks to 'show', 'get', 'fetch', 'query', 'find', 'filter', 'calculate', 'aggregate', or 'transform' data",
             "Use after external data has been fetched and the user expects the fetched fields/rows to be presented, selected, filtered, or otherwise queried",
+            "Use when user asks about data quality, completeness, missing values, duplicates, or outliers",
             "NOT when user asks to 'explain', 'interpret', 'analyze', 'summarize', or 'comment on' existing data",
             "NOT useful if the user is using the same data for plotting",
         ]
@@ -415,7 +521,9 @@ class SQLAgent(BaseLumenAgent):
         default="""
         Creates and executes SQL queries to retrieve, filter, aggregate, or transform data.
         Handles table joins, WHERE clauses, GROUP BY, calculations, and other SQL operations.
-        Generates new data pipelines from SQL transformations."""
+        Generates new data pipelines from SQL transformations.
+        Profiles every result for data-quality problems (missing values, duplicates,
+        placeholder numbers, outliers) and reports them."""
     )
 
     prompts = param.Dict(
@@ -424,6 +532,7 @@ class SQLAgent(BaseLumenAgent):
                 "response_model": make_sql_model,
                 "template": PROMPTS_DIR / "SQLAgent" / "main.jinja2",
             },
+            "clean_data": {"response_model": SQLCleanup, "template": PROMPTS_DIR / "SQLAgent" / "clean_data.jinja2"},
             "revise_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "SQLAgent" / "revise_output.jinja2"},
         }
     )
@@ -447,8 +556,13 @@ class SQLAgent(BaseLumenAgent):
         step: ChatStep,
         max_retries: int = 2,
         discovery_context: str | None = None,
-    ) -> str:
-        """Validate and potentially fix SQL query."""
+    ) -> tuple[str, pd.DataFrame | None]:
+        """Validate and potentially fix SQL query.
+
+        Returns the validated SQL alongside the frame the validating execution
+        already produced, so callers can profile the result without paying for a
+        second query. The frame is None only when every attempt failed.
+        """
         # Clean SQL
         try:
             sql_query = clean_sql(sql_query, source.dialect, prettify=True)
@@ -459,9 +573,9 @@ class SQLAgent(BaseLumenAgent):
         for i in range(max_retries):
             try:
                 step.stream(f"\n\n`{expr_slug}`\n```sql\n{sql_query}\n```")
-                source.execute(sql_query)
+                result = source.execute(sql_query)
                 step.stream("\n\n✅ SQL validation successful")
-                return sql_query
+                return sql_query, result
             except Exception as e:
                 if i == max_retries - 1:
                     step.stream(f"\n\n❌ SQL validation failed after {max_retries} attempts: {e}")
@@ -478,18 +592,110 @@ class SQLAgent(BaseLumenAgent):
                     discovery_context=discovery_context
                 )
                 sql_query = clean_sql(retry_result, source.dialect, prettify=True)
-        return sql_query
+        return sql_query, None
+
+    @staticmethod
+    def _profile_source_rows(source: BaseSQLSource, tables: list[str]) -> list[str]:
+        """
+        Profile a sample of the rows feeding an aggregating query.
+
+        Only called when the result itself cannot show the problem (see
+        :func:`sql_contains_aggregates`), because each table costs one extra
+        query. Findings are prefixed with their table so the rewriting prompt
+        knows the fix belongs before the aggregation rather than in the output
+        columns.
+
+        Example: for a query grouping ``sales``, this runs
+        ``SELECT * FROM sales LIMIT 5000``, lints those rows, and returns
+        findings such as "In the source rows of `sales` (before aggregation):
+        Placeholder numbers [-9999, ...] appear as data in "revenue"".
+        """
+        findings = []
+        for table in tables[:SOURCE_PROFILE_MAX_TABLES]:
+            try:
+                # get_sql_expr turns a table name into the SELECT that defines it
+                # (for a CSV-backed table that is a read_csv call, not a name),
+                # and SQLLimit appends the row cap in the source's own dialect.
+                limited = SQLLimit(
+                    limit=PROFILE_SAMPLE_ROWS, write=source.dialect, pretty=False, identify=False
+                ).apply(source.get_sql_expr(table))
+                sample = source.execute(limited)
+            except Exception as e:
+                # A source that cannot be sampled simply contributes nothing;
+                # the query it feeds has already run successfully.
+                log_debug(f"Could not profile source table {table!r}: {e}")
+                continue
+            findings.extend(
+                f"In the source rows of `{table}` (before aggregation): {finding}"
+                for finding in lint_data(sample, actionable_only=True)
+            )
+        return findings
+
+    async def _clean_data_pass(
+        self,
+        sql_query: str,
+        findings: list[str],
+        original_rows: int,
+        source: BaseSQLSource,
+        messages: list[Message],
+        context: TContext,
+        step: ChatStep,
+    ) -> str:
+        """Rewrite ``sql_query`` to fix the data-quality problems in ``findings``.
+
+        The second half of the two-shot: the first pass answered the question,
+        this one cleans the answer. Returns the original query whenever the
+        rewrite is absent, identical, broken or empty, because a query that
+        already ran is worth more than a cleaner one that does not.
+        """
+        try:
+            cleanup = await self._invoke_prompt(
+                "clean_data", messages, context, sql=sql_query,
+                findings=findings, dialect=source.dialect,
+            )
+            cleaned = clean_sql(cleanup.query, source.dialect, prettify=True)
+        except Exception as e:
+            # Deliberately swallowed rather than raised: _render_execute_query is
+            # wrapped in retry_llm_output, so letting this escape would throw away
+            # a query that already answered the question and regenerate from zero.
+            step.stream(f"\n\n⚠️ Could not clean the query, keeping the original: {e}")
+            return sql_query
+        if cleaned == sql_query:
+            step.stream("\n\n✅ Query already handles the findings; left unchanged")
+            return sql_query
+
+        try:
+            cleaned_result = source.execute(cleaned)
+        except Exception as e:
+            step.stream(f"\n\n⚠️ Cleaned query failed, keeping the original: {e}")
+            return sql_query
+
+        # An empty result means the cleaning filtered away the answer itself.
+        # Silently returning nothing is worse than returning dirty data.
+        if cleaned_result.empty:
+            step.stream("\n\n⚠️ Cleaned query returned no rows, keeping the original")
+            return sql_query
+
+        # Always show the row delta: cleaning that quietly discards half the
+        # answer must be visible to whoever reads the result.
+        step.stream(
+            f"\n\n🧹 Cleaned the query: {cleanup.chain_of_thought}"
+            f"\n\n```sql\n{cleaned}\n```"
+            f"\n\n{original_rows} rows before cleaning, {len(cleaned_result)} after."
+        )
+        return cleaned
 
     async def _execute_query(
         self, source: BaseSQLSource, context: TContext, expr_slug: str, sql_query: str, tables: list[str],
-        is_final: bool, should_materialize: bool, step: ChatStep
-    ) -> Pipeline:
+        is_final: bool, should_materialize: bool, step: ChatStep, raise_if_empty: bool = False
+    ) -> tuple[Pipeline, str]:
         """Execute SQL query and return pipeline and summary."""
         # Create SQL source
         source_tables = source.tables if source.tables is not None else {}
         if isinstance(source_tables, list):
             source_tables = {t: source.get_sql_expr(t) for t in source_tables}
         table_defs = {table: source_tables[table] for table in tables if table in source_tables}
+        expr_slug = self._unique_expr_slug(expr_slug, source_tables)
         table_defs[expr_slug] = sql_query
 
         # Only pass materialize parameter for DuckDB sources
@@ -499,6 +705,25 @@ class SQLAgent(BaseLumenAgent):
             )
         else:
             sql_expr_source = source.create_sql_expr_source(table_defs)
+
+        # Create pipeline
+        if is_final:
+            sql_transforms = [SQLLimit(limit=1_000_000, write=source.dialect, pretty=True, identify=False)]
+            pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms)
+        else:
+            pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug)
+
+        # Get data summary
+        df = await get_data(pipeline)
+
+        # Reject before promoting the new source: retry_llm_output re-runs this
+        # method on failure, and a rejected query left installed as
+        # ``context["source"]`` becomes the base every later attempt builds on.
+        if df.empty and raise_if_empty:
+            raise ValueError(
+                f"\nQuery `{sql_query}` returned empty results."
+                "\nUse `run_exploration_sql` to check what values actually exist before filtering."
+            )
 
         if should_materialize:
             context["source"] = sql_expr_source
@@ -517,15 +742,6 @@ class SQLAgent(BaseLumenAgent):
                 "created_order": existing_entries + 1,
             }
 
-        # Create pipeline
-        if is_final:
-            sql_transforms = [SQLLimit(limit=1_000_000, write=source.dialect, pretty=True, identify=False)]
-            pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms)
-        else:
-            pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug)
-
-        # Get data summary
-        df = await get_data(pipeline)
         summary = await describe_data(df, reduce_enums=False)
         if len(summary) >= 1000:
             summary = summary[:1000-3] + "..."
@@ -534,23 +750,41 @@ class SQLAgent(BaseLumenAgent):
             summary_formatted += f"\n\nMaterialized data: `{sql_expr_source.name}{SOURCE_TABLE_SEPARATOR}{expr_slug}`"
         stream_details(f"{summary_formatted}", step, title=expr_slug)
 
-        return pipeline
+        return pipeline, expr_slug
+
+    @staticmethod
+    def _unique_expr_slug(expr_slug: str, source_tables: dict[str, str]) -> str:
+        """
+        Return a slug that does not collide with an existing table.
+
+        Materialization issues ``CREATE OR REPLACE VIEW <expr_slug>``, so reusing
+        the name of a table the query reads redefines that table in terms of the
+        query's own output — destroying the original data for the rest of the
+        session and, when the query selects from the same name, producing
+        "infinite recursion detected" on every later read. Weak models routinely
+        echo back an input table name as ``table_slug`` despite the field
+        instructing otherwise, so treat the collision as the agent's problem to
+        resolve rather than the model's to get right.
+        """
+        if expr_slug not in source_tables:
+            return expr_slug
+        for suffix in range(1, 100):
+            candidate = f"{expr_slug}_derived_{suffix}"
+            if candidate not in source_tables:
+                log_debug(
+                    f"table_slug {expr_slug!r} collides with an existing table; "
+                    f"materializing as {candidate!r} to avoid overwriting it."
+                )
+                return candidate
+        raise ValueError(f"Could not derive a non-colliding table slug for {expr_slug!r}.")
 
     async def _finalize_execution(
         self,
         pipeline: Pipeline,
         sql: str,
         step_title: str | None,
-        raise_if_empty: bool = False
     ) -> SQLEditor:
         """Finalize execution for final step."""
-
-        df = await get_data(pipeline)
-        if df.empty and raise_if_empty:
-            raise ValueError(
-                f"\nQuery `{sql}` returned empty results."
-                "\nUse `run_exploration_sql` to check what values actually exist before filtering."
-            )
 
         view = self._editor_type(
             component=pipeline, title=step_title, spec=sql
@@ -684,24 +918,52 @@ class SQLAgent(BaseLumenAgent):
             sql_query = output.query.strip()
             expr_slug = output.table_slug.strip()
 
-            validated_sql = await self._validate_sql(
+            validated_sql, preview = await self._validate_sql(
                 context, sql_query, expr_slug, source, messages,
                 step, discovery_context=discovery_context
             )
 
+            # Profile the frame validation already fetched, so the user sees what
+            # is wrong with the result even when no rewrite follows.
+            findings: list[str] = []
+            actionable: list[str] = []
+            if preview is not None:
+                findings = lint_data(preview)
+                # Only the actionable subset justifies (and is shown to) the
+                # rewriting pass. Constant columns and outliers are reported but
+                # must not provoke a query rewrite.
+                if self.clean_data:
+                    actionable = lint_data(preview, actionable_only=True)
+
+            if self.clean_data and sql_contains_aggregates(validated_sql, source.dialect):
+                source_findings = self._profile_source_rows(source, tables)
+                findings += source_findings
+                actionable += source_findings
+
+            if findings:
+                stream_details(
+                    "\n".join(f"- {finding}" for finding in findings),
+                    step, title="Data quality findings", auto=False
+                )
+            if actionable:
+                validated_sql = await self._clean_data_pass(
+                    validated_sql, actionable, 0 if preview is None else len(preview),
+                    source, messages, context, step
+                )
+
             # Only materialize for DuckDB sources
             should_materialize = isinstance(source, DuckDBSource)
 
-            pipeline = await self._execute_query(
+            pipeline, expr_slug = await self._execute_query(
                 source, context, expr_slug, validated_sql, tables=tables,
-                is_final=True, should_materialize=should_materialize, step=step
+                is_final=True, should_materialize=should_materialize, step=step,
+                raise_if_empty=raise_if_empty
             )
 
             view = await self._finalize_execution(
                 pipeline,
                 validated_sql,
                 output_title,
-                raise_if_empty=raise_if_empty
             )
 
             if isinstance(step, ChatStep):

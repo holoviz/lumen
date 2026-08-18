@@ -61,7 +61,8 @@ from .llm import Llm, OpenAI, get_available_llm
 from .llm_dialog import LLMConfigDialog
 from .logs import ChatLogs
 from .models import ErrorDescription
-from .report import ActorTask, Report, Section
+from .report import ActorTask, Section
+from .story import StoryReport
 from .utils import (
     IMAGE_MIME_TYPES, content_to_text, format_msg_content, log_debug,
     wrap_logfire,
@@ -503,6 +504,8 @@ class UI(Viewer):
         params["log_level"] = params.get("log_level", self.param["log_level"].default).upper()
         super().__init__(**params)
         self._current_mode = "Exploration"
+        self._report = None
+        self._report_plans = None
         if self.logfire_tags is not None:
             if self.llm._supports_logfire:
                 self.llm.logfire_tags = self.logfire_tags
@@ -820,6 +823,21 @@ class UI(Viewer):
         """Whether an exploration should be shown in split view."""
         return exploration is not self._home
 
+    def _exploration_plans(self, item) -> list[Plan]:
+        """The item's plan followed by every followup plan below it, in reading
+        order. Followups nest arbitrarily deep, so descending a single level
+        would drop the newest explorations from the report."""
+        plans = [item["view"].plan]
+        for child in item["items"]:
+            plans += self._exploration_plans(child)
+        return plans
+
+    def _select_exploration(self, item):
+        """Picking an exploration in the navigation leaves report mode and
+        returns to the chat showing that exploration."""
+        if self._is_report_mode():
+            self._handle_sidebar_event(self._sidebar_menu.items[0])
+
     @hold()
     def _update_main_view(self, force_report_mode: bool | None = None):
         """
@@ -852,10 +870,22 @@ class UI(Viewer):
                 )
                 main_content = Column(no_explorations_msg, back_button, styles={"margin": "auto"})
             else:
-                main_content = Report(
-                    *(Section(item["view"].plan, *(it["view"].plan for it in item["items"]), title=item["view"].plan.title)
-                      for item in self._explorations.items[1:])
-                )
+                sections = [
+                    (item["view"].plan.title, self._exploration_plans(item))
+                    for item in self._explorations.items[1:]
+                ]
+                plans = tuple(plan for _, section_plans in sections for plan in section_plans)
+                # Reuse the report unless the explorations changed, so a story
+                # written on it survives a trip back to the chat. Building the
+                # sections is what reparents the plans, so it has to stay
+                # inside this branch.
+                if plans != self._report_plans:
+                    self._report = StoryReport(
+                        *(Section(*section_plans, title=title) for title, section_plans in sections),
+                        llm=self.llm,
+                    )
+                    self._report_plans = plans
+                main_content = self._report
             self._current_mode = "Report"
             self._navigation_caption.object = REPORT_CAPTION
         else:
@@ -1193,18 +1223,43 @@ class UI(Viewer):
         if self.document_vector_store is None:
             self.document_vector_store = self._coordinator.document_vector_store
 
+    def _format_llm_provider_label(self) -> str:
+        """Markdown label naming the LLM provider for the status line.
+
+        When the *generic* OpenAI wrapper points at a custom endpoint (e.g. a
+        self-hosted or third-party service) naming the provider alone is
+        misleading, so flag it as a custom compatible endpoint. Dedicated
+        providers (AI Navigator, AI Catalyst, Ollama, Groq, ...) carry a
+        meaningful ``display_name`` and their own default endpoint, so they are
+        always named directly. The exact host and model are deliberately left
+        out to keep the splash approachable for non-technical users; those
+        details live in the LLM settings dialog.
+        """
+        name = self.llm.display_name or type(self.llm).__name__
+        # Only the base OpenAI wrapper is generic enough that a non-default
+        # endpoint changes what it actually connects to; subclasses set their
+        # own endpoint (sometimes in __init__), so comparing against the param
+        # default would spuriously flag their default config as "custom".
+        # NB: exact type check, not isinstance — the OpenAI subclasses
+        # (AINavigator, AICatalyst, Ollama, Groq, OpenRouter) are exactly the
+        # dedicated providers we want named directly, and all carry a truthy
+        # endpoint, so isinstance would reintroduce the false "custom" label.
+        if type(self.llm) is OpenAI and self.llm.endpoint:
+            return f"a **custom {name}-compatible endpoint**"
+        return f"**{name}**"
+
     def _get_status_text(self) -> str:
         """Generate the status text showing sources and LLM provider."""
         num_sources = len(self.context.get("sources", []))
-        llm_name = type(self.llm).__name__
+        llm_label = self._format_llm_provider_label()
 
         # Build LLM status text
         if self._llm_status == 'verifying':
-            llm_text = f"verifying **{llm_name}** connection"
+            llm_text = f"verifying {llm_label} connection"
         elif self._llm_status == 'connected':
-            llm_text = f"using **{llm_name}** as the LLM provider"
+            llm_text = f"using {llm_label} as the LLM provider"
         else:
-            llm_text = f"connecting to **{llm_name}** failed"
+            llm_text = f"connecting to {llm_label} failed"
 
         if num_sources == 0:
             status = f"Drag & drop your dataset here to begin; {llm_text}."
@@ -1219,7 +1274,7 @@ class UI(Viewer):
 
     def _render_main(self) -> list[Viewable]:
         self._cta = Typography(self._get_status_text(), margin=(0, 0, 5, 0))
-        self._chat_splash = Column(self._cta, self._chat_input, margin=(0, 0, 0, -10))
+        self._chat_splash = Column(self._cta, self._chat_input, margin=(0, 0, 0, -10), sizing_mode="stretch_width")
         self._error_alert = Alert(
             object="",
             severity="error",
@@ -1253,10 +1308,11 @@ class UI(Viewer):
                 self._success_alert,
                 max_width=850,
                 styles={'margin': 'auto'},
-                sx={'p': '0 20px 20px 20px'}
+                sx={'p': '0 20px 20px 20px'},
+                sizing_mode="stretch_width"
             ),
             sx={'display': 'flex', 'align-items': 'center'},
-            height_policy='max'
+            height_policy="max"
         )
 
         self._main = Row(self._splash, sizing_mode='stretch_both', align="center")
@@ -1414,7 +1470,7 @@ class UI(Viewer):
 
         self._explorations = MenuList(
             items=[self._exploration], value=self.param._exploration, show_children=True,
-            dense=True, margin=0, sizing_mode='stretch_width',
+            dense=True, margin=0, on_click=self._select_exploration, sizing_mode='stretch_width',
             sx={".mui-light .MuiBox-root": {"backgroundColor": "var(--mui-palette-grey-100)"}},
         )
         self._explorations.param.watch(self._cleanup_explorations, 'items')
@@ -1764,7 +1820,7 @@ class UI(Viewer):
     def _create_view(self, server: bool = False):
         if server:
             panel_extension(
-                *{ext for agent in self._coordinator.agents for ext in agent._extensions} | {"filedropper"},
+                *{ext for agent in self._coordinator.agents for ext in agent._extensions} | {"filedropper", "jsoneditor"},
                 css_files=["https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css"]
             )
             return self._page
@@ -1923,7 +1979,13 @@ class ExplorerUI(UI):
         if not hasattr(self, '_page'):
             return
         exploration, report = self._sidebar_menu.items[:2]
-        self._sidebar_menu.update_item(exploration, active=True, icon="timeline" if report["active"] else "insert_chart")
+        # Report mode owns the active state while it is on, so the Explore item
+        # keeps the outlined icon it gets when switching to the report.
+        in_report = report["active"]
+        self._sidebar_menu.update_item(
+            exploration, active=not in_report,
+            icon="insert_chart_outlined" if in_report else "insert_chart",
+        )
         self._update_main_view()
 
     def _handle_llm_dialog(self, event):
@@ -2059,7 +2121,7 @@ class ExplorerUI(UI):
             disabled=[] if num_sources else [1],
             min_height=125,
             margin=(0, 10),
-            sizing_mode="stretch_height",
+            sizing_mode="stretch_width",
             stylesheets=[".MuiTabsPanel > .MuiBox-root { overflow: visible}"]
         )
 

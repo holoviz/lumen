@@ -11,7 +11,7 @@ Lumen works with any LLM provider. Choose the approach that fits your needs:
 
 - ☁️ **Cloud providers** — OpenAI, Anthropic, Google, Mistral, Azure (easiest to get started)
 - 🖥️ **Locally hosted** — Ollama, Llama.cpp (free, runs on your machine, no API keys)
-- 🔀 **Router/Multi-provider** — OpenRouter, LiteLLM (unified interface, many providers and models)
+- 🔀 **Router/Multi-provider** — Kilo, OpenRouter, LiteLLM (unified interface, many providers and models)
 
 ---
 
@@ -267,6 +267,49 @@ Run open-source LLMs on your own machine. No API keys required, full privacy, fr
 ## Router / Multi-Provider
 
 Use a unified interface to access multiple LLM providers and models.
+
+=== "Kilo"
+
+    ```bash
+    pip install 'lumen[ai]'
+    export KILO_API_KEY=...
+    ```
+
+    [Kilo](https://kilo.ai/) provides an OpenAI-compatible API for accessing models from multiple providers through a single API key or its free tier.
+
+    **Get your API key:**
+    
+    1. Visit [app.kilo.ai/profile](https://app.kilo.ai/profile)
+    2. Scroll down and click copy API key
+    3. Set environment variable:
+    
+    ```bash
+    # macOS/Linux
+    export KILO_API_KEY='your-key-here'
+    
+    # Windows PowerShell
+    $env:KILO_API_KEY='your-key-here'
+    
+    # Windows CMD
+    set KILO_API_KEY=your-key-here
+    ```
+
+    Then use Kilo with any supported model:
+
+    ```python
+    import lumen.ai as lmai
+
+    llm = lmai.llm.Kilo(
+        model_kwargs={
+            "default": {"model": "kilo-auto/free"},
+            "sql": {"model": "anthropic/claude-sonnet-4.6"},
+            "vega_lite": {"model": "openai/gpt-5.4-mini"},
+        }
+    )
+
+    ui = lmai.ExplorerUI(data='data.csv', llm=llm)
+    ui.servable()
+    ```
 
 === "OpenRouter"
 

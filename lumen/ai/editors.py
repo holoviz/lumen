@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 import param
 
 from panel.config import config
+from panel.custom import JSComponent
 from panel.layout import Column, Row
 from panel.pane import (
     PDF, DeckGL, Image as PnImage, Markdown, panel as as_panel,
@@ -44,6 +45,89 @@ if TYPE_CHECKING:
     from panel.chat.feed import ChatFeed
 
     from .report import Task
+
+
+class EditableProse(JSComponent):
+    """
+    A paragraph of Markdown the user can edit in place, like a document editor.
+
+    It shows the rendered Markdown until it is clicked, then swaps to the raw
+    text to edit and renders again on blur, so the story reads as prose rather
+    than as Markdown source. ``value`` is only written back into the element
+    when it differs from what is already there, because assigning to a
+    contenteditable node resets the caret to the start, which would make it
+    impossible to type.
+    """
+
+    value = param.String(default="", doc="""
+        The Markdown source of the paragraph.""")
+
+    _rendered = param.String(default="", doc="""
+        ``value`` rendered to HTML, shown while the paragraph is not edited.""")
+
+    _esm = """
+    export function render({ model }) {
+      const div = document.createElement('div')
+      div.className = 'editable-prose'
+      div.title = 'Click to edit'
+
+      const show = () => { div.innerHTML = model._rendered }
+      const edit = () => {
+        div.textContent = model.value
+        div.contentEditable = 'true'
+        div.classList.add('editing')
+        div.focus()
+      }
+
+      div.addEventListener('click', () => { if (div.contentEditable !== 'true') edit() })
+      div.addEventListener('input', () => { model.value = div.textContent })
+      div.addEventListener('blur', () => {
+        div.contentEditable = 'false'
+        div.classList.remove('editing')
+        show()
+      })
+      model.on('_rendered', () => { if (div.contentEditable !== 'true') show() })
+      model.on('value', () => {
+        // Only while editing, and only if it really changed, or the caret jumps.
+        if (div.contentEditable === 'true' && div.textContent !== model.value) {
+          div.textContent = model.value
+        }
+      })
+
+      show()
+      return div
+    }
+    """
+
+    _stylesheets = [
+        """
+        .editable-prose {
+          outline: none;
+          padding: 4px 6px;
+          border-radius: 4px;
+          cursor: text;
+        }
+        .editable-prose > :first-child { margin-top: 0; }
+        .editable-prose > :last-child { margin-bottom: 0; }
+        .editable-prose:hover { background: rgba(127, 127, 127, 0.08); }
+        .editable-prose.editing {
+          background: rgba(127, 127, 127, 0.12);
+          white-space: pre-wrap;
+        }
+        """
+    ]
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._render_markdown()
+
+    @param.depends("value", watch=True)
+    def _render_markdown(self):
+        # Rendered with the same engine as Panel's Markdown pane, so the story
+        # reads identically on screen and in the exports.
+        from markdown_it import MarkdownIt
+
+        self._rendered = MarkdownIt("gfm-like").render(self.value)
 
 
 class LumenEditor(Viewer):
@@ -352,6 +436,46 @@ class VegaLiteEditor(LumenEditor):
             spec_dict.pop('pipeline')
         return type(component).from_spec(spec_dict, pipeline=pipeline)
 
+    @staticmethod
+    def _supplies_geometry(data: dict) -> bool:
+        """Whether a data definition yields features a geoshape can draw."""
+        fmt = data.get("format") or {}
+        return fmt.get("type") in ("topojson", "geojson") or fmt.get("property") == "features"
+
+    @classmethod
+    def _check_geoshape_data(cls, node: Any, inherited: dict | None = None) -> None:
+        """Raise if any geoshape mark resolves to data that carries no geometry.
+
+        Such a spec compiles cleanly and then draws nothing at all, so the only
+        symptom is an empty canvas; raising turns that silence into an error the
+        agent can retry against. Layers inherit their parent's ``data`` when they
+        declare none, so the check follows the same scoping rather than looking
+        only at the top level. A spec with no ``data`` anywhere is the valid case
+        where the table's own geometry is injected at render time.
+        """
+        if isinstance(node, list):
+            for item in node:
+                cls._check_geoshape_data(item, inherited)
+            return
+        if not isinstance(node, dict):
+            return
+
+        data = node.get("data", inherited)
+        mark = node.get("mark")
+        mark_type = mark.get("type") if isinstance(mark, dict) else mark
+        if mark_type == "geoshape" and isinstance(data, dict) and not cls._supplies_geometry(data):
+            raise RuntimeError(
+                "A geoshape mark draws the geometry found in `data`, but `data` here is the "
+                "table, which carries no geometry, so the map renders empty. Either set `data` "
+                "to the boundary topojson/geojson and pull the table's columns in with a "
+                "`transform.lookup` whose `from.data` names the table, or omit `data` entirely "
+                "when the table has its own geometry column."
+            )
+
+        for key, value in node.items():
+            if key != "data":
+                cls._check_geoshape_data(value, data)
+
     @classmethod
     def validate_spec(cls, spec):
         if "spec" in spec:
@@ -364,6 +488,8 @@ class VegaLiteEditor(LumenEditor):
             if '\n    at Nc.' in msg:
                 msg = msg[:msg.index('\n    at Nc.')]
             raise RuntimeError(msg) from e
+
+        cls._check_geoshape_data(spec)
         return super().validate_spec(spec)
 
     def __str__(self):
@@ -745,6 +871,12 @@ class MultiChartEditor(LumenEditor):
         The editors of the individual charts, whose specs are exposed as
         sub-tabs.""")
 
+    # The "All" tab is only ever built from VegaLiteEditors, so it offers the
+    # same formats; referencing the tuple keeps the two in sync.
+    export_formats = VegaLiteEditor.export_formats
+
+    _raster_formats = ("png", "jpeg", "webp", "tiff", "eps")
+
     _label = "Charts"
 
     def __init__(self, **params):
@@ -764,14 +896,70 @@ class MultiChartEditor(LumenEditor):
             dynamic=True, sizing_mode="stretch_both", margin=0
         )
 
-    def export(self, fmt: str) -> StringIO:
-        if fmt != "yaml":
+    def export(self, fmt: str) -> StringIO | BytesIO:
+        if fmt not in self.export_formats:
             raise ValueError(f"Unknown export format {fmt!r} for {self.__class__.__name__}")
         # A chart that could not be serialized has no spec; skip it rather than
         # failing the export of the ones that did.
-        return StringIO("---\n".join(
-            editor.spec for editor in self.chart_editors if editor.spec
-        ))
+        editors = [editor for editor in self.chart_editors if editor.spec]
+        if fmt == "yaml":
+            return StringIO("---\n".join(editor.spec for editor in editors))
+        if fmt == "html":
+            # Save the live stacked composite as one standalone, offline page.
+            buf = StringIO()
+            self.component.get_panel().save(buf)
+            buf.seek(0)
+            return buf
+        if not editors:
+            return StringIO("")
+        if fmt == "svg":
+            return self._combine_svg([editor.export("svg").getvalue() for editor in editors])
+        # The remaining formats combine the individual chart renders. Each chart
+        # is rendered to PNG first (reusing VegaLiteEditor.export, so scale and
+        # the default sizing come for free), then stacked or paginated with Pillow.
+        images = [Image.open(editor.export("png")) for editor in editors]
+        if fmt == "pdf":
+            pages = [img.convert("RGB") for img in images]
+            buf = BytesIO()
+            pages[0].save(buf, "PDF", save_all=True, append_images=pages[1:])
+            buf.seek(0)
+            return buf
+        return self._stack_images(images, fmt)
+
+    def _combine_svg(self, svgs: list[str]) -> StringIO:
+        """Stack child SVGs vertically inside one outer SVG via nested tags."""
+        parts, offset, max_width = [], 0.0, 0.0
+        for svg in svgs:
+            svg = re.sub(r"^\s*<\?xml[^>]*\?>\s*", "", svg)
+            width_match = re.search(r'<svg\b[^>]*\bwidth="([\d.]+)"', svg)
+            height_match = re.search(r'<svg\b[^>]*\bheight="([\d.]+)"', svg)
+            width = float(width_match.group(1)) if width_match else 800.0
+            height = float(height_match.group(1)) if height_match else 400.0
+            # Nest each child as a positioned inner <svg> by injecting a y offset.
+            parts.append(re.sub(r"<svg\b", f'<svg y="{offset:g}"', svg, count=1))
+            offset += height
+            max_width = max(max_width, width)
+        inner = "\n".join(parts)
+        return StringIO(
+            f'<svg xmlns="http://www.w3.org/2000/svg" '
+            f'width="{max_width:g}" height="{offset:g}">\n{inner}\n</svg>'
+        )
+
+    def _stack_images(self, images: list, fmt: str) -> BytesIO:
+        """Vertically stack the chart images into a single image saved as fmt."""
+        mode = "RGB" if fmt in ("jpeg", "eps") else "RGBA"
+        background = (255, 255, 255) if mode == "RGB" else (255, 255, 255, 0)
+        width = max(img.width for img in images)
+        height = sum(img.height for img in images)
+        canvas = Image.new(mode, (width, height), background)
+        offset = 0
+        for img in images:
+            canvas.paste(img.convert(mode), (0, offset))
+            offset += img.height
+        buf = BytesIO()
+        canvas.save(buf, format=fmt.upper())
+        buf.seek(0)
+        return buf
 
 
 class DocumentEditor(LumenEditor):

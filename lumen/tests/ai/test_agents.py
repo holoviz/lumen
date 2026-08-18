@@ -4,6 +4,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import numpy as np
+import pandas as pd
 import pytest
 
 from lumen.ai.agents.document_list import DocumentListAgent
@@ -22,7 +24,10 @@ from lumen.ai.agents import (
 from lumen.ai.agents.analysis import make_analysis_model
 from lumen.ai.agents.deck_gl import DeckGLAgent
 from lumen.ai.agents.hvplot import hvPlotAgent
-from lumen.ai.agents.sql import make_sql_model
+from lumen.ai.agents.sql import (
+    EXPLORATION_MAX_TOKENS, SQLCleanup, format_exploration_result,
+    make_sql_model, sql_contains_aggregates,
+)
 from lumen.ai.agents.vega_lite import (
     AltairChartSpec, AltairSpec, ChartSpec, VegaLiteSpec, VegaLiteSpecUpdate,
 )
@@ -35,6 +40,7 @@ from lumen.ai.llm import Llm
 from lumen.ai.schemas import (
     Column, Metaset, TableCatalogEntry, get_metaset,
 )
+from lumen.ai.utils import count_tokens
 from lumen.config import SOURCE_TABLE_SEPARATOR, dump_yaml
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
@@ -111,6 +117,187 @@ async def test_sql_agent(llm, duckdb_source, test_messages):
     )
     assert set(out_context) == {"data", "pipeline", "sql", "table", "source"}
 
+@pytest.fixture
+def dirty_source():
+    """A table lint_data has something to say about: a duplicated row, padded
+    text and a -9999 placeholder standing in for a missing measurement."""
+    return DuckDBSource(tables={
+        "dirty": """
+            SELECT * FROM (
+              VALUES (1, ' alpha ', 10.0),
+                     (1, ' alpha ', 10.0),
+                     (2, 'beta', -9999.0),
+                     (3, 'gamma', 30.0),
+                     (4, 'delta', 40.0)
+            ) AS t(id, name, value)
+        """
+    })
+
+
+async def _respond_to_dirty_table(llm, source, messages, responses, **agent_kwargs):
+    """Run SQLAgent over the dirty fixture with a queued set of LLM responses."""
+    agent = SQLAgent(llm=llm, **agent_kwargs)
+    context = {
+        "source": source,
+        "sources": [source],
+        "metaset": await get_metaset([source], ["dirty"]),
+    }
+    llm.set_responses(responses)
+    out, _ = await agent.respond(messages, context)
+    return out
+
+
+async def test_sql_agent_clean_data_rewrites_dirty_query(llm, dirty_source, test_messages):
+    SQLQueryWithTables = make_sql_model([(dirty_source.name, "dirty")])
+    out = await _respond_to_dirty_table(llm, dirty_source, test_messages, [
+        SQLQueryWithTables(query="SELECT * FROM dirty", table_slug="dirty_rows", tables=["dirty"]),
+        SQLCleanup(
+            chain_of_thought="Dropped the duplicate row and trimmed the names.",
+            query='SELECT DISTINCT "id", TRIM("name") AS "name", "value" FROM dirty',
+        ),
+    ])
+    assert llm._index == 2, "the cleaning pass should have consumed a second response"
+    assert "DISTINCT" in out[0].spec
+    assert "TRIM" in out[0].spec
+
+
+async def test_sql_agent_clean_data_skipped_when_result_is_clean(llm, tiny_source, test_messages):
+    """No findings must mean no second LLM call, or the pass costs on every query."""
+    agent = SQLAgent(llm=llm)
+    context = {
+        "source": tiny_source,
+        "sources": [tiny_source],
+        "metaset": await get_metaset([tiny_source], ["tiny"]),
+    }
+    SQLQueryWithTables = make_sql_model([(tiny_source.name, "tiny")])
+    llm.set_responses([
+        SQLQueryWithTables(query="SELECT * FROM tiny", table_slug="tiny_rows", tables=["tiny"]),
+    ])
+    # Asserted on the method rather than the response counter: _clean_data_pass
+    # swallows its own failures, so a consumed-responses count cannot tell
+    # "never called" apart from "called and errored".
+    with patch.object(SQLAgent, "_clean_data_pass", new=AsyncMock()) as clean_data_pass:
+        await agent.respond(test_messages, context)
+    clean_data_pass.assert_not_awaited()
+
+
+@pytest.mark.parametrize("sql, expected", [
+    ("SELECT region, SUM(revenue) FROM dirty GROUP BY region", True),
+    ("SELECT COUNT(*) FROM dirty", True),
+    ("WITH t AS (SELECT * FROM dirty) SELECT MAX(value) FROM t", True),
+    ("SELECT * FROM dirty", False),
+    ("SELECT DISTINCT * FROM dirty", False),
+    ("SELECT id, name FROM dirty WHERE value > 0", False),
+    ("not sql at all !!!", False),
+])
+def test_sql_contains_aggregates(sql, expected):
+    assert sql_contains_aggregates(sql, "duckdb") is expected
+
+
+async def test_sql_agent_profiles_source_rows_behind_an_aggregate(llm, dirty_source, test_messages):
+    """An aggregate hides its inputs: SUM() already swallowed the -9999 placeholders,
+    so the result cannot show them and the source rows must be profiled instead."""
+    SQLQueryWithTables = make_sql_model([(dirty_source.name, "dirty")])
+    captured = {}
+
+    async def _capture(self, sql_query, findings, original_rows, source, messages, context, step):
+        captured["findings"] = findings
+        return sql_query
+
+    with patch.object(SQLAgent, "_clean_data_pass", new=_capture):
+        await _respond_to_dirty_table(llm, dirty_source, test_messages, [
+            SQLQueryWithTables(
+                query='SELECT "name", SUM("value") AS total FROM dirty GROUP BY "name"',
+                table_slug="dirty_totals", tables=["dirty"],
+            ),
+        ])
+
+    joined = " ".join(captured["findings"])
+    assert "before aggregation" in joined
+    assert "-9999" in joined, "the placeholder the aggregate hid must reach the rewrite"
+
+
+async def test_sql_agent_skips_source_profiling_when_not_aggregating(llm, dirty_source, test_messages):
+    """A plain SELECT already shows its own problems, so it must not pay for extra queries."""
+    SQLQueryWithTables = make_sql_model([(dirty_source.name, "dirty")])
+    with patch.object(SQLAgent, "_profile_source_rows") as profile:
+        await _respond_to_dirty_table(llm, dirty_source, test_messages, [
+            SQLQueryWithTables(query="SELECT * FROM dirty", table_slug="dirty_rows", tables=["dirty"]),
+            SQLCleanup(chain_of_thought="Dropped duplicates.", query="SELECT DISTINCT * FROM dirty"),
+        ])
+    profile.assert_not_called()
+
+
+async def test_sql_agent_clean_data_ignores_report_only_findings(llm, tiny_source, test_messages):
+    """A constant column is reported but must not cost a rewrite: filtering to one
+    value is an ordinary query, and dropping that column would lose the answer."""
+    agent = SQLAgent(llm=llm)
+    context = {
+        "source": tiny_source,
+        "sources": [tiny_source],
+        "metaset": await get_metaset([tiny_source], ["tiny"]),
+    }
+    SQLQueryWithTables = make_sql_model([(tiny_source.name, "tiny")])
+    llm.set_responses([
+        SQLQueryWithTables(
+            query="SELECT 'north' AS region, id FROM tiny",
+            table_slug="tiny_region", tables=["tiny"],
+        ),
+    ])
+    with patch.object(SQLAgent, "_clean_data_pass", new=AsyncMock()) as clean_data_pass:
+        await agent.respond(test_messages, context)
+    clean_data_pass.assert_not_awaited()
+
+
+async def test_sql_agent_clean_data_disabled_leaves_query_alone(llm, dirty_source, test_messages):
+    SQLQueryWithTables = make_sql_model([(dirty_source.name, "dirty")])
+    responses = [
+        SQLQueryWithTables(query="SELECT * FROM dirty", table_slug="dirty_rows", tables=["dirty"]),
+    ]
+    with patch.object(SQLAgent, "_clean_data_pass", new=AsyncMock()) as clean_data_pass:
+        out = await _respond_to_dirty_table(
+            llm, dirty_source, test_messages, responses, clean_data=False
+        )
+    clean_data_pass.assert_not_awaited()
+    assert "DISTINCT" not in out[0].spec
+
+
+async def test_sql_agent_clean_data_falls_back_when_rewrite_is_empty(llm, dirty_source, test_messages):
+    """A rewrite that filters the answer away must not replace the answer."""
+    SQLQueryWithTables = make_sql_model([(dirty_source.name, "dirty")])
+    out = await _respond_to_dirty_table(llm, dirty_source, test_messages, [
+        SQLQueryWithTables(query="SELECT * FROM dirty", table_slug="dirty_rows", tables=["dirty"]),
+        SQLCleanup(chain_of_thought="Removed every row.", query="SELECT * FROM dirty WHERE 1 = 0"),
+    ])
+    assert llm._index == 2
+    assert "1 = 0" not in out[0].spec
+
+
+async def test_sql_agent_clean_data_falls_back_when_rewrite_is_invalid(llm, dirty_source, test_messages):
+    """A rewrite naming a column that does not exist must not replace the answer."""
+    SQLQueryWithTables = make_sql_model([(dirty_source.name, "dirty")])
+    out = await _respond_to_dirty_table(llm, dirty_source, test_messages, [
+        SQLQueryWithTables(query="SELECT * FROM dirty", table_slug="dirty_rows", tables=["dirty"]),
+        SQLCleanup(chain_of_thought="Trimmed a column.", query='SELECT TRIM("nope") FROM dirty'),
+    ])
+    assert llm._index == 2
+    assert "nope" not in out[0].spec
+
+
+async def test_sql_agent_clean_data_falls_back_when_the_call_fails(llm, dirty_source, test_messages):
+    """A failed cleaning call must keep the working query, not trigger a full retry."""
+    def _explode():
+        raise RuntimeError("cleaning model unavailable")
+
+    SQLQueryWithTables = make_sql_model([(dirty_source.name, "dirty")])
+    out = await _respond_to_dirty_table(llm, dirty_source, test_messages, [
+        SQLQueryWithTables(query="SELECT * FROM dirty", table_slug="dirty_rows", tables=["dirty"]),
+        _explode,
+    ])
+    assert llm._index == 2
+    assert "dirty" in out[0].spec
+
+
 async def test_vegalite_agent(llm, duckdb_source, test_messages):
     """Test VegaLiteAgent instantiation and respond"""
 
@@ -126,6 +313,7 @@ async def test_vegalite_agent(llm, duckdb_source, test_messages):
     }
 
     spec = {
+        "config": {"numberFormat": ","},
         "data": {
             "values": [
                 {"A": 1, "B": 2, "C": 3, "D": "2023-01-01T00:00:00Z"},
@@ -153,7 +341,7 @@ async def test_vegalite_agent(llm, duckdb_source, test_messages):
     out, out_context = await agent.respond(test_messages, context)
     assert len(out) == 1
     assert isinstance(out[0], VegaLiteEditor)
-    assert out[0].spec == "$schema: https://vega.github.io/schema/vega-lite/v5.json\ndata:\n  values:\n  - A: 1\n    B: 2\n    C: 3\n    D: '2023-01-01T00:00:00Z'\n  - A: 4\n    B: 5\n    C: 6\n    D: '2023-01-02T00:00:00Z'\nencoding:\n  x:\n    field: A\n    type: quantitative\n  y:\n    field: B\n    type: quantitative\nheight: container\nmark: bar\nwidth: container\n"
+    assert out[0].spec == "$schema: https://vega.github.io/schema/vega-lite/v5.json\nconfig:\n  numberFormat: ','\ndata:\n  values:\n  - A: 1\n    B: 2\n    C: 3\n    D: '2023-01-01T00:00:00Z'\n  - A: 4\n    B: 5\n    C: 6\n    D: '2023-01-02T00:00:00Z'\nencoding:\n  x:\n    field: A\n    type: quantitative\n  y:\n    field: B\n    type: quantitative\nheight: container\nmark: bar\nwidth: container\n"
 
 
 async def test_vegalite_agent_multiple(llm, duckdb_source, test_messages):
@@ -769,3 +957,92 @@ async def test_view_retry_recovers_using_revised_spec(llm):
     assert seen_specs[0]["kind"] == "line"   # first attempt used the original
     assert seen_specs[1]["kind"] == "bar"    # retry used the REVISED spec
     assert result["kind"] == "bar"
+
+
+# -------------------------------------------------------------------
+# format_exploration_result
+# -------------------------------------------------------------------
+
+def _exploration_frame(n_rows=53, n_cols=7):
+    rng = np.random.default_rng(0)
+    data = {"station_id": [f"ST{i:04d}" for i in range(n_rows)]}
+    for c in range(n_cols - 1):
+        data[f"metric_{c}"] = rng.uniform(0, 100, n_rows).round(4)
+    return pd.DataFrame(data)
+
+
+def test_format_exploration_result_reports_full_shape():
+    """The true row count is stated, so no follow-up COUNT(*) is needed."""
+
+    result = format_exploration_result(_exploration_frame())
+    assert "53 rows x 7 columns" in result
+    assert "first 5 of 53 rows" in result
+
+
+def test_format_exploration_result_lists_dtypes():
+
+    result = format_exploration_result(_exploration_frame())
+    assert "station_id: str" in result
+    assert "metric_0: float64" in result
+
+
+def test_format_exploration_result_stays_within_budget():
+
+    wide = _exploration_frame(n_rows=100_000, n_cols=40)
+    result = format_exploration_result(wide)
+    assert count_tokens(result) <= EXPLORATION_MAX_TOKENS
+    assert "100000 rows x 40 columns" in result
+    assert "showing the first 25 columns" in result
+
+
+def test_format_exploration_result_is_far_cheaper_than_full_dump():
+    """The preview must cost a fraction of the old 50-row aligned to_string dump."""
+
+    df = _exploration_frame()
+    old = df.head(100).to_string(max_cols=25, max_rows=50)
+    new = format_exploration_result(df)
+    assert count_tokens(new) < count_tokens(old) / 3
+
+
+def test_format_exploration_result_empty_frame():
+
+    result = format_exploration_result(_exploration_frame(n_rows=0))
+    assert "0 rows x 7 columns" in result
+    assert "no rows" in result
+
+
+def test_unique_expr_slug_passes_through_fresh_name():
+
+    assert SQLAgent._unique_expr_slug("top_5_athletes", {"hosts": "SELECT 1"}) == "top_5_athletes"
+
+
+def test_unique_expr_slug_avoids_existing_table():
+    """A slug echoing an input table must not be reused: materializing it would
+    issue CREATE OR REPLACE VIEW over the source table and destroy it."""
+
+    tables = {"data_olympic_hosts_csv": "SELECT * FROM data_olympic_hosts_csv"}
+    slug = SQLAgent._unique_expr_slug("data_olympic_hosts_csv", tables)
+    assert slug not in tables
+    assert slug.startswith("data_olympic_hosts_csv")
+
+
+def test_unique_expr_slug_skips_taken_suffixes():
+
+    tables = {"hosts": "", "hosts_derived_1": "", "hosts_derived_2": ""}
+    assert SQLAgent._unique_expr_slug("hosts", tables) == "hosts_derived_3"
+
+
+def test_colliding_slug_does_not_clobber_source_table():
+    """End-to-end guard for the materialization overwrite: the original table
+    must survive a query whose table_slug collides with its name."""
+
+    source = DuckDBSource(tables={"hosts": "SELECT 2022 AS game_year, 'China' AS game_location"})
+    before = source.get("hosts")
+
+    # A model handing back an unrelated exploration query under the input
+    # table's own name — the observed weak-model failure.
+    bad_sql = "SELECT table_name FROM information_schema.tables WHERE table_type = 'BASE TABLE'"
+    slug = SQLAgent._unique_expr_slug("hosts", source.tables)
+    source.create_sql_expr_source({slug: bad_sql}, materialize=True)
+
+    pd.testing.assert_frame_equal(source.get("hosts"), before)

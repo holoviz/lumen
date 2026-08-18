@@ -27,6 +27,7 @@ from panel_material_ui import (
     Progress, Select, SpeedDial, TextAreaInput, TextInput, Typography,
 )
 
+from ..util import try_import
 from ..views.base import Panel, View
 from .actor import (
     Actor, ContextProvider, NullStep, TContext,
@@ -812,12 +813,15 @@ class Section(TaskGroup):
         only draws headers for its top level sections, so without this nothing
         inside one could be selected.
 
-        A nested section gets a heading too, unless it takes its parent's title
-        (a section wrapping a single plan does), which would repeat the heading
-        the report already shows.
+        A nested section gets a heading too, unless it is untitled or takes its
+        parent's title (a section wrapping a single plan does), which would
+        repeat the heading the report already shows.
+
+        A task whose outputs are not viewable renders nothing, so its row is
+        hidden rather than left as a lone checkbox floating in empty space.
         """
         if isinstance(task, Section):
-            if task.title == self.title:
+            if not task.title or task.title == self.title:
                 return task
             return Column(
                 _export_header(task, task, variant="h4"),
@@ -832,6 +836,7 @@ class Section(TaskGroup):
             sizing_mode="stretch_width",
             styles={'min-height': 'unset'},
             height_policy='fit',
+            visible=task._view.param['objects'].rx().rx.bool(),
         )
 
     async def _run_task(self, i: int, task: Task | Actor, context: TContext | None, **kwargs) -> list[Any]:
@@ -966,6 +971,7 @@ class Report(TaskGroup):
             items=[
                 {"label": "Notebook (.ipynb)", "format": "ipynb", "icon": "description"},
                 {"label": "HTML (.html)", "format": "html", "icon": "language"},
+                {"label": "Word (.docx)", "format": "docx", "icon": "article"},
             ],
             on_click=lambda _: self._download._transfer(),
             icon_size="36px",
@@ -1010,6 +1016,7 @@ class Report(TaskGroup):
                 {"label": "Clear Report", "icon": "clear"},
                 {"label": "Export as Notebook", "icon": "description", "format": "ipynb"},
                 {"label": "Export as HTML", "icon": "language", "format": "html"},
+                {"label": "Export as Word", "icon": "article", "format": "docx"},
                 {"label": "Configure Report", "icon": "settings"}
             ],
             color="default",
@@ -1059,7 +1066,7 @@ class Report(TaskGroup):
             self._handle_cancel()
         elif icon == "clear":
             self.reset()
-        elif icon in ("description", "language"):
+        elif icon in ("description", "language", "article"):
             fmt = item.get("format", "ipynb")
             self._export.value = {"format": fmt}
             self._download._transfer()
@@ -1116,7 +1123,15 @@ class Report(TaskGroup):
         # Task-less reports (e.g. Report.from_views) populate ``views`` directly.
         if not len(self):
             return self.views
-        return self._selected_views(self)
+        views = list(self._header)
+        for section in self:
+            self._append_section_views(views, section)
+        return views
+
+    def _append_section_views(self, views, section):
+        if not section.include_in_export:
+            return
+        views += self._selected_views(section)
 
     def _selected_views(self, group, include_header=True):
         """
@@ -1209,15 +1224,83 @@ class Report(TaskGroup):
         self._export_view().save(buf, title=self.title or "Report")
         return buf.getvalue()
 
+    def to_docx(self) -> bytes:
+        """
+        Returns the Word (.docx) representation of the report as bytes.
+        """
+        if len(self) and self.status != "success":
+            raise RuntimeError(
+                "Report has not been executed, run report before exporting to docx."
+            )
+        if try_import("docx") is None:
+            raise ImportError(
+                "Exporting a report to Word requires python-docx; install it with "
+                "`pip install python-docx`."
+            )
+        from docx import Document
+
+        from .export import docx_add_chart, docx_add_markdown, docx_add_table
+
+        doc = Document()
+        pending: list[tuple[int, str]] = []
+
+        def flush_headers():
+            for level, heading in pending:
+                doc.add_heading(heading, level=level or 1)
+            pending.clear()
+
+        for out in self._export_views:
+            if isinstance(out, Typography):
+                obj = out.object or ""
+                if out.variant and out.variant.startswith('h'):
+                    level, heading = int(out.variant[1:]), obj
+                elif obj.startswith('#'):
+                    level = len(obj) - len(obj.lstrip('#'))
+                    heading = obj.lstrip('# ').strip()
+                else:
+                    level, heading = 1, obj
+                pending.append((min(level, 4), heading))
+                continue
+            if isinstance(out, LumenEditor):
+                has_chart = 'png' in out.export_formats
+                data = getattr(out.component, 'data', None)
+                if not has_chart and data is None:
+                    continue
+                flush_headers()
+                # Prefer the chart as an image; fall back to a data table when
+                # there is no renderable chart.
+                if not (has_chart and docx_add_chart(doc, out)) and data is not None:
+                    docx_add_table(doc, data)
+                continue
+            if isinstance(out, Markdown):
+                text = out.object
+            elif isinstance(out, str):
+                text = out
+            elif isinstance(out, ChatMessage):
+                inner = out.object
+                text = inner.object if isinstance(inner, Markdown) else (inner if isinstance(inner, str) else None)
+            else:
+                text = None
+            if text is None:
+                continue
+            flush_headers()
+            docx_add_markdown(doc, text)
+
+        buf = io.BytesIO()
+        doc.save(buf)
+        return buf.getvalue()
+
     async def _export_report(self, item=None):
         if len(self) and self.status not in ("success", "cancelled", "error"):
             await self.execute()
         fmt = item.get("format", "ipynb") if isinstance(item, dict) else "ipynb"
         title = self.title or "Report"
-        ext = "html" if fmt == "html" else "ipynb"
+        ext = {"html": "html", "docx": "docx"}.get(fmt, "ipynb")
         self._download.filename = f"{title}.{ext}"
         if fmt == "html":
             return io.StringIO(self.to_html())
+        if fmt == "docx":
+            return io.BytesIO(self.to_docx())
         return io.StringIO(self.to_notebook())
 
     def _expand_all(self, event=None):
@@ -1256,16 +1339,18 @@ class Report(TaskGroup):
         return outputs
 
     def __panel__(self):
+        # Fill the available height and scroll the content within it: the inner
+        # div is bounded to the full height and scrolls, so a tall report or
+        # story slides inside the pane and a short one leaves no gap. (The
+        # surrounding layout must stretch this rather than centre it.)
         return Container(
             self._switcher,
             self._container,
-            align="center",
             sizing_mode="stretch_both",
-            stylesheets=[":host > div { overflow-y: auto; }"],
+            stylesheets=[":host > div { height: 100%; overflow-y: auto; }"],
             sx={
                 "minWidth": "320px",
                 "width": "100%",
-                "height": "auto",
                 ".mui-light &": { "background-color": "var(--mui-palette-grey-100)"},
                 ".mui-dark &": { "background-color": "var(--mui-palette-grey-900)"}
             }

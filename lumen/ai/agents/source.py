@@ -32,7 +32,7 @@ from ..tools import FunctionTool
 from ..translate import doc_descriptions
 from ..utils import (
     describe_data, get_pipeline, log_debug, result_to_dataframe,
-    retry_llm_output,
+    retry_llm_output, truncate_to_tokens,
 )
 from .base import Agent
 
@@ -56,6 +56,17 @@ class SourceOutputs(ContextModel, total=False):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+# describe_data output is YAML statistics plus sample rows, which tokenizes near
+# 3 chars/token, so the previous 4000-character cap admitted ~1300 tokens.
+DATA_SUMMARY_MAX_TOKENS = 1200
+
+
+async def _summarize_source_data(df) -> str:
+    """Describe *df* for the prompt, capped to a token budget."""
+    summary = await describe_data(df, reduce_enums=False)
+    return truncate_to_tokens(summary, DATA_SUMMARY_MAX_TOKENS)
+
 
 def _build_catalog_summary(context: TContext) -> str:
     """
@@ -419,9 +430,7 @@ class SourceAgent(Agent):
             pipeline = await get_pipeline(source=source, table=table_name)
             metaset = await get_metaset([source], [table_name])
             df = await asyncio.to_thread(lambda: pipeline.data)
-            summary = await describe_data(df, reduce_enums=False)
-            if len(summary) >= 4000:
-                summary = summary[:3997] + "..."
+            summary = await _summarize_source_data(df)
             return source, table_name, df, summary, pipeline, metaset
 
         # --- DataFrame path (CodeSourceControls, raw callables) ---
@@ -453,9 +462,7 @@ class SourceAgent(Agent):
 
         pipeline = await get_pipeline(source=source, table=table_name)
         metaset = await get_metaset([source], [table_name])
-        summary = await describe_data(df, reduce_enums=False)
-        if len(summary) >= 4000:
-            summary = summary[:3997] + "..."
+        summary = await _summarize_source_data(df)
 
         return source, table_name, df, summary, pipeline, metaset
 

@@ -19,21 +19,100 @@ except ModuleNotFoundError:
 from lumen.ai.config import PROMPTS_DIR
 from lumen.ai.models import DeleteLine, InsertLine, ReplaceLine
 from lumen.ai.utils import (
-    IMAGE_MIME_TYPES, UNRECOVERABLE_ERRORS, apply_changes, clean_sql,
-    content_to_text, describe_data, find_slug_by_table_name,
-    format_msg_content, fuse_messages, get_schema, mutate_user_message,
-    parse_huggingface_url, render_template, report_error, retry_llm_output,
-    serialize_image_content, set_content_text, slug_to_table_name,
+    FALLBACK_CHARS_PER_TOKEN, IMAGE_MIME_TYPES, UNRECOVERABLE_ERRORS,
+    apply_changes, clean_sql, collapse_indexed_columns, content_to_text,
+    count_tokens, describe_data, find_slug_by_table_name, format_msg_content,
+    fuse_messages, get_schema, mutate_user_message, parse_huggingface_url,
+    render_template, report_error, retry_llm_output, serialize_image_content,
+    set_content_text, slug_to_table_name, truncate_to_tokens,
 )
 from lumen.config import SOURCE_TABLE_SEPARATOR as SEP
+
+
+def test_collapse_indexed_columns_collapses_large_series():
+    """A dense numbered series (e.g. an embedding matrix) collapses to one entry."""
+    names = ["obs_id"] + [f"X_pca_{i}" for i in range(100)]
+    assert collapse_indexed_columns(names) == ["obs_id", "X_pca_0..X_pca_99 (100 cols)"]
+
+
+def test_collapse_indexed_columns_leaves_unique_names():
+    """Genuinely distinct columns are never collapsed."""
+    names = ["gender", "age", "smoking_status", "tissue_site"]
+    assert collapse_indexed_columns(names) == names
+
+
+def test_collapse_indexed_columns_short_series_untouched():
+    """Runs below the threshold stay expanded (e.g. tSNE/UMAP 2-D embeddings)."""
+    names = ["X_tsne_0", "X_tsne_1", "obs_id"]
+    assert collapse_indexed_columns(names) == names
+
+
+def test_collapse_indexed_columns_preserves_position_and_interleaving():
+    """Each series collapses at its first occurrence, even when interleaved."""
+    names = []
+    for i in range(10):
+        names.extend([f"a_{i}", f"b_{i}"])
+    result = collapse_indexed_columns(names)
+    assert result == ["a_0..a_9 (10 cols)", "b_0..b_9 (10 cols)"]
+
+
+def test_collapse_indexed_columns_near_complete_gap_named():
+    """A near-complete run collapses and names its missing index."""
+    names = [f"X_pca_{i}" for i in range(100) if i != 50]
+    assert collapse_indexed_columns(names) == ["X_pca_0..X_pca_99 (99 cols, missing 50)"]
+
+
+def test_collapse_indexed_columns_multiple_gaps_listed():
+    """Several holes (within budget) are all named, in order."""
+    names = [f"x_{i}" for i in range(100) if i not in (50, 73)]
+    assert collapse_indexed_columns(names) == ["x_0..x_99 (98 cols, missing 50, 73)"]
+
+
+def test_collapse_indexed_columns_too_many_gaps_expanded():
+    """More holes than max_gaps: left expanded, since the gaps likely matter."""
+    drop = {1, 3, 5, 7, 9, 11}  # 6 gaps > default max_gaps of 5
+    names = [f"x_{i}" for i in range(20) if i not in drop]
+    assert collapse_indexed_columns(names) == names
+
+
+def test_collapse_indexed_columns_step_series_expanded():
+    """A step-2 series is too gappy to be a run and stays expanded."""
+    names = [f"x_{2 * i}" for i in range(10)]  # span 19, 9 holes
+    assert collapse_indexed_columns(names) == names
+
+
+def test_collapse_indexed_columns_nonzero_start():
+    """Contiguous runs that don't start at zero collapse honestly."""
+    names = [f"p_{i}" for i in range(5, 21)]  # p_5..p_20, 16 members
+    assert collapse_indexed_columns(names) == ["p_5..p_20 (16 cols)"]
+
+
+def test_collapse_indexed_columns_non_numeric_suffix_ignored():
+    """Names whose suffix isn't a bare integer don't match the series pattern."""
+    names = ["total_counts", "total_counts_mt", "n_genes_by_counts"]
+    assert collapse_indexed_columns(names) == names
+
+
+def test_collapse_indexed_columns_no_separator():
+    """The classic PCA convention (no separator, e.g. PC1..PC50) collapses too."""
+    names = [f"PC{i}" for i in range(1, 51)]
+    assert collapse_indexed_columns(names) == ["PC1..PC50 (50 cols)"]
+
+
+def test_collapse_indexed_columns_alternate_separators():
+    """Hyphen- and dot-separated series are recognised, not just underscores."""
+    hyphen = [f"dim-{i}" for i in range(8)]
+    dot = [f"emb.{i}" for i in range(8)]
+    assert collapse_indexed_columns(hyphen) == ["dim-0..dim-7 (8 cols)"]
+    assert collapse_indexed_columns(dot) == ["emb.0..emb.7 (8 cols)"]
 
 
 def test_render_template_with_valid_template():
     now = dt.datetime.now()
     expected = (
-        "Do not excessively reason in responses; there are chain_of_thought fields for that, but those should also be concise (1-2 sentences).\n"
-        f"The current date time is {now.strftime('%b %d, %Y %I:%M %p')}\n"
-        "What is the topic of the data?"
+        "Do not excessively reason in responses; chain_of_thought fields for that, but should also be concise (1-2 sentences).\n"
+        f"Current date time {now.strftime('%b %d, %Y %I:%M %p')}\n"
+        "What topic of data?"
     )
     assert (
         render_template(PROMPTS_DIR / "_Testing" / "topic.jinja2", {"tools": ""}, current_datetime=now).strip()
@@ -44,9 +123,9 @@ def test_render_template_with_valid_template():
 def test_render_template_with_override():
     now = dt.datetime.now()
     expected = (
-        "Do not excessively reason in responses; there are chain_of_thought fields for that, but those should also be concise (1-2 sentences).\n"
-        f"The current date time is {now.strftime('%b %d, %Y %I:%M %p')}\n"
-        "What is the topic of the data?\n"
+        "Do not excessively reason in responses; chain_of_thought fields for that, but should also be concise (1-2 sentences).\n"
+        f"Current date time {now.strftime('%b %d, %Y %I:%M %p')}\n"
+        "What topic of data?\n"
         "Its Lumen"
     )
     assert (
@@ -786,3 +865,74 @@ class TestMutateUserMessageMultimodal:
         assert original[0]["content"] == ["query", img]
         # Result should have the mutation
         assert img in result[0]["content"]
+
+
+# -------------------------------------------------------------------
+# count_tokens / truncate_to_tokens
+# -------------------------------------------------------------------
+
+class TestCountTokens:
+
+    def test_empty_string(self):
+        assert count_tokens("") == 0
+
+    def test_counts_tokens(self):
+        # Exact counts are tokenizer-specific; assert the shape of the answer
+        # rather than a magic number, so a vocab change doesn't break the suite.
+        assert count_tokens("hello world") >= 2
+        assert count_tokens("hello world " * 100) > count_tokens("hello world")
+
+    def test_falls_back_when_encoder_unavailable(self):
+        """A missing tokenizer must degrade to a char estimate, not raise."""
+        text = "a" * 300
+        with patch("lumen.ai.utils._get_token_encoder", return_value=None):
+            assert count_tokens(text) == pytest.approx(300 / FALLBACK_CHARS_PER_TOKEN, abs=1)
+
+    def test_encoder_is_cached(self):
+        from lumen.ai.utils import _get_token_encoder
+        assert _get_token_encoder() is _get_token_encoder()
+
+    def test_encoder_failure_is_soft(self):
+        """A tokenizer that fails to load yields None rather than propagating."""
+        from lumen.ai import utils
+        with patch.dict(utils._TOKEN_ENCODER_CACHE, clear=True):
+            with patch.dict("sys.modules", {"tiktoken": None}):
+                # `import tiktoken` raises ImportError when the module is None.
+                assert utils._get_token_encoder() is None
+                assert utils.count_tokens("some text") > 0
+
+
+class TestTruncateToTokens:
+
+    def test_under_budget_is_unchanged(self):
+        text = "line one\nline two"
+        assert truncate_to_tokens(text, 1000) == text
+
+    def test_over_budget_respects_cap(self):
+        text = "\n".join(f"row {i} has a value of {i * 3.14159}" for i in range(300))
+        result = truncate_to_tokens(text, 100)
+        assert count_tokens(result) <= 100
+        assert len(result) < len(text)
+
+    def test_reports_what_was_dropped(self):
+        text = "\n".join(f"row {i}" for i in range(500))
+        result = truncate_to_tokens(text, 60)
+        assert "truncated, showing" in result
+        assert "tokens)" in result
+
+    def test_cuts_on_a_line_boundary(self):
+        """The last retained line must be whole, so YAML/tables stay parseable."""
+        lines = [f"key_{i}: value_{i}" for i in range(300)]
+        result = truncate_to_tokens("\n".join(lines), 100)
+        body = result.split("\n")[:-1]  # drop the appended note
+        assert body
+        assert all(line in lines for line in body)
+
+    def test_single_oversized_line(self):
+        """One line longer than the whole budget still respects the cap."""
+        result = truncate_to_tokens("x" * 5000, 50)
+        assert count_tokens(result) <= 50
+
+    def test_custom_marker(self):
+        text = "\n".join(f"row {i}" for i in range(500))
+        assert "elided, showing" in truncate_to_tokens(text, 60, marker="elided")

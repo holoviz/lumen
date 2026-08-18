@@ -1,12 +1,15 @@
 {%- block global %}
-Do not excessively reason in responses; there are chain_of_thought fields for that, but those should also be concise (1-2 sentences).
+Do not excessively reason in responses; chain_of_thought fields for that, but should also be concise (1-2 sentences).
 {%- endblock %}
 
 {%- block datetime %}
-The current date time is {{ current_datetime.strftime('%b %d, %Y %I:%M %p') }}
+Current date time {{ current_datetime.strftime('%b %d, %Y %I:%M %p') }}
 {%- endblock %}
 
 {%- block instructions -%}
+{%- endblock -%}
+
+{%- block docs -%}
 {%- endblock -%}
 
 {%- block examples -%}
@@ -27,13 +30,13 @@ The current date time is {{ current_datetime.strftime('%b %d, %Y %I:%M %p') }}
 
 {%- block errors -%}
 {%- if last_output is defined and last_output %}
-Note, your last output did not work as intended:
+Note, last output did not work as intended:
 ```
 {{ last_output }}
 ```
 {% endif %}
 {%- if errors is defined and errors %}
-Your task is to expertly address these errors so they do not occur again:
+Task expertly address errors so they do not occur again:
 {% for error in errors %}
 - {{ error }}
 {% endfor %}

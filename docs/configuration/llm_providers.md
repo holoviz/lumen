@@ -23,7 +23,7 @@ To use a specific provider, pass the `--provider` flag:
 ``` bash
 lumen-ai serve penguins.csv --provider anthropic
 lumen-ai serve penguins.csv --provider google --model 'gemini-2.5-flash'
-lumen-ai serve penguins.csv --provider openrouter --model 'openai/gpt-4o-mini'
+lumen-ai serve penguins.csv --provider kilo --model 'openai/gpt-4o-mini'
 lumen-ai serve penguins.csv --provider ollama --model 'qwen3:32b'
 lumen-ai serve penguins.csv --provider mlx
 ```
@@ -38,7 +38,7 @@ Use cheap models for simple tasks, powerful models for complex tasks:
 import lumen.ai as lmai
 
 model_config = {
-    "default": {"model": "gpt-5.4-mini"},  # Cheap for most agents
+    "default": {"model": "gpt-5.6-luna"},  # Cheap for most agents
     "sql": {"model": "gpt-4.1"},           # Powerful for SQL
     "vega_lite": {"model": "gpt-4.1"},     # Powerful for charts
     "deck_gl": {"model": "gpt-4.1"},       # Powerful for 3D maps
@@ -89,7 +89,7 @@ For installation and API key setup instructions, see the [Installation guide](..
 
 | Provider | Default Model | Popular Models |
 |----------|---------------|----------------|
-| **OpenAI** | `gpt-5.4-mini` | `gpt-5.4`, `gpt-5.4-nano` |
+| **OpenAI** | `gpt-5.6-luna` | `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.4-nano` |
 | **Anthropic** | `claude-haiku-4-5` | `claude-sonnet-4-6`, `claude-opus-4-5` |
 | **Google** | `gemini-3-flash-preview` | `gemini-3-pro-preview`, `gemini-2.5-flash`, `gemini-2.0-flash` |
 | **Mistral** | `mistral-small-latest` | `mistral-large-latest`, `ministral-8b-latest` |
@@ -98,6 +98,8 @@ For installation and API key setup instructions, see the [Installation guide](..
 
 !!! warning "Reasoning Models Not Suitable for Dialog"
     Reasoning models like `gpt-5`, `o4-mini`, and `gemini-2.0-flash-thinking` are **significantly slower** than standard models. They are designed for single, complex queries that require deep thinking, not interactive chat interfaces. For dialog-based applications like Lumen, use standard models for better user experience.
+
+    The OpenAI default, `gpt-5.6-luna`, is a reasoning model. Chat completions rejects function tools while reasoning is active, so Lumen disables reasoning for it and keeps it as fast as a standard model. To use reasoning with function tools, switch to the responses API: `lmai.llm.OpenAI(api="responses")`.
 
 ### Local providers
 
@@ -124,6 +126,7 @@ For installation and API key setup instructions, see the [Installation guide](..
 
 | Provider | Default Model | Description |
 |----------|---------------|-------------|
+| **Kilo** | `kilo-auto/free` | OpenAI-compatible gateway providing access to models from OpenAI, Anthropic, Google, Meta, Mistral, and more through a single API key. |
 | **OpenRouter** | `openai/gpt-4o-mini` | OpenAI-compatible gateway providing access to models from OpenAI, Anthropic, Google, Meta, Mistral, and more through a single API key. |
 | **AWS Bedrock** | `us.anthropic.claude-sonnet-4-6-20250929-v1:0` | Enterprise gateway providing access to models from Anthropic, Meta, Mistral, and more. |
 | **LiteLLM** | `gpt-5.4-mini` | Unified router to access 100+ models across all supported LLM providers. |
@@ -133,6 +136,25 @@ For installation and API key setup instructions, see the [Installation guide](..
 
 - **AnthropicBedrock** - Optimized for Claude models using Anthropic's SDK
 - **Bedrock** - Universal access to all Bedrock models (Claude, Llama, Mistral, Titan, etc.)
+
+### Kilo
+
+Kilo provides an OpenAI-compatible API for routing requests to models from multiple providers.
+
+``` py title="Kilo configuration"
+import lumen.ai as lmai
+
+llm = lmai.llm.Kilo(
+    model_kwargs={
+        "default": {"model": "kilo-auto/free"},
+        "sql": {"model": "anthropic/claude-sonnet-4.6"},
+        "vega_lite": {"model": "openai/gpt-5.4-mini"},
+    }
+)
+
+ui = lmai.ExplorerUI(data='penguins.csv', llm=llm)
+ui.servable()
+```
 
 ### OpenRouter
 
@@ -151,6 +173,7 @@ llm = lmai.llm.OpenRouter(
 
 ui = lmai.ExplorerUI(data='penguins.csv', llm=llm)
 ui.servable()
+```
 
 ## Advanced configuration
 
@@ -440,7 +463,7 @@ Additional model types:
 
 Different providers use different model string formats:
 
-- **OpenAI**: `"gpt-5.4"`, `"gpt-5.4-mini"`, `"gpt-5.4-nano"`, `"gpt-5.4"`
+- **OpenAI**: `"gpt-5.6-luna"`, `"gpt-5.4"`, `"gpt-5.4-mini"`, `"gpt-5.4-nano"`
 - **Anthropic**: `"claude-sonnet-4-6"`, `"claude-haiku-4-5"`, `"claude-opus-4-5"`
 - **OpenRouter**: `"openai/gpt-4o-mini"`, `"anthropic/claude-3.5-sonnet"`, `"google/gemini-2.5-flash"`
 - **Google**: `"gemini-3-flash-preview"`, `"gemini-2.5-flash"`

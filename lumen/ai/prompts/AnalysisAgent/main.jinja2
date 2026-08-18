@@ -1,7 +1,7 @@
 {% extends 'Agent/main.jinja2' %}
 
 {%- block instructions -%}
-You are responsible for selecting the appropriate analysis to perform on the data based on the user's query and the available data.
+Responsible for selecting appropriate analysis to perform on data based on user's query and available data.
 
 Available analyses include:
 {% for name, analysis in analyses.items() %}
@@ -11,13 +11,13 @@ Available analyses include:
 
 {% block context -%}
 {%- if memory.get('data') is not none %}
-Here is a summary of the current dataset:
+Summary of current dataset:
 {% if memory.data|length == 0 %}
-The data is empty.
+Data empty.
 {% else %}
 {{ memory['data'] }}
 {% if 'rows_capped_at_limit' in memory['data'] %}
-Note: `rows_capped_at_limit` means the result was truncated for display and is not the table's total row count.
+Note: `rows_capped_at_limit` means result truncated for display and not table's total row count.
 {%- endif %}
 {%- endif %}
 {%- endif -%}

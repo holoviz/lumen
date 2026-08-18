@@ -71,11 +71,33 @@ IMAGE_MIME_TYPES = {
     '.bmp': 'image/bmp',
 }
 
+# Rows beyond which a frame is sampled before being profiled. Shared by
+# describe_data_sync and lint_data so the summary an LLM reads and the findings
+# it is asked to act on are drawn from the same amount of data.
+PROFILE_SAMPLE_ROWS = 5000
+
 # Column-selection tuning for describe_data_sync.
 DEFAULT_MAX_SUMMARY_COLS = 16
 # Columns with at most this many distinct values are treated as
 # human-meaningful "enum"/categorical columns and prioritised.
 LOW_CARDINALITY_MAX = 10
+
+# Matches a column name ending in a stem + integer index, with an optional
+# separator so all common series conventions are caught: "X_pca_12", "PC1",
+# "dim-1", "emb.2". Used to collapse machine-generated numbered column series.
+INDEXED_COLUMN_RE = re.compile(r"^(?P<stem>.+?)[_.\-]?(?P<idx>\d+)$")
+
+# Tokenizer used to size prompt payloads. o200k_base is what semchunk resolves
+# vector_store's "gpt-4o-mini" default to, so chunking and truncation agree.
+TOKEN_ENCODING = "o200k_base"
+# Used when the tokenizer cannot be loaded. Deliberately below the ~4 chars/token
+# of English prose: dense YAML and aligned numeric tables run nearer 2.5, and
+# under-estimating the ratio over-estimates tokens, so we truncate early rather
+# than blowing a budget.
+FALLBACK_CHARS_PER_TOKEN = 3.0
+# Resolved lazily by _get_token_encoder. Key presence (not its value)
+# distinguishes "not yet resolved" from "resolved, and unavailable".
+_TOKEN_ENCODER_CACHE: dict[str, Any] = {}
 
 
 def deterministic_hash(text: str) -> int:
@@ -766,9 +788,9 @@ def describe_data_sync(
         return header + df.to_markdown(index=False)
 
     is_sampled = False
-    if shape[0] > 5000:
+    if shape[0] > PROFILE_SAMPLE_ROWS:
         is_sampled = True
-        df = df.sample(5000)
+        df = df.sample(PROFILE_SAMPLE_ROWS)
 
     df = df.sort_index()
 
@@ -844,11 +866,12 @@ def describe_data_sync(
         if nulls > 0:
             df_describe_dict[col]["nulls"] = nulls
 
-    # select datetime64 columns
-    for col in df.select_dtypes(include=["datetime64"]).columns:
-        for key in df_describe_dict[col]:
-            df_describe_dict[col][key] = str(df_describe_dict[col][key])
-        df[col] = df[col].astype(str)  # shorten output
+    # select datetime64 columns (including tz-aware)
+    for col in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            for key in df_describe_dict[col]:
+                df_describe_dict[col][key] = str(df_describe_dict[col][key])
+            df[col] = df[col].astype(str)  # shorten output
 
     # select all numeric columns and round
     for col in df.select_dtypes(include=["int64", "float64"]).columns:
@@ -949,7 +972,6 @@ async def describe_data(
         describe_data_sync, df, enum_limit, reduce_enums, row_limit,
         max_cols, priority_columns,
     )
-
 
 
 def clean_sql(sql_expr: str, dialect: str | None = None, prettify: bool = False) -> str:
@@ -1095,7 +1117,8 @@ def log_debug(msg: Any, offset: int = 24, prefix: str = "", suffix: str = "", sh
     else:
         log.debug(msg)
     if show_length:
-        log.debug(f"Characters: \033[94m{len(msg)}\033[0m")
+        num_tokens = count_tokens(msg) if isinstance(msg, str) else sum(count_tokens(m) for m in msg)
+        log.debug(f"Characters: \033[94m{len(msg)}\033[0m Tokens: \033[94m{num_tokens}\033[0m")
     if suffix:
         log.debug(suffix)
     if show_sep == "below":
@@ -1233,6 +1256,189 @@ def truncate_string(s, max_length=30, ellipsis="..."):
         return s
     part_length = (max_length - len(ellipsis)) // 2
     return f"{s[:part_length]}{ellipsis}{s[-part_length:]}"
+
+
+def _get_token_encoder():
+    """
+    Return a cached tiktoken encoder, or ``None`` if one cannot be loaded.
+
+    Resolution is deferred to first use: ``tiktoken.get_encoding`` downloads the
+    BPE vocabulary over HTTPS unless it is already in ``$TIKTOKEN_CACHE_DIR``,
+    so importing this module must not trigger it. Any failure (no tiktoken,
+    offline, upstream 5xx) is logged once and yields ``None``, which callers
+    treat as "estimate from character length" — sizing a prompt payload is never
+    worth raising into an in-flight conversation.
+    """
+    if "encoder" in _TOKEN_ENCODER_CACHE:
+        return _TOKEN_ENCODER_CACHE["encoder"]
+    try:
+        import tiktoken
+
+        encoder = tiktoken.get_encoding(TOKEN_ENCODING)
+    except Exception as e:
+        log.warning(
+            f"Could not load the {TOKEN_ENCODING!r} tokenizer ({type(e).__name__}: {e}); "
+            f"token counts will be estimated from character length at "
+            f"~{FALLBACK_CHARS_PER_TOKEN} chars/token."
+        )
+        encoder = None
+    _TOKEN_ENCODER_CACHE["encoder"] = encoder
+    return encoder
+
+
+def count_tokens(text: str) -> int:
+    """
+    Estimate how many tokens *text* occupies in an LLM prompt.
+
+    Counts with the :data:`TOKEN_ENCODING` tokenizer. Lumen also targets
+    Anthropic, Google, Mistral, Bedrock and LiteLLM models, whose tokenizers
+    differ, so this is an estimate for every provider — use it to size payloads,
+    not to predict billing. Falls back to a character-length estimate when the
+    tokenizer is unavailable.
+    """
+    if not text:
+        return 0
+    encoder = _get_token_encoder()
+    if encoder is None:
+        return math.ceil(len(text) / FALLBACK_CHARS_PER_TOKEN)
+    return len(encoder.encode(text, disallowed_special=()))
+
+
+def truncate_to_tokens(text: str, max_tokens: int, marker: str = "truncated") -> str:
+    """
+    Trim *text* to roughly *max_tokens*, cutting on a line boundary.
+
+    Prompt payloads are YAML, whitespace-aligned tables and markdown, where a
+    mid-line cut leaves a fragment the model may misread as data — so the text
+    is cut back to the last complete line that fits. The appended note reports
+    what was dropped, letting the model distinguish "this is everything" from
+    "there is more", rather than inferring it from a bare ellipsis.
+
+    Parameters
+    ----------
+    text : str
+        Text to trim.
+    max_tokens : int
+        Approximate token budget, per :func:`count_tokens`.
+    marker : str
+        Word used in the appended note.
+
+    Returns
+    -------
+    str
+        *text* unchanged when it already fits, otherwise the leading lines that
+        fit followed by ``... (truncated, showing N of M tokens)``.
+    """
+    total = count_tokens(text)
+    if total <= max_tokens:
+        return text
+
+    # Cut proportionally on characters first, then walk back a line at a time
+    # until the result plus its note fits. The first guess is usually right;
+    # the loop only corrects for uneven token density within the text.
+    note_budget = count_tokens(f"\n... ({marker}, showing {max_tokens} of {total} tokens)")
+    budget = max(max_tokens - note_budget, 1)
+    lines = text.split("\n")
+    keep = max(1, int(len(lines) * budget / total))
+    while keep > 1 and count_tokens("\n".join(lines[:keep])) > budget:
+        keep -= 1
+    kept = "\n".join(lines[:keep])
+    if count_tokens(kept) > budget:
+        # A single line exceeds the budget on its own; fall back to a character
+        # cut so we still respect the cap.
+        kept = kept[: max(1, int(len(kept) * budget / count_tokens(kept)))]
+    shown = count_tokens(kept)
+    return f"{kept}\n... ({marker}, showing {shown} of {total} tokens)"
+
+
+def collapse_indexed_columns(
+    names: list[str], min_series: int = 8, max_gaps: int = 5
+) -> list[str]:
+    """
+    Collapse machine-generated numbered column series into a single entry.
+
+    A *series* is a group of columns that share a stem and differ only by a
+    trailing integer index (e.g. ``X_pca_0 … X_pca_99`` or ``PCs_0 … PCs_99``),
+    such as embedding/PCA matrices or one-hot expansions. Individually the names
+    carry no meaning, so listing every one wastes prompt budget without adding
+    signal. A run of at least *min_series* members collapses; a near-complete
+    run is still collapsed and its missing indices are named. Genuinely distinct
+    names, short runs, and sparse/heavily-gapped runs (which includes any
+    step > 1 series) are returned unchanged and in their original position.
+
+    Parameters
+    ----------
+    names : list[str]
+        Column names in their original order.
+    min_series : int
+        Minimum present members before a stem is collapsed. Smaller runs stay
+        expanded since the token savings don't justify hiding the columns.
+    max_gaps : int
+        Most missing indices tolerated within a run's span. A run with more
+        holes than this stays expanded, since the gaps are likely meaningful
+        (and too numerous to name compactly). This also excludes step > 1
+        series, whose "gaps" exceed the budget.
+
+    Returns
+    -------
+    list[str]
+        Column names with each qualifying series replaced by a single
+        ``"{first}..{last} ({n} cols)"`` entry — with ``", missing <indices>"``
+        appended when the run has holes. The real first/last column names are
+        used, so the original separator and any zero-padding are preserved. The
+        entry sits where the series first appeared.
+
+    Examples
+    --------
+    >>> collapse_indexed_columns(["obs_id", "PCs_0", "PCs_1", "PCs_2"], min_series=2)
+    ['obs_id', 'PCs_0..PCs_2 (3 cols)']
+    >>> collapse_indexed_columns(["x_0", "x_1", "x_3"], min_series=2)
+    ['x_0..x_3 (3 cols, missing 2)']
+    >>> collapse_indexed_columns(["gender", "age", "smoking_status"])
+    ['gender', 'age', 'smoking_status']
+    """
+    stem_members: dict[str, list[tuple[int, str]]] = {}
+    name_stem: dict[str, str] = {}
+    for name in names:
+        match = INDEXED_COLUMN_RE.match(name)
+        if match:
+            stem = match.group("stem")
+            stem_members.setdefault(stem, []).append((int(match.group("idx")), name))
+            name_stem[name] = stem
+
+    collapsible: dict[str, str] = {}
+    for stem, members in stem_members.items():
+        indices = [idx for idx, _ in members]
+        # Skip small runs, and any with duplicate indices (not a clean series).
+        if len(indices) < min_series or len(set(indices)) != len(indices):
+            continue
+        lo, hi = min(indices), max(indices)
+        # Collapse a contiguous run, or a near-complete one whose few holes we
+        # can name. A sparse or heavily-gapped run (including any step > 1
+        # series) exceeds max_gaps and stays expanded — its holes may matter.
+        missing = sorted(set(range(lo, hi + 1)) - set(indices))
+        if len(missing) > max_gaps:
+            continue
+        # Label from the real endpoint names so the source's separator and any
+        # zero-padding (``_``, ``-``, ``.`` or none) are preserved.
+        lo_name = next(name for idx, name in members if idx == lo)
+        hi_name = next(name for idx, name in members if idx == hi)
+        label = f"{lo_name}..{hi_name} ({len(indices)} cols"
+        if missing:
+            label += f", missing {', '.join(map(str, missing))}"
+        collapsible[stem] = label + ")"
+
+    result: list[str] = []
+    emitted: set[str] = set()
+    for name in names:
+        stem = name_stem.get(name)
+        if stem in collapsible:
+            if stem not in emitted:
+                result.append(collapsible[stem])
+                emitted.add(stem)
+        else:
+            result.append(name)
+    return result
 
 
 def truncate_iterable(iterable, max_length=150) -> tuple[list, list, bool]:

@@ -1,103 +1,145 @@
 {% extends 'BaseViewAgent/main.jinja2' %}
 
 {% block instructions %}
-Generate complete, effective Vega-Lite visualizations that clearly communicate data insights.
+Generate complete, effective Vega-Lite visualizations clearly communicating data insights.
 
-## ESSENTIAL STRUCTURE
+## Essential Structure
 
 Every visualization must:
-- Use `data: {name: {{ memory['table'] }}}` with exact column names from source
-- Wrap all marks in a `layer` array, each with its own `mark` and `encoding`
+- Use `data: {name: {{ memory['table'] }}}` with exact column names from source; a choropleth joined to external boundaries is the one exception (see Key Patterns)
+- Wrap all marks in `layer` array, each with own `mark` and `encoding`
 - Focus on ONE primary metric or relationship per chart
-- Include narrative titles that tell a story about the data (what happened, not just what's shown)
-- Do not overcrowd the plot with too many data points, especially for bars
-- Do not use scientific notation in axis ticks
+- If a categorical column separates the rows into more than one series, split on it with `color` (or `detail` when no legend is wanted). A `line` or `area` mark with no split joins points across series and produces a zigzag: two products sharing the same months, drawn as one line, alternate between them.
+- Give the chart its own narrative title *inside the spec*: `title: {text: ..., subtitle: ...}` (see title example). This is the only title that renders above the plot; the `title` field on the chart entry is a tab label and never appears in the chart itself.
+  - `title.text` states the finding, not the variables: "Revenue fell 12% after the March price change", NOT "Revenue by Month". If it contains no claim, it is not a title yet.
+  - `title.subtitle` adds a second fact from the data ("Enterprise accounts drove the whole decline"). Never describe the chart's own construction — "Stacked bars show revenue by segment" tells the reader what they can already see. Keep it under ~60 characters or it clips.
+- Do not overcrowd plot: when a discrete axis (bar categories, ordinal `x`/`y`) would carry more than 25 distinct values, do not plot all of them. Check `nunique` for that column in data summary, then do one of:
+  - Rank and filter to at most 25 with `window` + `filter` (see ranked bar chart example), and name the cut in the spec's `title.text` (e.g. "Top 15 Regions by Revenue") — never title a truncated chart as if it showed everything
+  - OR group the tail into a single "Other" category with `calculate` transform
+  - OR switch to a form built for high cardinality: bin the measure into a histogram, or use `mark: rect`
+
+  Text labels on every mark count as overcrowding: only add them to a chart already reduced to 25 marks or fewer. When every mark carries its value as a label, the quantitative axis is redundant — set `axis: null` on that channel instead of showing both.
+- Axis ticks: set `axis: {format: ','}` on quantitative axes (never scientific notation), plus `tickMinStep: 1` when the value is a count, so ticks cannot land on half of something countable. In a layered spec set these on every layer sharing the axis, or the merge drops them.
 - When n_rows > 10000:
-  - Use aggregation and/or binning either in the encoding fields or as distinct transforms
+  - Use aggregation and/or binning either in encoding fields or as distinct transforms
   - OR enable canvas rendering using `{config: {render: {renderer: "canvas"}}}` (up to 50k rows)
 
-## MULTIPLE CHARTS
+## Multiple Charts
 
-Return several charts in `charts` ONLY when the request clearly spans distinct metrics or relationships that should not share one plot (e.g. "sales over time and sales by region"), or when the user explicitly asks for more than one. When a single chart answers the question, return exactly one.
-- Each entry in `charts` is a complete, standalone single-view spec following the rules above; do not pack several plots into one entry with `hconcat`/`vconcat`/`facet`/`repeat`.
-- Give each chart a short, descriptive `title` used as its tab label.
+Return several charts in `charts` ONLY when request clearly spans distinct metrics or relationships that should not share one plot (e.g. "sales over time and sales by region"), or user explicitly asks for more than one. When single chart answers question, return exactly one.
+- Each entry in `charts` complete, standalone single-view spec following rules above; do not pack several plots into one entry with `hconcat`/`vconcat`/`facet`/`repeat`.
+- Give each chart entry a short `title` (5 words or fewer) used as its tab label. The narrative title is separate and belongs in the spec's own `title` block.
 
-## MARK vs ENCODING
+## Mark vs Encoding
 
-This is the most common source of errors. See examples for correct placement:
+Most common error source. See examples for correct placement:
 - **Mark**: static styling—position (`dx`, `dy`, `align`, `baseline`) and appearance (`color`, `opacity`, `fontSize`)
 - **Encoding**: data mappings—channels (`x`, `y`, `color`, `size`, `text`) with `{field: ...}` or `{value: ...}`
 - **NEVER put `dx`, `dy`, `align`, `baseline` in encoding**—they belong in mark only
 
-## LEGENDS
+## Legends
 
-Legends appear when you map data to `color`, `size`, or `shape` in encoding.
+Legends appear when mapping data to `color`, `size`, or `shape` in encoding.
 
 **Single field**: Map directly
-**Multiple series**: Use `transform` to create a constant field, then map it (never use `datum` in color encoding)
-**Avoid redundancy**: If encoding the same field with both size and color, either:
-  - Use size only with a single color: `color: {value: '#1f77b4'}`
+**Multiple series**: Use `transform` to create constant field, then map it (never use `datum` in color encoding)
+**Avoid redundancy**: If encoding same field with both size and color, either:
+  - Use size only with single color: `color: {value: '#1f77b4'}`
   - Or disable one legend: `color: {field: value, scale: {scheme: blues}, legend: null}`
 
-## KEY PATTERNS
+## Key Patterns
 
-**Sort rankings**: `sort: "-x"` (horizontal) or `sort: "-y"` (vertical) on the categorical axis
+**Sort rankings**: `sort: "-x"` (horizontal) or `sort: "-y"` (vertical) on categorical axis. In a layered spec where layers bind different fields to that axis, `"-x"` cannot resolve and silently falls back to alphabetical — use an explicit sort field instead, and repeat it identically on every layer sharing that axis or the merge drops it:
+- Encoding sort takes a single OBJECT: `sort: {op: sum, field: sales, order: descending}`. A list of objects is read as an array of literal category values, matches nothing, and leaves the axis alphabetical. The list form (`sort: [{field: ..., order: ...}]`) belongs to `window` transforms only — the two are not interchangeable.
 
-**Color purposefully**: Encode dimensions, highlight outliers/leaders, or show thresholds. Keep color in `mark` for text labels that shouldn't appear in legends. When encoding quantitative values with color, consider setting an appropriate `domain` if data doesn't start at 0 (e.g., `scale: {scheme: blues, domain: [min, max]}`).
+**Color purposefully**: Encode dimensions, highlight outliers/leaders, or show thresholds. Keep color in `mark` for text labels that shouldn't appear in legends. When encoding quantitative values with color, consider setting appropriate `domain` if data doesn't start at 0 (e.g., `scale: {scheme: blues, domain: [min, max]}`).
+- A categorical `scale.range` MUST be paired with an explicit `scale.domain`. Alone, the range binds to the domain in alphabetical order, so meaningful colors land on the wrong categories: green/orange/red intended for Low/Medium/High sorts to High/Low/Medium, painting High green and Medium red.
 
-**Diverging colormaps**: When values straddle a meaningful center (anomalies, deviations, above/below a threshold) or diverging is requested, pick a diverging scheme and anchor the center with `domainMid`: `scale: {scheme: redblue, domainMid: 0}`. Without it the neutral color sits at the data midpoint and one side dominates. Schemes: `redblue`, `blueorange`, `redyellowblue`, `purplegreen`.
+**Stack order**: A stacked mark orders its segments alphabetically unless told otherwise. Add a numeric field via `calculate` and map it to the `order` channel to get a deliberate sequence.
 
-**Informative titles**: Title tells a story (what happened, not what's shown). See examples.
+**Diverging colormaps**: When values straddle meaningful center (anomalies, deviations, above/below threshold) or diverging requested, pick diverging scheme and anchor center with `domainMid`: `scale: {scheme: redblue, domainMid: 0}`. Without it, neutral color sits at data midpoint and one side dominates. Schemes: `redblue`, `blueorange`, `redyellowblue`, `purplegreen`. Only when the values actually cross that center: when they all sit on one side of the `domainMid`, half the ramp goes unused and the column collapses into a narrow band of near-identical color, so reach for a sequential scheme instead.
 
-**Data types**: Match type to your data - quantitative for continuous, ordinal for ordered categories, nominal for unordered, temporal for dates
+**Choropleth layering**: A geoshape draws the geometry in its own `data`, so a table joined to external boundaries puts the boundary file in `data` and names the table inside `transform.lookup.from.data`. A region with no matching row is dropped rather than drawn, so draw the boundaries twice: an unencoded base layer, then the joined layer above it.
+
+**Encoding follows intent**: sorted bars for a ranking, line for a trend, slope or dumbbell for before/after, binned bars or `mark: rect` for a distribution. Keep the one mark that makes the point and drop the rest.
+
+**Direct labels over legends**: with only a few series, set `legend: null` and label each series on the mark itself — a `text` layer filtered to the series' last point, `align: left`, small `dx`. The eye should not have to leave the data to decode a color key.
+
+**Gray context, one highlight**: mute everything that is not the message (`'#cccccc'`, or `opacity: 0.25`) and give the accent color only to the series or bar carrying it. One focus per chart — see the `condition` in the ranked bar example.
+
+**Annotate the finding**: mark the threshold, event or delta in place with a `rule` layer plus a `text` layer. Assume the reader never hovers: the static view has to carry the whole message on its own.
+
+**Show spread**: when the point rests on noisy estimates, show the range (`mark: errorbar`, or a band via `y`/`y2`) rather than rounding to one confident number.
+
+**Data types**: Match type to data - quantitative for continuous, ordinal for ordered categories, nominal for unordered, temporal for dates
 - For year fields: use `type: quantitative` with `axis.format: 'd'` to prevent comma separators (1990 not 1,990)
 
 **Incompatible scales**: Different units cannot share Y-axis. Choose: (1) primary metric only, or (2) faceting with `fold` + `resolve: {scale: {y: independent}}`
 
 **Dynamic filtering**: Use window transforms instead of hardcoding (min/max, endpoints, top N):
 - Top-level: applies to all layers | Layer-level: that layer only
+- `rank` numbers every row, so per-series ranking needs `groupby`: `window: [{op: rank, as: rank}], groupby: [series_field]`. Without it a top-N filter keeps only the leading series.
+- Endpoints come from the data, never a row count: `window` `min`/`max` over the axis field with `frame: [null, null]`, then filter against those (see the time series example). A literal rank comparison against the number of rows you happened to see breaks the moment a row is added.
 
 **Scale domains**: Default starts at 0, hiding clustered data (5500-6000 on 0-6000 scale). Set explicit domain: `scale: {domain: [5500, 6000]}`
 
-**Clean, minimal styling**: Remove borders (`config.view.stroke: null`), context-aware gridlines (hbar=x-grid, vbar/line=y-grid), inline units (`format: '.0%'`), drop obvious titles
-
-**Selective emphasis**: Reduce opacity of secondary data (`opacity: 0.3`), keep primary prominent (`opacity: 1, strokeWidth: 2-3`)
+**Clean, minimal styling**: Remove borders (`config.view.stroke: null`), drop gridlines (`config: {axis: {grid: false}}`) unless a reader has to trace a mark back to the axis to read it, inline units (`format: '.0%'`), drop obvious axis titles
 
 **Geographic maps**: Use `longitude`/`latitude` encodings (NOT `x`/`y`) with `projection: {type: mercator}` at top level. Base map added automatically.
 
 **Choropleth maps**: Join data to map boundaries - `lookup: <map_field>`, `from: {data: {...}, key: <your_field>, fields: [...]}` (key/fields inside from!)
 {%- if gridded is defined and gridded %}
 
-**Gridded xarray data**: This table is a long-form grid derived from an xarray dataset.
+**Gridded xarray data**: Table long-form grid derived from xarray dataset.
 - coordinate dimensions: {{ gridded.dims | join(', ') }}
 - data variables: {{ gridded.data_vars | join(', ') }}
-Use `mark: rect` with `x`/`y` mapped to the coordinate dimensions (type `ordinal`) and
-`color` mapped to a data variable (type `quantitative`, `scale: {scheme: viridis}`).
+Use `mark: rect` with `x`/`y` mapped to coordinate dimensions (type `ordinal`) and
+`color` mapped to data variable (type `quantitative`, `scale: {scheme: viridis}`).
 Do NOT use `longitude`/`latitude` encodings or geographic projections for this data.
 {%- endif %}
 {% endblock %}
 
+{% block docs %}
+{% include 'VegaLiteAgent/doc_pages.jinja2' %}
+{% endblock %}
+
 {% block examples %}
-## EXAMPLES
-{% if doc_examples is defined and doc_examples %}
-{% for example in doc_examples %}
-{{ example }}
-{% endfor %}
-{% endif %}
+## Examples (illustrative — table, column and value names below are placeholders, not real data)
 
 Mark vs Encoding (common error—dx/dy go in mark, NOT encoding):
 ```yaml
 layer:
-  # ✅ CORRECT: dx in mark
+  # CORRECT: dx in mark
   - mark: {type: text, align: left, dx: 5, color: black}
     encoding:
       x: {field: value, type: quantitative}
       y: {field: category, type: nominal}
       text: {field: value, type: quantitative}
-  # ❌ WRONG: dx in encoding causes validation error
+  # WRONG: dx in encoding causes a validation error
   # - mark: text
   #   encoding:
   #     dx: {value: 5}  # INVALID - dx is not an encoding channel
+```
+
+Wide columns into one stacked bar (common error—one layer per column overpaints):
+```yaml
+# CORRECT: fold the columns into a single long field, then stack once
+transform:
+  - fold: [q1_sales, q2_sales, q3_sales]
+    as: [quarter, sales]
+layer:
+  - mark: bar
+    encoding:
+      y: {field: region, type: nominal, sort: {op: sum, field: sales, order: descending}}
+      x: {aggregate: sum, field: sales, type: quantitative}
+      color: {field: quarter, type: nominal}
+# WRONG: a layer per column draws every bar from zero, so the longest one hides
+# the rest, each total reads short, and `sort: "-x"` cannot resolve across layers
+# layer:
+#   - mark: bar
+#     encoding: {y: {field: region}, x: {field: q1_sales}}
+#   - mark: bar
+#     encoding: {y: {field: region}, x: {field: q2_sales}}
 ```
 
 Title with subtitle:
@@ -139,21 +181,20 @@ Ranked bar chart with top 10 filter:
 data:
   name: <TABLE_NAME>
 transform:
-  - window: [{op: rank, field: turbine_count, as: rank}]
+  - window: [{op: rank, as: rank}]
     sort: [{field: turbine_count, order: descending}]
   - filter: datum.rank <= 10
 layer:
   - mark: bar
     encoding:
-      y: {field: state, type: nominal, sort: "-x", axis: {title: null}}
+      y: {field: state, type: nominal, sort: {field: turbine_count, order: descending}, axis: {title: null}}
       x: {field: turbine_count, type: quantitative, axis: {title: "Number of Turbines", format: ","}}
       color:
         condition: {test: "datum.state === 'TX'", value: '#1f77b4'}
         value: '#aec7e8'
 config:
   view: {stroke: null}
-  axisX: {gridColor: '#eeeeee'}
-  axisY: {grid: false}
+  axis: {grid: false}
 ```
 
 Geographic scatter:
@@ -191,33 +232,7 @@ layer:
       color: {value: '#d62728'}
 config:
   view: {stroke: null}
-  axisX: {grid: false}
-  axisY: {gridColor: '#eeeeee'}
-```
-
-Dual encoding (size + color for different metrics):
-```yaml
-data:
-  name: <TABLE_NAME>
-layer:
-  - mark: {type: circle, opacity: 0.7}
-    encoding:
-      longitude: {field: xlong, type: quantitative}
-      latitude: {field: ylat, type: quantitative}
-      size: {field: capacity_kw, type: quantitative}
-      color: {field: efficiency_pct, type: quantitative, scale: {scheme: viridis, domain: [85, 95]}, legend: {title: "Efficiency (%)"}}
-```
-
-Bar chart with legend:
-```yaml
-data:
-  name: <TABLE_NAME>
-layer:
-  - mark: bar
-    encoding:
-      x: {field: category, type: nominal}
-      y: {field: sales, type: quantitative}
-      color: {field: category, type: nominal, legend: {title: "Category", orient: "right"}}
+  axis: {grid: false}
 ```
 
 {%- if gridded is defined and gridded %}
@@ -238,23 +253,45 @@ config:
   view: {stroke: null}
 ```
 {%- endif %}
-Choropleth map:
+Choropleth map, when the table has its own geometry column (schema `format: geometry`).
+Omit `data`: the geometry is injected as a GeoJSON FeatureCollection, so every
+field is addressed as `properties.<column>` because each datum is a Feature.
 ```yaml
-data:
-  url: "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"
-  format: {type: topojson, feature: states}
-transform:
-  - lookup: "properties.name"
-    from:
-      data: {name: <TABLE_NAME>}
-      key: State
-      fields: [Total_Students]
 mark: geoshape
-projection: {type: albersUsa}
+projection: {type: naturalEarth1}
 encoding:
-  color: {field: Total_Students, type: quantitative, scale: {scheme: blues}, legend: {title: "Total Students"}}
+  color:
+    field: properties.<VALUE_COLUMN>
+    type: quantitative
+    scale: {scheme: blues}
+    legend: {title: "<VALUE_COLUMN>"}
   tooltip:
-    - {field: "properties.name", type: nominal, title: "State"}
-    - {field: Total_Students, type: quantitative, format: ",", title: "Total Students"}
+    - {field: properties.<NAME_COLUMN>, type: nominal}
+    - {field: properties.<VALUE_COLUMN>, type: quantitative, format: ".2f"}
+```
+
+Choropleth map, when the table has no geometry and must be joined to external boundaries:
+```yaml
+projection: {type: albersUsa}
+layer:
+  - data:
+      url: "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"
+      format: {type: topojson, feature: states}
+    mark: {type: geoshape, fill: null, stroke: "#888888", strokeWidth: 0.5}
+  - data:
+      url: "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"
+      format: {type: topojson, feature: states}
+    transform:
+      - lookup: "properties.name"        # field on the boundaries
+        from:
+          data: {name: {{ memory['table'] }}}          # the table, named exactly
+          key: <TABLE_JOIN_COLUMN>                     # matching column in the table
+          fields: [<VALUE_COLUMN>]                     # only these exist after the join
+    mark: {type: geoshape, stroke: "white", strokeWidth: 0.5}
+    encoding:
+      color: {field: <VALUE_COLUMN>, type: quantitative, scale: {scheme: blues}, legend: {title: "<VALUE_COLUMN>"}}
+      tooltip:
+        - {field: "properties.name", type: nominal, title: "State"}
+        - {field: <VALUE_COLUMN>, type: quantitative, format: ","}
 ```
 {% endblock %}

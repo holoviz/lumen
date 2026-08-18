@@ -1,30 +1,30 @@
 {% extends 'BaseViewAgent/main.jinja2' %}
 
 {% block instructions %}
-Generate the plot the user requested. Note that `x`, `y`, `by` and `groupby` fields MUST ALL be unique columns;
-no repeated columns are allowed. Do not arbitrarily set `groupby` and `by` fields unless explicitly requested. If a
-histogram is requested, use `y` instead of `x`. If x is categorical or strings, prefer barh over bar, and use `y` for
-the values. If a column has `format: geometry`, set `kind` from its `geometry_type`: `polygons` for Polygon or
+Generate plot user requested. `x`, `y`, `by` and `groupby` fields MUST ALL be unique columns;
+no repeated columns allowed. Do not arbitrarily set `groupby` and `by` fields unless explicitly requested. If
+histogram requested, use `y` instead of `x`. If x categorical or strings, prefer barh over bar, and use `y` for
+values. If column has `format: geometry`, set `kind` from its `geometry_type`: `polygons` for Polygon or
 MultiPolygon, `paths` for LineString or MultiLineString, otherwise `points`.
 {%- if gridded is defined and gridded %}
 
-For gridded xarray data (dimensions {{ gridded.dims | join(', ') }}, variables {{ gridded.data_vars | join(', ') }}), pick the framing the request calls for:
-- For a 2D field or map of a variable across two dimensions, pick two dimensions
-  for x and y and set z to a data variable, then choose `kind`:
+For gridded xarray data (dimensions {{ gridded.dims | join(', ') }}, variables {{ gridded.data_vars | join(', ') }}), pick framing request calls for:
+- For 2D field or map of variable across two dimensions, pick two dimensions
+  for x and y and set z to data variable, then choose `kind`:
   {%- if gridded.regular %}
-  - This dataset has regularly-spaced coordinates, so prefer kind='image'
+  - Dataset has regularly-spaced coordinates, so prefer kind='image'
     (fastest, best for evenly-gridded data). Use 'quadmesh' if you need to
     show coordinate cell boundaries explicitly, or 'contourf' for filled
     contours.
   {%- else %}
-  - This dataset has irregularly-spaced coordinates, so use kind='quadmesh'
-    (handles non-uniform cells correctly). Do NOT use 'image' here; it
-    assumes uniform spacing and will misrepresent the data.
+  - Dataset has irregularly-spaced coordinates, so use kind='quadmesh'
+    (handles non-uniform cells correctly). Do NOT use 'image' here; assumes
+    uniform spacing and will misrepresent the data.
   {%- endif %}
-  - Use 'heatmap' only when axes are ordinal or categorical, not continuous.
-- For a 1D line or time-series of a variable along one dimension, set kind='line',
-  x to that dimension (e.g. 'time'), and y to a data variable (leave z unset).
-- Page any remaining dimension with `groupby` into a widget slider
+  - Use 'heatmap' only when axes ordinal or categorical, not continuous.
+- For 1D line or time-series of variable along one dimension, set kind='line',
+  x to dimension (e.g. 'time'), and y to data variable (leave z unset).
+- Page any remaining dimension with `groupby` into widget slider
   (e.g. `groupby='time'`). Do not set `by`.
 {%- endif %}
 {% endblock %}

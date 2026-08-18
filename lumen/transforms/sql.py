@@ -13,9 +13,9 @@ import sqlglot
 from sqlglot import parse
 from sqlglot.dialects.dialect import Dialect
 from sqlglot.expressions import (
-    LT, Alias, Column, Expression, Identifier, Literal as SQLLiteral, Max, Min,
-    Null, ReadCSV, Select, Star, Table, TableSample, and_, func, or_,
-    replace_placeholders, select,
+    LT, Alias, ArrayAgg, Column, Count, Distinct, Expression, Identifier,
+    Literal as SQLLiteral, Max, Min, Null, ReadCSV, Select, Star, Table,
+    TableSample, and_, func, or_, replace_placeholders, select,
 )
 from sqlglot.optimizer import optimize
 
@@ -25,6 +25,24 @@ from .base import Transform
 
 Dialect.classes['postgresql'] = Dialect.get('postgres')
 Dialect.classes['mssql'] = Dialect.get('tsql')
+
+#: Dialects known to support aggregating distinct values into an array, i.e.
+#: `ARRAY_AGG(DISTINCT col)`, which `SQLSchemaStats` depends on.
+#:
+#: Deliberately an allowlist rather than a try/except: sqlglot's default
+#: `unsupported_level` only warns, so an unsupported dialect may emit SQL that
+#: is silently wrong rather than raising. MySQL and SQLite have no array
+#: aggregate at all (only `GROUP_CONCAT`); Redshift has only `LISTAGG` but
+#: sqlglot emits `ARRAY_AGG` for it regardless; and BigQuery's `ARRAY_AGG`
+#: raises at runtime on NULL input unless `IGNORE NULLS` is given.
+ARRAY_AGG_DISTINCT_DIALECTS = frozenset({
+    'duckdb',
+    'postgres',
+    'postgresql',
+    'presto',
+    'snowflake',
+    'trino',
+})
 
 
 class SQLTransform(Transform):
@@ -292,8 +310,13 @@ class SQLSelectFrom(SQLFormat):
             # e.g. read_parquet("/path/to/file.parquet"); so we need to quote
             expression = Table(this=Identifier(this=sql_in, quoted=True))
 
-        # if 'data/life-expectancy.csv' becomes 'data / life-expectancy.csv'
-        if not list(expression.find_all(Select)) and " / " in expression.sql():
+        # A bare table name that does not round-trip was mis-parsed as an
+        # expression, e.g. 'data/life-expectancy.csv' becomes
+        # 'data / life-expectancy.csv' and '2014_sales' becomes '2014 AS _sales'
+        if (
+            not list(expression.find_all(Select))
+            and expression.sql().strip().lower() != sql_in.strip().lower()
+        ):
             expression = Table(this=Identifier(this=sql_in, quoted=True))
 
         tables = {}
@@ -481,6 +504,81 @@ class SQLMinMax(SQLTransform):
                 )
         expression = select(*minmax).from_(subquery)
         return self.to_sql(expression)
+
+
+class SQLSchemaStats(SQLTransform):
+    """
+    Computes every statistic required to describe a table in one query.
+
+    `BaseSQLSource.get_schema` otherwise issues one `SELECT DISTINCT` per
+    categorical column plus separate count and min/max queries, so a wide
+    table costs one round trip per column. Folding them into a single
+    aggregate SELECT reduces that to one round trip and one scan, which
+    matters most for remote backends where each query is network latency
+    (and, on metered warehouses, billed separately).
+
+    Aliases are positional (`__enum_0`, `__min_0`, ...) rather than derived
+    from column names, so they can neither collide with a real column nor
+    exceed a dialect's identifier length limit.
+
+    Requires a dialect that supports aggregating distinct values into an
+    array; see `ARRAY_AGG_DISTINCT_DIALECTS`.
+    """
+
+    enum_columns = param.List(default=[], doc="""
+        Columns to collect the distinct values of.""")
+
+    minmax_columns = param.List(default=[], doc="""
+        Columns to compute the minimum and maximum of.""")
+
+    transform_type: ClassVar[str] = 'sql_schema_stats'
+
+    count_alias: ClassVar[str] = '__count'
+
+    def apply(self, sql_in: str) -> str:
+        subquery = self._to_subquery(self.parse_sql(sql_in))
+        aggregates: list[Expression] = [
+            Count(this=Star()).as_(Identifier(this=self.count_alias, quoted=True))
+        ]
+        for i, col in enumerate(self.enum_columns):
+            column = Column(this=Identifier(this=col, quoted=True))
+            aggregates.append(
+                ArrayAgg(this=Distinct(expressions=[column])).as_(
+                    Identifier(this=self.enum_alias(i), quoted=True)
+                )
+            )
+            # Dialects disagree on whether an array aggregate retains NULLs
+            # (and BigQuery rejects them outright), so count the non-null
+            # values instead and reinstate NULL from the row count.
+            aggregates.append(
+                Count(this=column).as_(
+                    Identifier(this=self.nonnull_alias(i), quoted=True)
+                )
+            )
+        for i, col in enumerate(self.minmax_columns):
+            column = Column(this=Identifier(this=col, quoted=True))
+            for agg_func, alias in ((Min, self.min_alias(i)), (Max, self.max_alias(i))):
+                aggregates.append(
+                    agg_func(this=column).as_(Identifier(this=alias, quoted=True))
+                )
+        expression = select(*aggregates).from_(subquery)
+        return self.to_sql(expression)
+
+    @classmethod
+    def enum_alias(cls, index: int) -> str:
+        return f'__enum_{index}'
+
+    @classmethod
+    def nonnull_alias(cls, index: int) -> str:
+        return f'__nonnull_{index}'
+
+    @classmethod
+    def min_alias(cls, index: int) -> str:
+        return f'__min_{index}'
+
+    @classmethod
+    def max_alias(cls, index: int) -> str:
+        return f'__max_{index}'
 
 
 class SQLColumns(SQLTransform):

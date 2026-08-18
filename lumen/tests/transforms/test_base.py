@@ -5,7 +5,7 @@ import pandas as pd
 import param  # type: ignore
 
 from lumen.transforms.base import (
-    Count, DropNA, Eval, Sum, Transform, project_lnglat,
+    Count, DropNA, Eval, Filter, Sum, Transform, project_lnglat,
 )
 
 
@@ -82,8 +82,31 @@ def test_dropna_transform(mixed_df):
     assert len(DropNA.apply_to(mixed_df, axis=1, how='all').columns) == 4
 
 
+def test_dropna_transform_with_thresh():
+    df = pd.DataFrame({
+        'a': [1.0, None, 3.0],
+        'b': [1.0, 2.0, None],
+    })
+
+    result = DropNA.apply_to(df, thresh=2)
+
+    pd.testing.assert_frame_equal(result, df.dropna(thresh=2))
+
+
 def test_project_lnglat_default_params():
     """Regression test: latitude default was 'longitude' (copy-paste bug)."""
     transform = project_lnglat()
     assert transform.longitude == 'longitude'
     assert transform.latitude == 'latitude'
+
+
+def test_filter_invalid_condition_warns(caplog):
+    df = pd.DataFrame({'A': [1, 2]})
+
+    result = Filter(conditions=[('A', {'unexpected': True})]).apply(df)
+
+    pd.testing.assert_frame_equal(result, df)
+    assert (
+        "Condition {'unexpected': True} on 'A' column not understood. "
+        "Filter query will not be applied."
+    ) in caplog.text

@@ -1401,6 +1401,31 @@ def test_duckdb_geometry_returns_geodataframe():
     assert str(result.geometry.dtype) == 'geometry'
 
 
+def test_duckdb_geometry_crs_read_from_column_type(tmp_path):
+    """ST_Read reports a CRS-carrying column as GEOMETRY('EPSG:4326'), so the
+    type must be matched by prefix and the CRS taken from it."""
+    if gpd is None:
+        pytest.skip("geopandas is not installed")
+    path = tmp_path / 'shapes.geojson'
+    gpd.GeoDataFrame(
+        {'name': ['a']},
+        geometry=[Polygon([(0, 0), (1, 0), (1, 1)])],
+        crs='EPSG:4326',
+    ).to_file(path, driver='GeoJSON')
+    try:
+        source = DuckDBSource(
+            uri=':memory:',
+            initializers=["INSTALL spatial;", "LOAD spatial;"],
+            tables={'geo': f"SELECT * FROM ST_Read('{path}')"},
+        )
+    except Exception as e:  # pragma: no cover - environment dependent
+        pytest.skip(f"duckdb spatial extension unavailable: {e}")
+
+    result = source.get('geo')
+    assert isinstance(result, gpd.GeoDataFrame)
+    assert result.crs.to_epsg() == 4326
+
+
 def test_duckdb_geometry_crs_none_by_default():
     """Without geometry_crs set the CRS stays None (WKB carries none); no regression."""
     source, gpd = _spatial_source()
@@ -1438,3 +1463,24 @@ def test_duckdb_get_schema_geometry_no_distinct():
     # non-geometry columns still summarised as usual
     assert schema['pop']['inclusiveMinimum'] == 1
     assert schema['pop']['inclusiveMaximum'] == 2
+
+
+def test_file_table_key_survives_normalization(tmp_path):
+    """A registered file-based table must be findable by its own name.
+
+    File-based keys were normalized with a bare non-word substitution while
+    every lookup goes through ``normalize_table``, which also strips leading
+    and trailing underscores. An absolute path starts with a separator and so
+    produced a leading underscore, leaving the source unable to resolve the
+    table it had just registered. That broke ``lumen-ai serve /abs/path.csv``
+    for any absolute path.
+    """
+    csv = tmp_path / "sales.csv"
+    pd.DataFrame({"region": ["North", "South"], "revenue": [10, 20]}).to_csv(csv, index=False)
+
+    source = DuckDBSource(tables={str(csv): str(csv)}, uri=":memory:")
+
+    (table,) = source.get_tables()
+    assert not table.startswith("_")
+    assert source.normalize_table(table) in source.tables
+    assert len(source.get(table)) == 2

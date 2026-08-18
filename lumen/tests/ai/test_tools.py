@@ -370,3 +370,26 @@ def test_apply_filter_tool_subsets_xarray_like_sel():
     expected = ds.sel(lat=slice(20.0, 30.0)).to_dataframe().reset_index().shape[0]
     assert len(pipeline.data) == expected
     assert set(pipeline.data["lat"].unique()) == {20.0, 30.0}
+
+
+async def test_invoke_prompt_forwards_max_retries(llm, monkeypatch):
+    """``max_retries`` reaches the LLM instead of the Jinja context.
+
+    ``tools/base.py`` and ``tools/mcp.py`` both pass ``max_retries=3``, but
+    ``_invoke_prompt`` had no such parameter, so it fell into ``**prompt_kwargs``
+    and was rendered as template context. Those call sites silently ran with the
+    single attempt from ``Llm.create_kwargs``.
+    """
+    from lumen.ai.actor import Actor
+
+    seen = {}
+
+    async def fake_invoke(**kwargs):
+        seen.update(kwargs)
+        return "ok"
+
+    monkeypatch.setattr(llm, "invoke", fake_invoke)
+    actor = Actor(llm=llm)
+    await actor._invoke_prompt("main", [{"role": "user", "content": "hi"}], {}, max_retries=3)
+
+    assert seen["max_retries"] == 3

@@ -377,3 +377,18 @@ def test_read_geo_file_captures_crs():
     buf = io.BytesIO(gdf.to_json().encode())
     result = read_geo_file(buf, "geojson", "geo")
     assert result.source_params["geometry_crs"] == "EPSG:4326"
+
+
+@requires_geopandas
+def test_add_table_reads_geojson_as_geospatial(upload_controls):
+    """A .geojson upload is parsed by the geospatial reader, not the JSON reader,
+    which rejects a FeatureCollection as non-tabular."""
+    gdf = gpd.GeoDataFrame(
+        {"name": ["a"]}, geometry=[Polygon([(0, 0), (1, 0), (1, 1)])], crs="EPSG:4326"
+    )
+    buf = io.BytesIO(gdf.to_json().encode())
+    source = DuckDBSource(uri=":memory:", tables={})
+    card = UploadedFileRow(file_obj=buf, filename="shapes.geojson", alias="shapes")
+
+    assert upload_controls._add_table(source, buf, card) == 1
+    assert "geometry" in source.get("shapes").columns

@@ -100,8 +100,8 @@ DEFAULT_EMBEDDINGS_PATH = Path("embeddings")
 LUMEN_CACHE_DIR = Path(platformdirs.user_cache_dir("lumen"))
 LUMEN_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-VEGA_LITE_EXAMPLES_OPENAI_DB_FILE = "vega_lite_examples_openai.db"
-VEGA_LITE_EXAMPLES_NUMPY_DB_FILE = "vega_lite_examples_numpy.db"
+VEGA_LITE_DOCS_OPENAI_DB_FILE = "vega_lite_docs_openai.db"
+VEGA_LITE_DOCS_NUMPY_DB_FILE = "vega_lite_docs_numpy.db"
 VECTOR_STORE_ASSETS_URL = "https://assets.holoviz.org/lumen/vector_store/"
 
 UNRECOVERABLE_ERRORS = (

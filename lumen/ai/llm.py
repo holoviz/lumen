@@ -72,8 +72,26 @@ LLM_PROVIDERS = {
     'llama-cpp': 'LlamaCpp',
     'mlx': 'MLX',
     'litellm': 'LiteLLM',
-    'openrouter': 'OpenRouter'
+    'openrouter': 'OpenRouter',
+    'kilo': 'Kilo',
 }
+
+# Request parameters an OpenAI-compatible model may reject, and the value to
+# retry with; None omits the parameter entirely. Applied only after the API
+# names the parameter in a 400, so new models need no entry here.
+ADAPTIVE_KWARGS = {
+    "temperature": None,
+    "reasoning_effort": "none",
+}
+
+
+def find_bad_request(error: BaseException | None) -> openai.BadRequestError | None:
+    """Find a provider 400 on an exception's cause chain, if there is one."""
+    while error is not None:
+        if isinstance(error, openai.BadRequestError):
+            return error
+        error = error.__cause__
+    return None
 
 
 def get_available_llm() -> type[Llm] | None:
@@ -802,7 +820,7 @@ class Llm(param.Parameterized):
         try:
             self._ready = False
             await self.invoke(
-                messages=[{'role': 'user', 'content': 'Ready? "Y" or "N"'}],
+                messages=[{'role': 'user', 'content': 'Ready? Just "Y" or "N"'}],
                 model_spec="ui",
             )
             self._ready = True
@@ -973,11 +991,11 @@ class Llm(param.Parameterized):
                 role = message["type"]
             if role == "system":
                 content = message.get("content", "")
-                log_debug(f"System prompt ({len(content)} chars):\n\033[90m{content}\033[0m")
+                log_debug(f"System prompt:\n\033[90m{content}\033[0m", show_length=True)
                 continue
             content = message.get("content") if isinstance(message, dict) else None
             if not content and "tool_calls" in message:
-                content = truncate_string(json.dumps(message["tool_calls"], indent=2), max_length=1000)
+                content = truncate_string(json.dumps(message["tool_calls"], indent=2), max_length=10000)
             role_char = role[0]
             log_debug(f"Message \033[95m{i} ({role_char})\033[0m: {format_msg_content(content)}")
             if previous_role == role and not role.startswith("tool"):
@@ -998,7 +1016,7 @@ class Llm(param.Parameterized):
             log_debug(f"Response model: \033[93m{response_model.__name__!r}\033[0m")
             if isinstance(result, ImageResponse):
                 result = result.output
-        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
+        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=10000)}\033[0m\n---")
         return result
 
 
@@ -1112,11 +1130,12 @@ class OpenAI(Llm, OpenAIMixin):
     mode = param.Selector(default=Mode.TOOLS)
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "gpt-5.4-mini"},  # Use standard models, not reasoning models (gpt-5, o4-mini)
+        "default": {"model": "gpt-5.6-luna"},  # Runs with reasoning disabled; see _reasoning_models
         "ui": {"model": "gpt-5.4-nano"},
     })
 
     select_models = param.List(default=[
+        "gpt-5.6-luna",
         "gpt-5.2",
         "gpt-5-mini",
         "gpt-5-nano",
@@ -1128,6 +1147,12 @@ class OpenAI(Llm, OpenAIMixin):
     temperature = param.Number(default=0.25, bounds=(0, None), allow_None=True, constant=True)
 
     _supports_logfire = True
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        # Per-model request fixes learned from the API, e.g. gpt-5.6-luna
+        # rejecting a non-default temperature. See ADAPTIVE_KWARGS.
+        self._kwarg_fixes: dict[str, dict[str, Any]] = {}
 
     @classmethod
     def _resolve_openai_mode(cls, mode: Mode) -> Mode:
@@ -1401,7 +1426,42 @@ class OpenAI(Llm, OpenAIMixin):
         # Add timeout to the partial
         return partial(client_callable.func, *client_callable.args, timeout=self.timeout, **client_callable.keywords)
 
+    def _apply_kwarg_fixes(self, model: str, kwargs: dict[str, Any]):
+        for key, value in self._kwarg_fixes.get(model, {}).items():
+            if value is None:
+                kwargs.pop(key, None)
+            else:
+                kwargs[key] = value
+
+    def _learn_kwarg_fix(self, model: str, error: openai.BadRequestError) -> bool:
+        """
+        Record how to satisfy a model that rejected a request parameter,
+        returning whether anything new was learned. Explicit ``create_kwargs``
+        are never overridden, so a deliberate choice still surfaces its error.
+        """
+        fixes = self._kwarg_fixes.setdefault(model, {})
+        if error.param not in ADAPTIVE_KWARGS or error.param in fixes or error.param in self.create_kwargs:
+            return False
+        fixes[error.param] = ADAPTIVE_KWARGS[error.param]
+        log_debug(f"Adapting to \033[96m{model!r}\033[0m: {error.param}={fixes[error.param]!r}")
+        return True
+
     async def run_client(self, model_spec: str | dict, messages: list[Message] | list[dict[str, Any]], **kwargs):
+        model = self._get_model_kwargs(model_spec)["model"]
+        self._apply_kwarg_fixes(model, kwargs)
+        while True:
+            try:
+                return await self._send(model_spec, messages, **kwargs)
+            except Exception as e:
+                # instructor re-raises provider errors wrapped in its own
+                # retry exception, so the 400 is found on the cause chain.
+                error = find_bad_request(e)
+                # Each retry records one more parameter, so this terminates.
+                if error is None or not self._learn_kwarg_fix(model, error):
+                    raise
+                self._apply_kwarg_fixes(model, kwargs)
+
+    async def _send(self, model_spec: str | dict, messages: list[Message] | list[dict[str, Any]], **kwargs):
         if self.api == "chat_completions":
             return await super().run_client(model_spec, messages, **kwargs)
 
@@ -1411,7 +1471,7 @@ class OpenAI(Llm, OpenAIMixin):
             kwargs["tools"] = self._transform_responses_tools(kwargs.get("tools"))
         client = await self.get_client(model_spec, **kwargs)
         result = await client(input=messages, **kwargs)
-        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
+        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=10000)}\033[0m\n---")
         return result
 
 
@@ -1809,7 +1869,7 @@ class Anthropic(Llm, AnthropicMixin):
             log_debug(f"Response model: \033[93m{response_model.__name__!r}\033[0m")
             if isinstance(result, ImageResponse):
                 result = result.output
-        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
+        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=10000)}\033[0m\n---")
         return result
 
     @classmethod
@@ -2636,7 +2696,7 @@ class MLX(Llm):
                 self._create_chat_completion, messages, model=model_spec, **kwargs
             )
 
-        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
+        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=10000)}\033[0m\n---")
         return result
 
 
@@ -2782,7 +2842,7 @@ class WebLLM(Llm):
         self._status.name = pn.rx('Loading LLM {:.1f}%').format(progress)
         try:
             await self.invoke(
-                messages=[{'role': 'user', 'content': 'Ready? "Y" or "N"'}],
+                messages=[{'role': 'user', 'content': 'Ready? Just "Y" or "N"'}],
                 model_spec="ui",
             )
         except Exception as e:
@@ -2979,3 +3039,44 @@ class OpenRouter(OpenAI):
             for model in response.json().get("data", [])
             if model.get("id")
         }
+
+
+class Kilo(OpenAI):
+    """
+    An LLM implementation using the Kilo API.
+
+    Kilo provides an OpenAI-compatible endpoint that routes requests to
+    models from multiple providers. Kilo has a free tier, but for other models,
+    optionally set the ``KILO_API_KEY`` environment variable or pass ``api_key``
+    directly. The provider is auto-detected when
+    ``KILO_API_KEY`` is present, or can be selected explicitly with
+    ``--provider kilo``.
+    """
+
+    api_key_env_var: str = PROVIDER_ENV_VARS["kilo"]
+
+    display_name = param.String(
+        default="Kilo",
+        constant=True,
+        doc="Display name for UI",
+    )
+
+    endpoint = param.String(
+        default="https://api.kilo.ai/api/gateway",
+        doc="The Kilo API endpoint.",
+    )
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "kilo-auto/free"},
+    })
+
+    select_models = param.List(default=[
+        "kilo-auto/free",
+        "kilo-auto/balanced",
+        "kilo-auto/efficient",
+        "kilo-auto/frontier",
+    ], constant=True, doc="Available Kilo models for selection dropdowns.")
+
+    def models(self) -> set[str]:
+        """Return the set of available model identifiers from Kilo."""
+        return {model_json["id"] for model_json in requests.get("https://api.kilo.ai/api/gateway/models").json()["data"]}
