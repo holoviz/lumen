@@ -877,9 +877,9 @@ class DropNA(Transform):
 
     def apply(self, table: DataFrame) -> DataFrame:
         kwargs = {'axis': self.axis, 'subset': self.subset}
-        if self.how:
+        if self.how and self.thresh is None:
             kwargs['how'] = self.how
-        if self.thresh:
+        if self.thresh is not None:
             kwargs['thresh'] = self.thresh
         return table.dropna(**kwargs)
 
