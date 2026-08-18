@@ -163,7 +163,7 @@ def test_native_path_is_actually_taken(constructor, caplog, transform, kwargs, f
         pytest.skip('documented fallback')
     with caplog.at_level('WARNING'):
         transform.apply_to(constructor(FRAMES[frame_name]), **kwargs)
-    assert_native_path(caplog, getattr(constructor, '__module__', '').split('.')[0])
+    assert_native_path(caplog, constructor.__module__.split('.')[0])
 
 
 ORDERED = [c for c in CASES if c[0] in (Sort, Iloc, Aggregate, Filter)]

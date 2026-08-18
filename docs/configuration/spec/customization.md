@@ -197,7 +197,7 @@ class APISource(Source):
 A custom `Source` does not have to return pandas. Any dataframe library
 [narwhals](https://narwhals-dev.github.io/narwhals/) supports, such as polars or
 pyarrow, is accepted, and schema generation, filtering and the transforms listed
-below run on it natively. Two things to know before choosing one:
+below run on it natively. Things to know before choosing one:
 
 - `filter`, `aggregate`, `sort`, `columns`, `iloc`, `sample`, `melt`, `rename`
   and `dropna` run natively for their common configurations. Everything else
@@ -205,13 +205,16 @@ below run on it natively. Two things to know before choosing one:
   safe and never silent.
 - Conversion is per configuration, not per transform. `aggregate` converts
   unless `with_index: false`, and its `method` must be one of `min`, `max`,
-  `mean`, `sum`, `std` or `var` — other pandas aggregation names either do not
+  `mean`, `sum`, `std` or `var`. Other pandas aggregation names either do not
   exist in narwhals or do not mean the same thing there, so they take the
   pandas path. `sort` converts when `by` is empty, `dropna` for `how: all`,
   `axis: 1` or `thresh`, `rename` for index or level renames, and `melt` for an
   empty `value_vars`.
 - Anything touching the pandas index (`query`, `eval`, `stack`, `unstack`,
   `set_index`, `reset_index`) always converts.
+- Views convert to pandas regardless, because hvPlot, Tabulator, Perspective and
+  Vega only read pandas. Returning polars saves work up to the view, not through
+  it.
 
 To pin what `Pipeline.data` comes back as regardless of the Source, set
 `dataframe_backend` to `pandas`, `polars` or `pyarrow`. Leaving it unset keeps
@@ -224,9 +227,6 @@ pipelines:
     table: sales
     dataframe_backend: polars
 ```
-- Views convert to pandas regardless, because hvPlot, Tabulator, Perspective and
-  Vega only read pandas. Returning polars saves work up to the view, not through
-  it.
 
 Reference in YAML:
 
