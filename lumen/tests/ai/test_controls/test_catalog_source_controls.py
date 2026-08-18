@@ -57,6 +57,35 @@ async def test_load_from_query_preserves_string_index_through_vector_store():
 
 
 @pytest.mark.asyncio
+async def test_load_from_query_serializes_timestamp_index_for_vector_store():
+    controls = _CatalogControls(context={})
+    index = pd.to_datetime(["2025-01-01", "2025-01-02"])
+    controls.catalog_df = pd.DataFrame(
+        {"name": ["first", "target"]}, index=index
+    )
+    controls.vector_store = AsyncMock()
+
+    await controls._embed()
+
+    items = controls.vector_store.upsert.await_args.args[0]
+    row_idx = items[1]["metadata"]["_row_idx"]
+    assert row_idx == str(index[1])
+
+    controls.vector_store.query.return_value = [
+        {
+            "metadata": {
+                "type": "catalog_entry",
+                "_control_id": id(controls),
+                "_row_idx": row_idx,
+            }
+        }
+    ]
+    result = await controls._load_from_query("target")
+
+    assert result.table == "target"
+
+
+@pytest.mark.asyncio
 async def test_load_from_query_registers_source_output_once_when_in_context():
     source = DuckDBSource.from_df(tables={"target": pd.DataFrame({"value": [1]})})
     controls = _CatalogControls(context={"sources": [source]})
