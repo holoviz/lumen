@@ -967,6 +967,20 @@ class hvPlotBaseView(View):
 
     by = param.ListSelector(doc="The column(s) to facet the plot by.")
 
+    color_key = param.Dict(default=None, doc="""
+        Mapping of the values in `by` to explicit colors, e.g.
+        {'Irish': '#e41a1c', 'Italian': '#377eb8'}. Only meaningful with
+        datashade; without it datashader picks a categorical palette.""")
+
+    datashade = param.Boolean(default=False, doc="""
+        Aggregate the data server-side with datashader and send an image
+        instead of one glyph per row. Combined with `by` this blends the
+        categories present in each pixel, rather than overplotting them.""")
+
+    dynspread = param.Boolean(default=False, doc="""
+        Grow isolated points so sparse regions stay visible after
+        datashading. Has no effect unless datashade is enabled.""")
+
     groupby = param.ListSelector(doc="The column(s) to group by.")
 
     z = param.Selector(doc="""
@@ -1013,7 +1027,7 @@ class hvPlotBaseView(View):
         n = len(df)
         if n <= MAX_RENDER_ROWS or self.kind in REDUCING_KINDS:
             return
-        if self.kwargs.get('rasterize') or self.kwargs.get('datashade'):
+        if self.datashade or self.kwargs.get('rasterize'):
             return
         raise ValueError(
             f"Cannot render {n:,} rows as kind={self.kind!r}: each row becomes a "
@@ -1036,14 +1050,20 @@ class hvPlotUIView(hvPlotBaseView):
     view_type = 'hvplot_ui'
 
     def _get_args(self, explorer_cls=None, data=None):
-        from hvplot.ui import Geographic, hvPlotExplorer  # type: ignore
+        from hvplot.ui import (  # type: ignore
+            Colormapping, Geographic, Operations, hvPlotExplorer,
+        )
         if explorer_cls is None:
             explorer_cls = hvPlotExplorer
         if data is None:
             data = self.get_data()
+        # The explorer keeps colormapping and datashading on nested controls, so
+        # a param is only forwarded if one of them claims it; anything else is
+        # rejected by hvPlotExplorer.__init__.
+        controls = (explorer_cls.param, Geographic.param, Colormapping.param, Operations.param)
         params = {
             k: v for k, v in self.param.values().items()
-            if (k in explorer_cls.param or k in Geographic.param)
+            if any(k in control for control in controls)
             and v is not None and k != 'name'
         }
         return (data,), dict(params, **self.kwargs)
@@ -1187,6 +1207,14 @@ class hvPlotView(hvPlotBaseView):
             processed['stream'] = self._data_stream
         if self.z is not None:
             processed['C' if self.kind == 'heatmap' else 'z'] = self.z
+        # Params are stripped out of kwargs by View.__init__, so anything hvPlot
+        # needs has to be put back explicitly.
+        if self.datashade:
+            processed['datashade'] = True
+        if self.dynspread:
+            processed['dynspread'] = True
+        if self.color_key is not None:
+            processed['color_key'] = self.color_key
 
         kind = self.kind
         plot_source = df
