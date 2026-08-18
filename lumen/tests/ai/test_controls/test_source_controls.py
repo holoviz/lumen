@@ -20,6 +20,7 @@ from lumen.ai.controls import (
 )
 from lumen.ai.controls.ingest.download import DownloadSourceControls
 from lumen.ai.controls.ingest.parametric import ParametricSourceControls
+from lumen.ai.controls.ingest.rest_api import RESTAPISourceControls
 from lumen.ai.controls.ingest.utils import (
     read_html_tables, read_json_to_dataframe,
 )
@@ -622,3 +623,29 @@ class TestApplyOverrides:
 
         assert "y" not in params_dict
         assert params_dict["x"].default == "value"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RESTAPISourceControls Tests
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestRESTAPISourceControlsEmbedding:
+    """Tests for vector store embedding in RESTAPISourceControls."""
+
+    def test_construction_with_vector_store(self, vector_store):
+        """A vector_store does not break action setup."""
+        controls = RESTAPISourceControls(
+            base_url="https://api.example.com",
+            endpoints={
+                "Alerts": {
+                    "method": "get",
+                    "path": "/alerts",
+                    "description": "Fetch alerts",
+                    "parameters": [{"name": "area", "in": "query"}],
+                },
+            },
+            vector_store=vector_store,
+        )
+
+        assert [name for name, _ in controls.as_tools()] == ["Alerts"]

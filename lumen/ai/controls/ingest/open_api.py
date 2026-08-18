@@ -124,7 +124,7 @@ class OpenAPISourceControls(RESTAPISourceControls):
             self._layout.loading = False
 
         if self.vector_store is not None:
-            asyncio.create_task(self._embed_actions())  # noqa: RUF006
+            asyncio.create_task(self._embed())  # noqa: RUF006
 
     # ──────────────────────────────────────────────────────────────────────────
     # Type resolution (overrides RESTAPISourceControls default)
