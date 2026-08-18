@@ -414,6 +414,7 @@ def test_pipeline_dataframe_backend_rejects_unknown():
 
 def test_describe_data_accepts_any_backend(constructor):
     """describe_data converts internally so callers do not have to."""
+    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
     from lumen.ai.utils import describe_data_sync
     summary = describe_data_sync(constructor({"i": [0, 1, 2], "s": ["a", "b", "c"]}))
     assert "data_shape" in summary
