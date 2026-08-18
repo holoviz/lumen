@@ -6,6 +6,12 @@ no repeated columns allowed. Do not arbitrarily set `groupby` and `by` fields un
 histogram requested, use `y` instead of `x`. If x categorical or strings, prefer barh over bar, and use `y` for
 values. If column has `format: geometry`, set `kind` from its `geometry_type`: `polygons` for Polygon or
 MultiPolygon, `paths` for LineString or MultiLineString, otherwise `points`.
+
+To color a dense scatter or point cloud by a category, set `by` to that column and `datashade=True`; this
+aggregates per pixel and blends the categories sharing one, instead of drawing points on top of each other.
+Add `dynspread=True` when the points are sparse enough to disappear. Set `color_key` to an explicit
+{category: hex} mapping only when the user names colors or asks for a specific palette; otherwise leave it
+unset and a categorical palette is chosen. Do not set `datashade` for a plot with no `by`.
 {%- if gridded is defined and gridded %}
 
 For gridded xarray data (dimensions {{ gridded.dims | join(', ') }}, variables {{ gridded.data_vars | join(', ') }}), pick framing request calls for:

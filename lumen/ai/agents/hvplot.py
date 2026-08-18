@@ -70,6 +70,11 @@ class hvPlotAgent(BaseViewAgent):
         spec["responsive"] = True
         data = await get_data(pipeline)
         if len(data) > 20000 and spec["kind"] in ("line", "scatter", "points"):
-            spec["rasterize"] = True
-            spec["cnorm"] = "log"
+            if spec.get("by"):
+                # rasterize reduces to a single number per pixel, which throws
+                # away the category; datashade blends the ones sharing a pixel.
+                spec["datashade"] = True
+            else:
+                spec["rasterize"] = True
+                spec["cnorm"] = "log"
         return spec
