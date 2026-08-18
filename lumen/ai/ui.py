@@ -456,7 +456,7 @@ class UI(Viewer):
     source_controls = param.List(default=[UploadSourceControls, DownloadSourceControls], doc="""
         List of SourceControls types to manage datasets.""")
 
-    filedropper_kwargs = param.Dict(default={}, doc="""Keyword arguments to pass to FileDropper in UploadControls.
+    filedropper_kwargs = param.Dict(default={}, doc="""Keyword arguments to pass to FileDropper in UploadSourceControls.
         Common options include 'accepted_filetypes' and 'max_file_size'.
         See https://panel.holoviz.org/reference/widgets/FileDropper.html for all available options.""")
 
