@@ -14,7 +14,6 @@ from ...pipeline import Pipeline
 from ...sources.base import BaseSQLSource, Source
 from ...sources.duckdb import DuckDBSource
 from ...transforms.sql import SQLLimit
-from ...util import as_pandas
 from ..config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from ..context import ContextModel, TContext
 from ..data_quality import lint_data
@@ -430,7 +429,7 @@ def make_apply_filter_tool(pipeline: Pipeline) -> FunctionTool:
             pipeline.add_filter(filt)
         except Exception as exc:
             return f"Could not apply filter on {field!r} with value {value!r}: {exc}"
-        return f"Applied filter on {field!r} ({value!r}); {len(as_pandas(pipeline.data))} rows match."
+        return f"Applied filter on {field!r} ({value!r})."
 
     fields = ", ".join(filterable) or "(none)"
     apply_filter.__doc__ = (

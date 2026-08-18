@@ -20,7 +20,7 @@ from panel.chat import ChatStep
 
 from ...pipeline import Pipeline
 from ...sources.duckdb import DuckDBSource
-from ...util import as_pandas, normalize_table_name
+from ...util import normalize_table_name
 from ..config import PROMPTS_DIR
 from ..context import ContextModel, TContext
 from ..controls.ingest.base import BaseSourceControls
@@ -429,7 +429,7 @@ class SourceAgent(Agent):
             context["source"] = source
             pipeline = await get_pipeline(source=source, table=table_name)
             metaset = await get_metaset([source], [table_name])
-            df = await asyncio.to_thread(lambda: as_pandas(pipeline.data))
+            df = await asyncio.to_thread(lambda: pipeline.data)
             summary = await _summarize_source_data(df)
             return source, table_name, df, summary, pipeline, metaset
 

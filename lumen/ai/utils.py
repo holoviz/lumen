@@ -628,9 +628,8 @@ async def get_data(pipeline):
     block the main thread when calling pipeline.data
     """
     def get_data_sync():
-        # Every agent reaches the data through here, and everything downstream
-        # (describe_data_sync, result_to_dataframe, the code sandbox) is written
-        # against pandas, so any other dataframe library is materialized here.
+        # result_to_dataframe and the LLM code sandbox are written against
+        # pandas. describe_data converts for itself, and so do the views.
         return as_pandas(pipeline.data)
     return await asyncio.to_thread(get_data_sync)
 
@@ -742,7 +741,7 @@ def _select_relevant_columns(
 
 
 def describe_data_sync(
-    df: pd.DataFrame,
+    df: Any,
     enum_limit: int = 3,
     reduce_enums: bool = True,
     row_limit: int | None = None,
@@ -754,8 +753,8 @@ def describe_data_sync(
 
     Parameters
     ----------
-    df : pd.DataFrame
-        The DataFrame to describe
+    df : Any
+        The DataFrame to describe, in pandas or any library narwhals supports
     enum_limit : int
         Maximum number of enum values to show per column
     reduce_enums : bool
@@ -779,6 +778,9 @@ def describe_data_sync(
     str
         YAML-formatted summary of the DataFrame
     """
+    # Accept any frame narwhals understands. The summary itself is pandas-only
+    # for now, so converting here keeps it to one place to change later.
+    df = as_pandas(df)
     size = df.size
     shape = df.shape
     shape_header = {"data_shape": [int(shape[0]), int(shape[1])], "is_sampled": False}
@@ -938,7 +940,7 @@ def describe_data_sync(
 
 
 async def describe_data(
-    df: pd.DataFrame,
+    df: Any,
     enum_limit: int = 3,
     reduce_enums: bool = True,
     row_limit: int | None = None,
@@ -950,8 +952,8 @@ async def describe_data(
 
     Parameters
     ----------
-    df : pd.DataFrame
-        The DataFrame to describe
+    df : Any
+        The DataFrame to describe, in pandas or any library narwhals supports
     enum_limit : int
         Maximum number of enum values to show per column
     reduce_enums : bool
