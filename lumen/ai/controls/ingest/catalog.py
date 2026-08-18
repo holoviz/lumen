@@ -291,10 +291,7 @@ class CatalogSourceControls(BaseSourceControls):
                 or match_idx >= len(self.catalog_df)
             ):
                 return SourceResult.empty(no_match)
-            try:
-                entry = self.catalog_df.iloc[match_idx]
-            except (IndexError, TypeError):
-                return SourceResult.empty(no_match)
+            entry = self.catalog_df.iloc[match_idx]
             result = await self._fetch_entry(entry)
             # The SourceAgent path bypasses _run_load, so apply the same output
             # registration and event handling as the Tabulator click path.
