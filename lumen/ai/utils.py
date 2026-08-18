@@ -53,6 +53,7 @@ from .config import (
 )
 
 if TYPE_CHECKING:
+    from narwhals.stable.v2.typing import Frame, IntoFrame
     from panel.chat.step import ChatStep
 
     from .editors import VegaLiteEditor
@@ -741,7 +742,7 @@ def _select_relevant_columns(
 
 
 def describe_data_sync(
-    df: Any,
+    df: IntoFrame | Frame,
     enum_limit: int = 3,
     reduce_enums: bool = True,
     row_limit: int | None = None,
@@ -753,7 +754,7 @@ def describe_data_sync(
 
     Parameters
     ----------
-    df : Any
+    df : IntoFrame | Frame
         The DataFrame to describe, in pandas or any library narwhals supports
     enum_limit : int
         Maximum number of enum values to show per column
@@ -940,7 +941,7 @@ def describe_data_sync(
 
 
 async def describe_data(
-    df: Any,
+    df: IntoFrame | Frame,
     enum_limit: int = 3,
     reduce_enums: bool = True,
     row_limit: int | None = None,
@@ -952,7 +953,7 @@ async def describe_data(
 
     Parameters
     ----------
-    df : Any
+    df : IntoFrame | Frame
         The DataFrame to describe, in pandas or any library narwhals supports
     enum_limit : int
         Maximum number of enum values to show per column
