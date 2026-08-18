@@ -121,7 +121,7 @@ features = [
 media = "(prefers-color-scheme)"
 
 [project.theme.palette.toggle]
-icon = "material/BrightnessAuto"
+icon = "material/brightness-auto"
 name = "Switch to light mode"
 
 [[project.theme.palette]]
