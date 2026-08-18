@@ -198,7 +198,7 @@ class RESTAPISourceControls(ParametricSourceControls):
                 skip_params=self.skip_params if hasattr(self, "skip_params") else None,
             )
         if self.vector_store is not None:
-            pn.state.execute(self._embed_actions)
+            pn.state.execute(self._embed)
 
     def _make_endpoint_callable(self, spec: dict) -> Callable:
         """
