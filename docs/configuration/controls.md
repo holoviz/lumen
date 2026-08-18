@@ -63,7 +63,7 @@ Requires the `kagglehub` package:
 pip install kagglehub
 ```
 
-If `kagglehub` is not installed, Kaggle URL support is silently disabled.
+If `kagglehub` is not installed, the input placeholder stops advertising Kaggle URLs, and pasting one returns a message telling you to install the package.
 
 ### Creating custom controls
 
@@ -429,7 +429,7 @@ class MesonetDailyControls(URLSourceControls):
 
 ### RESTAPISourceControls
 
-`RESTAPISourceControls` exposes manually-defined REST API endpoints. Each endpoint is described with `method`, `path`, `summary`, `description`, and `parameters`, and the control builds a typed callable (rendered as widgets) for each one.
+`RESTAPISourceControls` exposes manually-defined REST API endpoints. Each endpoint is described with `method`, `path`, `summary`, `description`, and `parameters`, and the control builds a callable (rendered as widgets) for each one.
 
 ```python
 from lumen.ai.controls import RESTAPISourceControls
