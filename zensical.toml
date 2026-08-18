@@ -27,7 +27,8 @@ nav = [
       {"Census Data AI Explorer" = "examples/tutorials/census_data_ai_explorer.md"},
       {"Mesonet Weather Explorer" = "examples/tutorials/mesonet_weather_explorer.md"},
       {"Weather API Explorer" = "examples/tutorials/weather_openapi_explorer.md"},
-      {"Massive Stock Explorer" = "examples/tutorials/massive_stock_explorer.md"}
+      {"Massive Stock Explorer" = "examples/tutorials/massive_stock_explorer.md"},
+      {"Build Dashboard with Spec" = "examples/tutorials/penguins_dashboard_spec.md"}
     ]},
     {"Gallery" = [
       {"Overview" = "examples/gallery/index.md"},
