@@ -33,19 +33,19 @@ Lumen ships with a set of built-in source controls:
 | `UploadSourceControls` | Concrete | Uploading local files (CSV, Excel, etc.) |
 | `DownloadSourceControls` | Concrete | Fetching data from URLs (including Kaggle datasets) |
 | `CodeSourceControls` | Concrete | Wrapping Python functions or object methods as data sources |
-| `URLSourceControls` | Concrete | Fetching data from URL templates |
-| `RESTAPISourceControls` | Concrete | Defining REST API endpoints manually |
+| `URLSourceControls` | Base class | Fetching data from URL templates |
+| `RESTAPISourceControls` | Base class | Defining REST API endpoints manually |
 | `OpenAPISourceControls` | Concrete | Auto-discovering endpoints from an OpenAPI spec |
 | `CatalogSourceControls` | Base class | Browsing and loading from a pre-fetched dataset catalog |
 
-`UploadSourceControls` stages selected files before processing. After selecting files, click `Upload file(s)` to process them, or `Clear selected` to reset the staged selection.
+`UploadSourceControls` stages selected files before processing. After selecting files, click `Upload file(s)` to process them, or `Clear selected` to reset the staged selection. `DownloadSourceControls` uses the inherited label, `Confirm file(s)`.
 
 Both `UploadSourceControls` and `DownloadSourceControls` inherit from `FileSourceControls`, which classifies each file as either **data** or **metadata**:
 
-- **Data files** (CSV, Parquet, JSON, Excel, GeoJSON, HTML, scientific formats, etc.) are parsed into DuckDB tables.
-- **Metadata files** (e.g. `md`, `txt`, `yaml`, `yml`, `pdf`, `docx`, `pptx`, ...) or files whose name contains `metadata`, `readme`, or `schema` are added to the document vector store so the agent can retrieve their contents.
+- **Data files** (CSV, Parquet, Excel, GeoJSON, HTML, scientific formats, etc.) are parsed into DuckDB tables.
+- **Metadata files** (`md`, `txt`, `yaml`, `yml`, `json`, `pdf`, `docx`, `doc`, `pptx`, `ppt`) or files whose name contains `_metadata`, `metadata_`, `readme`, or `schema` are added to the document vector store so the agent can retrieve their contents.
 
-For each file you can toggle between `data` and `metadata`, edit its table alias, and (for `.xlsx` files) pick the sheet to import.
+Extensions in both lists resolve to metadata, so a `.json` file is treated as metadata by default. For each file you can toggle between `data` and `metadata`, edit its table alias, and (for `.xlsx` files) pick the sheet to import.
 
 #### Kaggle datasets
 
@@ -237,13 +237,13 @@ def _update_year_options(self):
 
 ## Catalog controls
 
-`CatalogSourceControls` is a base class for controls that browse a pre-fetched catalog of datasets, letting users click a row to ingest that dataset. When a `vector_store` is provided, catalog entries are embedded in the background so the `SourceAgent` can search and load them from a natural-language query.
+`CatalogSourceControls` is a base class for controls that browse a pre-fetched catalog of datasets, letting users click a row to ingest that dataset. The `SourceAgent` can search and load entries from a natural-language query out of the box, using keyword matching over `search_columns`. Passing a `vector_store` embeds the entries in the background and upgrades that search to semantic matching.
 
 Subclasses implement three methods:
 
 | Method | Purpose |
 |--------|---------|
-| `_load_catalog()` | Fetch the catalog `DataFrame` once at startup |
+| `_load_catalog()` | Fetch the catalog `DataFrame` once on session load |
 | `_fetch_entry(entry)` | Download and process a single catalog entry, returning a `SourceResult` |
 | `_entry_to_text(entry)` | (Optional) text representation used for vector embedding (defaults to joining `search_columns`) |
 
@@ -255,12 +255,16 @@ Class-level attributes configure the `Tabulator` browser:
 | `filter_columns` | `{col: header_filter config}` for column filtering |
 | `search_columns` | Column names concatenated for vector embedding |
 | `detail_columns` | Column names shown in the expanded row detail view |
-| `vector_store` | Optional `VectorStore`; entries are embedded for agent search |
+
+Semantic search is enabled separately by passing a `vector_store` to the constructor, as with every other control.
+
+The catalog is fetched via `pn.state.onload`, so these controls only populate inside a served Panel session (`panel serve`), not in a plain script or notebook.
 
 ```python
 import pandas as pd
 
 from lumen.ai.controls import CatalogSourceControls, SourceResult
+from lumen.util import normalize_table_name
 
 
 class CensusCatalogControls(CatalogSourceControls):
@@ -276,10 +280,10 @@ class CensusCatalogControls(CatalogSourceControls):
 
     async def _fetch_entry(self, entry: pd.Series) -> SourceResult:
         df = await download(entry["url"])
-        return SourceResult.from_dataframe(df, entry["name"])
+        return SourceResult.from_dataframe(df, normalize_table_name(entry["name"]))
 ```
 
-Agents can ingest a dataset by calling `load_entry(row_idx)`, or by searching the catalog via the control's tool exposed through `as_tools()`.
+Agents ingest a dataset by searching the catalog via the control's tool exposed through `as_tools()`.
 
 ## Parametric controls
 
@@ -455,11 +459,11 @@ controls = RESTAPISourceControls(
 | `headers` | Default HTTP headers sent with every request |
 | `endpoints` | `{display_name: endpoint_spec}`; each spec has `method`, `path`, `summary`, `description`, `parameters` |
 
-Endpoint parameters support `type`, `enum` (rendered as a dropdown), `required`, `default`, and `description`. Override `_resolve_param_type()` for richer type mapping.
+Endpoint parameters support `enum` (rendered as a dropdown), `required`, `default`, and `description`. The base class renders every parameter as a string; override `_resolve_param_type()` to map the `type` field onto real Python types, as `OpenAPISourceControls` does.
 
 ### OpenAPISourceControls
 
-`OpenAPISourceControls` fetches an OpenAPI 3.x spec at startup, resolves `$ref` references, and registers every path/method pair as an action — no manual endpoint definitions needed.
+`OpenAPISourceControls` fetches an OpenAPI 3.x spec on session load, resolves `$ref` references, and registers every path/method pair as an action, with no manual endpoint definitions needed. Like `CatalogSourceControls`, it fetches via `pn.state.onload` and so only populates under `panel serve`.
 
 ```python
 from lumen.ai.controls import OpenAPISourceControls
