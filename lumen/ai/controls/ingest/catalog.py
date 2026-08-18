@@ -238,19 +238,16 @@ class CatalogSourceControls(BaseSourceControls):
             return
 
         items = []
-        for idx, row in self.catalog_df.iterrows():
+        for pos, (_, row) in enumerate(self.catalog_df.iterrows()):
             text = self._entry_to_text(row)
             if not text:
                 continue
 
             # Structured metadata for post-semantic filtering
             # VectorStore metadata values must be str/int/float/bool
-            row_idx = idx.item() if hasattr(idx, "item") else idx
-            if not isinstance(row_idx, (str, int, float, bool)):
-                row_idx = str(row_idx)
             metadata = {
                 "type": "catalog_entry",
-                "_row_idx": row_idx,
+                "_row_idx": pos,
                 "_control_id": id(self),
             }
             for col in self.filter_columns:
@@ -286,24 +283,22 @@ class CatalogSourceControls(BaseSourceControls):
             return SourceResult.empty("Catalog not yet loaded.")
 
         match_idx = await self._search_catalog(query)
-        if match_idx is None:
-            return SourceResult.empty(
-                f"No dataset matching '{query}' found in catalog."
-            )
-
-        entry = self.catalog_df.loc[match_idx]
+        no_match = f"No dataset matching '{query}' found in catalog."
         try:
+            if (
+                not isinstance(match_idx, int)
+                or match_idx < 0
+                or match_idx >= len(self.catalog_df)
+            ):
+                return SourceResult.empty(no_match)
+            try:
+                entry = self.catalog_df.iloc[match_idx]
+            except (IndexError, TypeError):
+                return SourceResult.empty(no_match)
             result = await self._fetch_entry(entry)
-            # Register the source on the control so the UI's
-            # _sync_sources watcher fires and the SourceCatalog
-            # ("Available Sources") is updated.  When invoked
-            # via the Tabulator click path this happens inside
-            # _run_load → _handle_success; the SourceAgent path
-            # bypasses _run_load so we do it explicitly here.
-            if result and result.sources:
-                for src in result.sources:
-                    self._register_source_output(src)
-                self.param.trigger("outputs")
+            # The SourceAgent path bypasses _run_load, so apply the same output
+            # registration and event handling as the Tabulator click path.
+            self._handle_success(result)
             return result
         finally:
             # _fetch_entry may update the progress bar (e.g.
@@ -327,8 +322,8 @@ class CatalogSourceControls(BaseSourceControls):
         self._cached_catalog_tools = tools
         return tools
 
-    async def _search_catalog(self, query: str) -> object | None:
-        """Find the best matching catalog row index label for *query*.
+    async def _search_catalog(self, query: str) -> int | None:
+        """Find the best matching catalog row position for *query*.
 
         Uses vector search when a ``vector_store`` is available and
         falls back to keyword matching on ``search_columns``.
@@ -356,11 +351,11 @@ class CatalogSourceControls(BaseSourceControls):
         best_idx = None
         best_score = 0
 
-        for idx, row in self.catalog_df.iterrows():
+        for pos, (_, row) in enumerate(self.catalog_df.iterrows()):
             text = self._entry_to_text(row).lower()
             score = sum(1 for word in query_words if word in text)
             if score > best_score:
                 best_score = score
-                best_idx = idx
+                best_idx = pos
 
         return best_idx if best_score > 0 else None
