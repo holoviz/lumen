@@ -245,9 +245,12 @@ class CatalogSourceControls(BaseSourceControls):
 
             # Structured metadata for post-semantic filtering
             # VectorStore metadata values must be str/int/float/bool
+            row_idx = idx.item() if hasattr(idx, "item") else idx
+            if not isinstance(row_idx, (str, int, float, bool)):
+                row_idx = str(row_idx)
             metadata = {
                 "type": "catalog_entry",
-                "_row_idx": int(idx) if not isinstance(idx, int) else idx,
+                "_row_idx": row_idx,
                 "_control_id": id(self),
             }
             for col in self.filter_columns:
@@ -288,7 +291,7 @@ class CatalogSourceControls(BaseSourceControls):
                 f"No dataset matching '{query}' found in catalog."
             )
 
-        entry = self.catalog_df.iloc[match_idx]
+        entry = self.catalog_df.loc[match_idx]
         try:
             result = await self._fetch_entry(entry)
             # Register the source on the control so the UI's
@@ -298,10 +301,8 @@ class CatalogSourceControls(BaseSourceControls):
             # _run_load → _handle_success; the SourceAgent path
             # bypasses _run_load so we do it explicitly here.
             if result and result.sources:
-                existing = self.context.get("sources", [])
                 for src in result.sources:
-                    if src not in existing:
-                        self._register_source_output(src)
+                    self._register_source_output(src)
                 self.param.trigger("outputs")
             return result
         finally:
@@ -326,8 +327,8 @@ class CatalogSourceControls(BaseSourceControls):
         self._cached_catalog_tools = tools
         return tools
 
-    async def _search_catalog(self, query: str) -> int | None:
-        """Find the best matching catalog row index for *query*.
+    async def _search_catalog(self, query: str) -> object | None:
+        """Find the best matching catalog row index label for *query*.
 
         Uses vector search when a ``vector_store`` is available and
         falls back to keyword matching on ``search_columns``.
