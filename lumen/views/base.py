@@ -1001,13 +1001,28 @@ class hvPlotBaseView(View):
                 import hvplot.dask  # type: ignore  # noqa: F401
             except Exception:
                 pass
-        if 'by' in params and isinstance(params['by'], str):
-            params['by'] = [params['by']]
-        if 'groupby' in params and isinstance(params['groupby'], str):
-            params['groupby'] = [params['groupby']]
+        for key in ('by', 'groupby'):
+            if key in params:
+                params[key] = self._as_column_list(params[key])
         if params.get("geo") and params.get("kind") in (None, "scatter"):
             params["kind"] = "points"
         super().__init__(**params)
+
+    @staticmethod
+    def _as_column_list(value):
+        """Accept a bare column name wherever a list of them is expected."""
+        return [value] if isinstance(value, str) else value
+
+    @classmethod
+    def _validate_by(cls, value, spec, context):
+        # Spec validation runs before __init__, so without this a spec saying
+        # `by: family` is rejected by the ListSelector before the coercion
+        # above ever gets to see it.
+        return cls._as_column_list(value)
+
+    @classmethod
+    def _validate_groupby(cls, value, spec, context):
+        return cls._as_column_list(value)
 
     @classproperty
     def _valid_keys_(cls):

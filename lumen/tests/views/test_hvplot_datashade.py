@@ -203,3 +203,33 @@ def test_render_cap_still_raises_without_aggregation(categorical_pipeline, monke
 
     with pytest.raises(ValueError, match="10 rows"):
         view._check_render_size(over_cap)
+
+
+# ---- A single column name where a list is expected ----
+
+@pytest.mark.parametrize("key", ["by", "groupby"])
+def test_spec_accepts_a_bare_column_name(categorical_pipeline, key):
+    """__init__ coerces a string, but validate() runs on the raw spec first, so
+    without a matching hook a spec saying `by: family` was rejected before the
+    coercion written for it ever ran."""
+    spec = {"type": "hvplot", "kind": "points", "x": "x", "y": "y", key: "ancestry"}
+
+    validated = hvPlotView.validate(dict(spec))
+
+    assert validated[key] == ["ancestry"]
+
+
+@pytest.mark.parametrize("key", ["by", "groupby"])
+def test_spec_leaves_a_list_alone(categorical_pipeline, key):
+    spec = {"type": "hvplot", "kind": "points", "x": "x", "y": "y", key: ["ancestry"]}
+
+    assert hvPlotView.validate(dict(spec))[key] == ["ancestry"]
+
+
+@pytest.mark.parametrize("key", ["by", "groupby"])
+def test_constructor_still_coerces_a_bare_column_name(categorical_pipeline, key):
+    view = hvPlotView(
+        pipeline=categorical_pipeline, kind="points", x="x", y="y", **{key: "ancestry"}
+    )
+
+    assert getattr(view, key) == ["ancestry"]
