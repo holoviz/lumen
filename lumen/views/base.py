@@ -1108,7 +1108,11 @@ class hvPlotUIView(hvPlotBaseView):
             if any(k in control for control in controls)
             and v is not None and k != 'name'
         }
-        if self.color_key is not None:
+        # Only completed once a control has claimed it above: hvPlot gained the
+        # color_key control after this was written, and forcing the keyword in
+        # regardless makes hvPlotExplorer.__init__ reject it outright on an
+        # older hvPlot rather than simply coloring from the default palette.
+        if 'color_key' in params:
             params['color_key'] = self._complete_color_key(data)
         return (data,), dict(params, **self.kwargs)
 
