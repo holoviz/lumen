@@ -935,7 +935,7 @@ async def test_routing_invoked_with_dict_spec_and_decision_used(monkeypatch):
     assert routed_messages == [{"role": "user", "content": "hi"}]
     assert routed_kwargs["model_spec"] == {"model": "router-model"}
     assert routed_kwargs["tools"] == []
-    assert routed_kwargs["system"] == llm._routing_system_prompt()
+    assert routed_kwargs["system"] == llm._routing_system_prompt("edit")
     assert issubclass(routed_kwargs["response_model"], BaseModel)
 
 
@@ -960,7 +960,7 @@ async def test_routing_prompt_lists_options_with_descriptions(monkeypatch):
     await llm._resolve_routing("edit", messages)
 
     routed_messages, routed_kwargs = calls[0]
-    assert routed_kwargs["system"] == llm._routing_system_prompt()
+    assert routed_kwargs["system"] == llm._routing_system_prompt("edit")
     assert "Best for editing tasks" in routed_kwargs["system"]
     assert "Best for SQL tasks" in routed_kwargs["system"]
     assert routed_messages == [{"role": "user", "content": "hi"}]
@@ -1259,7 +1259,7 @@ def test_spec_descriptions_used_as_fallback_in_routing_prompt():
         "default": "General purpose model",
         "sql": "For SQL queries",
     }
-    prompt = llm._routing_system_prompt()
+    prompt = llm._routing_system_prompt("edit")
     assert "General purpose model" in prompt
     # edit already has an explicit description in ROUTED_MODEL_KWARGS
     assert "Best for editing tables and visualizations" in prompt
@@ -1273,6 +1273,117 @@ def test_explicit_description_overrides_spec_descriptions():
     llm = _routing_llm()
     llm.model_kwargs["sql"]["description"] = "Custom SQL description"
     llm.spec_descriptions = {"sql": "Fallback SQL description"}
-    prompt = llm._routing_system_prompt()
+    prompt = llm._routing_system_prompt("edit")
     assert "Custom SQL description" in prompt
     assert "Fallback SQL description" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# Routing resolution through the model_kwargs fallback
+# ---------------------------------------------------------------------------
+
+async def _route_and_record(llm, model_spec, decision="sql"):
+    """Invoke through the real routing path, returning the models actually called."""
+    models = []
+
+    async def fake_run_client(spec, messages, **kwargs):
+        model = llm._get_model_kwargs(spec).get("model")
+        models.append(model)
+        if kwargs.get("response_model") is not None:
+            return SimpleNamespace(model_spec=decision)
+        return "done"
+
+    llm.run_client = fake_run_client
+    await llm.invoke([{"role": "user", "content": "hi"}], model_spec=model_spec)
+    return models
+
+
+@pytest.mark.parametrize("model_spec", ["sql", "chat", "vega_lite", "default"])
+async def test_routing_applies_to_specs_resolved_from_default(model_spec):
+    """Actors derive model_spec from their class name (sql, chat, vega_lite, ...),
+    which providers do not enumerate in model_kwargs. Those specs resolve to the
+    'default' entry, so 'default' declaring routing must route them too."""
+    llm = _make(OpenAI, {})
+    llm.model_kwargs = {
+        "default": {"model": "base-model", "routing": {"model": "router-model"}},
+        "ui": {"model": "ui-model"},
+    }
+    models = await _route_and_record(llm, model_spec, decision="ui")
+    assert models == ["router-model", "ui-model"]
+
+
+async def test_routing_skipped_when_resolved_entry_declares_none():
+    """An explicitly configured entry without routing is used as-is, even when
+    the 'default' entry declares routing."""
+    llm = _make(OpenAI, {})
+    llm.model_kwargs = {
+        "default": {"model": "base-model", "routing": {"model": "router-model"}},
+        "ui": {"model": "ui-model"},
+    }
+    assert await _route_and_record(llm, "ui") == ["ui-model"]
+
+
+async def test_llamacpp_repo_id_spec_never_routed():
+    """LlamaCpp resolves a '/' repo id to that model directly, so routing must
+    not override a model the caller named explicitly."""
+    llm = LlamaCpp(model_kwargs={
+        "default": {"repo_id": "unsloth/Qwen3-32B-GGUF", "routing": {"model": "router-model"}},
+    })
+    assert await llm._resolve_routing("unsloth/Qwen3-Coder-32B-A3B-Instruct-GGUF", []) == (
+        "unsloth/Qwen3-Coder-32B-A3B-Instruct-GGUF"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Routing context stripping
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("content", [
+    pytest.param(_make_test_image(), id="bare-image"),
+    pytest.param(["describe this", _make_test_image()], id="list-image"),
+    pytest.param([{"type": "text", "text": "hi"},
+                  {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}}],
+                 id="list-image-url-dict"),
+])
+def test_strip_for_routing_removes_every_image_shape(content):
+    """The routing model is small and usually text-only, so no image payload may
+    reach it in any of the content shapes _check_for_image produces."""
+    llm = _make(OpenAI, {})
+    stripped = llm._strip_for_routing([{"role": "user", "content": content}])
+    remaining = stripped[0]["content"]
+    items = remaining if isinstance(remaining, list) else [remaining]
+    assert not any(isinstance(item, Image) for item in items)
+    assert not any(isinstance(item, dict) and item.get("type") == "image_url" for item in items)
+
+
+# ---------------------------------------------------------------------------
+# Routing prompt content
+# ---------------------------------------------------------------------------
+
+def test_spec_descriptions_documented_by_default():
+    """The universal spec keys describe themselves without the UI layer having
+    been constructed, so headless routing is not left with bare key names."""
+    llm = _make(OpenAI, {})
+    llm.model_kwargs = {
+        "default": {"model": "base-model", "routing": {"model": "router-model"}},
+        "ui": {"model": "ui-model"},
+    }
+    prompt = llm._routing_system_prompt("default")
+    assert "No description provided." not in prompt
+
+
+def test_routing_prompt_names_the_requested_spec():
+    """The router picks a model for a task, so it is told which task was asked
+    for rather than inferring it from the user message alone."""
+    llm = _routing_llm()
+    assert "sql" in llm._routing_system_prompt("sql")
+
+
+def test_model_card_offers_user_supplied_select_models():
+    """select_models is user-settable at construction, so the dialog dropdown has
+    to read the instance rather than the provider class default."""
+    from lumen.ai.llm_dialog import LLMModelCard
+
+    llm = OpenAI(model_kwargs={"default": {"model": "m"}}, select_models=["my-model", "other"])
+    card = LLMModelCard(llm=llm, model_type="default", llm_choices=[], description="")
+    assert card._get_default_models() == ["m", "my-model", "other"]
