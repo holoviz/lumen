@@ -239,6 +239,10 @@ class LLMConfigDialog(Viewer):
         # Initialize model cards
         self._refresh_model_cards()
 
+        # Expose agent descriptions to the LLM so the routing prompt
+        # can use them even when model_kwargs entries lack a 'description' key.
+        self.llm.spec_descriptions = self._get_all_agent_types()
+
         # Flag to prevent update loops during provider changes
         self._updating_provider = False
 

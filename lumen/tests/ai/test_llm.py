@@ -932,7 +932,7 @@ async def test_routing_invoked_with_dict_spec_and_decision_used(monkeypatch):
     assert "routing" not in resolved
 
     routed_messages, routed_kwargs = calls[0]
-    assert routed_messages == messages
+    assert routed_messages == [{"role": "user", "content": "hi"}]
     assert routed_kwargs["model_spec"] == {"model": "router-model"}
     assert routed_kwargs["tools"] == []
     assert routed_kwargs["system"] == llm._routing_system_prompt()
@@ -1187,3 +1187,92 @@ async def test_stream_router_down_no_reroute_across_rounds(monkeypatch):
     assert all(spec["model"] == "edit-model" for spec in stream_specs)
     assert all("routing" not in spec for spec in stream_specs)
     assert "fallback answer" in outputs
+
+
+async def test_routing_receives_only_last_user_message(monkeypatch):
+    """The routing call receives only the last user message, not the full
+    conversation history (which could be thousands of chars)."""
+    llm = _routing_llm()
+    calls = []
+
+    async def fake_invoke(messages, **kwargs):
+        calls.append(messages)
+        return SimpleNamespace(model_spec="sql")
+
+    monkeypatch.setattr(llm, "invoke", fake_invoke)
+    messages = [
+        {"role": "system", "content": "You are helpful."},
+        {"role": "user", "content": "first question"},
+        {"role": "assistant", "content": "first answer"},
+        {"role": "user", "content": "second question"},
+    ]
+    await llm._resolve_routing("edit", messages)
+    assert calls[0] == [{"role": "user", "content": "second question"}]
+
+
+async def test_routing_strips_images_from_messages(monkeypatch):
+    """The routing call never receives raw image data — image content parts
+    are stripped so a small text-only router model is not sent base64 blobs."""
+    llm = _routing_llm()
+    calls = []
+
+    async def fake_invoke(messages, **kwargs):
+        calls.append(messages)
+        return SimpleNamespace(model_spec="sql")
+
+    monkeypatch.setattr(llm, "invoke", fake_invoke)
+    messages = [
+        {"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+            {"type": "text", "text": "describe this chart"},
+        ]},
+    ]
+    await llm._resolve_routing("edit", messages)
+    assert calls[0] == [{"role": "user", "content": [{"type": "text", "text": "describe this chart"}]}]
+
+
+async def test_routing_strips_binary_image_content(monkeypatch):
+    """Binary image content in the last user message is replaced with empty
+    string so the router does not receive raw bytes."""
+    llm = _routing_llm()
+    calls = []
+
+    async def fake_invoke(messages, **kwargs):
+        calls.append(messages)
+        return SimpleNamespace(model_spec="sql")
+
+    monkeypatch.setattr(llm, "invoke", fake_invoke)
+    image_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+    messages = [
+        {"role": "user", "content": image_bytes},
+    ]
+    await llm._resolve_routing("edit", messages)
+    assert calls[0] == [{"role": "user", "content": ""}]
+
+
+def test_spec_descriptions_used_as_fallback_in_routing_prompt():
+    """When model_kwargs entries lack a 'description' key, spec_descriptions
+    is consulted as fallback so the routing prompt is not full of
+    'No description provided.' lines."""
+    llm = _routing_llm()
+    llm.spec_descriptions = {
+        "default": "General purpose model",
+        "sql": "For SQL queries",
+    }
+    prompt = llm._routing_system_prompt()
+    assert "General purpose model" in prompt
+    # edit already has an explicit description in ROUTED_MODEL_KWARGS
+    assert "Best for editing tables and visualizations" in prompt
+    assert "For SQL queries" in prompt
+    assert "No description provided" not in prompt
+
+
+def test_explicit_description_overrides_spec_descriptions():
+    """An explicit 'description' key in model_kwargs takes priority over
+    spec_descriptions."""
+    llm = _routing_llm()
+    llm.model_kwargs["sql"]["description"] = "Custom SQL description"
+    llm.spec_descriptions = {"sql": "Fallback SQL description"}
+    prompt = llm._routing_system_prompt()
+    assert "Custom SQL description" in prompt
+    assert "Fallback SQL description" not in prompt

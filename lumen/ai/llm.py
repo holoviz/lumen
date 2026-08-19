@@ -153,6 +153,12 @@ class Llm(param.Parameterized):
                   "description": "Best for editing tables and visualizations",
                   "routing": {"model": "nemotron-switchyard"}}}""")
 
+    spec_descriptions = param.Dict(default={}, doc="""
+        Mapping of spec key to human-readable description, used as a
+        fallback in the routing prompt when ``model_kwargs`` entries
+        do not declare their own ``description``.  Populated externally
+        (e.g. by the UI layer) from agent class metadata.""")
+
     tools = param.List(default=[], doc="""
         Default tools that are always available to this LLM instance.
         These are combined with any tools passed directly to invoke()
@@ -438,11 +444,16 @@ class Llm(param.Parameterized):
         """Build the dedicated system prompt for the routing call.
 
         The router is told it is choosing between the configured ``model_kwargs``
-        entries and is given each entry's optional ``description`` so it can
-        reason about what each option is for, rather than bare key names.
+        entries and is given each entry's description so it can reason about
+        what each option is for, rather than bare key names.
+
+        Descriptions are resolved in order: an explicit ``description`` key in
+        the ``model_kwargs`` entry wins first; then ``spec_descriptions``
+        (populated externally from agent metadata) is consulted as a fallback;
+        finally the literal ``"No description provided."`` is used.
         """
         options = "\n".join(
-            f"- {key}: {config.get('description', 'No description provided.')}"
+            f"- {key}: {config.get('description', self.spec_descriptions.get(key, 'No description provided.'))}"
             for key, config in self.model_kwargs.items()
             if isinstance(config, dict)
         )
@@ -453,6 +464,22 @@ class Llm(param.Parameterized):
             f"{options}\n"
             "Reply with exactly one of the option names above."
         )
+
+    def _strip_for_routing(self, messages: list[Message]) -> list[Message]:
+        """Prepare messages for the routing call: last user message only, images removed."""
+        user_msgs = [m for m in messages if m.get("role") == "user"]
+        if not user_msgs:
+            return []
+        last = dict(user_msgs[-1])
+        content = last.get("content")
+        if isinstance(content, list):
+            last["content"] = [
+                item for item in content
+                if not (isinstance(item, dict) and item.get("type") == "image_url")
+            ]
+        elif isinstance(content, (bytes, Image)):
+            last["content"] = ""
+        return [last]
 
     async def _resolve_routing(
         self,
@@ -483,9 +510,10 @@ class Llm(param.Parameterized):
 
         routing_spec = dict(routing_spec)
         routing_prompt = self._routing_system_prompt()
+        routing_messages = self._strip_for_routing(messages)
         try:
             route = await self.invoke(
-                messages=[m for m in messages if m.get("role") != "system"],
+                messages=routing_messages,
                 system=routing_prompt,
                 model_spec=routing_spec,
                 response_model=self._route_spec_model(),
@@ -542,6 +570,7 @@ class Llm(param.Parameterized):
         """
         system = system.strip().replace("\n\n", "\n")
         messages, input_kwargs = self._add_system_message(messages, system, input_kwargs)
+        messages, contains_image = self._check_for_image(messages)
         model_spec = await self._resolve_routing(model_spec, messages)
         max_tool_rounds = int(input_kwargs.pop("max_tool_rounds", 16))
 
@@ -552,7 +581,6 @@ class Llm(param.Parameterized):
         if tool_specs is not None:
             kwargs["tools"] = tool_specs
 
-        messages, contains_image = self._check_for_image(messages)
         if contains_image:
             # Currently instructor does not support streaming with multimodal
             # https://github.com/567-labs/instructor/issues/1872
@@ -982,8 +1010,8 @@ class Llm(param.Parameterized):
         """
         combined_tools = self._combine_tools(tools)
         _, tool_instances, tool_contexts = self._normalize_tools(combined_tools)
-        model_spec = await self._resolve_routing(model_spec, messages)
         messages, contains_image = self._check_for_image(messages)
+        model_spec = await self._resolve_routing(model_spec, messages)
         if self.logfire_tags is not None or contains_image:
             output = await self.invoke(
                 messages,
