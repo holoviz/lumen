@@ -429,7 +429,7 @@ def make_apply_filter_tool(pipeline: Pipeline) -> FunctionTool:
             pipeline.add_filter(filt)
         except Exception as exc:
             return f"Could not apply filter on {field!r} with value {value!r}: {exc}"
-        return f"Applied filter on {field!r} ({value!r}); {len(pipeline.data)} rows match."
+        return f"Applied filter on {field!r} ({value!r})."
 
     fields = ", ".join(filterable) or "(none)"
     apply_filter.__doc__ = (

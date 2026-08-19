@@ -21,6 +21,7 @@ import panel as pn
 import param  # type: ignore
 
 from bokeh.models import NumeralTickFormatter  # type: ignore
+from hvplot import hvPlotTabular  # type: ignore
 from panel.io.document import immediate_dispatch
 from panel.pane.base import PaneBase
 from panel.pane.holoviews import HoloViews as HoloViewsPane
@@ -43,8 +44,9 @@ from ..state import state
 from ..transforms.base import Transform
 from ..transforms.sql import SQLTransform
 from ..util import (
-    VARIABLE_RE, catch_and_notify, geometry_to_geojson, geometry_to_wkt,
-    is_geodataframe, is_ref, resolve_module_reference, try_import_xarray,
+    VARIABLE_RE, as_pandas, catch_and_notify, geometry_to_geojson,
+    geometry_to_wkt, is_geodataframe, is_ref, resolve_module_reference,
+    try_import_xarray,
 )
 from ..validation import ValidationError
 
@@ -76,6 +78,13 @@ MAX_RENDER_ROWS = 250_000
 REDUCING_KINDS = GRIDDED_KINDS + (
     "heatmap", "hexbin", "hist", "kde", "box", "violin", "bivariate",
 )
+
+# Keep the Selector in sync with tabular kinds that produce plots in hvPlot.
+# The explorer is handled by hvPlotUIView, while dataset returns a bare
+# hv.Dataset with no plotting class for hvPlotView to render.
+HVPLOT_KINDS = [
+    kind for kind in hvPlotTabular.__all__ if kind not in {"explorer", "dataset"}
+] + list(GRIDDED_KINDS)
 
 
 class View(MultiTypeComponent, Viewer):
@@ -609,7 +618,10 @@ class View(MultiTypeComponent, Viewer):
             return self._cache
         if self.pipeline.data is None:
             self.pipeline._update_data()
-        self._cache = data = self.pipeline.data
+        # Views hand the frame straight to hvplot, Tabulator, Perspective, Vega
+        # and friends, none of which read anything but pandas, so this is where
+        # any other dataframe library is materialized.
+        self._cache = data = as_pandas(self.pipeline.data)
         if self.limit is not None:
             data = data.iloc[:self.limit]
         return data.copy()
@@ -950,12 +962,7 @@ class hvPlotBaseView(View):
 
     kind = param.Selector(
         default=None, doc="The kind of plot, e.g. 'scatter' or 'line'.",
-        objects=[
-            'area', 'bar', 'barh', 'bivariate', 'box', 'contour', 'contourf',
-            'errorbars', 'hist', 'image', 'kde', 'labels',
-            'line', 'scatter', 'heatmap', 'hexbin', 'ohlc', 'paths', 'points',
-            'polygons', 'quadmesh', 'step', 'violin'
-        ]
+        objects=HVPLOT_KINDS
     )
 
     x = param.Selector(doc="The column to render on the x-axis.")

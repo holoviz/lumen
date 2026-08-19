@@ -887,9 +887,9 @@ async def test_view_retry_keeps_context_and_passes_spec_by_keyword(llm):
         chain_of_thought = ""
 
     async def fake_stream_prompt(*args, **kwargs):
-        async def gen():
-            yield _Out(yaml_spec="kind: line")
-        return gen()
+        # _stream_prompt is an async generator function, so the caller iterates
+        # what it returns rather than awaiting it.
+        yield _Out(yaml_spec="kind: line")
 
     async def fake_extract_spec(context, spec):
         raise ValueError("bad spec")
@@ -929,10 +929,8 @@ async def test_view_retry_recovers_using_revised_spec(llm):
         chain_of_thought = ""
 
     async def fake_stream_prompt(*args, **kwargs):
-        async def gen():
-            # realistic hvPlot output shape: view params, no yaml_spec
-            yield _Out(kind="line", x="a", y="b")
-        return gen()
+        # realistic hvPlot output shape: view params, no yaml_spec
+        yield _Out(kind="line", x="a", y="b")
 
     async def fake_extract_spec(context, spec):
         seen_specs.append(dict(spec))
