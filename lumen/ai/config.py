@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
+from functools import cache
 from pathlib import Path, PosixPath
 
 import numpy as np
@@ -158,6 +159,20 @@ VEGA_MAP_LAYER = {
         "mark": {"type": "geoshape", "fill": None, "stroke": "black"}
     }
 }
+
+
+@cache
+def get_markitdown():
+    """
+    The MarkItDown converter shared by everything that reads documents.
+
+    Built on first use rather than at import, because markitdown reaches
+    pandas through its xlsx converter and costs about 0.7s to import.
+    """
+    from markitdown import MarkItDown
+
+    return MarkItDown()
+
 
 def str_presenter(dumper, data):
     if "\n" in data:  # Only use literal block for strings containing newlines
