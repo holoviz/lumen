@@ -15,6 +15,8 @@ from pathlib import Path
 from subprocess import check_output
 
 import bokeh
+import narwhals as narwhals_any
+import narwhals.stable.v2 as nw
 import numpy as np
 import pandas as pd
 import panel as pn
@@ -57,13 +59,189 @@ class NumpyDumper(yaml.SafeDumper):
             data = str(data)
         return super().represent_data(data)
 
+def is_narwhals(obj):
+    """Return True if obj is a narwhals DataFrame or LazyFrame.
+
+    Tested against the bare namespace on purpose: narwhals.stable.v1 and v2
+    both subclass it, so this recognises a frame whichever namespace the
+    caller wrapped it with.
+    """
+    return isinstance(obj, (narwhals_any.DataFrame, narwhals_any.LazyFrame))
+
+
+def is_lazyframe(obj):
+    """Return True if obj is a narwhals LazyFrame, from any narwhals namespace.
+
+    Callers need this before len(), slicing or item access, none of which a
+    LazyFrame supports.
+    """
+    return isinstance(obj, narwhals_any.LazyFrame)
+
+
+def as_narwhals(df):
+    """Return df wrapped as a narwhals frame, or df unchanged if it cannot be.
+
+    Wrapping a pandas DataFrame is lossless and free: to_native() returns the
+    caller's original object. Dask frames are deliberately left alone because
+    narwhals maps them to a LazyFrame, which would bypass the hasattr(df,
+    'compute') branches the dask paths rely on.
+    """
+    if df is None or is_narwhals(df):
+        return df
+    dd = try_import('dask.dataframe', load=False)
+    if dd is not None and isinstance(df, dd.DataFrame):
+        return df
+    return nw.from_native(df, pass_through=True)
+
+
+def collect_lazy(df):
+    """Return df with any lazy frame collected, in its own backend.
+
+    A Source must not hand a lazy frame further in: everything downstream
+    calls len(), .iloc or .index on it, none of which a LazyFrame answers to,
+    and the failure would surface far from its cause.
+    """
+    narwhals_df = as_narwhals(df)
+    if is_lazyframe(narwhals_df):
+        return narwhals_df.collect().to_native()
+    return df
+
+
+DATAFRAME_BACKENDS = ['pandas', 'polars', 'pyarrow']
+
+
+def to_backend(df, backend):
+    """Return df as a frame of the named dataframe library.
+
+    A backend of None leaves the frame as whatever produced it. Converting
+    costs a full copy, so this is only worth asking for at a boundary where
+    the consumer needs a specific library.
+    """
+    if backend is None or df is None:
+        return df
+    narwhals_df = as_narwhals(df)
+    if not is_narwhals(narwhals_df):
+        return df
+    if is_lazyframe(narwhals_df):
+        narwhals_df = narwhals_df.collect()
+    if narwhals_df.implementation.name.lower() == backend:
+        return df
+    if backend == 'pandas':
+        return narwhals_df.to_pandas()
+    if backend == 'polars':
+        return narwhals_df.to_polars()
+    return narwhals_df.to_arrow()
+
+
+def as_pandas(df):
+    """Return df as a pandas DataFrame, collecting it first if it is lazy.
+
+    The boundary for consumers that need real pandas: hvplot's accessor,
+    Panel's Tabulator, Perspective and Vega panes, and the LLM schema summary.
+    A pandas frame is returned untouched, which also keeps a GeoDataFrame from
+    being flattened into a plain DataFrame on the way through.
+    """
+    if isinstance(df, pd.DataFrame):
+        return df
+    narwhals_df = as_narwhals(df)
+    if not is_narwhals(narwhals_df):
+        return df
+    if is_lazyframe(narwhals_df):
+        narwhals_df = narwhals_df.collect()
+    return narwhals_df.to_pandas()
+
+
+def _narwhals_dataframe_schema(df, columns=None):
+    """Return a JSON schema for a narwhals-wrapped frame.
+
+    Mirrors get_dataframe_schema for the dataframe libraries pandas cannot
+    describe. It is a separate function rather than the shared implementation
+    because the pandas path covers two things narwhals has no representation
+    for: geopandas geometry columns, and pandas categorical categories that
+    no row uses.
+    """
+    schema = {'type': 'array', 'items': {'type': 'object', 'properties': {}}}
+    if is_lazyframe(df):
+        df = df.collect()
+    df_schema = df.collect_schema()
+    empty = len(df) == 0
+    properties = schema['items']['properties']
+    names = df_schema.names() if columns is None else columns
+
+    # One query for every bound rather than two per column: a frame with a
+    # hundred numeric columns is otherwise two hundred separate query plans.
+    bounds = {}
+    if not empty:
+        bounded = [
+            n for n in names
+            if df_schema[n].is_numeric() or isinstance(df_schema[n], (nw.Datetime, nw.Date))
+        ]
+        if bounded:
+            # Aliased positionally because a column may legally be named
+            # anything, including whatever we would otherwise build a key from.
+            wanted = [(name, agg) for name in bounded for agg in ('min', 'max')]
+            row = df.select(*[
+                getattr(nw.col(name), agg)().alias(str(i))
+                for i, (name, agg) in enumerate(wanted)
+            ]).to_dict(as_series=False)
+            bounds = {
+                pair: nw.to_py_scalar(row[str(i)][0])
+                for i, pair in enumerate(wanted)
+            }
+
+    for name in names:
+        dtype = df_schema[name]
+        temporal = isinstance(dtype, (nw.Datetime, nw.Date))
+        if temporal:
+            if empty:
+                vmin = vmax = pd.NaT
+            else:
+                vmin = bounds[name, 'min']
+                vmax = bounds[name, 'max']
+            # An all-null column has no min, and pandas renders its NaT as the
+            # string 'NaT', so match that rather than emitting null.
+            properties[name] = {
+                'type': 'string',
+                'inclusiveMinimum': 'NaT' if vmin is None else vmin.isoformat(),
+                'inclusiveMaximum': 'NaT' if vmax is None else vmax.isoformat(),
+                'format': 'datetime',
+            }
+        elif dtype.is_numeric():
+            # pandas leaves the type unset for an empty frame, and auto_filters
+            # keys off that, so an empty frame has to look the same here.
+            kind, vmin, vmax = None, float('NaN'), float('NaN')
+            if not empty:
+                cast = int if dtype.is_integer() else float
+                kind = 'integer' if dtype.is_integer() else 'number'
+                try:
+                    vmin = cast(bounds[name, 'min'])
+                    vmax = cast(bounds[name, 'max'])
+                except Exception:
+                    vmin = vmax = float('NaN')
+            properties[name] = {
+                'type': kind, 'inclusiveMinimum': vmin, 'inclusiveMaximum': vmax
+            }
+        elif isinstance(dtype, nw.Boolean):
+            properties[name] = {'type': 'boolean'}
+        elif isinstance(dtype, nw.Enum):
+            properties[name] = {'type': 'string', 'enum': list(dtype.categories)}
+        elif isinstance(dtype, (nw.String, nw.Categorical, nw.Object)):
+            cats = [] if empty else df[name].unique(maintain_order=True).to_list()
+            properties[name] = {'type': 'string', 'enum': cats}
+        # Anything else (duration, binary, list, struct, unknown) is left out
+        # of the schema: a widget built on a dtype no filter understands is
+        # worse than none. The pandas path also omits these, except for time
+        # columns, which it happens to reach through its object-dtype branch.
+    return schema
+
+
 def get_dataframe_schema(df, columns=None):
     """
     Returns a JSON schema optionally filtered by a subset of the columns.
 
     Parameters
     ----------
-    df : pandas.DataFrame or dask.DataFrame
+    df : pandas.DataFrame, dask.DataFrame or any frame narwhals supports
         The DataFrame to describe with the schema
     columns: list(str) or None
         List of columns to include in schema
@@ -73,6 +251,13 @@ def get_dataframe_schema(df, columns=None):
     dict
         The JSON schema describing the DataFrame
     """
+    if df is not None and not isinstance(df, pd.DataFrame):
+        # pandas frames keep the path below: it describes geometry columns and
+        # unused categorical categories, neither of which survives narwhals.
+        narwhals_df = as_narwhals(df)
+        if is_narwhals(narwhals_df):
+            return _narwhals_dataframe_schema(narwhals_df, columns)
+
     if 'dask.dataframe' in sys.modules:
         import dask.dataframe as dd
         is_dask = isinstance(df, dd.DataFrame)

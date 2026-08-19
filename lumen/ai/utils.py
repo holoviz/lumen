@@ -46,13 +46,14 @@ from ..pipeline import Pipeline
 from ..sources.base import Source
 from ..sources.xarray_sql import XArraySQLSource
 from ..transforms import SQLRemoveSourceSeparator
-from ..util import log, try_import_xarray
+from ..util import as_pandas, log, try_import_xarray
 from .config import (
     PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, UNRECOVERABLE_ERRORS, VEGA_MAP_LAYER,
     VEGA_ZOOMABLE_MAP_ITEMS, MissingContextError, RetriesExceededError,
 )
 
 if TYPE_CHECKING:
+    from narwhals.stable.v2.typing import Frame, IntoFrame
     from panel.chat.step import ChatStep
 
     from .editors import VegaLiteEditor
@@ -628,7 +629,9 @@ async def get_data(pipeline):
     block the main thread when calling pipeline.data
     """
     def get_data_sync():
-        return pipeline.data
+        # result_to_dataframe and the LLM code sandbox are written against
+        # pandas. describe_data converts for itself, and so do the views.
+        return as_pandas(pipeline.data)
     return await asyncio.to_thread(get_data_sync)
 
 
@@ -739,7 +742,7 @@ def _select_relevant_columns(
 
 
 def describe_data_sync(
-    df: pd.DataFrame,
+    df: IntoFrame | Frame,
     enum_limit: int = 3,
     reduce_enums: bool = True,
     row_limit: int | None = None,
@@ -751,8 +754,8 @@ def describe_data_sync(
 
     Parameters
     ----------
-    df : pd.DataFrame
-        The DataFrame to describe
+    df : IntoFrame | Frame
+        The DataFrame to describe, in pandas or any library narwhals supports
     enum_limit : int
         Maximum number of enum values to show per column
     reduce_enums : bool
@@ -776,6 +779,9 @@ def describe_data_sync(
     str
         YAML-formatted summary of the DataFrame
     """
+    # Accept any frame narwhals understands. The summary itself is pandas-only
+    # for now, so converting here keeps it to one place to change later.
+    df = as_pandas(df)
     size = df.size
     shape = df.shape
     shape_header = {"data_shape": [int(shape[0]), int(shape[1])], "is_sampled": False}
@@ -935,7 +941,7 @@ def describe_data_sync(
 
 
 async def describe_data(
-    df: pd.DataFrame,
+    df: IntoFrame | Frame,
     enum_limit: int = 3,
     reduce_enums: bool = True,
     row_limit: int | None = None,
@@ -947,8 +953,8 @@ async def describe_data(
 
     Parameters
     ----------
-    df : pd.DataFrame
-        The DataFrame to describe
+    df : IntoFrame | Frame
+        The DataFrame to describe, in pandas or any library narwhals supports
     enum_limit : int
         Maximum number of enum values to show per column
     reduce_enums : bool

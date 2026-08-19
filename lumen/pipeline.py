@@ -7,6 +7,7 @@ from itertools import product
 from typing import Any, ClassVar, Literal
 
 import numpy as np
+import pandas as pd
 import panel as pn
 import param  # type: ignore
 import tqdm  # type: ignore
@@ -25,7 +26,8 @@ from .state import state
 from .transforms.base import Filter as FilterTransform, Transform
 from .transforms.sql import SQLTransform
 from .util import (
-    VARIABLE_RE, catch_and_notify, get_dataframe_schema, is_ref,
+    DATAFRAME_BACKENDS, VARIABLE_RE, as_narwhals, as_pandas, catch_and_notify,
+    get_dataframe_schema, is_narwhals, is_ref, to_backend,
 )
 from .validation import ValidationError, match_suggestion_message
 
@@ -60,7 +62,20 @@ def auto_filters(schema: dict[str, dict[str, Any]]) -> list[dict[str, str]]:
 class DataFrame(param.DataFrame):
     """
     DataFrame parameter that resolves data on access.
+
+    param.DataFrame is a ClassSelector on pandas.DataFrame, which would reject
+    a frame from any other dataframe library before a Source could hand one
+    over, so the check is widened to anything narwhals can read.
     """
+
+    def _validate(self, val):
+        if val is None or isinstance(val, pd.DataFrame):
+            super()._validate(val)
+        elif not is_narwhals(as_narwhals(val)):
+            raise ValueError(
+                f'{self.name!r} expects a pandas DataFrame or a frame from a '
+                f'dataframe library narwhals supports, not {type(val).__name__}.'
+            )
 
     def __get__(self, obj, objtype):
         if obj is not None:
@@ -104,6 +119,11 @@ class Pipeline(Viewer, Component):
     data = DataFrame(doc="The current data on this source.")
 
     schema = param.Dict(doc="The schema of the input data.")
+
+    dataframe_backend = param.Selector(default=None, objects=[None, *DATAFRAME_BACKENDS], doc="""
+        The dataframe library `Pipeline.data` is returned as. Leave unset to
+        get whatever the Source produced, which avoids a conversion."""
+    )
 
     auto_update = param.Boolean(default=True, constant=True, doc="""
         Whether changes in filters, transforms and references automatically
@@ -197,7 +217,13 @@ class Pipeline(Viewer, Component):
 
     def __panel__(self) -> Row:
         controls = self.control_panel
-        table = Tabulator(self.param.data, pagination='remote', sizing_mode="stretch_both", min_height=200)
+        # Tabulator reads .index and .iloc, so it needs real pandas. This is
+        # the notebook and pn.panel(pipeline) path, which does not go through
+        # View.get_data where the other materialization lives.
+        table = Tabulator(
+            param.rx(as_pandas)(self.param.data), pagination='remote',
+            sizing_mode="stretch_both", min_height=200
+        )
         if controls:
             return Row(self.control_panel, table)
         return table
@@ -311,13 +337,16 @@ class Pipeline(Viewer, Component):
                 continue
             from holoviews import Dataset  # type: ignore
             if filt.value is not None:
-                ds = Dataset(data)
+                # HoloViews only learned to read narwhals frames in 1.22 and the
+                # floor is lower than that, so hand it pandas.
+                ds = Dataset(as_pandas(data))
                 data = ds.select(filt.value).data
 
         # Apply transforms
         for transform in self.transforms:
+            data = transform._coerce(data)
             data = transform.apply(data)
-        return data
+        return to_backend(data, self.dataframe_backend)
 
     def get_schema(self):
         """
