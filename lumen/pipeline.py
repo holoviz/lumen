@@ -27,7 +27,7 @@ from .transforms.base import Filter as FilterTransform, Transform
 from .transforms.sql import SQLTransform
 from .util import (
     DATAFRAME_BACKENDS, VARIABLE_RE, as_narwhals, as_pandas, catch_and_notify,
-    get_dataframe_schema, is_narwhals, is_ref, to_backend,
+    collect_lazy, get_dataframe_schema, is_narwhals, is_ref, to_backend,
 )
 from .validation import ValidationError, match_suggestion_message
 
@@ -346,7 +346,10 @@ class Pipeline(Viewer, Component):
         for transform in self.transforms:
             data = transform._coerce(data)
             data = transform.apply(data)
-        return to_backend(data, self.dataframe_backend)
+        # A lazy Source stays lazy through the transforms above and is
+        # collected exactly once here, because everything downstream of
+        # Pipeline.data calls len(), .iloc or .index on it.
+        return to_backend(collect_lazy(data), self.dataframe_backend)
 
     def get_schema(self):
         """
