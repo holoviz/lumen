@@ -81,3 +81,32 @@ def test_prompt_documents_categorical_datashading():
 
     assert "datashade" in prompt
     assert "color_key" in prompt
+
+
+# ---- The schema the LLM is actually handed ----
+
+def test_get_model_builds_the_view_schema():
+    """_get_model walked the whole component tree until it hit a param type it
+    could not map, so no hvPlot view schema could be built at all."""
+    schema = {
+        "lon": {"type": "number"},
+        "lat": {"type": "number"},
+        "family": {"type": "string", "enum": ["Irish", "Italian"]},
+    }
+
+    model = hvPlotAgent()._get_model("main", schema)
+    properties = model.model_json_schema()["properties"]
+
+    assert {"kind", "x", "y", "by", "datashade", "dynspread", "color_key"} <= set(properties)
+
+
+def test_get_model_omits_excluded_names():
+    """The generated models inherit, so anything excluded has to stay out of the
+    parent models too."""
+    model = hvPlotAgent()._get_model("main", {"lon": {"type": "number"}})
+    properties = model.model_json_schema()["properties"]
+
+    excluded = {"pipeline", "source", "transforms", "download", "controls",
+                "field", "selection_group"}
+
+    assert not (excluded & set(properties))

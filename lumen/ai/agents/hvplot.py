@@ -56,6 +56,11 @@ class hvPlotAgent(BaseViewAgent):
             extra_fields={
                 "chain_of_thought": (str, FieldInfo(description="Your thought process behind the plot.")),
             },
+            # Only this one view is being described. Expanding subclasses is for
+            # callers that want a union over a taxonomy, and here it would walk
+            # every subclass of every base, down into Panel and Bokeh objects
+            # that have no JSON schema and nothing to do with a plot.
+            process_subclasses=False,
         )
         return model[self.view_type.__name__]
 

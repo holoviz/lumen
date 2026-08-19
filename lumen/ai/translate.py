@@ -38,6 +38,7 @@ PARAM_TYPE_MAPPING: dict[param.Parameter, type] = {
     param.CalendarDate: DATE_TYPE,
     param.CalendarDateRange: tuple[DATE_TYPE],
     param.Parameter: object,
+    param.Path: str,
     param.Color: Color,
     param.Callable: Callable,
 }
@@ -279,7 +280,17 @@ def parameter_to_field(parameter: param.Parameter, created_models: dict[str, typ
     elif parameter.name == "margin":
         type_ = float | tuple[float, float] | tuple[float, float, float, float]
     else:
-        raise NotImplementedError(f"Parameter {parameter.name!r} of {param_type.__name__!r} not supported")
+        # Every branch above dispatches on the exact class, so a Parameter
+        # subclass that is not listed lands here: Magnitude is a Number,
+        # Filename is a Path, and any future subclass is the same story.
+        # Resolving through the MRO keeps those usable rather than aborting the
+        # whole model; param.Parameter is mapped, so the walk always terminates.
+        type_ = next(
+            (PARAM_TYPE_MAPPING[base] for base in param_type.__mro__[1:] if base in PARAM_TYPE_MAPPING),
+            object,
+        )
+        if parameter.default is not None and parameter.default is not PydanticUndefined:
+            field_kwargs["default"] = parameter.default
 
     if hasattr(parameter, "bounds") and parameter.bounds and type_ in [int, float]:
         try:
@@ -329,6 +340,14 @@ def param_to_pydantic(
     if parameterized_name in created_models:
         return created_models
 
+    current_excluded: list[str]
+    if isinstance(excluded, str) and hasattr(parameterized, excluded):
+        current_excluded = getattr(parameterized, excluded, [])
+    elif isinstance(excluded, list):  # If excluded is already a list
+        current_excluded = excluded
+    else:  # Fallback: excluded is a string but not an attribute, or other unexpected type
+        current_excluded = []
+
     pydantic_model_bases = []
     # Iterate over direct base classes of `parameterized`
     for param_parent_cls in parameterized.__bases__:
@@ -344,9 +363,15 @@ def param_to_pydantic(
                     param_parent_cls,
                     base_model=base_model,
                     created_models=created_models,
-                    # schema, excluded, extra_fields are generally not propagated
-                    # to parents unless explicitly needed, as they are often
-                    # specific to the current class conversion.
+                    # `excluded` has to reach the parent: the generated models
+                    # inherit, so a name dropped only here still arrives via the
+                    # parent's model. Leaving it out also made the caller's
+                    # exclusions no protection against walking into whatever
+                    # those params point at, which for a View is every other
+                    # component in Lumen.
+                    excluded=current_excluded,
+                    # schema and extra_fields stay local: they describe this
+                    # class's own fields.
                     process_subclasses=process_subclasses,  # PROPAGATE
                 )
 
@@ -367,14 +392,6 @@ def param_to_pydantic(
                     pydantic_model_bases.append(b_item)
         elif base_model not in pydantic_model_bases:  # Should be redundant if list is empty
             pydantic_model_bases.append(base_model)
-
-    current_excluded: list[str]
-    if isinstance(excluded, str) and hasattr(parameterized, excluded):
-        current_excluded = getattr(parameterized, excluded, [])
-    elif isinstance(excluded, list):  # If excluded is already a list
-        current_excluded = excluded
-    else:  # Fallback: excluded is a string but not an attribute, or other unexpected type
-        current_excluded = []
 
     field_params = list(getattr(parameterized, "_field_params", []))
 

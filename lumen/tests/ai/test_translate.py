@@ -1,3 +1,5 @@
+from typing import get_args
+
 import param
 import pytest
 
@@ -573,3 +575,46 @@ def test_param_range_conversion():
     instance = PydanticPlotConfig(xlim=(1.0, 5.0), ylim=(-1.0, 1.0))
     assert instance.xlim == (1.0, 5.0)
     assert instance.ylim == (-1.0, 1.0)
+
+
+class _UnmappedTypes(param.Parameterized):
+    """Parameter subclasses that no branch of parameter_to_field names."""
+
+    alpha = param.Magnitude(default=1.0)
+
+    yaml_file = param.Filename(default=None, check_exists=False)
+
+
+def test_param_subclasses_resolve_through_the_mro():
+    """Dispatch is by exact class, so an unlisted subclass used to abort the
+    whole model rather than the one field."""
+    models = param_to_pydantic(_UnmappedTypes, base_model=BaseModel, process_subclasses=False)
+    fields = models["_UnmappedTypes"].model_fields
+
+    assert fields["alpha"].annotation is float  # Magnitude is a Number
+    # Filename is a Path, and allows None, so it arrives as Optional[str].
+    assert str in get_args(fields["yaml_file"].annotation)
+
+
+class _Parent(param.Parameterized):
+
+    secret = param.String(default="hidden")
+
+    kept = param.String(default="visible")
+
+
+class _Child(_Parent):
+
+    own = param.String(default="mine")
+
+
+def test_excluded_names_do_not_return_via_the_parent():
+    """The generated models inherit, so an exclusion that stops at the child
+    still arrives through the parent's model."""
+    models = param_to_pydantic(
+        _Child, base_model=BaseModel, excluded=["secret"], process_subclasses=False
+    )
+    properties = models["_Child"].model_json_schema()["properties"]
+
+    assert "secret" not in properties
+    assert {"kept", "own"} <= set(properties)
