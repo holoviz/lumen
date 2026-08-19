@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
 from ...views import hvPlotUIView
+from ...views.base import GRIDDED_KINDS
 from ..config import PROMPTS_DIR
 from ..context import TContext
 from ..translate import param_to_pydantic
@@ -64,9 +65,31 @@ class hvPlotAgent(BaseViewAgent):
         )
         return model[self.view_type.__name__]
 
+    @staticmethod
+    def _drop_conflicting_axes(spec: dict[str, Any]) -> None:
+        """Remove axis assignments that contradict each other.
+
+        The prompt asks for x, y, by and groupby to name distinct columns, and
+        the model does not always oblige. A groupby repeating x or y raises
+        while the plot is built, and one repeating by is worse than that: it
+        pages each category into its own frame, so a datashaded plot renders
+        without complaint and blends nothing.
+        """
+        taken = {spec.get("x"), spec.get("y"), *(spec.get("by") or [])}
+        groupby = [col for col in (spec.get("groupby") or []) if col not in taken]
+        if groupby:
+            spec["groupby"] = groupby
+        else:
+            spec.pop("groupby", None)
+        # z belongs to the gridded kinds; elsewhere hvPlot only warns it is
+        # unused, which is a warning nobody reads.
+        if spec.get("kind") not in GRIDDED_KINDS and spec.get("kind") != "heatmap":
+            spec.pop("z", None)
+
     async def _extract_spec(self, context: TContext, spec: dict[str, Any]):
         pipeline = context["pipeline"]
         spec = {key: val for key, val in spec.items() if val is not None}
+        self._drop_conflicting_axes(spec)
         spec["type"] = "hvplot_ui"
         self.view_type.validate(spec)
         spec.pop("type", None)

@@ -233,3 +233,75 @@ def test_constructor_still_coerces_a_bare_column_name(categorical_pipeline, key)
     )
 
     assert getattr(view, key) == ["ancestry"]
+
+
+# ---- A colour key naming only some categories ----
+
+def test_partial_color_key_is_completed(categorical_pipeline, categorical_df):
+    """Datashader needs a color per category, but naming the few that matter is
+    the natural way to ask, so the rest are filled rather than raising."""
+    view = hvPlotView(
+        pipeline=categorical_pipeline,
+        kind="points",
+        x="x",
+        y="y",
+        by=["ancestry"],
+        datashade=True,
+        color_key={"Irish": "#e41a1c"},
+    )
+
+    resolved = view._complete_color_key(categorical_df)
+
+    assert set(resolved) == {"Irish", "Italian", "German"}
+    assert resolved["Irish"] == "#e41a1c"
+    assert len(set(resolved.values())) == 3
+
+
+def test_completed_key_never_reuses_a_chosen_color(categorical_pipeline, categorical_df):
+    view = hvPlotView(
+        pipeline=categorical_pipeline,
+        kind="points",
+        x="x",
+        y="y",
+        by=["ancestry"],
+        datashade=True,
+        color_key={"Irish": "#1f77b4"},
+    )
+
+    resolved = view._complete_color_key(categorical_df)
+
+    assert list(resolved.values()).count("#1f77b4") == 1
+
+
+def test_complete_key_is_left_alone(categorical_pipeline, categorical_df):
+    view = hvPlotView(
+        pipeline=categorical_pipeline,
+        kind="points",
+        x="x",
+        y="y",
+        by=["ancestry"],
+        datashade=True,
+        color_key=COLOR_KEY,
+    )
+
+    assert view._complete_color_key(categorical_df) == COLOR_KEY
+
+
+def test_completion_covers_a_categorical_dtype(categorical_pipeline, categorical_df):
+    """count_cat keys off the dtype's categories, which can list values that
+    never appear in the frame."""
+    framed = categorical_df.copy()
+    framed["ancestry"] = framed["ancestry"].astype("category")
+    view = hvPlotView(
+        pipeline=categorical_pipeline,
+        kind="points",
+        x="x",
+        y="y",
+        by=["ancestry"],
+        datashade=True,
+        color_key={"Irish": "#e41a1c"},
+    )
+
+    resolved = view._complete_color_key(framed)
+
+    assert set(resolved) == set(framed["ancestry"].cat.categories)

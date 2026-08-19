@@ -21,6 +21,7 @@ import panel as pn
 import param  # type: ignore
 
 from bokeh.models import NumeralTickFormatter  # type: ignore
+from holoviews.plotting.util import process_cmap  # type: ignore
 from hvplot import hvPlotTabular  # type: ignore
 from panel.io.document import immediate_dispatch
 from panel.pane.base import PaneBase
@@ -1028,6 +1029,32 @@ class hvPlotBaseView(View):
     def _valid_keys_(cls):
         return None
 
+    def _complete_color_key(self, df):
+        """Fill in a partial ``color_key`` from the categorical palette.
+
+        Not named ``_resolve_color_key``: from_spec treats ``_resolve_<param>``
+        as a spec resolver and would call this with the raw spec value.
+
+        Datashader needs a color for every category present, but naming the few
+        that matter and leaving the rest is the natural way to ask for one, so
+        the remainder are filled in rather than raising.
+        """
+        if self.color_key is None or not self.by or not isinstance(df, pd.DataFrame):
+            return self.color_key
+        column = df[self.by[0]]
+        categories = list(
+            column.cat.categories if isinstance(column.dtype, pd.CategoricalDtype)
+            else pd.unique(column)
+        )
+        missing = [c for c in categories if c not in self.color_key]
+        if not missing:
+            return self.color_key
+        # glasbey_hv carries 256 distinct hues; a Category palette repeats
+        # after 10 or 20 and would hand two categories the same color.
+        spare = [c for c in process_cmap('glasbey_hv', categorical=True)
+                 if c not in set(self.color_key.values())]
+        return dict(self.color_key, **dict(zip(missing, spare, strict=False)))
+
     def _check_render_size(self, df) -> None:
         """Refuse to render more per-row glyphs than a browser tab can hold.
 
@@ -1081,6 +1108,8 @@ class hvPlotUIView(hvPlotBaseView):
             if any(k in control for control in controls)
             and v is not None and k != 'name'
         }
+        if self.color_key is not None:
+            params['color_key'] = self._complete_color_key(data)
         return (data,), dict(params, **self.kwargs)
 
     def __panel__(self):
@@ -1229,7 +1258,7 @@ class hvPlotView(hvPlotBaseView):
         if self.dynspread:
             processed['dynspread'] = True
         if self.color_key is not None:
-            processed['color_key'] = self.color_key
+            processed['color_key'] = self._complete_color_key(df)
 
         kind = self.kind
         plot_source = df

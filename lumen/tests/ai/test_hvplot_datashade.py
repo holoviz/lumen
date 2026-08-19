@@ -110,3 +110,46 @@ def test_get_model_omits_excluded_names():
                 "field", "selection_group"}
 
     assert not (excluded & set(properties))
+
+
+# ---- The model does not always honour the "distinct columns" instruction ----
+
+async def test_groupby_repeating_by_is_dropped():
+    """A groupby equal to by pages each category into its own frame, so the
+    plot renders and blends nothing."""
+    spec = await extract(
+        {"kind": "points", "x": "x", "y": "y", "by": ["c"], "groupby": ["c"]}, 20_001
+    )
+
+    assert "groupby" not in spec
+    assert spec["datashade"] is True
+
+
+async def test_groupby_repeating_the_axes_is_dropped():
+    """A groupby naming x or y raises while the plot is being built."""
+    spec = await extract(
+        {"kind": "points", "x": "x", "y": "y", "by": ["c"], "groupby": ["x", "y", "c"]}, 20_001
+    )
+
+    assert "groupby" not in spec
+
+
+async def test_a_distinct_groupby_survives():
+    spec = await extract(
+        {"kind": "line", "x": "x", "y": "y", "by": ["c"], "groupby": ["other"]}, 10
+    )
+
+    assert spec["groupby"] == ["other"]
+
+
+async def test_z_is_dropped_for_non_gridded_kinds():
+    spec = await extract({"kind": "points", "x": "x", "y": "y", "z": "c"}, 10)
+
+    assert "z" not in spec
+
+
+@pytest.mark.parametrize("kind", ["image", "quadmesh", "heatmap"])
+async def test_z_is_kept_for_gridded_kinds(kind):
+    spec = await extract({"kind": kind, "x": "x", "y": "y", "z": "c"}, 10)
+
+    assert spec["z"] == "c"
